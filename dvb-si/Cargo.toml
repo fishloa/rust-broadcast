@@ -1,0 +1,44 @@
+[package]
+name         = "dvb_si"
+version      = "0.1.0"
+edition      = "2021"
+description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock"]
+keywords     = ["dvb", "mpeg", "broadcast", "si", "psi"]
+categories   = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/zenith"
+readme       = "README.md"
+rust-version = "1.75"
+
+[dependencies]
+dvb_common  = { path = "../dvb_common" }
+thiserror   = "2"
+chrono      = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+smallvec  = { version = "1.13", optional = true }
+serde     = { version = "1", optional = true, features = ["derive"] }
+rayon     = { version = "1.10", optional = true }
+bytes     = { version = "1", optional = true }
+encoding_rs = "0.8"
+
+[dev-dependencies]
+hex = "0.4"
+serde_json = "1.0"
+
+[features]
+default = ["chrono", "ts", "smallvec", "serde"]
+
+# Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
+chrono   = ["dep:chrono"]
+
+# MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
+ts       = ["dep:bytes"]
+
+# Inline storage for small loop collections (SmallVec<[T; N]>). Off = plain Vec.
+smallvec = ["dep:smallvec"]
+
+# JSON / generic serialization on parsed + owned variants. Propagates to chrono + smallvec.
+serde    = ["dep:serde", "chrono?/serde", "smallvec?/serde"]
+
+# Parallel bulk-parse helpers (par_iter). Off = single-threaded.
+rayon    = ["dep:rayon"]

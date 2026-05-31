@@ -1,0 +1,446 @@
+//! Satellite Delivery System Descriptor -- ETSI EN 300 468 \u00a76.2.13.2 (tag 0x43).
+//!
+//! Carried inside the NIT's `transport_stream_loop`'s second descriptor loop.
+//! Conveys carrier tuning parameters for a DVB-S / DVB-S2 transponder.
+
+use crate::error::{Error, Result};
+use crate::traits::Descriptor;
+use dvb_common::{Parse, Serialize};
+
+/// Descriptor tag for satellite_delivery_system_descriptor.
+pub const TAG: u8 = 0x43;
+const HEADER_LEN: usize = 2;
+const BODY_LEN: u8 = 11;
+
+/// Polarization (\u00a76.2.13.2 Table 43).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Polarization {
+    /// Linear horizontal.
+    LinearHorizontal,
+    /// Linear vertical.
+    LinearVertical,
+    /// Circular left.
+    CircularLeft,
+    /// Circular right.
+    CircularRight,
+}
+
+/// Modulation system (DVB-S or DVB-S2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModulationSystem {
+    /// DVB-S (first generation).
+    DvbS,
+    /// DVB-S2 (second generation).
+    DvbS2,
+}
+
+/// Modulation type (\u00a76.2.13.2 Table 44).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModulationType {
+    /// Auto-detect.
+    Auto,
+    /// QPSK.
+    Qpsk,
+    /// 8PSK.
+    Psk8,
+    /// 16QAM.
+    Qam16,
+}
+
+/// Roll-off factor (DVB-S2 only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RollOff {
+    /// 0.35 (DVB-S default).
+    Alpha035,
+    /// 0.25 (DVB-S2 common).
+    Alpha025,
+    /// 0.20 (DVB-S2 narrow).
+    Alpha020,
+    /// Reserved -- do not emit.
+    Reserved,
+}
+
+/// Satellite Delivery System Descriptor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SatelliteDeliverySystemDescriptor {
+    /// 32-bit BCD frequency in GHz (e.g. 11_725_000 kHz \u2192 0x11725000 = 11.72500 GHz).
+    pub frequency_bcd: u32,
+    /// 16-bit BCD orbital position tenths of a degree (e.g. 0x1920 = 192.0\u00b0).
+    pub orbital_position_bcd: u16,
+    /// False = west, true = east.
+    pub east: bool,
+    /// Polarization.
+    pub polarization: Polarization,
+    /// DVB-S2 roll-off factor.
+    pub roll_off: RollOff,
+    /// Modulation system.
+    pub modulation_system: ModulationSystem,
+    /// Modulation type.
+    pub modulation_type: ModulationType,
+    /// 28-bit BCD symbol rate in Msym/s (e.g. 0x0275_000 = 27.500 Msym/s).
+    pub symbol_rate_bcd: u32,
+    /// 4-bit FEC inner code.
+    pub fec_inner: u8,
+}
+
+impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
+    type Error = crate::error::Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < HEADER_LEN {
+            return Err(Error::BufferTooShort {
+                need: HEADER_LEN,
+                have: bytes.len(),
+                what: "satellite delivery system descriptor header",
+            });
+        }
+
+        let tag = bytes[0];
+        if tag != TAG {
+            return Err(Error::InvalidDescriptor {
+                tag,
+                reason: "expected tag 0x43",
+            });
+        }
+
+        let length = bytes[1] as usize;
+        let total = HEADER_LEN + length;
+
+        if bytes.len() < total {
+            return Err(Error::BufferTooShort {
+                need: total,
+                have: bytes.len(),
+                what: "satellite delivery system descriptor body",
+            });
+        }
+
+        if length != BODY_LEN as usize {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "descriptor_length must equal 11",
+            });
+        }
+
+        let body = &bytes[HEADER_LEN..total];
+
+        // Frequency: 4 bytes BCD (GHz.MMMM)
+        let frequency_bcd = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
+
+        // Orbital position: 2 bytes BCD (tenths of a degree)
+        let orbital_position_bcd = u16::from_be_bytes([body[4], body[5]]);
+
+        // Flags byte 6: bit 7 = west_east_flag, bits 5-6 = polarization,
+        // bits 3-4 = roll_off, bit 2 = modulation_system, bits 1-0 = modulation_type
+        let flags = body[6];
+        let east = (flags & 0x80) != 0;
+
+        let pol_raw = (flags >> 5) & 0x03;
+        let polarization = match pol_raw {
+            0 => Polarization::LinearHorizontal,
+            1 => Polarization::LinearVertical,
+            2 => Polarization::CircularLeft,
+            _ => Polarization::CircularRight,
+        };
+
+        let roll_raw = (flags >> 3) & 0x03;
+        let roll_off = match roll_raw {
+            0 => RollOff::Alpha035,
+            1 => RollOff::Alpha025,
+            2 => RollOff::Alpha020,
+            _ => RollOff::Reserved,
+        };
+
+        let mod_sys_raw = (flags >> 2) & 0x01;
+        let modulation_system = match mod_sys_raw {
+            0 => ModulationSystem::DvbS,
+            _ => ModulationSystem::DvbS2,
+        };
+
+        let mod_type_raw = flags & 0x03;
+        let modulation_type = match mod_type_raw {
+            0 => ModulationType::Auto,
+            1 => ModulationType::Qpsk,
+            2 => ModulationType::Psk8,
+            _ => ModulationType::Qam16,
+        };
+
+        // Symbol rate: 28-bit BCD packed into 4 bytes (3.5 bytes + 4-bit FEC)
+        let symbol_rate_and_fec = u32::from_be_bytes([body[7], body[8], body[9], body[10]]);
+        let symbol_rate_bcd = symbol_rate_and_fec >> 4;
+        let fec_inner = (symbol_rate_and_fec & 0x0F) as u8;
+
+        Ok(SatelliteDeliverySystemDescriptor {
+            frequency_bcd,
+            orbital_position_bcd,
+            east,
+            polarization,
+            roll_off,
+            modulation_system,
+            modulation_type,
+            symbol_rate_bcd,
+            fec_inner,
+        })
+    }
+}
+
+impl Serialize for SatelliteDeliverySystemDescriptor {
+    type Error = crate::error::Error;
+    fn serialized_len(&self) -> usize {
+        HEADER_LEN + BODY_LEN as usize
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+
+        buf[0] = TAG;
+        buf[1] = BODY_LEN;
+
+        // Frequency: 4 bytes BCD
+        let freq_bytes = self.frequency_bcd.to_be_bytes();
+        buf[2..6].copy_from_slice(&freq_bytes);
+
+        // Orbital position: 2 bytes BCD
+        let orb_bytes = self.orbital_position_bcd.to_be_bytes();
+        buf[6..8].copy_from_slice(&orb_bytes);
+
+        // Flags byte: combine west_east, polarization, roll_off, modulation_system, modulation_type
+        let mut flags: u8 = 0;
+        if self.east {
+            flags |= 0x80;
+        }
+        flags |= match self.polarization {
+            Polarization::LinearHorizontal => 0x00,
+            Polarization::LinearVertical => 0x20,
+            Polarization::CircularLeft => 0x40,
+            Polarization::CircularRight => 0x60,
+        };
+        flags |= match self.roll_off {
+            RollOff::Alpha035 => 0x00,
+            RollOff::Alpha025 => 0x08,
+            RollOff::Alpha020 => 0x10,
+            RollOff::Reserved => 0x18,
+        };
+        flags |= match self.modulation_system {
+            ModulationSystem::DvbS => 0x00,
+            ModulationSystem::DvbS2 => 0x04,
+        };
+        flags |= match self.modulation_type {
+            ModulationType::Auto => 0x00,
+            ModulationType::Qpsk => 0x01,
+            ModulationType::Psk8 => 0x02,
+            ModulationType::Qam16 => 0x03,
+        };
+        buf[8] = flags;
+
+        // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC
+        let sym_freq = (self.symbol_rate_bcd << 4) | (u32::from(self.fec_inner) & 0x0F);
+        let sym_bytes = sym_freq.to_be_bytes();
+        buf[9..13].copy_from_slice(&sym_bytes);
+
+        Ok(len)
+    }
+}
+
+impl<'a> Descriptor<'a> for SatelliteDeliverySystemDescriptor {
+    const TAG: u8 = TAG;
+
+    fn descriptor_length(&self) -> u8 {
+        BODY_LEN
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a valid 13-byte descriptor (2 header + 11 body) and confirm
+    /// parse extracts frequency and orbital position correctly.
+    #[test]
+    fn parse_extracts_frequency_and_orbital_position() {
+        // frequency: 11.7250 GHz \u2192 BCD 0x11 0x72 0x50 0x00
+        // orbital: 192.0\u00b0 \u2192 BCD 0x19 0x20
+        let raw: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, // frequency
+            0x19, 0x20, // orbital position
+            0x00, // flags (all defaults: west, linear-h, alpha-035, DVB-S, auto)
+            0x02, 0x75, 0x00, 0x00, // symbol rate 27.500 Msym/s, FEC 0
+        ];
+        let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+        assert_eq!(desc.frequency_bcd, 0x11725000);
+        assert_eq!(desc.orbital_position_bcd, 0x1920);
+    }
+
+    /// Flags byte bit 7 encodes west/east direction.
+    #[test]
+    fn parse_extracts_west_east_flag() {
+        // East: bit 7 = 1
+        let raw_east: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+            0x80, // east flag set, everything else zero
+            0x02, 0x75, 0x00, 0x00,
+        ];
+        let desc_east = SatelliteDeliverySystemDescriptor::parse(&raw_east).unwrap();
+        assert!(desc_east.east, "east should be true when bit 7 is set");
+
+        // West: bit 7 = 0
+        let raw_west: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, // east flag clear
+            0x02, 0x75, 0x00, 0x00,
+        ];
+        let desc_west = SatelliteDeliverySystemDescriptor::parse(&raw_west).unwrap();
+        assert!(!desc_west.east, "east should be false when bit 7 is clear");
+    }
+
+    /// All four polarization values are extracted correctly from bits 5-6.
+    #[test]
+    fn parse_extracts_polarization_variants() {
+        let pol_pairs: [(u8, Polarization); 4] = [
+            (0x00, Polarization::LinearHorizontal),
+            (0x20, Polarization::LinearVertical),
+            (0x40, Polarization::CircularLeft),
+            (0x60, Polarization::CircularRight),
+        ];
+
+        for (offset, expected_pol) in pol_pairs {
+            let raw: Vec<u8> = vec![
+                TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+                offset, // polarization bits
+                0x02, 0x75, 0x00, 0x00,
+            ];
+            let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+            assert_eq!(
+                desc.polarization, expected_pol,
+                "polarization mismatch for offset 0x{:02x}",
+                offset
+            );
+        }
+    }
+
+    /// Modulation system (bit 2) and modulation type (bits 1-0) are extracted.
+    #[test]
+    fn parse_extracts_modulation_system_and_type() {
+        // DVB-S (bit 2 = 0), QPSK (bits 1-0 = 01)
+        let raw: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x01, // DVB-S, QPSK
+            0x02, 0x75, 0x00, 0x00,
+        ];
+        let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+        assert_eq!(desc.modulation_system, ModulationSystem::DvbS);
+        assert_eq!(desc.modulation_type, ModulationType::Qpsk);
+
+        // DVB-S2 (bit 2 = 1), 8PSK (bits 1-0 = 10)
+        let raw2: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+            0x06, // DVB-S2 (0x04) + 8PSK (0x02)
+            0x02, 0x75, 0x00, 0x00,
+        ];
+        let desc2 = SatelliteDeliverySystemDescriptor::parse(&raw2).unwrap();
+        assert_eq!(desc2.modulation_system, ModulationSystem::DvbS2);
+        assert_eq!(desc2.modulation_type, ModulationType::Psk8);
+    }
+
+    /// Roll-off codes (bits 3-4) are extracted correctly.
+    #[test]
+    fn parse_extracts_roll_off() {
+        let roll_pairs: [(u8, RollOff); 4] = [
+            (0x00, RollOff::Alpha035),
+            (0x08, RollOff::Alpha025),
+            (0x10, RollOff::Alpha020),
+            (0x18, RollOff::Reserved),
+        ];
+
+        for (offset, expected_roll) in roll_pairs {
+            let raw: Vec<u8> = vec![
+                TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, offset, // roll-off bits
+                0x02, 0x75, 0x00, 0x00,
+            ];
+            let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+            assert_eq!(desc.roll_off, expected_roll);
+        }
+    }
+
+    /// Symbol rate (28-bit BCD) and FEC inner (4 bits) are extracted from
+    /// the last 4 bytes.
+    #[test]
+    fn parse_extracts_symbol_rate_and_fec() {
+        // symbol_rate: 27.500 Msym/s \u2192 BCD 0x027500, FEC: 5/6 \u2192 0x5
+        let raw: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
+            0x05, // symbol_rate_bcd = 0x027500, fec_inner = 5
+        ];
+        let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+        assert_eq!(desc.symbol_rate_bcd, 0x0275000);
+        assert_eq!(desc.fec_inner, 5);
+
+        // FEC full range test: 0x0 to 0xF
+        let raw2: Vec<u8> = vec![
+            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
+            0x0F, // FEC = 0x0F
+        ];
+        let desc2 = SatelliteDeliverySystemDescriptor::parse(&raw2).unwrap();
+        assert_eq!(desc2.fec_inner, 0x0F);
+    }
+
+    /// Wrong tag byte should return InvalidDescriptor.
+    #[test]
+    fn parse_rejects_wrong_tag() {
+        let raw: Vec<u8> = vec![
+            0x44, // wrong tag (cable delivery system)
+            BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00, 0x00,
+        ];
+        let err = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidDescriptor { tag: 0x44, .. }),
+            "expected InvalidDescriptor(tag=0x44), got {err:?}"
+        );
+    }
+
+    /// Body length must be exactly 11. Wrong length returns InvalidDescriptor.
+    #[test]
+    fn parse_rejects_wrong_length() {
+        let raw: Vec<u8> = vec![
+            TAG, 0x05, // wrong length (should be 11)
+            0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+        ];
+        let err = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidDescriptor {
+                    reason: "descriptor_length must equal 11",
+                    ..
+                }
+            ),
+            "expected InvalidDescriptor about length, got {err:?}"
+        );
+    }
+
+    /// Parse \u2192 serialize \u2192 re-parse should yield an equal struct and
+    /// identical bytes.
+    #[test]
+    fn serialize_round_trip() {
+        let desc = SatelliteDeliverySystemDescriptor {
+            frequency_bcd: 0x11725000,
+            orbital_position_bcd: 0x1920,
+            east: true,
+            polarization: Polarization::CircularRight,
+            roll_off: RollOff::Alpha025,
+            modulation_system: ModulationSystem::DvbS2,
+            modulation_type: ModulationType::Psk8,
+            symbol_rate_bcd: 0x027500,
+            fec_inner: 5,
+        };
+
+        let mut buf = vec![0u8; desc.serialized_len()];
+        let written = desc.serialize_into(&mut buf).unwrap();
+        assert_eq!(written, desc.serialized_len());
+
+        let reparsed = SatelliteDeliverySystemDescriptor::parse(&buf).unwrap();
+        assert_eq!(desc, reparsed);
+    }
+}
