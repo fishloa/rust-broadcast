@@ -4,10 +4,13 @@
 
 use std::fmt;
 
+use num_enum::TryFromPrimitive;
+
 use dvb_common::{Parse, Serialize};
 
 /// S1 field (3 bits) per EN 302 755 §7.2.1.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u8)]
 pub enum S1Field {
     /// S1 value V0.
     V0 = 0,
@@ -27,29 +30,18 @@ pub enum S1Field {
     V7 = 7,
 }
 
-impl TryFrom<u8> for S1Field {
-    type Error = crate::Error;
-    fn try_from(v: u8) -> Result<Self, Self::Error> {
-        match v {
-            0 => Ok(S1Field::V0),
-            1 => Ok(S1Field::V1),
-            2 => Ok(S1Field::V2),
-            3 => Ok(S1Field::V3),
-            4 => Ok(S1Field::V4),
-            5 => Ok(S1Field::V5),
-            6 => Ok(S1Field::V6),
-            7 => Ok(S1Field::V7),
-            _ => Err(crate::Error::ReservedBitsViolation {
-                field: "s1_field",
-                reason: "Must be 0..=7",
-            }),
-        }
-    }
-}
-
 impl From<S1Field> for u8 {
     fn from(s: S1Field) -> Self {
         s as u8
+    }
+}
+
+impl From<num_enum::TryFromPrimitiveError<S1Field>> for crate::error::Error {
+    fn from(_: num_enum::TryFromPrimitiveError<S1Field>) -> Self {
+        crate::error::Error::ReservedBitsViolation {
+            field: "s1_field",
+            reason: "Must be 0..=7",
+        }
     }
 }
 
@@ -162,5 +154,17 @@ mod tests {
             s2_field: 0,
         };
         assert!(p.to_string().contains("FEF Null"));
+    }
+
+    #[test]
+    fn exhaustive_byte_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = S1Field::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 8, "expected 8 matched variants");
     }
 }

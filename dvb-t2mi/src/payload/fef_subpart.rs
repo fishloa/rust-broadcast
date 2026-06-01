@@ -10,10 +10,12 @@
 
 use std::fmt;
 
+use num_enum::TryFromPrimitive;
+
 use dvb_common::{Parse, Serialize};
 
 /// Sub-part variety per §5.2.12 Table 13.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u16)]
 pub enum SubpartVariety {
     /// Null — `reserved_for_future_use(32)` = 0.
@@ -26,46 +28,24 @@ pub enum SubpartVariety {
     TxSigFef = 0x0003,
 }
 
-impl TryFrom<u16> for SubpartVariety {
-    type Error = crate::Error;
-
-    fn try_from(value: u16) -> Result<Self, Self::Error> {
-        match value {
-            0x0000 => Ok(SubpartVariety::Null),
-            0x0001 => Ok(SubpartVariety::Iq),
-            0x0002 => Ok(SubpartVariety::Prbs),
-            0x0003 => Ok(SubpartVariety::TxSigFef),
-            _ => Err(crate::Error::InvalidPacketType { found: value as u8 }),
-        }
-    }
-}
-
 impl From<SubpartVariety> for u16 {
     fn from(sv: SubpartVariety) -> Self {
         sv as u16
     }
 }
 
+impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Error {
+    fn from(e: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
+        crate::error::Error::InvalidPacketType { found: e.number as u8 }
+    }
+}
+
 /// PRBS type for SubpartVariety::Prbs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum PrbsType {
     /// User-defined test/measurement.
     UserDefined = 0x00,
-}
-
-impl TryFrom<u8> for PrbsType {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(PrbsType::UserDefined),
-            _ => Err(crate::Error::ReservedBitsViolation {
-                field: "prbs_type",
-                reason: "Must be 0x00 (user-defined) per ETSI TS 102 773 §5.2.12.3",
-            }),
-        }
-    }
 }
 
 impl From<PrbsType> for u8 {
@@ -322,5 +302,29 @@ mod tests {
     fn subpart_variety_try_from_reserved() {
         assert!(SubpartVariety::try_from(0x0004).is_err());
         assert!(SubpartVariety::try_from(0xFFFF).is_err());
+    }
+
+    #[test]
+    fn exhaustive_subpart_variety_sweep() {
+        let mut matched = 0u32;
+        for value in 0u16..=0xFFFF {
+            if let Ok(v) = SubpartVariety::try_from(value) {
+                assert_eq!(v as u16, value, "round-trip failed for {value:#06x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 4, "expected 4 matched variants");
+    }
+
+    #[test]
+    fn exhaustive_prbs_type_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = PrbsType::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 1, "expected 1 matched variant");
     }
 }

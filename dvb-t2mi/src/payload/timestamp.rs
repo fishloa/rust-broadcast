@@ -4,10 +4,12 @@
 //! Emission time = seconds_since_2000 + subseconds * Tsub (where Tsub depends on bandwidth).
 //! Null timestamp: all bits of seconds_since_2000, subseconds, utco = 1.
 
+use num_enum::TryFromPrimitive;
+
 use dvb_common::{Parse, Serialize};
 
 /// Bandwidth per §5.2.7 Table 3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Bandwidth {
     /// 1.7 MHz bandwidth.
@@ -24,38 +26,28 @@ pub enum Bandwidth {
     Mhz10 = 5,
 }
 
-impl TryFrom<u8> for Bandwidth {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Bandwidth::Mhz1_7),
-            1 => Ok(Bandwidth::Mhz5),
-            2 => Ok(Bandwidth::Mhz6),
-            3 => Ok(Bandwidth::Mhz7),
-            4 => Ok(Bandwidth::Mhz8),
-            5 => Ok(Bandwidth::Mhz10),
-            _ => Err(crate::Error::ReservedBitsViolation {
-                field: "bw",
-                reason: "Must be 0..=5 per ETSI TS 102 773 §5.2.7 Table 3",
-            }),
-        }
-    }
-}
-
 impl From<Bandwidth> for u8 {
     fn from(bw: Bandwidth) -> Self {
         bw as u8
     }
 }
 
+impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
+    fn from(_: num_enum::TryFromPrimitiveError<Bandwidth>) -> Self {
+        crate::error::Error::ReservedBitsViolation {
+            field: "bw",
+            reason: "Must be 0..=5 per ETSI TS 102 773 §5.2.7 Table 3",
+        }
+    }
+}
+
 /// DVB-T2 timestamp payload (type 0x20) per ETSI TS 102 773 §5.2.7.
 ///
 /// Layout (88 bits = 11 bytes):
-/// - byte 0 \[7:4\]: rfu (4 bits) — must be 0
-/// - byte 0 \[3:0\]: bw (4 bits) — Table 3
-/// - bytes 6-8 bits \[26:0\]: subseconds (27 bits)
-/// - bytes 8-10 bits \[12:0\]: utco (13 bits) — UTC offset in seconds
+/// - byte 0 [7:4]: rfu (4 bits) — must be 0
+/// - byte 0 [3:0]: bw (4 bits) — Table 3
+/// - bytes 6-8 bits [26:0]: subseconds (27 bits)
+/// - bytes 8-10 bits [12:0]: utco (13 bits) — UTC offset in seconds
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct T2TimestampPayload {
     /// Bandwidth (determines Tsub units).
@@ -183,6 +175,18 @@ mod tests {
     #[test]
     fn bandwidth_try_from_rejects_6() {
         assert!(Bandwidth::try_from(6).is_err());
+    }
+
+    #[test]
+    fn exhaustive_byte_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = Bandwidth::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 6, "expected 6 matched variants");
     }
 
     #[test]

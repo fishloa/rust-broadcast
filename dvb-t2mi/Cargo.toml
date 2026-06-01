@@ -12,6 +12,7 @@ rust-version = "1.75"
 [dependencies]
 dvb_common = { path = "../dvb_common" }
 thiserror  = "2"
+num_enum   = "0.7"
 bytes      = { version = "1", optional = true }
 
 [features]

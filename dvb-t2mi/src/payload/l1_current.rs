@@ -3,10 +3,12 @@
 //! L1-current carries the complete L1 signalling for the current T2 frame:
 //! L1PRE + L1CONF + L1DYN_CURR + optionally L1EXT.
 
+use num_enum::TryFromPrimitive;
+
 use dvb_common::{Parse, Serialize};
 
 /// Frequency source per §5.2.4 Table 2.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum FrequencySource {
     /// Use L1-current data field.
@@ -17,25 +19,18 @@ pub enum FrequencySource {
     ManualPerModulator = 0b10,
 }
 
-impl TryFrom<u8> for FrequencySource {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0b00 => Ok(FrequencySource::UseL1CurrentData),
-            0b01 => Ok(FrequencySource::UseIndividualAddressing),
-            0b10 => Ok(FrequencySource::ManualPerModulator),
-            _ => Err(crate::Error::ReservedBitsViolation {
-                field: "freq_source",
-                reason: "Must be 0b00, 0b01, or 0b10 (ETSI TS 102 773 §5.2.4)",
-            }),
-        }
-    }
-}
-
 impl From<FrequencySource> for u8 {
     fn from(fs: FrequencySource) -> Self {
         fs as u8
+    }
+}
+
+impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Error {
+    fn from(_: num_enum::TryFromPrimitiveError<FrequencySource>) -> Self {
+        crate::error::Error::ReservedBitsViolation {
+            field: "freq_source",
+            reason: "Must be 0b00, 0b01, or 0b10 (ETSI TS 102 773 §5.2.4)",
+        }
     }
 }
 
@@ -43,8 +38,8 @@ impl From<FrequencySource> for u8 {
 ///
 /// Layout:
 /// - byte 0: frame_idx (8 bits) — T2 frame where L1 is carried
-/// - byte 1 \[7:6\]: freq_source (2 bits) — Table 2
-/// - byte 1 \[5:0\]: rfu (6 bits) — must be 0
+/// - byte 1 [7:6]: freq_source (2 bits) — Table 2
+/// - byte 1 [5:0]: rfu (6 bits) — must be 0
 /// - bytes 2..: l1_current_data (variable bytes)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct L1CurrentPayload<'a> {
@@ -140,6 +135,18 @@ mod tests {
     #[test]
     fn frequency_source_try_from_rejects_11() {
         assert!(FrequencySource::try_from(0b11).is_err());
+    }
+
+    #[test]
+    fn exhaustive_byte_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = FrequencySource::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 3, "expected 3 matched variants");
     }
 
     #[test]

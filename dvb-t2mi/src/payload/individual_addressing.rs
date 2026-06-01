@@ -5,10 +5,12 @@
 
 use std::fmt;
 
+use num_enum::TryFromPrimitive;
+
 use dvb_common::{Parse, Serialize};
 
 /// Function tags per §5.2.8.2 Table 5.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum AddressingFunctionTag {
     /// Transmitter time offset.
@@ -39,30 +41,6 @@ pub enum AddressingFunctionTag {
     TxSigAuxStreamTxId = 0x16,
     /// Frequency (T2-specific).
     Frequency = 0x17,
-}
-
-impl TryFrom<u8> for AddressingFunctionTag {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(AddressingFunctionTag::TimeOffset),
-            0x01 => Ok(AddressingFunctionTag::FrequencyOffset),
-            0x02 => Ok(AddressingFunctionTag::Power),
-            0x03 => Ok(AddressingFunctionTag::PrivateData),
-            0x04 => Ok(AddressingFunctionTag::CellId),
-            0x05 => Ok(AddressingFunctionTag::Enable),
-            0x06 => Ok(AddressingFunctionTag::Bandwidth),
-            0x10 => Ok(AddressingFunctionTag::AcePapr),
-            0x11 => Ok(AddressingFunctionTag::MisoGroup),
-            0x12 => Ok(AddressingFunctionTag::TrPapr),
-            0x13 => Ok(AddressingFunctionTag::L1AcePapr),
-            0x15 => Ok(AddressingFunctionTag::TxSigFefSeqNum),
-            0x16 => Ok(AddressingFunctionTag::TxSigAuxStreamTxId),
-            0x17 => Ok(AddressingFunctionTag::Frequency),
-            _ => Err(crate::Error::InvalidPacketType { found: value }),
-        }
-    }
 }
 
 impl From<AddressingFunctionTag> for u8 {
@@ -198,6 +176,18 @@ mod tests {
     fn addressing_function_tag_try_from_rejects_unknown() {
         assert!(AddressingFunctionTag::try_from(0x14).is_err());
         assert!(AddressingFunctionTag::try_from(0xFF).is_err());
+    }
+
+    #[test]
+    fn exhaustive_byte_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = AddressingFunctionTag::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 14, "expected 14 matched variants");
     }
 
     #[test]

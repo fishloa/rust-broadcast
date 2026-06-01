@@ -1,9 +1,11 @@
 //! T2-MI packet header and type parsing.
 
+use num_enum::TryFromPrimitive;
+
 /// Packet types per ETSI TS 102 773 Table 1.
 ///
 /// Reserved for future use: `0x22..=0x2F`, `0x34..=0xFF`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u8)]
 pub enum PacketType {
     /// Baseband Frame (BBFRAME) — §5.2.1
@@ -32,31 +34,15 @@ pub enum PacketType {
     FefSubPart = 0x33,
 }
 
-impl TryFrom<u8> for PacketType {
-    type Error = crate::Error;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0x00 => Ok(PacketType::BasebandFrame),
-            0x01 => Ok(PacketType::AuxiliaryIqData),
-            0x02 => Ok(PacketType::ArbitraryCellInsertion),
-            0x10 => Ok(PacketType::L1Current),
-            0x11 => Ok(PacketType::L1Future),
-            0x12 => Ok(PacketType::P2BiasBalancing),
-            0x20 => Ok(PacketType::Timestamp),
-            0x21 => Ok(PacketType::IndividualAddressing),
-            0x30 => Ok(PacketType::FefPartNull),
-            0x31 => Ok(PacketType::FefPartIqData),
-            0x32 => Ok(PacketType::FefPartComposite),
-            0x33 => Ok(PacketType::FefSubPart),
-            _ => Err(crate::error::Error::InvalidPacketType { found: value }),
-        }
-    }
-}
-
 impl From<PacketType> for u8 {
     fn from(pt: PacketType) -> Self {
         pt as u8
+    }
+}
+
+impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
+    fn from(e: num_enum::TryFromPrimitiveError<PacketType>) -> Self {
+        crate::error::Error::InvalidPacketType { found: e.number }
     }
 }
 
@@ -65,9 +51,9 @@ impl From<PacketType> for u8 {
 /// Layout:
 /// - byte 0: packet_type (8 bits) — Table 1
 /// - byte 1: packet_count (8 bits) — wraps 0xFF→0x00, arbitrary start
-/// - byte 2 \[7:4\]: superframe_idx (4 bits)
-/// - byte 2 \[3\]: rfu (1 bit) — must be 0
-/// - byte 2 \[2:0\]: t2mi_stream_id (3 bits)
+/// - byte 2 [7:4]: superframe_idx (4 bits)
+/// - byte 2 [3]: rfu (1 bit) — must be 0
+/// - byte 2 [2:0]: t2mi_stream_id (3 bits)
 /// - byte 3: rfu (8 bits) — must be 0
 /// - byte 4-5: payload_len (16 bits, unit = bits)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,6 +206,18 @@ mod tests {
                 "0x{v:02x} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn exhaustive_byte_sweep() {
+        let mut matched = 0u16;
+        for byte in 0u8..=0xFF {
+            if let Ok(v) = PacketType::try_from(byte) {
+                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
+                matched += 1;
+            }
+        }
+        assert_eq!(matched, 12, "expected 12 matched variants");
     }
 
     #[test]
