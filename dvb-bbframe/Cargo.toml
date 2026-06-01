@@ -1,0 +1,15 @@
+[package]
+name    = "dvb_bbframe"
+version = "0.1.0"
+edition = "2021"
+description = "ETSI DVB-S2 / S2X / T2 BBFrame parser + builder."
+license = "MIT OR Apache-2.0"
+authors = ["Alex Fishloa"]
+keywords = ["dvb", "bbframe", "s2", "t2", "mpeg"]
+categories = ["parser-implementations", "multimedia"]
+rust-version = "1.75"
+
+[dependencies]
+dvb_common = { path = "../dvb_common" }
+thiserror  = "2"
+num_enum   = "0.7"
