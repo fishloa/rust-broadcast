@@ -1,0 +1,16 @@
+[package]
+name         = "dvb_common"
+version      = "0.1.0"
+edition      = "2021"
+description  = "Shared Parse/Serialize traits and CRC-32 MPEG-2 used by the dvb_si / dvb_t2mi / dvb_bbframe family."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock"]
+keywords     = ["dvb", "mpeg", "broadcast", "crc", "parser"]
+categories   = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/zenith"
+readme       = "README.md"
+rust-version = "1.75"
+
+[dependencies]
+# intentionally empty — consumers of dvb_common must pay for nothing they
+# aren't already paying for in the downstream DVB crates.
