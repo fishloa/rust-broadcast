@@ -15,15 +15,15 @@ const TEI_MASK: u8 = 0x80;
 /// ETSI EN 300 468 §3.2.3: byte 1 bits 6 = pusi (Payload Unit Start Indicator).
 const PUSI_MASK: u8 = 0x40;
 /// ETSI EN 300 468 §3.2.3: byte 1 bits 5..=1 = 13-bit PID (upper 5 bits).
-const PID_MASK_HI: u8 = 0x1F;
+pub const PID_MASK_HI: u8 = 0x1F;
 /// ETSI EN 300 468 §3.2.3: byte 3 bits 7..=6 = 2-bit scrambling control.
-const SCRAMBLING_MASK: u8 = 0xC0;
+pub const SCRAMBLING_MASK: u8 = 0xC0;
 /// ETSI EN 300 468 §3.2.3: byte 3 bit 4 = adaptation_field_control (bit 4 = 1 means adaptation present).
-const ADAPTATION_FLAG: u8 = 0x20;
+pub const ADAPTATION_FLAG: u8 = 0x20;
 /// ETSI EN 300 468 §3.2.3: byte 3 bit 3 = adaptation_field_control (bit 3 = 1 means payload present).
-const PAYLOAD_FLAG: u8 = 0x10;
+pub const PAYLOAD_FLAG: u8 = 0x10;
 /// ETSI EN 300 468 §3.2.3: byte 3 bits 3..=0 = 4-bit continuity_counter.
-const CC_MASK: u8 = 0x0F;
+pub const CC_MASK: u8 = 0x0F;
 
 /// Parsed TS header — the 4-byte transport header fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,6 +66,63 @@ pub struct TsPacket<'a> {
     pub raw: &'a [u8; TS_PACKET_SIZE],
 }
 
+impl TsHeader {
+    /// Parse a 4-byte TS transport header.
+    ///
+    /// Returns `None` if `raw4` is shorter than 4 bytes.
+    pub fn parse(raw4: &[u8]) -> Option<Self> {
+        if raw4.len() < 4 {
+            return None;
+        }
+        let b1 = raw4[1];
+        let b2 = raw4[2];
+        let b3 = raw4[3];
+
+        let tei = (b1 & TEI_MASK) != 0;
+        let pusi = (b1 & PUSI_MASK) != 0;
+        let pid = (((b1 & PID_MASK_HI) as u16) << 8) | (b2 as u16);
+        let scrambling = (b3 & SCRAMBLING_MASK) >> 6;
+        let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
+        let has_payload = (b3 & PAYLOAD_FLAG) != 0;
+        let continuity_counter = b3 & CC_MASK;
+
+        Some(Self {
+            tei,
+            pusi,
+            pid,
+            scrambling,
+            has_adaptation,
+            has_payload,
+            continuity_counter,
+        })
+    }
+
+    /// Serialize this header into the first 4 bytes of `buf`.
+    ///
+    /// Panics if `buf` is shorter than 4 bytes.
+    pub fn serialize_into(&self, buf: &mut [u8]) {
+        assert!(buf.len() >= 4, "buffer must have at least 4 bytes for TS header");
+        buf[0] = TS_SYNC_BYTE;
+        buf[1] = 0;
+        if self.tei {
+            buf[1] |= TEI_MASK;
+        }
+        if self.pusi {
+            buf[1] |= PUSI_MASK;
+        }
+        buf[1] |= ((self.pid >> 8) as u8) & PID_MASK_HI;
+        buf[2] = (self.pid & 0xFF) as u8;
+        buf[3] = (self.scrambling << 6) & SCRAMBLING_MASK;
+        if self.has_adaptation {
+            buf[3] |= ADAPTATION_FLAG;
+        }
+        if self.has_payload {
+            buf[3] |= PAYLOAD_FLAG;
+        }
+        buf[3] |= self.continuity_counter & CC_MASK;
+    }
+}
+
 impl<'a> TsPacket<'a> {
     /// Parse a single 188-byte TS packet from a buffer.
     ///
@@ -84,7 +141,6 @@ impl<'a> TsPacket<'a> {
             return Err(Error::InvalidSyncByte { found: buf[0] });
         }
 
-        // ETSI EN 300 468 §3.2.3: bytes 1-3 are the transport header flags.
         let raw: &[u8; TS_PACKET_SIZE] =
             buf[..TS_PACKET_SIZE]
                 .try_into()
@@ -94,38 +150,19 @@ impl<'a> TsPacket<'a> {
                     what: "TsPacket::parse (array conversion)",
                 })?;
 
-        let b1 = raw[1];
-        let b2 = raw[2];
-        let b3 = raw[3];
-
-        let tei = (b1 & TEI_MASK) != 0;
-        let pusi = (b1 & PUSI_MASK) != 0;
-        let pid = (((b1 & PID_MASK_HI) as u16) << 8) | (b2 as u16);
-        let scrambling = (b3 & SCRAMBLING_MASK) >> 6;
-        let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
-        let has_payload = (b3 & PAYLOAD_FLAG) != 0;
-        let continuity_counter = b3 & CC_MASK;
-
-        let header = TsHeader {
-            tei,
-            pusi,
-            pid,
-            scrambling,
-            has_adaptation,
-            has_payload,
-            continuity_counter,
-        };
+        let header = TsHeader::parse(&raw[..4])
+            .expect("raw is 188 bytes so first 4 bytes are always present");
 
         let mut cursor = 4usize;
         let mut payload = None;
 
         // Skip adaptation field if present (not parsed in detail — not needed for sections).
-        if has_adaptation && cursor < TS_PACKET_SIZE {
+        if header.has_adaptation && cursor < TS_PACKET_SIZE {
             let af_len = raw[cursor] as usize;
             cursor += 1 + af_len;
         }
 
-        if has_payload && cursor < TS_PACKET_SIZE {
+        if header.has_payload && cursor < TS_PACKET_SIZE {
             payload = Some(&raw[cursor..]);
         }
 
