@@ -71,12 +71,13 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
         while offset < body_end {
             let service_id = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
             let flags = bytes[offset + 2];
-            if flags & RESERVED_BITS_MASK != RESERVED_BITS_MASK {
-                return Err(Error::ReservedBitsViolation {
-                    field: "logical_channel_descriptor reserved bits",
-                    reason: "expected 0b11111 in bits 6..2",
-                });
-            }
+            // ETSI EN 300 468 §5.1: "Decoders shall ignore reserved bits."
+            // The earlier strict check (`flags & RESERVED_BITS_MASK ==
+            // RESERVED_BITS_MASK`) rejected real-world broadcasts where the
+            // reserved bits were cleared — observed on TNTSat / ORF Digital
+            // on 5°W and 19.2°E — and silently swallowed every LCN. Tolerate
+            // either reserved-bits value; only the documented
+            // visible_service and lcn fields drive behaviour.
             let visible_service = flags & VISIBLE_MASK != 0;
             let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(bytes[offset + 3]);
             entries.push(LogicalChannelEntry {
@@ -194,10 +195,21 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_reserved_bits_violation() {
+    fn parse_tolerates_cleared_reserved_bits() {
+        // Real-world broadcasts (TNTSat / ORF Digital) emit
+        // logical_channel_descriptors where the reserved bits aren't all
+        // set. ETSI EN 300 468 §5.1 says "decoders shall ignore reserved
+        // bits" — so we MUST accept the descriptor and just decode the
+        // documented fields.
+        //
+        // The flags byte 0x00 here has visible_service=0, reserved=0,
+        // LCN-hi=0. Combined with byte 0x05 (LCN-lo) the LCN is 5.
         let bytes = [TAG, 4, 0x00, 0x01, 0x00, 0x05];
-        let err = LogicalChannelDescriptor::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::ReservedBitsViolation { .. }));
+        let d = LogicalChannelDescriptor::parse(&bytes).expect("tolerant parse");
+        assert_eq!(d.entries.len(), 1);
+        assert_eq!(d.entries[0].service_id, 1);
+        assert_eq!(d.entries[0].logical_channel_number, 5);
+        assert!(!d.entries[0].visible_service);
     }
 
     #[test]
