@@ -35,16 +35,19 @@ impl<'a> Parse<'a> for FefIqPayload<'a> {
             });
         }
 
-        if bytes[1] & 0x1F != 0 {
+        // Layout (Figure 13): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4) | data.
+        // rfu spans all of byte 1 plus the top bit of byte 2.
+        if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
             return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 1 bottom 5 bits",
+                field: "9-bit rfu",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.10)",
             });
         }
 
         Ok(FefIqPayload {
             fef_idx: bytes[0],
-            s1_field: S1Field::try_from((bytes[1] >> 5) & 0x07)?,
+            // byte 2: rfu(1) | s1_field(3) [6:4] | s2_field(4) [3:0]
+            s1_field: S1Field::try_from((bytes[2] >> 4) & 0x07)?,
             s2_field: bytes[2] & 0x0F,
             fef_part_data: &bytes[FEF_IQ_HEADER_LEN..],
         })
@@ -67,8 +70,8 @@ impl Serialize for FefIqPayload<'_> {
         }
 
         buf[0] = self.fef_idx;
-        buf[1] = (u8::from(self.s1_field) << 5) & 0xE0;
-        buf[2] = self.s2_field & 0x0F;
+        buf[1] = 0; // rfu (high 8 of the 9 reserved bits)
+        buf[2] = ((u8::from(self.s1_field) & 0x07) << 4) | (self.s2_field & 0x0F);
 
         if !self.fef_part_data.is_empty() {
             buf[FEF_IQ_HEADER_LEN..FEF_IQ_HEADER_LEN + self.fef_part_data.len()]
@@ -99,7 +102,8 @@ mod tests {
     #[test]
     fn parse_extracts_fields_and_data() {
         let data = [0xDE, 0xAD];
-        let mut buf = vec![0x05u8, 0x40, 0x0A];
+        // fef_idx=5, rfu=0, byte2 = s1(2)<<4 | s2(0x0A) = 0x2A
+        let mut buf = vec![0x05u8, 0x00, 0x2A];
         buf.extend_from_slice(&data);
 
         let result = FefIqPayload::parse(&buf).unwrap();
