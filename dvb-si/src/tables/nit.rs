@@ -273,7 +273,8 @@ impl Serialize for Nit<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }

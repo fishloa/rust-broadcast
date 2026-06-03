@@ -152,7 +152,8 @@ impl Serialize for Sat<'_> {
         buf[8] = 0x00; // reserved_zero_future_use
         let body_end = HEADER_LEN + self.body.len();
         buf[HEADER_LEN..body_end].copy_from_slice(self.body);
-        buf[body_end..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..body_end]);
+        buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }

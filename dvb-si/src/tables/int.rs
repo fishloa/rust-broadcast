@@ -280,9 +280,10 @@ impl Serialize for Int<'_> {
         let loops_end = loops_start + self.loops.len();
         buf[loops_start..loops_end].copy_from_slice(self.loops);
 
-        // CRC: four zero bytes (callers requiring a real CRC must fill them).
+        // CRC: compute over everything up to (but not including) the CRC slot.
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }

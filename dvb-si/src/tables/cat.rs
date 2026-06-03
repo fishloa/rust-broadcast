@@ -171,7 +171,9 @@ impl Serialize for Cat {
             buf[pos + 6..pos + 6 + e.private_data.len()].copy_from_slice(&e.private_data);
             pos += 6 + e.private_data.len();
         }
-        buf[len - CRC_LEN..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc_pos = len - CRC_LEN;
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }

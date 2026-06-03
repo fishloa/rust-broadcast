@@ -197,7 +197,7 @@ impl<'a> Parse<'a> for Bat<'a> {
         }
 
         // CRC-32 verification per ISO/IEC 13818-1 §2.4.3.2.
-        let crc_computed = crc32_mpeg2(&bytes[..total - CRC_LEN]);
+        let crc_computed = dvb_common::crc32_mpeg2::compute(&bytes[..total - CRC_LEN]);
         let crc_expected = u32::from_be_bytes([
             bytes[total - 4],
             bytes[total - 3],
@@ -289,7 +289,7 @@ impl Serialize for Bat<'_> {
 
         // CRC: compute over everything up to (but not including) the CRC slot.
         let crc_pos = len - CRC_LEN;
-        let crc = crc32_mpeg2(&buf[..crc_pos]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -298,24 +298,6 @@ impl Serialize for Bat<'_> {
 impl<'a> Table<'a> for Bat<'a> {
     const TABLE_ID: u8 = TABLE_ID;
     const PID: u16 = PID;
-}
-
-/// MPEG-2 CRC-32 per ISO/IEC 13818-1 §2.4.3.2. Polynomial 0x04C11DB7,
-/// MSB-first, init 0xFFFFFFFF, no final XOR.
-fn crc32_mpeg2(data: &[u8]) -> u32 {
-    const POLY: u32 = 0x04C11DB7;
-    let mut crc: u32 = 0xFFFFFFFF;
-    for &byte in data {
-        crc ^= (byte as u32) << 24;
-        for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 {
-                (crc << 1) ^ POLY
-            } else {
-                crc << 1
-            };
-        }
-    }
-    crc
 }
 
 #[cfg(test)]

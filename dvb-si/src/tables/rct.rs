@@ -295,8 +295,9 @@ impl Serialize for Rct<'_> {
         let desc_end = desc_start + self.descriptors.len();
         buf[desc_start..desc_end].copy_from_slice(self.descriptors);
 
-        // CRC-32: four zero bytes (placeholder; real sections carry a computed CRC)
-        buf[desc_end..desc_end + CRC_LEN].copy_from_slice(&[0, 0, 0, 0]);
+        // CRC-32: compute over everything up to (but not including) the CRC slot.
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..desc_end]);
+        buf[desc_end..desc_end + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }

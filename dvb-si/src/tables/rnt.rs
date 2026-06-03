@@ -193,11 +193,10 @@ impl Serialize for Rnt<'_> {
         let rp_end = cd_end + self.resolution_providers.len();
         buf[cd_end..rp_end].copy_from_slice(self.resolution_providers);
 
-        // CRC-32: four zero bytes (the spec mandates the field's presence; the
-        // integrator is expected to overwrite with the real CRC after inserting
-        // into a section framer, exactly as tot.rs does).
+        // CRC-32: compute over everything up to (but not including) the CRC slot.
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }

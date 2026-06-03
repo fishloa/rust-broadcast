@@ -314,11 +314,10 @@ impl Serialize for Unt<'_> {
         let plat_end = common_end + self.platform_loop.len();
         buf[common_end..plat_end].copy_from_slice(self.platform_loop);
 
-        // ── CRC_32 — four zero bytes (placeholder; integrators may compute) ──
-        // The spec mandates CRC_32 (rpchof). Write zeros here; callers that
-        // require a valid CRC must overwrite these bytes after serialize_into.
+        // ── CRC_32 — compute over everything up to (but not including) the CRC slot.
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }

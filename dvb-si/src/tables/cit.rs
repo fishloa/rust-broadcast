@@ -227,9 +227,9 @@ impl Serialize for Cit<'_> {
         let crid_end = ps_end + self.crid_entries.len();
         buf[ps_end..crid_end].copy_from_slice(self.crid_entries);
 
-        // CRC-32: four zero bytes (caller is expected to fill with a proper CRC
-        // if needed; zero is the sentinel value matching tot.rs convention).
-        buf[crid_end..len].copy_from_slice(&[0, 0, 0, 0]);
+        // CRC-32: compute over everything up to (but not including) the CRC slot.
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crid_end]);
+        buf[crid_end..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }
