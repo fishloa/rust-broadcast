@@ -47,7 +47,7 @@ fn short_form_section_round_trip_is_identity() {
     let section_length = payload.len() as u16;
     let mut raw: Vec<u8> = Vec::with_capacity(3 + section_length as usize);
     raw.push(0x70); // table_id (TDT — real short-form table)
-    raw.push(0x30 | ((section_length >> 8) as u8 & 0x0F)); // SSI=0, PI=0, reserved=11
+    raw.push(0x70 | ((section_length >> 8) as u8 & 0x0F)); // SSI=0, reserved_future_use=1, reserved=11
     raw.push((section_length & 0xFF) as u8);
     raw.extend_from_slice(&payload);
 
@@ -86,7 +86,7 @@ fn st_short_form_round_trip_is_identity() {
     let section_length = payload.len() as u16;
     let mut raw: Vec<u8> = Vec::with_capacity(3 + section_length as usize);
     raw.push(TABLE_ID); // table_id = 0x72
-    raw.push(0x30 | ((section_length >> 8) as u8 & 0x0F)); // SSI=0, PI=0, reserved=11
+    raw.push(0x70 | ((section_length >> 8) as u8 & 0x0F)); // SSI=0, reserved_future_use=1, reserved=11
     raw.push((section_length & 0xFF) as u8);
     raw.extend_from_slice(&payload);
 
@@ -105,7 +105,7 @@ fn st_short_form_round_trip_is_identity() {
 fn st_empty_round_trip() {
     use dvb_si::tables::st::{St, TABLE_ID};
 
-    let raw: Vec<u8> = vec![TABLE_ID, 0x30, 0x00];
+    let raw: Vec<u8> = vec![TABLE_ID, 0x70, 0x00];
     let parsed = St::parse(&raw).expect("parse empty ST");
     assert!(parsed.is_empty());
 

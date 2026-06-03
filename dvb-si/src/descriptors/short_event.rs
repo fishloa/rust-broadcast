@@ -14,12 +14,15 @@ const LANG_LEN: usize = 3;
 
 /// Short Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ShortEventDescriptor<'a> {
     /// Three-character ISO 639-2 language code of the event name / text.
     pub language_code: [u8; 3],
     /// Raw event_name bytes (DVB-encoded text).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub event_name: &'a [u8],
     /// Raw text bytes (DVB-encoded text) — brief description.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub text: &'a [u8],
 }
 

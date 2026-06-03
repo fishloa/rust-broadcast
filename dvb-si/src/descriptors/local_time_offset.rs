@@ -17,6 +17,7 @@ const RESERVED_BIT_MASK: u8 = 0x02;
 
 /// One per-country offset entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalTimeOffsetEntry {
     /// ISO 3166 alpha country code.
     pub country_code: [u8; 3],
@@ -35,6 +36,7 @@ pub struct LocalTimeOffsetEntry {
 
 /// Local Time Offset Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalTimeOffsetDescriptor {
     /// Entries in wire order.
     pub entries: Vec<LocalTimeOffsetEntry>,
@@ -77,12 +79,8 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
         while offset < body_end {
             let country_code = [bytes[offset], bytes[offset + 1], bytes[offset + 2]];
             let flags = bytes[offset + 3];
-            if flags & RESERVED_BIT_MASK == 0 {
-                return Err(Error::ReservedBitsViolation {
-                    field: "local_time_offset_descriptor reserved bit",
-                    reason: "bit 1 must be 1",
-                });
-            }
+            // The reserved bit is ignored on parse (EN 300 468 §5.1: decoders
+            // shall ignore reserved bits).
             let country_region_id = (flags & REGION_ID_MASK) >> 2;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
             let local_time_offset_bcd = u16::from_be_bytes([bytes[offset + 4], bytes[offset + 5]]);
@@ -219,12 +217,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_reserved_bit_not_set() {
+    fn parse_ignores_reserved_bit_not_set() {
+        // Reserved bit clear must be ignored, not rejected (EN 300 468 §5.1).
         let bytes = [
             TAG, 13, 0x46, 0x52, 0x41, 0x00, 0x01, 0x00, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x02, 0x00,
         ];
-        let err = LocalTimeOffsetDescriptor::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::ReservedBitsViolation { .. }));
+        let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.entries.len(), 1);
+        assert!(!d.entries[0].local_time_offset_negative);
     }
 
     #[test]

@@ -107,8 +107,9 @@ impl Serialize for St {
         // Byte 0: table_id = 0x72
         buf[0] = TABLE_ID;
 
-        // Byte 1: SSI=0, PI=0, reserved=11, upper nibble of section_length
-        buf[1] = 0x30 | ((self.payload.len() >> 8) as u8 & 0x0F);
+        // Byte 1: SSI=0, reserved_future_use='1', reserved='11', upper nibble of
+        // section_length. Top nibble 0b0111 = 0x70, matching DIT/RST/TDT/TOT.
+        buf[1] = 0x70 | ((self.payload.len() >> 8) as u8 & 0x0F);
 
         // Byte 2: section_length low byte
         buf[2] = (self.payload.len() & 0xFF) as u8;
@@ -131,14 +132,14 @@ mod tests {
 
     /// Build a minimal ST section byte vector.
     fn make_st_section(payload: &[u8]) -> Vec<u8> {
-        let mut buf = vec![TABLE_ID, 0x30, payload.len() as u8];
+        let mut buf = vec![TABLE_ID, 0x70, payload.len() as u8];
         buf.extend_from_slice(payload);
         buf
     }
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let bytes = [0x71, 0x30, 0x02, 0x00, 0x00];
+        let bytes = [0x71, 0x70, 0x02, 0x00, 0x00];
         assert!(matches!(
             St::parse(&bytes).unwrap_err(),
             Error::UnexpectedTableId { table_id: 0x71, .. }
@@ -167,7 +168,7 @@ mod tests {
         let mut buf = vec![0u8; st.serialized_len()];
         st.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[0], TABLE_ID);
-        assert_eq!(buf[1], 0x30 | ((2 >> 8) as u8 & 0x0F));
+        assert_eq!(buf[1], 0x70 | ((2 >> 8) as u8 & 0x0F));
         assert_eq!(buf[2], 2);
     }
 
@@ -176,7 +177,7 @@ mod tests {
         let st = St::new(vec![]);
         let mut buf = vec![0u8; st.serialized_len()];
         st.serialize_into(&mut buf).unwrap();
-        assert_eq!(buf, [TABLE_ID, 0x30, 0x00]);
+        assert_eq!(buf, [TABLE_ID, 0x70, 0x00]);
     }
 
     #[test]
@@ -216,7 +217,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_buffer_too_short() {
-        let bytes = [0x72, 0x30]; // only 2 bytes
+        let bytes = [0x72, 0x70]; // only 2 bytes
         assert!(matches!(
             St::parse(&bytes).unwrap_err(),
             Error::BufferTooShort { need: 3, .. }
@@ -226,7 +227,7 @@ mod tests {
     #[test]
     fn parse_rejects_section_length_exceeds_buffer() {
         // section_length = 10 but only 2 payload bytes available after header
-        let bytes = [0x72, 0x30, 10, 0x00, 0x00];
+        let bytes = [0x72, 0x70, 10, 0x00, 0x00];
         assert!(matches!(
             St::parse(&bytes).unwrap_err(),
             Error::BufferTooShort { what: "St payload", .. }

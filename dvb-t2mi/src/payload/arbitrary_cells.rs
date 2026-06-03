@@ -12,6 +12,7 @@ use dvb_common::{Parse, Serialize};
 /// - byte 5 \[5:0\] + byte 6-7: start_cell_address (22 bits)
 /// - bytes 8..: arbitrary_cell_data (variable I/Q pairs)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ArbitraryCellsPayload<'a> {
     /// FRAME_IDX of T2 frame.
     pub frame_idx: u8,
@@ -20,6 +21,7 @@ pub struct ArbitraryCellsPayload<'a> {
     /// Cell address per EN 302 755 §8.3.6.2 (22-bit field).
     pub start_cell_address: u32,
     /// Raw I/Q sample data (12-bit two's complement I + 12-bit Q pairs).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub arbitrary_cell_data: &'a [u8],
 }
 

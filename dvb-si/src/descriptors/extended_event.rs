@@ -1,4 +1,4 @@
-//! Extended Event Descriptor — ETSI EN 300 468 §6.2.15 (tag 0x4E).
+//! Extended Event Descriptor — ETSI EN 300 468 §6.2.16 (tag 0x4E).
 //!
 //! Carried inside EIT. Provides the full event description split across
 //! descriptor_number / last_descriptor_number fragments. Each fragment
@@ -18,15 +18,20 @@ const TEXT_LEN_FIELD: usize = 1;
 
 /// One (description, value) item — e.g. "Director" → "Alice Smith".
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ExtendedEventItem<'a> {
     /// DVB-encoded item description bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub description: &'a [u8],
     /// DVB-encoded item value bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub value: &'a [u8],
 }
 
 /// Extended Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
 pub struct ExtendedEventDescriptor<'a> {
     /// 0-based fragment index within the extended event series.
     pub descriptor_number: u8,
@@ -35,8 +40,10 @@ pub struct ExtendedEventDescriptor<'a> {
     /// ISO 639-2 language code.
     pub language_code: [u8; 3],
     /// Item list.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub items: Vec<ExtendedEventItem<'a>>,
     /// Raw DVB-encoded extended text bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub text: &'a [u8],
 }
 

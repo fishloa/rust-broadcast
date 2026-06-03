@@ -13,8 +13,10 @@ const HEADER_LEN: usize = 2;
 
 /// Default Authority Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct DefaultAuthorityDescriptor<'a> {
     /// Raw ASCII default authority bytes (e.g. b"bbc.co.uk").
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub default_authority: &'a [u8],
 }
 

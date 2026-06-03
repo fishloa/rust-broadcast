@@ -88,9 +88,9 @@ impl<'a> Parse<'a> for Tdt {
         }
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
         if section_length as usize != UTC_TIME_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TABLE_ID,
-                reason: "TDT section_length must equal 5",
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: UTC_TIME_LEN,
             });
         }
         let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
@@ -149,7 +149,7 @@ mod tests {
         let bytes = [TABLE_ID, 0x70, 0x04, 0, 0, 0, 0, 0];
         assert!(matches!(
             Tdt::parse(&bytes).unwrap_err(),
-            Error::InvalidDescriptor { .. }
+            Error::SectionLengthOverflow { .. }
         ));
     }
 

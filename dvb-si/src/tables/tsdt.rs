@@ -14,7 +14,6 @@ pub const PID: u16 = 0x0002;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
-const DESC_LOOP_LEN_FIELD: usize = 2;
 const CRC_LEN: usize = 4;
 
 /// Transport Stream Description Table.
@@ -39,7 +38,7 @@ impl<'a> Parse<'a> for Tsdt {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
+        let min_len = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
         if bytes.len() < min_len {
             return Err(Error::BufferTooShort {
                 need: min_len,
@@ -71,17 +70,10 @@ impl<'a> Parse<'a> for Tsdt {
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let desc_loop_length =
-            (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
-        let desc_start = dl_pos + DESC_LOOP_LEN_FIELD;
-        let desc_end = desc_start + desc_loop_length;
-        if desc_end > total - CRC_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: desc_loop_length,
-                available: total - CRC_LEN - desc_start,
-            });
-        }
+        // §2.4.4.12: descriptors run directly from byte 8 to the CRC; there is
+        // no descriptor_loop_length field. The section_length bounds the loop.
+        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
+        let desc_end = total - CRC_LEN;
 
         Ok(Tsdt {
             table_id_extension,
@@ -98,11 +90,7 @@ impl Serialize for Tsdt {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        MIN_HEADER_LEN
-            + EXTENSION_HEADER_LEN
-            + DESC_LOOP_LEN_FIELD
-            + self.descriptors.len()
-            + CRC_LEN
+        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + self.descriptors.len() + CRC_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -123,17 +111,13 @@ impl Serialize for Tsdt {
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
-        let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let dl = self.descriptors.len() as u16;
-        buf[dl_pos] = 0xF0 | ((dl >> 8) as u8 & 0x0F);
-        buf[dl_pos + 1] = (dl & 0xFF) as u8;
-
-        let desc_start = dl_pos + DESC_LOOP_LEN_FIELD;
+        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
         buf[desc_start..desc_start + self.descriptors.len()]
             .copy_from_slice(&self.descriptors);
 
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
     }
@@ -150,7 +134,7 @@ mod tests {
 
     fn build_tsdt(table_id_extension: u16, version: u8, descriptors: &[u8]) -> Vec<u8> {
         let section_length: u16 =
-            (EXTENSION_HEADER_LEN + DESC_LOOP_LEN_FIELD + descriptors.len() + CRC_LEN) as u16;
+            (EXTENSION_HEADER_LEN + descriptors.len() + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID);
         v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
@@ -159,9 +143,6 @@ mod tests {
         v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);
         v.push(0x00);
         v.push(0x00);
-        let dl = descriptors.len() as u16;
-        v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
-        v.push((dl & 0xFF) as u8);
         v.extend_from_slice(descriptors);
         v.extend_from_slice(&[0, 0, 0, 0]);
         v

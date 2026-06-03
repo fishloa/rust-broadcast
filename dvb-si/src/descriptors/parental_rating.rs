@@ -13,6 +13,7 @@ const ENTRY_LEN: usize = 4;
 
 /// One parental rating entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RatingEntry {
     /// ISO 3166 alpha country code (e.g. b"FRA", b"GBR").
     pub country_code: [u8; 3],
@@ -33,6 +34,7 @@ impl RatingEntry {
 
 /// Parental Rating Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ParentalRatingDescriptor {
     /// Entries in wire order.
     pub entries: Vec<RatingEntry>,

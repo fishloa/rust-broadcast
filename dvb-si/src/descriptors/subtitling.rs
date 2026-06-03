@@ -1,4 +1,4 @@
-//! Subtitling Descriptor — ETSI EN 300 468 §6.2.41 (tag 0x59).
+//! Subtitling Descriptor — ETSI EN 300 468 §6.2.42 (tag 0x59).
 //!
 //! Carried inside PMT's ES_info loop. Enumerates DVB subtitle services:
 //! one entry per 3-char language code + subtitling_type + composition/
@@ -15,10 +15,11 @@ const ENTRY_LEN: usize = 8;
 
 /// One subtitling component.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SubtitlingEntry {
     /// ISO 639-2 language code.
     pub language_code: [u8; 3],
-    /// subtitling_type byte (ETSI Table 93): 0x01 = EBU teletext subtitles,
+    /// subtitling_type byte (ETSI EN 300 468 §6.2.42): 0x01 = EBU teletext subtitles,
     /// 0x10..=0x13 = DVB subtitles, etc.
     pub subtitling_type: u8,
     /// composition_page_id.
@@ -29,6 +30,7 @@ pub struct SubtitlingEntry {
 
 /// Subtitling Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SubtitlingDescriptor {
     /// Entries in wire order.
     pub entries: Vec<SubtitlingEntry>,

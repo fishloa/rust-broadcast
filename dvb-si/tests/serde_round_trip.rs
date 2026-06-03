@@ -118,6 +118,8 @@ fn sdt_serializes_to_valid_json() {
         transport_stream_id: 0x1234,
         version_number: 0,
         current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
         original_network_id: 0x0020,
         services: vec![SdtService {
             service_id: 1,
@@ -166,6 +168,8 @@ fn nit_serializes_to_valid_json() {
         network_id: 0x0020,
         version_number: 0,
         current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
         network_descriptors: &[],
         transport_streams: vec![NitTransportStream {
             transport_stream_id: 0x1234,

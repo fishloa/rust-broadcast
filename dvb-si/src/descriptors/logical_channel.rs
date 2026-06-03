@@ -18,6 +18,7 @@ const LCN_HI_MASK: u8 = 0x03;
 
 /// One LCN assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LogicalChannelEntry {
     /// Service being numbered.
     pub service_id: u16,
@@ -29,6 +30,7 @@ pub struct LogicalChannelEntry {
 
 /// Logical Channel Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LogicalChannelDescriptor {
     /// Entries in wire order.
     pub entries: Vec<LogicalChannelEntry>,

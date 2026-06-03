@@ -16,6 +16,7 @@ use dvb_common::{Parse, Serialize};
 
 /// Sub-part variety per §5.2.12 Table 13.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u16)]
 pub enum SubpartVariety {
     /// Null — `reserved_for_future_use(32)` = 0.
@@ -35,13 +36,19 @@ impl From<SubpartVariety> for u16 {
 }
 
 impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Error {
-    fn from(e: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
-        crate::error::Error::InvalidPacketType { found: e.number as u8 }
+    fn from(_: num_enum::TryFromPrimitiveError<SubpartVariety>) -> Self {
+        // subpart_variety is a 16-bit field — casting the offending value to u8
+        // would truncate it, and InvalidPacketType is the wrong category anyway.
+        crate::error::Error::ReservedBitsViolation {
+            field: "subpart_variety",
+            reason: "Must be 0x0000..=0x0003 per ETSI TS 102 773 §5.2.12 Table 13",
+        }
     }
 }
 
 /// PRBS type for SubpartVariety::Prbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum PrbsType {
     /// User-defined test/measurement.
@@ -65,6 +72,7 @@ impl From<PrbsType> for u8 {
 /// - bytes 11-14: rfu2 (10 bits) + subpart_length (22 bits)
 /// - bytes 15..: subpart data (variable, format per variety)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FefSubPartPayload<'a> {
     /// FEF index within super-frame.
     pub fef_idx: u8,
@@ -77,6 +85,7 @@ pub struct FefSubPartPayload<'a> {
     /// Length in elementary time periods.
     pub subpart_length: u32,
     /// Raw sub-part data (format depends on variety).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub subpart_data: &'a [u8],
 }
 

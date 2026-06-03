@@ -14,6 +14,7 @@ const BODY_LEN: u8 = 1;
 
 /// Stream Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StreamIdentifierDescriptor {
     /// Component tag used to cross-reference a component_descriptor.
     pub component_tag: u8,

@@ -17,8 +17,12 @@ const STREAM_CONTENT_MASK: u8 = 0x0F;
 
 /// Component Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ComponentDescriptor<'a> {
-    /// 4-bit stream_content (ETSI Table 26: 0x01 video, 0x02 audio, 0x03 teletext, …).
+    /// 4-bit stream_content_ext (high nibble) — combines with `stream_content`
+    /// to identify the component (EN 300 468 §6.2.8 Table 25).
+    pub stream_content_ext: u8,
+    /// 4-bit stream_content (0x01 video, 0x02 audio, 0x03 teletext, …).
     pub stream_content: u8,
     /// component_type byte (sub-classification inside the stream_content).
     pub component_type: u8,
@@ -27,6 +31,7 @@ pub struct ComponentDescriptor<'a> {
     /// ISO 639-2 language code.
     pub language_code: [u8; 3],
     /// Raw DVB-encoded text label for this component.
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub text: &'a [u8],
 }
 
@@ -61,6 +66,7 @@ impl<'a> Parse<'a> for ComponentDescriptor<'a> {
                 reason: "component_descriptor body shorter than minimum 6 bytes",
             });
         }
+        let stream_content_ext = bytes[HEADER_LEN] >> 4;
         let stream_content = bytes[HEADER_LEN] & STREAM_CONTENT_MASK;
         let component_type = bytes[HEADER_LEN + 1];
         let component_tag = bytes[HEADER_LEN + 2];
@@ -71,6 +77,7 @@ impl<'a> Parse<'a> for ComponentDescriptor<'a> {
         ];
         let text = &bytes[HEADER_LEN + PRE_TEXT_LEN..end];
         Ok(Self {
+            stream_content_ext,
             stream_content,
             component_type,
             component_tag,
@@ -96,8 +103,8 @@ impl Serialize for ComponentDescriptor<'_> {
         }
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
-        // High nibble is reserved_future_use per §6.2.8, transmit as 1111.
-        buf[HEADER_LEN] = 0xF0 | (self.stream_content & STREAM_CONTENT_MASK);
+        // High nibble = stream_content_ext, low nibble = stream_content (§6.2.8).
+        buf[HEADER_LEN] = (self.stream_content_ext << 4) | (self.stream_content & STREAM_CONTENT_MASK);
         buf[HEADER_LEN + 1] = self.component_type;
         buf[HEADER_LEN + 2] = self.component_tag;
         buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.language_code);
@@ -166,6 +173,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let d = ComponentDescriptor {
+            stream_content_ext: 0x0F,
             stream_content: 0x03,
             component_type: 0x10,
             component_tag: 0x05,
@@ -179,7 +187,7 @@ mod tests {
 
     #[test]
     fn stream_content_masked_to_low_nibble() {
-        // Byte = 0xF2 → high nibble is reserved, low nibble is stream_content=2.
+        // Byte = 0xF2 → high nibble is stream_content_ext (0xF), low nibble is stream_content=2.
         let bytes = [TAG, 6, 0xF2, 0x00, 0x00, b'e', b'n', b'g'];
         let d = ComponentDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.stream_content, 2);

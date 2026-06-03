@@ -19,12 +19,14 @@ const AUX_ID_MAX: u8 = 0x0F;
 /// - byte 1 \[3:0\] + byte 2 \[7:0\]: rfu (12 bits), must be 0
 /// - bytes 3..: aux_stream_data (variable, 12-bit I + 12-bit Q samples)
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AuxIqPayload<'a> {
     /// FRAME_IDX of the T2 frame.
     pub frame_idx: u8,
     /// Auxiliary stream identifier (1..=15).
     pub aux_id: u8,
     /// Raw auxiliary stream data bytes (I/Q pairs).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub aux_stream_data: &'a [u8],
 }
 
@@ -46,11 +48,7 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&aux_id) {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "aux_id",
-                reason: format!(
-                    "aux_id out of range {}..={}, got {}",
-                    AUX_ID_MIN, AUX_ID_MAX, aux_id
-                )
-                .leak() as &'static str,
+                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)",
             });
         }
 
@@ -89,11 +87,7 @@ impl Serialize for AuxIqPayload<'_> {
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&self.aux_id) {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "aux_id",
-                reason: format!(
-                    "aux_id out of range {}..={}, got {}",
-                    AUX_ID_MIN, AUX_ID_MAX, self.aux_id
-                )
-                .leak() as &'static str,
+                reason: "aux_id out of range 1..=15 (ETSI TS 102 773 §5.2.2)",
             });
         }
 

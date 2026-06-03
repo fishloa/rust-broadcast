@@ -17,6 +17,7 @@ const RESERVED_FU_MASK: u16 = 0xFFF0;
 
 /// FEC outer coding scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum FecOuter {
     /// Not defined.
     NotDefined,
@@ -30,6 +31,7 @@ pub enum FecOuter {
 
 /// Modulation scheme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Modulation {
     /// Not defined.
     NotDefined,
@@ -49,6 +51,7 @@ pub enum Modulation {
 
 /// FEC inner convolutional code rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum FecInner {
     /// Not defined.
     NotDefined,
@@ -78,6 +81,7 @@ pub enum FecInner {
 
 /// Cable Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CableDeliverySystemDescriptor {
     /// 32-bit BCD frequency in 100 kHz (e.g. 0x03460000 = 346.0000 MHz).
     pub frequency_bcd: u32,

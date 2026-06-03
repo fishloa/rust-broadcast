@@ -12,8 +12,9 @@ pub const TAG: u8 = 0x43;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
 
-/// Polarization (\u00a76.2.13.2 Table 43).
+/// Polarization (\u00a76.2.13.2 Table 38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Polarization {
     /// Linear horizontal.
     LinearHorizontal,
@@ -25,8 +26,9 @@ pub enum Polarization {
     CircularRight,
 }
 
-/// Modulation system (DVB-S or DVB-S2).
+/// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ModulationSystem {
     /// DVB-S (first generation).
     DvbS,
@@ -34,8 +36,9 @@ pub enum ModulationSystem {
     DvbS2,
 }
 
-/// Modulation type (\u00a76.2.13.2 Table 44).
+/// Modulation type (\u00a76.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ModulationType {
     /// Auto-detect.
     Auto,
@@ -47,8 +50,9 @@ pub enum ModulationType {
     Qam16,
 }
 
-/// Roll-off factor (DVB-S2 only).
+/// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RollOff {
     /// 0.35 (DVB-S default).
     Alpha035,
@@ -62,6 +66,7 @@ pub enum RollOff {
 
 /// Satellite Delivery System Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SatelliteDeliverySystemDescriptor {
     /// 32-bit BCD frequency in GHz (e.g. 11_725_000 kHz \u2192 0x11725000 = 11.72500 GHz).
     pub frequency_bcd: u32,
@@ -237,8 +242,10 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
         };
         buf[8] = flags;
 
-        // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC
-        let sym_freq = (self.symbol_rate_bcd << 4) | (u32::from(self.fec_inner) & 0x0F);
+        // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC.
+        // Mask to 28 bits so an over-range value can't spill past the field.
+        let sym_freq =
+            ((self.symbol_rate_bcd & 0x0FFF_FFFF) << 4) | (u32::from(self.fec_inner) & 0x0F);
         let sym_bytes = sym_freq.to_be_bytes();
         buf[9..13].copy_from_slice(&sym_bytes);
 

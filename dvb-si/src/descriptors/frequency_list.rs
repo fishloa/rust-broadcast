@@ -16,13 +16,14 @@ pub const HEADER_LEN: usize = 2;
 pub const CODING_BYTE_LEN: usize = 1;
 /// Length of a single frequency entry in bytes.
 pub const ENTRY_LEN: usize = 4;
-/// Mask for the reserved bits in the coding_type byte (top 6 bits).
-pub const RESERVED_BITS_MASK: u8 = 0xFC;
-/// Mask for the coding_type bits (bottom 2 bits).
+/// Mask for the coding_type bits (bottom 2 bits); the top 6 bits are reserved.
 pub const CODING_TYPE_MASK: u8 = 0x03;
+/// Reserved bits (top 6 of the coding byte). Ignored on parse, set to 1 on serialize.
+pub const RESERVED_BITS_MASK: u8 = 0xFC;
 
 /// Coding type selects the interpretation of each 4-byte BCD frequency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CodingType {
     /// Not defined (coding_type = 0b00).
     Undefined,
@@ -36,6 +37,7 @@ pub enum CodingType {
 
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FrequencyListDescriptor {
     /// Interpretation of every `centre_frequencies_bcd` entry.
     pub coding_type: CodingType,
@@ -101,14 +103,8 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
         }
 
         let coding_byte = bytes[body_start];
-        let reserved = coding_byte & RESERVED_BITS_MASK;
-        if reserved != RESERVED_BITS_MASK {
-            return Err(Error::ReservedBitsViolation {
-                field: "coding_type",
-                reason: "top 6 bits must be 0b111111",
-            });
-        }
-
+        // Top 6 bits are reserved_future_use — ignored on parse
+        // (EN 300 468 §5.1: decoders shall ignore reserved bits).
         let coding_type_value = coding_byte & CODING_TYPE_MASK;
         let coding_type = match coding_type_value {
             0b00 => CodingType::Undefined,
@@ -244,15 +240,14 @@ mod tests {
         );
     }
 
-    /// coding byte 0x03 (reserved bits zero) → ReservedBitsViolation
+    /// Reserved bits set to zero must be ignored, not rejected (EN 300 468 §5.1).
     #[test]
-    fn parse_rejects_reserved_bits_violation() {
+    fn parse_ignores_reserved_bits() {
+        // coding byte 0x03: top 6 reserved bits = 0, coding_type = 0b11 (terrestrial).
         let raw: Vec<u8> = vec![TAG, 0x01, 0x03];
-        let err = FrequencyListDescriptor::parse(&raw).unwrap_err();
-        assert!(
-            matches!(err, Error::ReservedBitsViolation { field, .. } if field == "coding_type"),
-            "expected ReservedBitsViolation, got {err:?}"
-        );
+        let d = FrequencyListDescriptor::parse(&raw).unwrap();
+        assert_eq!(d.coding_type, CodingType::Terrestrial);
+        assert!(d.centre_frequencies_bcd.is_empty());
     }
 
     /// Body length not 1 + multiple of 4 → InvalidDescriptor

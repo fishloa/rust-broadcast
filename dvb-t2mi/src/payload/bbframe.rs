@@ -11,6 +11,7 @@ use dvb_common::{Parse, Serialize};
 /// - byte 2 bits 6..0: rfu (7 bits) — must be 0
 /// - bytes 3..: bbframe (Kbch bits) — encoded BBFRAME body
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct BbframePayload<'a> {
     /// FRAME_IDX of first T2 frame the IF is mapped to.
     pub frame_idx: u8,
@@ -19,6 +20,7 @@ pub struct BbframePayload<'a> {
     /// `true` = first BBFRAME of an interleaving frame.
     pub intl_frame_start: bool,
     /// The raw BBFrame data (Kbch bits = bytes when aligned).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub bbframe: &'a [u8],
 }
 

@@ -10,6 +10,7 @@ use dvb_common::{Parse, Serialize};
 
 /// S1 field (3 bits) per EN 302 755 §7.2.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum S1Field {
     /// S1 value V0.
@@ -47,6 +48,7 @@ impl From<num_enum::TryFromPrimitiveError<S1Field>> for crate::error::Error {
 
 /// FEF part: Null payload (type 0x30) per ETSI TS 102 773 §5.2.9.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FefNullPayload {
     /// FEF index within super-frame.
     pub fef_idx: u8,
@@ -69,15 +71,18 @@ impl<'a> Parse<'a> for FefNullPayload {
                 what: "FefNullPayload",
             });
         }
-        if bytes[1] & 0x1F != 0 {
+        // Layout (Figure 12): fef_idx(8) | rfu(9) | s1_field(3) | s2_field(4).
+        // rfu spans all of byte 1 plus the top bit of byte 2.
+        if bytes[1] != 0 || bytes[2] & 0x80 != 0 {
             return Err(crate::Error::ReservedBitsViolation {
-                field: "byte 1 bottom 5 bits",
+                field: "9-bit rfu",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.9)",
             });
         }
         Ok(FefNullPayload {
             fef_idx: bytes[0],
-            s1_field: S1Field::try_from((bytes[1] >> 5) & 0x07)?,
+            // byte 2: rfu(1) | s1_field(3) [6:4] | s2_field(4) [3:0]
+            s1_field: S1Field::try_from((bytes[2] >> 4) & 0x07)?,
             s2_field: bytes[2] & 0x0F,
         })
     }
@@ -98,8 +103,8 @@ impl Serialize for FefNullPayload {
             });
         }
         buf[0] = self.fef_idx;
-        buf[1] = (u8::from(self.s1_field) << 5) & 0xE0;
-        buf[2] = self.s2_field & 0x0F;
+        buf[1] = 0; // rfu (high 8 of the 9 reserved bits)
+        buf[2] = ((u8::from(self.s1_field) & 0x07) << 4) | (self.s2_field & 0x0F);
         Ok(self.serialized_len())
     }
 }
@@ -120,7 +125,8 @@ mod tests {
 
     #[test]
     fn parse_extracts_fields() {
-        let buf = [0x05u8, 0x20, 0x0A];
+        // fef_idx=5, rfu=0, byte2 = s1(1)<<4 | s2(0x0A) = 0x1A
+        let buf = [0x05u8, 0x00, 0x1A];
         let result = FefNullPayload::parse(&buf).unwrap();
         assert_eq!(result.fef_idx, 5);
         assert_eq!(result.s1_field, S1Field::V1);

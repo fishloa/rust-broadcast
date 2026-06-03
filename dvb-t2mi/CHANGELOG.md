@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `serde` feature flag — optional `Serialize`/`Deserialize` derives on the T2-MI
+  header and all 12 payload types (off by default).
+
+### Fixed
+
+- `IndividualAddressingPayload` (§5.2.8) now matches Fig 11: top level is
+  `rfu(8) · individual_addressing_length(8) · individual_addressing_data(var)`;
+  `tx_identifier` lives inside each per-transmitter entry of the data loop, not
+  at the top. The redundant length field was dropped (derived on serialize).
+- `FefSubPartPayload` invalid `subpart_variety` now reports `ReservedBitsViolation`
+  instead of truncating the 16-bit value into an `InvalidPacketType` u8.
+
 ## [0.1.0] — 2026-04-20
 
 Initial release. Complete implementation of ETSI TS 102 773 v1.4.1 DVB-T2 Modulator Interface.

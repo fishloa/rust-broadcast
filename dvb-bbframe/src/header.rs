@@ -10,11 +10,17 @@ use crate::error::Error;
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
-/// Maximum valid DFL in bits for DVB-S2 (normal FECFRAME is 64800, short is 16200).
+/// Loosest valid DFL upper bound in bits across the standards this crate parses.
+///
+/// DVB-S2 normal FECFRAME caps the data field near 64800 bits; DVB-T2 is tighter
+/// (EN 302 755 Table 2: DFL in [0, 53760]). A BBHEADER does not by itself say
+/// which standard produced it, so this generous bound avoids rejecting any valid
+/// S2/S2X/T2 frame.
 pub const DFL_MAX_BITS: u16 = 64800;
 
 /// Input stream format as described by the TS/GS field (MATYPE-1 bits [7:6]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum TsGs {
     /// Generic Packetized Stream.
@@ -47,6 +53,7 @@ impl std::fmt::Display for TsGs {
 
 /// Operating mode: Normal or High Efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum Mode {
     /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
@@ -67,6 +74,7 @@ impl From<num_enum::TryFromPrimitiveError<Mode>> for Error {
 /// - MATYPE-1 (byte 0): TS/GS, SIS/MIS, CCM/ACM, ISSYI, NPD, EXT[1:0]
 /// - MATYPE-2 (byte 1): ISI (0-255) or reserved
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Matype {
     /// Input stream format — see [`TsGs`].
     pub ts_gs: TsGs,
@@ -152,6 +160,7 @@ impl From<Matype> for [u8; 2] {
 ///
 /// Detection: `crc8(bytes[0..9]) ^ bytes[9]` yields 0 for NM, 1 for HEM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Bbheader {
     /// MATYPE field.
     pub matype: Matype,

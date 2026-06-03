@@ -1,16 +1,22 @@
-//! Selection Information Table — ETSI EN 300 468 §5.2.10.
+//! Selection Information Table — ETSI EN 300 468 §7.1.2.
 //!
-//! SIT is carried on PID 0x001F with table_id 0x7F. It is used in partial
-//! transport streams (e.g., DVB-S2 multi-stream) to carry selection-related
-//! descriptors.
+//! Carried on PID 0x001F with table_id 0x7F, only in partial transport streams
+//! (e.g. a recording). After the section header it has two loops:
+//!   1. `transmission_info_descriptors` — descriptors describing the whole
+//!      partial stream, prefixed by a 12-bit length;
+//!   2. a per-service loop: `service_id(16) + reserved(1) + running_status(3) +
+//!      service_descriptors_length(12) + descriptors`.
+//!
+//! Both loops are exposed as raw bytes for the caller to walk with the
+//! descriptor parsers.
 
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
-/// table_id for Selection Information Table.
+/// table_id for the Selection Information Table.
 pub const TABLE_ID: u8 = 0x7F;
-/// Well-known PID on which SIT is carried.
+/// Well-known PID on which the SIT is carried.
 pub const PID: u16 = 0x001F;
 
 const MIN_HEADER_LEN: usize = 3;
@@ -18,11 +24,12 @@ const EXTENSION_HEADER_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 const CRC_LEN: usize = 4;
 
-/// Selection Information Table.
+/// Selection Information Table (§7.1.2, Table 164).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Sit {
-    /// 16-bit table_id_extension.
+    /// 16-bit field after section_length — reserved_future_use for the SIT
+    /// (conventionally 0xFFFF); retained verbatim.
     pub table_id_extension: u16,
     /// 5-bit version_number.
     pub version_number: u8,
@@ -32,8 +39,10 @@ pub struct Sit {
     pub section_number: u8,
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
-    /// Descriptor loop bytes (owned copy).
-    pub descriptors: Vec<u8>,
+    /// Transmission-info descriptor loop bytes (the first loop).
+    pub transmission_info_descriptors: Vec<u8>,
+    /// Per-service loop bytes (service_id + running_status + descriptors), raw.
+    pub service_loop: Vec<u8>,
 }
 
 impl<'a> Parse<'a> for Sit {
@@ -48,7 +57,6 @@ impl<'a> Parse<'a> for Sit {
                 what: "Sit",
             });
         }
-
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -56,12 +64,11 @@ impl<'a> Parse<'a> for Sit {
                 expected: &[TABLE_ID],
             });
         }
-
-        let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
+        let section_length = ((bytes[1] & 0x0F) as usize) << 8 | bytes[2] as usize;
+        let total = MIN_HEADER_LEN + section_length;
         if bytes.len() < total {
             return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
+                declared: section_length,
                 available: bytes.len() - MIN_HEADER_LEN,
             });
         }
@@ -73,14 +80,14 @@ impl<'a> Parse<'a> for Sit {
         let last_section_number = bytes[7];
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let desc_loop_length =
-            (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
-        let desc_start = dl_pos + DESC_LOOP_LEN_FIELD;
-        let desc_end = desc_start + desc_loop_length;
-        if desc_end > total - CRC_LEN {
+        let ti_len = (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
+        let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
+        let ti_end = ti_start + ti_len;
+        let crc_start = total - CRC_LEN;
+        if ti_end > crc_start {
             return Err(Error::SectionLengthOverflow {
-                declared: desc_loop_length,
-                available: total - CRC_LEN - desc_start,
+                declared: ti_len,
+                available: crc_start.saturating_sub(ti_start),
             });
         }
 
@@ -90,7 +97,10 @@ impl<'a> Parse<'a> for Sit {
             current_next_indicator,
             section_number,
             last_section_number,
-            descriptors: bytes[desc_start..desc_end].to_vec(),
+            transmission_info_descriptors: bytes[ti_start..ti_end].to_vec(),
+            // Everything between the transmission-info loop and the CRC is the
+            // per-service loop, kept raw.
+            service_loop: bytes[ti_end..crc_start].to_vec(),
         })
     }
 }
@@ -102,7 +112,8 @@ impl Serialize for Sit {
         MIN_HEADER_LEN
             + EXTENSION_HEADER_LEN
             + DESC_LOOP_LEN_FIELD
-            + self.descriptors.len()
+            + self.transmission_info_descriptors.len()
+            + self.service_loop.len()
             + CRC_LEN
     }
 
@@ -114,8 +125,7 @@ impl Serialize for Sit {
                 have: buf.len(),
             });
         }
-
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
+        let section_length = (len - MIN_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
         buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
@@ -125,17 +135,18 @@ impl Serialize for Sit {
         buf[7] = self.last_section_number;
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let dl = self.descriptors.len() as u16;
-        buf[dl_pos] = 0xF0 | ((dl >> 8) as u8 & 0x0F);
-        buf[dl_pos + 1] = (dl & 0xFF) as u8;
-
-        let desc_start = dl_pos + DESC_LOOP_LEN_FIELD;
-        buf[desc_start..desc_start + self.descriptors.len()]
-            .copy_from_slice(&self.descriptors);
+        let ti_len = self.transmission_info_descriptors.len() as u16;
+        buf[dl_pos] = 0xF0 | ((ti_len >> 8) as u8 & 0x0F);
+        buf[dl_pos + 1] = (ti_len & 0xFF) as u8;
+        let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
+        let ti_end = ti_start + self.transmission_info_descriptors.len();
+        buf[ti_start..ti_end].copy_from_slice(&self.transmission_info_descriptors);
+        let sl_end = ti_end + self.service_loop.len();
+        buf[ti_end..sl_end].copy_from_slice(&self.service_loop);
 
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
-
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }
@@ -149,28 +160,33 @@ impl<'a> Table<'a> for Sit {
 mod tests {
     use super::*;
 
-    fn build_sit(table_id_extension: u16, version: u8, descriptors: &[u8]) -> Vec<u8> {
-        let section_length: u16 =
-            (EXTENSION_HEADER_LEN + DESC_LOOP_LEN_FIELD + descriptors.len() + CRC_LEN) as u16;
-        let mut v = Vec::new();
-        v.push(TABLE_ID);
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
+    fn build_sit(table_id_extension: u16, version: u8, ti_desc: &[u8], service_loop: &[u8]) -> Vec<u8> {
+        let section_length = (EXTENSION_HEADER_LEN
+            + DESC_LOOP_LEN_FIELD
+            + ti_desc.len()
+            + service_loop.len()
+            + CRC_LEN) as u16;
+        let mut v = vec![
+            TABLE_ID,
+            0xB0 | ((section_length >> 8) as u8 & 0x0F),
+            (section_length & 0xFF) as u8,
+        ];
         v.extend_from_slice(&table_id_extension.to_be_bytes());
         v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);
         v.push(0x00);
         v.push(0x00);
-        let dl = descriptors.len() as u16;
+        let dl = ti_desc.len() as u16;
         v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
         v.push((dl & 0xFF) as u8);
-        v.extend_from_slice(descriptors);
+        v.extend_from_slice(ti_desc);
+        v.extend_from_slice(service_loop);
         v.extend_from_slice(&[0, 0, 0, 0]);
         v
     }
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let mut bytes = build_sit(0x1234, 5, &[]);
+        let mut bytes = build_sit(0x1234, 5, &[], &[]);
         bytes[0] = 0x7E;
         assert!(matches!(
             Sit::parse(&bytes).unwrap_err(),
@@ -180,51 +196,48 @@ mod tests {
 
     #[test]
     fn parse_rejects_short_buffer() {
-        let err = Sit::parse(&[0x7F, 0xB0]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
+        assert!(matches!(
+            Sit::parse(&[0x7F, 0xB0]).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
     }
 
     #[test]
-    fn parse_empty_descriptor_loop() {
-        let bytes = build_sit(0x1234, 5, &[]);
-        let sit = Sit::parse(&bytes).unwrap();
+    fn parse_empty() {
+        let sit = Sit::parse(&build_sit(0x1234, 5, &[], &[])).unwrap();
         assert_eq!(sit.table_id_extension, 0x1234);
         assert_eq!(sit.version_number, 5);
         assert!(sit.current_next_indicator);
-        assert_eq!(sit.section_number, 0);
-        assert_eq!(sit.last_section_number, 0);
-        assert!(sit.descriptors.is_empty());
+        assert!(sit.transmission_info_descriptors.is_empty());
+        assert!(sit.service_loop.is_empty());
     }
 
     #[test]
-    fn parse_with_descriptors() {
-        let descriptors = [0x4D, 0x02, 0x01, 0x02];
-        let bytes = build_sit(0xABCD, 7, &descriptors);
-        let sit = Sit::parse(&bytes).unwrap();
-        assert_eq!(sit.table_id_extension, 0xABCD);
-        assert_eq!(sit.version_number, 7);
-        assert_eq!(sit.descriptors, &descriptors[..]);
+    fn parse_separates_both_loops() {
+        let ti = [0x4D, 0x02, 0x01, 0x02]; // a transmission-info descriptor
+        // one service entry: service_id=0x0001, running_status=4, svc_desc_len=0
+        let service = [0x00, 0x01, 0x80 | (4 << 4), 0x00];
+        let sit = Sit::parse(&build_sit(0xABCD, 7, &ti, &service)).unwrap();
+        assert_eq!(sit.transmission_info_descriptors, &ti[..]);
+        assert_eq!(sit.service_loop, &service[..]);
     }
 
     #[test]
     fn serialize_round_trip() {
-        let descriptors = [0x4D, 0x02, 0x01, 0x02];
-        let bytes = build_sit(0xCAFE, 3, &descriptors);
-        let sit = Sit::parse(&bytes).unwrap();
+        let ti = [0x4D, 0x02, 0x01, 0x02];
+        let service = [0x00, 0x01, 0xC0, 0x00];
+        let sit = Sit::parse(&build_sit(0xCAFE, 3, &ti, &service)).unwrap();
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
-        let re = Sit::parse(&buf).unwrap();
-        assert_eq!(sit, re);
+        assert_eq!(Sit::parse(&buf).unwrap(), sit);
     }
 
     #[test]
     fn serialize_round_trip_empty() {
-        let bytes = build_sit(0x0001, 0, &[]);
-        let sit = Sit::parse(&bytes).unwrap();
+        let sit = Sit::parse(&build_sit(0x0001, 0, &[], &[])).unwrap();
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
-        let re = Sit::parse(&buf).unwrap();
-        assert_eq!(sit, re);
+        assert_eq!(Sit::parse(&buf).unwrap(), sit);
     }
 
     #[test]
@@ -233,14 +246,10 @@ mod tests {
         assert_eq!(<Sit as Table>::PID, 0x001F);
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn sit_round_trips_via_json() {
-        let descriptors = [0x4D, 0x02, 0x01, 0x02];
-        let bytes = build_sit(0xDEAD, 9, &descriptors);
-        let sit = Sit::parse(&bytes).unwrap();
+        let sit = Sit::parse(&build_sit(0xDEAD, 9, &[0x4D, 0x00], &[0x00, 0x01, 0xC0, 0x00])).unwrap();
         let j = serde_json::to_string(&sit).unwrap();
-        let back: Sit = serde_json::from_str(&j).unwrap();
-        assert_eq!(sit, back);
+        assert_eq!(serde_json::from_str::<Sit>(&j).unwrap(), sit);
     }
 }

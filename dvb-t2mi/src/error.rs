@@ -38,15 +38,6 @@ pub enum Error {
         reason: &'static str,
     },
 
-    /// CRC-32 validation failed (Annex A).
-    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
-    CrcMismatch {
-        /// CRC we calculated over header + payload + padding.
-        computed: u32,
-        /// CRC carried at the end of the packet.
-        expected: u32,
-    },
-
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error("serialize: output buffer too small — need {need}, have {have}")]
     OutputBufferTooSmall {

@@ -43,6 +43,7 @@ pub use registration::RegistrationDescriptor;
 
 /// Unified descriptor variant. Variants land as per-descriptor phases complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Descriptor<'a> {
     /// Conditional Access descriptor (tag 0x09).
@@ -58,6 +59,7 @@ pub enum Descriptor<'a> {
         /// The raw tag byte.
         tag: u8,
         /// The raw payload (descriptor_length bytes, not including the 2-byte header).
+        #[cfg_attr(feature = "serde", serde(borrow))]
         bytes: &'a [u8],
     },
 }

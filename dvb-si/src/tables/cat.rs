@@ -9,7 +9,8 @@
 
 use crate::descriptors::ca::CaDescriptor;
 use crate::error::{Error, Result};
-use dvb_common::Parse;
+use crate::traits::Table;
+use dvb_common::{Parse, Serialize};
 
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x01;
@@ -23,6 +24,7 @@ const CRC_LEN: usize = 4;
 /// One CA descriptor entry from the CAT, in owned form so it
 /// outlives the source section bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CatCaEntry {
     /// CA System ID — the CAID. e.g. 0x0500 Viaccess, 0x0650
     /// Irdeto ORF-ICE, 0x0100 Seca/Mediaguard.
@@ -35,6 +37,7 @@ pub struct CatCaEntry {
 
 /// Conditional Access Table.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Cat {
     /// 5-bit version_number from the section header.
     pub version_number: u8,
@@ -126,6 +129,58 @@ impl<'a> Parse<'a> for Cat {
             ca_descriptors,
         })
     }
+}
+
+impl Serialize for Cat {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let desc_len: usize = self
+            .ca_descriptors
+            .iter()
+            .map(|e| 6 + e.private_data.len())
+            .sum();
+        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + desc_len + CRC_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        let section_length = (len - MIN_HEADER_LEN) as u16;
+        buf[0] = TABLE_ID;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        // table_id_extension is reserved for the CAT — conventionally 0xFFFF.
+        buf[3] = 0xFF;
+        buf[4] = 0xFF;
+        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
+        buf[6] = self.section_number;
+        buf[7] = self.last_section_number;
+        let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
+        for e in &self.ca_descriptors {
+            buf[pos] = crate::descriptors::ca::TAG;
+            buf[pos + 1] = (4 + e.private_data.len()) as u8;
+            buf[pos + 2..pos + 4].copy_from_slice(&e.ca_system_id.to_be_bytes());
+            buf[pos + 4] = 0xE0 | ((e.ca_pid >> 8) as u8 & 0x1F);
+            buf[pos + 5] = (e.ca_pid & 0xFF) as u8;
+            buf[pos + 6..pos + 6 + e.private_data.len()].copy_from_slice(&e.private_data);
+            pos += 6 + e.private_data.len();
+        }
+        let crc_pos = len - CRC_LEN;
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        Ok(len)
+    }
+}
+
+impl<'a> Table<'a> for Cat {
+    const TABLE_ID: u8 = TABLE_ID;
+    const PID: u16 = PID;
 }
 
 #[cfg(test)]
@@ -223,5 +278,29 @@ mod tests {
         assert_eq!(cat.ca_descriptors.len(), 2);
         assert_eq!(cat.ca_descriptors[0].ca_system_id, 0x0500);
         assert_eq!(cat.ca_descriptors[1].ca_system_id, 0x0650);
+    }
+
+    #[test]
+    fn serialize_round_trip() {
+        let mut desc = Vec::new();
+        desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
+        desc.extend_from_slice(&ca_descriptor(0x0650, 0x0062));
+        let cat = Cat::parse(&build_cat(3, &desc)).unwrap();
+        let mut buf = vec![0u8; cat.serialized_len()];
+        cat.serialize_into(&mut buf).unwrap();
+        assert_eq!(Cat::parse(&buf).unwrap(), cat);
+    }
+
+    #[test]
+    fn table_trait_constants() {
+        assert_eq!(<Cat as Table>::TABLE_ID, 0x01);
+        assert_eq!(<Cat as Table>::PID, 0x0001);
+    }
+
+    #[test]
+    fn serde_json_round_trip() {
+        let cat = Cat::parse(&build_cat(1, &ca_descriptor(0x0500, 0x0050))).unwrap();
+        let j = serde_json::to_string(&cat).unwrap();
+        assert_eq!(serde_json::from_str::<Cat>(&j).unwrap(), cat);
     }
 }

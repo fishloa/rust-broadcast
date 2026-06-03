@@ -17,13 +17,6 @@ pub enum Error {
         have: usize,
     },
 
-    /// MATYPE field contained an invalid value.
-    #[error("invalid MATYPE field: {reason}")]
-    InvalidMatypeField {
-        /// Why the field is invalid.
-        reason: &'static str,
-    },
-
     /// MODE field is neither 0 (NM) nor 1 (HEM).
     #[error("invalid MODE: {mode} (must be 0 or 1 per EN 302 755 §5.1.7)")]
     InvalidMode {
@@ -56,20 +49,18 @@ pub enum Error {
         have: usize,
     },
 
-    /// DFL field is outside the valid range (0..=53760 for DVB-T2).
-    #[error("DFL={dfl} bits exceeds maximum {max} bits (EN 302 755 Table 2)")]
+    /// DFL field is outside the valid range. The enforced ceiling `DFL_MAX_BITS`
+    /// (64800) is the DVB-S2 normal-FECFRAME data-field bound (EN 302 307-1
+    /// §5.1.4); DVB-T2 is tighter still (0..=53760, EN 302 755 Table 2).
+    #[error(
+        "DFL={dfl} bits exceeds maximum {max} bits (EN 302 307-1 §5.1.4 S2 normal frame; \
+         DVB-T2 tighter per EN 302 755 Table 2)"
+    )]
     DflOutOfRange {
         /// DFL value that was rejected.
         dfl: u16,
         /// Maximum allowed DFL.
         max: u16,
-    },
-
-    /// HEM detected but expected NM fields are inconsistent.
-    #[error("HEM inconsistency: {reason}")]
-    InconsistentHem {
-        /// Why the HEM state is inconsistent.
-        reason: &'static str,
     },
 }
 

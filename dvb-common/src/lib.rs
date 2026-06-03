@@ -3,6 +3,7 @@
 //! See individual modules for documentation.
 
 #![forbid(unsafe_code)]
+#![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod crc32_mpeg2;

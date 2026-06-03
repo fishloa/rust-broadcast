@@ -6,6 +6,7 @@ use num_enum::TryFromPrimitive;
 ///
 /// Reserved for future use: `0x22..=0x2F`, `0x34..=0xFF`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum PacketType {
     /// Baseband Frame (BBFRAME) — §5.2.1
@@ -57,6 +58,7 @@ impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
 /// - byte 3: rfu (8 bits) — must be 0
 /// - byte 4-5: payload_len (16 bits, unit = bits)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Header {
     /// Table 1 packet type.
     pub packet_type: PacketType,

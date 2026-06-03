@@ -65,6 +65,10 @@ pub struct Sdt<'a> {
     pub version_number: u8,
     /// current_next_indicator bit.
     pub current_next_indicator: bool,
+    /// section_number in the sub-table sequence.
+    pub section_number: u8,
+    /// last_section_number in the sub-table sequence.
+    pub last_section_number: u8,
     /// original_network_id of the described TS.
     pub original_network_id: u16,
     /// Services in wire order.
@@ -107,6 +111,8 @@ impl<'a> Parse<'a> for Sdt<'a> {
         let transport_stream_id = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let section_number = bytes[6];
+        let last_section_number = bytes[7];
         let original_network_id = u16::from_be_bytes([bytes[8], bytes[9]]);
 
         let services_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
@@ -147,6 +153,8 @@ impl<'a> Parse<'a> for Sdt<'a> {
             transport_stream_id,
             version_number,
             current_next_indicator,
+            section_number,
+            last_section_number,
             original_network_id,
             services,
         })
@@ -181,8 +189,8 @@ impl Serialize for Sdt<'_> {
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
-        buf[6] = 0;
-        buf[7] = 0;
+        buf[6] = self.section_number;
+        buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[10] = 0xFF; // reserved_future_use
 
@@ -204,7 +212,8 @@ impl Serialize for Sdt<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        buf[crc_pos..len].copy_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }
@@ -337,6 +346,8 @@ mod tests {
             transport_stream_id: 0x1234,
             version_number: 5,
             current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
             original_network_id: 0x0020,
             services: vec![
                 SdtService {

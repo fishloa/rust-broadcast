@@ -14,6 +14,7 @@ const ENTRY_LEN: usize = 3;
 
 /// One (service_id, service_type) pair.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ServiceListEntry {
     /// DVB service_id (matches program_number in PAT).
     pub service_id: u16,
@@ -23,6 +24,7 @@ pub struct ServiceListEntry {
 
 /// Service List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ServiceListDescriptor {
     /// Entries in wire order.
     pub entries: Vec<ServiceListEntry>,

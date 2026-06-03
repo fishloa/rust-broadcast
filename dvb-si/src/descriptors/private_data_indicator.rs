@@ -18,6 +18,7 @@ const BODY_LEN: u8 = 4;
 /// or industry consortium to identify the organization that defined the private
 /// data format used in the associated elementary stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct PrivateDataIndicatorDescriptor {
     /// 4-byte private data specifier identifier.
     pub private_data_specifier: [u8; 4],

@@ -11,6 +11,7 @@ use dvb_common::{Parse, Serialize};
 
 /// Function tags per §5.2.8.2 Table 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 pub enum AddressingFunctionTag {
     /// Transmitter time offset.
@@ -72,48 +73,63 @@ impl fmt::Display for AddressingFunctionTag {
 
 /// A single function entry within individual addressing.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FunctionEntry<'a> {
     /// Function tag identifying the entry type.
     pub tag: AddressingFunctionTag,
     /// Raw function body (including tag + length bytes).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub raw: &'a [u8],
 }
 
-/// Individual addressing payload (type 0x21) per ETSI TS 102 773 §5.2.8.
+/// Individual addressing payload (type 0x21) per ETSI TS 102 773 §5.2.8.1, Fig 11.
 ///
-/// Layout:
-/// - byte 0-1: tx_identifier (16 bits) — 0x0000 = broadcast
-/// - byte 2: ind_addr_data_length (8 bits) — length of function loop in bytes
-/// - bytes 3..: function loop entries
+/// Top-level layout:
+/// - byte 0: rfu (8 bits) — reserved, ignored on parse, preserved for round-trip
+/// - byte 1: individual_addressing_length (8 bits) — length of the data loop in bytes
+/// - bytes 2..: individual_addressing_data — a loop of per-transmitter entries, each
+///   `tx_identifier(16) · function_loop_length(8) · function()…`. The tx_identifier
+///   lives INSIDE each entry, not at the top level; the loop is kept raw here.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IndividualAddressingPayload<'a> {
-    /// Transmitter identifier (0x0000 = broadcast).
-    pub tx_identifier: u16,
-    /// Length of the function loop in bytes.
-    pub ind_addr_data_length: u8,
-    /// Raw function loop data.
-    pub ind_addr_data: &'a [u8],
+    /// Reserved-for-future-use byte (byte 0); preserved verbatim for round-trip.
+    pub rfu: u8,
+    /// Raw individual_addressing_data loop. Length is the 8-bit
+    /// `individual_addressing_length` field, derived from this slice on serialize.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub individual_addressing_data: &'a [u8],
 }
+
+const HEADER_LEN: usize = 2;
 
 impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < 3 {
+        if bytes.len() < HEADER_LEN {
             return Err(crate::Error::BufferTooShort {
-                need: 3,
+                need: HEADER_LEN,
                 have: bytes.len(),
                 what: "IndividualAddressingPayload header",
             });
         }
 
-        let tx_identifier = u16::from_be_bytes([bytes[0], bytes[1]]);
-        let ind_addr_data_length = bytes[2];
+        let rfu = bytes[0];
+        let individual_addressing_length = bytes[1] as usize;
+        // The data loop must hold exactly the declared number of bytes (§5.2.8.1).
+        let need = HEADER_LEN + individual_addressing_length;
+        if bytes.len() < need {
+            return Err(crate::Error::BufferTooShort {
+                need,
+                have: bytes.len(),
+                what: "IndividualAddressingPayload data",
+            });
+        }
 
         Ok(IndividualAddressingPayload {
-            tx_identifier,
-            ind_addr_data_length,
-            ind_addr_data: &bytes[3..],
+            rfu,
+            individual_addressing_data: &bytes[HEADER_LEN..need],
         })
     }
 }
@@ -122,7 +138,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        3 + self.ind_addr_data.len()
+        HEADER_LEN + self.individual_addressing_data.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
@@ -133,13 +149,21 @@ impl Serialize for IndividualAddressingPayload<'_> {
             });
         }
 
-        let tx_id = self.tx_identifier.to_be_bytes();
-        buf[0] = tx_id[0];
-        buf[1] = tx_id[1];
-        buf[2] = self.ind_addr_data_length;
+        // individual_addressing_length is an 8-bit field — the data loop cannot
+        // exceed 255 bytes.
+        if self.individual_addressing_data.len() > u8::MAX as usize {
+            return Err(crate::Error::ReservedBitsViolation {
+                field: "individual_addressing_length",
+                reason: "individual_addressing_data exceeds 255 bytes (8-bit length field)",
+            });
+        }
 
-        if !self.ind_addr_data.is_empty() {
-            buf[3..3 + self.ind_addr_data.len()].copy_from_slice(self.ind_addr_data);
+        buf[0] = self.rfu;
+        buf[1] = self.individual_addressing_data.len() as u8;
+
+        if !self.individual_addressing_data.is_empty() {
+            buf[HEADER_LEN..HEADER_LEN + self.individual_addressing_data.len()]
+                .copy_from_slice(self.individual_addressing_data);
         }
 
         Ok(self.serialized_len())
@@ -150,8 +174,9 @@ impl fmt::Display for IndividualAddressingPayload<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "IndividualAddressing {{ tx_id: 0x{:04X}, addr_data_len: {} }}",
-            self.tx_identifier, self.ind_addr_data_length
+            "IndividualAddressing {{ rfu: 0x{:02X}, addr_data_len: {} }}",
+            self.rfu,
+            self.individual_addressing_data.len()
         )
     }
 }
@@ -196,36 +221,57 @@ mod tests {
     }
 
     #[test]
-    fn parse_extracts_tx_identifier_and_addressing_data() {
-        let buf = [0x00u8, 0x05, 0x04, 0x10, 0x04, 0xCA, 0xFE];
+    fn parse_extracts_rfu_and_addressing_data() {
+        // rfu=0x00, length=4, then a 4-byte data loop. The data loop here is one
+        // transmitter entry: tx_identifier=0x0005, function_loop_length=0x04, ...
+        // — but parse keeps the whole loop raw.
+        let buf = [0x00u8, 0x04, 0x00, 0x05, 0x04, 0x10];
         let result = IndividualAddressingPayload::parse(&buf).unwrap();
-        assert_eq!(result.tx_identifier, 0x0005);
-        assert_eq!(result.ind_addr_data_length, 4);
-        assert_eq!(result.ind_addr_data, &[0x10, 0x04, 0xCA, 0xFE]);
+        assert_eq!(result.rfu, 0x00);
+        assert_eq!(result.individual_addressing_data, &[0x00, 0x05, 0x04, 0x10]);
+    }
+
+    #[test]
+    fn parse_preserves_rfu_byte() {
+        let buf = [0xFFu8, 0x00];
+        let result = IndividualAddressingPayload::parse(&buf).unwrap();
+        assert_eq!(result.rfu, 0xFF);
+        assert!(result.individual_addressing_data.is_empty());
     }
 
     #[test]
     fn parse_rejects_short_buffer() {
-        assert!(IndividualAddressingPayload::parse(&[0x00, 0x00]).is_err());
+        assert!(IndividualAddressingPayload::parse(&[0x00]).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_truncated_data() {
+        // declares 4 data bytes but only 2 follow
+        assert!(IndividualAddressingPayload::parse(&[0x00, 0x04, 0xAA, 0xBB]).is_err());
     }
 
     #[test]
     fn serialize_round_trip() {
         let orig = IndividualAddressingPayload {
-            tx_identifier: 0x0003,
-            ind_addr_data_length: 4,
-            ind_addr_data: &[0x00, 0x04, 0xDE, 0xAD],
+            rfu: 0x00,
+            individual_addressing_data: &[0x00, 0x03, 0x04, 0xDE, 0xAD],
         };
         let mut buf = vec![0u8; orig.serialized_len()];
         orig.serialize_into(&mut buf).unwrap();
+        // length field is derived from the data slice
+        assert_eq!(buf[1], 5);
         let parsed = IndividualAddressingPayload::parse(&buf).unwrap();
         assert_eq!(orig, parsed);
     }
 
     #[test]
-    fn broadcast_tx_identifier() {
-        let buf = [0x00u8, 0x00, 0x00];
-        let result = IndividualAddressingPayload::parse(&buf).unwrap();
-        assert_eq!(result.tx_identifier, 0x0000);
+    fn serialize_empty_data() {
+        let orig = IndividualAddressingPayload {
+            rfu: 0x00,
+            individual_addressing_data: &[],
+        };
+        let mut buf = vec![0u8; orig.serialized_len()];
+        orig.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x00, 0x00]);
     }
 }

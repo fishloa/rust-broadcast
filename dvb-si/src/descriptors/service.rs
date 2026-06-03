@@ -13,12 +13,15 @@ const HEADER_LEN: usize = 2;
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ServiceDescriptor<'a> {
     /// service_type byte (ETSI Table 87).
     pub service_type: u8,
     /// Raw provider_name bytes (DVB-encoded text).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub provider_name: &'a [u8],
     /// Raw service_name bytes (DVB-encoded text).
+    #[cfg_attr(feature = "serde", serde(borrow))]
     pub service_name: &'a [u8],
 }
 
