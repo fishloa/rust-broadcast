@@ -4,6 +4,8 @@
 
 use std::collections::VecDeque;
 
+use crate::crc::CRC_LEN;
+
 /// Per-PID T2-MI packet reassembler.
 ///
 /// Accepts TS payload slices with PUSI state and emits complete T2-MI packets.
@@ -16,8 +18,6 @@ pub struct PacketReassembler {
 
 /// Total bytes in a T2-MI header.
 const HEADER_LEN: usize = 6;
-/// Total bytes in a T2-MI CRC trailer.
-const CRC_LEN: usize = 4;
 
 impl PacketReassembler {
     /// Create a new empty reassembler.

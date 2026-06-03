@@ -47,8 +47,8 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
 /// Layout (88 bits = 11 bytes):
 /// - byte 0 [7:4]: rfu (4 bits) — must be 0
 /// - byte 0 [3:0]: bw (4 bits) — Table 3
-/// - bytes 6-8 bits [26:0]: subseconds (27 bits)
-/// - bytes 8-10 bits [12:0]: utco (13 bits) — UTC offset in seconds
+/// - subseconds (27 bits): bytes 6-8 + byte 9 [7:5]
+/// - utco (13 bits): byte 9 [4:0] + byte 10 — UTC offset in seconds
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct T2TimestampPayload {
