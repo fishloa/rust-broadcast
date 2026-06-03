@@ -1,9 +1,8 @@
 //! DVB-SI text decoding — ETSI EN 300 468 Annex A.
 //!
-//! Lift-and-shift port of zenith's `src/si/dvb_text.rs`. Full Annex A
-//! table coverage (all 17 charsets, emphasis pairs, extended language
-//! blocks) lands in Phase 1; this subset matches zenith's current
-//! behaviour byte-for-byte so migration carries zero regression.
+//! Covers the common charsets: ISO 6937 (with diacritic combining), ISO 8859-n,
+//! UTF-8 (selector 0x15) and UCS-2 BE (selector 0x11). Full Annex A coverage
+//! (all 17 charsets, emphasis pairs, extended language blocks) is future work.
 
 use std::borrow::Cow;
 
@@ -27,7 +26,7 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
 
     // Annex A.2 control codes:
     //   0x86 emphasis on, 0x87 emphasis off, 0x8A CR/LF -> space.
-    //   Other C0/C1 controls are stripped per zenith's pre-existing behaviour.
+    //   Other C0/C1 controls are stripped.
     decoded
         .chars()
         .filter_map(|c| match c as u32 {

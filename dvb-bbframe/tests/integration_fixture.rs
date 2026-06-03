@@ -1,8 +1,6 @@
 //! Integration tests using real TV capture fixtures.
 
-// Fixtures live in the top-level zenith repo at tests/bbframe/. dvb_bbframe
-// borrows them via relative include_bytes! rather than duplicating the files.
-// This keeps a single source of truth for fixture data across the workspace.
+// Fixtures are vendored under tests/fixtures/ and embedded via include_bytes!.
 const TNT_FIXTURE: &[u8] = include_bytes!("fixtures/tnt-5w-12732v-bbframe.ts");
 const RAI_FIXTURE: &[u8] = include_bytes!("fixtures/rai-5w-12606v-bbframe.ts");
 
@@ -168,8 +166,7 @@ fn serialize_round_trip_all_tnt_bbframes() {
 // T2-MI-wrapped TS in their data field.
 //
 // Inner HEM BBFrame validation is out of scope for dvb_bbframe tests —
-// reaching them requires T2-MI packet parsing (dvb_t2mi). Those tests
-// live at the zenith integration layer.
+// reaching them requires T2-MI packet parsing (dvb_t2mi).
 
 #[test]
 fn rai_fixture_outer_bbframes_parse_as_nm() {

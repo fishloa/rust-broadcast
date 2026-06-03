@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://crates.io/crates/dvb_t2mi)
 [![docs.rs](https://img.shields.io/badge/docs.rs-dvb__t2mi-green.svg)](https://docs.rs/dvb_t2mi)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-APACHE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
 
 Complete, spec-compliant **ETSI TS 102 773 v1.4.1** DVB-T2 Modulator Interface (T2-MI) parser and builder in Rust.
 
@@ -171,7 +171,7 @@ while let Some(t2mi_packet) = reasm.pop_packet() {
 This crate implements **only the T2-MI protocol** (ETSI TS 102 773). It does **not** include:
 
 - **BBHeader parsing** — the 10-byte DVB-T2 BBHEADER is defined in EN 302 755, handled by the consuming application's adaptor layer.
-- **HEM (High Efficiency Mode)** detection — adaptor-layer concern, uses existing `dvb-gse` or `crc8` from zenith.
+- **HEM (High Efficiency Mode)** detection — an adaptor-layer concern (CRC-8 init-XOR + 187/188-byte user-packet stride), not part of the T2-MI protocol itself.
 - **DVB-T2 physical layer** — LDPC coding, OFDM cell mapping, time interleaving are all outside scope.
 - **L1 signalling parsing** — the raw L1-current/L1-future bytes are passed through uninterpreted; a DVB-T2 modulator consumes them directly.
 
@@ -183,9 +183,4 @@ This crate implements **only the T2-MI protocol** (ETSI TS 102 773). It does **n
 
 ## License
 
-Licensed under either of:
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+MIT — see [LICENSE](../LICENSE).

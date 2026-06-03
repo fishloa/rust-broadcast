@@ -2,7 +2,7 @@
 
 ## 0.1.0 — unreleased
 
-First substantive release. Sufficient for zenith's current runtime needs.
+First substantive release covering the common DVB SI / MPEG-2 PSI tables and descriptors.
 
 ### Added
 - `Section<'a>` — generic PSI/SI section framing with CRC-32 validation

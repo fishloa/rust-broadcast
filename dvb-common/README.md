@@ -6,7 +6,7 @@ Shared primitives for the DVB crate family:
 - `crc32_mpeg2` — CRC-32 per ETSI EN 300 468 Annex C / ETSI TS 102 773 Annex A.
 
 Consumed by `dvb_si`, `dvb_t2mi`, `dvb_bbframe`. Zero runtime dependencies.
-Publishable to crates.io under MIT OR Apache-2.0.
+Licensed MIT.
 
 ## Non-goals
 

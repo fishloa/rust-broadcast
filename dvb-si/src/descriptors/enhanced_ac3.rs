@@ -1,8 +1,8 @@
 //! Enhanced AC-3 Descriptor — ETSI EN 300 468 Annex D (tag 0x7A).
 //!
 //! Same flags-and-fields layout as AC-3 plus two extra bits
-//! (mixinfoexists, substream ids). Using a simpler subset here — zenith only
-//! needs the presence of the tag to resolve EAC-3 from 0x06 private PES.
+//! (mixinfoexists, substream ids). A simpler subset is modelled here; the
+//! descriptor body beyond the documented flags is retained as raw bytes.
 
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
