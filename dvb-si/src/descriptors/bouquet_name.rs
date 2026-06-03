@@ -5,7 +5,7 @@ use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Wire tag for the Bouquet Name Descriptor.
-pub const DESCRIPTOR_TAG: u8 = 0x47;
+pub const TAG: u8 = 0x47;
 
 /// Header length (tag byte + length byte, no payload).
 pub const HEADER_LEN: usize = 2;
@@ -32,7 +32,7 @@ impl<'a> Parse<'a> for BouquetNameDescriptor<'a> {
         }
 
         let tag = bytes[0];
-        if tag != DESCRIPTOR_TAG {
+        if tag != TAG {
             return Err(Error::InvalidDescriptor {
                 tag,
                 reason: "expected tag 0x47",
@@ -71,7 +71,7 @@ impl Serialize for BouquetNameDescriptor<'_> {
             });
         }
 
-        buf[0] = DESCRIPTOR_TAG;
+        buf[0] = TAG;
         buf[1] = self.bouquet_name.len() as u8;
         buf[HEADER_LEN..need].copy_from_slice(self.bouquet_name);
 
@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn parse_extracts_bouquet_name() {
         let raw: Vec<u8> = vec![
-            DESCRIPTOR_TAG,
+            TAG,
             0x04, // length = 4
             b'B',
             b'O',
@@ -145,7 +145,7 @@ mod tests {
     /// Descriptor with no bouquet name bytes is valid: `[0x47, 0x00]`.
     #[test]
     fn empty_bouquet_name_is_valid() {
-        let raw: &[u8] = &[DESCRIPTOR_TAG, 0x00];
+        let raw: &[u8] = &[TAG, 0x00];
         let desc = BouquetNameDescriptor::parse(raw).unwrap();
         assert!(desc.bouquet_name.is_empty());
     }
@@ -154,7 +154,7 @@ mod tests {
     /// identical bytes.
     #[test]
     fn serialize_round_trip_preserves_bytes() {
-        let raw: Vec<u8> = vec![DESCRIPTOR_TAG, 0x04, b'B', b'O', b'U', b'Q'];
+        let raw: Vec<u8> = vec![TAG, 0x04, b'B', b'O', b'U', b'Q'];
         let parsed = BouquetNameDescriptor::parse(&raw).unwrap();
         let mut buf = vec![0u8; parsed.serialized_len()];
         let written = parsed.serialize_into(&mut buf).unwrap();
@@ -168,7 +168,7 @@ mod tests {
     /// Serialise into a buffer smaller than `serialized_len()` must fail.
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let raw: Vec<u8> = vec![DESCRIPTOR_TAG, 0x04, b'B', b'O', b'U', b'Q'];
+        let raw: Vec<u8> = vec![TAG, 0x04, b'B', b'O', b'U', b'Q'];
         let parsed = BouquetNameDescriptor::parse(&raw).unwrap();
         let mut tiny = vec![0u8; 1];
         let err = parsed.serialize_into(&mut tiny).unwrap_err();

@@ -5,7 +5,7 @@ use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Wire tag for the Network Name Descriptor.
-pub const DESCRIPTOR_TAG: u8 = 0x40;
+pub const TAG: u8 = 0x40;
 
 /// Header length (tag byte + length byte, no payload).
 pub const HEADER_LEN: usize = 2;
@@ -33,7 +33,7 @@ impl<'a> Parse<'a> for NetworkNameDescriptor<'a> {
         }
 
         let tag = bytes[0];
-        if tag != DESCRIPTOR_TAG {
+        if tag != TAG {
             return Err(Error::InvalidDescriptor {
                 tag,
                 reason: "expected tag 0x40",
@@ -72,7 +72,7 @@ impl Serialize for NetworkNameDescriptor<'_> {
             });
         }
 
-        buf[0] = DESCRIPTOR_TAG;
+        buf[0] = TAG;
         buf[1] = self.network_name.len() as u8;
         buf[HEADER_LEN..need].copy_from_slice(self.network_name);
 
@@ -96,7 +96,7 @@ mod tests {
     #[test]
     fn parse_extracts_network_name() {
         let raw: Vec<u8> = vec![
-            DESCRIPTOR_TAG,
+            TAG,
             0x04, // length = 4
             b'E',
             b'U',
@@ -147,7 +147,7 @@ mod tests {
     /// identical bytes.
     #[test]
     fn serialize_round_trip_preserves_bytes() {
-        let raw: Vec<u8> = vec![DESCRIPTOR_TAG, 0x04, b'E', b'U', b'T', b'E'];
+        let raw: Vec<u8> = vec![TAG, 0x04, b'E', b'U', b'T', b'E'];
         let parsed = NetworkNameDescriptor::parse(&raw).unwrap();
         let mut buf = vec![0u8; parsed.serialized_len()];
         let written = parsed.serialize_into(&mut buf).unwrap();
@@ -161,7 +161,7 @@ mod tests {
     /// Serialise into a buffer smaller than `serialized_len()` must fail.
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let raw: Vec<u8> = vec![DESCRIPTOR_TAG, 0x04, b'E', b'U', b'T', b'E'];
+        let raw: Vec<u8> = vec![TAG, 0x04, b'E', b'U', b'T', b'E'];
         let parsed = NetworkNameDescriptor::parse(&raw).unwrap();
         let mut tiny = vec![0u8; 1];
         let err = parsed.serialize_into(&mut tiny).unwrap_err();
@@ -175,7 +175,7 @@ mod tests {
     /// Descriptor with no network name bytes is valid: `[0x40, 0x00]`.
     #[test]
     fn empty_network_name_is_valid() {
-        let raw: &[u8] = &[DESCRIPTOR_TAG, 0x00];
+        let raw: &[u8] = &[TAG, 0x00];
         let desc = NetworkNameDescriptor::parse(raw).unwrap();
         assert!(desc.network_name.is_empty());
     }
@@ -184,7 +184,7 @@ mod tests {
     #[test]
     fn descriptor_length_getter_matches_payload() {
         let raw: Vec<u8> = vec![
-            DESCRIPTOR_TAG,
+            TAG,
             0x07,
             b'F',
             b'R',

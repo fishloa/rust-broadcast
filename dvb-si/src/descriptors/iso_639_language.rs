@@ -15,7 +15,7 @@ const ENTRY_LEN: usize = 4;
 pub struct LanguageEntry {
     /// Three-character ISO 639-2 language code (e.g. b"eng", b"fra").
     pub language_code: [u8; 3],
-    /// Audio type (ETSI EN 300 468 Table 82): 0 = undefined, 1 = clean effects,
+    /// Audio type (ETSI EN 300 468 §6.2.22): 0 = undefined, 1 = clean effects,
     /// 2 = hearing impaired, 3 = visual impaired commentary.
     pub audio_type: u8,
 }

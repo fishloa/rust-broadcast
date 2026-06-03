@@ -1,4 +1,4 @@
-//! Extended Event Descriptor — ETSI EN 300 468 §6.2.15 (tag 0x4E).
+//! Extended Event Descriptor — ETSI EN 300 468 §6.2.16 (tag 0x4E).
 //!
 //! Carried inside EIT. Provides the full event description split across
 //! descriptor_number / last_descriptor_number fragments. Each fragment
