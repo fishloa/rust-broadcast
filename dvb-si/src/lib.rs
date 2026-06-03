@@ -1,8 +1,8 @@
 //! ETSI EN 300 468 v1.19.1 DVB Service Information parser and builder.
 //!
 //! Entry points:
-//! - [`traits::Parse`] / [`traits::Serialize`] — the two symmetric contracts
-//!   every table and descriptor implements.
+//! - [`Parse`](dvb_common::Parse) / [`Serialize`](dvb_common::Serialize) — the two
+//!   symmetric contracts every table and descriptor implements.
 //! - [`tables`] — PAT, PMT, CAT, NIT, BAT, SDT, EIT, TDT, TOT, RST, DIT, SIT, ST, SAT.
 //! - [`descriptors`] — every DVB descriptor (tags 0x40..0x7F) plus MPEG-2 descriptors.
 //! - [`pid::well_known`] — reserved DVB/MPEG-2 PIDs.

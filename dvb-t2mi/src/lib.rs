@@ -1,8 +1,8 @@
 //! ETSI TS 102 773 v1.4.1 DVB-T2 Modulator Interface (T2-MI) parser + builder.
 //!
 //! Entry points:
-//! - [`traits::Parse`] / [`traits::Serialize`] — the two symmetric contracts
-//!   every payload type implements.
+//! - [`Parse`](dvb_common::Parse) / [`Serialize`](dvb_common::Serialize) — the two
+//!   symmetric contracts every payload type implements.
 //! - [`packet`] — T2-MI packet header and type parsing.
 //! - [`payload`] — BBFrame, L1, FEF, timestamp, and addressing payload types.
 //! - [`crc`] — CRC-32 per Annex A.
