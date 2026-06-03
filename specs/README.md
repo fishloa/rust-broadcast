@@ -1,0 +1,25 @@
+# Vendored ETSI specification PDFs
+
+Canonical source-of-truth standards for the `rust-dvb` crates. The
+structured markdown under each crate's `docs/` is transcribed from these.
+Kept in-repo so the parsers can always be checked against the spec they
+claim to implement.
+
+These are freely-downloadable ETSI deliverables, redistributed here for
+reference. ETSI retains copyright; see <https://www.etsi.org/>.
+
+| File | Standard | Used by |
+|---|---|---|
+| `etsi_en_300_468_v01.19.01_dvb_si.pdf` | EN 300 468 v1.19.1 — DVB Service Information | `dvb-si` (all SI tables, incl. SAT §5.2.11) |
+| `etsi_en_301_192_v01.07.01_dvb_databcast.pdf` | EN 301 192 v1.7.1 — DVB data broadcasting | `dvb-si` (INT, table_id 0x4C) |
+| `etsi_ts_102_006_v01.07.01_dvb_ssu.pdf` | TS 102 006 v1.7.1 — System Software Update | `dvb-si` (UNT, table_id 0x4B) |
+| `etsi_ts_102_323_v01.04.01_dvb_tvanytime.pdf` | TS 102 323 v1.4.1 — TV-Anytime carriage | `dvb-si` (RCT 0x76, CIT 0x77, RNT 0x79) |
+| `etsi_en_302_307_1_v01.04.01_dvb_s2.pdf` | EN 302 307-1 — DVB-S2 | `dvb-bbframe` |
+| `etsi_en_302_307_2_v01.04.01_dvb_s2x.pdf` | EN 302 307-2 — DVB-S2X | `dvb-bbframe` |
+| `etsi_en_302_755_v01.04.01_dvb_t2.pdf` | EN 302 755 v1.4.1 — DVB-T2 | `dvb-bbframe`, `dvb-t2mi` |
+| `etsi_ts_102_773_v01.04.01_dvb_t2_modulator_interface.pdf` | TS 102 773 v1.4.1 — T2-MI | `dvb-t2mi` |
+
+Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
+- https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf
+- https://www.etsi.org/deliver/etsi_en/301100_301199/301192/01.07.01_60/en_301192v010701p.pdf
+- https://www.etsi.org/deliver/etsi_ts/102300_102399/102323/01.04.01_60/ts_102323v010401p.pdf
