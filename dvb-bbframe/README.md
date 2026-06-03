@@ -43,4 +43,5 @@ vendored in the workspace `specs/` directory.
 
 ## License
 
-MIT — see [LICENSE](../LICENSE).
+Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0
+([LICENSE-APACHE](../LICENSE-APACHE)), at your option.

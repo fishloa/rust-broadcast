@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/badge/version-0.1.0-blue.svg)](https://crates.io/crates/dvb_t2mi)
 [![docs.rs](https://img.shields.io/badge/docs.rs-dvb__t2mi-green.svg)](https://docs.rs/dvb_t2mi)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](../LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
 
 Complete, spec-compliant **ETSI TS 102 773 v1.4.1** DVB-T2 Modulator Interface (T2-MI) parser and builder in Rust.
 
@@ -183,4 +183,5 @@ This crate implements **only the T2-MI protocol** (ETSI TS 102 773). It does **n
 
 ## License
 
-MIT — see [LICENSE](../LICENSE).
+Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0
+([LICENSE-APACHE](../LICENSE-APACHE)), at your option.
