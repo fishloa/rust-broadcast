@@ -17,13 +17,6 @@ pub enum Error {
         have: usize,
     },
 
-    /// MATYPE field contained an invalid value.
-    #[error("invalid MATYPE field: {reason}")]
-    InvalidMatypeField {
-        /// Why the field is invalid.
-        reason: &'static str,
-    },
-
     /// MODE field is neither 0 (NM) nor 1 (HEM).
     #[error("invalid MODE: {mode} (must be 0 or 1 per EN 302 755 §5.1.7)")]
     InvalidMode {
@@ -63,13 +56,6 @@ pub enum Error {
         dfl: u16,
         /// Maximum allowed DFL.
         max: u16,
-    },
-
-    /// HEM detected but expected NM fields are inconsistent.
-    #[error("HEM inconsistency: {reason}")]
-    InconsistentHem {
-        /// Why the HEM state is inconsistent.
-        reason: &'static str,
     },
 }
 

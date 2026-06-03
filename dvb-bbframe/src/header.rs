@@ -10,7 +10,12 @@ use crate::error::Error;
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
-/// Maximum valid DFL in bits for DVB-S2 (normal FECFRAME is 64800, short is 16200).
+/// Loosest valid DFL upper bound in bits across the standards this crate parses.
+///
+/// DVB-S2 normal FECFRAME caps the data field near 64800 bits; DVB-T2 is tighter
+/// (EN 302 755 Table 2: DFL in [0, 53760]). A BBHEADER does not by itself say
+/// which standard produced it, so this generous bound avoids rejecting any valid
+/// S2/S2X/T2 frame.
 pub const DFL_MAX_BITS: u16 = 64800;
 
 /// Input stream format as described by the TS/GS field (MATYPE-1 bits [7:6]).

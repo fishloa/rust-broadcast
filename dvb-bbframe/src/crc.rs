@@ -11,8 +11,9 @@ pub const CRC8_INIT: u8 = 0x00;
 
 /// CRC-8 initial register value used by DVB-T2 BBFrames inside T2-MI streams.
 ///
-/// T2-MI (ETSI TS 102 773 §5.2.1) carries DVB-T2 BBFrames. Empirically,
-/// these use CRC-8 with init=0xB5 instead of the standard init=0x00.
+/// DVB-T2 High Efficiency Mode (HEM) uses CRC-8 with init=0xB5 rather than the
+/// standard init=0x00; the MODE bit is recovered from this difference per
+/// EN 302 755 §5.1.7.
 pub const CRC8_INIT_DVB_T2: u8 = 0xB5;
 
 /// Compute CRC-8 with the standard initial value (0x00).

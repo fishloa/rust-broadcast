@@ -102,7 +102,7 @@ fn iso_6937_single(b: u8) -> char {
         0xA8 => '¤',
         0xFB => 'ß',
         0xFC => 'œ',
-        0xFD => 'ŕ',
+        0xFD => '\u{0131}', // LATIN SMALL LETTER DOTLESS I (ISO 6937 0xFD)
         0xFE => '\u{FFFD}',
         0xFF => '\u{FFFD}',
         other => other as char,

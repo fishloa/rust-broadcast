@@ -114,11 +114,20 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
 
         let tx_identifier = u16::from_be_bytes([bytes[0], bytes[1]]);
         let ind_addr_data_length = bytes[2];
+        // ind_addr_data must hold exactly the declared number of bytes (§5.2.8).
+        let need = 3 + ind_addr_data_length as usize;
+        if bytes.len() < need {
+            return Err(crate::Error::BufferTooShort {
+                need,
+                have: bytes.len(),
+                what: "IndividualAddressingPayload data",
+            });
+        }
 
         Ok(IndividualAddressingPayload {
             tx_identifier,
             ind_addr_data_length,
-            ind_addr_data: &bytes[3..],
+            ind_addr_data: &bytes[3..need],
         })
     }
 }
