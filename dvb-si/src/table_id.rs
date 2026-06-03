@@ -26,6 +26,9 @@ pub enum TableId {
     ServiceDescriptionActual   = 0x42,
     ServiceDescriptionOther    = 0x46,
     BouquetAssociation         = 0x4A,
+    UpdateNotification         = 0x4B,
+    IpMacNotification          = 0x4C,
+    SatelliteAccess            = 0x4D,
     EventInformationPfActual   = 0x4E,
     EventInformationPfOther    = 0x4F,
 
@@ -120,7 +123,7 @@ mod tests {
                 matched += 1;
             }
         }
-        // 24 defined variants
-        assert_eq!(matched, 24, "expected 24 matched variants");
+        // 27 defined variants (added UNT 0x4B, INT 0x4C, SAT 0x4D)
+        assert_eq!(matched, 27, "expected 27 matched variants");
     }
 }
