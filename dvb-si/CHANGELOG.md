@@ -18,7 +18,15 @@ common descriptors, and the DVB-allocated companion tables.
 - `Sat` — Satellite Access Table family (0x4D, §5.2.11)
 - `Ait` (0x74, TS 102 809), `DsmccSection` (0x3A–0x3F)
 - Companion tables: `Unt` (0x4B, TS 102 006), `Int` (0x4C, EN 301 192),
-  `Rct` (0x76), `Cit` (0x77), `Rnt` (0x79) (TS 102 323)
+  `Container` (0x75), `Rct` (0x76), `Cit` (0x77), `Rnt` (0x79) (TS 102 323)
+- MPE family: `DatagramSection` (0x3E, EN 301 192 §7 — typed IP/MAC view),
+  `MpeFecSection` (0x78, EN 301 192 §9.9), `MpeIfecSection` (0x7A, TS 102 772)
+- `ProtectionMessageSection` (0x7B, TS 102 809 §9) — authentication-message
+  and certificate-collection variants discriminated by table_id_extension
+- `DownloadableFontInfoSection` (0x7C, EN 303 560; table_id per EN 300 468
+  V1.19.1 Table 2 NOTE 2 — the spec's own 0x4C was an acknowledged accident)
+- **Coverage milestone: every allocated table_id in EN 300 468 V1.19.1
+  Table 2 is implemented.**
 
 **Descriptors** — typed parsers for the common DVB + MPEG-2 descriptors
 (network_name, service, service_list, linkage, short/extended_event, component,
