@@ -1,6 +1,6 @@
 # dvb_t2mi
 
-[![crates.io](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://crates.io/crates/dvb_t2mi)
+[![crates.io](https://img.shields.io/badge/version-1.0.1-blue.svg)](https://crates.io/crates/dvb_t2mi)
 [![docs.rs](https://img.shields.io/badge/docs.rs-dvb__t2mi-green.svg)](https://docs.rs/dvb_t2mi)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
 

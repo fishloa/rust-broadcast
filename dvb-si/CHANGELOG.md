@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1 — 2026-06-04
+
+Docs-only: README rewritten around an explicit implementation matrix — per
+table_id status, carousel message coverage, typed-descriptor list, spec
+grounding. No code changes.
+
 ## 1.0.0 — 2026-06-04
 
 First substantive release covering the MPEG-2 PSI and DVB SI table set, the
