@@ -1,4 +1,4 @@
-//! Multilingual Component Descriptor — ETSI EN 300 468 §6.2.24 (tag 0x5E).
+//! Multilingual Component Descriptor — ETSI EN 300 468 §6.2.23 (tag 0x5E).
 //!
 //! Table 77 (PDF p. 94). Carried in the EIT / PMT. A leading `component_tag`
 //! byte ties the descriptor to a component, followed by a loop of (ISO 639-2

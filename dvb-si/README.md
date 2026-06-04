@@ -4,8 +4,9 @@ ETSI EN 300 468 DVB Service Information parser **and builder**, plus the
 MPEG-2 PSI tables it builds on, the DVB-allocated companion tables, and the
 DSM-CC data carousel.
 
-**Complete table coverage: every allocated `table_id` in EN 300 468 V1.19.1
-Table 2 is implemented** — 29 tables, each with a symmetric
+**Complete coverage: every allocated `table_id` in EN 300 468 V1.19.1
+Table 2 (29 tables) and every allocated `descriptor_tag` in Table 12
+(0x40–0x7F, 64 descriptors) is implemented**, each with a symmetric
 `Parse` / `Serialize` pair and round-trip tests. Layouts are derived from the
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and
 validated against live broadcast captures.
@@ -70,33 +71,158 @@ test suite. BIOP object-carousel payloads above this layer are out of scope.
 
 ## Descriptors
 
-29 descriptors parse into typed structs; any other tag passes through as raw
-bytes (tag + payload preserved):
+**Every allocated `descriptor_tag` in EN 300 468 V1.19.1 Table 12
+(0x40–0x7F) is implemented** — plus the MPEG-2 descriptors that matter in SI
+context and the de-facto private logical_channel_descriptor. Each parses into
+a typed struct with a symmetric serializer and round-trip tests; any
+unallocated/unknown tag passes through as raw bytes (tag + payload preserved).
+Per the crate's zero-copy convention, free-form byte fields (names, selector
+tails) stay borrowed `&[u8]`; notes below only where a sub-structure is
+deliberately kept raw.
 
-| Tags | Typed descriptors |
-|---|---|
-| MPEG-2 | 0x05 registration · 0x06 data_stream_alignment · 0x09 CA · 0x0A ISO-639 language · 0x0F private_data_indicator |
-| DVB | 0x40 network_name · 0x41 service_list · 0x43 satellite_delivery · 0x44 cable_delivery · 0x47 bouquet_name · 0x48 service · 0x4A linkage · 0x4D short_event · 0x4E extended_event · 0x50 component · 0x52 stream_identifier · 0x54 content · 0x55 parental_rating · 0x56 teletext · 0x58 local_time_offset · 0x59 subtitling · 0x5A terrestrial_delivery · 0x62 frequency_list · 0x6A AC-3 · 0x73 default_authority · 0x76 content_identifier · 0x79 S2_satellite_delivery · 0x7A Enhanced AC-3 |
-| Private | 0x83 logical_channel (EACEM/NorDig) |
+| tag | Descriptor | Spec | Status |
+|---|---|---|---|
+| 0x05 | registration | ISO/IEC 13818-1 | ✅ full |
+| 0x06 | data_stream_alignment | ISO/IEC 13818-1 | ✅ full |
+| 0x09 | CA | ISO/IEC 13818-1 | ✅ full |
+| 0x0A | ISO_639_language | ISO/IEC 13818-1 | ✅ full |
+| 0x0F | private_data_indicator | ISO/IEC 13818-1 | ✅ full |
+| 0x40 | network_name | EN 300 468 | ✅ full |
+| 0x41 | service_list | EN 300 468 | ✅ full |
+| 0x42 | stuffing | EN 300 468 | ✅ full |
+| 0x43 | satellite_delivery_system | EN 300 468 | ✅ full |
+| 0x44 | cable_delivery_system | EN 300 468 | ✅ full |
+| 0x45 | VBI_data | EN 300 468 | ✅ full (typed service loop; one-byte line entries raw per §6.2.47) |
+| 0x46 | VBI_teletext | EN 300 468 | ✅ full |
+| 0x47 | bouquet_name | EN 300 468 | ✅ full |
+| 0x48 | service | EN 300 468 | ✅ full |
+| 0x49 | country_availability | EN 300 468 | ✅ full |
+| 0x4A | linkage | EN 300 468 | ✅ full |
+| 0x4B | NVOD_reference | EN 300 468 | ✅ full |
+| 0x4C | time_shifted_service | EN 300 468 | ✅ full |
+| 0x4D | short_event | EN 300 468 | ✅ full |
+| 0x4E | extended_event | EN 300 468 | ✅ full |
+| 0x4F | time_shifted_event | EN 300 468 | ✅ full |
+| 0x50 | component | EN 300 468 | ✅ full |
+| 0x51 | mosaic | EN 300 468 | ✅ full (typed cell + elementary-cell loops, typed cell_linkage variants) |
+| 0x52 | stream_identifier | EN 300 468 | ✅ full |
+| 0x53 | CA_identifier | EN 300 468 | ✅ full |
+| 0x54 | content | EN 300 468 | ✅ full |
+| 0x55 | parental_rating | EN 300 468 | ✅ full |
+| 0x56 | teletext | EN 300 468 | ✅ full |
+| 0x57 | telephone | EN 300 468 | ✅ full (bit-packed length fields typed) |
+| 0x58 | local_time_offset | EN 300 468 | ✅ full |
+| 0x59 | subtitling | EN 300 468 | ✅ full |
+| 0x5A | terrestrial_delivery_system | EN 300 468 | ✅ full |
+| 0x5B | multilingual_network_name | EN 300 468 | ✅ full |
+| 0x5C | multilingual_bouquet_name | EN 300 468 | ✅ full |
+| 0x5D | multilingual_service_name | EN 300 468 | ✅ full |
+| 0x5E | multilingual_component | EN 300 468 | ✅ full |
+| 0x5F | private_data_specifier | EN 300 468 | ✅ full |
+| 0x60 | service_move | EN 300 468 | ✅ full |
+| 0x61 | short_smoothing_buffer | EN 300 468 | ✅ full |
+| 0x62 | frequency_list | EN 300 468 | ✅ full |
+| 0x63 | partial_transport_stream | EN 300 468 §7.2.1 | ✅ full |
+| 0x64 | data_broadcast | EN 300 468 | ✅ full (selector raw — interpretation depends on data_broadcast_id) |
+| 0x65 | scrambling | EN 300 468 | ✅ full |
+| 0x66 | data_broadcast_id | EN 300 468 / EN 301 192 | ✅ full (id_selector tail raw) |
+| 0x67 | transport_stream | EN 300 468 | ✅ full |
+| 0x68 | DSNG | EN 300 468 | ✅ full |
+| 0x69 | PDC | EN 300 468 | ✅ full |
+| 0x6A | AC-3 | EN 300 468 Annex D | ✅ full |
+| 0x6B | ancillary_data | EN 300 468 | ✅ full |
+| 0x6C | cell_list | EN 300 468 | ✅ full (both loops typed, 12+12-bit extents unpacked) |
+| 0x6D | cell_frequency_link | EN 300 468 | ✅ full (both loops typed) |
+| 0x6E | announcement_support | EN 300 468 | ✅ full |
+| 0x6F | application_signalling | TS 102 809 | ✅ full |
+| 0x70 | adaptation_field_data | EN 300 468 | ✅ full |
+| 0x71 | service_identifier | TS 102 809 | ✅ full |
+| 0x72 | service_availability | EN 300 468 | ✅ full |
+| 0x73 | default_authority | TS 102 323 | ✅ full |
+| 0x74 | related_content | TS 102 323 | ✅ full |
+| 0x75 | TVA_id | TS 102 323 | ✅ full |
+| 0x76 | content_identifier | TS 102 323 | ✅ full |
+| 0x77 | time_slice_fec_identifier | EN 301 192 | ✅ full |
+| 0x78 | ECM_repetition_rate | EN 301 192 | ✅ full |
+| 0x79 | S2_satellite_delivery_system | EN 300 468 | ✅ full |
+| 0x7A | enhanced_AC-3 | EN 300 468 Annex D | ✅ full |
+| 0x7B | DTS | EN 300 468 Annex G | ✅ full |
+| 0x7C | AAC | EN 300 468 Annex H | ✅ full |
+| 0x7D | XAIT_location | TS 102 727 | ✅ full |
+| 0x7E | FTA_content_management | EN 300 468 | ✅ full |
+| 0x7F | extension | EN 300 468 §6.2.18.1 | ✅ typed discriminant + typed bodies below; unknown tag_extensions round-trip raw |
+| 0x83 | logical_channel | EACEM/NorDig private | ✅ full |
+
+### Extension descriptor registry (tag 0x7F)
+
+The first payload byte (`descriptor_tag_extension`) selects a sub-descriptor
+(EN 300 468 §6.4). A body is typed only when its syntax table is vendored
+under `docs/`; everything else is preserved byte-exact as `Raw` and
+round-trips losslessly.
+
+| tag_ext | Extension | Status |
+|---|---|---|
+| 0x04 | T2_delivery_system | ✅ typed (first level; cell loop raw) |
+| 0x06 | supplementary_audio | ✅ typed |
+| 0x07 | network_change_notify | ✅ typed (cell loop raw) |
+| 0x08 | message | ✅ typed |
+| 0x09 | target_region | ✅ typed (region loop raw) |
+| 0x0A | target_region_name | ✅ typed (region loop raw) |
+| 0x0B | service_relocated | ✅ typed |
+| 0x0D | C2_delivery_system | ✅ typed |
+| 0x13 | URI_linkage | ✅ typed (uri/private split) |
+| 0x15 | AC-4 | ✅ typed (first level; toc/extra raw) |
+| 0x16 | C2_bundle_delivery_system | ✅ typed (full fixed loop) |
+| 0x17 | S2X_satellite_delivery_system | ✅ typed (primary channel; bonding tail raw) |
+| 0x19 | audio_preselection | ✅ typed (preselection loop raw) |
+| 0x20 | TTML_subtitling | ✅ typed (EN 303 560) |
+| 0x00 image_icon · 0x05 SH_delivery_system · 0x10 video_depth_range · 0x11 T2MI · 0x22–0x24 | niche; deferred | raw-preserved |
+| 0x01–0x03 CPCM (TS 102 825) · 0x0C XAIT_PID (TS 102 727) · 0x0E/0x0F/0x21 DTS family · 0x14 CI_ancillary (TS 103 205) · 0x18 protection_message (TS 102 809) | spec not vendored | raw-preserved |
 
 ## Text decoding
 
-EN 300 468 Annex A: the default Latin table **glyph-for-glyph per Figure A.1**
-(ISO 6937 superset — € at 0xA4, full non-spacing diacritic row with
-precomposed forms + combining-mark fallback, every position pinned by tests),
-ISO 8859-n via `encoding_rs`, UTF-8 (selector 0x15), UCS-2 BE (0x11), Annex
-A.2 control codes.
+**Full EN 300 468 Annex A Table A.3 selector coverage:**
+
+| Selector | Table | Decoding |
+|---|---|---|
+| (none, first byte ≥ 0x20) | default Latin, Figure A.1 | **glyph-for-glyph** (ISO 6937 superset — € at 0xA4, full non-spacing diacritic row with precomposed forms + combining-mark fallback, every position pinned by tests) |
+| 0x01–0x0B | ISO/IEC 8859-5 … -15 | via `encoding_rs` (0x08 is reserved — no ISO 8859-12) |
+| 0x10 | ISO/IEC 8859-n (two-byte selector) | via `encoding_rs` |
+| 0x11 | ISO/IEC 10646 BMP | UCS-2 BE |
+| 0x12 | KS X 1001 (Korean) | EUC-KR |
+| 0x13 | GB-2312-1980 (Simplified Chinese) | GBK (GB-2312 superset) |
+| 0x14 | Big5 (Traditional Chinese) | Big5 |
+| 0x15 | UTF-8 | passthrough |
+| 0x1F | `encoding_type_id` escape | id byte consumed; body U+FFFD (no registered broadcast ids) |
+| reserved (0x08, 0x0C–0x0F, 0x16–0x1E) | — | U+FFFD per byte |
+
+Annex A.1 control codes are honored for both the single-byte (0x80–0x9F) and
+two-byte (U+E080–U+E09F PUA, Table A.2) tables: emphasis markers dropped,
+CR/LF → space, reserved controls stripped.
 
 ## Spec grounding
 
 Every layout is cited. The repo vendors the ETSI PDFs and transcribes their
 syntax tables into reviewable markdown
-([`docs/`](https://github.com/fishloa/rust-dvb/tree/main/dvb-si/docs)):
-EN 300 468 V1.19.1 (2025-02), TS 102 323, TS 102 006, EN 301 192, TS 102 809,
-TS 102 772, EN 303 560, TR 101 202 — plus a provenance-documented hand
-transcription for ISO/IEC 13818-6 (not freely redistributable). The crate has
-been through four adversarial spec-audit rounds; fixture tests run against
-real transponder captures.
+([`docs/`](https://github.com/fishloa/rust-dvb/tree/main/dvb-si/docs)) —
+each spec below links both the ETSI deliverable and the in-repo
+transcription:
+
+| Spec | ETSI deliverable | Transcription |
+|---|---|---|
+| EN 300 468 V1.19.1 (2025-02) — DVB SI | [PDF](https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf) | [en_300_468.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_300_468.md) |
+| EN 301 192 v1.7.1 — data broadcasting | [PDF](https://www.etsi.org/deliver/etsi_en/301100_301199/301192/01.07.01_60/en_301192v010701p.pdf) | [en_301_192.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_301_192.md) |
+| TS 102 006 v1.7.1 — System Software Update | [PDF](https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf) | [ts_102_006_ssu.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_006_ssu.md) |
+| TS 102 323 v1.4.1 — TV-Anytime carriage | [PDF](https://www.etsi.org/deliver/etsi_ts/102300_102399/102323/01.04.01_60/ts_102323v010401p.pdf) | [ts_102_323_tva.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_323_tva.md) |
+| TS 102 809 v1.3.1 — application signalling | [PDF](https://www.etsi.org/deliver/etsi_ts/102800_102899/102809/01.03.01_60/ts_102809v010301p.pdf) | [ts_102_809_apps.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_809_apps.md) |
+| TS 102 772 v1.1.1 — MPE-IFEC | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102772/01.01.01_60/ts_102772v010101p.pdf) | [ts_102_772_mpe_ifec.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_772_mpe_ifec.md) |
+| EN 303 560 v1.1.1 — TTML subtitling | [PDF](https://www.etsi.org/deliver/etsi_en/303500_303599/303560/01.01.01_60/en_303560v010101p.pdf) | [en_303_560_ttml.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_303_560_ttml.md) |
+| TS 102 727 v1.1.1 — MHP (XAIT) | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102727/01.01.01_60/ts_102727v010101p.pdf) | vendored PDF only (cites give page + table) |
+| TR 101 202 v1.2.1 — data broadcasting guidelines | [PDF](https://www.etsi.org/deliver/etsi_tr/101200_101299/101202/01.02.01_60/tr_101202v010201p.pdf) | profile semantics for `carousel` (no syntax tables) |
+| ISO/IEC 13818-6 — DSM-CC | not freely redistributable | [iso_13818_6_carousel.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/iso_13818_6_carousel.md) (provenance-documented hand transcription) |
+
+The crate has been through five adversarial spec-audit rounds; fixture tests
+run against real transponder captures.
 
 ## Usage
 
@@ -129,9 +255,9 @@ dvb-si = { version = "1.0", default-features = false }  # tight build
 
 ## Family
 
-[`dvb-common`](https://crates.io/crates/dvb-common) (traits + CRC-32) ·
-[`dvb-t2mi`](https://crates.io/crates/dvb-t2mi) (T2-MI, all 12 packet types) ·
-[`dvb-bbframe`](https://crates.io/crates/dvb-bbframe) (S2/S2X/T2 BBFRAME).
+[`dvb-common`](https://crates.io/crates/dvb-common) — traits + CRC-32\
+[`dvb-t2mi`](https://crates.io/crates/dvb-t2mi) — T2-MI, all 12 packet types\
+[`dvb-bbframe`](https://crates.io/crates/dvb-bbframe) — S2/S2X/T2 BBFRAME\
 For GSE see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 
 ## License

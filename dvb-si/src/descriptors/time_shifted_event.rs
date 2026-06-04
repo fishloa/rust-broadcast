@@ -1,4 +1,4 @@
-//! Time Shifted Event Descriptor — ETSI EN 300 468 §6.2.46 (tag 0x4F).
+//! Time Shifted Event Descriptor — ETSI EN 300 468 §6.2.44 (tag 0x4F).
 //!
 //! Table 103 (PDF p. 109). Carried in the EIT for an NVOD time-shifted
 //! event; points at the reference service + event it shifts. Body is a 16-bit

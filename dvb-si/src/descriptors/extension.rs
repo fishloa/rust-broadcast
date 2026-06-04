@@ -51,7 +51,7 @@
 //! - `0x01` cpcm_delivery_signalling — spec not vendored (ETSI TS 102 825).
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
 //! - `0x05` SH_delivery_system — niche (satellite-to-handheld); deferred.
-//! - `0x0C` XAIT_PID — spec not vendored (ETSI TS 102 727).
+//! - `0x0C` XAIT_PID — deferred (TS 102 727 PDF vendored, no extracted syntax table yet).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x10` video_depth_range — niche (3D disparity); deferred.
 //! - `0x11` T2MI — niche (T2-MI encapsulation); deferred.
@@ -79,7 +79,7 @@ const ISO_639_LEN: usize = 3;
 const T2_FIXED_PREFIX_LEN: usize = 3; // plp_id(1) + T2_system_id(2)
 const T2_FLAGS_BLOCK_LEN: usize = 2; // SISO_MISO..tfs_flag, packed in 2 bytes
 const C2_LEN: usize = 7; // plp + data_slice + freq(4) + 1 packed byte
-const C2_BUNDLE_ENTRY_LEN: usize = 9; // plp + data_slice + freq(4) + 1 packed + 1 (primary+reserved)
+const C2_BUNDLE_ENTRY_LEN: usize = 8; // plp + data_slice + freq(4) + 1 packed + 1 (primary(1)+reserved_zero(7))
 const SERVICE_RELOCATED_LEN: usize = 6; // 3 × u16
 /// S2X primary-channel block after the 2 flags bytes (excl. scrambling/ISI/timeslice):
 /// frequency(4) + orbital_position(2) + 1 packed byte + symbol_rate(4 bytes).
@@ -790,8 +790,10 @@ fn parse_s2x(sel: &[u8]) -> Result<S2XSatelliteDeliverySystem<'_>> {
     }
     let receiver_profiles = sel[0] >> 3;
     let b1 = sel[1];
-    let s2x_mode = (b1 >> 3) & 0x03;
-    let scrambling_sequence_selector = (b1 & 0x04) != 0;
+    // Table 140 byte 1, MSB-first: S2X_mode(2) scrambling_sequence_selector(1)
+    // reserved_zero_future_use(3) TS_GS_S2X_mode(2).
+    let s2x_mode = (b1 >> 6) & 0x03;
+    let scrambling_sequence_selector = (b1 & 0x20) != 0;
     let ts_gs_s2x_mode = b1 & 0x03;
     let mut pos = 2;
     let scrambling_sequence_index = if scrambling_sequence_selector {
@@ -1027,8 +1029,10 @@ impl ExtensionBody<'_> {
                 out[p..p + b.cell_loop.len()].copy_from_slice(b.cell_loop);
             }
             ExtensionBody::SupplementaryAudio(b) => {
+                // Table 153 bit 1 is plain reserved_future_use → emitted as 1.
                 out[0] = (u8::from(b.mix_type) << 7)
                     | ((b.editorial_classification & 0x1F) << 2)
+                    | 0x02
                     | u8::from(b.language_code_present);
                 let mut p = 1;
                 if let Some(lc) = b.iso_639_language_code {
@@ -1107,14 +1111,13 @@ impl ExtensionBody<'_> {
                         | ((e.active_ofdm_symbol_duration & 0x07) << 3)
                         | (e.guard_interval & 0x07);
                     out[p + 7] = u8::from(e.primary_channel) << 7;
-                    out[p + 8] = 0;
                     p += C2_BUNDLE_ENTRY_LEN;
                 }
             }
             ExtensionBody::S2XSatelliteDeliverySystem(b) => {
                 out[0] = b.receiver_profiles << 3;
-                out[1] = ((b.s2x_mode & 0x03) << 3)
-                    | (u8::from(b.scrambling_sequence_selector) << 2)
+                out[1] = ((b.s2x_mode & 0x03) << 6)
+                    | (u8::from(b.scrambling_sequence_selector) << 5)
                     | (b.ts_gs_s2x_mode & 0x03);
                 let mut p = 2;
                 if b.scrambling_sequence_selector {
@@ -1302,8 +1305,9 @@ mod tests {
 
     #[test]
     fn parse_supplementary_audio_with_language() {
-        // mix_type=1, editorial=0x17, language_code_present=1, then "fre", private 0xAA
-        let flags = 0x80 | (0x17 << 2) | 0x01;
+        // mix_type=1, editorial=0x17, reserved=1, language_code_present=1,
+        // then "fre", private 0xAA
+        let flags = 0x80 | (0x17 << 2) | 0x02 | 0x01;
         let sel = [flags, b'f', b'r', b'e', 0xAA];
         let bytes = wrap(0x06, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -1322,7 +1326,7 @@ mod tests {
 
     #[test]
     fn parse_supplementary_audio_no_language() {
-        let flags = (0x01 << 2) & 0x7C; // mix=0, editorial=1, lang=0
+        let flags = ((0x01 << 2) & 0x7C) | 0x02; // mix=0, editorial=1, reserved=1, lang=0
         let sel = [flags];
         let bytes = wrap(0x06, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -1361,7 +1365,8 @@ mod tests {
     fn parse_c2_bundle_two_entries() {
         let entry = |off: u8| {
             let packed = (0x01u8 << 6) | 0x01; // freq_type=1, ofdm=0, guard=1
-            [off, off + 1, 0x00, 0x00, 0x10, 0x00, packed, 0x80, 0x00]
+            // 8 bytes per Table 139: ... + primary_channel(1)+reserved_zero(7)
+            [off, off + 1, 0x00, 0x00, 0x10, 0x00, packed, 0x80]
         };
         let mut sel = Vec::new();
         sel.extend_from_slice(&entry(0x01));
@@ -1383,7 +1388,7 @@ mod tests {
 
     #[test]
     fn parse_c2_bundle_rejects_partial_entry() {
-        let sel = [0x01, 0x02, 0x03]; // 3 bytes, not a multiple of 9
+        let sel = [0x01, 0x02, 0x03]; // 3 bytes, not a multiple of 8
         let bytes = wrap(0x16, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
@@ -1522,7 +1527,7 @@ mod tests {
     fn parse_s2x_primary_with_isi_and_timeslice() {
         // receiver_profiles=0x05; s2x_mode=2, scram_sel=0, ts_gs=1; ISI + timeslice
         let b0 = 0x05 << 3;
-        let b1 = (0x02 << 3) | 0x01; // mode 2, no scrambling, ts_gs 1
+        let b1 = (0x02 << 6) | 0x01; // mode 2 [7:6], no scrambling, ts_gs 1 [1:0]
         let mut sel = vec![b0, b1];
         sel.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // frequency
         sel.extend_from_slice(&0x00C8u16.to_be_bytes()); // orbital_position
@@ -1561,7 +1566,7 @@ mod tests {
     #[test]
     fn parse_s2x_with_scrambling_index() {
         let b0 = 0x01 << 3;
-        let b1 = (0x01 << 3) | 0x04; // mode 1, scrambling selector set
+        let b1 = (0x01 << 6) | 0x20; // mode 1 [7:6], scrambling selector set [5]
         let mut sel = vec![b0, b1];
         // scrambling index 0x2ABCD (18-bit)
         sel.push(0x02);
@@ -1589,7 +1594,7 @@ mod tests {
     fn parse_s2x_mode3_tail_preserved() {
         // mode 3 (channel bonding) — the bond loop lands in `tail` (raw).
         let b0 = 0x01 << 3;
-        let b1 = 0x03 << 3; // mode 3, no scrambling, ts_gs 0
+        let b1 = 0x03 << 6; // mode 3 [7:6], no scrambling, ts_gs 0
         let mut sel = vec![b0, b1];
         sel.extend_from_slice(&0u32.to_be_bytes());
         sel.extend_from_slice(&0u16.to_be_bytes());

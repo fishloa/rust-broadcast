@@ -1,4 +1,4 @@
-//! Related Content Descriptor — ETSI TS 102 323 §10.3, Table 108 (tag 0x74).
+//! Related Content Descriptor — ETSI TS 102 323 §10.4.1, Table 108 (tag 0x74).
 //!
 //! Carried in a PMT ES_info loop to flag that the elementary stream delivers
 //! a Related Content Table (RCT) sub_table. The descriptor body is empty — it

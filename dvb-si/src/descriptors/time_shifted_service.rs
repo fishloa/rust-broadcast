@@ -1,4 +1,4 @@
-//! Time Shifted Service Descriptor — ETSI EN 300 468 §6.2.46 (tag 0x4C).
+//! Time Shifted Service Descriptor — ETSI EN 300 468 §6.2.45 (tag 0x4C).
 //!
 //! Table 104 (PDF p. 109). Carried in the SDT for an NVOD time-shifted
 //! service; points at the reference service whose schedule it shifts. Body is

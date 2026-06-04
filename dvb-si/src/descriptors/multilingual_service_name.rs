@@ -1,4 +1,4 @@
-//! Multilingual Service Name Descriptor — ETSI EN 300 468 §6.2.26 (tag 0x5D).
+//! Multilingual Service Name Descriptor — ETSI EN 300 468 §6.2.25 (tag 0x5D).
 //!
 //! Table 79 (PDF p. 95). Carried in the SDT. A loop of entries, each carrying
 //! an ISO 639-2 language code plus TWO length-prefixed strings: the service

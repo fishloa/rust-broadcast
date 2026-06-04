@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.1.0 — 2026-06-04
+
+**Coverage milestone: every allocated `descriptor_tag` in EN 300 468 V1.19.1
+Table 12 (0x40–0x7F) is implemented** — 41 new descriptor modules, each with
+a symmetric `Parse`/`Serialize` pair, spec-cited layout, and round-trip tests.
+
+### Added
+
+**Descriptors** (EN 300 468 unless noted)
+- 0x42 stuffing, 0x45 VBI_data, 0x46 VBI_teletext, 0x49 country_availability,
+  0x4B NVOD_reference, 0x4C time_shifted_service, 0x4F time_shifted_event,
+  0x51 mosaic (typed cell/elementary-cell loops + cell_linkage variants),
+  0x53 CA_identifier, 0x57 telephone, 0x5B–0x5E multilingual
+  network_name/bouquet_name/service_name/component, 0x5F
+  private_data_specifier, 0x60 service_move, 0x61 short_smoothing_buffer,
+  0x63 partial_transport_stream, 0x64 data_broadcast, 0x65 scrambling,
+  0x66 data_broadcast_id, 0x67 transport_stream, 0x68 DSNG, 0x69 PDC,
+  0x6B ancillary_data, 0x6C cell_list, 0x6D cell_frequency_link,
+  0x6E announcement_support, 0x70 adaptation_field_data,
+  0x72 service_availability, 0x7B DTS (Annex G), 0x7C AAC (Annex H),
+  0x7E FTA_content_management
+- 0x6F application_signalling, 0x71 service_identifier (TS 102 809)
+- 0x74 related_content, 0x75 TVA_id (TS 102 323)
+- 0x77 time_slice_fec_identifier, 0x78 ECM_repetition_rate (EN 301 192)
+- 0x7D XAIT_location (TS 102 727, newly vendored)
+- 0x7F extension descriptor — typed `descriptor_tag_extension` discriminant
+  with 14 typed extension bodies (T2/C2/C2-bundle/S2X delivery systems,
+  supplementary_audio, network_change_notify, message, target_region(_name),
+  service_relocated, URI_linkage, AC-4, audio_preselection, TTML_subtitling)
+  and a raw-preserving fallthrough: unknown tag_extensions round-trip
+  byte-exact.
+
+**Text** — full Annex A Table A.3 selector coverage: 0x12 KS X 1001 (EUC-KR),
+0x13 GB-2312 (via GBK), 0x14 Big5, 0x1F encoding_type_id escape; two-byte
+control codes (U+E080–U+E09F, Table A.2) now honored alongside the
+single-byte set.
+
+### Fixed (audit round 5, pre-release)
+- extension/S2X_satellite_delivery_system (0x7F/0x17): byte-1 bit layout
+  corrected to Table 140 — S2X_mode at bits [7:6] and
+  scrambling_sequence_selector at bit [5] (were [4:3] and [2]).
+- extension/C2_bundle_delivery_system (0x7F/0x16): bundle entries are 8 bytes
+  per Table 139, not 9 — multi-entry descriptors no longer misalign.
+- extension/supplementary_audio (0x7F/0x06): flags-byte bit 1 is plain
+  `reserved_future_use` → now serialized as 1 per the crate convention.
+- Doc-cite corrections: time_shifted_event §6.2.44, time_shifted_service
+  §6.2.45, multilingual_component §6.2.23, multilingual_service_name §6.2.25,
+  related_content §10.4.1.
+
 ## 1.0.1 — 2026-06-04
 
 Docs-only: README rewritten around an explicit implementation matrix — per

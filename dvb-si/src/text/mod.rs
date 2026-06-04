@@ -37,17 +37,21 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
         Charset::Unsupported(_indicator) => body.iter().map(|_| '\u{FFFD}').collect(),
     };
 
-    // Annex A.2 control codes:
-    //   0x86 emphasis on, 0x87 emphasis off, 0x8A CR/LF -> space.
-    //   Other C0/C1 controls are stripped.
+    // Annex A.1 control codes:
+    //   single-byte tables: 0x86 emphasis on, 0x87 emphasis off, 0x8A CR/LF
+    //   -> space; other C0/C1 controls are stripped.
+    //   two-byte tables (Table A.2): the same functions live at U+E086 /
+    //   U+E087 / U+E08A inside the ISO 10646 PUA; the rest of
+    //   U+E080..U+E09F is reserved for control functions and stripped.
     decoded
         .chars()
         .filter_map(|c| match c as u32 {
-            0x86 | 0x87 => None,
-            0x8A => Some(' '),
+            0x86 | 0x87 | 0xE086 | 0xE087 => None,
+            0x8A | 0xE08A => Some(' '),
             0x0A => Some(' '),
             code if code < 0x20 => None,
             code if (0x80..0xA0).contains(&code) => None,
+            code if (0xE080..0xE0A0).contains(&code) => None,
             _ => Some(c),
         })
         .collect()
@@ -436,6 +440,23 @@ mod tests {
     fn decode_selector_0x14_big5() {
         // Big5 0xA4A4 = '中'.
         assert_eq!(decode_dvb_string(&[0x14, 0xA4, 0xA4]), "中");
+    }
+
+    /// A multi-byte trail byte in 0x80–0x9F must survive: the C1 control
+    /// filter operates on decoded code points, never on raw trail bytes.
+    /// GBK 0x8180 = '亐' (U+4E90, trail byte in the C1 range).
+    #[test]
+    fn decode_selector_0x13_gbk_trail_byte_in_c1_range() {
+        assert_eq!(decode_dvb_string(&[0x13, 0x81, 0x80]), "亐");
+    }
+
+    /// Annex A.1 two-byte control codes live at U+E080–U+E09F in the PUA
+    /// (Table A.2): U+E08A is CR/LF → space; the reserved rest is stripped.
+    /// GBK 0xABCD decodes to U+E08A; GBK 0xABC3 decodes to U+E080.
+    #[test]
+    fn two_byte_control_codes_filtered() {
+        assert_eq!(decode_dvb_string(&[0x13, 0xAB, 0xCD]), " ");
+        assert_eq!(decode_dvb_string(&[0x13, 0xAB, 0xC3]), "");
     }
 
     /// 0x1F consumes its 8-bit encoding_type_id; the body is undecodable
