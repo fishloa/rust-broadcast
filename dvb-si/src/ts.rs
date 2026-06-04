@@ -6,9 +6,11 @@ use crate::error::{Error, Result};
 pub const TS_PACKET_SIZE: usize = 188;
 /// Sync byte that every TS packet starts with (ISO/IEC 13818-1 §2.4.3.2).
 pub const TS_SYNC_BYTE: u8 = 0x47;
-/// Upper bound on a single PSI/SI section — per ETSI EN 300 468 §5.1.1,
-/// `section_length` is 12 bits so at most 4096 bytes inclusive of header.
-const MAX_SECTION_SIZE: usize = 4096;
+/// Upper bound on a single section: `section_length` is 12 bits (max 4095)
+/// plus the 3-byte header = 4098. (Long-form SI caps `section_length` at
+/// 4093 → total 4096, but maximal short-form private sections may reach
+/// 4098; the reassembler accepts the absolute ceiling.)
+const MAX_SECTION_SIZE: usize = 4098;
 
 /// ETSI EN 300 468 §3.2.3: transport header byte 1 bits 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
@@ -193,6 +195,13 @@ impl SectionReassembler {
     /// where one feed might yield multiple sections).
     pub fn feed(&mut self, payload: &[u8], pusi: bool) {
         if pusi {
+            // A PUSI packet whose adaptation field consumed the whole body is
+            // malformed but constructible — drop sync rather than panic.
+            if payload.is_empty() {
+                self.buf.clear();
+                self.expected = 0;
+                return;
+            }
             let pointer = payload[0] as usize;
             let start = 1 + pointer;
             if start >= payload.len() {
@@ -441,5 +450,40 @@ mod tests {
             reasm.pop_section().is_none(),
             "second pop should also be none"
         );
+    }
+
+    /// A PUSI packet with an empty payload (adaptation field ate the body)
+    /// is malformed but must not panic — it drops sync.
+    #[test]
+    fn reassembler_empty_pusi_payload_does_not_panic() {
+        let mut reasm = SectionReassembler::default();
+        reasm.feed(&[], true);
+        assert!(reasm.pop_section().is_none());
+        // Recovers on the next clean PUSI.
+        let mut payload = vec![0x00u8, 0x72, 0x70, 0x01, 0x00];
+        payload.resize(5, 0);
+        reasm.feed(&payload, true);
+        assert!(reasm.pop_section().is_some());
+    }
+
+    /// A maximal short-form private section (section_length 0xFFF, total
+    /// 4098 bytes) reassembles — the ceiling is 12-bit length + 3-byte
+    /// header, not 4096.
+    #[test]
+    fn reassembler_accepts_maximal_private_section() {
+        let mut section = vec![0x80u8, 0x7F, 0xFF]; // user-private tid, SSI=0, len 0xFFF
+        section.resize(3 + 0xFFF, 0xAB);
+
+        let mut reasm = SectionReassembler::default();
+        // First TS payload: pointer_field 0 then the section start.
+        let mut first = vec![0x00];
+        first.extend_from_slice(&section[..183]);
+        reasm.feed(&first, true);
+        for chunk in section[183..].chunks(184) {
+            reasm.feed(chunk, false);
+        }
+        let out = reasm.pop_section().expect("4098-byte section should pop");
+        assert_eq!(out.len(), 4098);
+        assert_eq!(out.as_ref(), &section[..]);
     }
 }

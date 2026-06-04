@@ -10,21 +10,33 @@
 //! and verifies the output is valid JSON containing the wire-relevant
 //! top-level fields. Round-trip via a borrowing-friendly format
 //! (postcard, bincode) is a separate concern.
+//!
+//! Coverage now also includes the companion tables — `Container`,
+//! `MpeDatagramSection`, `MpeFec`, `MpeIfec`, `ProtectionMessageSection`,
+//! `DownloadableFontInfoSection` — plus a DSM-CC object-carousel case
+//! (`UnMessage::Dii`).
 #![cfg(feature = "serde")]
 
 use dvb_common::Parse;
+use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::tables::{
     ait::{Ait, AitApplication, ApplicationIdentifier},
     bat::{Bat, BatTransportStream},
     cat::Cat,
     cit::Cit,
+    container::Container,
     dit::Dit,
+    downloadable_font_info::{DownloadableFontInfoSection, FontInfo},
     dsmcc::DsmccSection,
     eit::{Eit, EitEvent, EitKind},
     int::Int,
+    mpe::MpeDatagramSection,
+    mpe_fec::{MpeFec, RealTimeParameters as MpeFecRtp},
+    mpe_ifec::{MpeIfec, RealTimeParameters as MpeIfecRtp},
     nit::{Nit, NitKind, NitTransportStream},
     pat::{Pat, PatEntry},
     pmt::{Pmt, PmtStream},
+    protection_message::{ProtectionMessageBody, ProtectionMessageSection},
     rct::Rct,
     rnt::Rnt,
     rst::{Rst, RstEntry},
@@ -422,4 +434,145 @@ fn rnt_serializes_to_valid_json() {
     };
     let j = serde_json::to_string(&rnt).expect("serialize RNT");
     assert_valid_json_with_keys(&j, &["context_id", "resolution_providers"]);
+}
+
+// --- Companion tables + carousel: serialize emits valid JSON --------------
+
+#[test]
+fn container_serializes_to_valid_json() {
+    let container = Container {
+        private_indicator: true,
+        container_id: 0xBEEF,
+        version_number: 9,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        container_data: &[0xCA, 0xFE],
+    };
+    let j = serde_json::to_string(&container).expect("serialize Container");
+    assert_valid_json_with_keys(&j, &["container_id", "version_number", "container_data"]);
+}
+
+#[test]
+fn mpe_datagram_section_serializes_to_valid_json() {
+    let mpe = MpeDatagramSection {
+        section_syntax_indicator: false,
+        private_indicator: true,
+        mac_address: [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
+        payload_scrambling_control: 0b01,
+        address_scrambling_control: 0b11,
+        llc_snap_flag: true,
+        current_next_indicator: true,
+        section_number: 3,
+        last_section_number: 7,
+        payload: &[0xAB, 0xCD],
+        checksum: [0xDE, 0xAD, 0xBE, 0xEF],
+    };
+    let j = serde_json::to_string(&mpe).expect("serialize MpeDatagramSection");
+    assert_valid_json_with_keys(&j, &["mac_address", "payload", "checksum"]);
+}
+
+#[test]
+fn mpe_fec_serializes_to_valid_json() {
+    let mpe_fec = MpeFec {
+        private_indicator: true,
+        padding_columns: 12,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        real_time_parameters: MpeFecRtp {
+            delta_t: 0x0ABC,
+            table_boundary: true,
+            frame_boundary: false,
+            address: 0x0001_2345,
+        },
+        rs_data: &[0x01, 0x02],
+    };
+    let j = serde_json::to_string(&mpe_fec).expect("serialize MpeFec");
+    assert_valid_json_with_keys(&j, &["padding_columns", "real_time_parameters", "rs_data"]);
+}
+
+#[test]
+fn mpe_ifec_serializes_to_valid_json() {
+    let mpe_ifec = MpeIfec {
+        private_indicator: true,
+        burst_number: 7,
+        ifec_burst_size: 8,
+        version: 3,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        real_time_parameters: MpeIfecRtp {
+            delta_t: 0x0ABC,
+            mpe_boundary: true,
+            frame_boundary: false,
+            prev_burst_size: 0x0001_2345,
+        },
+        ifec_data: &[0x01, 0x02],
+    };
+    let j = serde_json::to_string(&mpe_ifec).expect("serialize MpeIfec");
+    assert_valid_json_with_keys(&j, &["burst_number", "real_time_parameters", "ifec_data"]);
+}
+
+#[test]
+fn protection_message_section_serializes_to_valid_json() {
+    let pms = ProtectionMessageSection {
+        table_id_extension: 0x0100,
+        version_number: 5,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        body: ProtectionMessageBody::CertificateCollection {
+            certificates: vec![&[0x30, 0x82, 0x01, 0x02], &[0xAB, 0xCD]],
+        },
+    };
+    let j = serde_json::to_string(&pms).expect("serialize ProtectionMessageSection");
+    assert_valid_json_with_keys(&j, &["table_id_extension", "body"]);
+}
+
+#[test]
+fn downloadable_font_info_section_serializes_to_valid_json() {
+    let dfis = DownloadableFontInfoSection {
+        font_id_extension: 0,
+        font_id: 0x42,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        font_info: vec![
+            FontInfo::StyleWeight { style: 2, weight: 2 },
+            FontInfo::FileUri {
+                format: 1,
+                uri: b"https://f.example/Droid.otf",
+            },
+        ],
+    };
+    let j = serde_json::to_string(&dfis).expect("serialize DownloadableFontInfoSection");
+    assert_valid_json_with_keys(&j, &["font_id", "font_info"]);
+}
+
+#[test]
+fn un_message_dii_serializes_to_valid_json() {
+    let dii = UnMessage::Dii(Dii {
+        transaction_id: 0x8002_0002,
+        adaptation: &[],
+        download_id: 0x0000_00AB,
+        block_size: 4066,
+        window_size: 0,
+        ack_period: 0,
+        t_c_download_window: 0,
+        t_c_download_scenario: 0,
+        compatibility_descriptor: &[],
+        modules: vec![DiiModule {
+            module_id: 1,
+            module_size: 8000,
+            module_version: 3,
+            module_info: &[0xDE, 0xAD],
+        }],
+        private_data: &[],
+    });
+    // The enum is externally tagged: the JSON top-level object carries a
+    // single `Dii` key whose value is the message body.
+    let j = serde_json::to_string(&dii).expect("serialize UnMessage::Dii");
+    assert_valid_json_with_keys(&j, &["Dii"]);
 }

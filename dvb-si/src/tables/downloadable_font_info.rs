@@ -304,6 +304,18 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
+        // 8-bit length prefixes error on over-range payloads rather than
+        // silently truncating (the crate's strict serialize idiom).
+        let guard_u8 = |len: usize| -> Result<()> {
+            if len > u8::MAX as usize {
+                return Err(Error::SectionLengthOverflow {
+                    declared: len,
+                    available: u8::MAX as usize,
+                });
+            }
+            Ok(())
+        };
+
         let mut pos = HEADER_LEN;
         for f in &self.font_info {
             match f {
@@ -314,6 +326,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     pos += 2;
                 }
                 FontInfo::FileUri { format, uri } => {
+                    guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4)=0 | font_file_format(4).
                     buf[pos + 1] = format & 0x0F;
@@ -323,6 +336,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     pos = s + uri.len();
                 }
                 FontInfo::FontSize { size, info } => {
+                    guard_u8(info.len())?;
                     buf[pos] = FONT_INFO_TYPE_FONT_SIZE;
                     buf[pos + 1..pos + 3].copy_from_slice(&size.to_be_bytes());
                     buf[pos + 3] = info.len() as u8;
@@ -334,6 +348,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     font_info_type,
                     info,
                 } => {
+                    guard_u8(info.len())?;
                     buf[pos] = *font_info_type;
                     buf[pos + 1] = info.len() as u8;
                     let s = pos + 2;

@@ -11,3 +11,7 @@ are the authoritative source. Excluded from the published crate.
 | [ts_102_006_ssu.md](ts_102_006_ssu.md) | TS 102 006 v1.7.1 — System Software Update | UNT (0x4B) |
 | [en_301_192.md](en_301_192.md) | EN 301 192 v1.7.1 — Data Broadcasting | INT (0x4C) |
 | [ts_102_323_tva.md](ts_102_323_tva.md) | TS 102 323 v1.4.1 — TV-Anytime | RCT (0x76), CIT (0x77), RNT (0x79) |
+| [ts_102_809_apps.md](ts_102_809_apps.md) | TS 102 809 v1.3.1 — Application signalling | AIT (0x74), protection message (0x7B) |
+| [ts_102_772_mpe_ifec.md](ts_102_772_mpe_ifec.md) | TS 102 772 v1.1.1 — MPE-IFEC | MPE-IFEC (0x7A) |
+| [en_303_560_ttml.md](en_303_560_ttml.md) | EN 303 560 v1.1.1 — TTML subtitling | DFIS (0x7C) |
+| [iso_13818_6_carousel.md](iso_13818_6_carousel.md) | ISO/IEC 13818-6 — DSM-CC carousel | DSM-CC carousel layouts (hand-transcribed — NOT extractor-generated) |

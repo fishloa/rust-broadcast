@@ -351,7 +351,9 @@ impl ProtectionMessageBody<'_> {
     }
 
     /// Write the body into `buf`, returning the number of bytes written.
-    fn write_into(&self, buf: &mut [u8]) -> usize {
+    /// Over-range length/count fields error rather than silently truncating
+    /// (the crate's strict serialize idiom — cf. `mpe.rs` scrambling guards).
+    fn write_into(&self, buf: &mut [u8]) -> Result<usize> {
         match self {
             ProtectionMessageBody::AuthenticationMessage {
                 section_hash_algorithm_identifier,
@@ -369,11 +371,36 @@ impl ProtectionMessageBody<'_> {
                     .iter()
                     .map(|h| 1 + h.reference.len() + h.hash.len())
                     .sum();
+                if loop_bytes > 0x0FFF {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: loop_bytes,
+                        available: 0x0FFF,
+                    });
+                }
+                if extension_bytes.len() > u8::MAX as usize {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: extension_bytes.len(),
+                        available: u8::MAX as usize,
+                    });
+                }
+                if signature_key_identifier.len() > u8::MAX as usize {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: signature_key_identifier.len(),
+                        available: u8::MAX as usize,
+                    });
+                }
                 // reserved(4) emitted 1s | section_hashes_loop_length(12).
                 buf[3] = 0xF0 | ((loop_bytes >> 8) as u8 & 0x0F);
                 buf[4] = (loop_bytes & 0xFF) as u8;
                 let mut pos = AUTH_FIXED_PREFIX;
                 for h in hashes {
+                    // reference_length is a 4-bit field.
+                    if h.reference.len() > 0x0F {
+                        return Err(Error::SectionLengthOverflow {
+                            declared: h.reference.len(),
+                            available: 0x0F,
+                        });
+                    }
                     buf[pos] = (h.reference_type << 4) | (h.reference.len() as u8 & 0x0F);
                     pos += 1;
                     buf[pos..pos + h.reference.len()].copy_from_slice(h.reference);
@@ -392,13 +419,27 @@ impl ProtectionMessageBody<'_> {
                 pos += signature_key_identifier.len();
                 buf[pos..pos + signature.len()].copy_from_slice(signature);
                 pos += signature.len();
-                pos
+                Ok(pos)
             }
             ProtectionMessageBody::CertificateCollection { certificates } => {
+                // certificate_count is a 4-bit field.
+                if certificates.len() > 0x0F {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: certificates.len(),
+                        available: 0x0F,
+                    });
+                }
                 // reserved(4) emitted 1s | certificate_count(4).
                 buf[0] = 0xF0 | (certificates.len() as u8 & 0x0F);
                 let mut pos = 1;
                 for c in certificates {
+                    // certificate_length is a 12-bit field.
+                    if c.len() > 0x0FFF {
+                        return Err(Error::SectionLengthOverflow {
+                            declared: c.len(),
+                            available: 0x0FFF,
+                        });
+                    }
                     // reserved(4) emitted 1s | certificate_length(12).
                     buf[pos] = 0xF0 | ((c.len() >> 8) as u8 & 0x0F);
                     buf[pos + 1] = (c.len() & 0xFF) as u8;
@@ -406,11 +447,11 @@ impl ProtectionMessageBody<'_> {
                     buf[pos..pos + c.len()].copy_from_slice(c);
                     pos += c.len();
                 }
-                pos
+                Ok(pos)
             }
             ProtectionMessageBody::Raw(raw) => {
                 buf[..raw.len()].copy_from_slice(raw);
-                raw.len()
+                Ok(raw.len())
             }
         }
     }
@@ -439,7 +480,7 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        let body_written = self.body.write_into(&mut buf[HEADER_LEN..]);
+        let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..body_end]);
         buf[body_end..len].copy_from_slice(&crc.to_be_bytes());

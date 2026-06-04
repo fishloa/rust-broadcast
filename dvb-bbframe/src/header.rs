@@ -720,7 +720,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_valid_dvbt2_bbframe_with_init_b5() {
+    fn parse_valid_dvbt2_hem_bbframe_rai() {
         // Real DVB-T2 BBFRAME header from Rai T2-MI (12606V, ISI 5, PLP 0).
         let hdr: [u8; BBHEADER_LEN] = [0xf8, 0x00, 0xa4, 0x28, 0xbc, 0xc8, 0xe2, 0x03, 0x50, 0x1f];
         assert_eq!(Bbheader::parse(&hdr).unwrap().dfl, 48328);

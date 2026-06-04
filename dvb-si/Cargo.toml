@@ -10,7 +10,7 @@ categories   = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
 rust-version = "1.75"
-exclude      = ["docs/**"]
+exclude      = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]
 all-features = true

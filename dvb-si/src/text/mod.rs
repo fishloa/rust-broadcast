@@ -70,6 +70,9 @@ fn split_charset(bytes: &[u8]) -> (Charset, &[u8]) {
     match bytes[0] {
         b if b >= 0x20 => (Charset::Iso6937, bytes),
         0x00 => (Charset::Iso6937, &bytes[1..]),
+        // Table A.3: 0x01..=0x0B map to ISO 8859-5..-15, EXCEPT 0x08 which is
+        // "reserved for future use" (there is no ISO 8859-12).
+        0x08 => (Charset::Unsupported(0x08), &bytes[1..]),
         0x01..=0x0B => (Charset::Iso8859(bytes[0] + 4), &bytes[1..]),
         0x10 if bytes.len() >= 3 && bytes[1] == 0x00 => {
             (Charset::Iso8859(bytes[2]), &bytes[3..])
@@ -392,6 +395,14 @@ mod tests {
         // 0x8A in DVB text maps to CR/LF per Annex A.2 — render as space.
         let s = decode_dvb_string(&[0x00, b'A', 0x8A, b'B']);
         assert_eq!(s, "A B");
+    }
+
+    /// Table A.3 marks single-byte selector 0x08 reserved (no ISO 8859-12).
+    #[test]
+    fn reserved_selector_0x08_is_unsupported() {
+        let s = decode_dvb_string(&[0x08, 0x41, 0x42]);
+        assert!(s.chars().all(|c| c == '\u{FFFD}'));
+        assert_eq!(s.chars().count(), 2);
     }
 
     #[test]

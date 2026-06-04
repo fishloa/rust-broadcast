@@ -76,7 +76,9 @@ pub struct SatelliteDeliverySystemDescriptor {
     pub east: bool,
     /// Polarization.
     pub polarization: Polarization,
-    /// DVB-S2 roll-off factor.
+    /// DVB-S2 roll-off factor. Meaningful only when `modulation_system` is
+    /// DVB-S2 (Table 37); for DVB-S the bits are reserved_zero_future_use and
+    /// serialize emits them as 0 regardless of this field.
     pub roll_off: RollOff,
     /// Modulation system.
     pub modulation_system: ModulationSystem,
@@ -224,12 +226,16 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             Polarization::CircularLeft => 0x40,
             Polarization::CircularRight => 0x60,
         };
-        flags |= match self.roll_off {
-            RollOff::Alpha035 => 0x00,
-            RollOff::Alpha025 => 0x08,
-            RollOff::Alpha020 => 0x10,
-            RollOff::Reserved => 0x18,
-        };
+        // Table 37: roll_off exists only when modulation_system == DVB-S2;
+        // for DVB-S those 2 bits are reserved_zero_future_use and SHALL be 0.
+        if self.modulation_system == ModulationSystem::DvbS2 {
+            flags |= match self.roll_off {
+                RollOff::Alpha035 => 0x00,
+                RollOff::Alpha025 => 0x08,
+                RollOff::Alpha020 => 0x10,
+                RollOff::Reserved => 0x18,
+            };
+        }
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,
             ModulationSystem::DvbS2 => 0x04,

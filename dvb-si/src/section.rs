@@ -25,6 +25,10 @@
 //!   byte 3..(3+section_length): payload (no extension header, no CRC)
 //! ```
 //!
+//! NOTE the TOT exception: the TOT (0x73) also sets SSI=0 but DOES end with a
+//! CRC_32 (EN 300 468 §5.2.6). Parsing it through this generic short-form
+//! path folds the CRC into `payload` — use [`crate::tables::tot::Tot`].
+//!
 //! `section_length` counts bytes *after* the 3-byte section header, so the
 //! total section size is `section_length + 3`.
 
@@ -54,7 +58,8 @@ pub struct Section<'a> {
     pub table_id: u8,
     /// When `true` the section uses the long-form syntax (has extension header
     /// and CRC). When `false` only the 3-byte header is present (short form,
-    /// e.g. TDT/TOT).
+    /// e.g. TDT — but see the module docs for the TOT exception: SSI=0 yet
+    /// CRC present; parse TOT via `tables::tot`, not this path).
     pub section_syntax_indicator: bool,
     /// Private indicator bit (meaning is table-specific).
     pub private_indicator: bool,
