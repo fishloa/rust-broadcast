@@ -25,7 +25,14 @@ implementation and is round-trip tested.
 - AIT (0x74, TS 102 809), DSM-CC (0x3A–0x3F)
 - **UNT** (0x4B, TS 102 006 — System Software Update)
 - **INT** (0x4C, EN 301 192 — IP/MAC Notification)
-- **RCT** (0x76), **CIT** (0x77), **RNT** (0x79) — TS 102 323 TV-Anytime
+- **Container** (0x75), **RCT** (0x76), **CIT** (0x77), **RNT** (0x79) — TS 102 323 TV-Anytime
+- **MPE datagram_section** (0x3E, EN 301 192 §7 — typed IP/MAC view of the DSM-CC private section)
+- **MPE-FEC** (0x78, EN 301 192 §9.9), **MPE-IFEC** (0x7A, TS 102 772)
+- **Protection message** (0x7B, TS 102 809 §9 — authentication + certificate collection variants)
+- **Downloadable font info / DFIS** (0x7C, EN 303 560)
+
+With these, **every allocated table_id in EN 300 468 V1.19.1 Table 2 is
+implemented** — the remaining values are reserved or user-defined.
 
 **Descriptors** (parsed into typed structs; others pass through as raw bytes)
 - 0x09 CA, 0x0A ISO-639 language, 0x40 network_name, 0x41 service_list,
