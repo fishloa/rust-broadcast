@@ -35,7 +35,7 @@ UTF-8 (selector 0x15), UCS-2 BE (0x11); Annex A.2 control codes.
 
 **Typed constants** — `TableId`, `DescriptorTag`, `pid::well_known`.
 
-**Feature flags** — `chrono`, `ts`, `smallvec`, `serde`, `rayon`.
+**Feature flags** — `chrono`, `ts`, `serde`.
 
 ### Fixed
 - `Tsdt` (0x03): removed a phantom `descriptor_loop_length` field — per
@@ -53,7 +53,25 @@ UTF-8 (selector 0x15), UCS-2 BE (0x11); Annex A.2 control codes.
   serialized as 0 per §6.2.13.3 Table 42 (was incorrectly 1).
 - `content_identifier` (0x76): dropped the unreachable `CridLocation::Reserved`
   variant (reserved locations have no defined length and are rejected on parse).
-- Doc-cite fixes: `teletext` type coding is Table 102 (not 99).
+- Doc-cite fixes: `teletext` type coding is Table 102 (not 99); `bouquet_name`
+  §6.2.6, `network_name` §6.2.28, `parental_rating` §6.2.30, `service_list`
+  §6.2.36, `stream_identifier` §6.2.41.
+- `St`: accepts any `data_byte` value per §5.2.8 ("may take any value and has
+  no meaning") — previously rejected non-zero stuffing, breaking real 0xFF fill.
+- `Tot`: serialize emits `section_syntax_indicator = 0` per §5.2.6 (the TOT
+  exception: SSI=0 yet CRC_32 present); was emitting SSI=1.
+- `Sat`: PID corrected to 0x001B (EN 300 468 Table 1) — was wrongly 0x0010
+  (the NIT PID); `pid::well_known::SAT` added.
+- `Cat`: descriptor loop now preserved raw (`descriptors: Vec<u8>`) so non-CA
+  descriptors round-trip; typed CA view via `Cat::ca_descriptors()`.
+- `Cit`: dropped the desync-prone `prepend_strings_length` field (derived from
+  the slice on serialize, guarded ≤ 255).
+- `Bat`: no longer verifies CRC inside `parse` — crate-wide contract is that
+  CRC validation belongs to `Section::validate_crc`; BAT was the lone
+  inconsistent exception.
+- `Nit`/`Bat`: per-entry `BufferTooShort` had `need`/`have` swapped.
+- Removed the advertised-but-unimplemented `smallvec` and `rayon` feature
+  flags (no code used either dependency).
 - Text decoding: the default Latin table is now glyph-for-glyph faithful to
   EN 300 468 V1.19.1 Figure A.1 (transcribed in `docs/en_300_468.md`). Notable
   corrections: 0xA4 → € U+20AC (was ¤), 0xFC → þ (was œ), 0xFD → ŧ (was ı),

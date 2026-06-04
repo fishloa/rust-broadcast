@@ -62,6 +62,13 @@ impl Serialize for P2BiasPayload {
             });
         }
 
+        if self.num_active_bias_cells_per_p2 > 0x7FFF {
+            return Err(crate::Error::ReservedBitsViolation {
+                field: "num_active_bias_cells_per_p2",
+                reason: "Must fit in 15 bits",
+            });
+        }
+
         buf[0] = self.frame_idx;
         buf[1] = 0; // rfu
         buf[2] = 0; // rfu

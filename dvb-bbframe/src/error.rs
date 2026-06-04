@@ -24,15 +24,6 @@ pub enum Error {
         mode: u8,
     },
 
-    /// CRC-8 validation failed (EN 302 755 Annex F / EN 302 307-1 §5.1.4).
-    #[error("CRC-8 mismatch: computed=0x{computed:02X}, stored=0x{stored:02X}")]
-    Crc8Mismatch {
-        /// CRC we calculated over bytes 0-8.
-        computed: u8,
-        /// CRC carried at byte 9 (XOR'd with MODE).
-        stored: u8,
-    },
-
     /// TS/GS input stream type is not supported.
     #[error("unsupported TS/GS: 0x{ts_gs:02X}")]
     UnsupportedTsGs {
@@ -73,16 +64,6 @@ mod tests {
         let err = Error::BufferTooShort { need: 10, have: 5 };
         let msg = format!("{err}");
         assert!(msg.contains("10") && msg.contains("5"));
-    }
-
-    #[test]
-    fn crc8_mismatch_message_contains_values() {
-        let err = Error::Crc8Mismatch {
-            computed: 0x42,
-            stored: 0x1F,
-        };
-        let msg = format!("{err}");
-        assert!(msg.contains("42") && msg.contains("1F"));
     }
 
     #[test]

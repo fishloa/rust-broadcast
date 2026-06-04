@@ -62,7 +62,8 @@ transcribed in `docs/en_300_468.md`.
 use dvb_common::Parse;
 use dvb_si::tables::sdt::Sdt;
 
-let sdt = Sdt::parse(&section_bytes)?;
+// `section_bytes`: one complete SDT section, e.g. from `SectionReassembler`.
+let sdt = Sdt::parse(section_bytes)?;
 for service in &sdt.services {
     println!("service_id = {}", service.service_id);
 }
@@ -70,11 +71,10 @@ for service in &sdt.services {
 
 ## Features
 
-Default: `chrono`, `ts`, `smallvec`, `serde`.
+Default: `chrono`, `ts`, `serde`.
 
 ```toml
-dvb_si = { version = "0.1", default-features = false }  # tight build
-dvb_si = { version = "0.1", features = ["rayon"] }       # bulk tooling
+dvb-si = { version = "0.1", default-features = false }  # tight build
 ```
 
 ## Authoritative reference

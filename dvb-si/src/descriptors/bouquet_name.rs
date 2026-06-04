@@ -1,4 +1,4 @@
-//! Bouquet Name Descriptor — ETSI EN 300 468 §6.2.4 (tag 0x47).
+//! Bouquet Name Descriptor — ETSI EN 300 468 §6.2.6 (tag 0x47).
 
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;

@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   at the top. The redundant length field was dropped (derived on serialize).
 - `FefSubPartPayload` invalid `subpart_variety` now reports `ReservedBitsViolation`
   instead of truncating the 16-bit value into an `InvalidPacketType` u8.
+- `PacketReassembler::feed` drops the unused `pid` parameter (demux upstream,
+  one reassembler per PID) and now treats `pointer_field` as authoritative:
+  a buffered partial whose declared length over-ran (corrupt
+  `payload_len_bits` / lost TS packets) is discarded at the next PUSI instead
+  of swallowing the packets that follow; a pointer past the payload end drops
+  sync until the next PUSI.
+- Added `Header::payload_bytes(&self, packet)` — slices the declared payload
+  out of the full packet buffer (errors with `PayloadLengthMismatch` on
+  truncation).
+- Serialize-bounds consistency: `p2_bias` (15-bit field) and
+  `fef_null`/`fef_iq` `s2_field` (4-bit) now error on over-range values
+  instead of silently masking, matching every other bounded field.
 
 ## [0.1.0] — 2026-04-20
 

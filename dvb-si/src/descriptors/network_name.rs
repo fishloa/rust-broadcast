@@ -1,4 +1,4 @@
-//! Network Name Descriptor — ETSI EN 300 468 §6.2.27 (tag 0x40).
+//! Network Name Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x40).
 
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;

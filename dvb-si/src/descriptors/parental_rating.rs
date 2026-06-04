@@ -1,4 +1,4 @@
-//! Parental Rating Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x55).
+//! Parental Rating Descriptor — ETSI EN 300 468 §6.2.30 (tag 0x55).
 //!
 //! Carried inside EIT. Per-country minimum-age rating for the event.
 

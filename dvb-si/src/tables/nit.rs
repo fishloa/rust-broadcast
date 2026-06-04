@@ -165,8 +165,8 @@ impl<'a> Parse<'a> for Nit<'a> {
         while pos < loop_end {
             if pos + TS_HEADER_LEN > loop_end {
                 return Err(Error::BufferTooShort {
-                    need: loop_end,
-                    have: pos + TS_HEADER_LEN,
+                    need: pos + TS_HEADER_LEN,
+                    have: loop_end,
                     what: "Nit transport_stream_entry",
                 });
             }

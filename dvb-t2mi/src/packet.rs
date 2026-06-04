@@ -138,6 +138,26 @@ impl Header {
     pub fn total_bytes(&self) -> usize {
         6 + self.payload_len_bytes() + super::crc::CRC_LEN
     }
+
+    /// Slice the payload bytes out of the full packet buffer this header was
+    /// parsed from (the 6 header bytes, then `payload_len_bytes()` of payload,
+    /// then the 4-byte CRC trailer).
+    ///
+    /// Errors with [`Error::PayloadLengthMismatch`] when the buffer is too
+    /// short for the declared `payload_len_bits`.
+    pub fn payload_bytes<'a>(
+        &self,
+        packet: &'a [u8],
+    ) -> Result<&'a [u8], crate::error::Error> {
+        let end = 6 + self.payload_len_bytes();
+        if packet.len() < end {
+            return Err(crate::error::Error::PayloadLengthMismatch {
+                declared_bits: self.payload_len_bits,
+                remaining_bytes: packet.len().saturating_sub(6),
+            });
+        }
+        Ok(&packet[6..end])
+    }
 }
 
 impl dvb_common::Serialize for Header {
@@ -411,5 +431,26 @@ mod tests {
         let mut buf = [0u8; 6];
         let result = hdr.serialize_into(&mut buf);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn payload_bytes_slices_declared_payload() {
+        // payload_len_bits = 24 → 3 payload bytes after the 6-byte header.
+        let buf = [
+            0x00, 0x01, 0x10, 0x00, 0x00, 0x18, 0xAA, 0xBB, 0xCC, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let hdr = Header::parse(&buf).unwrap();
+        assert_eq!(hdr.payload_bytes(&buf).unwrap(), &[0xAA, 0xBB, 0xCC]);
+    }
+
+    #[test]
+    fn payload_bytes_rejects_truncated_buffer() {
+        // Declares 3 payload bytes but only 1 follows the header.
+        let buf = [0x00, 0x01, 0x10, 0x00, 0x00, 0x18, 0xAA];
+        let hdr = Header::parse(&buf).unwrap();
+        assert!(matches!(
+            hdr.payload_bytes(&buf),
+            Err(crate::Error::PayloadLengthMismatch { .. })
+        ));
     }
 }

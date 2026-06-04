@@ -47,8 +47,41 @@ pub struct Cat {
     pub section_number: u8,
     /// last_section_number (typically 0).
     pub last_section_number: u8,
-    /// CA descriptor entries from the section's flat descriptor loop.
-    pub ca_descriptors: Vec<CatCaEntry>,
+    /// Raw descriptor-loop bytes (byte 8 → CRC), preserved verbatim. ISO/IEC
+    /// 13818-1 §2.4.4.6 permits descriptors other than CA in this loop; keeping
+    /// the loop raw makes parse → serialize identity hold for all of them. Use
+    /// [`Cat::ca_descriptors`] for the typed CA (tag 0x09) view.
+    pub descriptors: Vec<u8>,
+}
+
+impl Cat {
+    /// Typed view of the CA descriptors (tag 0x09) in the descriptor loop.
+    /// Non-CA descriptors are skipped; a truncated trailing descriptor ends
+    /// the walk.
+    #[must_use]
+    pub fn ca_descriptors(&self) -> Vec<CatCaEntry> {
+        let mut out = Vec::new();
+        let mut pos = 0;
+        while pos + 2 <= self.descriptors.len() {
+            let tag = self.descriptors[pos];
+            let length = self.descriptors[pos + 1] as usize;
+            let end = pos + 2 + length;
+            if end > self.descriptors.len() {
+                break;
+            }
+            if tag == crate::descriptors::ca::TAG {
+                if let Ok(ca) = CaDescriptor::parse(&self.descriptors[pos..end]) {
+                    out.push(CatCaEntry {
+                        ca_system_id: ca.ca_system_id,
+                        ca_pid: ca.ca_pid,
+                        private_data: ca.private_data.to_vec(),
+                    });
+                }
+            }
+            pos = end;
+        }
+        out
+    }
 }
 
 impl<'a> Parse<'a> for Cat {
@@ -88,45 +121,16 @@ impl<'a> Parse<'a> for Cat {
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        // Descriptor loop runs from byte 8 up to (but not including) the 4-byte CRC.
+        // Descriptor loop runs from byte 8 up to (but not including) the 4-byte
+        // CRC. Kept raw — see the field doc; typed CA view via ca_descriptors().
         let descriptors_end = total - CRC_LEN;
-        let mut ca_descriptors = Vec::new();
-        let mut pos = 8;
-        while pos < descriptors_end {
-            // Descriptor header is 2 bytes (tag + length).
-            if pos + 2 > descriptors_end {
-                break;
-            }
-            let tag = bytes[pos];
-            let length = bytes[pos + 1] as usize;
-            let descriptor_end = pos + 2 + length;
-            if descriptor_end > descriptors_end {
-                // Truncated descriptor — bail out preserving what we already have.
-                break;
-            }
-
-            // Only CA descriptors (tag 0x09) are meaningful in the CAT loop.
-            // The standard does allow other descriptors but in practice all
-            // production CATs we've seen carry only CA descriptors.
-            if tag == crate::descriptors::ca::TAG {
-                if let Ok(ca) = CaDescriptor::parse(&bytes[pos..descriptor_end]) {
-                    ca_descriptors.push(CatCaEntry {
-                        ca_system_id: ca.ca_system_id,
-                        ca_pid: ca.ca_pid,
-                        private_data: ca.private_data.to_vec(),
-                    });
-                }
-            }
-
-            pos = descriptor_end;
-        }
 
         Ok(Cat {
             version_number,
             current_next_indicator,
             section_number,
             last_section_number,
-            ca_descriptors,
+            descriptors: bytes[8..descriptors_end].to_vec(),
         })
     }
 }
@@ -135,12 +139,7 @@ impl Serialize for Cat {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let desc_len: usize = self
-            .ca_descriptors
-            .iter()
-            .map(|e| 6 + e.private_data.len())
-            .sum();
-        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + desc_len + CRC_LEN
+        MIN_HEADER_LEN + EXTENSION_HEADER_LEN + self.descriptors.len() + CRC_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -161,16 +160,8 @@ impl Serialize for Cat {
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        for e in &self.ca_descriptors {
-            buf[pos] = crate::descriptors::ca::TAG;
-            buf[pos + 1] = (4 + e.private_data.len()) as u8;
-            buf[pos + 2..pos + 4].copy_from_slice(&e.ca_system_id.to_be_bytes());
-            buf[pos + 4] = 0xE0 | ((e.ca_pid >> 8) as u8 & 0x1F);
-            buf[pos + 5] = (e.ca_pid & 0xFF) as u8;
-            buf[pos + 6..pos + 6 + e.private_data.len()].copy_from_slice(&e.private_data);
-            pos += 6 + e.private_data.len();
-        }
+        let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
+        buf[desc_start..desc_start + self.descriptors.len()].copy_from_slice(&self.descriptors);
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
@@ -222,7 +213,8 @@ mod tests {
         let cat = Cat::parse(&bytes).expect("parse");
         assert_eq!(cat.version_number, 5);
         assert!(cat.current_next_indicator);
-        assert_eq!(cat.ca_descriptors.len(), 0);
+        assert!(cat.descriptors.is_empty());
+        assert_eq!(cat.ca_descriptors().len(), 0);
     }
 
     #[test]
@@ -231,10 +223,11 @@ mod tests {
         desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
         let bytes = build_cat(0, &desc);
         let cat = Cat::parse(&bytes).unwrap();
-        assert_eq!(cat.ca_descriptors.len(), 1);
-        assert_eq!(cat.ca_descriptors[0].ca_system_id, 0x0500);
-        assert_eq!(cat.ca_descriptors[0].ca_pid, 0x0050);
-        assert!(cat.ca_descriptors[0].private_data.is_empty());
+        let cas = cat.ca_descriptors();
+        assert_eq!(cas.len(), 1);
+        assert_eq!(cas[0].ca_system_id, 0x0500);
+        assert_eq!(cas[0].ca_pid, 0x0050);
+        assert!(cas[0].private_data.is_empty());
     }
 
     #[test]
@@ -245,11 +238,12 @@ mod tests {
         desc.extend_from_slice(&ca_descriptor(0x0100, 0x0080));
         let bytes = build_cat(2, &desc);
         let cat = Cat::parse(&bytes).unwrap();
-        assert_eq!(cat.ca_descriptors.len(), 3);
-        assert_eq!(cat.ca_descriptors[0].ca_system_id, 0x0500);
-        assert_eq!(cat.ca_descriptors[1].ca_system_id, 0x0650);
-        assert_eq!(cat.ca_descriptors[2].ca_system_id, 0x0100);
-        assert_eq!(cat.ca_descriptors[1].ca_pid, 0x0062);
+        let cas = cat.ca_descriptors();
+        assert_eq!(cas.len(), 3);
+        assert_eq!(cas[0].ca_system_id, 0x0500);
+        assert_eq!(cas[1].ca_system_id, 0x0650);
+        assert_eq!(cas[2].ca_system_id, 0x0100);
+        assert_eq!(cas[1].ca_pid, 0x0062);
     }
 
     #[test]
@@ -266,18 +260,26 @@ mod tests {
         assert!(matches!(err, Error::BufferTooShort { .. }));
     }
 
+    /// §2.4.4.6 permits non-CA descriptors in the CAT loop: the typed view
+    /// skips them, but parse → serialize MUST preserve them byte-for-byte.
     #[test]
-    fn parse_skips_non_ca_descriptors() {
-        // Two CA descriptors with an unknown-tag descriptor between them.
+    fn non_ca_descriptors_skipped_by_view_but_round_trip() {
         let mut desc = Vec::new();
         desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
         desc.extend_from_slice(&[0x12, 0x02, 0xAA, 0xBB]); // unknown tag 0x12, len 2
         desc.extend_from_slice(&ca_descriptor(0x0650, 0x0062));
         let bytes = build_cat(0, &desc);
         let cat = Cat::parse(&bytes).unwrap();
-        assert_eq!(cat.ca_descriptors.len(), 2);
-        assert_eq!(cat.ca_descriptors[0].ca_system_id, 0x0500);
-        assert_eq!(cat.ca_descriptors[1].ca_system_id, 0x0650);
+        let cas = cat.ca_descriptors();
+        assert_eq!(cas.len(), 2);
+        assert_eq!(cas[0].ca_system_id, 0x0500);
+        assert_eq!(cas[1].ca_system_id, 0x0650);
+        // The unknown descriptor survives the round trip verbatim.
+        assert_eq!(cat.descriptors, desc);
+        let mut buf = vec![0u8; cat.serialized_len()];
+        cat.serialize_into(&mut buf).unwrap();
+        let re = Cat::parse(&buf).unwrap();
+        assert_eq!(re.descriptors, desc);
     }
 
     #[test]

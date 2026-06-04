@@ -1,4 +1,5 @@
 target/
-Cargo.lock
 **/*.rs.bk
 .DS_Store
+tools/dvb-si-audit/.venv/
+tools/dvb-si-audit/out/

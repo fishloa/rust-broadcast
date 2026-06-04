@@ -12,14 +12,15 @@ readme       = "README.md"
 rust-version = "1.75"
 exclude      = ["docs/**"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 dvb-common  = { path = "../dvb-common", version = "0.1" }
 thiserror   = "2"
 num_enum    = "0.7"
 chrono      = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
-smallvec  = { version = "1.13", optional = true }
 serde     = { version = "1", optional = true, features = ["derive"] }
-rayon     = { version = "1.10", optional = true }
 bytes     = { version = "1", optional = true }
 encoding_rs = "0.8"
 
@@ -28,7 +29,7 @@ hex = "0.4"
 serde_json = "1.0"
 
 [features]
-default = ["chrono", "ts", "smallvec", "serde"]
+default = ["chrono", "ts", "serde"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono"]
@@ -36,11 +37,5 @@ chrono   = ["dep:chrono"]
 # MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
 ts       = ["dep:bytes"]
 
-# Inline storage for small loop collections (SmallVec<[T; N]>). Off = plain Vec.
-smallvec = ["dep:smallvec"]
-
-# JSON / generic serialization on parsed + owned variants. Propagates to chrono + smallvec.
-serde    = ["dep:serde", "chrono?/serde", "smallvec?/serde"]
-
-# Parallel bulk-parse helpers (par_iter). Off = single-threaded.
-rayon    = ["dep:rayon"]
+# JSON / generic serialization on parsed + owned variants. Propagates to chrono.
+serde    = ["dep:serde", "chrono?/serde"]

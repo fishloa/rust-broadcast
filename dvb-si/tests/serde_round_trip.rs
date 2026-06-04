@@ -15,15 +15,27 @@
 use dvb_common::Parse;
 use dvb_si::tables::{
     ait::{Ait, AitApplication, ApplicationIdentifier},
+    bat::{Bat, BatTransportStream},
+    cat::Cat,
+    cit::Cit,
+    dit::Dit,
     dsmcc::DsmccSection,
     eit::{Eit, EitEvent, EitKind},
+    int::Int,
     nit::{Nit, NitKind, NitTransportStream},
     pat::{Pat, PatEntry},
     pmt::{Pmt, PmtStream},
+    rct::Rct,
+    rnt::Rnt,
+    rst::{Rst, RstEntry},
+    sat::Sat,
     sdt::{Sdt, SdtKind, SdtService},
+    sit::Sit,
     st::St,
     tdt::Tdt,
     tot::Tot,
+    tsdt::Tsdt,
+    unt::Unt,
 };
 
 // --- Owned tables: full JSON round-trip via a parsed fixture --------------
@@ -224,4 +236,190 @@ fn dsmcc_section_serializes_to_valid_json() {
     let section = DsmccSection::parse(&bytes).expect("parse DSM-CC section");
     let j = serde_json::to_string(&section).expect("serialize DSM-CC");
     assert_valid_json_with_keys(&j, &["table_id", "extension_id", "payload"]);
+}
+
+#[test]
+fn cat_serializes_to_valid_json() {
+    let cat = Cat {
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        descriptors: vec![0x09, 0x04, 0x06, 0x48, 0xE0, 0x50],
+    };
+    let j = serde_json::to_string(&cat).expect("serialize CAT");
+    assert_valid_json_with_keys(&j, &["version_number", "descriptors"]);
+}
+
+#[test]
+fn tsdt_serializes_to_valid_json() {
+    let tsdt = Tsdt {
+        table_id_extension: 0xFFFF,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        descriptors: vec![0x42, 0x00],
+    };
+    let j = serde_json::to_string(&tsdt).expect("serialize TSDT");
+    assert_valid_json_with_keys(&j, &["table_id_extension", "descriptors"]);
+}
+
+#[test]
+fn bat_serializes_to_valid_json() {
+    let bat = Bat {
+        bouquet_id: 0x0001,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        bouquet_descriptors: &[],
+        transport_streams: vec![BatTransportStream {
+            transport_stream_id: 0x1234,
+            original_network_id: 0x0020,
+            descriptors: &[],
+        }],
+    };
+    let j = serde_json::to_string(&bat).expect("serialize BAT");
+    assert_valid_json_with_keys(&j, &["bouquet_id", "transport_streams"]);
+}
+
+#[test]
+fn rst_serializes_to_valid_json() {
+    let rst = Rst {
+        entries: vec![RstEntry {
+            transport_stream_id: 0x1234,
+            original_network_id: 0x0020,
+            service_id: 0x0001,
+            event_id: 0x0001,
+            running_status: 4,
+        }],
+    };
+    let j = serde_json::to_string(&rst).expect("serialize RST");
+    assert_valid_json_with_keys(&j, &["entries"]);
+}
+
+#[test]
+fn dit_serializes_to_valid_json() {
+    let dit = Dit { transition_flag: true };
+    let j = serde_json::to_string(&dit).expect("serialize DIT");
+    assert_valid_json_with_keys(&j, &["transition_flag"]);
+}
+
+#[test]
+fn sit_serializes_to_valid_json() {
+    let sit = Sit {
+        table_id_extension: 0xFFFF,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        transmission_info_descriptors: vec![],
+        service_loop: vec![],
+    };
+    let j = serde_json::to_string(&sit).expect("serialize SIT");
+    assert_valid_json_with_keys(&j, &["table_id_extension", "service_loop"]);
+}
+
+#[test]
+fn sat_serializes_to_valid_json() {
+    let sat = Sat {
+        satellite_table_id: 0,
+        table_count: 0,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        body: &[],
+    };
+    let j = serde_json::to_string(&sat).expect("serialize SAT");
+    assert_valid_json_with_keys(&j, &["satellite_table_id", "body"]);
+}
+
+#[test]
+fn unt_serializes_to_valid_json() {
+    let unt = Unt {
+        action_type: 0x01,
+        oui_hash: 0x00,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        oui: 0x00_00_01,
+        processing_order: 0,
+        common_descriptors: &[],
+        platform_loop: &[],
+    };
+    let j = serde_json::to_string(&unt).expect("serialize UNT");
+    assert_valid_json_with_keys(&j, &["action_type", "oui", "platform_loop"]);
+}
+
+#[test]
+fn int_serializes_to_valid_json() {
+    let int = Int {
+        action_type: 0x01,
+        platform_id_hash: 0x00,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        platform_id: 0x00_00_01,
+        processing_order: 0,
+        platform_descriptors: &[],
+        loops: &[],
+    };
+    let j = serde_json::to_string(&int).expect("serialize INT");
+    assert_valid_json_with_keys(&j, &["action_type", "platform_id", "loops"]);
+}
+
+#[test]
+fn rct_serializes_to_valid_json() {
+    let rct = Rct {
+        table_id_extension_flag: false,
+        service_id: 0x0001,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        year_offset: 0x07D3,
+        link_count: 0,
+        link_info_loop: &[],
+        descriptors: &[],
+    };
+    let j = serde_json::to_string(&rct).expect("serialize RCT");
+    assert_valid_json_with_keys(&j, &["service_id", "year_offset", "link_info_loop"]);
+}
+
+#[test]
+fn cit_serializes_to_valid_json() {
+    let cit = Cit {
+        private_indicator: false,
+        service_id: 0x0001,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        transport_stream_id: 0x1234,
+        original_network_id: 0x0020,
+        prepend_strings: &[],
+        crid_entries: &[],
+    };
+    let j = serde_json::to_string(&cit).expect("serialize CIT");
+    assert_valid_json_with_keys(&j, &["service_id", "prepend_strings", "crid_entries"]);
+}
+
+#[test]
+fn rnt_serializes_to_valid_json() {
+    let rnt = Rnt {
+        context_id: 0x0001,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        context_id_type: 0,
+        common_descriptors: &[],
+        resolution_providers: &[],
+    };
+    let j = serde_json::to_string(&rnt).expect("serialize RNT");
+    assert_valid_json_with_keys(&j, &["context_id", "resolution_providers"]);
 }
