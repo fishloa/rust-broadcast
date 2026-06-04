@@ -1,6 +1,6 @@
 //! Satellite Access Table (SAT) — ETSI EN 300 468 §5.2.11.
 //!
-//! Long-form private section on PID 0x0010 with table_id 0x4D. The SAT is a
+//! Long-form private section on PID 0x001B with table_id 0x4D. The SAT is a
 //! *family*: a common `satellite_access_section()` header carries a 6-bit
 //! `satellite_table_id` discriminant ([`SatTableId`]) that selects one of five
 //! body structures (position v2, cell fragment, time association, beamhopping
@@ -9,9 +9,9 @@
 //! The body is bit-packed orbital / beamhopping data (33-bit NCR split fields,
 //! two's-complement lat/long, conditional ephemeris loops). It is exposed here
 //! as a raw byte slice ([`Sat::body`]); the full per-variant field layout is
-//! documented in `docs/tables/sat.md` and `docs/tables/sat/position_v3.md`.
-//! This mirrors the crate convention of keeping complex variable-length loops
-//! raw (cf. the descriptor loops in `bat.rs`).
+//! documented in `docs/en_300_468.md` (Tables 11a–11i). This mirrors the crate
+//! convention of keeping complex variable-length loops raw (cf. the descriptor
+//! loops in `bat.rs`).
 
 use crate::error::{Error, Result};
 use crate::traits::Table;
@@ -20,8 +20,8 @@ use num_enum::TryFromPrimitive;
 
 /// table_id for the Satellite Access Table.
 pub const TABLE_ID: u8 = 0x4D;
-/// Well-known PID on which the SAT is carried (the NIT PID, per §5.1.3).
-pub const PID: u16 = 0x0010;
+/// Well-known PID on which the SAT is carried (EN 300 468 Table 1, §5.1.3).
+pub const PID: u16 = 0x001B;
 
 /// Bytes of fixed header before the body (table_id..reserved_zero_future_use).
 const HEADER_LEN: usize = 9;

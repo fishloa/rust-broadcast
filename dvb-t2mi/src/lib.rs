@@ -7,6 +7,14 @@
 //! - [`payload`] — BBFrame, L1, FEF, timestamp, and addressing payload types.
 //! - [`crc`] — CRC-32 per Annex A.
 //!
+//! # RFU policy
+//!
+//! Payload parsers REJECT non-zero reserved (rfu) bits with
+//! `ReservedBitsViolation` and serialize them as 0 — with one deliberate
+//! exception: individual addressing (0x21) PRESERVES its leading rfu byte
+//! verbatim so gateway streams round-trip byte-exact (see
+//! `payload::individual_addressing`).
+//!
 //! # Example
 //!
 //! ```

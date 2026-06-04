@@ -1,4 +1,4 @@
-//! Stream Identifier Descriptor — ETSI EN 300 468 §6.2.40 (tag 0x52).
+//! Stream Identifier Descriptor — ETSI EN 300 468 §6.2.41 (tag 0x52).
 //!
 //! One-byte `component_tag` that anchors components named elsewhere (e.g. by
 //! component_descriptor).

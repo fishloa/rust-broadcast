@@ -1,10 +1,14 @@
-//! DVB + MPEG-2 descriptors.
+//! DVB + MPEG-2 descriptors. Each descriptor tag gets its own submodule file.
 //!
-//! Each descriptor tag gets its own submodule file (see the file tree in
-//! `docs/superpowers/specs/2026-04-20-dvb-si-crate-design.md`).
+//! The usual way to consume a descriptor is to walk a table's raw descriptor
+//! loop and call the specific descriptor module's `parse` for the tags you
+//! care about (e.g. [`satellite_delivery_system`], [`service`], [`linkage`]).
 //!
-//! The public [`Descriptor`] enum dispatches by tag; unknown tags are
-//! preserved as [`Descriptor::Unknown`] for forward compatibility.
+//! The [`Descriptor`] enum covers only the small set of MPEG-2 descriptors
+//! that appear in contexts without surrounding table semantics (CA,
+//! data_stream_alignment, private_data_indicator, registration); every other
+//! tag lands as [`Descriptor::Unknown`] with its raw bytes preserved — it is
+//! NOT a dispatcher over the full typed-descriptor set.
 
 pub mod ac3;
 pub mod bouquet_name;

@@ -1,7 +1,7 @@
 //! DVB-SI text decoding — ETSI EN 300 468 Annex A.
 //!
 //! Covers the common charsets: the default Latin table (Figure A.1, an ISO 6937
-//! superset — see [`iso_6937_single`]), ISO 8859-n, UTF-8 (selector 0x15) and
+//! superset — see `iso_6937_single`), ISO 8859-n, UTF-8 (selector 0x15) and
 //! UCS-2 BE (selector 0x11). Remaining Annex A coverage (Cyrillic/Arabic/Greek/
 //! Hebrew figures via selectors already routed to ISO 8859-n, CJK selectors
 //! 0x12–0x14, emphasis pairs) is future work.

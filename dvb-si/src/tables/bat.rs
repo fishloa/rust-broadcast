@@ -166,8 +166,8 @@ impl<'a> Parse<'a> for Bat<'a> {
         while pos < loop_end {
             if pos + TS_HEADER_LEN > loop_end {
                 return Err(Error::BufferTooShort {
-                    need: loop_end,
-                    have: pos + TS_HEADER_LEN,
+                    need: pos + TS_HEADER_LEN,
+                    have: loop_end,
                     what: "Bat transport_stream_entry",
                 });
             }
@@ -196,20 +196,10 @@ impl<'a> Parse<'a> for Bat<'a> {
             pos = desc_end;
         }
 
-        // CRC-32 verification per ISO/IEC 13818-1 §2.4.3.2.
-        let crc_computed = dvb_common::crc32_mpeg2::compute(&bytes[..total - CRC_LEN]);
-        let crc_expected = u32::from_be_bytes([
-            bytes[total - 4],
-            bytes[total - 3],
-            bytes[total - 2],
-            bytes[total - 1],
-        ]);
-        if crc_computed != crc_expected {
-            return Err(Error::CrcMismatch {
-                computed: crc_computed,
-                expected: crc_expected,
-            });
-        }
+        // CRC is NOT verified here — crate-wide contract: table parsers trust
+        // their input and CRC validation is the framing layer's job
+        // (`Section::validate_crc`). BAT used to be the lone exception, which
+        // made the family contract inconsistent.
 
         Ok(Bat {
             bouquet_id,
@@ -463,13 +453,15 @@ mod tests {
         assert_eq!(bat, parsed);
     }
 
+    /// Crate-wide contract: table parsers do NOT verify CRC — that is the
+    /// framing layer's job (`Section::validate_crc`). A corrupted-CRC BAT
+    /// still parses; callers wanting integrity check the Section first.
     #[test]
-    fn bat_crc_mismatch_rejected() {
+    fn bat_parse_does_not_verify_crc() {
         let mut bytes = build_bat(0x0001, 0, 0, 0, &[], &[]);
-        // Corrupt a payload byte (the bouquet_id high byte at index 3).
-        bytes[3] ^= 0xFF;
-        let err = Bat::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::CrcMismatch { .. }));
+        bytes[3] ^= 0xFF; // corrupt bouquet_id high byte → CRC now wrong
+        let bat = Bat::parse(&bytes).unwrap();
+        assert_eq!(bat.bouquet_id, 0x0001 ^ 0xFF00);
     }
 
     #[test]

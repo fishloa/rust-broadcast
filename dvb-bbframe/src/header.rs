@@ -5,7 +5,7 @@
 
 use num_enum::TryFromPrimitive;
 
-use crate::crc::{crc8, crc8_with_init, CRC8_INIT_DVB_T2};
+use crate::crc::crc8;
 use crate::error::Error;
 
 /// Total bytes in a BBHEADER.
@@ -205,36 +205,22 @@ impl Bbheader {
             });
         }
 
-        // Mode detection: crc8(init=0x00) XOR stored CRC-8 = MODE field
+        // Mode detection per EN 302 755 §5.1.7: the byte on the wire is
+        // `crc8(bytes[0..9]) XOR MODE` (MODE: 0 = NM, 1 = HEM). The XOR is
+        // itself the integrity check — corruption that lands `mode_val`
+        // outside {0, 1} is rejected by `Mode::try_from` as InvalidMode; a
+        // residual flip into the other valid mode is undetectable by design
+        // of the spec's scheme (there is no separate "HEM CRC init").
         let computed_crc = crc8(&bytes[..9]);
         let mode_val = computed_crc ^ crc_stored;
         let mode = Mode::try_from(mode_val)?;
 
         let (upl, sync, issy_in_header) = match mode {
-            Mode::Normal => {
-                let crc_expected = computed_crc;
-                if crc_expected != crc_stored {
-                    // In NM, MODE=0, so CRC-8 should match directly
-                    return Err(Error::Crc8Mismatch {
-                        computed: crc_expected,
-                        stored: crc_stored,
-                    });
-                }
-                (u16::from_be_bytes([bytes[2], bytes[3]]), bytes[6], None)
-            }
+            Mode::Normal => (u16::from_be_bytes([bytes[2], bytes[3]]), bytes[6], None),
             Mode::HighEfficiency => {
-                // In HEM, bytes[2..4] are ISSY_2MSB, byte[6] is ISSY_1LSB
-                // UPL and SYNC are repurposed for ISSY
-                let issy_in_header = Some([bytes[2], bytes[3], bytes[6]]);
-                // Verify with DVB-T2 CRC init
-                let computed_crc_t2 = crc8_with_init(&bytes[..9], CRC8_INIT_DVB_T2);
-                if computed_crc_t2 != crc_stored {
-                    return Err(Error::Crc8Mismatch {
-                        computed: computed_crc_t2,
-                        stored: crc_stored,
-                    });
-                }
-                (0, 0, issy_in_header)
+                // In HEM, bytes[2..4] are ISSY_2MSB, byte[6] is ISSY_1LSB —
+                // UPL and SYNC are repurposed for ISSY.
+                (0, 0, Some([bytes[2], bytes[3], bytes[6]]))
             }
         };
 

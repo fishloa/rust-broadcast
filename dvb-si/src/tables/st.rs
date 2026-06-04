@@ -1,8 +1,9 @@
 //! Stuffing Table — ETSI EN 300 468 §5.2.8.
 //!
 //! Short-form section on PID 0x0014 with table_id 0x72. Payload is stuffing
-//! bytes (each byte == `0x00`) used to fill a TS packet when no other table
-//! data is available. No CRC.
+//! bytes used to invalidate/replace sections; per §5.2.8 each `data_byte`
+//! "may take any value and has no meaning" (0xFF fill is common on real
+//! transponders). No CRC.
 
 use crate::error::{Error, Result};
 use crate::traits::Table;
@@ -19,7 +20,7 @@ const HEADER_LEN: usize = 3;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct St {
-    /// Raw stuffing bytes (each byte == `0x00`).
+    /// Raw stuffing bytes — any value, no meaning (§5.2.8).
     pub payload: Vec<u8>,
 }
 
@@ -77,13 +78,9 @@ impl<'a> Parse<'a> for St {
             });
         }
 
+        // §5.2.8: data_byte "may take any value and has no meaning" — no
+        // value constraint; preserve verbatim.
         let payload = &bytes[HEADER_LEN..HEADER_LEN + payload_len];
-        if payload.iter().any(|&b| b != 0x00) {
-            return Err(Error::InvalidDescriptor {
-                tag: TABLE_ID,
-                reason: "non-zero stuffing byte found",
-            });
-        }
         Ok(Self { payload: payload.to_vec() })
     }
 }
@@ -153,13 +150,16 @@ mod tests {
         assert!(st.is_empty());
     }
 
+    /// §5.2.8: data_byte "may take any value and has no meaning" — 0xFF fill
+    /// (common on real transponders) must parse and round-trip.
     #[test]
-    fn parse_rejects_non_zero_payload_byte() {
-        let bytes = make_st_section(&[0x00, 0xFF]);
-        assert!(matches!(
-            St::parse(&bytes).unwrap_err(),
-            Error::InvalidDescriptor { tag: 0x72, .. }
-        ));
+    fn parse_accepts_any_data_byte_value() {
+        let bytes = make_st_section(&[0x00, 0xFF, 0xAA]);
+        let st = St::parse(&bytes).unwrap();
+        assert_eq!(st.payload, vec![0x00, 0xFF, 0xAA]);
+        let mut buf = vec![0u8; st.serialized_len()];
+        st.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
     }
 
     #[test]

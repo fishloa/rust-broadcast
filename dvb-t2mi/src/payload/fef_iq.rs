@@ -69,6 +69,13 @@ impl Serialize for FefIqPayload<'_> {
             });
         }
 
+        if self.s2_field > 0x0F {
+            return Err(crate::Error::ReservedBitsViolation {
+                field: "s2_field",
+                reason: "Must fit in 4 bits",
+            });
+        }
+
         buf[0] = self.fef_idx;
         buf[1] = 0; // rfu (high 8 of the 9 reserved bits)
         buf[2] = ((u8::from(self.s1_field) & 0x07) << 4) | (self.s2_field & 0x0F);

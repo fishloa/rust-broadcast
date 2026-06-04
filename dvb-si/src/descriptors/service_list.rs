@@ -1,4 +1,4 @@
-//! Service List Descriptor — ETSI EN 300 468 §6.2.35 (tag 0x41).
+//! Service List Descriptor — ETSI EN 300 468 §6.2.36 (tag 0x41).
 //!
 //! Carried inside NIT/BAT transport_stream_loop second descriptor loop.
 //! Enumerates the service_id/service_type pairs available on the TS.

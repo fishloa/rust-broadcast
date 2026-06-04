@@ -3,6 +3,11 @@
 //! This is intentionally minimal: header framing, table_id dispatch,
 //! length check, and carrying the payload as `Cow<'a, [u8]>`. Full
 //! DSM-CC payload parsing is deliberately out of scope (YAGNI).
+//!
+//! Known limitation: the parser assumes long-form framing (extension header +
+//! trailing CRC_32) regardless of `section_syntax_indicator`. ISO/IEC 13818-6
+//! permits SSI=0 sections whose trailing 4 bytes carry a checksum under a
+//! different rule; those are not distinguished here.
 
 use crate::error::{Error, Result};
 use crate::traits::Table;

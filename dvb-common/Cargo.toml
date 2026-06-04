@@ -11,6 +11,9 @@ repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
 rust-version = "1.75"
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 # intentionally empty — consumers of dvb_common must pay for nothing they
 # aren't already paying for in the downstream DVB crates.

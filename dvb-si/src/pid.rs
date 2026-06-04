@@ -27,7 +27,9 @@ pub mod well_known {
     pub const NETWORK_SYNC: u16 = 0x0015;
     /// Resolution Notification Table.
     pub const RNT: u16 = 0x0016;
-    /// Inband signalling (reserved).
+    /// Satellite Access Table (EN 300 468 Table 1).
+    pub const SAT: u16 = 0x001B;
+    /// Link-local inband signalling (reserved).
     pub const INBAND_SIGNALLING: u16 = 0x001C;
     /// Measurement (reserved).
     pub const MEASUREMENT: u16 = 0x001D;

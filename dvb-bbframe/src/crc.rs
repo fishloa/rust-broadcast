@@ -6,28 +6,19 @@
 /// CRC-8 polynomial (0xD5), MSB-first, no reflection.
 pub const CRC8_POLY: u8 = 0xD5;
 
-/// Standard CRC-8 initial register value (DVB-S2 NM mode).
+/// Standard CRC-8 initial register value (0x00).
 pub const CRC8_INIT: u8 = 0x00;
 
-/// CRC-8 initial register value used by DVB-T2 BBFrames inside T2-MI streams.
-///
-/// DVB-T2 High Efficiency Mode (HEM) uses CRC-8 with init=0xB5 rather than the
-/// standard init=0x00; the MODE bit is recovered from this difference per
-/// EN 302 755 §5.1.7.
-pub const CRC8_INIT_DVB_T2: u8 = 0xB5;
-
 /// Compute CRC-8 with the standard initial value (0x00).
+///
+/// There is no separate "HEM init": EN 302 755 §5.1.7 puts
+/// `crc8(header) XOR MODE` on the wire, so HEM (MODE=1) is the init-0 CRC
+/// XOR 1. (A previous revision modelled HEM as init=0xB5 — that value is
+/// init-0 propagated through exactly 9 zero bytes and only coincided for
+/// 9-byte inputs; do not reintroduce it.)
 #[inline]
 pub fn crc8(bytes: &[u8]) -> u8 {
-    crc8_with_init(bytes, CRC8_INIT)
-}
-
-/// Compute CRC-8 with a custom initial register value.
-///
-/// This is used for DVB-T2 (init = [`CRC8_INIT_DVB_T2`]) to detect HEM mode.
-#[inline]
-pub fn crc8_with_init(bytes: &[u8], init: u8) -> u8 {
-    let mut crc = init;
+    let mut crc = CRC8_INIT;
     for &byte in bytes {
         crc ^= byte;
         for _ in 0..8 {
@@ -51,16 +42,11 @@ mod tests {
     }
 
     #[test]
-    fn crc8_with_init_b5_on_empty_is_init() {
-        assert_eq!(crc8_with_init(&[], CRC8_INIT_DVB_T2), CRC8_INIT_DVB_T2);
-    }
-
-    #[test]
     fn crc8_known_dvb_t2_vector() {
-        // Rai T2-MI (12606V, ISI 5, PLP 0).
+        // Rai T2-MI (12606V, ISI 5, PLP 0). Live capture: wire byte is 0x1F.
         let hdr = [0xf8u8, 0x00, 0xa4, 0x28, 0xbc, 0xc8, 0xe2, 0x03, 0x50];
-        assert_eq!(crc8_with_init(&hdr, CRC8_INIT_DVB_T2), 0x1F);
-        // Standard init=0x00 gives 0x1E (off by one — the HEM detection basis).
         assert_eq!(crc8(&hdr), 0x1E);
+        // §5.1.7: wire byte = crc8 XOR MODE → 0x1E ^ 1 = 0x1F (HEM).
+        assert_eq!(crc8(&hdr) ^ 0x01, 0x1F);
     }
 }

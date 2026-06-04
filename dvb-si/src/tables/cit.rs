@@ -76,11 +76,8 @@ pub struct Cit<'a> {
     /// `original_network_id` of the originating network.
     pub original_network_id: u16,
 
-    /// Number of bytes in the prepend-string block (mirrors
-    /// `prepend_strings.len()` after successful parse).
-    pub prepend_strings_length: u8,
-
-    /// Raw prepend-string block (`prepend_strings_length` bytes). Entries are
+    /// Raw prepend-string block. The wire `prepend_strings_length` byte is
+    /// derived from `prepend_strings.len()` on serialize (≤ 255). Entries are
     /// null-terminated ASCII/DVB-text fragments; addressed by index from the
     /// CRID loop.
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -167,7 +164,6 @@ impl<'a> Parse<'a> for Cit<'a> {
             last_section_number,
             transport_stream_id,
             original_network_id,
-            prepend_strings_length,
             prepend_strings,
             crid_entries,
         })
@@ -189,6 +185,14 @@ impl Serialize for Cit<'_> {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
                 have: buf.len(),
+            });
+        }
+
+        // prepend_strings_length is an 8-bit wire field, derived from the slice.
+        if self.prepend_strings.len() > u8::MAX as usize {
+            return Err(Error::SectionLengthOverflow {
+                declared: self.prepend_strings.len(),
+                available: u8::MAX as usize,
             });
         }
 
@@ -216,7 +220,7 @@ impl Serialize for Cit<'_> {
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[12] = self.prepend_strings_length;
+        buf[12] = self.prepend_strings.len() as u8;
 
         // Prepend strings.
         let ps_start = HEADER_LEN + EXTENSION_LEN;
@@ -273,7 +277,6 @@ mod tests {
             last_section_number,
             transport_stream_id,
             original_network_id,
-            prepend_strings_length: prepend_strings.len() as u8,
             prepend_strings,
             crid_entries,
         };
@@ -298,7 +301,6 @@ mod tests {
         assert_eq!(cit.last_section_number, 0);
         assert_eq!(cit.transport_stream_id, 0x0064);
         assert_eq!(cit.original_network_id, 0x0002);
-        assert_eq!(cit.prepend_strings_length, prepend.len() as u8);
         assert_eq!(cit.prepend_strings, prepend);
         assert_eq!(cit.crid_entries, &[] as &[u8]);
     }
@@ -404,7 +406,6 @@ mod tests {
             last_section_number: 4,
             transport_stream_id: 0x03E8,
             original_network_id: 0x0050,
-            prepend_strings_length: prepend.len() as u8,
             prepend_strings: prepend,
             crid_entries: &crid_entries,
         };
@@ -439,7 +440,6 @@ mod tests {
             last_section_number: 0,
             transport_stream_id: 0x0001,
             original_network_id: 0x0001,
-            prepend_strings_length: 0,
             prepend_strings: &[],
             crid_entries: &[],
         };

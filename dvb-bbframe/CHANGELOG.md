@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Removed the fictitious "HEM CRC-8 init = 0xB5" model (`CRC8_INIT_DVB_T2`,
+  `crc8_with_init`). EN 302 755 §5.1.7 defines the wire byte as
+  `crc8(header) XOR MODE`; 0xB5 was init-0 propagated through exactly nine
+  zero bytes and only coincided for 9-byte inputs. Parse now uses the spec
+  formula directly; the `Crc8Mismatch` error variant (unreachable by
+  construction — the XOR already constrains the byte) was removed. The only
+  integrity signal the spec's scheme supports is `InvalidMode`.
+
 ## [0.1.0]
 
 Initial release. DVB-S2 / S2X / T2 Base-Band Frame (BBFRAME) header parser and

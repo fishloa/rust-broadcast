@@ -1,7 +1,13 @@
 //! Time Offset Table — ETSI EN 300 468 §5.2.6.
 //!
-//! Long-form section on PID 0x0014 with table_id 0x73. Structure:
+//! Carried on PID 0x0014 with table_id 0x73. Structure:
 //!   5-byte UTC time + descriptor loop + 4-byte CRC32.
+//!
+//! The TOT is the spec's framing exception: `section_syntax_indicator` SHALL
+//! be `0b0` (§5.2.6: "This 1-bit field shall be set to 0b0") yet the section
+//! still ends with a CRC_32. Do not route TOT bytes through the generic
+//! [`crate::section::Section`] short-form path — it would fold the CRC into
+//! the payload. Parse with [`Tot::parse`] directly.
 
 use crate::error::{Error, Result};
 use crate::traits::Table;
@@ -87,7 +93,9 @@ impl Serialize for Tot<'_> {
         }
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
+        // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
+        buf[1] = 0x70 | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         let dl = self.descriptors.len() as u16;
@@ -115,7 +123,8 @@ mod tests {
         let section_length = (UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + desc.len() + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID);
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        // SSI=0 per §5.2.6 (the TOT exception: SSI=0 but CRC present).
+        v.push(0x70 | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
         v.extend_from_slice(&[0xE4, 0x09, 0x12, 0x34, 0x56]);
         let dl = desc.len() as u16;

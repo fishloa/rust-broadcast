@@ -104,9 +104,10 @@ use dvb_t2mi::ts::PacketReassembler;
 
 let mut reasm = PacketReassembler::new();
 
-// Feed each incoming TS packet (184-byte payload, PUSI flag, PID)
+// Demux by PID upstream (one reassembler per T2-MI PID), then feed each
+// TS payload with its PUSI flag.
 for (ts_payload, pusi) in ts_packets {
-    reasm.feed(&ts_payload, pusi, 0x0006);
+    reasm.feed(&ts_payload, pusi);
 }
 
 // Drain completed T2-MI packets

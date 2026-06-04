@@ -25,19 +25,17 @@ impl PacketReassembler {
         Self::default()
     }
 
-    /// Feed a TS payload slice with PUSI state and the 4-byte PID.
+    /// Feed a TS payload slice with its PUSI state.
+    ///
+    /// The reassembler is single-stream: the caller demultiplexes by PID
+    /// (typically 0x0006 data piping, or whatever the PMT assigns) and feeds
+    /// only the T2-MI PID's payloads — one `PacketReassembler` per PID.
     ///
     /// Per §6.1.1:
     /// - If PUSI is set, byte 0 is `pointer_field` indicating offset to next T2-MI packet.
     /// - T2-MI packets are packed back-to-back; a new one can start mid-payload.
     /// - If PUSI is clear, continuation bytes extend the current packet.
-    pub fn feed(&mut self, payload: &[u8], pusi: bool, pid: u16) {
-        // Only process packets with the expected T2-MI PID (typically 0x0006 for data piping)
-        // PID 0x0000 = PAT — skip it entirely, it's not T2-MI data
-        // For simplicity in this reassembler, we only care about the data PID,
-        // but we accept all non-PAT/PMT PIDs for generic operation.
-        let _ = pid; // suppress unused warning; caller can filter
-
+    pub fn feed(&mut self, payload: &[u8], pusi: bool) {
         if payload.is_empty() {
             return;
         }
@@ -45,9 +43,9 @@ impl PacketReassembler {
         if pusi {
             let ptr = payload[0] as usize;
 
-            // Bytes 1..boundary belong to previous packet (if synced)
+            // Bytes 1..boundary belong to the packet in progress (if synced).
             let boundary = 1 + ptr;
-            if self.synced && boundary > 0 {
+            if self.synced {
                 let end = boundary.min(payload.len());
                 if end > 1 {
                     self.buf.extend_from_slice(&payload[1..end]);
@@ -56,13 +54,26 @@ impl PacketReassembler {
                 self.try_extract_packets();
             }
 
-            // Start new T2-MI packet at boundary
-            if boundary < payload.len() {
-                self.buf.extend_from_slice(&payload[boundary..]);
+            // §6.1.1: pointer_field is authoritative — a new T2-MI packet
+            // starts exactly at `boundary`. Anything still buffered belongs to
+            // a packet that never completed (corrupt payload_len_bits or lost
+            // TS packets); drop it so the corruption cannot swallow the good
+            // packets that follow.
+            self.buf.clear();
+
+            if boundary <= payload.len() {
+                if boundary < payload.len() {
+                    self.buf.extend_from_slice(&payload[boundary..]);
+                    self.try_extract_packets();
+                }
+                // boundary == payload.len(): the new packet starts at the very
+                // end — zero bytes yet; continuation arrives on the next feed.
                 self.synced = true;
-                self.try_extract_packets();
+            } else {
+                // pointer_field points past the payload — malformed; wait for
+                // the next PUSI to resync.
+                self.synced = false;
             }
-            // If boundary >= payload.len(), we'll continue on next feed
         } else if self.synced {
             // Continuation: all payload bytes extend current T2-MI packet
             self.buf.extend_from_slice(payload);
@@ -133,7 +144,7 @@ mod tests {
         // TS payload: pointer_field=0, then T2-MI packet
         let mut ts_payload = vec![0x00];
         ts_payload.extend_from_slice(&t2mi);
-        reasm.feed(&ts_payload, true, 0x0006);
+        reasm.feed(&ts_payload, true);
         let pkt = reasm.pop_packet().unwrap();
         assert_eq!(&pkt[..], &t2mi[..]);
     }
@@ -146,11 +157,11 @@ mod tests {
         // First TS: PUSI=1, pointer=0, first 100 bytes of T2-MI
         let mut ts1 = vec![0x00];
         ts1.extend_from_slice(&t2mi[..100]);
-        reasm.feed(&ts1, true, 0x0006);
+        reasm.feed(&ts1, true);
         assert!(reasm.pop_packet().is_none());
 
         // Second TS: !PUSI, remaining bytes
-        reasm.feed(&t2mi[100..], false, 0x0006);
+        reasm.feed(&t2mi[100..], false);
         let pkt = reasm.pop_packet().unwrap();
         assert_eq!(&pkt[..], &t2mi[..]);
     }
@@ -164,7 +175,7 @@ mod tests {
         let mut ts_payload = vec![0x00]; // pointer=0
         ts_payload.extend_from_slice(&t1);
         ts_payload.extend_from_slice(&t2);
-        reasm.feed(&ts_payload, true, 0x0006);
+        reasm.feed(&ts_payload, true);
 
         let p1 = reasm.pop_packet().unwrap();
         let p2 = reasm.pop_packet().unwrap();
@@ -179,7 +190,7 @@ mod tests {
         // TS payload: pointer=3, 3 bytes junk, then T2-MI packet
         let mut ts_payload = vec![0x03, 0xFF, 0xFF, 0xFF];
         ts_payload.extend_from_slice(&t2mi);
-        reasm.feed(&ts_payload, true, 0x0006);
+        reasm.feed(&ts_payload, true);
         let pkt = reasm.pop_packet().unwrap();
         assert_eq!(&pkt[..], &t2mi[..]);
     }
@@ -187,15 +198,62 @@ mod tests {
     #[test]
     fn discards_data_before_first_pusi() {
         let mut reasm = PacketReassembler::new();
-        reasm.feed(&[0xAA, 0xBB], false, 0x0006); // !synced, !pusi → discard
+        reasm.feed(&[0xAA, 0xBB], false); // !synced, !pusi → discard
         assert!(reasm.pop_packet().is_none());
     }
 
     #[test]
     fn handles_empty_payload() {
         let mut reasm = PacketReassembler::new();
-        reasm.feed(&[], true, 0x0006);
+        reasm.feed(&[], true);
         assert!(reasm.pop_packet().is_none());
+    }
+
+    /// §6.1.1: pointer_field is authoritative. A buffered partial whose
+    /// declared length over-ran (corruption / lost TS packets) must be
+    /// dropped at the next PUSI instead of swallowing the good packet that
+    /// starts there.
+    #[test]
+    fn corrupt_length_resyncs_at_next_pusi() {
+        let mut reasm = PacketReassembler::new();
+
+        // A partial packet that claims a huge payload (8000 bits = 1000
+        // bytes) but only ever delivers a few bytes.
+        let mut corrupt = vec![0x00u8, 0x00, 0x00, 0x00];
+        corrupt.extend_from_slice(&8000u16.to_be_bytes());
+        corrupt.extend_from_slice(&[0xEE; 20]);
+        let mut ts1 = vec![0x00]; // PUSI, pointer=0
+        ts1.extend_from_slice(&corrupt);
+        reasm.feed(&ts1, true);
+        assert!(reasm.pop_packet().is_none());
+
+        // Next PUSI with pointer=0: a clean, complete packet starts here.
+        let good = make_t2mi_packet(0x00, 7, &[0xAB, 0xCD]);
+        let mut ts2 = vec![0x00];
+        ts2.extend_from_slice(&good);
+        reasm.feed(&ts2, true);
+
+        let pkt = reasm.pop_packet().expect("good packet must survive resync");
+        assert_eq!(&pkt[..], &good[..]);
+        assert!(reasm.pop_packet().is_none());
+    }
+
+    /// A pointer_field that points past the payload end is malformed — the
+    /// reassembler must drop sync and recover on the following PUSI.
+    #[test]
+    fn pointer_past_payload_end_drops_sync() {
+        let mut reasm = PacketReassembler::new();
+        reasm.feed(&[0xFF, 0xAA, 0xBB], true); // ptr=255 > payload len
+        assert!(reasm.pop_packet().is_none());
+        // Continuation while unsynced is discarded.
+        reasm.feed(&[0xCC; 8], false);
+        assert!(reasm.pop_packet().is_none());
+        // Clean PUSI recovers.
+        let good = make_t2mi_packet(0x00, 1, &[0x55]);
+        let mut ts = vec![0x00];
+        ts.extend_from_slice(&good);
+        reasm.feed(&ts, true);
+        assert_eq!(&reasm.pop_packet().unwrap()[..], &good[..]);
     }
 
     #[test]
@@ -209,7 +267,7 @@ mod tests {
         ts_payload.extend_from_slice(&t1);
         ts_payload.extend_from_slice(&t2);
         ts_payload.extend_from_slice(&t3);
-        reasm.feed(&ts_payload, true, 0x0006);
+        reasm.feed(&ts_payload, true);
 
         let packets: Vec<_> = reasm.drain_packets().collect();
         assert_eq!(packets.len(), 3);
