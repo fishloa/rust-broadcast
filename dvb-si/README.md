@@ -37,8 +37,11 @@ implementation and is round-trip tested.
   0x7A Enhanced AC-3, plus bouquet_name, logical_channel, private_data_indicator,
   registration, stream_identifier, teletext, frequency_list.
 
-**Text** — Annex A: ISO 6937 (with diacritic combining), ISO 8859-n (via
-`encoding_rs`), UTF-8 (selector 0x15), UCS-2 BE (0x11); Annex A.2 control codes.
+**Text** — Annex A: the default Latin table, glyph-for-glyph per Figure A.1
+(ISO 6937 superset, € at 0xA4; full non-spacing diacritic row with precomposed
+forms + combining-mark fallback), ISO 8859-n (via `encoding_rs`), UTF-8
+(selector 0x15), UCS-2 BE (0x11); Annex A.2 control codes. Figure A.1 is
+transcribed in `docs/en_300_468.md`.
 
 **CRC** — Annex C MPEG-2 CRC-32, compile-time table (from `dvb_common`).
 

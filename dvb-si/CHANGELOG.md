@@ -54,6 +54,13 @@ UTF-8 (selector 0x15), UCS-2 BE (0x11); Annex A.2 control codes.
 - `content_identifier` (0x76): dropped the unreachable `CridLocation::Reserved`
   variant (reserved locations have no defined length and are rejected on parse).
 - Doc-cite fixes: `teletext` type coding is Table 102 (not 99).
+- Text decoding: the default Latin table is now glyph-for-glyph faithful to
+  EN 300 468 V1.19.1 Figure A.1 (transcribed in `docs/en_300_468.md`). Notable
+  corrections: 0xA4 → € U+20AC (was ¤), 0xFC → þ (was œ), 0xFD → ŧ (was ı),
+  0xFF → soft hyphen; quotes/arrows/fractions and the D/E/F rows no longer
+  fall back to Latin-1. The full non-spacing row (macron, breve, dot, ring,
+  double acute, ogonek, caron) is handled with precomposed forms and a
+  base + combining-mark fallback. 0xA8 = ¤ confirmed correct against the PDF.
 
 ### Notes
 - Tables and descriptors parse their outer structure with typed fields; nested
