@@ -27,6 +27,12 @@ common descriptors, and the DVB-allocated companion tables.
   V1.19.1 Table 2 NOTE 2 — the spec's own 0x4C was an acknowledged accident)
 - **Coverage milestone: every allocated table_id in EN 300 468 V1.19.1
   Table 2 is implemented.**
+- `carousel` module — DSM-CC data-carousel download protocol (ISO/IEC
+  13818-6 §7.2/§7.3, DVB-profiled): typed `Dsi`/`Dii`/`DownloadDataBlock`
+  messages over the `tables::dsmcc` section framing, plus
+  `ModuleReassembler` for DDB→module collection. Layout provenance in
+  `docs/iso_13818_6_carousel.md`; pinned against the live m6-single.ts
+  capture and round-tripped byte-exact against broadcast bytes.
 
 **Descriptors** — typed parsers for the common DVB + MPEG-2 descriptors
 (network_name, service, service_list, linkage, short/extended_event, component,

@@ -34,6 +34,16 @@ implementation and is round-trip tested.
 With these, **every allocated table_id in EN 300 468 V1.19.1 Table 2 is
 implemented** — the remaining values are reserved or user-defined.
 
+**DSM-CC data carousel** (`carousel` module)
+- Typed U-N download messages on top of the DSM-CC section framing:
+  **DSI** / **DII** (table_id 0x3B) and **DDB** (0x3C), ISO/IEC 13818-6
+  §7.2/§7.3 as profiled by DVB (TR 101 202, TS 102 006, TS 102 809)
+- **`ModuleReassembler`** — collects DDB blocks into complete modules per the
+  DII geometry (version-aware, size-capped, out-of-order tolerant)
+- Layouts documented in [`docs/iso_13818_6_carousel.md`](docs/iso_13818_6_carousel.md)
+  with provenance notes (ISO/IEC 13818-6 cannot be vendored) and pinned
+  against a live French-TNT capture
+
 **Descriptors** (parsed into typed structs; others pass through as raw bytes)
 - 0x09 CA, 0x0A ISO-639 language, 0x40 network_name, 0x41 service_list,
   0x43 satellite_delivery_system, 0x44 cable_delivery_system, 0x48 service,
