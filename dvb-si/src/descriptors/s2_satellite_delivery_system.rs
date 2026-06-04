@@ -175,9 +175,21 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
     fn serialized_len(&self) -> usize {
         HEADER_LEN
             + FLAGS_LEN
-            + if self.scrambling_sequence_selector { SCRAMBLING_FIELD_LEN } else { 0 }
-            + if self.multiple_input_stream_flag { ISI_FIELD_LEN } else { 0 }
-            + if self.not_timeslice_flag { 0 } else { TIMESLICE_FIELD_LEN }
+            + if self.scrambling_sequence_selector {
+                SCRAMBLING_FIELD_LEN
+            } else {
+                0
+            }
+            + if self.multiple_input_stream_flag {
+                ISI_FIELD_LEN
+            } else {
+                0
+            }
+            + if self.not_timeslice_flag {
+                0
+            } else {
+                TIMESLICE_FIELD_LEN
+            }
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {

@@ -160,7 +160,12 @@ impl<'a> Table<'a> for Sit {
 mod tests {
     use super::*;
 
-    fn build_sit(table_id_extension: u16, version: u8, ti_desc: &[u8], service_loop: &[u8]) -> Vec<u8> {
+    fn build_sit(
+        table_id_extension: u16,
+        version: u8,
+        ti_desc: &[u8],
+        service_loop: &[u8],
+    ) -> Vec<u8> {
         let section_length = (EXTENSION_HEADER_LEN
             + DESC_LOOP_LEN_FIELD
             + ti_desc.len()
@@ -215,7 +220,7 @@ mod tests {
     #[test]
     fn parse_separates_both_loops() {
         let ti = [0x4D, 0x02, 0x01, 0x02]; // a transmission-info descriptor
-        // one service entry: service_id=0x0001, running_status=4, svc_desc_len=0
+                                           // one service entry: service_id=0x0001, running_status=4, svc_desc_len=0
         let service = [0x00, 0x01, 0x80 | (4 << 4), 0x00];
         let sit = Sit::parse(&build_sit(0xABCD, 7, &ti, &service)).unwrap();
         assert_eq!(sit.transmission_info_descriptors, &ti[..]);
@@ -248,7 +253,13 @@ mod tests {
 
     #[test]
     fn sit_round_trips_via_json() {
-        let sit = Sit::parse(&build_sit(0xDEAD, 9, &[0x4D, 0x00], &[0x00, 0x01, 0xC0, 0x00])).unwrap();
+        let sit = Sit::parse(&build_sit(
+            0xDEAD,
+            9,
+            &[0x4D, 0x00],
+            &[0x00, 0x01, 0xC0, 0x00],
+        ))
+        .unwrap();
         let j = serde_json::to_string(&sit).unwrap();
         assert_eq!(serde_json::from_str::<Sit>(&j).unwrap(), sit);
     }

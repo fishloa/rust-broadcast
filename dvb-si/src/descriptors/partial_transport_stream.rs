@@ -145,9 +145,7 @@ mod tests {
     #[test]
     fn parse_extracts_fields_and_ignores_reserved() {
         // peak_rate=0x012345, min=0x0ABCDE, max=0x1234. Reserved bits set to 1.
-        let bytes = [
-            TAG, 8, 0xC1, 0x23, 0x45, 0xCA, 0xBC, 0xDE, 0xD2, 0x34,
-        ];
+        let bytes = [TAG, 8, 0xC1, 0x23, 0x45, 0xCA, 0xBC, 0xDE, 0xD2, 0x34];
         let d = PartialTransportStreamDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.peak_rate, 0x01_2345);
         assert_eq!(d.minimum_overall_smoothing_rate, 0x0A_BCDE);
@@ -156,9 +154,8 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let err =
-            PartialTransportStreamDescriptor::parse(&[0x64, 8, 0, 0, 0, 0, 0, 0, 0, 0])
-                .unwrap_err();
+        let err = PartialTransportStreamDescriptor::parse(&[0x64, 8, 0, 0, 0, 0, 0, 0, 0, 0])
+            .unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: 0x64, .. }));
     }
 
@@ -171,16 +168,14 @@ mod tests {
     #[test]
     fn parse_rejects_truncated_body() {
         // length=8 but only 4 payload bytes present.
-        let err =
-            PartialTransportStreamDescriptor::parse(&[TAG, 8, 0, 0, 0, 0]).unwrap_err();
+        let err = PartialTransportStreamDescriptor::parse(&[TAG, 8, 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::BufferTooShort { .. }));
     }
 
     #[test]
     fn parse_rejects_wrong_length() {
         let err =
-            PartialTransportStreamDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0])
-                .unwrap_err();
+            PartialTransportStreamDescriptor::parse(&[TAG, 7, 0, 0, 0, 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { .. }));
     }
 

@@ -184,7 +184,10 @@ fn rai_fixture_outer_bbframes_parse_as_nm() {
             continue;
         }
         let hdr = Bbheader::parse(frame).unwrap_or_else(|e| {
-            panic!("Rai outer BBHeader #{i} failed: {e}\n  header: {:02X?}", &frame[..10])
+            panic!(
+                "Rai outer BBHeader #{i} failed: {e}\n  header: {:02X?}",
+                &frame[..10]
+            )
         });
         assert_eq!(hdr.mode, Mode::Normal, "Rai outer BBHeader #{i} must be NM");
     }

@@ -106,8 +106,7 @@ impl<'a> Parse<'a> for Ait<'a> {
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let common_descriptors_length =
-            (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
+        let common_descriptors_length = (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         let common_desc_end = common_desc_start + common_descriptors_length;
         let app_loop_end = total - CRC_LEN;
@@ -309,9 +308,10 @@ mod tests {
         let mut bytes = build_ait(0x0010, false, 0, &[], &[]);
         bytes[0] = 0x00;
         let err = Ait::parse(&bytes).unwrap_err();
-        assert!(
-            matches!(err, Error::UnexpectedTableId { table_id: 0x00, .. })
-        );
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x00, .. }
+        ));
     }
 
     #[test]

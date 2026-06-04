@@ -283,7 +283,14 @@ mod tests {
             1,
             0,
             0x20,
-            &[(100, true, true, 4, false, vec![0x48, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05])],
+            &[(
+                100,
+                true,
+                true,
+                4,
+                false,
+                vec![0x48, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05],
+            )],
         );
         let sdt = Sdt::parse(&bytes).unwrap();
         assert_eq!(sdt.services.len(), 1);
@@ -335,7 +342,10 @@ mod tests {
         let mut bytes = build_sdt(SdtKind::Actual, 1, 0, 0x20, &[]);
         bytes[0] = 0x00;
         let err = Sdt::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::UnexpectedTableId { table_id: 0x00, .. }));
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x00, .. }
+        ));
     }
 
     #[test]

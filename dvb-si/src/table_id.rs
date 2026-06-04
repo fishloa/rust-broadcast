@@ -7,12 +7,13 @@ use num_enum::TryFromPrimitive;
 /// Typed `table_id` enumeration.
 ///
 /// Tables that occupy a range of values (EIT schedule 0x50..=0x5F and 0x60..=0x6F)
-/// are not listed as enum variants; see [`eit_schedule_actual_segment`] and
-/// [`eit_schedule_other_segment`] instead.
+/// are not listed as enum variants; see [`Self::eit_schedule_actual_segment`] and
+/// [`Self::eit_schedule_other_segment`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
 #[allow(missing_docs)]
+#[rustfmt::skip] // deliberate column-aligned discriminants
 pub enum TableId {
     // ── MPEG-2 tables ──────────────────────────────────────────────────────
     Pat                        = 0x00,

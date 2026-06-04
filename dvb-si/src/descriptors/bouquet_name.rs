@@ -95,12 +95,8 @@ mod tests {
     #[test]
     fn parse_extracts_bouquet_name() {
         let raw: Vec<u8> = vec![
-            TAG,
-            0x04, // length = 4
-            b'B',
-            b'O',
-            b'U',
-            b'Q',
+            TAG, 0x04, // length = 4
+            b'B', b'O', b'U', b'Q',
         ];
         let desc = BouquetNameDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.bouquet_name, b"BOUQ");

@@ -115,7 +115,10 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
                 .entries
                 .iter()
                 .map(|e| {
-                    LANG_LEN + LEN_FIELD + e.service_provider_name.len() + LEN_FIELD
+                    LANG_LEN
+                        + LEN_FIELD
+                        + e.service_provider_name.len()
+                        + LEN_FIELD
                         + e.service_name.len()
                 })
                 .sum::<usize>()
@@ -158,8 +161,7 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
             pos += LANG_LEN;
             buf[pos] = e.service_provider_name.len() as u8;
             pos += LEN_FIELD;
-            buf[pos..pos + e.service_provider_name.len()]
-                .copy_from_slice(e.service_provider_name);
+            buf[pos..pos + e.service_provider_name.len()].copy_from_slice(e.service_provider_name);
             pos += e.service_provider_name.len();
             buf[pos] = e.service_name.len() as u8;
             pos += LEN_FIELD;
@@ -261,7 +263,10 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let bytes = build(&[(*b"eng", b"Provider", b"Channel"), (*b"deu", b"Anbieter", b"Sender")]);
+        let bytes = build(&[
+            (*b"eng", b"Provider", b"Channel"),
+            (*b"deu", b"Anbieter", b"Sender"),
+        ]);
         let parsed = MultilingualServiceNameDescriptor::parse(&bytes).unwrap();
         let mut buf = vec![0u8; parsed.serialized_len()];
         parsed.serialize_into(&mut buf).unwrap();

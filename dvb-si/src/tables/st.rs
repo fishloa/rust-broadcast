@@ -81,7 +81,9 @@ impl<'a> Parse<'a> for St {
         // §5.2.8: data_byte "may take any value and has no meaning" — no
         // value constraint; preserve verbatim.
         let payload = &bytes[HEADER_LEN..HEADER_LEN + payload_len];
-        Ok(Self { payload: payload.to_vec() })
+        Ok(Self {
+            payload: payload.to_vec(),
+        })
     }
 }
 
@@ -230,7 +232,10 @@ mod tests {
         let bytes = [0x72, 0x70, 10, 0x00, 0x00];
         assert!(matches!(
             St::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort { what: "St payload", .. }
+            Error::BufferTooShort {
+                what: "St payload",
+                ..
+            }
         ));
     }
 

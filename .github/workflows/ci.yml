@@ -39,10 +39,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      # Note: no `cargo fmt --check` gate — the source uses deliberate manual
-      # column alignment (enum discriminants, Cargo.toml) that rustfmt undoes.
+      # Deliberate column alignment (TableId / DescriptorTag discriminants)
+      # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
+      - name: rustfmt
+        run: cargo fmt --all --check
       - name: clippy
         run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 
@@ -53,8 +55,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # Build the docs (catches doc-code breakage). Not `-D warnings`: the
-      # protocol docs use bit-range notation like `[7:4]` that rustdoc reports
-      # as broken intra-doc links — cosmetic, renders fine as text.
+      # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
+      # so it can't be mistaken for intra-doc links. Keep it that way.
       - name: cargo doc
         run: cargo doc --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings"

@@ -176,8 +176,7 @@ impl<'a> Parse<'a> for Rct<'a> {
                     what: "Rct link_entry header",
                 });
             }
-            let link_info_length =
-                (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            let link_info_length = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
             let entry_end = pos + LINK_ENTRY_HEADER_LEN + link_info_length;
             if entry_end > payload_end {
                 return Err(Error::SectionLengthOverflow {
@@ -259,7 +258,11 @@ impl Serialize for Rct<'_> {
 
         // Byte 1: section_syntax_indicator(1)=1 | table_id_extension_flag(1) |
         //         reserved(2)=11 | section_length_hi(4)
-        let tief_bit: u8 = if self.table_id_extension_flag { 0x40 } else { 0x00 };
+        let tief_bit: u8 = if self.table_id_extension_flag {
+            0x40
+        } else {
+            0x00
+        };
         buf[1] = 0x80 | tief_bit | 0x30 | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
@@ -267,9 +270,7 @@ impl Serialize for Rct<'_> {
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
 
         // Byte 5: reserved(2)=11 | version_number(5) | current_next_indicator(1)
-        buf[5] = 0xC0
-            | ((self.version_number & 0x1F) << 1)
-            | u8::from(self.current_next_indicator);
+        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
 
         // Bytes 6-7: section_number, last_section_number
         buf[6] = self.section_number;
@@ -398,10 +399,7 @@ mod tests {
         let err = Rct::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::UnexpectedTableId {
-                table_id: 0x4A,
-                ..
-            }
+            Error::UnexpectedTableId { table_id: 0x4A, .. }
         ));
     }
 

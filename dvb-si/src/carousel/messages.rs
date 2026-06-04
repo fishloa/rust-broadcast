@@ -150,10 +150,7 @@ pub struct DownloadDataBlock<'a> {
 /// Parse the 12-byte dsmccMessageHeader / dsmccDownloadDataHeader common
 /// shape. Returns (messageId, transaction_or_download_id, adaptation,
 /// payload) where `payload` is bounded by `messageLength`.
-fn parse_header<'a>(
-    bytes: &'a [u8],
-    what: &'static str,
-) -> Result<(u16, u32, &'a [u8], &'a [u8])> {
+fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'a [u8], &'a [u8])> {
     if bytes.len() < MESSAGE_HEADER_LEN {
         return Err(Error::BufferTooShort {
             need: MESSAGE_HEADER_LEN,
@@ -266,8 +263,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 }
                 let mut server_id = [0u8; SERVER_ID_LEN];
                 server_id.copy_from_slice(&payload[..SERVER_ID_LEN]);
-                let (compatibility_descriptor, pos) =
-                    length_prefixed(payload, SERVER_ID_LEN, end)?;
+                let (compatibility_descriptor, pos) = length_prefixed(payload, SERVER_ID_LEN, end)?;
                 let (private_data, _pos) = length_prefixed(payload, pos, end)?;
                 Ok(UnMessage::Dsi(Dsi {
                     transaction_id,
@@ -624,7 +620,7 @@ mod tests {
         assert_eq!(buf[1], 0x03); // dsmccType
         assert_eq!(u16::from_be_bytes([buf[2], buf[3]]), MESSAGE_ID_DSI);
         assert_eq!(buf[8], 0xFF); // reserved
-        // messageLength = bytes after the 12-byte header
+                                  // messageLength = bytes after the 12-byte header
         let ml = u16::from_be_bytes([buf[10], buf[11]]) as usize;
         assert_eq!(ml, buf.len() - 12);
     }
@@ -637,7 +633,10 @@ mod tests {
         buf[0] = 0x12;
         assert!(matches!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation { field: "protocolDiscriminator", .. }
+            Error::ReservedBitsViolation {
+                field: "protocolDiscriminator",
+                ..
+            }
         ));
     }
 
@@ -650,7 +649,10 @@ mod tests {
         buf[3] = 0x01; // 0x1001 DownloadInfoRequest — not valid broadcast-side
         assert!(matches!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation { field: "messageId", .. }
+            Error::ReservedBitsViolation {
+                field: "messageId",
+                ..
+            }
         ));
     }
 
@@ -696,7 +698,10 @@ mod tests {
         msg.serialize_into(&mut buf).unwrap();
         assert!(matches!(
             DownloadDataBlock::parse(&buf).unwrap_err(),
-            Error::ReservedBitsViolation { field: "messageId", .. }
+            Error::ReservedBitsViolation {
+                field: "messageId",
+                ..
+            }
         ));
     }
 

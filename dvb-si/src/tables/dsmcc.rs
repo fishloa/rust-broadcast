@@ -142,14 +142,8 @@ impl<'a> Table<'a> for DsmccSection<'a> {
 mod tests {
     use super::*;
 
-    fn build_dsmcc(
-        table_id: u8,
-        extension_id: u16,
-        version: u8,
-        payload: &[u8],
-    ) -> Vec<u8> {
-        let section_length: u16 =
-            (EXTENSION_HEADER_LEN + payload.len() + CRC_LEN) as u16;
+    fn build_dsmcc(table_id: u8, extension_id: u16, version: u8, payload: &[u8]) -> Vec<u8> {
+        let section_length: u16 = (EXTENSION_HEADER_LEN + payload.len() + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(table_id);
         v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
@@ -168,27 +162,30 @@ mod tests {
         let mut bytes = build_dsmcc(0x3B, 0x0001, 0, &[]);
         bytes[0] = 0x00;
         let err = DsmccSection::parse(&bytes).unwrap_err();
-        assert!(
-            matches!(err, Error::UnexpectedTableId { table_id: 0x00, .. })
-        );
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x00, .. }
+        ));
     }
 
     #[test]
     fn parse_rejects_table_id_below_range() {
         let bytes = build_dsmcc(0x39, 0x0001, 0, &[]);
         let err = DsmccSection::parse(&bytes).unwrap_err();
-        assert!(
-            matches!(err, Error::UnexpectedTableId { table_id: 0x39, .. })
-        );
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x39, .. }
+        ));
     }
 
     #[test]
     fn parse_rejects_table_id_above_range() {
         let bytes = build_dsmcc(0x40, 0x0001, 0, &[]);
         let err = DsmccSection::parse(&bytes).unwrap_err();
-        assert!(
-            matches!(err, Error::UnexpectedTableId { table_id: 0x40, .. })
-        );
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x40, .. }
+        ));
     }
 
     #[test]

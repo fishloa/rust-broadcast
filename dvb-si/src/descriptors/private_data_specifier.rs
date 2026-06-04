@@ -81,8 +81,7 @@ impl Serialize for PrivateDataSpecifierDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 4]
-            .copy_from_slice(&self.private_data_specifier.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + 4].copy_from_slice(&self.private_data_specifier.to_be_bytes());
         Ok(len)
     }
 }

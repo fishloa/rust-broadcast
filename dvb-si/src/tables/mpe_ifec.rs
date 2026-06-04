@@ -91,8 +91,7 @@ impl RealTimeParameters {
         let mpe_boundary = (b[1] & 0x08) != 0;
         let frame_boundary = (b[1] & 0x04) != 0;
         // prev_burst_size(18) = bottom 2 bits of b[1] | b[2] | b[3]
-        let prev_burst_size =
-            (((b[1] & 0x03) as u32) << 16) | ((b[2] as u32) << 8) | (b[3] as u32);
+        let prev_burst_size = (((b[1] & 0x03) as u32) << 16) | ((b[2] as u32) << 8) | (b[3] as u32);
         RealTimeParameters {
             delta_t,
             mpe_boundary,

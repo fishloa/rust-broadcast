@@ -60,7 +60,8 @@ fn fixture_m6_ait_sections_parse() {
         parsed_count += 1;
     }
     assert_eq!(
-        parsed_count, sections.len(),
+        parsed_count,
+        sections.len(),
         "all AIT sections should parse"
     );
 }
@@ -107,7 +108,8 @@ fn fixture_m6_dsmcc_sections_parse() {
         parsed_count += 1;
     }
     assert_eq!(
-        parsed_count, sections.len(),
+        parsed_count,
+        sections.len(),
         "all DSM-CC sections should parse"
     );
 }
@@ -135,7 +137,10 @@ fn fixture_m6_dsmcc_round_trip() {
 
 #[test]
 fn fixture_tnt_isi6_nit_sections_parse() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tnt-5w-12732v-isi6-10s.ts");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tnt-5w-12732v-isi6-10s.ts"
+    );
     let sections = extract_sections_for_pid(path, 0x0010);
 
     assert!(
@@ -165,7 +170,10 @@ fn fixture_tnt_isi6_nit_sections_parse() {
 
 #[test]
 fn fixture_tnt_isi6_nit_round_trip() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tnt-5w-12732v-isi6-10s.ts");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/tnt-5w-12732v-isi6-10s.ts"
+    );
     let sections = extract_sections_for_pid(path, 0x0010);
 
     let mut round_tripped = 0;
@@ -183,5 +191,8 @@ fn fixture_tnt_isi6_nit_round_trip() {
         assert_eq!(nit, reparsed);
         round_tripped += 1;
     }
-    assert!(round_tripped > 0, "expected at least 1 NIT round-trip success");
+    assert!(
+        round_tripped > 0,
+        "expected at least 1 NIT round-trip success"
+    );
 }

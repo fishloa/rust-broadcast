@@ -88,8 +88,7 @@ impl Serialize for DataBroadcastIdDescriptor<'_> {
         }
         buf[0] = TAG;
         buf[1] = body as u8;
-        buf[HEADER_LEN..HEADER_LEN + ID_LEN]
-            .copy_from_slice(&self.data_broadcast_id.to_be_bytes());
+        buf[HEADER_LEN..HEADER_LEN + ID_LEN].copy_from_slice(&self.data_broadcast_id.to_be_bytes());
         let sel_start = HEADER_LEN + ID_LEN;
         buf[sel_start..sel_start + self.id_selector.len()].copy_from_slice(self.id_selector);
         Ok(len)

@@ -18,7 +18,7 @@ pub const BBHEADER_LEN: usize = 10;
 /// S2/S2X/T2 frame.
 pub const DFL_MAX_BITS: u16 = 64800;
 
-/// Input stream format as described by the TS/GS field (MATYPE-1 bits [7:6]).
+/// Input stream format as described by the TS/GS field (MATYPE-1 bits `[7:6]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[repr(u8)]
@@ -71,7 +71,7 @@ impl From<num_enum::TryFromPrimitiveError<Mode>> for Error {
 /// The pair of MATYPE bytes describing the input stream format and mode adaptation.
 ///
 /// Per EN 302 755 Table 1:
-/// - MATYPE-1 (byte 0): TS/GS, SIS/MIS, CCM/ACM, ISSYI, NPD, EXT[1:0]
+/// - MATYPE-1 (byte 0): TS/GS, SIS/MIS, CCM/ACM, ISSYI, NPD, `EXT[1:0]`
 /// - MATYPE-2 (byte 1): ISI (0-255) or reserved
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

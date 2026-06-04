@@ -1,8 +1,8 @@
 //! Round-trip tests: parse → serialize → parse must produce identical bytes
 //! and an identical struct for every parser type in the crate.
 
-use dvb_si::section::Section;
 use dvb_common::{Parse, Serialize};
+use dvb_si::section::Section;
 
 #[test]
 fn long_form_section_round_trip_is_identity() {
@@ -28,12 +28,18 @@ fn long_form_section_round_trip_is_identity() {
 
     let reparsed = Section::parse(&out).expect("reparse");
     assert_eq!(parsed.table_id, reparsed.table_id);
-    assert_eq!(parsed.section_syntax_indicator, reparsed.section_syntax_indicator);
+    assert_eq!(
+        parsed.section_syntax_indicator,
+        reparsed.section_syntax_indicator
+    );
     assert_eq!(parsed.private_indicator, reparsed.private_indicator);
     assert_eq!(parsed.section_length, reparsed.section_length);
     assert_eq!(parsed.extension_id, reparsed.extension_id);
     assert_eq!(parsed.version_number, reparsed.version_number);
-    assert_eq!(parsed.current_next_indicator, reparsed.current_next_indicator);
+    assert_eq!(
+        parsed.current_next_indicator,
+        reparsed.current_next_indicator
+    );
     assert_eq!(parsed.section_number, reparsed.section_number);
     assert_eq!(parsed.last_section_number, reparsed.last_section_number);
     assert_eq!(parsed.payload, reparsed.payload);

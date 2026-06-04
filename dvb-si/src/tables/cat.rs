@@ -251,7 +251,10 @@ mod tests {
         let mut bytes = build_cat(0, &[]);
         bytes[0] = 0x02; // PMT table_id
         let err = Cat::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::UnexpectedTableId { table_id: 0x02, .. }));
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x02, .. }
+        ));
     }
 
     #[test]

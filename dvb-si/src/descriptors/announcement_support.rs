@@ -273,7 +273,8 @@ mod tests {
         // indicator=0x0001, entry: type=0x01, ref_type=0x02 → reference present.
         // flags = 0001 1 010 = 0x1A
         let bytes = [
-            TAG, 10, 0x00, 0x01, 0x1A, // onid=0xAABB, tsid=0xCCDD, sid=0xEEFF, component_tag=0x09
+            TAG, 10, 0x00, 0x01,
+            0x1A, // onid=0xAABB, tsid=0xCCDD, sid=0xEEFF, component_tag=0x09
             0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x09,
         ];
         let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();

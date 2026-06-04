@@ -166,9 +166,7 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
 
         let body_bytes = &bytes[HEADER_LEN..total - CRC_LEN];
         let body = match table_id_extension {
-            AUTH_EXTENSION_FIRST..=AUTH_EXTENSION_LAST => {
-                parse_authentication_message(body_bytes)?
-            }
+            AUTH_EXTENSION_FIRST..=AUTH_EXTENSION_LAST => parse_authentication_message(body_bytes)?,
             CERTIFICATE_COLLECTION_EXTENSION => parse_certificate_collection(body_bytes)?,
             _ => ProtectionMessageBody::Raw(body_bytes),
         };
@@ -499,8 +497,7 @@ mod tests {
 
     /// Wrap a body in the 8-byte common header + placeholder CRC.
     fn build_section(extension: u16, version: u8, body: &[u8]) -> Vec<u8> {
-        let section_length =
-            (HEADER_LEN - SECTION_LENGTH_PREFIX + body.len() + CRC_LEN) as u16;
+        let section_length = (HEADER_LEN - SECTION_LENGTH_PREFIX + body.len() + CRC_LEN) as u16;
         let mut v = vec![
             TABLE_ID,
             0xB0 | ((section_length >> 8) as u8 & 0x0F),

@@ -45,11 +45,11 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
 /// DVB-T2 timestamp payload (type 0x20) per ETSI TS 102 773 §5.2.7.
 ///
 /// Layout (88 bits = 11 bytes):
-/// - byte 0 [7:4]: rfu (4 bits) — must be 0
-/// - byte 0 [3:0]: bw (4 bits) — Table 3
+/// - byte 0 `[7:4]`: rfu (4 bits) — must be 0
+/// - byte 0 `[3:0]`: bw (4 bits) — Table 3
 /// - bytes 1-5: seconds_since_2000 (40 bits)
-/// - subseconds (27 bits): bytes 6-8 + byte 9 [7:5]
-/// - utco (13 bits): byte 9 [4:0] + byte 10 — UTC offset in seconds
+/// - subseconds (27 bits): bytes 6-8 + byte 9 `[7:5]`
+/// - utco (13 bits): byte 9 `[4:0]` + byte 10 — UTC offset in seconds
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct T2TimestampPayload {

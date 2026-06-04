@@ -773,7 +773,9 @@ fn parse_c2_bundle(sel: &[u8]) -> Result<C2BundleDeliverySystem> {
         entries.push(C2BundleEntry {
             plp_id: chunk[0],
             data_slice_id: chunk[1],
-            c2_system_tuning_frequency: u32::from_be_bytes([chunk[2], chunk[3], chunk[4], chunk[5]]),
+            c2_system_tuning_frequency: u32::from_be_bytes([
+                chunk[2], chunk[3], chunk[4], chunk[5],
+            ]),
             c2_system_tuning_frequency_type: packed >> 6,
             active_ofdm_symbol_duration: (packed >> 3) & 0x07,
             guard_interval: packed & 0x07,
@@ -981,7 +983,11 @@ impl ExtensionBody<'_> {
             ExtensionBody::C2DeliverySystem(_) => C2_LEN,
             ExtensionBody::UriLinkage(b) => {
                 2 + b.uri.len()
-                    + if b.min_polling_interval.is_some() { 2 } else { 0 }
+                    + if b.min_polling_interval.is_some() {
+                        2
+                    } else {
+                        0
+                    }
                     + b.private_data.len()
             }
             ExtensionBody::Ac4(b) => {
@@ -1365,7 +1371,7 @@ mod tests {
     fn parse_c2_bundle_two_entries() {
         let entry = |off: u8| {
             let packed = (0x01u8 << 6) | 0x01; // freq_type=1, ofdm=0, guard=1
-            // 8 bytes per Table 139: ... + primary_channel(1)+reserved_zero(7)
+                                               // 8 bytes per Table 139: ... + primary_channel(1)+reserved_zero(7)
             [off, off + 1, 0x00, 0x00, 0x10, 0x00, packed, 0x80]
         };
         let mut sel = Vec::new();

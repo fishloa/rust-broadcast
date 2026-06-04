@@ -39,8 +39,7 @@ pub const PID: u16 = 0x0000;
 
 /// Minimum byte length of a valid UNT section (3-byte header + 9-byte
 /// fixed body + 2-byte common_descriptor_loop_length field + 4-byte CRC).
-const MIN_SECTION_LEN: usize =
-    HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
+const MIN_SECTION_LEN: usize = HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 /// 3-byte outer header: table_id(8) + section_syntax_indicator(1) +
 /// reserved_future_use(1) + reserved(2) + section_length(12).
@@ -361,10 +360,7 @@ mod tests {
 
         // Header.
         v.push(TABLE_ID);
-        v.push(
-            SECTION_LEN_BYTE1_FLAGS
-                | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK),
-        );
+        v.push(SECTION_LEN_BYTE1_FLAGS | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK));
         v.push((section_length & 0xFF) as u8);
 
         // Fixed body.
@@ -408,16 +404,16 @@ mod tests {
         let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
 
         let bytes = build_unt(
-            0x01,   // action_type: System Software Update
+            0x01, // action_type: System Software Update
             oui_hash,
-            7,      // version_number (5-bit)
-            true,   // current_next_indicator
-            0,      // section_number
-            0,      // last_section_number
+            7,    // version_number (5-bit)
+            true, // current_next_indicator
+            0,    // section_number
+            0,    // last_section_number
             oui,
-            0x00,   // processing_order: first
+            0x00, // processing_order: first
             common_descs,
-            &[],    // empty platform loop
+            &[], // empty platform loop
         );
 
         let unt = Unt::parse(&bytes).expect("parse must succeed");
@@ -524,7 +520,9 @@ mod tests {
         };
 
         let mut buf = vec![0u8; original.serialized_len()];
-        original.serialize_into(&mut buf).expect("serialize must succeed");
+        original
+            .serialize_into(&mut buf)
+            .expect("serialize must succeed");
 
         let reparsed = Unt::parse(&buf).expect("reparse must succeed");
         assert_eq!(original, reparsed);

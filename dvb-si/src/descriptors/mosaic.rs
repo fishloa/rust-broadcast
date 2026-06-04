@@ -101,8 +101,7 @@ impl CellLinkage {
         match self {
             CellLinkage::Undefined | CellLinkage::Reserved { .. } => 0,
             CellLinkage::Bouquet { .. } => 2,
-            CellLinkage::Service { .. }
-            | CellLinkage::OtherMosaic { .. } => 6,
+            CellLinkage::Service { .. } | CellLinkage::OtherMosaic { .. } => 6,
             CellLinkage::Event { .. } => 8,
         }
     }

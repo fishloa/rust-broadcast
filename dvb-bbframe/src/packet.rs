@@ -239,7 +239,7 @@ impl CarryOverExtractor {
         out
     }
 
-    /// Feed an NM BBFrame. Stride=188, byte[0] of each UP is the CRC-8 of
+    /// Feed an NM BBFrame. Stride=188, `byte[0]` of each UP is the CRC-8 of
     /// the previous UP and gets replaced with 0x47.
     pub fn feed_nm(
         &mut self,

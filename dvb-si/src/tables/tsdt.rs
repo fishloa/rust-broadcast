@@ -112,8 +112,7 @@ impl Serialize for Tsdt {
         buf[7] = self.last_section_number;
 
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[desc_start..desc_start + self.descriptors.len()]
-            .copy_from_slice(&self.descriptors);
+        buf[desc_start..desc_start + self.descriptors.len()].copy_from_slice(&self.descriptors);
 
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
@@ -133,8 +132,7 @@ mod tests {
     use super::*;
 
     fn build_tsdt(table_id_extension: u16, version: u8, descriptors: &[u8]) -> Vec<u8> {
-        let section_length: u16 =
-            (EXTENSION_HEADER_LEN + descriptors.len() + CRC_LEN) as u16;
+        let section_length: u16 = (EXTENSION_HEADER_LEN + descriptors.len() + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID);
         v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));

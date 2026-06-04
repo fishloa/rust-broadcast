@@ -343,7 +343,16 @@ mod tests {
         let mac = [0x01, 0x00, 0x5E, 0x12, 0x34, 0x56];
         let payload = [0xDE, 0xAD, 0xBE, 0xEF];
         let bytes = build_mpe(
-            false, true, mac, 0b10, 0b01, true, 2, 3, &payload, [0xAA, 0xBB, 0xCC, 0xDD],
+            false,
+            true,
+            mac,
+            0b10,
+            0b01,
+            true,
+            2,
+            3,
+            &payload,
+            [0xAA, 0xBB, 0xCC, 0xDD],
         );
         let sec = MpeDatagramSection::parse(&bytes).unwrap();
         assert!(!sec.section_syntax_indicator);
@@ -397,7 +406,16 @@ mod tests {
     #[test]
     fn parse_rejects_wrong_table_id() {
         let mut bytes = build_mpe(
-            true, false, [0; 6], 0, 0, false, 0, 0, &[0x01], [0, 0, 0, 0],
+            true,
+            false,
+            [0; 6],
+            0,
+            0,
+            false,
+            0,
+            0,
+            &[0x01],
+            [0, 0, 0, 0],
         );
         bytes[0] = 0x3F; // valid DSM-CC range value, but not the MPE table_id
         assert!(matches!(
@@ -415,7 +433,16 @@ mod tests {
     #[test]
     fn parse_rejects_section_length_overflow() {
         let mut bytes = build_mpe(
-            true, false, [0; 6], 0, 0, false, 0, 0, &[0xAA], [0, 0, 0, 0],
+            true,
+            false,
+            [0; 6],
+            0,
+            0,
+            false,
+            0,
+            0,
+            &[0xAA],
+            [0, 0, 0, 0],
         );
         // Inflate declared section_length well past the actual buffer.
         let fake_sl: u16 = (bytes.len() as u16) + 100 - HEADER_LEN as u16;
@@ -466,9 +493,7 @@ mod tests {
         let mac = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
         let payload = [0x11, 0x22, 0x33];
         let trailer = [0x12, 0x34, 0x56, 0x78];
-        let bytes = build_mpe(
-            false, true, mac, 0b11, 0b10, true, 1, 5, &payload, trailer,
-        );
+        let bytes = build_mpe(false, true, mac, 0b11, 0b10, true, 1, 5, &payload, trailer);
         let parsed = MpeDatagramSection::parse(&bytes).unwrap();
         assert_eq!(parsed.checksum, trailer);
         let mut buf = vec![0u8; parsed.serialized_len()];

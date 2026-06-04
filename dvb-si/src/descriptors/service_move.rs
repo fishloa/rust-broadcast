@@ -112,8 +112,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_tag() {
-        let err =
-            ServiceMoveDescriptor::parse(&[0x61, 6, 0, 0, 0, 0, 0, 0]).unwrap_err();
+        let err = ServiceMoveDescriptor::parse(&[0x61, 6, 0, 0, 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: 0x61, .. }));
     }
 
@@ -132,8 +131,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_length() {
-        let err =
-            ServiceMoveDescriptor::parse(&[TAG, 5, 0, 1, 0, 2, 0]).unwrap_err();
+        let err = ServiceMoveDescriptor::parse(&[TAG, 5, 0, 1, 0, 2, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { .. }));
     }
 

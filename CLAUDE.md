@@ -21,7 +21,8 @@ cargo build --workspace --all-features --locked
 cargo test  --workspace --all-features --locked
 cargo build --workspace --no-default-features --locked
 cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
-cargo doc --workspace --all-features --no-deps --locked   # not -D warnings (see below)
+cargo fmt --all --check
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 
 # Scoped runs:
 cargo test -p dvb-si --all-features                # one crate
@@ -29,9 +30,9 @@ cargo test -p dvb-si --test round_trip             # one integration test file
 cargo test -p dvb-si descriptors::pdc              # tests matching a path
 ```
 
-**Do NOT run `cargo fmt`.** The source uses deliberate manual column alignment (enum discriminants, Cargo.toml tables) that rustfmt destroys. There is intentionally no fmt gate in CI.
+Formatting is rustfmt-clean and CI-gated (`cargo fmt --all --check`). The deliberately column-aligned enums (`TableId`, `DescriptorTag`) carry `#[rustfmt::skip]` — keep the attribute (and the alignment) when editing them, and use the same pattern for any new aligned table. Cargo.toml manifests keep their manual column alignment (rustfmt doesn't touch them).
 
-Rustdoc reports the bit-range notation in protocol docs (e.g. `[7:4]`) as broken intra-doc links — that's cosmetic and expected; don't "fix" it and don't gate docs on `-D warnings`.
+Docs are warning-clean and CI-gated (`RUSTDOCFLAGS="-D warnings"`). Bit-range notation in doc comments must be backticked — `` `[7:4]` `` — or rustdoc parses it as an intra-doc link.
 
 ## Workflow: GitHub issues drive the work
 
@@ -42,8 +43,9 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
 3. **Commit style** follows the existing history: `feat(carousel): …`, `fix(text): …`, `docs(dvb-si): …`, or a plain scoped summary. Imperative, specific, references the spec section when relevant.
 4. **Open a PR** with `gh pr create`, body referencing the issue (`Closes #n`). CI must pass before merge:
    - test matrix on stable **and** 1.75 (MSRV) — all-features and no-default-features builds
+   - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
-   - doc build
+   - doc build with `RUSTDOCFLAGS="-D warnings"`
 5. **Releases are tag-driven and CI-only.** Bump all four crate versions together, merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
 
 ## Architecture

@@ -122,8 +122,7 @@ impl<'a> Parse<'a> for Bat<'a> {
         let last_section_number = bytes[7];
 
         // bytes[8..10] = reserved(4) | bouquet_descriptors_length(12)
-        let bouquet_descriptors_length =
-            (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
+        let bouquet_descriptors_length = (((bytes[8] & 0x0F) as usize) << 8) | bytes[9] as usize;
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let bouquet_desc_end = bouquet_desc_start + bouquet_descriptors_length;
@@ -393,7 +392,11 @@ mod tests {
             0,
             &[],
             &[
-                (0x1234, 0x0020, vec![0x43, 0x07, 0x0B, 0xB8, 0x00, 0x02, 0x00, 0x05]),
+                (
+                    0x1234,
+                    0x0020,
+                    vec![0x43, 0x07, 0x0B, 0xB8, 0x00, 0x02, 0x00, 0x05],
+                ),
                 (0x5678, 0x0020, vec![]),
             ],
         );
@@ -418,14 +421,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let name_desc: Vec<u8> = vec![
-            DESCRIPTOR_TAG_BOUQUET_NAME,
-            0x04,
-            b'T',
-            b'E',
-            b'S',
-            b'T',
-        ];
+        let name_desc: Vec<u8> = vec![DESCRIPTOR_TAG_BOUQUET_NAME, 0x04, b'T', b'E', b'S', b'T'];
         let ts_desc: [u8; 3] = [0x43, 0x01, 0x01];
         let bat = Bat {
             bouquet_id: 0x4242,

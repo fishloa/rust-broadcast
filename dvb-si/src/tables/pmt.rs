@@ -57,11 +57,8 @@ pub struct Pmt<'a> {
 impl<'a> Parse<'a> for Pmt<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let min_len = MIN_HEADER_LEN
-            + EXTENSION_HEADER_LEN
-            + PCR_PID_LEN
-            + PROG_INFO_LEN_BYTES
-            + CRC_LEN;
+        let min_len =
+            MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
         if bytes.len() < min_len {
             return Err(Error::BufferTooShort {
                 need: min_len,
@@ -91,13 +88,10 @@ impl<'a> Parse<'a> for Pmt<'a> {
         let current_next_indicator = (bytes[5] & 0x01) != 0;
 
         let pcr_pid = (((bytes[8] & 0x1F) as u16) << 8) | bytes[9] as u16;
-        let program_info_length =
-            (((bytes[10] & 0x0F) as usize) << 8) | bytes[11] as usize;
+        let program_info_length = (((bytes[10] & 0x0F) as usize) << 8) | bytes[11] as usize;
 
-        let prog_info_start = MIN_HEADER_LEN
-            + EXTENSION_HEADER_LEN
-            + PCR_PID_LEN
-            + PROG_INFO_LEN_BYTES;
+        let prog_info_start =
+            MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
         let prog_info_end = prog_info_start + program_info_length;
         let stream_loop_end = total - CRC_LEN;
         if prog_info_end > stream_loop_end {
@@ -112,8 +106,7 @@ impl<'a> Parse<'a> for Pmt<'a> {
         let mut pos = prog_info_end;
         while pos + STREAM_HEADER_LEN <= stream_loop_end {
             let stream_type = bytes[pos];
-            let elementary_pid =
-                (((bytes[pos + 1] & 0x1F) as u16) << 8) | bytes[pos + 2] as u16;
+            let elementary_pid = (((bytes[pos + 1] & 0x1F) as u16) << 8) | bytes[pos + 2] as u16;
             let es_info_length =
                 (((bytes[pos + 3] & 0x0F) as usize) << 8) | bytes[pos + 4] as usize;
             let es_start = pos + STREAM_HEADER_LEN;
@@ -183,10 +176,8 @@ impl Serialize for Pmt<'_> {
         buf[10] = 0xF0 | ((pil >> 8) as u8 & 0x0F);
         buf[11] = (pil & 0xFF) as u8;
 
-        let prog_info_start = MIN_HEADER_LEN
-            + EXTENSION_HEADER_LEN
-            + PCR_PID_LEN
-            + PROG_INFO_LEN_BYTES;
+        let prog_info_start =
+            MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
         buf[prog_info_start..prog_info_start + self.program_info.len()]
             .copy_from_slice(self.program_info);
 
@@ -281,10 +272,7 @@ mod tests {
             0,
             0x101,
             &[],
-            &[
-                (0x02, 0x102, vec![0x11, 0x22]),
-                (0x1B, 0x103, vec![0x33]),
-            ],
+            &[(0x02, 0x102, vec![0x11, 0x22]), (0x1B, 0x103, vec![0x33])],
         );
         let pmt = Pmt::parse(&bytes).unwrap();
         assert_eq!(pmt.streams.len(), 2);
@@ -301,7 +289,10 @@ mod tests {
         let mut bytes = build_pmt(1, 0, 0x100, &[], &[]);
         bytes[0] = 0x00;
         let err = Pmt::parse(&bytes).unwrap_err();
-        assert!(matches!(err, Error::UnexpectedTableId { table_id: 0x00, .. }));
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x00, .. }
+        ));
     }
 
     #[test]

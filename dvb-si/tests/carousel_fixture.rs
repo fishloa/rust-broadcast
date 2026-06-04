@@ -125,7 +125,11 @@ fn fixture_m6_ddb_header_prefix_links_to_dii() {
     let msg = &prefix[8..];
     assert_eq!(msg[0], 0x11, "protocolDiscriminator");
     assert_eq!(msg[1], 0x03, "dsmccType = U-N download");
-    assert_eq!(u16::from_be_bytes([msg[2], msg[3]]), 0x1003, "messageId = DDB");
+    assert_eq!(
+        u16::from_be_bytes([msg[2], msg[3]]),
+        0x1003,
+        "messageId = DDB"
+    );
     let download_id = u32::from_be_bytes([msg[4], msg[5], msg[6], msg[7]]);
     assert!(
         dii_download_ids.contains(&download_id),

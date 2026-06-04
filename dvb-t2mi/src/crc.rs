@@ -5,8 +5,8 @@
 //! position semantics come from TS 102 773 §5.1 — a T2-MI-framing
 //! concern, not a CRC primitive.
 
-use dvb_common::crc32_mpeg2;
 use crate::error::{Error, Result};
+use dvb_common::crc32_mpeg2;
 
 /// Length of the CRC-32 trailer in each T2-MI packet.
 pub const CRC_LEN: usize = 4;

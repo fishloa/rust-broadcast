@@ -36,7 +36,7 @@ pub struct CaDescriptor<'a> {
     pub ca_system_id: u16,
 
     /// PID carrying ECM/EMM data for this CA system.
-    /// Bits [12:0] of the 2-byte field; upper 3 bits are reserved.
+    /// Bits `[12:0]` of the 2-byte field; upper 3 bits are reserved.
     pub ca_pid: u16,
 
     /// Optional private data following the standard CA descriptor fields.

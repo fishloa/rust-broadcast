@@ -32,6 +32,6 @@ pub mod traits;
 #[cfg(feature = "ts")]
 pub mod ts;
 
+pub use descriptor_tag::DescriptorTag;
 pub use error::{Error, Result};
 pub use table_id::TableId;
-pub use descriptor_tag::DescriptorTag;

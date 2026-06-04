@@ -203,12 +203,7 @@ mod tests {
     #[test]
     fn parse_single_inline_crid() {
         let data = b"DVB/CRID/EPG123";
-        let mut buf = vec![
-            TAG,
-            (data.len() + 2) as u8,
-            0x01 << 2,
-            data.len() as u8,
-        ];
+        let mut buf = vec![TAG, (data.len() + 2) as u8, 0x01 << 2, data.len() as u8];
         buf.extend_from_slice(data);
         let d = ContentIdentifierDescriptor::parse(&buf).unwrap();
         assert_eq!(d.entries.len(), 1);

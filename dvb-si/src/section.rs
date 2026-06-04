@@ -32,8 +32,8 @@
 //! `section_length` counts bytes *after* the 3-byte section header, so the
 //! total section size is `section_length + 3`.
 
-use dvb_common::crc32_mpeg2 as crc;
 use crate::error::{Error, Result};
+use dvb_common::crc32_mpeg2 as crc;
 use dvb_common::{Parse, Serialize};
 
 // Minimum bytes to read the section header (table_id + section_syntax_indicator
@@ -406,12 +406,12 @@ mod tests {
     #[test]
     fn parse_reads_extension_id_version_current_next_section_numbers() {
         let raw = make_long_section(
-            0x02,  // PMT table_id
-            0xBEEF, // extension_id / program_number
-            7,     // version_number
-            true,  // current_next
-            2,     // section_number
-            5,     // last_section_number
+            0x02,          // PMT table_id
+            0xBEEF,        // extension_id / program_number
+            7,             // version_number
+            true,          // current_next
+            2,             // section_number
+            5,             // last_section_number
             &[0x00, 0x00], // dummy payload
         );
 
@@ -427,12 +427,12 @@ mod tests {
     fn parse_reads_current_next_indicator_false() {
         // Same as test 4 but with current_next = false (bit 0 of byte 5 cleared).
         let raw = make_long_section(
-            0x02,    // PMT table_id
-            0xBEEF,  // extension_id
-            7,       // version_number
-            false,   // current_next — the field under test
-            2,       // section_number
-            5,       // last_section_number
+            0x02,   // PMT table_id
+            0xBEEF, // extension_id
+            7,      // version_number
+            false,  // current_next — the field under test
+            2,      // section_number
+            5,      // last_section_number
             &[0x00, 0x00],
         );
 
@@ -523,7 +523,9 @@ mod tests {
         assert!(!section.section_syntax_indicator);
         assert!(section.crc32.is_none());
         // validate_crc on short-form should return Ok(()) vacuously.
-        section.validate_crc(&buf).expect("short-form: no CRC to validate");
+        section
+            .validate_crc(&buf)
+            .expect("short-form: no CRC to validate");
         // Payload is the 5 bytes after the 3-byte header.
         assert_eq!(section.payload(), &buf[3..]);
     }

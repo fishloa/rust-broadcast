@@ -14,7 +14,7 @@
 
 use dvb_t2mi::packet::{Header, PacketType};
 use dvb_t2mi::payload::{
-    BbframePayload, Bandwidth, FefSubPartPayload, IndividualAddressingPayload, SubpartVariety,
+    Bandwidth, BbframePayload, FefSubPartPayload, IndividualAddressingPayload, SubpartVariety,
     T2TimestampPayload,
 };
 
@@ -51,7 +51,8 @@ fn t2_timestamp_payload_round_trips_via_json() {
         utco: 0x0123,
     };
     let j = serde_json::to_string(&ts).expect("serialize T2TimestampPayload");
-    let back: T2TimestampPayload = serde_json::from_str(&j).expect("deserialize T2TimestampPayload");
+    let back: T2TimestampPayload =
+        serde_json::from_str(&j).expect("deserialize T2TimestampPayload");
     assert_eq!(ts, back);
 }
 

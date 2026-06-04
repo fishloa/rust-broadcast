@@ -354,10 +354,7 @@ mod tests {
         bytes[0] = 0x40; // Not 0x77.
         assert!(matches!(
             Cit::parse(&bytes).unwrap_err(),
-            Error::UnexpectedTableId {
-                table_id: 0x40,
-                ..
-            }
+            Error::UnexpectedTableId { table_id: 0x40, .. }
         ));
     }
 

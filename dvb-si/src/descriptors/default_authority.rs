@@ -85,9 +85,7 @@ mod tests {
 
     #[test]
     fn parse_extracts_authority_bytes() {
-        let bytes = [
-            TAG, 9, b'b', b'b', b'c', b'.', b'c', b'o', b'.', b'u', b'k',
-        ];
+        let bytes = [TAG, 9, b'b', b'b', b'c', b'.', b'c', b'o', b'.', b'u', b'k'];
         let d = DefaultAuthorityDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.default_authority, b"bbc.co.uk");
     }

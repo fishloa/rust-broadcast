@@ -136,7 +136,9 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_set() {
-        let dit = Dit { transition_flag: true };
+        let dit = Dit {
+            transition_flag: true,
+        };
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0xFF]);
@@ -145,7 +147,9 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_clear() {
-        let dit = Dit { transition_flag: false };
+        let dit = Dit {
+            transition_flag: false,
+        };
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0x7F]);
@@ -154,7 +158,9 @@ mod tests {
 
     #[test]
     fn serialize_into_too_small_buffer() {
-        let dit = Dit { transition_flag: false };
+        let dit = Dit {
+            transition_flag: false,
+        };
         let mut buf = [0u8; 3];
         assert!(matches!(
             dit.serialize_into(&mut buf).unwrap_err(),
@@ -164,12 +170,20 @@ mod tests {
 
     #[test]
     fn serialized_len_is_four() {
-        assert_eq!(Dit { transition_flag: false }.serialized_len(), 4);
+        assert_eq!(
+            Dit {
+                transition_flag: false
+            }
+            .serialized_len(),
+            4
+        );
     }
 
     #[test]
     fn serde_json_round_trip() {
-        let dit = Dit { transition_flag: true };
+        let dit = Dit {
+            transition_flag: true,
+        };
         let json = serde_json::to_string(&dit).unwrap();
         let restored: Dit = serde_json::from_str(&json).unwrap();
         assert_eq!(dit, restored);

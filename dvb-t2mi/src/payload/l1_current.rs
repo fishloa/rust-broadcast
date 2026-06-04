@@ -39,8 +39,8 @@ impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Er
 ///
 /// Layout:
 /// - byte 0: frame_idx (8 bits) — T2 frame where L1 is carried
-/// - byte 1 [7:6]: freq_source (2 bits) — Table 2
-/// - byte 1 [5:0]: rfu (6 bits) — must be 0
+/// - byte 1 `[7:6]`: freq_source (2 bits) — Table 2
+/// - byte 1 `[5:0]`: rfu (6 bits) — must be 0
 /// - bytes 2..: l1_current_data (variable bytes)
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

@@ -97,9 +97,18 @@ fn pat_with_multiple_entries_round_trips() {
         section_number: 0,
         last_section_number: 0,
         entries: vec![
-            PatEntry { program_number: 0, pid: 0x10 },
-            PatEntry { program_number: 1, pid: 0x100 },
-            PatEntry { program_number: 2, pid: 0x200 },
+            PatEntry {
+                program_number: 0,
+                pid: 0x10,
+            },
+            PatEntry {
+                program_number: 1,
+                pid: 0x100,
+            },
+            PatEntry {
+                program_number: 2,
+                pid: 0x200,
+            },
         ],
     };
     let j = serde_json::to_string(&p).expect("serialize");
@@ -313,7 +322,9 @@ fn rst_serializes_to_valid_json() {
 
 #[test]
 fn dit_serializes_to_valid_json() {
-    let dit = Dit { transition_flag: true };
+    let dit = Dit {
+        transition_flag: true,
+    };
     let j = serde_json::to_string(&dit).expect("serialize DIT");
     assert_valid_json_with_keys(&j, &["transition_flag"]);
 }
@@ -540,7 +551,10 @@ fn downloadable_font_info_section_serializes_to_valid_json() {
         section_number: 0,
         last_section_number: 0,
         font_info: vec![
-            FontInfo::StyleWeight { style: 2, weight: 2 },
+            FontInfo::StyleWeight {
+                style: 2,
+                weight: 2,
+            },
             FontInfo::FileUri {
                 format: 1,
                 uri: b"https://f.example/Droid.otf",

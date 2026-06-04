@@ -275,7 +275,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             .font_info
             .iter()
             .map(|f| match f {
-                FontInfo::StyleWeight { .. } => 2,        // type + 1 packed byte
+                FontInfo::StyleWeight { .. } => 2, // type + 1 packed byte
                 FontInfo::FileUri { uri, .. } => 1 + 2 + uri.len(), // type + (fmt|len) + uri
                 FontInfo::FontSize { info, .. } => 1 + 2 + 1 + info.len(), // type + size + len + info
                 FontInfo::LengthDelimited { info, .. } => 1 + 1 + info.len(), // type + len + info
@@ -399,11 +399,11 @@ mod tests {
         let uri = b"https://f.example/Droid.otf";
         let family = b"Droid Sans";
         let mut b = vec![
-            FONT_INFO_TYPE_STYLE_WEIGHT,    // type 0x00
-            (2u8 << 5) | (2u8 << 1),        // style=2 (italic), weight=2 (bold)
-            FONT_INFO_TYPE_FILE_URI,        // type 0x01
-            0x01,                           // format=1 (WOFF)
-            uri.len() as u8,                // uri_length
+            FONT_INFO_TYPE_STYLE_WEIGHT, // type 0x00
+            (2u8 << 5) | (2u8 << 1),     // style=2 (italic), weight=2 (bold)
+            FONT_INFO_TYPE_FILE_URI,     // type 0x01
+            0x01,                        // format=1 (WOFF)
+            uri.len() as u8,             // uri_length
         ];
         b.extend_from_slice(uri);
         // type 0x02 — font_size=24, info block "px"
@@ -436,7 +436,10 @@ mod tests {
         assert_eq!(sec.font_info.len(), 4);
         assert_eq!(
             sec.font_info[0],
-            FontInfo::StyleWeight { style: 2, weight: 2 }
+            FontInfo::StyleWeight {
+                style: 2,
+                weight: 2
+            }
         );
         match &sec.font_info[1] {
             FontInfo::FileUri { format, uri } => {

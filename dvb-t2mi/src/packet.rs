@@ -52,9 +52,9 @@ impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
 /// Layout:
 /// - byte 0: packet_type (8 bits) — Table 1
 /// - byte 1: packet_count (8 bits) — wraps 0xFF→0x00, arbitrary start
-/// - byte 2 [7:4]: superframe_idx (4 bits)
-/// - byte 2 [3]: rfu (1 bit) — must be 0
-/// - byte 2 [2:0]: t2mi_stream_id (3 bits)
+/// - byte 2 `[7:4]`: superframe_idx (4 bits)
+/// - byte 2 `[3]`: rfu (1 bit) — must be 0
+/// - byte 2 `[2:0]`: t2mi_stream_id (3 bits)
 /// - byte 3: rfu (8 bits) — must be 0
 /// - byte 4-5: payload_len (16 bits, unit = bits)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,12 +143,9 @@ impl Header {
     /// parsed from (the 6 header bytes, then `payload_len_bytes()` of payload,
     /// then the 4-byte CRC trailer).
     ///
-    /// Errors with [`Error::PayloadLengthMismatch`] when the buffer is too
+    /// Errors with [`Error::PayloadLengthMismatch`](crate::error::Error::PayloadLengthMismatch) when the buffer is too
     /// short for the declared `payload_len_bits`.
-    pub fn payload_bytes<'a>(
-        &self,
-        packet: &'a [u8],
-    ) -> Result<&'a [u8], crate::error::Error> {
+    pub fn payload_bytes<'a>(&self, packet: &'a [u8]) -> Result<&'a [u8], crate::error::Error> {
         let end = 6 + self.payload_len_bytes();
         if packet.len() < end {
             return Err(crate::error::Error::PayloadLengthMismatch {

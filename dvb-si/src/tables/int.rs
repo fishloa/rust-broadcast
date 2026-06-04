@@ -342,7 +342,8 @@ mod tests {
         // platform_id 0x001234, typical DVB IP/MAC announcement.
         let bytes = build_int(
             ACTION_TYPE_STREAM_ANNOUNCEMENT,
-            /* platform_id_hash = */ 0x12 ^ 0x34, // XOR of low two bytes for illustration
+            /* platform_id_hash = */
+            0x12 ^ 0x34, // XOR of low two bytes for illustration
             /* version_number = */ 3,
             /* current_next_indicator = */ true,
             /* section_number = */ 0,
@@ -375,7 +376,16 @@ mod tests {
             0xF0, 0x00, // operational_descriptor_loop_length = 0
         ];
         let bytes = build_int(
-            0x01, 0x56, 5, false, 1, 1, 0x00_56_78, 0x01, &[], &fake_loops,
+            0x01,
+            0x56,
+            5,
+            false,
+            1,
+            1,
+            0x00_56_78,
+            0x01,
+            &[],
+            &fake_loops,
         );
         let int = Int::parse(&bytes).unwrap();
         assert_eq!(int.platform_id, 0x00_56_78);
@@ -391,10 +401,7 @@ mod tests {
         let err = Int::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::UnexpectedTableId {
-                table_id: 0x4B,
-                ..
-            }
+            Error::UnexpectedTableId { table_id: 0x4B, .. }
         ));
     }
 

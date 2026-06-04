@@ -16,6 +16,7 @@
 #[non_exhaustive]
 #[repr(u8)]
 #[allow(missing_docs)]
+#[rustfmt::skip] // deliberate column-aligned discriminants
 pub enum DescriptorTag {
     // ── MPEG-2 descriptors (0x02..=0x3F) ───────────────────────────────────
     // Populated as phases 2+ land.

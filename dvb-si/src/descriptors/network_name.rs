@@ -96,12 +96,8 @@ mod tests {
     #[test]
     fn parse_extracts_network_name() {
         let raw: Vec<u8> = vec![
-            TAG,
-            0x04, // length = 4
-            b'E',
-            b'U',
-            b'T',
-            b'E',
+            TAG, 0x04, // length = 4
+            b'E', b'U', b'T', b'E',
         ];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.network_name, b"EUTE");
@@ -183,17 +179,7 @@ mod tests {
     /// `descriptor_length()` must equal `network_name.len()` cast to u8.
     #[test]
     fn descriptor_length_getter_matches_payload() {
-        let raw: Vec<u8> = vec![
-            TAG,
-            0x07,
-            b'F',
-            b'R',
-            b'A',
-            b'N',
-            b'C',
-            b'E',
-            b'2',
-        ];
+        let raw: Vec<u8> = vec![TAG, 0x07, b'F', b'R', b'A', b'N', b'C', b'E', b'2'];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.descriptor_length(), desc.network_name.len() as u8);
     }

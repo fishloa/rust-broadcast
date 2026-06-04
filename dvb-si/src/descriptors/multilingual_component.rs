@@ -164,8 +164,11 @@ mod tests {
     use super::*;
 
     fn build(component_tag: u8, entries: &[([u8; 3], &[u8])]) -> Vec<u8> {
-        let body: usize =
-            COMPONENT_TAG_LEN + entries.iter().map(|(_, t)| LANG_LEN + 1 + t.len()).sum::<usize>();
+        let body: usize = COMPONENT_TAG_LEN
+            + entries
+                .iter()
+                .map(|(_, t)| LANG_LEN + 1 + t.len())
+                .sum::<usize>();
         let mut v = Vec::with_capacity(HEADER_LEN + body);
         v.push(TAG);
         v.push(body as u8);

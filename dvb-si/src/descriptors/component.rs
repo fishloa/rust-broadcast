@@ -104,7 +104,8 @@ impl Serialize for ComponentDescriptor<'_> {
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
         // High nibble = stream_content_ext, low nibble = stream_content (§6.2.8).
-        buf[HEADER_LEN] = (self.stream_content_ext << 4) | (self.stream_content & STREAM_CONTENT_MASK);
+        buf[HEADER_LEN] =
+            (self.stream_content_ext << 4) | (self.stream_content & STREAM_CONTENT_MASK);
         buf[HEADER_LEN + 1] = self.component_type;
         buf[HEADER_LEN + 2] = self.component_tag;
         buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.language_code);

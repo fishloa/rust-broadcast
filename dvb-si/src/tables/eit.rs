@@ -310,9 +310,10 @@ fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
     // ETSI EN 300 468 Annex C: Y', M', K, Y, M, D via the Zeller-like formula.
     let mjd = i64::from(mjd);
     let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor())
-        / 30.6001) as i64;
-    let d = mjd - 14_956 - (y_prime as f64 * 365.25).floor() as i64
+    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor()) / 30.6001) as i64;
+    let d = mjd
+        - 14_956
+        - (y_prime as f64 * 365.25).floor() as i64
         - (m_prime as f64 * 30.6001).floor() as i64;
     let k = if m_prime == 14 || m_prime == 15 { 1 } else { 0 };
     let y = y_prime + k + 1900;
@@ -496,13 +497,7 @@ mod tests {
         let mjd: u16 = 59945;
         let ev = EitEvent {
             event_id: 1,
-            start_time_raw: [
-                (mjd >> 8) as u8,
-                (mjd & 0xFF) as u8,
-                0x12,
-                0x34,
-                0x56,
-            ],
+            start_time_raw: [(mjd >> 8) as u8, (mjd & 0xFF) as u8, 0x12, 0x34, 0x56],
             duration_raw: [0, 0, 0],
             running_status: 0,
             free_ca_mode: false,

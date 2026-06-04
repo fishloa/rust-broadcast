@@ -103,7 +103,10 @@ impl TsHeader {
     ///
     /// Panics if `buf` is shorter than 4 bytes.
     pub fn serialize_into(&self, buf: &mut [u8]) {
-        assert!(buf.len() >= 4, "buffer must have at least 4 bytes for TS header");
+        assert!(
+            buf.len() >= 4,
+            "buffer must have at least 4 bytes for TS header"
+        );
         buf[0] = TS_SYNC_BYTE;
         buf[1] = 0;
         if self.tei {

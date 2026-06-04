@@ -247,9 +247,7 @@ mod tests {
     #[test]
     fn parse_rejects_selector_length_overrun() {
         // selector_length=200 but body is tiny.
-        let bytes = [
-            TAG, 8, 0x00, 0x0B, 0x12, 200, b'e', b'n', b'g', 0,
-        ];
+        let bytes = [TAG, 8, 0x00, 0x0B, 0x12, 200, b'e', b'n', b'g', 0];
         let err = DataBroadcastDescriptor::parse(&bytes).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { .. }));
     }
@@ -257,9 +255,7 @@ mod tests {
     #[test]
     fn parse_rejects_text_length_overrun() {
         // selector_length=0, lang present, text_length=5 but no text bytes.
-        let bytes = [
-            TAG, 8, 0x00, 0x0B, 0x12, 0, b'e', b'n', b'g', 5,
-        ];
+        let bytes = [TAG, 8, 0x00, 0x0B, 0x12, 0, b'e', b'n', b'g', 5];
         let err = DataBroadcastDescriptor::parse(&bytes).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { .. }));
     }

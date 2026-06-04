@@ -62,7 +62,10 @@ mod tests {
     #[test]
     fn iscr_short_decodes_15_bits() {
         // bit7=0 → ISCR short. 0x7ABC → iscr = 0x7ABC & 0x7FFF.
-        assert_eq!(decode_issy_short([0x7A, 0xBC]), Some(Issy::IscrShort(0x7ABC)));
+        assert_eq!(
+            decode_issy_short([0x7A, 0xBC]),
+            Some(Issy::IscrShort(0x7ABC))
+        );
         assert_eq!(decode_issy_short([0x00, 0x01]), Some(Issy::IscrShort(1)));
     }
 
@@ -79,7 +82,10 @@ mod tests {
             decode_issy_long([0xBF, 0xFF, 0xFF]),
             Some(Issy::IscrLong(0x3FFFFF))
         );
-        assert_eq!(decode_issy_long([0x80, 0x12, 0x34]), Some(Issy::IscrLong(0x1234)));
+        assert_eq!(
+            decode_issy_long([0x80, 0x12, 0x34]),
+            Some(Issy::IscrLong(0x1234))
+        );
     }
 
     #[test]

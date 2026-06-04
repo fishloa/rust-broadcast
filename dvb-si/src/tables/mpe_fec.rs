@@ -229,7 +229,7 @@ impl Serialize for MpeFec<'_> {
         // Extension header.
         buf[3] = self.padding_columns;
         buf[4] = 0xFF; // reserved_for_future_use(8) emitted as 1s.
-        // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
+                       // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
         buf[5] = 0xFE | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;

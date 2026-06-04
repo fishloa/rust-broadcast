@@ -106,9 +106,8 @@ impl<'a> Parse<'a> for Rnt<'a> {
 
         // bytes[9..11] = reserved(4) | common_descriptors_length(12)
         let common_desc_len_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        let common_descriptors_length =
-            (((bytes[common_desc_len_pos] & 0x0F) as usize) << 8)
-                | bytes[common_desc_len_pos + 1] as usize;
+        let common_descriptors_length = (((bytes[common_desc_len_pos] & 0x0F) as usize) << 8)
+            | bytes[common_desc_len_pos + 1] as usize;
 
         let common_desc_start = common_desc_len_pos + COMMON_DESC_LEN_FIELD;
         let common_desc_end = common_desc_start + common_descriptors_length;
@@ -171,9 +170,7 @@ impl Serialize for Rnt<'_> {
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
-        buf[5] = 0xC0
-            | ((self.version_number & 0x1F) << 1)
-            | u8::from(self.current_next_indicator);
+        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = self.context_id_type;
