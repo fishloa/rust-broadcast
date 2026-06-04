@@ -46,6 +46,8 @@ pub enum TableId {
     MpeFec                     = 0x78,
     ResolutionNotification     = 0x79,
     MpeIfec                    = 0x7A,
+    ProtectionMessage          = 0x7B,
+    DownloadableFontInfo       = 0x7C,
     DiscontinuityInformation   = 0x7E,
     SelectionInformation       = 0x7F,
 }
@@ -123,7 +125,7 @@ mod tests {
                 matched += 1;
             }
         }
-        // 27 defined variants (added UNT 0x4B, INT 0x4C, SAT 0x4D)
-        assert_eq!(matched, 27, "expected 27 matched variants");
+        // 29 defined variants (added ProtectionMessage 0x7B, DownloadableFontInfo 0x7C)
+        assert_eq!(matched, 29, "expected 29 matched variants");
     }
 }
