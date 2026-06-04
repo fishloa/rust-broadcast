@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-common"
-version      = "1.0.1"
+version      = "1.1.0"
 edition      = "2021"
 description  = "Shared Parse/Serialize traits and CRC-32 MPEG-2 used by the dvb_si / dvb_t2mi / dvb_bbframe family."
 license      = "MIT OR Apache-2.0"

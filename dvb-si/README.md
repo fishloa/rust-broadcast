@@ -250,7 +250,7 @@ Default: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` (TS packet +
 `SectionReassembler`), `serde`.
 
 ```toml
-dvb-si = { version = "1.0", default-features = false }  # tight build
+dvb-si = { version = "1.1", default-features = false }  # tight build
 ```
 
 ## Family

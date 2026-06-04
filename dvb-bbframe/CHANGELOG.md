@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-04
+
+Version-lockstep release with the workspace (dvb-si: complete EN 300 468
+Table 12 descriptor coverage); doc-comment formatting/link cleanup only,
+no functional changes.
+
 ## [1.0.1] — 2026-06-04
 
 Version-lockstep release with the workspace (dvb-si README overhaul); no code changes.
