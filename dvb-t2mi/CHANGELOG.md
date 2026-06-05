@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-05
+
+Version-lockstep release with the workspace (dvb-si 2.0 typed client API).
+
+### Added
+
+- **`payload::AnyPayload`** — macro-generated dispatch enum over all 12 T2-MI packet
+  types. `AnyPayload::dispatch(packet_type, payload_bytes)` returns `Some(Result<Self>)`
+  for known types, `None` for unknown (caller makes `Unknown { packet_type, body }`).
+  Driven by `PayloadDef` trait + `declare_payloads!` macro; drift-tested against the
+  `PACKET_TYPE` constants.
+- **`pump::T2miPump`** (feature `ts`) — feed-and-iterate pump over a T2-MI TS stream.
+  `T2miPump::new(pid)` + `feed_ts(&[u8])` for encapsulated streams; `feed_raw(&[u8])`
+  for bare T2-MI. Per-packet CRC-32 checked; failures dropped and counted. Stats:
+  `ts_packets`, `t2mi_packets`, `crc_failures`, `malformed_packets`.
+- **`pump::T2miEvent`** — owning-`Bytes` event: `.header() -> Result<Header>`,
+  `.payload() -> Result<AnyPayload<'_>>` (lazy, borrows event bytes).
+- **`examples/t2mi_dump.rs`** — CLI pump tool: `cargo run -p dvb-t2mi --example
+  t2mi_dump -- file.ts`. Prints one line per T2-MI packet with header fields and
+  payload type.
+- **Chain test** (`tests/chain.rs`) — T2miPump → `AnyPayload::BbFrame` →
+  `bbframe::up_iter` → `SiDemux` → at least one typed `AnyTable`.
+
 ## [1.1.0] — 2026-06-04
 
 Version-lockstep release with the workspace (dvb-si: complete EN 300 468

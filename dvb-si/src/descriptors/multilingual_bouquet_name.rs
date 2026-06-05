@@ -4,6 +4,7 @@
 //! code, bouquet name) pairs, each name length-prefixed by an 8-bit field.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -15,22 +16,19 @@ const NAME_LEN_FIELD: usize = 1;
 
 /// One localised bouquet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct BouquetNameEntry<'a> {
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
-    /// Raw DVB-encoded bouquet name bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub bouquet_name: &'a [u8],
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded bouquet name.
+    pub bouquet_name: DvbText<'a>,
 }
 
 /// Multilingual Bouquet Name Descriptor (tag 0x5C).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct MultilingualBouquetNameDescriptor<'a> {
     /// Localised names in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub entries: Vec<BouquetNameEntry<'a>>,
 }
 
@@ -68,7 +66,7 @@ impl<'a> Parse<'a> for MultilingualBouquetNameDescriptor<'a> {
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
+            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
             let name_len = bytes[pos + LANG_LEN] as usize;
             let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
             let name_end = name_start + name_len;
@@ -80,7 +78,7 @@ impl<'a> Parse<'a> for MultilingualBouquetNameDescriptor<'a> {
             }
             entries.push(BouquetNameEntry {
                 language_code,
-                bouquet_name: &bytes[name_start..name_end],
+                bouquet_name: DvbText::new(&bytes[name_start..name_end]),
             });
             pos = name_end;
         }
@@ -126,10 +124,11 @@ impl Serialize for MultilingualBouquetNameDescriptor<'_> {
         buf[1] = body as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code);
+            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             buf[pos + LANG_LEN] = e.bouquet_name.len() as u8;
             let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
-            buf[name_start..name_start + e.bouquet_name.len()].copy_from_slice(e.bouquet_name);
+            buf[name_start..name_start + e.bouquet_name.len()]
+                .copy_from_slice(e.bouquet_name.raw());
             pos = name_start + e.bouquet_name.len();
         }
         Ok(len)
@@ -141,6 +140,11 @@ impl<'a> Descriptor<'a> for MultilingualBouquetNameDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualBouquetNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_BOUQUET_NAME";
 }
 
 #[cfg(test)]
@@ -165,8 +169,8 @@ mod tests {
         let bytes = build(&[(*b"eng", b"Sky")]);
         let d = MultilingualBouquetNameDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
-        assert_eq!(d.entries[0].bouquet_name, b"Sky");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
+        assert_eq!(d.entries[0].bouquet_name.raw(), b"Sky");
     }
 
     #[test]
@@ -174,7 +178,7 @@ mod tests {
         let bytes = build(&[(*b"eng", b"Pack"), (*b"fra", b"Bouquet")]);
         let d = MultilingualBouquetNameDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[1].bouquet_name, b"Bouquet");
+        assert_eq!(d.entries[1].bouquet_name.raw(), b"Bouquet");
     }
 
     #[test]
@@ -224,8 +228,8 @@ mod tests {
     fn serialize_rejects_too_small_buffer() {
         let d = MultilingualBouquetNameDescriptor {
             entries: vec![BouquetNameEntry {
-                language_code: *b"eng",
-                bouquet_name: b"X",
+                language_code: LangCode(*b"eng"),
+                bouquet_name: DvbText::new(b"X"),
             }],
         };
         let mut tiny = [0u8; 3];
@@ -238,8 +242,8 @@ mod tests {
         let name = vec![0u8; 256];
         let d = MultilingualBouquetNameDescriptor {
             entries: vec![BouquetNameEntry {
-                language_code: *b"eng",
-                bouquet_name: &name,
+                language_code: LangCode(*b"eng"),
+                bouquet_name: DvbText::new(&name),
             }],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -255,8 +259,8 @@ mod tests {
         // exercise the serialize path and assert it is deterministic.
         let d = MultilingualBouquetNameDescriptor {
             entries: vec![BouquetNameEntry {
-                language_code: *b"eng",
-                bouquet_name: b"Sky",
+                language_code: LangCode(*b"eng"),
+                bouquet_name: DvbText::new(b"Sky"),
             }],
         };
         let json = serde_json::to_string(&d).unwrap();

@@ -88,6 +88,11 @@ impl<'a> Descriptor<'a> for DsngDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for DsngDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DSNG";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,6 +3,7 @@
 //! Carried inside EIT. Per-country minimum-age rating for the event.
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -15,8 +16,8 @@ const ENTRY_LEN: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RatingEntry {
-    /// ISO 3166 alpha country code (e.g. b"FRA", b"GBR").
-    pub country_code: [u8; 3],
+    /// ISO 3166 alpha country code (e.g. `LangCode(*b"FRA")`, `LangCode(*b"GBR")`).
+    pub country_code: LangCode,
     /// Rating byte per §6.2.28 Table 79.
     pub rating: u8,
 }
@@ -77,11 +78,11 @@ impl<'a> Parse<'a> for ParentalRatingDescriptor {
         for i in 0..num_entries {
             let entry_start = body_start + i * ENTRY_LEN;
             entries.push(RatingEntry {
-                country_code: [
+                country_code: LangCode([
                     bytes[entry_start],
                     bytes[entry_start + 1],
                     bytes[entry_start + 2],
-                ],
+                ]),
                 rating: bytes[entry_start + 3],
             });
         }
@@ -107,9 +108,7 @@ impl Serialize for ParentalRatingDescriptor {
         buf[1] = (len - HEADER_LEN) as u8;
         for (i, entry) in self.entries.iter().enumerate() {
             let entry_start = HEADER_LEN + i * ENTRY_LEN;
-            buf[entry_start] = entry.country_code[0];
-            buf[entry_start + 1] = entry.country_code[1];
-            buf[entry_start + 2] = entry.country_code[2];
+            buf[entry_start..entry_start + 3].copy_from_slice(&entry.country_code.0);
             buf[entry_start + 3] = entry.rating;
         }
         Ok(len)
@@ -123,6 +122,11 @@ impl<'a> Descriptor<'a> for ParentalRatingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ParentalRatingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "PARENTAL_RATING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,7 +136,7 @@ mod tests {
         let bytes = [TAG, 4, b'F', b'R', b'A', 0x05];
         let d = ParentalRatingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].country_code, *b"FRA");
+        assert_eq!(d.entries[0].country_code, LangCode(*b"FRA"));
         assert_eq!(d.entries[0].rating, 0x05);
     }
 
@@ -141,9 +145,9 @@ mod tests {
         let bytes = [TAG, 8, b'G', b'B', b'R', 0x01, b'U', b'S', b'A', 0x10];
         let d = ParentalRatingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[0].country_code, *b"GBR");
+        assert_eq!(d.entries[0].country_code, LangCode(*b"GBR"));
         assert_eq!(d.entries[0].rating, 0x01);
-        assert_eq!(d.entries[1].country_code, *b"USA");
+        assert_eq!(d.entries[1].country_code, LangCode(*b"USA"));
         assert_eq!(d.entries[1].rating, 0x10);
     }
 
@@ -170,7 +174,7 @@ mod tests {
     #[test]
     fn minimum_age_maps_0x01_to_4_years() {
         let entry = RatingEntry {
-            country_code: *b"FRA",
+            country_code: LangCode(*b"FRA"),
             rating: 0x01,
         };
         assert_eq!(entry.minimum_age(), Some(4));
@@ -179,7 +183,7 @@ mod tests {
     #[test]
     fn minimum_age_returns_none_for_rating_0x00() {
         let entry = RatingEntry {
-            country_code: *b"USA",
+            country_code: LangCode(*b"USA"),
             rating: 0x00,
         };
         assert!(entry.minimum_age().is_none());
@@ -188,12 +192,12 @@ mod tests {
     #[test]
     fn minimum_age_returns_none_for_rating_0x10_and_above() {
         let entry = RatingEntry {
-            country_code: *b"GBR",
+            country_code: LangCode(*b"GBR"),
             rating: 0x10,
         };
         assert!(entry.minimum_age().is_none());
         let entry2 = RatingEntry {
-            country_code: *b"JPN",
+            country_code: LangCode(*b"JPN"),
             rating: 0xFF,
         };
         assert!(entry2.minimum_age().is_none());
@@ -204,11 +208,11 @@ mod tests {
         let d = ParentalRatingDescriptor {
             entries: vec![
                 RatingEntry {
-                    country_code: *b"FRA",
+                    country_code: LangCode(*b"FRA"),
                     rating: 0x05,
                 },
                 RatingEntry {
-                    country_code: *b"GBR",
+                    country_code: LangCode(*b"GBR"),
                     rating: 0x01,
                 },
             ],

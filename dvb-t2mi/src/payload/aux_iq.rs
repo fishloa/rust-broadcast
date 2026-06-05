@@ -69,6 +69,11 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for AuxIqPayload<'a> {
+    const PACKET_TYPE: u8 = 0x01;
+    const NAME: &'static str = "AUX_IQ";
+}
+
 impl Serialize for AuxIqPayload<'_> {
     type Error = crate::error::Error;
 

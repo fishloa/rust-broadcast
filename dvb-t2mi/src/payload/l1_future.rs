@@ -50,6 +50,11 @@ impl<'a> Parse<'a> for L1FuturePayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for L1FuturePayload<'a> {
+    const PACKET_TYPE: u8 = 0x11;
+    const NAME: &'static str = "L1_FUTURE";
+}
+
 impl Serialize for L1FuturePayload<'_> {
     type Error = crate::error::Error;
 

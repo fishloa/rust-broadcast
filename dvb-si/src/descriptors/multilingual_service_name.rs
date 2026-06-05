@@ -5,6 +5,7 @@
 //! provider name and the service name.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -16,25 +17,21 @@ const LEN_FIELD: usize = 1;
 
 /// One localised (provider name, service name) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ServiceNameEntry<'a> {
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
-    /// Raw DVB-encoded service provider name bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_provider_name: &'a [u8],
-    /// Raw DVB-encoded service name bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_name: &'a [u8],
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded service provider name.
+    pub service_provider_name: DvbText<'a>,
+    /// DVB Annex-A encoded service name.
+    pub service_name: DvbText<'a>,
 }
 
 /// Multilingual Service Name Descriptor (tag 0x5D).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct MultilingualServiceNameDescriptor<'a> {
     /// Localised name pairs in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub entries: Vec<ServiceNameEntry<'a>>,
 }
 
@@ -73,7 +70,7 @@ impl<'a> Parse<'a> for MultilingualServiceNameDescriptor<'a> {
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
+            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
             let provider_len_pos = pos + LANG_LEN;
             let provider_len = bytes[provider_len_pos] as usize;
             let provider_start = provider_len_pos + LEN_FIELD;
@@ -85,7 +82,7 @@ impl<'a> Parse<'a> for MultilingualServiceNameDescriptor<'a> {
                     reason: "service_provider_name_length runs past descriptor end",
                 });
             }
-            let service_provider_name = &bytes[provider_start..provider_end];
+            let service_provider_name = DvbText::new(&bytes[provider_start..provider_end]);
             let service_len = bytes[provider_end] as usize;
             let service_start = provider_end + LEN_FIELD;
             let service_end = service_start + service_len;
@@ -95,7 +92,7 @@ impl<'a> Parse<'a> for MultilingualServiceNameDescriptor<'a> {
                     reason: "service_name_length runs past descriptor end",
                 });
             }
-            let service_name = &bytes[service_start..service_end];
+            let service_name = DvbText::new(&bytes[service_start..service_end]);
             entries.push(ServiceNameEntry {
                 language_code,
                 service_provider_name,
@@ -157,15 +154,16 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
         buf[1] = body as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code);
+            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             pos += LANG_LEN;
             buf[pos] = e.service_provider_name.len() as u8;
             pos += LEN_FIELD;
-            buf[pos..pos + e.service_provider_name.len()].copy_from_slice(e.service_provider_name);
+            buf[pos..pos + e.service_provider_name.len()]
+                .copy_from_slice(e.service_provider_name.raw());
             pos += e.service_provider_name.len();
             buf[pos] = e.service_name.len() as u8;
             pos += LEN_FIELD;
-            buf[pos..pos + e.service_name.len()].copy_from_slice(e.service_name);
+            buf[pos..pos + e.service_name.len()].copy_from_slice(e.service_name.raw());
             pos += e.service_name.len();
         }
         Ok(len)
@@ -177,6 +175,11 @@ impl<'a> Descriptor<'a> for MultilingualServiceNameDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualServiceNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_SERVICE_NAME";
 }
 
 #[cfg(test)]
@@ -206,9 +209,9 @@ mod tests {
         let bytes = build(&[(*b"eng", b"BBC", b"One")]);
         let d = MultilingualServiceNameDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
-        assert_eq!(d.entries[0].service_provider_name, b"BBC");
-        assert_eq!(d.entries[0].service_name, b"One");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
+        assert_eq!(d.entries[0].service_provider_name.raw(), b"BBC");
+        assert_eq!(d.entries[0].service_name.raw(), b"One");
     }
 
     #[test]
@@ -216,15 +219,15 @@ mod tests {
         let bytes = build(&[(*b"eng", b"Prov", b"Svc"), (*b"fra", b"Fourn", b"Chaine")]);
         let d = MultilingualServiceNameDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[1].service_name, b"Chaine");
+        assert_eq!(d.entries[1].service_name.raw(), b"Chaine");
     }
 
     #[test]
     fn parse_empty_names_valid() {
         let bytes = build(&[(*b"deu", b"", b"")]);
         let d = MultilingualServiceNameDescriptor::parse(&bytes).unwrap();
-        assert!(d.entries[0].service_provider_name.is_empty());
-        assert!(d.entries[0].service_name.is_empty());
+        assert!(d.entries[0].service_provider_name.raw().is_empty());
+        assert!(d.entries[0].service_name.raw().is_empty());
     }
 
     #[test]
@@ -279,9 +282,9 @@ mod tests {
     fn serialize_rejects_too_small_buffer() {
         let d = MultilingualServiceNameDescriptor {
             entries: vec![ServiceNameEntry {
-                language_code: *b"eng",
-                service_provider_name: b"P",
-                service_name: b"S",
+                language_code: LangCode(*b"eng"),
+                service_provider_name: DvbText::new(b"P"),
+                service_name: DvbText::new(b"S"),
             }],
         };
         let mut tiny = [0u8; 3];
@@ -294,9 +297,9 @@ mod tests {
         let provider = vec![0u8; 256];
         let d = MultilingualServiceNameDescriptor {
             entries: vec![ServiceNameEntry {
-                language_code: *b"eng",
-                service_provider_name: &provider,
-                service_name: b"S",
+                language_code: LangCode(*b"eng"),
+                service_provider_name: DvbText::new(&provider),
+                service_name: DvbText::new(b"S"),
             }],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -312,9 +315,9 @@ mod tests {
         // exercise the serialize path and assert it is deterministic.
         let d = MultilingualServiceNameDescriptor {
             entries: vec![ServiceNameEntry {
-                language_code: *b"eng",
-                service_provider_name: b"BBC",
-                service_name: b"One",
+                language_code: LangCode(*b"eng"),
+                service_provider_name: DvbText::new(b"BBC"),
+                service_name: DvbText::new(b"One"),
             }],
         };
         let json = serde_json::to_string(&d).unwrap();

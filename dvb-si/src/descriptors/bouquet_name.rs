@@ -1,6 +1,7 @@
 //! Bouquet Name Descriptor — ETSI EN 300 468 §6.2.6 (tag 0x47).
 
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -13,11 +14,10 @@ pub const HEADER_LEN: usize = 2;
 /// Bouquet Name Descriptor (tag 0x47). Carries the human-readable name of
 /// a bouquet in its BAT's `bouquet_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct BouquetNameDescriptor<'a> {
-    /// Raw DVB-encoded bouquet name bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub bouquet_name: &'a [u8],
+    /// DVB Annex-A encoded bouquet name (EN 300 468 §6.2.6).
+    pub bouquet_name: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for BouquetNameDescriptor<'a> {
@@ -51,7 +51,7 @@ impl<'a> Parse<'a> for BouquetNameDescriptor<'a> {
         }
 
         Ok(BouquetNameDescriptor {
-            bouquet_name: &bytes[HEADER_LEN..total],
+            bouquet_name: DvbText::new(&bytes[HEADER_LEN..total]),
         })
     }
 }
@@ -73,7 +73,7 @@ impl Serialize for BouquetNameDescriptor<'_> {
 
         buf[0] = TAG;
         buf[1] = self.bouquet_name.len() as u8;
-        buf[HEADER_LEN..need].copy_from_slice(self.bouquet_name);
+        buf[HEADER_LEN..need].copy_from_slice(self.bouquet_name.raw());
 
         Ok(need)
     }
@@ -83,8 +83,13 @@ impl<'a> Descriptor<'a> for BouquetNameDescriptor<'a> {
     const TAG: u8 = 0x47;
 
     fn descriptor_length(&self) -> u8 {
-        self.bouquet_name.len() as u8
+        self.bouquet_name.raw().len() as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for BouquetNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "BOUQUET_NAME";
 }
 
 #[cfg(test)]
@@ -99,7 +104,7 @@ mod tests {
             b'B', b'O', b'U', b'Q',
         ];
         let desc = BouquetNameDescriptor::parse(&raw).unwrap();
-        assert_eq!(desc.bouquet_name, b"BOUQ");
+        assert_eq!(desc.bouquet_name.raw(), b"BOUQ");
     }
 
     /// Wrong tag byte should return InvalidDescriptor.
@@ -143,7 +148,7 @@ mod tests {
     fn empty_bouquet_name_is_valid() {
         let raw: &[u8] = &[TAG, 0x00];
         let desc = BouquetNameDescriptor::parse(raw).unwrap();
-        assert!(desc.bouquet_name.is_empty());
+        assert!(desc.bouquet_name.raw().is_empty());
     }
 
     /// Parse → serialize → re-parse should yield an equal struct and

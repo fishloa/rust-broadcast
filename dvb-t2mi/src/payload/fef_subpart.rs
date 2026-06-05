@@ -141,6 +141,11 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for FefSubPartPayload<'a> {
+    const PACKET_TYPE: u8 = 0x33;
+    const NAME: &'static str = "FEF_SUBPART";
+}
+
 impl Serialize for FefSubPartPayload<'_> {
     type Error = crate::error::Error;
 

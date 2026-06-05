@@ -223,6 +223,14 @@ impl<'a> Table<'a> for Sdt<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Sdt<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[
+        (TABLE_ID_ACTUAL, TABLE_ID_ACTUAL),
+        (TABLE_ID_OTHER, TABLE_ID_OTHER),
+    ];
+    const NAME: &'static str = "SERVICE_DESCRIPTION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

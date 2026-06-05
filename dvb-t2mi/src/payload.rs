@@ -1,5 +1,6 @@
 //! T2-MI payload types (§5.2.1 - §5.2.12).
 
+pub mod any;
 pub mod arbitrary_cells;
 pub mod aux_iq;
 pub mod bbframe;
@@ -13,6 +14,7 @@ pub mod l1_future;
 pub mod p2_bias;
 pub mod timestamp;
 
+pub use any::AnyPayload;
 pub use arbitrary_cells::ArbitraryCellsPayload;
 pub use aux_iq::AuxIqPayload;
 pub use bbframe::BbframePayload;

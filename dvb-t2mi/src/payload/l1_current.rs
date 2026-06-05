@@ -88,6 +88,11 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for L1CurrentPayload<'a> {
+    const PACKET_TYPE: u8 = 0x10;
+    const NAME: &'static str = "L1_CURRENT";
+}
+
 impl Serialize for L1CurrentPayload<'_> {
     type Error = crate::error::Error;
 

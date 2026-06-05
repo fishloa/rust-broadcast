@@ -256,6 +256,11 @@ impl<'a> Table<'a> for MpeFec<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for MpeFec<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
+    const NAME: &'static str = "MPE_FEC";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

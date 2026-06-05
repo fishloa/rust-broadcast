@@ -107,6 +107,11 @@ impl<'a> Descriptor<'a> for ShortSmoothingBufferDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ShortSmoothingBufferDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SHORT_SMOOTHING_BUFFER";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

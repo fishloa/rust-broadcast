@@ -134,6 +134,11 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for IndividualAddressingPayload<'a> {
+    const PACKET_TYPE: u8 = 0x21;
+    const NAME: &'static str = "INDIVIDUAL_ADDRESSING";
+}
+
 impl Serialize for IndividualAddressingPayload<'_> {
     type Error = crate::error::Error;
 

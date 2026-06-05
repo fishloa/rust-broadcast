@@ -138,6 +138,11 @@ impl<'a> Descriptor<'a> for PartialTransportStreamDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for PartialTransportStreamDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "PARTIAL_TRANSPORT_STREAM";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

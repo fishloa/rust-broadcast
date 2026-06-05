@@ -60,6 +60,41 @@ All types implement the `Parse` and `Serialize` traits defined in this crate, wi
 | §6.1 | TS encapsulation | [`ts::PacketReassembler`] |
 | Annex A | CRC-32 polynomial | [`crc::crc32`], [`crc::validate_crc`] |
 
+## Pump a stream, get typed payloads
+
+`T2miPump` is the feed-and-iterate front door: construct it with the T2-MI PID
+(from the PMT), feed 188-byte TS packets, and get back CRC-valid `T2miEvent`s
+whose `payload()` dispatches to a typed `AnyPayload`. `AnyPayload` covers all 12
+packet types (an unrecognised type falls through to `AnyPayload::Unknown` with
+the raw bytes preserved), and like the rest of the workspace it is generated from
+a single declarative list so the dispatcher can't drift.
+
+```rust
+use dvb_t2mi::pump::T2miPump;
+use dvb_t2mi::payload::AnyPayload;
+
+let mut pump = T2miPump::new(0x0006);            // T2-MI PID from the PMT
+for packet in ts_packets {                       // each aligned 188-byte packet
+    for event in pump.feed_ts(packet) {          // CRC-valid packets only
+        match event.payload()? {
+            AnyPayload::Bbframe(bb)   => println!("BBFrame plp_id={}", bb.plp_id),
+            AnyPayload::Timestamp(ts) => { let _ = ts; }
+            AnyPayload::Unknown { packet_type, .. } => eprintln!("0x{packet_type:02X}"),
+            _ => {}
+        }
+    }
+}
+```
+
+For un-encapsulated `.t2mi` byte streams use `T2miPump::raw()` + `feed_raw`. The
+[`t2mi_dump`](examples/t2mi_dump.rs) example is a complete CLI
+(`cargo run -p dvb-t2mi --example t2mi_dump -- file.ts [--pid 0xNNN|raw]`).
+
+The pump composes with the rest of the workspace into the full signal chain —
+`T2miPump → AnyPayload::Bbframe → dvb_bbframe::Bbheader + up_iter → inner TS →
+dvb_si::demux::SiDemux`; a worked, fully-asserted version is in
+[`tests/chain.rs`](tests/chain.rs).
+
 ## Quick Start
 
 ### Parse a T2-MI packet header

@@ -160,6 +160,11 @@ impl<'a> Descriptor<'a> for VbiDataDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for VbiDataDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "VBI_DATA";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

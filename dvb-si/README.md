@@ -5,7 +5,7 @@ MPEG-2 PSI tables it builds on, the DVB-allocated companion tables, and the
 DSM-CC data carousel.
 
 **Complete coverage: every allocated `table_id` in EN 300 468 V1.19.1
-Table 2 (29 tables) and every allocated `descriptor_tag` in Table 12
+Table 2 (29 table types; 28 dispatched by `AnyTable` + the type-keyed MPE datagram view) and every allocated `descriptor_tag` in Table 12
 (0x40–0x7F, 64 descriptors) is implemented**, each with a symmetric
 `Parse` / `Serialize` pair and round-trip tests. Layouts are derived from the
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and
@@ -224,6 +224,57 @@ transcription:
 The crate has been through five adversarial spec-audit rounds; fixture tests
 run against real transponder captures.
 
+## Demux in 10 lines
+
+Feed 188-byte TS packets to [`SiDemux`]; it filters by PID, reassembles
+sections, validates CRCs, follows the PAT to PMT PIDs, and version-gates so a
+steady carousel emits each table only once. You get a `SectionEvent` per
+**changed** section:
+
+```rust
+use dvb_si::demux::SiDemux;
+use dvb_si::tables::AnyTable;
+
+let mut demux = SiDemux::builder().build();
+for packet in ts_packets {                      // each aligned 188-byte packet
+    for event in demux.feed(&packet) {          // changed sections only
+        if let Ok(AnyTable::Pat(pat)) = event.table() {
+            println!("PAT v{} on {}", event.version().unwrap_or(0), event.pid());
+            let _ = pat;
+        }
+    }
+}
+```
+
+See [`examples/si_dump.rs`](examples/si_dump.rs) for a complete file-reading CLI
+(`cargo run -p dvb-si --example si_dump -- file.ts [--json]`).
+
+## Typed dispatch
+
+You rarely match table_ids or descriptor_tags by hand. `AnyTable::parse`
+dispatches a complete section to the right typed table; `parse_loop` walks a
+descriptor loop yielding `AnyDescriptor` values (typed where known, `Unknown`
+otherwise, never panicking); and `DescriptorRegistry` lets you plug in private
+descriptors at runtime. All three are generated from a single declarative list
+so the dispatcher can never drift from the implemented set.
+
+```rust
+use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+
+for item in parse_loop(eit_event.descriptors) {
+    match item? {
+        AnyDescriptor::ShortEvent(se) => println!("{}", se.event_name.decode()),
+        AnyDescriptor::Unknown { tag, .. } => eprintln!("unknown 0x{tag:02X}"),
+        _ => {}
+    }
+}
+```
+
+> **Upgrading from 1.x?** Text fields are now `DvbText`, language codes are
+> `LangCode`, the JSON shape changed, and the subset `Descriptor` enum is gone.
+> See **[MIGRATION-2.0.md](MIGRATION-2.0.md)** for every break with before/after
+> code.
+
 ## Usage
 
 ```rust
@@ -250,7 +301,7 @@ Default: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` (TS packet +
 `SectionReassembler`), `serde`.
 
 ```toml
-dvb-si = { version = "1.1", default-features = false }  # tight build
+dvb-si = { version = "2.0", default-features = false }  # tight build
 ```
 
 ## Family

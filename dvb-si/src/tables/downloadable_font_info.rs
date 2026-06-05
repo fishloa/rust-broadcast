@@ -369,6 +369,11 @@ impl<'a> Table<'a> for DownloadableFontInfoSection<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for DownloadableFontInfoSection<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
+    const NAME: &'static str = "DOWNLOADABLE_FONT_INFO";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,20 +1,17 @@
 //! DVB + MPEG-2 descriptors. Each descriptor tag gets its own submodule file.
 //!
 //! The usual way to consume a descriptor is to walk a table's raw descriptor
-//! loop and call the specific descriptor module's `parse` for the tags you
-//! care about (e.g. [`satellite_delivery_system`], [`service`], [`linkage`]).
-//!
-//! The [`Descriptor`] enum covers only the small set of MPEG-2 descriptors
-//! that appear in contexts without surrounding table semantics (CA,
-//! data_stream_alignment, private_data_indicator, registration); every other
-//! tag lands as [`Descriptor::Unknown`] with its raw bytes preserved — it is
-//! NOT a dispatcher over the full typed-descriptor set.
+//! loop with [`parse_loop`], which yields a typed [`AnyDescriptor`] per entry
+//! (or [`AnyDescriptor::Unknown`] for tags with no implementation). To handle a
+//! single known tag, call the specific module's `parse` directly (e.g.
+//! [`satellite_delivery_system`], [`service`], [`linkage`]).
 
 pub mod aac;
 pub mod ac3;
 pub mod adaptation_field_data;
 pub mod ancillary_data;
 pub mod announcement_support;
+pub mod any;
 pub mod application_signalling;
 pub mod bouquet_name;
 pub mod ca;
@@ -55,6 +52,7 @@ pub mod pdc;
 pub mod private_data_indicator;
 pub mod private_data_specifier;
 pub mod registration;
+pub mod registry;
 pub mod related_content;
 pub mod s2_satellite_delivery_system;
 pub mod satellite_delivery_system;
@@ -86,39 +84,5 @@ pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
 
-/// Unified descriptor variant. Variants land as per-descriptor phases complete.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[non_exhaustive]
-pub enum Descriptor<'a> {
-    /// Conditional Access descriptor (tag 0x09).
-    Ca(CaDescriptor<'a>),
-    /// Data stream alignment descriptor (tag 0x06).
-    DataStreamAlignment(DataStreamAlignmentDescriptor),
-    /// Private Data Indicator descriptor (tag 0x0F).
-    PrivateDataIndicator(PrivateDataIndicatorDescriptor),
-    /// Registration descriptor (tag 0x05).
-    Registration(RegistrationDescriptor<'a>),
-    /// Forward-compatible fallthrough for tags we don't recognise.
-    Unknown {
-        /// The raw tag byte.
-        tag: u8,
-        /// The raw payload (descriptor_length bytes, not including the 2-byte header).
-        #[cfg_attr(feature = "serde", serde(borrow))]
-        bytes: &'a [u8],
-    },
-}
-
-impl<'a> Descriptor<'a> {
-    /// The underlying tag byte.
-    #[must_use]
-    pub const fn tag(&self) -> u8 {
-        match self {
-            Self::Ca(_) => ca::TAG,
-            Self::DataStreamAlignment(_) => data_stream_alignment::TAG,
-            Self::PrivateDataIndicator(_) => private_data_indicator::TAG,
-            Self::Registration(_) => registration::TAG,
-            Self::Unknown { tag, .. } => *tag,
-        }
-    }
-}
+pub use any::{parse_loop, AnyDescriptor, DescriptorIter};
+pub use registry::{DescriptorObject, DescriptorRegistry};

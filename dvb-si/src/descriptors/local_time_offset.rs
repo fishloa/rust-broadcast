@@ -4,6 +4,7 @@
 //! country offsets from UTC plus any upcoming DST transition.
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -20,7 +21,7 @@ const RESERVED_BIT_MASK: u8 = 0x02;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LocalTimeOffsetEntry {
     /// ISO 3166 alpha country code.
-    pub country_code: [u8; 3],
+    pub country_code: LangCode,
     /// 6-bit country_region_id for sub-national regions.
     pub country_region_id: u8,
     /// Polarity: false = offset is positive (local = UTC + offset),
@@ -77,7 +78,7 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
         let mut entries = Vec::with_capacity(length / ENTRY_LEN);
         let mut offset = body_start;
         while offset < body_end {
-            let country_code = [bytes[offset], bytes[offset + 1], bytes[offset + 2]];
+            let country_code = LangCode([bytes[offset], bytes[offset + 1], bytes[offset + 2]]);
             let flags = bytes[offset + 3];
             // The reserved bit is ignored on parse (EN 300 468 §5.1: decoders
             // shall ignore reserved bits).
@@ -119,7 +120,7 @@ impl Serialize for LocalTimeOffsetDescriptor {
         buf[1] = (len - HEADER_LEN) as u8;
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
-            buf[offset..offset + 3].copy_from_slice(&entry.country_code);
+            buf[offset..offset + 3].copy_from_slice(&entry.country_code.0);
             let flags = ((entry.country_region_id << 2) & REGION_ID_MASK)
                 | RESERVED_BIT_MASK
                 | if entry.local_time_offset_negative {
@@ -145,6 +146,11 @@ impl<'a> Descriptor<'a> for LocalTimeOffsetDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for LocalTimeOffsetDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "LOCAL_TIME_OFFSET";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,7 +162,7 @@ mod tests {
         ];
         let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].country_code, [0x46, 0x52, 0x41]);
+        assert_eq!(d.entries[0].country_code, LangCode([0x46, 0x52, 0x41]));
         assert_eq!(d.entries[0].country_region_id, 0);
         assert!(!d.entries[0].local_time_offset_negative);
         assert_eq!(d.entries[0].local_time_offset_bcd, 0x0100);
@@ -175,8 +181,8 @@ mod tests {
         ];
         let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[0].country_code, [0x46, 0x52, 0x41]);
-        assert_eq!(d.entries[1].country_code, [0x47, 0x42, 0x52]);
+        assert_eq!(d.entries[0].country_code, LangCode([0x46, 0x52, 0x41]));
+        assert_eq!(d.entries[1].country_code, LangCode([0x47, 0x42, 0x52]));
     }
 
     #[test]
@@ -231,7 +237,7 @@ mod tests {
     fn serialize_round_trip() {
         let d = LocalTimeOffsetDescriptor {
             entries: vec![LocalTimeOffsetEntry {
-                country_code: [0x46, 0x52, 0x41],
+                country_code: LangCode([0x46, 0x52, 0x41]),
                 country_region_id: 0,
                 local_time_offset_negative: false,
                 local_time_offset_bcd: 0x0100,

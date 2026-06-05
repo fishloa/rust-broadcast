@@ -5,6 +5,7 @@
 //! descriptor loops.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -17,7 +18,7 @@ const STREAM_CONTENT_MASK: u8 = 0x0F;
 
 /// Component Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ComponentDescriptor<'a> {
     /// 4-bit stream_content_ext (high nibble) — combines with `stream_content`
     /// to identify the component (EN 300 468 §6.2.8 Table 25).
@@ -29,10 +30,9 @@ pub struct ComponentDescriptor<'a> {
     /// component_tag for cross-reference with stream_identifier_descriptor.
     pub component_tag: u8,
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
-    /// Raw DVB-encoded text label for this component.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded text label for this component.
+    pub text: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for ComponentDescriptor<'a> {
@@ -70,12 +70,12 @@ impl<'a> Parse<'a> for ComponentDescriptor<'a> {
         let stream_content = bytes[HEADER_LEN] & STREAM_CONTENT_MASK;
         let component_type = bytes[HEADER_LEN + 1];
         let component_tag = bytes[HEADER_LEN + 2];
-        let language_code = [
+        let language_code = LangCode([
             bytes[HEADER_LEN + 3],
             bytes[HEADER_LEN + 4],
             bytes[HEADER_LEN + 5],
-        ];
-        let text = &bytes[HEADER_LEN + PRE_TEXT_LEN..end];
+        ]);
+        let text = DvbText::new(&bytes[HEADER_LEN + PRE_TEXT_LEN..end]);
         Ok(Self {
             stream_content_ext,
             stream_content,
@@ -108,8 +108,8 @@ impl Serialize for ComponentDescriptor<'_> {
             (self.stream_content_ext << 4) | (self.stream_content & STREAM_CONTENT_MASK);
         buf[HEADER_LEN + 1] = self.component_type;
         buf[HEADER_LEN + 2] = self.component_tag;
-        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.language_code);
-        buf[HEADER_LEN + PRE_TEXT_LEN..len].copy_from_slice(self.text);
+        buf[HEADER_LEN + 3..HEADER_LEN + 6].copy_from_slice(&self.language_code.0);
+        buf[HEADER_LEN + PRE_TEXT_LEN..len].copy_from_slice(self.text.raw());
         Ok(len)
     }
 }
@@ -119,6 +119,11 @@ impl<'a> Descriptor<'a> for ComponentDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for ComponentDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "COMPONENT";
 }
 
 #[cfg(test)]
@@ -134,8 +139,8 @@ mod tests {
         assert_eq!(d.stream_content, 2);
         assert_eq!(d.component_type, 0x01);
         assert_eq!(d.component_tag, 0x42);
-        assert_eq!(&d.language_code, b"eng");
-        assert_eq!(d.text, b"STEREO");
+        assert_eq!(d.language_code, LangCode(*b"eng"));
+        assert_eq!(d.text.raw(), b"STEREO");
     }
 
     #[test]
@@ -168,7 +173,7 @@ mod tests {
     fn parse_with_empty_text_valid() {
         let bytes = [TAG, 6, 0x01, 0x01, 0x01, b'e', b'n', b'g'];
         let d = ComponentDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.text, &[] as &[u8]);
+        assert!(d.text.raw().is_empty());
     }
 
     #[test]
@@ -178,8 +183,8 @@ mod tests {
             stream_content: 0x03,
             component_type: 0x10,
             component_tag: 0x05,
-            language_code: *b"fra",
-            text: b"Sous-titres",
+            language_code: LangCode(*b"fra"),
+            text: DvbText::new(b"Sous-titres"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();

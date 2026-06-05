@@ -4,6 +4,7 @@
 //! single language.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -14,16 +15,14 @@ const LANG_LEN: usize = 3;
 
 /// Short Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ShortEventDescriptor<'a> {
-    /// Three-character ISO 639-2 language code of the event name / text.
-    pub language_code: [u8; 3],
-    /// Raw event_name bytes (DVB-encoded text).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub event_name: &'a [u8],
-    /// Raw text bytes (DVB-encoded text) — brief description.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    /// ISO 639-2 language code of the event name / text.
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded event name.
+    pub event_name: DvbText<'a>,
+    /// DVB Annex-A encoded brief description.
+    pub text: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
@@ -58,11 +57,11 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
             });
         }
         let body_start = HEADER_LEN;
-        let language_code = [
+        let language_code = LangCode([
             bytes[body_start],
             bytes[body_start + 1],
             bytes[body_start + 2],
-        ];
+        ]);
         let name_len_pos = body_start + LANG_LEN;
         let name_len = bytes[name_len_pos] as usize;
         let name_start = name_len_pos + 1;
@@ -73,7 +72,7 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
                 reason: "event_name_length runs past descriptor end",
             });
         }
-        let event_name = &bytes[name_start..name_end];
+        let event_name = DvbText::new(&bytes[name_start..name_end]);
         let text_len = bytes[name_end] as usize;
         let text_start = name_end + 1;
         let text_end = text_start + text_len;
@@ -83,7 +82,7 @@ impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = &bytes[text_start..text_end];
+        let text = DvbText::new(&bytes[text_start..text_end]);
         Ok(Self {
             language_code,
             event_name,
@@ -108,14 +107,14 @@ impl Serialize for ShortEventDescriptor<'_> {
         }
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
-        buf[2..5].copy_from_slice(&self.language_code);
+        buf[2..5].copy_from_slice(&self.language_code.0);
         buf[5] = self.event_name.len() as u8;
         let n_start = 6;
         let n_end = n_start + self.event_name.len();
-        buf[n_start..n_end].copy_from_slice(self.event_name);
+        buf[n_start..n_end].copy_from_slice(self.event_name.raw());
         buf[n_end] = self.text.len() as u8;
         let t_start = n_end + 1;
-        buf[t_start..t_start + self.text.len()].copy_from_slice(self.text);
+        buf[t_start..t_start + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
     }
 }
@@ -125,6 +124,11 @@ impl<'a> Descriptor<'a> for ShortEventDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for ShortEventDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SHORT_EVENT";
 }
 
 #[cfg(test)]
@@ -137,9 +141,9 @@ mod tests {
             TAG, 0x0C, b'e', b'n', b'g', 4, b'N', b'e', b'w', b's', 3, b'L', b'i', b'v',
         ];
         let d = ShortEventDescriptor::parse(&bytes).unwrap();
-        assert_eq!(&d.language_code, b"eng");
-        assert_eq!(d.event_name, b"News");
-        assert_eq!(d.text, b"Liv");
+        assert_eq!(d.language_code, LangCode(*b"eng"));
+        assert_eq!(d.event_name.raw(), b"News");
+        assert_eq!(d.text.raw(), b"Liv");
     }
 
     #[test]
@@ -174,16 +178,16 @@ mod tests {
     fn empty_event_name_and_text_valid() {
         let bytes = [TAG, 5, b'e', b'n', b'g', 0, 0];
         let d = ShortEventDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.event_name, &[] as &[u8]);
-        assert_eq!(d.text, &[] as &[u8]);
+        assert!(d.event_name.raw().is_empty());
+        assert!(d.text.raw().is_empty());
     }
 
     #[test]
     fn serialize_round_trip() {
         let d = ShortEventDescriptor {
-            language_code: *b"fra",
-            event_name: b"Journal",
-            text: b"20h",
+            language_code: LangCode(*b"fra"),
+            event_name: DvbText::new(b"Journal"),
+            text: DvbText::new(b"20h"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -194,9 +198,9 @@ mod tests {
     #[test]
     fn descriptor_length_matches_payload() {
         let d = ShortEventDescriptor {
-            language_code: *b"eng",
-            event_name: b"ABC",
-            text: b"DE",
+            language_code: LangCode(*b"eng"),
+            event_name: DvbText::new(b"ABC"),
+            text: DvbText::new(b"DE"),
         };
         // 3 lang + 1 name_len + 3 name + 1 text_len + 2 text = 10
         assert_eq!(d.descriptor_length(), 10);

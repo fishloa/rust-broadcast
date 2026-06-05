@@ -274,6 +274,12 @@ impl<'a> Table<'a> for Eit<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Eit<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] =
+        &[(TABLE_ID_PF_ACTUAL, TABLE_ID_SCHEDULE_OTHER_LAST)];
+    const NAME: &'static str = "EVENT_INFORMATION";
+}
+
 #[cfg(feature = "chrono")]
 impl EitEvent<'_> {
     /// Decode `start_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.

@@ -5,6 +5,7 @@
 //! language code, text) pairs, each text length-prefixed by an 8-bit field.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -17,24 +18,21 @@ const TEXT_LEN_FIELD: usize = 1;
 
 /// One localised component description.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ComponentTextEntry<'a> {
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
-    /// Raw DVB-encoded text bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded component description text.
+    pub text: DvbText<'a>,
 }
 
 /// Multilingual Component Descriptor (tag 0x5E).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct MultilingualComponentDescriptor<'a> {
     /// component_tag linking this descriptor to a stream_identifier_descriptor.
     pub component_tag: u8,
     /// Localised descriptions in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub entries: Vec<ComponentTextEntry<'a>>,
 }
 
@@ -79,7 +77,7 @@ impl<'a> Parse<'a> for MultilingualComponentDescriptor<'a> {
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
+            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
             let text_len = bytes[pos + LANG_LEN] as usize;
             let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
             let text_end = text_start + text_len;
@@ -91,7 +89,7 @@ impl<'a> Parse<'a> for MultilingualComponentDescriptor<'a> {
             }
             entries.push(ComponentTextEntry {
                 language_code,
-                text: &bytes[text_start..text_end],
+                text: DvbText::new(&bytes[text_start..text_end]),
             });
             pos = text_end;
         }
@@ -142,10 +140,10 @@ impl Serialize for MultilingualComponentDescriptor<'_> {
         buf[HEADER_LEN] = self.component_tag;
         let mut pos = HEADER_LEN + COMPONENT_TAG_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code);
+            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             buf[pos + LANG_LEN] = e.text.len() as u8;
             let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
-            buf[text_start..text_start + e.text.len()].copy_from_slice(e.text);
+            buf[text_start..text_start + e.text.len()].copy_from_slice(e.text.raw());
             pos = text_start + e.text.len();
         }
         Ok(len)
@@ -157,6 +155,11 @@ impl<'a> Descriptor<'a> for MultilingualComponentDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualComponentDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_COMPONENT";
 }
 
 #[cfg(test)]
@@ -187,8 +190,8 @@ mod tests {
         let d = MultilingualComponentDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.component_tag, 0x12);
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
-        assert_eq!(d.entries[0].text, b"Video");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
+        assert_eq!(d.entries[0].text.raw(), b"Video");
     }
 
     #[test]
@@ -197,7 +200,7 @@ mod tests {
         let d = MultilingualComponentDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.component_tag, 0x03);
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[1].text, b"Son");
+        assert_eq!(d.entries[1].text.raw(), b"Son");
     }
 
     #[test]
@@ -264,8 +267,8 @@ mod tests {
         let d = MultilingualComponentDescriptor {
             component_tag: 0x01,
             entries: vec![ComponentTextEntry {
-                language_code: *b"eng",
-                text: &text,
+                language_code: LangCode(*b"eng"),
+                text: DvbText::new(&text),
             }],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -282,8 +285,8 @@ mod tests {
         let d = MultilingualComponentDescriptor {
             component_tag: 0x12,
             entries: vec![ComponentTextEntry {
-                language_code: *b"eng",
-                text: b"Video",
+                language_code: LangCode(*b"eng"),
+                text: DvbText::new(b"Video"),
             }],
         };
         let json = serde_json::to_string(&d).unwrap();

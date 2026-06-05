@@ -5,6 +5,7 @@
 //! selector tail, plus a localised text description in one language.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -19,8 +20,8 @@ const TEXT_LEN_FIELD: usize = 1;
 
 /// Data Broadcast Descriptor (tag 0x64).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", serde(bound = ""))]
 pub struct DataBroadcastDescriptor<'a> {
     /// 16-bit data_broadcast_id (ETSI TS 101 162 registration).
     pub data_broadcast_id: u16,
@@ -30,10 +31,9 @@ pub struct DataBroadcastDescriptor<'a> {
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub selector: &'a [u8],
     /// ISO 639-2 language code of the text description.
-    pub language_code: [u8; 3],
-    /// Raw DVB-encoded text description bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    pub language_code: LangCode,
+    /// DVB Annex-A encoded text description.
+    pub text: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
@@ -87,7 +87,7 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
         let selector = &bytes[pos..selector_end];
         pos = selector_end;
 
-        let language_code = [bytes[pos], bytes[pos + 1], bytes[pos + 2]];
+        let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
         pos += LANG_LEN;
 
         let text_length = bytes[pos] as usize;
@@ -99,7 +99,7 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = &bytes[pos..text_end];
+        let text = DvbText::new(&bytes[pos..text_end]);
 
         Ok(Self {
             data_broadcast_id,
@@ -162,11 +162,11 @@ impl Serialize for DataBroadcastDescriptor<'_> {
         pos += SELECTOR_LEN_FIELD;
         buf[pos..pos + self.selector.len()].copy_from_slice(self.selector);
         pos += self.selector.len();
-        buf[pos..pos + LANG_LEN].copy_from_slice(&self.language_code);
+        buf[pos..pos + LANG_LEN].copy_from_slice(&self.language_code.0);
         pos += LANG_LEN;
         buf[pos] = self.text.len() as u8;
         pos += TEXT_LEN_FIELD;
-        buf[pos..pos + self.text.len()].copy_from_slice(self.text);
+        buf[pos..pos + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
     }
 }
@@ -176,6 +176,11 @@ impl<'a> Descriptor<'a> for DataBroadcastDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for DataBroadcastDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DATA_BROADCAST";
 }
 
 #[cfg(test)]
@@ -210,8 +215,8 @@ mod tests {
         assert_eq!(d.data_broadcast_id, 0x000B);
         assert_eq!(d.component_tag, 0x12);
         assert_eq!(d.selector, &[0xAA, 0xBB]);
-        assert_eq!(&d.language_code, b"eng");
-        assert_eq!(d.text, b"Hello");
+        assert_eq!(d.language_code, LangCode(*b"eng"));
+        assert_eq!(d.text.raw(), b"Hello");
     }
 
     #[test]
@@ -219,8 +224,8 @@ mod tests {
         let bytes = build(0x0001, 0x00, &[], *b"fra", b"");
         let d = DataBroadcastDescriptor::parse(&bytes).unwrap();
         assert!(d.selector.is_empty());
-        assert!(d.text.is_empty());
-        assert_eq!(&d.language_code, b"fra");
+        assert!(d.text.raw().is_empty());
+        assert_eq!(d.language_code, LangCode(*b"fra"));
     }
 
     #[test]
@@ -277,8 +282,8 @@ mod tests {
             data_broadcast_id: 0x0001,
             component_tag: 0x00,
             selector: &[],
-            language_code: *b"eng",
-            text: &[],
+            language_code: LangCode(*b"eng"),
+            text: DvbText::new(&[]),
         };
         let mut tiny = [0u8; 4];
         let err = d.serialize_into(&mut tiny).unwrap_err();
@@ -292,8 +297,8 @@ mod tests {
             data_broadcast_id: 0x0001,
             component_tag: 0x00,
             selector: &sel,
-            language_code: *b"eng",
-            text: &[],
+            language_code: LangCode(*b"eng"),
+            text: DvbText::new(&[]),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
@@ -309,8 +314,8 @@ mod tests {
             data_broadcast_id: 0x0001,
             component_tag: 0x00,
             selector: &sel,
-            language_code: *b"eng",
-            text: &txt,
+            language_code: LangCode(*b"eng"),
+            text: DvbText::new(&txt),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
@@ -328,8 +333,8 @@ mod tests {
             data_broadcast_id: 0x000B,
             component_tag: 0x09,
             selector: &[0x01, 0x02],
-            language_code: *b"eng",
-            text: b"Text",
+            language_code: LangCode(*b"eng"),
+            text: DvbText::new(b"Text"),
         };
         let json = serde_json::to_string(&d).unwrap();
         assert_eq!(json, serde_json::to_string(&d.clone()).unwrap());

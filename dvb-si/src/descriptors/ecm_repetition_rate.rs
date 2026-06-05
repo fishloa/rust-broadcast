@@ -106,6 +106,11 @@ impl<'a> Descriptor<'a> for EcmRepetitionRateDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for EcmRepetitionRateDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "ECM_REPETITION_RATE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,7 @@
 //! Network Name Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x40).
 
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -13,12 +14,10 @@ pub const HEADER_LEN: usize = 2;
 /// Network Name Descriptor (tag 0x40). Carries the human-readable name of
 /// a DVB network in its NIT's `network_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct NetworkNameDescriptor<'a> {
-    /// Raw DVB-encoded network name bytes. Decoding via `crate::text` lands
-    /// in a later phase; keep the bytes borrowed for now.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub network_name: &'a [u8],
+    /// DVB Annex-A encoded network name (EN 300 468 §6.2.28).
+    pub network_name: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for NetworkNameDescriptor<'a> {
@@ -52,7 +51,7 @@ impl<'a> Parse<'a> for NetworkNameDescriptor<'a> {
         }
 
         Ok(NetworkNameDescriptor {
-            network_name: &bytes[HEADER_LEN..total],
+            network_name: DvbText::new(&bytes[HEADER_LEN..total]),
         })
     }
 }
@@ -74,7 +73,7 @@ impl Serialize for NetworkNameDescriptor<'_> {
 
         buf[0] = TAG;
         buf[1] = self.network_name.len() as u8;
-        buf[HEADER_LEN..need].copy_from_slice(self.network_name);
+        buf[HEADER_LEN..need].copy_from_slice(self.network_name.raw());
 
         Ok(need)
     }
@@ -84,8 +83,13 @@ impl<'a> Descriptor<'a> for NetworkNameDescriptor<'a> {
     const TAG: u8 = 0x40;
 
     fn descriptor_length(&self) -> u8 {
-        self.network_name.len() as u8
+        self.network_name.raw().len() as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for NetworkNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "NETWORK_NAME";
 }
 
 #[cfg(test)]
@@ -100,7 +104,7 @@ mod tests {
             b'E', b'U', b'T', b'E',
         ];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
-        assert_eq!(desc.network_name, b"EUTE");
+        assert_eq!(desc.network_name.raw(), b"EUTE");
     }
 
     /// Wrong tag byte should return InvalidDescriptor.
@@ -173,7 +177,7 @@ mod tests {
     fn empty_network_name_is_valid() {
         let raw: &[u8] = &[TAG, 0x00];
         let desc = NetworkNameDescriptor::parse(raw).unwrap();
-        assert!(desc.network_name.is_empty());
+        assert!(desc.network_name.raw().is_empty());
     }
 
     /// `descriptor_length()` must equal `network_name.len()` cast to u8.
@@ -181,6 +185,9 @@ mod tests {
     fn descriptor_length_getter_matches_payload() {
         let raw: Vec<u8> = vec![TAG, 0x07, b'F', b'R', b'A', b'N', b'C', b'E', b'2'];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
-        assert_eq!(desc.descriptor_length(), desc.network_name.len() as u8);
+        assert_eq!(
+            desc.descriptor_length(),
+            desc.network_name.raw().len() as u8
+        );
     }
 }

@@ -15,7 +15,48 @@
 //! verbatim so gateway streams round-trip byte-exact (see
 //! `payload::individual_addressing`).
 //!
-//! # Example
+//! # Quickstart: pump a TS, get typed payloads
+//!
+//! [`pump::T2miPump`] filters a TS by PID, reassembles + CRC-validates T2-MI
+//! packets, and hands back events whose [`payload`](pump::T2miEvent::payload)
+//! dispatches to a typed [`payload::AnyPayload`]:
+//!
+//! ```no_run
+//! use dvb_t2mi::pump::T2miPump;
+//! use dvb_t2mi::payload::AnyPayload;
+//!
+//! let mut pump = T2miPump::new(0x0006); // T2-MI PID from the PMT
+//! # let ts_packets: Vec<[u8; 188]> = Vec::new();
+//! for packet in &ts_packets {          // each aligned 188-byte TS packet
+//!     for event in pump.feed_ts(packet) {
+//!         if let Ok(AnyPayload::Bbframe(bb)) = event.payload() {
+//!             println!("BBFrame plp_id={}", bb.plp_id);
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # The full signal chain
+//!
+//! T2-MI carries DVB-T2 BBFrames, which carry the inner MPEG-TS, which carries
+//! SI. The crates compose end to end — T2-MI here, BBFrame extraction in
+//! [`dvb-bbframe`](https://docs.rs/dvb-bbframe), SI demux in
+//! [`dvb-si`](https://docs.rs/dvb-si):
+//!
+//! ```text
+//! TS (T2-MI PID) ─▶ T2miPump ─▶ AnyPayload::Bbframe
+//!                                   │ bb.bbframe
+//!                                   ▼
+//!                          dvb_bbframe::Bbheader::parse + up_iter
+//!                                   │ inner TS packets
+//!                                   ▼
+//!                          dvb_si::demux::SiDemux ─▶ AnyTable
+//! ```
+//!
+//! A complete, working version of this chain (synthetic fixture, every layer
+//! built and asserted) lives in `dvb-t2mi/tests/chain.rs`.
+//!
+//! # Header-only example
 //!
 //! ```
 //! use dvb_t2mi::packet::Header;
@@ -31,6 +72,10 @@ pub mod crc;
 pub mod error;
 pub mod packet;
 pub mod payload;
+pub mod traits;
+
+#[cfg(feature = "ts")]
+pub mod pump;
 
 #[cfg(feature = "ts")]
 pub mod ts;

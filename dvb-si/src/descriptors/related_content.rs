@@ -80,6 +80,11 @@ impl<'a> Descriptor<'a> for RelatedContentDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for RelatedContentDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "RELATED_CONTENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

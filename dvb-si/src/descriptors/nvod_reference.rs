@@ -121,6 +121,11 @@ impl<'a> Descriptor<'a> for NvodReferenceDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for NvodReferenceDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "NVOD_REFERENCE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

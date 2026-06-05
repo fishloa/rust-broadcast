@@ -5,6 +5,7 @@
 //! contributes text plus an optional list of (item_description, item) pairs.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -18,33 +19,28 @@ const TEXT_LEN_FIELD: usize = 1;
 
 /// One (description, value) item — e.g. "Director" → "Alice Smith".
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ExtendedEventItem<'a> {
-    /// DVB-encoded item description bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub description: &'a [u8],
-    /// DVB-encoded item value bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub value: &'a [u8],
+    /// DVB Annex-A encoded item description.
+    pub description: DvbText<'a>,
+    /// DVB Annex-A encoded item value.
+    pub value: DvbText<'a>,
 }
 
 /// Extended Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ExtendedEventDescriptor<'a> {
     /// 0-based fragment index within the extended event series.
     pub descriptor_number: u8,
     /// Index of the final fragment in the series (0-based).
     pub last_descriptor_number: u8,
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
+    pub language_code: LangCode,
     /// Item list.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub items: Vec<ExtendedEventItem<'a>>,
-    /// Raw DVB-encoded extended text bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    /// DVB Annex-A encoded extended text.
+    pub text: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
@@ -76,7 +72,7 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
         let numbers_byte = bytes[2];
         let descriptor_number = numbers_byte >> 4;
         let last_descriptor_number = numbers_byte & 0x0F;
-        let language_code = [bytes[3], bytes[4], bytes[5]];
+        let language_code = LangCode([bytes[3], bytes[4], bytes[5]]);
 
         let items_len_pos = HEADER_LEN + NUMBERS_LEN + LANG_LEN;
         let items_length = bytes[items_len_pos] as usize;
@@ -114,8 +110,8 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
                 });
             }
             items.push(ExtendedEventItem {
-                description: &bytes[desc_start..desc_end],
-                value: &bytes[value_start..value_end],
+                description: DvbText::new(&bytes[desc_start..desc_end]),
+                value: DvbText::new(&bytes[value_start..value_end]),
             });
             pos = value_end;
         }
@@ -129,7 +125,7 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = &bytes[text_start..text_end];
+        let text = DvbText::new(&bytes[text_start..text_end]);
 
         Ok(Self {
             descriptor_number,
@@ -169,7 +165,7 @@ impl Serialize for ExtendedEventDescriptor<'_> {
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
         buf[2] = ((self.descriptor_number & 0x0F) << 4) | (self.last_descriptor_number & 0x0F);
-        buf[3..6].copy_from_slice(&self.language_code);
+        buf[3..6].copy_from_slice(&self.language_code.0);
 
         let items_bytes: usize = self
             .items
@@ -183,15 +179,15 @@ impl Serialize for ExtendedEventDescriptor<'_> {
             buf[pos] = item.description.len() as u8;
             let d_start = pos + 1;
             let d_end = d_start + item.description.len();
-            buf[d_start..d_end].copy_from_slice(item.description);
+            buf[d_start..d_end].copy_from_slice(item.description.raw());
             buf[d_end] = item.value.len() as u8;
             let v_start = d_end + 1;
             let v_end = v_start + item.value.len();
-            buf[v_start..v_end].copy_from_slice(item.value);
+            buf[v_start..v_end].copy_from_slice(item.value.raw());
             pos = v_end;
         }
         buf[pos] = self.text.len() as u8;
-        buf[pos + 1..pos + 1 + self.text.len()].copy_from_slice(self.text);
+        buf[pos + 1..pos + 1 + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
     }
 }
@@ -201,6 +197,11 @@ impl<'a> Descriptor<'a> for ExtendedEventDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for ExtendedEventDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "EXTENDED_EVENT";
 }
 
 #[cfg(test)]
@@ -249,8 +250,8 @@ mod tests {
         let d = ExtendedEventDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.descriptor_number, 2);
         assert_eq!(d.last_descriptor_number, 3);
-        assert_eq!(&d.language_code, b"fra");
-        assert_eq!(d.text, b"Hello");
+        assert_eq!(d.language_code, LangCode(*b"fra"));
+        assert_eq!(d.text.raw(), b"Hello");
         assert_eq!(d.items.len(), 0);
     }
 
@@ -260,10 +261,10 @@ mod tests {
         let bytes = build(0, 0, *b"eng", &items, b"");
         let d = ExtendedEventDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.items.len(), 2);
-        assert_eq!(d.items[0].description, b"Director");
-        assert_eq!(d.items[0].value, b"Alice");
-        assert_eq!(d.items[1].description, b"Year");
-        assert_eq!(d.items[1].value, b"2023");
+        assert_eq!(d.items[0].description.raw(), b"Director");
+        assert_eq!(d.items[0].value.raw(), b"Alice");
+        assert_eq!(d.items[1].description.raw(), b"Year");
+        assert_eq!(d.items[1].value.raw(), b"2023");
     }
 
     #[test]
@@ -313,7 +314,7 @@ mod tests {
         let bytes = build(0, 0, *b"eng", &[], b"");
         let d = ExtendedEventDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.items.len(), 0);
-        assert_eq!(d.text, b"");
+        assert_eq!(d.text.raw(), b"");
     }
 
     #[test]

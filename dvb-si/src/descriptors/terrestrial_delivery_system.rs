@@ -410,6 +410,11 @@ impl<'a> Descriptor<'a> for TerrestrialDeliverySystemDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TerrestrialDeliverySystemDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TERRESTRIAL_DELIVERY_SYSTEM";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

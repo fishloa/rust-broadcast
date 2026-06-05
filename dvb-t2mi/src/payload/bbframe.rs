@@ -59,6 +59,11 @@ impl<'a> Parse<'a> for BbframePayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for BbframePayload<'a> {
+    const PACKET_TYPE: u8 = 0x00;
+    const NAME: &'static str = "BBFRAME";
+}
+
 impl Serialize for BbframePayload<'_> {
     type Error = crate::error::Error;
 

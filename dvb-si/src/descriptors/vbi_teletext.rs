@@ -6,6 +6,7 @@
 //! (8 bits). Signals teletext also carried in the analogue VBI lines.
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -22,7 +23,7 @@ const MAX_BODY_LEN: usize = u8::MAX as usize;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VbiTeletextEntry {
     /// ISO 639-2 language code of this teletext service.
-    pub language_code: [u8; 3],
+    pub language_code: LangCode,
     /// 5-bit teletext_type (EN 300 468 Table 102).
     pub teletext_type: u8,
     /// 3-bit teletext_magazine_number.
@@ -73,7 +74,7 @@ impl<'a> Parse<'a> for VbiTeletextDescriptor {
         let body = &bytes[HEADER_LEN..end];
         let mut entries = Vec::with_capacity(length / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let language_code = [chunk[0], chunk[1], chunk[2]];
+            let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
             let type_and_mag = chunk[LANG_LEN];
             entries.push(VbiTeletextEntry {
                 language_code,
@@ -112,7 +113,7 @@ impl Serialize for VbiTeletextDescriptor {
         buf[1] = body_len as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code);
+            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             buf[pos + LANG_LEN] = ((e.teletext_type & 0x1F) << 3) | (e.magazine_number & 0x07);
             buf[pos + LANG_LEN + 1] = e.page_number;
             pos += ENTRY_LEN;
@@ -128,6 +129,11 @@ impl<'a> Descriptor<'a> for VbiTeletextDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for VbiTeletextDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "VBI_TELETEXT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +143,7 @@ mod tests {
         let bytes = [TAG, 5, b'e', b'n', b'g', (1 << 3) | 2, 0x10];
         let d = VbiTeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
         assert_eq!(d.entries[0].teletext_type, 1);
         assert_eq!(d.entries[0].magazine_number, 2);
         assert_eq!(d.entries[0].page_number, 0x10);
@@ -162,7 +168,7 @@ mod tests {
         let d = VbiTeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
         assert_eq!(d.entries[1].teletext_type, 2);
-        assert_eq!(&d.entries[1].language_code, b"fra");
+        assert_eq!(d.entries[1].language_code, LangCode(*b"fra"));
     }
 
     #[test]
@@ -201,7 +207,7 @@ mod tests {
     fn serialize_round_trip() {
         let d = VbiTeletextDescriptor {
             entries: vec![VbiTeletextEntry {
-                language_code: *b"fra",
+                language_code: LangCode(*b"fra"),
                 teletext_type: 2,
                 magazine_number: 8 & 0x07,
                 page_number: 0x88,
@@ -218,7 +224,7 @@ mod tests {
         let d = VbiTeletextDescriptor {
             entries: vec![
                 VbiTeletextEntry {
-                    language_code: *b"eng",
+                    language_code: LangCode(*b"eng"),
                     teletext_type: 1,
                     magazine_number: 1,
                     page_number: 0,
@@ -238,7 +244,7 @@ mod tests {
     fn serde_round_trip() {
         let d = VbiTeletextDescriptor {
             entries: vec![VbiTeletextEntry {
-                language_code: *b"eng",
+                language_code: LangCode(*b"eng"),
                 teletext_type: 2,
                 magazine_number: 1,
                 page_number: 0x10,

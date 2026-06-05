@@ -130,6 +130,11 @@ impl<'a> Descriptor<'a> for FtaContentManagementDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for FtaContentManagementDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "FTA_CONTENT_MANAGEMENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

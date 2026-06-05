@@ -76,6 +76,11 @@ impl<'a> Descriptor<'a> for StreamIdentifierDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for StreamIdentifierDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "STREAM_IDENTIFIER";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,6 +1,7 @@
 //! ISO 639 Language Descriptor — MPEG-2 ISO/IEC 13818-1 §2.6.19 (tag 0x0A).
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -13,8 +14,8 @@ const ENTRY_LEN: usize = 4;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LanguageEntry {
-    /// Three-character ISO 639-2 language code (e.g. b"eng", b"fra").
-    pub language_code: [u8; 3],
+    /// Three-character ISO 639-2 language code (e.g. `LangCode(*b"eng")`).
+    pub language_code: LangCode,
     /// Audio type (ETSI EN 300 468 §6.2.22): 0 = undefined, 1 = clean effects,
     /// 2 = hearing impaired, 3 = visual impaired commentary.
     pub audio_type: u8,
@@ -62,7 +63,7 @@ impl<'a> Parse<'a> for Iso639LanguageDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(LanguageEntry {
-                language_code: [chunk[0], chunk[1], chunk[2]],
+                language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
                 audio_type: chunk[3],
             });
         }
@@ -88,7 +89,7 @@ impl Serialize for Iso639LanguageDescriptor {
         buf[1] = (self.entries.len() * ENTRY_LEN) as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 3].copy_from_slice(&e.language_code);
+            buf[pos..pos + 3].copy_from_slice(&e.language_code.0);
             buf[pos + 3] = e.audio_type;
             pos += ENTRY_LEN;
         }
@@ -103,6 +104,11 @@ impl<'a> Descriptor<'a> for Iso639LanguageDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for Iso639LanguageDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "ISO_639_LANGUAGE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,7 +118,7 @@ mod tests {
         let bytes = [TAG, 4, b'e', b'n', b'g', 0x00];
         let d = Iso639LanguageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
         assert_eq!(d.entries[0].audio_type, 0);
     }
 
@@ -121,7 +127,7 @@ mod tests {
         let bytes = [TAG, 8, b'e', b'n', b'g', 1, b'f', b'r', b'a', 2];
         let d = Iso639LanguageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(&d.entries[1].language_code, b"fra");
+        assert_eq!(d.entries[1].language_code, LangCode(*b"fra"));
         assert_eq!(d.entries[1].audio_type, 2);
     }
 
@@ -149,11 +155,11 @@ mod tests {
         let d = Iso639LanguageDescriptor {
             entries: vec![
                 LanguageEntry {
-                    language_code: *b"eng",
+                    language_code: LangCode(*b"eng"),
                     audio_type: 0,
                 },
                 LanguageEntry {
-                    language_code: *b"fra",
+                    language_code: LangCode(*b"fra"),
                     audio_type: 1,
                 },
             ],
@@ -168,7 +174,7 @@ mod tests {
     fn descriptor_length_matches_payload() {
         let d = Iso639LanguageDescriptor {
             entries: vec![LanguageEntry {
-                language_code: *b"eng",
+                language_code: LangCode(*b"eng"),
                 audio_type: 0,
             }],
         };

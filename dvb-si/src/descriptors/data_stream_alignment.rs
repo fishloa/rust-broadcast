@@ -95,6 +95,11 @@ impl<'a> Descriptor<'a> for DataStreamAlignmentDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for DataStreamAlignmentDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DATA_STREAM_ALIGNMENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

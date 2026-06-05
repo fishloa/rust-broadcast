@@ -64,6 +64,11 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for ArbitraryCellsPayload<'a> {
+    const PACKET_TYPE: u8 = 0x02;
+    const NAME: &'static str = "ARBITRARY_CELLS";
+}
+
 impl Serialize for ArbitraryCellsPayload<'_> {
     type Error = crate::error::Error;
 

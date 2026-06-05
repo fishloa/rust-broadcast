@@ -128,6 +128,11 @@ impl<'a> Descriptor<'a> for XaitLocationDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for XaitLocationDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "XAIT_LOCATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -127,6 +127,11 @@ impl<'a> Table<'a> for Tsdt {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Tsdt {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
+    const NAME: &'static str = "TRANSPORT_STREAM_DESCRIPTION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

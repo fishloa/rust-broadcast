@@ -115,6 +115,11 @@ impl<'a> Parse<'a> for T2TimestampPayload {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for T2TimestampPayload {
+    const PACKET_TYPE: u8 = 0x20;
+    const NAME: &'static str = "TIMESTAMP";
+}
+
 impl Serialize for T2TimestampPayload {
     type Error = crate::error::Error;
 

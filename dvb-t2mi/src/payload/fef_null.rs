@@ -88,6 +88,11 @@ impl<'a> Parse<'a> for FefNullPayload {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for FefNullPayload {
+    const PACKET_TYPE: u8 = 0x30;
+    const NAME: &'static str = "FEF_NULL";
+}
+
 impl Serialize for FefNullPayload {
     type Error = crate::error::Error;
 

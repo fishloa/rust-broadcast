@@ -175,6 +175,11 @@ impl<'a> Descriptor<'a> for AacDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for AacDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "AAC";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

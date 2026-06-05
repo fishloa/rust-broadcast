@@ -89,6 +89,11 @@ impl<'a> Descriptor<'a> for AdaptationFieldDataDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for AdaptationFieldDataDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "ADAPTATION_FIELD_DATA";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

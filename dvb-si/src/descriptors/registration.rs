@@ -105,6 +105,11 @@ impl<'a> Descriptor<'a> for RegistrationDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for RegistrationDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "REGISTRATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

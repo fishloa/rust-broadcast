@@ -49,6 +49,7 @@ use dvb_si::tables::{
     tsdt::Tsdt,
     unt::Unt,
 };
+use dvb_si::text::{DvbText, LangCode};
 
 // --- Owned tables: full JSON round-trip via a parsed fixture --------------
 
@@ -589,4 +590,59 @@ fn un_message_dii_serializes_to_valid_json() {
     // single `Dii` key whose value is the message body.
     let j = serde_json::to_string(&dii).expect("serialize UnMessage::Dii");
     assert_valid_json_with_keys(&j, &["Dii"]);
+}
+
+// ── 2.0 decoded-text serde: DvbText/LangCode fields serialize as decoded
+//    strings (serialize-stable; these structs are deliberately not Deserialize) ──
+
+#[test]
+fn short_event_serializes_decoded_strings() {
+    use dvb_si::descriptors::short_event::ShortEventDescriptor;
+    let d = ShortEventDescriptor {
+        language_code: LangCode(*b"fre"),
+        event_name: DvbText::new(b"Journal"),
+        text: DvbText::new(b"20h"),
+    };
+    let j = serde_json::to_value(&d).unwrap();
+    assert_eq!(j["language_code"], "fre");
+    assert_eq!(j["event_name"], "Journal");
+    assert_eq!(j["text"], "20h");
+}
+
+#[test]
+fn service_serializes_decoded_strings() {
+    use dvb_si::descriptors::service::ServiceDescriptor;
+    let d = ServiceDescriptor {
+        service_type: 0x19,
+        provider_name: DvbText::new(b"BBC"),
+        service_name: DvbText::new(b"BBC ONE HD"),
+    };
+    let j = serde_json::to_value(&d).unwrap();
+    assert_eq!(j["service_type"], 0x19);
+    assert_eq!(j["provider_name"], "BBC");
+    assert_eq!(j["service_name"], "BBC ONE HD");
+}
+
+#[test]
+fn parental_rating_round_trips_lang_code_json() {
+    use dvb_si::descriptors::parental_rating::{ParentalRatingDescriptor, RatingEntry};
+    let d = ParentalRatingDescriptor {
+        entries: vec![
+            RatingEntry {
+                country_code: LangCode(*b"FRA"),
+                rating: 0x05,
+            },
+            RatingEntry {
+                country_code: LangCode(*b"GBR"),
+                rating: 0x01,
+            },
+        ],
+    };
+    let j = serde_json::to_string(&d).unwrap();
+    // LangCode serializes as a plain string; verify the JSON contains them.
+    assert!(j.contains("\"FRA\""), "expected FRA in {j}");
+    assert!(j.contains("\"GBR\""), "expected GBR in {j}");
+    // ParentalRatingDescriptor derives Deserialize — full round-trip.
+    let back: ParentalRatingDescriptor = serde_json::from_str(&j).unwrap();
+    assert_eq!(d, back);
 }

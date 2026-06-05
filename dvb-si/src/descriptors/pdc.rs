@@ -108,6 +108,11 @@ impl<'a> Descriptor<'a> for PdcDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for PdcDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "PDC";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

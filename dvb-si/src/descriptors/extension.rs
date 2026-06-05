@@ -61,6 +61,7 @@
 //! - any other value (incl. `0x80`..=`0xFF` user-defined) — unknown; preserved.
 
 use crate::error::{Error, Result};
+use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -134,8 +135,7 @@ pub enum ExtensionTag {
 /// Unrecognised or not-yet-typed discriminants land in [`ExtensionBody::Raw`],
 /// which carries the selector bytes verbatim so the descriptor round-trips.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: Message contains DvbText
 pub enum ExtensionBody<'a> {
     /// `0x04` — T2_delivery_system (Table 133, §6.4.6.3).
     T2DeliverySystem(#[cfg_attr(feature = "serde", serde(borrow))] T2DeliverySystem<'a>),
@@ -221,8 +221,7 @@ pub struct SupplementaryAudio<'a> {
     /// language_code_present(1).
     pub language_code_present: bool,
     /// ISO_639_language_code(24), present iff `language_code_present`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub iso_639_language_code: Option<&'a [u8]>,
+    pub iso_639_language_code: Option<LangCode>,
     /// Trailing private_data_byte run.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
@@ -249,17 +248,14 @@ pub struct NetworkChangeNotify<'a> {
 // ===========================================================================
 /// message body (Table 148).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct Message<'a> {
     /// message_id(8).
     pub message_id: u8,
     /// ISO_639_language_code(24).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub iso_639_language_code: &'a [u8],
-    /// text_char run (remainder of body).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub text: &'a [u8],
+    pub iso_639_language_code: LangCode,
+    /// DVB Annex-A encoded text_char run (remainder of body).
+    pub text: DvbText<'a>,
 }
 
 // ===========================================================================
@@ -274,8 +270,7 @@ pub struct Message<'a> {
 #[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
 pub struct TargetRegion<'a> {
     /// Leading country_code(24).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub country_code: &'a [u8],
+    pub country_code: LangCode,
     /// Raw region loop.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub region_loop: &'a [u8],
@@ -290,11 +285,9 @@ pub struct TargetRegion<'a> {
 #[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
 pub struct TargetRegionName<'a> {
     /// country_code(24).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub country_code: &'a [u8],
+    pub country_code: LangCode,
     /// ISO_639_language_code(24).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub iso_639_language_code: &'a [u8],
+    pub iso_639_language_code: LangCode,
     /// Raw region loop (length-delimited name entries).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub region_loop: &'a [u8],
@@ -499,8 +492,7 @@ pub struct AudioPreselection<'a> {
 #[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
 pub struct TtmlSubtitling<'a> {
     /// ISO_639_language_code(24).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub iso_639_language_code: &'a [u8],
+    pub iso_639_language_code: LangCode,
     /// subtitle_purpose(6) — Table 2.
     pub subtitle_purpose: u8,
     /// TTS_suitability(2) — Table 3.
@@ -518,13 +510,11 @@ pub struct TtmlSubtitling<'a> {
 
 /// Extension descriptor (EN 300 468 Table 54, §6.2.18.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: ExtensionBody contains DvbText
 pub struct ExtensionDescriptor<'a> {
     /// `descriptor_tag_extension` (raw `u8`; see [`ExtensionTag`] for names).
     pub tag_extension: u8,
     /// Typed body, or [`ExtensionBody::Raw`] for not-yet-typed discriminants.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub body: ExtensionBody<'a>,
 }
 
@@ -617,7 +607,7 @@ fn parse_supplementary_audio(sel: &[u8]) -> Result<SupplementaryAudio<'_>> {
         }
         let lc = &sel[pos..pos + ISO_639_LEN];
         pos += ISO_639_LEN;
-        Some(lc)
+        Some(LangCode([lc[0], lc[1], lc[2]]))
     } else {
         None
     };
@@ -636,8 +626,8 @@ fn parse_message(sel: &[u8]) -> Result<Message<'_>> {
     }
     Ok(Message {
         message_id: sel[0],
-        iso_639_language_code: &sel[1..1 + ISO_639_LEN],
-        text: &sel[1 + ISO_639_LEN..],
+        iso_639_language_code: LangCode([sel[1], sel[2], sel[3]]),
+        text: DvbText::new(&sel[1 + ISO_639_LEN..]),
     })
 }
 
@@ -646,7 +636,7 @@ fn parse_target_region(sel: &[u8]) -> Result<TargetRegion<'_>> {
         return Err(invalid("target_region: country_code truncated"));
     }
     Ok(TargetRegion {
-        country_code: &sel[..ISO_639_LEN],
+        country_code: LangCode([sel[0], sel[1], sel[2]]),
         region_loop: &sel[ISO_639_LEN..],
     })
 }
@@ -656,8 +646,8 @@ fn parse_target_region_name(sel: &[u8]) -> Result<TargetRegionName<'_>> {
         return Err(invalid("target_region_name: header truncated"));
     }
     Ok(TargetRegionName {
-        country_code: &sel[..ISO_639_LEN],
-        iso_639_language_code: &sel[ISO_639_LEN..2 * ISO_639_LEN],
+        country_code: LangCode([sel[0], sel[1], sel[2]]),
+        iso_639_language_code: LangCode([sel[3], sel[4], sel[5]]),
         region_loop: &sel[2 * ISO_639_LEN..],
     })
 }
@@ -884,7 +874,7 @@ fn parse_ttml(sel: &[u8]) -> Result<TtmlSubtitling<'_>> {
     let b3 = sel[ISO_639_LEN];
     let b4 = sel[ISO_639_LEN + 1];
     Ok(TtmlSubtitling {
-        iso_639_language_code: &sel[..ISO_639_LEN],
+        iso_639_language_code: LangCode([sel[0], sel[1], sel[2]]),
         subtitle_purpose: b3 >> 2,
         tts_suitability: b3 & 0x03,
         essential_font_usage_flag: (b4 & 0x80) != 0,
@@ -973,7 +963,7 @@ impl ExtensionBody<'_> {
                     + b.cell_loop.len()
             }
             ExtensionBody::SupplementaryAudio(b) => {
-                1 + b.iso_639_language_code.map_or(0, <[u8]>::len) + b.private_data.len()
+                1 + b.iso_639_language_code.map_or(0, |_| ISO_639_LEN) + b.private_data.len()
             }
             ExtensionBody::NetworkChangeNotify(b) => b.cell_loop.len(),
             ExtensionBody::Message(b) => 1 + ISO_639_LEN + b.text.len(),
@@ -1042,8 +1032,8 @@ impl ExtensionBody<'_> {
                     | u8::from(b.language_code_present);
                 let mut p = 1;
                 if let Some(lc) = b.iso_639_language_code {
-                    out[p..p + lc.len()].copy_from_slice(lc);
-                    p += lc.len();
+                    out[p..p + ISO_639_LEN].copy_from_slice(&lc.0);
+                    p += ISO_639_LEN;
                 }
                 out[p..p + b.private_data.len()].copy_from_slice(b.private_data);
             }
@@ -1052,16 +1042,16 @@ impl ExtensionBody<'_> {
             }
             ExtensionBody::Message(b) => {
                 out[0] = b.message_id;
-                out[1..1 + ISO_639_LEN].copy_from_slice(b.iso_639_language_code);
-                out[1 + ISO_639_LEN..1 + ISO_639_LEN + b.text.len()].copy_from_slice(b.text);
+                out[1..1 + ISO_639_LEN].copy_from_slice(&b.iso_639_language_code.0);
+                out[1 + ISO_639_LEN..1 + ISO_639_LEN + b.text.len()].copy_from_slice(b.text.raw());
             }
             ExtensionBody::TargetRegion(b) => {
-                out[..ISO_639_LEN].copy_from_slice(b.country_code);
+                out[..ISO_639_LEN].copy_from_slice(&b.country_code.0);
                 out[ISO_639_LEN..ISO_639_LEN + b.region_loop.len()].copy_from_slice(b.region_loop);
             }
             ExtensionBody::TargetRegionName(b) => {
-                out[..ISO_639_LEN].copy_from_slice(b.country_code);
-                out[ISO_639_LEN..2 * ISO_639_LEN].copy_from_slice(b.iso_639_language_code);
+                out[..ISO_639_LEN].copy_from_slice(&b.country_code.0);
+                out[ISO_639_LEN..2 * ISO_639_LEN].copy_from_slice(&b.iso_639_language_code.0);
                 out[2 * ISO_639_LEN..2 * ISO_639_LEN + b.region_loop.len()]
                     .copy_from_slice(b.region_loop);
             }
@@ -1160,7 +1150,7 @@ impl ExtensionBody<'_> {
                 out[1..1 + b.preselection_loop.len()].copy_from_slice(b.preselection_loop);
             }
             ExtensionBody::TtmlSubtitling(b) => {
-                out[..ISO_639_LEN].copy_from_slice(b.iso_639_language_code);
+                out[..ISO_639_LEN].copy_from_slice(&b.iso_639_language_code.0);
                 out[ISO_639_LEN] = (b.subtitle_purpose << 2) | (b.tts_suitability & 0x03);
                 out[ISO_639_LEN + 1] = (u8::from(b.essential_font_usage_flag) << 7)
                     | (u8::from(b.qualifier_present_flag) << 6)
@@ -1207,6 +1197,11 @@ impl<'a> Descriptor<'a> for ExtensionDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for ExtensionDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "EXTENSION";
 }
 
 #[cfg(test)]
@@ -1301,8 +1296,8 @@ mod tests {
         match &d.body {
             ExtensionBody::Message(b) => {
                 assert_eq!(b.message_id, 0x07);
-                assert_eq!(b.iso_639_language_code, b"eng");
-                assert_eq!(b.text, b"Hi");
+                assert_eq!(b.iso_639_language_code, LangCode(*b"eng"));
+                assert_eq!(b.text.raw(), b"Hi");
             }
             other => panic!("expected Message, got {other:?}"),
         }
@@ -1322,7 +1317,7 @@ mod tests {
                 assert!(b.mix_type);
                 assert_eq!(b.editorial_classification, 0x17);
                 assert!(b.language_code_present);
-                assert_eq!(b.iso_639_language_code, Some(b"fre".as_slice()));
+                assert_eq!(b.iso_639_language_code, Some(LangCode(*b"fre")));
                 assert_eq!(b.private_data, &[0xAA]);
             }
             other => panic!("expected SupplementaryAudio, got {other:?}"),
@@ -1646,7 +1641,7 @@ mod tests {
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::TtmlSubtitling(b) => {
-                assert_eq!(b.iso_639_language_code, b"eng");
+                assert_eq!(b.iso_639_language_code, LangCode(*b"eng"));
                 assert_eq!(b.subtitle_purpose, 0x10);
                 assert_eq!(b.tts_suitability, 0x01);
                 assert!(!b.essential_font_usage_flag);
@@ -1666,7 +1661,7 @@ mod tests {
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::TargetRegion(b) => {
-                assert_eq!(b.country_code, b"gbr");
+                assert_eq!(b.country_code, LangCode(*b"gbr"));
                 assert_eq!(b.region_loop, &[0x01, 0x02, 0x03]);
             }
             other => panic!("expected TargetRegion, got {other:?}"),
@@ -1681,8 +1676,8 @@ mod tests {
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::TargetRegionName(b) => {
-                assert_eq!(b.country_code, b"gbr");
-                assert_eq!(b.iso_639_language_code, b"eng");
+                assert_eq!(b.country_code, LangCode(*b"gbr"));
+                assert_eq!(b.iso_639_language_code, LangCode(*b"eng"));
                 assert_eq!(b.region_loop, &[0x44, 0x55]);
             }
             other => panic!("expected TargetRegionName, got {other:?}"),
@@ -1727,23 +1722,21 @@ mod tests {
             tag_extension: 0x08,
             body: ExtensionBody::Message(Message {
                 message_id: 1,
-                iso_639_language_code: b"eng",
-                text: b"hello",
+                iso_639_language_code: LangCode(*b"eng"),
+                text: DvbText::new(b"hello"),
             }),
         };
         // tag_ext(1) + message_id(1) + iso(3) + text(5) = 10
         assert_eq!(d.descriptor_length(), 10);
     }
 
-    /// JSON round-trip for an all-owned typed body (no borrowed slices). Bodies
-    /// carrying borrowed `&[u8]` cannot zero-copy-deserialize from JSON (serde
-    /// renders `&[u8]` as a numeric sequence) — that is a property of the
-    /// borrow, not this type, and matches the rest of the crate which only
-    /// `serde(borrow)`-annotates without JSON-round-tripping byte slices. For
-    /// the borrowed case we assert serialization succeeds.
+    /// Serialization is deterministic for an all-owned typed body (no borrowed
+    /// slices). `ExtensionDescriptor` no longer derives `Deserialize` because
+    /// `ExtensionBody::Message` contains `DvbText` which is serialize-only; we
+    /// therefore assert serialize stability rather than a round-trip.
     #[cfg(feature = "serde")]
     #[test]
-    fn serde_round_trip_owned_body() {
+    fn serde_serialize_is_stable_owned_body() {
         let typed = ExtensionDescriptor {
             tag_extension: 0x0D,
             body: ExtensionBody::C2DeliverySystem(C2DeliverySystem {
@@ -1756,8 +1749,9 @@ mod tests {
             }),
         };
         let json = serde_json::to_string(&typed).unwrap();
-        let back: ExtensionDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(typed, back);
+        assert_eq!(json, serde_json::to_string(&typed.clone()).unwrap());
+        assert!(json.contains("\"tag_extension\":13"));
+        assert!(json.contains("\"C2DeliverySystem\""));
     }
 
     /// Borrowed bodies (Raw, Message, …) serialize cleanly; the discriminant +
@@ -1777,8 +1771,8 @@ mod tests {
             tag_extension: 0x08,
             body: ExtensionBody::Message(Message {
                 message_id: 7,
-                iso_639_language_code: b"eng",
-                text: b"hi",
+                iso_639_language_code: LangCode(*b"eng"),
+                text: DvbText::new(b"hi"),
             }),
         };
         let json = serde_json::to_string(&msg).unwrap();

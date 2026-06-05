@@ -131,6 +131,11 @@ impl<'a> Descriptor<'a> for TvaIdDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TvaIdDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TVA_ID";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

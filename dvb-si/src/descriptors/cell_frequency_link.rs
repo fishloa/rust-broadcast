@@ -202,6 +202,11 @@ impl<'a> Descriptor<'a> for CellFrequencyLinkDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for CellFrequencyLinkDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "CELL_FREQUENCY_LINK";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

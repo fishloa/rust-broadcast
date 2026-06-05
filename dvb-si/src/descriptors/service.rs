@@ -4,6 +4,7 @@
 //! service_type byte classifying the service (TV SD, TV HD, radio, data, …).
 
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -13,16 +14,14 @@ const HEADER_LEN: usize = 2;
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
 pub struct ServiceDescriptor<'a> {
     /// service_type byte (ETSI Table 87).
     pub service_type: u8,
-    /// Raw provider_name bytes (DVB-encoded text).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub provider_name: &'a [u8],
-    /// Raw service_name bytes (DVB-encoded text).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_name: &'a [u8],
+    /// DVB Annex-A encoded provider name.
+    pub provider_name: DvbText<'a>,
+    /// DVB Annex-A encoded service name.
+    pub service_name: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for ServiceDescriptor<'a> {
@@ -65,7 +64,7 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
                 reason: "service_provider_name_length runs past descriptor end",
             });
         }
-        let provider_name = &bytes[HEADER_LEN + 2..provider_end];
+        let provider_name = DvbText::new(&bytes[HEADER_LEN + 2..provider_end]);
         let service_len = bytes[provider_end] as usize;
         let service_end = provider_end + 1 + service_len;
         if service_end > end {
@@ -74,7 +73,7 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
                 reason: "service_name_length runs past descriptor end",
             });
         }
-        let service_name = &bytes[provider_end + 1..service_end];
+        let service_name = DvbText::new(&bytes[provider_end + 1..service_end]);
         Ok(Self {
             service_type,
             provider_name,
@@ -103,10 +102,10 @@ impl Serialize for ServiceDescriptor<'_> {
         buf[3] = self.provider_name.len() as u8;
         let p_start = 4;
         let p_end = p_start + self.provider_name.len();
-        buf[p_start..p_end].copy_from_slice(self.provider_name);
+        buf[p_start..p_end].copy_from_slice(self.provider_name.raw());
         buf[p_end] = self.service_name.len() as u8;
         let s_start = p_end + 1;
-        buf[s_start..s_start + self.service_name.len()].copy_from_slice(self.service_name);
+        buf[s_start..s_start + self.service_name.len()].copy_from_slice(self.service_name.raw());
         Ok(len)
     }
 }
@@ -116,6 +115,11 @@ impl<'a> Descriptor<'a> for ServiceDescriptor<'a> {
     fn descriptor_length(&self) -> u8 {
         (self.serialized_len() - HEADER_LEN) as u8
     }
+}
+
+impl<'a> crate::traits::DescriptorDef<'a> for ServiceDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SERVICE";
 }
 
 #[cfg(test)]
@@ -130,8 +134,8 @@ mod tests {
         ];
         let d = ServiceDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.service_type, 1);
-        assert_eq!(d.provider_name, b"EUTE");
-        assert_eq!(d.service_name, b"TF1");
+        assert_eq!(d.provider_name.raw(), b"EUTE");
+        assert_eq!(d.service_name.raw(), b"TF1");
     }
 
     #[test]
@@ -164,16 +168,16 @@ mod tests {
     fn empty_provider_and_service_names_valid() {
         let bytes = [TAG, 3, 0x01, 0, 0];
         let d = ServiceDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.provider_name, &[] as &[u8]);
-        assert_eq!(d.service_name, &[] as &[u8]);
+        assert!(d.provider_name.raw().is_empty());
+        assert!(d.service_name.raw().is_empty());
     }
 
     #[test]
     fn serialize_round_trip() {
         let d = ServiceDescriptor {
             service_type: 0x19,
-            provider_name: b"BBC",
-            service_name: b"BBC ONE HD",
+            provider_name: DvbText::new(b"BBC"),
+            service_name: DvbText::new(b"BBC ONE HD"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -185,8 +189,8 @@ mod tests {
     fn descriptor_length_matches_payload() {
         let d = ServiceDescriptor {
             service_type: 1,
-            provider_name: b"AA",
-            service_name: b"BBB",
+            provider_name: DvbText::new(b"AA"),
+            service_name: DvbText::new(b"BBB"),
         };
         // 1 (type) + 1 (p_len) + 2 (p) + 1 (s_len) + 3 (s) = 8
         assert_eq!(d.descriptor_length(), 8);

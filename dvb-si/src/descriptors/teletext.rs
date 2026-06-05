@@ -4,6 +4,7 @@
 //! entry per 3-char language code + type/magazine/page triple (5 bytes).
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -18,7 +19,7 @@ const LANG_LEN: usize = 3;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TeletextEntry {
     /// ISO 639-2 language code of this teletext service.
-    pub language_code: [u8; 3],
+    pub language_code: LangCode,
     /// 5-bit teletext_type (ETSI Table 102): 1 = initial page, 2 = subtitle, etc.
     pub teletext_type: u8,
     /// 3-bit teletext_magazine_number.
@@ -68,7 +69,7 @@ impl<'a> Parse<'a> for TeletextDescriptor {
         let body = &bytes[HEADER_LEN..HEADER_LEN + length];
         let mut entries = Vec::with_capacity(length / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let language_code = [chunk[0], chunk[1], chunk[2]];
+            let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
             let type_and_mag = chunk[LANG_LEN];
             let teletext_type = (type_and_mag >> 3) & 0x1F;
             let magazine_number = type_and_mag & 0x07;
@@ -102,7 +103,7 @@ impl Serialize for TeletextDescriptor {
         buf[1] = (self.entries.len() * ENTRY_LEN) as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code);
+            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
             buf[pos + LANG_LEN] = ((e.teletext_type & 0x1F) << 3) | (e.magazine_number & 0x07);
             buf[pos + LANG_LEN + 1] = e.page_number;
             pos += ENTRY_LEN;
@@ -118,6 +119,11 @@ impl<'a> Descriptor<'a> for TeletextDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TeletextDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TELETEXT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,7 +134,7 @@ mod tests {
         let bytes = [TAG, 5, b'e', b'n', b'g', (1 << 3) | 2, 0x10];
         let d = TeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
         assert_eq!(d.entries[0].teletext_type, 1);
         assert_eq!(d.entries[0].magazine_number, 2);
         assert_eq!(d.entries[0].page_number, 0x10);
@@ -176,7 +182,7 @@ mod tests {
     fn serialize_round_trip() {
         let d = TeletextDescriptor {
             entries: vec![TeletextEntry {
-                language_code: *b"fra",
+                language_code: LangCode(*b"fra"),
                 teletext_type: 2,
                 magazine_number: 8 & 0x07,
                 page_number: 0x88,

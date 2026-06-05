@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-t2mi"
-version = "1.1.0"
+version = "2.0.0"
 edition = "2021"
 description = "ETSI TS 102 773 DVB-T2 Modulator Interface parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ exclude      = ["docs/**"]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "1.1" }
+dvb-common = { path = "../dvb-common", version = "2.0" }
 thiserror  = "2"
 num_enum   = "0.7"
 bytes      = { version = "1", optional = true }
@@ -24,8 +24,15 @@ serde      = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1.0"
+dvb-si     = { path = "../dvb-si", features = ["ts"] }
+dvb-bbframe = { path = "../dvb-bbframe" }
 
 [features]
 default = ["ts"]
 ts      = ["dep:bytes"]
 serde   = ["dep:serde"]
+
+# t2mi_dump: pump a TS/T2-MI stream (feature `ts` for feed_ts).
+[[example]]
+name              = "t2mi_dump"
+required-features = ["ts"]

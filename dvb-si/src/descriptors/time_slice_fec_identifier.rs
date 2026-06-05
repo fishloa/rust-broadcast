@@ -168,6 +168,11 @@ impl<'a> Descriptor<'a> for TimeSliceFecIdentifierDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TimeSliceFecIdentifierDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TIME_SLICE_FEC_IDENTIFIER";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

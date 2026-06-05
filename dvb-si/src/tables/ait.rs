@@ -252,6 +252,11 @@ impl<'a> Table<'a> for Ait<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Ait<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
+    const NAME: &'static str = "APPLICATION_INFORMATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

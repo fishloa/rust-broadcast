@@ -54,6 +54,11 @@ impl<'a> Parse<'a> for FefIqPayload<'a> {
     }
 }
 
+impl<'a> crate::traits::PayloadDef<'a> for FefIqPayload<'a> {
+    const PACKET_TYPE: u8 = 0x31;
+    const NAME: &'static str = "FEF_IQ";
+}
+
 impl Serialize for FefIqPayload<'_> {
     type Error = crate::error::Error;
 

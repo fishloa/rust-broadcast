@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "1.1.0"
+version      = "2.0.0"
 edition      = "2021"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
@@ -16,12 +16,13 @@ exclude      = ["docs/**", "tests/fixtures/**"]
 all-features = true
 
 [dependencies]
-dvb-common  = { path = "../dvb-common", version = "1.1" }
+dvb-common  = { path = "../dvb-common", version = "2.0" }
 thiserror   = "2"
 num_enum    = "0.7"
 chrono      = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
-serde     = { version = "1", optional = true, features = ["derive"] }
-bytes     = { version = "1", optional = true }
+serde         = { version = "1", optional = true, features = ["derive"] }
+erased-serde  = { version = "0.4", optional = true }
+bytes         = { version = "1", optional = true }
 encoding_rs = "0.8"
 
 [dev-dependencies]
@@ -38,4 +39,9 @@ chrono   = ["dep:chrono"]
 ts       = ["dep:bytes"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to chrono.
-serde    = ["dep:serde", "chrono?/serde"]
+serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde"]
+
+# si_dump: demux a .ts (feature `ts`) and emit decoded JSON (feature `serde`).
+[[example]]
+name              = "si_dump"
+required-features = ["ts", "serde"]

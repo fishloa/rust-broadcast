@@ -251,6 +251,11 @@ impl<'a> Descriptor<'a> for AnnouncementSupportDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for AnnouncementSupportDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "ANNOUNCEMENT_SUPPORT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

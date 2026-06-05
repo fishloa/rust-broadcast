@@ -195,6 +195,11 @@ impl<'a> Descriptor<'a> for DtsDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for DtsDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DTS";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,6 +5,7 @@
 //! ancillary page triple (8 bytes).
 
 use crate::error::{Error, Result};
+use crate::text::LangCode;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
@@ -18,7 +19,7 @@ const ENTRY_LEN: usize = 8;
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SubtitlingEntry {
     /// ISO 639-2 language code.
-    pub language_code: [u8; 3],
+    pub language_code: LangCode,
     /// subtitling_type byte (ETSI EN 300 468 §6.2.42): 0x01 = EBU teletext subtitles,
     /// 0x10..=0x13 = DVB subtitles, etc.
     pub subtitling_type: u8,
@@ -70,7 +71,7 @@ impl<'a> Parse<'a> for SubtitlingDescriptor {
         let mut entries = Vec::with_capacity(length / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(SubtitlingEntry {
-                language_code: [chunk[0], chunk[1], chunk[2]],
+                language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
                 subtitling_type: chunk[3],
                 composition_page_id: u16::from_be_bytes([chunk[4], chunk[5]]),
                 ancillary_page_id: u16::from_be_bytes([chunk[6], chunk[7]]),
@@ -98,7 +99,7 @@ impl Serialize for SubtitlingDescriptor {
         buf[1] = (self.entries.len() * ENTRY_LEN) as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + 3].copy_from_slice(&e.language_code);
+            buf[pos..pos + 3].copy_from_slice(&e.language_code.0);
             buf[pos + 3] = e.subtitling_type;
             buf[pos + 4..pos + 6].copy_from_slice(&e.composition_page_id.to_be_bytes());
             buf[pos + 6..pos + 8].copy_from_slice(&e.ancillary_page_id.to_be_bytes());
@@ -115,6 +116,11 @@ impl<'a> Descriptor<'a> for SubtitlingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for SubtitlingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SUBTITLING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,7 +130,7 @@ mod tests {
         let bytes = [TAG, 8, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x02];
         let d = SubtitlingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(&d.entries[0].language_code, b"eng");
+        assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
         assert_eq!(d.entries[0].subtitling_type, 0x10);
         assert_eq!(d.entries[0].composition_page_id, 1);
         assert_eq!(d.entries[0].ancillary_page_id, 2);
@@ -152,13 +158,13 @@ mod tests {
         let d = SubtitlingDescriptor {
             entries: vec![
                 SubtitlingEntry {
-                    language_code: *b"fra",
+                    language_code: LangCode(*b"fra"),
                     subtitling_type: 0x10,
                     composition_page_id: 0x1234,
                     ancillary_page_id: 0x5678,
                 },
                 SubtitlingEntry {
-                    language_code: *b"deu",
+                    language_code: LangCode(*b"deu"),
                     subtitling_type: 0x20,
                     composition_page_id: 0,
                     ancillary_page_id: 0,
