@@ -16,14 +16,13 @@ const FIXED_LEN: usize = 1;
 
 /// Short Smoothing Buffer Descriptor (tag 0x61).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShortSmoothingBufferDescriptor<'a> {
     /// 2-bit sb_size (ETSI Table 95, PDF p. 103): 1 = 1 536 bytes, others reserved.
     pub sb_size: u8,
     /// 6-bit sb_leak_rate (ETSI Table 96, PDF p. 104).
     pub sb_leak_rate: u8,
     /// Raw DVB_reserved tail bytes; preserved verbatim for round-trips.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub dvb_reserved: &'a [u8],
 }
 

@@ -31,7 +31,6 @@ pub struct PmtStream<'a> {
     /// 13-bit elementary stream PID.
     pub elementary_pid: u16,
     /// Raw ES_info descriptor bytes; parsing lives in crate::descriptors.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Elementary-stream descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
     pub es_info: DescriptorLoop<'a>,
@@ -50,12 +49,10 @@ pub struct Pmt<'a> {
     /// 13-bit PCR PID.
     pub pcr_pid: u16,
     /// Raw program_info descriptor bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Program-info descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
     pub program_info: DescriptorLoop<'a>,
     /// Elementary streams in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub streams: Vec<PmtStream<'a>>,
 }
 

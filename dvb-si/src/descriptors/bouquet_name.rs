@@ -14,7 +14,7 @@ pub const HEADER_LEN: usize = 2;
 /// Bouquet Name Descriptor (tag 0x47). Carries the human-readable name of
 /// a bouquet in its BAT's `bouquet_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct BouquetNameDescriptor<'a> {
     /// DVB Annex-A encoded bouquet name (EN 300 468 §6.2.6).
     pub bouquet_name: DvbText<'a>,

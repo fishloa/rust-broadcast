@@ -59,22 +59,19 @@ const AUTH_FIXED_PREFIX: usize = 5;
 /// with the truncated hash itself. `reference` length is the 4-bit
 /// `reference_length`; `hash` length is the section-wide `section_hash_length`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SectionHashEntry<'a> {
     /// 4-bit `reference_type` (§9.4.3 Table 45): 1 = same ES, 2 = component_tag ES.
     pub reference_type: u8,
     /// `reference_byte` field — its semantics depend on `reference_type`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub reference: &'a [u8],
     /// The (possibly truncated) section hash, `section_hash_length` bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub hash: &'a [u8],
 }
 
 /// Discriminated protection-message body, selected by `table_id_extension`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ProtectionMessageBody<'a> {
     /// Authentication message (extension `0x0000..=0x00FF`; §9.4.3 Table 42).
     AuthenticationMessage {
@@ -85,26 +82,21 @@ pub enum ProtectionMessageBody<'a> {
         /// `signature_algorithm_identifier` (§9.4.3 Table 44).
         signature_algorithm_identifier: u8,
         /// Section-hash loop entries in wire order.
-        #[cfg_attr(feature = "serde", serde(borrow))]
         hashes: Vec<SectionHashEntry<'a>>,
         /// `extension_byte` payload (length-prefixed by `extension_bytes_length`).
-        #[cfg_attr(feature = "serde", serde(borrow))]
         extension_bytes: &'a [u8],
         /// `signature_key_identifier_byte` payload (length-prefixed).
-        #[cfg_attr(feature = "serde", serde(borrow))]
         signature_key_identifier: &'a [u8],
         /// Detached signature — runs from after the key identifier to the CRC.
-        #[cfg_attr(feature = "serde", serde(borrow))]
         signature: &'a [u8],
     },
     /// Certificate collection message (extension `0x0100`; §9.5.4.9 Table 51).
     CertificateCollection {
         /// DER-encoded DVBCertificate byte runs, one slice per `certificate_length` loop entry.
-        #[cfg_attr(feature = "serde", serde(borrow))]
         certificates: Vec<&'a [u8]>,
     },
     /// Reserved extension (`0x0101..=0xFFFF`) — body preserved verbatim.
-    Raw(#[cfg_attr(feature = "serde", serde(borrow))] &'a [u8]),
+    Raw(&'a [u8]),
 }
 
 /// Protection message section (TS 102 809 §9; Tables 42 / 51).
@@ -112,8 +104,7 @@ pub enum ProtectionMessageBody<'a> {
 /// Typed fields cover the common section header; [`ProtectionMessageSection::body`]
 /// carries the typed, discriminated body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ProtectionMessageSection<'a> {
     /// `table_id_extension` — `authentication_group_id` for authentication
     /// messages, `trust_message_id` (0x0100) for certificate collections.
@@ -127,7 +118,6 @@ pub struct ProtectionMessageSection<'a> {
     /// last_section_number.
     pub last_section_number: u8,
     /// Discriminated body, selected by `table_id_extension`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub body: ProtectionMessageBody<'a>,
 }
 

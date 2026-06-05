@@ -16,7 +16,7 @@ const NAME_LEN_FIELD: usize = 1;
 
 /// One localised network name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NetworkNameEntry<'a> {
     /// ISO 639-2 language code.
     pub language_code: LangCode,
@@ -26,7 +26,7 @@ pub struct NetworkNameEntry<'a> {
 
 /// Multilingual Network Name Descriptor (tag 0x5B).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MultilingualNetworkNameDescriptor<'a> {
     /// Localised names in wire order.
     pub entries: Vec<NetworkNameEntry<'a>>,

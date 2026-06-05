@@ -86,7 +86,7 @@
 //! |---|---|---|
 //! | `chrono` | on | MJD + BCD time fields decode to `chrono::DateTime<Utc>` (EIT `start_time()`, TDT/TOT). Off → raw bytes. |
 //! | `ts` | on | [`demux::SiDemux`], [`ts::SectionReassembler`], TS packet parsing. Off → bring your own complete section bytes. |
-//! | `serde` | on | `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
+//! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
 //!
 //! ```toml
 //! dvb-si = { version = "2.0", default-features = false }  # tight, no_std-ish build

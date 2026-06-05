@@ -22,7 +22,7 @@ const ENTRY_LEN: usize = 4;
 
 /// One entry in the PAT program loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PatEntry {
     /// program_number. 0x0000 means "next PID is the NIT PID".
     pub program_number: u16,
@@ -32,7 +32,7 @@ pub struct PatEntry {
 
 /// Program Association Table.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Pat {
     /// transport_stream_id from the section header.
     pub transport_stream_id: u16,

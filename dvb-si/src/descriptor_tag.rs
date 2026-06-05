@@ -12,7 +12,7 @@
 /// [`crate::descriptors::AnyDescriptor::Unknown`] during parse and should not
 /// appear here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]
 #[allow(missing_docs)]

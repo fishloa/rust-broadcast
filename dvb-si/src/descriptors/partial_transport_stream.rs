@@ -29,7 +29,7 @@ const MAX_14: u16 = (1 << 14) - 1;
 
 /// Partial Transport Stream Descriptor (tag 0x63).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PartialTransportStreamDescriptor {
     /// 22-bit peak_rate (188-byte packets per unit interval, PDF p. 155).
     pub peak_rate: u32,
@@ -267,7 +267,7 @@ mod tests {
             maximum_overall_smoothing_buffer: 0x09AB,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: PartialTransportStreamDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(d, back);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

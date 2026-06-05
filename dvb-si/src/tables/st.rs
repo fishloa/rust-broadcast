@@ -18,7 +18,7 @@ const HEADER_LEN: usize = 3;
 
 /// Stuffing Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct St {
     /// Raw stuffing bytes — any value, no meaning (§5.2.8).
     pub payload: Vec<u8>,

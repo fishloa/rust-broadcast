@@ -16,14 +16,13 @@ const FIXED_LEN: usize = 4;
 
 /// ECM Repetition Rate Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EcmRepetitionRateDescriptor<'a> {
     /// 16-bit CA_system_ID this rate applies to.
     pub ca_system_id: u16,
     /// 16-bit ECM_repetition_rate (max ms between successive ECMs).
     pub ecm_repetition_rate: u16,
     /// Trailing private_data bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 

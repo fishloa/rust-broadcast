@@ -49,7 +49,7 @@ const CRC_LEN: usize = 4;
 ///   unique_string_bytes  (unique_string_length bytes)
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Cit<'a> {
     /// `private_indicator` bit from byte 1.
     pub private_indicator: bool,
@@ -80,12 +80,10 @@ pub struct Cit<'a> {
     /// derived from `prepend_strings.len()` on serialize (≤ 255). Entries are
     /// null-terminated ASCII/DVB-text fragments; addressed by index from the
     /// CRID loop.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub prepend_strings: &'a [u8],
 
     /// Raw CRID entry loop (everything between the prepend-string block and the
     /// CRC-32). Walk per the format documented on the struct.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub crid_entries: &'a [u8],
 }
 

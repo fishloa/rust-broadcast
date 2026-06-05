@@ -16,7 +16,7 @@ const BODY_LEN: u8 = 6;
 
 /// Service Move Descriptor (tag 0x60).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceMoveDescriptor {
     /// original_network_id of the service's new location.
     pub new_original_network_id: u16,
@@ -184,7 +184,7 @@ mod tests {
             new_service_id: 0x0003,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: ServiceMoveDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(d, back);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

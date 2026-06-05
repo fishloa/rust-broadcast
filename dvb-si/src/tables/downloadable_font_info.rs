@@ -68,7 +68,7 @@ const CRC_LEN: usize = 4;
 /// Variant is selected by `font_info_type` (Table 23). Reserved types
 /// (0x04..=0xFF) are length-delimited and round-trip via [`FontInfo::LengthDelimited`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum FontInfo<'a> {
     /// `font_info_type == 0x00`: style(3) + weight(4) + reserved(1).
     StyleWeight {
@@ -82,7 +82,6 @@ pub enum FontInfo<'a> {
         /// `font_file_format` (§5.3.2.3.2.3 Table 26): 0 = OFF, 1 = WOFF.
         format: u8,
         /// DVB URI string (UTF-8), `uri_length` bytes.
-        #[cfg_attr(feature = "serde", serde(borrow))]
         uri: &'a [u8],
     },
     /// `font_info_type == 0x02`: font_size(16) followed by the length-delimited block.
@@ -90,7 +89,6 @@ pub enum FontInfo<'a> {
         /// `font_size` — font height in pixels.
         size: u16,
         /// `text_char` block following `font_info_length` (UTF-8).
-        #[cfg_attr(feature = "serde", serde(borrow))]
         info: &'a [u8],
     },
     /// `font_info_type >= 0x03` (incl. reserved): font_info_length(8) + text_char block.
@@ -98,15 +96,13 @@ pub enum FontInfo<'a> {
         /// The `font_info_type` byte as parsed (0x03 = font_family, else reserved).
         font_info_type: u8,
         /// `text_char` block, `font_info_length` bytes (UTF-8 for defined types).
-        #[cfg_attr(feature = "serde", serde(borrow))]
         info: &'a [u8],
     },
 }
 
 /// Downloadable Font Information Section (EN 303 560 §5.3.2.3.1, Table 22).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DownloadableFontInfoSection<'a> {
     /// 9-bit `font_id_extension` — spec-mandated all-zero; together with
     /// `font_id` forms the 16-bit table_id_extension.
@@ -122,7 +118,6 @@ pub struct DownloadableFontInfoSection<'a> {
     /// last_section_number.
     pub last_section_number: u8,
     /// font_info loop entries in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub font_info: Vec<FontInfo<'a>>,
 }
 

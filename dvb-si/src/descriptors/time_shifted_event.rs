@@ -15,7 +15,7 @@ const BODY_LEN: usize = 4;
 
 /// Time Shifted Event Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TimeShiftedEventDescriptor {
     /// service_id of the reference (NVOD reference) service.
     pub reference_service_id: u16,
@@ -166,7 +166,7 @@ mod tests {
             reference_event_id: 0x5678,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: TimeShiftedEventDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(d, back);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

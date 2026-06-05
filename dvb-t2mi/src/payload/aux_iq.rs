@@ -19,14 +19,13 @@ const AUX_ID_MAX: u8 = 0x0F;
 /// - byte 1 \[3:0\] + byte 2 \[7:0\]: rfu (12 bits), must be 0
 /// - bytes 3..: aux_stream_data (variable, 12-bit I + 12-bit Q samples)
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AuxIqPayload<'a> {
     /// FRAME_IDX of the T2 frame.
     pub frame_idx: u8,
     /// Auxiliary stream identifier (1..=15).
     pub aux_id: u8,
     /// Raw auxiliary stream data bytes (I/Q pairs).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub aux_stream_data: &'a [u8],
 }
 

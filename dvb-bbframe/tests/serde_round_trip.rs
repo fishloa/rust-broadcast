@@ -1,8 +1,8 @@
 //! Serde coverage for the dvb_bbframe types.
 //!
-//! Both [`Bbheader`] and [`Issy`] are owned (`Copy`) types with no borrowed
-//! fields, so each is exercised with a full `to_string` -> `from_str` JSON
-//! round-trip and `assert_eq!`.
+//! Serde is **Serialize-only** (3.0.1): JSON is a display/export format and
+//! parsing FROM JSON is deliberately unsupported — re-parse from wire bytes.
+//! Each type is serialized and its shape asserted.
 #![cfg(feature = "serde")]
 
 use dvb_bbframe::crc::crc8;
@@ -10,7 +10,7 @@ use dvb_bbframe::header::Bbheader;
 use dvb_bbframe::issy::Issy;
 
 #[test]
-fn bbheader_round_trips_via_json() {
+fn bbheader_serializes_to_valid_json() {
     // Build a valid 10-byte Normal-Mode BBHEADER. byte 9 must equal
     // crc8(bytes[0..9]) so mode detection yields NM (crc ^ stored == 0).
     let mut bytes: [u8; 10] = [
@@ -25,20 +25,22 @@ fn bbheader_round_trips_via_json() {
     bytes[9] = crc8(&bytes[..9]);
 
     let parsed = Bbheader::parse(&bytes).expect("parse BBHEADER");
-    let j = serde_json::to_string(&parsed).expect("serialize Bbheader");
-    let back: Bbheader = serde_json::from_str(&j).expect("deserialize Bbheader");
-    assert_eq!(parsed, back);
+    let v = serde_json::to_value(parsed).expect("serialize Bbheader");
+    assert!(v.is_object(), "expected JSON object, got {v}");
+    assert_eq!(v["dfl"], 0x1700);
+    assert_eq!(v["sync"], 0x47);
 }
 
 #[test]
-fn issy_round_trips_via_json() {
-    for issy in [
-        Issy::IscrShort(0x1234),
-        Issy::IscrLong(0x0003_FFFF),
-        Issy::Signalling(0x0012_3456),
-    ] {
-        let j = serde_json::to_string(&issy).expect("serialize Issy");
-        let back: Issy = serde_json::from_str(&j).expect("deserialize Issy");
-        assert_eq!(issy, back);
+fn issy_serializes_to_valid_json() {
+    // Each Issy variant serializes as an externally-tagged enum object.
+    let cases = [
+        (Issy::IscrShort(0x1234), "IscrShort"),
+        (Issy::IscrLong(0x0003_FFFF), "IscrLong"),
+        (Issy::Signalling(0x0012_3456), "Signalling"),
+    ];
+    for (issy, tag) in cases {
+        let v = serde_json::to_value(issy).expect("serialize Issy");
+        assert!(v.get(tag).is_some(), "missing variant tag {tag} in {v}");
     }
 }

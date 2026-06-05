@@ -4,11 +4,11 @@
 //! (e.g. a recording). After the section header it has two loops:
 //!   1. `transmission_info_descriptors` — descriptors describing the whole
 //!      partial stream, prefixed by a 12-bit length;
-//!   2. a per-service loop: `service_id(16) + reserved(1) + running_status(3) +
-//!      service_descriptors_length(12) + descriptors`.
+//!   2. a per-service loop: `service_id(16) + reserved_future_use(1) +
+//!      running_status(3) + service_descriptors_length(12) + descriptors`.
 //!
-//! Both loops are exposed as raw bytes for the caller to walk with the
-//! descriptor parsers.
+//! Both loops are typed: the transmission-info loop is a [`DescriptorLoop`] and
+//! the service loop is a `Vec<SitService>`, each with its own descriptor loop.
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
@@ -24,6 +24,27 @@ const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 const CRC_LEN: usize = 4;
+/// Per-service fixed header: service_id(16) + reserved(1)/running_status(3)/
+/// service_descriptors_length(12) = 2 + 2 bytes.
+const SERVICE_HEADER_LEN: usize = 4;
+/// Maximum value of the 12-bit service_descriptors_length field.
+const MAX_SERVICE_DESC_LEN: usize = 0x0FFF;
+
+/// One service entry in the SIT service loop (§7.1.2, Table 164).
+///
+/// Wire layout: `service_id(16) + reserved_future_use(1) + running_status(3) +
+/// service_descriptors_length(12) + descriptors`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SitService<'a> {
+    /// service_id of this service.
+    pub service_id: u16,
+    /// 3-bit running_status (0=undefined .. 4=running).
+    pub running_status: u8,
+    /// Descriptor loop for this service. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
+}
 
 /// Selection Information Table (§7.1.2, Table 164).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,9 +64,8 @@ pub struct Sit<'a> {
     /// Transmission-info descriptor loop (the first loop). Serializes as the
     /// typed descriptor sequence; `.raw()` yields the wire bytes.
     pub transmission_info_descriptors: DescriptorLoop<'a>,
-    /// Per-service loop bytes (service_id + running_status + descriptors), raw.
-    /// Not a flat descriptor loop, so kept as raw bytes.
-    pub service_loop: &'a [u8],
+    /// Per-service loop, in wire order.
+    pub services: Vec<SitService<'a>>,
 }
 
 impl<'a> Parse<'a> for Sit<'a> {
@@ -94,6 +114,38 @@ impl<'a> Parse<'a> for Sit<'a> {
             });
         }
 
+        // Everything between the transmission-info loop and the CRC is the
+        // per-service loop. Walk it entry by entry, boundary-checked.
+        let mut services = Vec::new();
+        let mut pos = ti_end;
+        while pos < crc_start {
+            if pos + SERVICE_HEADER_LEN > crc_start {
+                return Err(Error::BufferTooShort {
+                    need: pos + SERVICE_HEADER_LEN,
+                    have: crc_start,
+                    what: "SitService header",
+                });
+            }
+            let service_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            // byte[pos+2]: reserved_future_use(1) | running_status(3) | len_hi(4)
+            let running_status = (bytes[pos + 2] >> 4) & 0x07;
+            let svc_desc_len = (((bytes[pos + 2] & 0x0F) as usize) << 8) | bytes[pos + 3] as usize;
+            let desc_start = pos + SERVICE_HEADER_LEN;
+            let desc_end = desc_start + svc_desc_len;
+            if desc_end > crc_start {
+                return Err(Error::SectionLengthOverflow {
+                    declared: svc_desc_len,
+                    available: crc_start - desc_start,
+                });
+            }
+            services.push(SitService {
+                service_id,
+                running_status,
+                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+            });
+            pos = desc_end;
+        }
+
         Ok(Sit {
             table_id_extension,
             version_number,
@@ -101,9 +153,7 @@ impl<'a> Parse<'a> for Sit<'a> {
             section_number,
             last_section_number,
             transmission_info_descriptors: DescriptorLoop::new(&bytes[ti_start..ti_end]),
-            // Everything between the transmission-info loop and the CRC is the
-            // per-service loop, kept raw.
-            service_loop: &bytes[ti_end..crc_start],
+            services,
         })
     }
 }
@@ -112,15 +162,30 @@ impl Serialize for Sit<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
+        let svc_bytes: usize = self
+            .services
+            .iter()
+            .map(|s| SERVICE_HEADER_LEN + s.descriptors.len())
+            .sum();
         MIN_HEADER_LEN
             + EXTENSION_HEADER_LEN
             + DESC_LOOP_LEN_FIELD
             + self.transmission_info_descriptors.len()
-            + self.service_loop.len()
+            + svc_bytes
             + CRC_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // Reject over-range service descriptor loops up front — never truncate.
+        // service_descriptors_length is a 12-bit field (max 0x0FFF).
+        for svc in &self.services {
+            if svc.descriptors.len() > MAX_SERVICE_DESC_LEN {
+                return Err(Error::SectionLengthOverflow {
+                    declared: svc.descriptors.len(),
+                    available: MAX_SERVICE_DESC_LEN,
+                });
+            }
+        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -144,8 +209,19 @@ impl Serialize for Sit<'_> {
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + self.transmission_info_descriptors.len();
         buf[ti_start..ti_end].copy_from_slice(self.transmission_info_descriptors.raw());
-        let sl_end = ti_end + self.service_loop.len();
-        buf[ti_end..sl_end].copy_from_slice(self.service_loop);
+
+        let mut pos = ti_end;
+        for svc in &self.services {
+            buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
+            let dll = svc.descriptors.len() as u16;
+            // reserved_future_use(1) emitted as 1 (§5.1 convention) | running_status(3) | len_hi(4)
+            buf[pos + 2] = 0x80 | ((svc.running_status & 0x07) << 4) | ((dll >> 8) as u8 & 0x0F);
+            buf[pos + 3] = (dll & 0xFF) as u8;
+            let desc_start = pos + SERVICE_HEADER_LEN;
+            let desc_end = desc_start + svc.descriptors.len();
+            buf[desc_start..desc_end].copy_from_slice(svc.descriptors.raw());
+            pos = desc_end;
+        }
 
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
@@ -215,6 +291,18 @@ mod tests {
         ));
     }
 
+    /// Encode one service entry: service_id + reserved(1)/running_status(3)/
+    /// svc_desc_len(12) + descriptor bytes.
+    fn service_entry(service_id: u16, running_status: u8, desc: &[u8]) -> Vec<u8> {
+        let dll = desc.len() as u16;
+        let mut v = Vec::new();
+        v.extend_from_slice(&service_id.to_be_bytes());
+        v.push(0x80 | ((running_status & 0x07) << 4) | ((dll >> 8) as u8 & 0x0F));
+        v.push((dll & 0xFF) as u8);
+        v.extend_from_slice(desc);
+        v
+    }
+
     #[test]
     fn parse_empty() {
         let bytes = build_sit(0x1234, 5, &[], &[]);
@@ -223,28 +311,77 @@ mod tests {
         assert_eq!(sit.version_number, 5);
         assert!(sit.current_next_indicator);
         assert!(sit.transmission_info_descriptors.is_empty());
-        assert!(sit.service_loop.is_empty());
+        assert!(sit.services.is_empty());
     }
 
     #[test]
-    fn parse_separates_both_loops() {
+    fn parse_two_services_typed() {
         let ti = [0x4D, 0x02, 0x01, 0x02]; // a transmission-info descriptor
-                                           // one service entry: service_id=0x0001, running_status=4, svc_desc_len=0
-        let service = [0x00, 0x01, 0x80 | (4 << 4), 0x00];
-        let bytes = build_sit(0xABCD, 7, &ti, &service);
+        let mut sl = service_entry(0x0001, 4, &[0x48, 0x02, 0xAA, 0xBB]);
+        sl.extend(service_entry(0x0002, 2, &[]));
+        let bytes = build_sit(0xABCD, 7, &ti, &sl);
         let sit = Sit::parse(&bytes).unwrap();
         assert_eq!(sit.transmission_info_descriptors.raw(), &ti[..]);
-        assert_eq!(sit.service_loop, &service[..]);
+        assert_eq!(sit.services.len(), 2);
+        assert_eq!(sit.services[0].service_id, 0x0001);
+        assert_eq!(sit.services[0].running_status, 4);
+        assert_eq!(
+            sit.services[0].descriptors.raw(),
+            &[0x48, 0x02, 0xAA, 0xBB][..]
+        );
+        assert_eq!(sit.services[1].service_id, 0x0002);
+        assert_eq!(sit.services[1].running_status, 2);
+        assert!(sit.services[1].descriptors.is_empty());
     }
 
     #[test]
-    fn serialize_round_trip() {
+    fn parse_rejects_truncated_service_header() {
+        // Service loop has only 3 bytes — less than the 4-byte service header.
+        let ti = [0x4D, 0x00];
+        let bytes = build_sit(0x1234, 0, &ti, &[0x00, 0x01, 0xC0]);
+        assert!(matches!(
+            Sit::parse(&bytes).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_inner_descriptor_overflow() {
+        // service_descriptors_length declares 5 bytes but only 1 follows.
+        let service = [0x00, 0x01, 0x80, 0x05, 0xFF];
+        let bytes = build_sit(0x1234, 0, &[], &service);
+        assert!(matches!(
+            Sit::parse(&bytes).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn serialize_round_trip_two_services() {
         let ti = [0x4D, 0x02, 0x01, 0x02];
-        let service = [0x00, 0x01, 0xC0, 0x00];
-        let bytes = build_sit(0xCAFE, 3, &ti, &service);
-        let sit = Sit::parse(&bytes).unwrap();
+        let sit = Sit {
+            table_id_extension: 0xCAFE,
+            version_number: 3,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transmission_info_descriptors: DescriptorLoop::new(&ti),
+            services: vec![
+                SitService {
+                    service_id: 0x0001,
+                    running_status: 4,
+                    descriptors: DescriptorLoop::new(&[0x48, 0x02, 0xAA, 0xBB]),
+                },
+                SitService {
+                    service_id: 0x0002,
+                    running_status: 2,
+                    descriptors: DescriptorLoop::new(&[]),
+                },
+            ],
+        };
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
+        // Byte-exact: re-parse must equal the original.
         assert_eq!(Sit::parse(&buf).unwrap(), sit);
     }
 
@@ -258,6 +395,30 @@ mod tests {
     }
 
     #[test]
+    fn serialize_rejects_over_range_service_desc_len() {
+        // A service descriptor loop longer than the 12-bit field can hold.
+        let big = vec![0u8; MAX_SERVICE_DESC_LEN + 1];
+        let sit = Sit {
+            table_id_extension: 0x0001,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transmission_info_descriptors: DescriptorLoop::new(&[]),
+            services: vec![SitService {
+                service_id: 0x0001,
+                running_status: 4,
+                descriptors: DescriptorLoop::new(&big),
+            }],
+        };
+        let mut buf = vec![0u8; sit.serialized_len()];
+        assert!(matches!(
+            sit.serialize_into(&mut buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
     fn table_trait_constants() {
         assert_eq!(<Sit<'_> as Table>::TABLE_ID, 0x7F);
         assert_eq!(<Sit<'_> as Table>::PID, 0x001F);
@@ -265,15 +426,28 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn sit_serializes_typed_loop() {
-        // SIT now borrows both loops (3.0): serialize-only. The
-        // transmission_info loop serializes as the typed descriptor sequence.
-        let bytes = build_sit(0xDEAD, 9, &[0x4D, 0x00], &[0x00, 0x01, 0xC0, 0x00]);
+    fn sit_serializes_typed_services() {
+        // Serialize-only (3.0). The transmission_info loop serializes as a typed
+        // descriptor sequence and each service exposes its typed descriptors.
+        let mut sl = service_entry(0x0001, 4, &[0x48, 0x02, 0xAA, 0xBB]);
+        sl.extend(service_entry(0x0002, 2, &[]));
+        let bytes = build_sit(0xDEAD, 9, &[0x4D, 0x00], &sl);
         let sit = Sit::parse(&bytes).unwrap();
         let v = serde_json::to_value(&sit).unwrap();
         assert!(
             v["transmission_info_descriptors"].is_array(),
             "transmission_info_descriptors must serialize as a typed sequence, got {v}"
+        );
+        assert!(
+            v["services"].is_array(),
+            "services must serialize as an array, got {v}"
+        );
+        assert_eq!(v["services"][0]["service_id"], 1);
+        assert_eq!(v["services"][0]["running_status"], 4);
+        // The service descriptor loop renders as a typed descriptor sequence.
+        assert!(
+            v["services"][0]["descriptors"].is_array(),
+            "service descriptors must serialize as a typed sequence, got {v}"
         );
     }
 }

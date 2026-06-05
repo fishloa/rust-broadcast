@@ -33,7 +33,7 @@ const EXTENDED_SURROUND_MAX: u8 = 0x03; // 2 bits
 
 /// DTS Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DtsDescriptor<'a> {
     /// 4-bit sample_rate_code (SFREQ, Table G.2).
     pub sample_rate_code: u8,
@@ -50,7 +50,6 @@ pub struct DtsDescriptor<'a> {
     /// 2-bit extended_surround_flag (Table G.5).
     pub extended_surround_flag: u8,
     /// Trailing additional_info bytes (TS 101 154 §6.3).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub additional_info: &'a [u8],
 }
 

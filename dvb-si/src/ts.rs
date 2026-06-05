@@ -29,7 +29,7 @@ pub const CC_MASK: u8 = 0x0F;
 
 /// Parsed TS header — the 4-byte transport header fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TsHeader {
     /// Transport Error Indicator — set by the demodulator when an
     /// uncorrectable error is present in the packet.
@@ -51,10 +51,9 @@ pub struct TsHeader {
 
 /// Borrowed view into one 188-byte TS packet.
 ///
-/// Serde: Serialize-only. Deserialize is omitted because `raw` is a
-/// reference to fixed-length 188-byte storage that cannot be reconstructed
-/// from a deserializer's lifetime budget; the field is also redundant once
-/// the header has been parsed. `raw` is excluded from the serialized form.
+/// Serde: Serialize-only (re-parse from wire bytes to reconstruct). `raw` is
+/// excluded from the serialized form because it is redundant once the header
+/// has been parsed.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TsPacket<'a> {

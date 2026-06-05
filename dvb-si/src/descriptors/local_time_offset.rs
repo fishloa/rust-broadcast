@@ -18,7 +18,7 @@ const RESERVED_BIT_MASK: u8 = 0x02;
 
 /// One per-country offset entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LocalTimeOffsetEntry {
     /// ISO 3166 alpha country code.
     pub country_code: LangCode,
@@ -37,7 +37,7 @@ pub struct LocalTimeOffsetEntry {
 
 /// Local Time Offset Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LocalTimeOffsetDescriptor {
     /// Entries in wire order.
     pub entries: Vec<LocalTimeOffsetEntry>,

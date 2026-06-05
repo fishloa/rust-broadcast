@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.0.1 — 2026-06-05
+
+Effectively replaces 3.0.0 (yanked). serde is now Serialize-only across the
+workspace (Deserialize removed — JSON is a display format); SIT service loop
+typed (`Vec<SitService>`), completing table consistency (#23). See
+[`MIGRATION-3.0.md`](MIGRATION-3.0.md) §§5–6.
+
+### Breaking
+
+- **serde is Serialize-only.** Every `Deserialize` derive/impl is removed
+  (including the manual `text::LangCode` impl) along with the now-dead
+  `serde(borrow)` / `serde(bound(deserialize = …))` attributes. JSON is a
+  display/export format; reconstruct values by re-`parse`-ing the wire bytes.
+  `Serialize` output is unchanged.
+- **SIT service loop is typed.** `Sit.service_loop: &'a [u8]` is replaced by
+  `Sit.services: Vec<SitService<'a>>`, where
+  `SitService { service_id: u16, running_status: u8, descriptors: DescriptorLoop<'a> }`
+  — mirroring `SdtService` (EN 300 468 §7.1.2, Table 164). The serialized JSON
+  drops the raw `service_loop` byte array in favour of typed `services` entries,
+  each with their own typed `descriptors` sequence. (#23)
+
 ## 3.0.0 — 2026-06-05
 
 Finishes the `DvbText` pattern for descriptor loops: every SI descriptor-loop

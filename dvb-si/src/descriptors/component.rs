@@ -18,7 +18,7 @@ const STREAM_CONTENT_MASK: u8 = 0x0F;
 
 /// Component Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ComponentDescriptor<'a> {
     /// 4-bit stream_content_ext (high nibble) — combines with `stream_content`
     /// to identify the component (EN 300 468 §6.2.8 Table 25).

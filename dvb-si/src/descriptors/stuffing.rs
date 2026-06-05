@@ -20,11 +20,9 @@ const MAX_BODY_LEN: usize = u8::MAX as usize;
 /// 8-bit field whose value is not specified"), so the payload is stored as an
 /// opaque borrowed slice and round-trips byte-for-byte.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StuffingDescriptor<'a> {
     /// Arbitrary stuffing bytes (any value), in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub stuffing_bytes: &'a [u8],
 }
 

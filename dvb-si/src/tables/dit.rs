@@ -19,7 +19,7 @@ const BODY_LEN: usize = 1;
 
 /// Discontinuity Information Table (§7.1.2, Table 163).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Dit {
     /// When set, a discontinuity in the transport stream occurs at this point.
     pub transition_flag: bool,
@@ -185,13 +185,13 @@ mod tests {
     }
 
     #[test]
-    fn serde_json_round_trip() {
+    fn serde_json_serializes_fields() {
+        // Serialize-only: assert the emitted JSON carries the field.
         let dit = Dit {
             transition_flag: true,
         };
-        let json = serde_json::to_string(&dit).unwrap();
-        let restored: Dit = serde_json::from_str(&json).unwrap();
-        assert_eq!(dit, restored);
+        let v = serde_json::to_value(dit).unwrap();
+        assert_eq!(v["transition_flag"], true);
     }
 
     #[test]

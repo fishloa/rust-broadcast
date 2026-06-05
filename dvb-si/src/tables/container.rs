@@ -59,7 +59,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// `container_data` borrows the payload region (everything between the extension
 /// header and the CRC-32 trailer) without parsing its internal structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Container<'a> {
     /// `private_indicator` bit from byte 1 (this is a private section).
     pub private_indicator: bool,
@@ -75,7 +75,6 @@ pub struct Container<'a> {
     pub last_section_number: u8,
     /// Raw `container_data` bytes (everything between the extension header and
     /// the CRC-32 trailer). Internal structure is not parsed.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub container_data: &'a [u8],
 }
 

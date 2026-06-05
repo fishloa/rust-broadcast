@@ -31,7 +31,6 @@ pub struct Tot<'a> {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS).
     pub utc_time_raw: [u8; 5],
     /// Raw descriptor bytes (typically local_time_offset_descriptor tag 0x58).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,

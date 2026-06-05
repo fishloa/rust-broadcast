@@ -57,7 +57,6 @@ pub struct Rnt<'a> {
     pub common_descriptors: DescriptorLoop<'a>,
     /// Raw bytes of the resolution-provider loop (everything after the common
     /// descriptors up to, but not including, the CRC-32 trailer).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub resolution_providers: &'a [u8],
 }
 

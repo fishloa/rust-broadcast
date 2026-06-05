@@ -14,7 +14,7 @@ pub const HEADER_LEN: usize = 2;
 /// Network Name Descriptor (tag 0x40). Carries the human-readable name of
 /// a DVB network in its NIT's `network_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NetworkNameDescriptor<'a> {
     /// DVB Annex-A encoded network name (EN 300 468 §6.2.28).
     pub network_name: DvbText<'a>,

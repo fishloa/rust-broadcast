@@ -34,7 +34,6 @@ pub struct BatTransportStream<'a> {
     /// original_network_id of the described TS.
     pub original_network_id: u16,
     /// Raw descriptor bytes for this transport stream.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
@@ -55,12 +54,10 @@ pub struct Bat<'a> {
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
     /// Raw bouquet-descriptor bytes (may contain bouquet_name_descriptor 0x47).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Bouquet descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub bouquet_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub transport_streams: Vec<BatTransportStream<'a>>,
 }
 

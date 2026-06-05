@@ -9,7 +9,7 @@ use dvb_common::{Parse, Serialize};
 
 /// Frequency source per §5.2.4 Table 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum FrequencySource {
     /// Use L1-current data field.
@@ -43,14 +43,13 @@ impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Er
 /// - byte 1 `[5:0]`: rfu (6 bits) — must be 0
 /// - bytes 2..: l1_current_data (variable bytes)
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct L1CurrentPayload<'a> {
     /// FRAME_IDX of T2 frame where L1 is carried.
     pub frame_idx: u8,
     /// Frequency source per §5.2.4 Table 2.
     pub freq_source: FrequencySource,
     /// L1-current data: L1PRE + L1CONF + L1DYN_CURR + L1EXT (all per EN 302 755).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub l1_current_data: &'a [u8],
 }
 

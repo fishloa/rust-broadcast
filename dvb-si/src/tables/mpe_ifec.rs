@@ -71,7 +71,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;
 /// final two fields are `mpe_boundary` / `prev_burst_size`, not
 /// `table_boundary` / `address`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RealTimeParameters {
     /// 12-bit `delta_t` — time until the start of the next burst.
     pub delta_t: u16,
@@ -118,7 +118,7 @@ impl RealTimeParameters {
 
 /// MPE-IFEC section (ETSI TS 102 772 v1.1.1 §5.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MpeIfec<'a> {
     /// `private_indicator` bit from byte 1 (MPE-IFEC is a private section).
     pub private_indicator: bool,
@@ -139,7 +139,6 @@ pub struct MpeIfec<'a> {
     pub real_time_parameters: RealTimeParameters,
     /// Raw IFEC data bytes (everything between the real_time_parameters block
     /// and the CRC-32 trailer).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub ifec_data: &'a [u8],
 }
 
@@ -425,11 +424,8 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn serde_json_round_trip() {
-        // `ifec_data` is a borrowed `&[u8]` (the rnt/cit idiom), so a deserialize
-        // round-trip is not possible. Mirror the borrowed tables by asserting
-        // serialization yields valid, field-bearing JSON. The typed
-        // RealTimeParameters struct DOES survive a full round-trip.
+    fn serde_json_serializes_fields() {
+        // Serialize-only: assert serialization yields valid, field-bearing JSON.
         let ifec = [0x01u8, 0x02];
         let bytes = build_mpe_ifec(7, 8, 3, true, 0, 0, sample_rtp(), &ifec);
         let s = MpeIfec::parse(&bytes).unwrap();
@@ -440,11 +436,5 @@ mod tests {
         assert_eq!(v["ifec_data"], serde_json::json!([0x01, 0x02]));
         assert_eq!(v["real_time_parameters"]["prev_burst_size"], 0x0001_2345);
         assert_eq!(v["real_time_parameters"]["mpe_boundary"], true);
-        // RealTimeParameters is owned/Copy → full serde round-trip works.
-        let rtp_json = serde_json::to_string(&s.real_time_parameters).unwrap();
-        assert_eq!(
-            serde_json::from_str::<RealTimeParameters>(&rtp_json).unwrap(),
-            s.real_time_parameters
-        );
     }
 }

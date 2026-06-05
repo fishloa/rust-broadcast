@@ -18,7 +18,7 @@ const MIN_BODY_LEN: usize = 4; // ca_system_id (2) + ca_pid (2)
 /// the CAT. Identifies the CA system and the PID where Entitlement Control
 /// Messages (ECMs) or Entitlement Management Messages (EMMs) can be found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaDescriptor<'a> {
     /// Conditional Access System ID.
     ///
@@ -40,7 +40,6 @@ pub struct CaDescriptor<'a> {
     pub ca_pid: u16,
 
     /// Optional private data following the standard CA descriptor fields.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 

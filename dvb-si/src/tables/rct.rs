@@ -100,7 +100,6 @@ pub struct Rct<'a> {
     /// Each entry begins with a 2-byte header: `reserved(4) | link_info_length(12)`.
     /// The following `link_info_length` bytes contain the link_info() payload
     /// (§10.4.3 Table 110). The integrator is responsible for further parsing.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub link_info_loop: &'a [u8],
 
     /// Trailing descriptor loop

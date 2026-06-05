@@ -173,7 +173,6 @@ pub struct Unt<'a> {
     ///
     /// To walk platform entries, parse this field according to
     /// ETSI TS 102 006 §9.4.2.2–9.4.2.4.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub platform_loop: &'a [u8],
 }
 

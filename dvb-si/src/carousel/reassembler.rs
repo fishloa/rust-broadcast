@@ -8,7 +8,7 @@ use super::messages::{Dii, DownloadDataBlock};
 
 /// Identifies one module instance on the carousel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ModuleKey {
     /// downloadId from the DII / DDB headers.
     pub download_id: u32,
@@ -20,7 +20,7 @@ pub struct ModuleKey {
 
 /// A fully reassembled module.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Module {
     /// Identity of the completed module.
     pub key: ModuleKey,

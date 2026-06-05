@@ -12,7 +12,7 @@
 
 /// Decoded ISSY value (EN 302 755 §5.1.7, Annex C).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Issy {
     /// ISCR short form — 15-bit Input Stream Clock Reference (2-byte ISSY).
     IscrShort(u16),

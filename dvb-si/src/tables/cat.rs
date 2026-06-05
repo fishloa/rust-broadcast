@@ -25,7 +25,7 @@ const CRC_LEN: usize = 4;
 /// One CA descriptor entry from the CAT, in owned form so it
 /// outlives the source section bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CatCaEntry {
     /// CA System ID — the CAID. e.g. 0x0500 Viaccess, 0x0650
     /// Irdeto ORF-ICE, 0x0100 Seca/Mediaguard.
@@ -311,9 +311,9 @@ mod tests {
         assert_eq!(<Cat<'_> as Table>::PID, 0x0001);
     }
 
-    /// CAT now borrows its descriptor loop (3.0): the loop serializes as the
-    /// typed descriptor sequence and the struct is serialize-only (no
-    /// Deserialize). Verify the CA descriptor decodes inside the JSON.
+    /// CAT borrows its descriptor loop (3.0): the loop serializes as the
+    /// typed descriptor sequence and the struct is serialize-only. Verify the
+    /// CA descriptor decodes inside the JSON.
     #[test]
     fn serde_json_serializes_typed_loop() {
         let bytes = build_cat(1, &ca_descriptor(0x0500, 0x0050));

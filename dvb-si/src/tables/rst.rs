@@ -28,7 +28,7 @@ const ENTRY_LEN: usize = 9;
 /// 1 not running, 2 starts in a few seconds, 3 pausing, 4 running,
 /// 5 service off-air, 6–7 reserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RstEntry {
     /// Transport stream carrying the event.
     pub transport_stream_id: u16,
@@ -44,7 +44,7 @@ pub struct RstEntry {
 
 /// Running Status Table (§5.2.8, Table 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Rst {
     /// Entries in wire order.
     pub entries: Vec<RstEntry>,
@@ -256,9 +256,11 @@ mod tests {
     }
 
     #[test]
-    fn serde_json_round_trip() {
+    fn serde_json_serializes_fields() {
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let rst = Rst::parse(&build_rst(&[entry(1, 2, 3, 4, 4)])).unwrap();
         let j = serde_json::to_string(&rst).unwrap();
-        assert_eq!(serde_json::from_str::<Rst>(&j).unwrap(), rst);
+        let v: serde_json::Value = serde_json::from_str(&j).unwrap();
+        assert_eq!(v["entries"][0]["service_id"], 3);
     }
 }

@@ -32,7 +32,7 @@ const CRC_LEN: usize = 4;
 
 /// `satellite_table_id` discriminant — selects the SAT body structure (§5.2.11.1, Table 11b).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum SatTableId {
     /// `satellite_position_v2_info` — TLE/SGP4 orbital elements (§5.2.11.2).
@@ -52,7 +52,7 @@ pub enum SatTableId {
 /// The typed fields cover the common section header; [`Sat::body`] is the raw
 /// body whose structure depends on [`Sat::satellite_table_id`].
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Sat<'a> {
     /// 6-bit discriminant selecting the body structure (see [`SatTableId`]).
     pub satellite_table_id: u8,
@@ -67,7 +67,6 @@ pub struct Sat<'a> {
     /// Highest section number of the sub_table.
     pub last_section_number: u8,
     /// Raw body bytes — interpret per [`Sat::satellite_table_id`]; layout in `docs/tables/sat.md`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub body: &'a [u8],
 }
 

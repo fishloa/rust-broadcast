@@ -20,7 +20,7 @@ pub const DFL_MAX_BITS: u16 = 64800;
 
 /// Input stream format as described by the TS/GS field (MATYPE-1 bits `[7:6]`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum TsGs {
     /// Generic Packetized Stream.
@@ -53,7 +53,7 @@ impl std::fmt::Display for TsGs {
 
 /// Operating mode: Normal or High Efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum Mode {
     /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
@@ -74,7 +74,7 @@ impl From<num_enum::TryFromPrimitiveError<Mode>> for Error {
 /// - MATYPE-1 (byte 0): TS/GS, SIS/MIS, CCM/ACM, ISSYI, NPD, `EXT[1:0]`
 /// - MATYPE-2 (byte 1): ISI (0-255) or reserved
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Matype {
     /// Input stream format — see [`TsGs`].
     pub ts_gs: TsGs,
@@ -160,7 +160,7 @@ impl From<Matype> for [u8; 2] {
 ///
 /// Detection: `crc8(bytes[0..9]) ^ bytes[9]` yields 0 for NM, 1 for HEM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Bbheader {
     /// MATYPE field.
     pub matype: Matype,

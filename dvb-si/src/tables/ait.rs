@@ -22,7 +22,7 @@ const APP_HEADER_LEN: usize = 9;
 
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ApplicationIdentifier {
     /// 32-bit organisation_id.
     pub organisation_id: u32,
@@ -39,7 +39,6 @@ pub struct AitApplication<'a> {
     /// Application control code (1 = autostart, etc.).
     pub control_code: u8,
     /// Raw descriptor bytes for this application.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Per-application descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
@@ -62,12 +61,10 @@ pub struct Ait<'a> {
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
     /// Raw common descriptor bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Common descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub common_descriptors: DescriptorLoop<'a>,
     /// Applications in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub applications: Vec<AitApplication<'a>>,
 }
 

@@ -94,7 +94,7 @@ const TTML_FIXED_LEN: usize = ISO_639_LEN + 2; // ISO_639(3) + 2 packed bytes
 /// discriminant is the raw [`ExtensionDescriptor::tag_extension`] `u8` so that
 /// unknown / reserved / user-defined tags round-trip unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ExtensionTag {
@@ -135,40 +135,38 @@ pub enum ExtensionTag {
 /// Unrecognised or not-yet-typed discriminants land in [`ExtensionBody::Raw`],
 /// which carries the selector bytes verbatim so the descriptor round-trips.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: Message contains DvbText
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ExtensionBody<'a> {
     /// `0x04` — T2_delivery_system (Table 133, §6.4.6.3).
-    T2DeliverySystem(#[cfg_attr(feature = "serde", serde(borrow))] T2DeliverySystem<'a>),
+    T2DeliverySystem(T2DeliverySystem<'a>),
     /// `0x06` — supplementary_audio (Table 153, §6.4.11).
-    SupplementaryAudio(#[cfg_attr(feature = "serde", serde(borrow))] SupplementaryAudio<'a>),
+    SupplementaryAudio(SupplementaryAudio<'a>),
     /// `0x07` — network_change_notify (Table 149, §6.4.9).
-    NetworkChangeNotify(#[cfg_attr(feature = "serde", serde(borrow))] NetworkChangeNotify<'a>),
+    NetworkChangeNotify(NetworkChangeNotify<'a>),
     /// `0x08` — message (Table 148, §6.4.9).
-    Message(#[cfg_attr(feature = "serde", serde(borrow))] Message<'a>),
+    Message(Message<'a>),
     /// `0x09` — target_region (Table 156, §6.4.12).
-    TargetRegion(#[cfg_attr(feature = "serde", serde(borrow))] TargetRegion<'a>),
+    TargetRegion(TargetRegion<'a>),
     /// `0x0A` — target_region_name (Table 157, §6.4.13).
-    TargetRegionName(#[cfg_attr(feature = "serde", serde(borrow))] TargetRegionName<'a>),
+    TargetRegionName(TargetRegionName<'a>),
     /// `0x0B` — service_relocated (Table 152, §6.4.10).
     ServiceRelocated(ServiceRelocated),
     /// `0x0D` — C2_delivery_system (Table 115, §6.4.6.1).
     C2DeliverySystem(C2DeliverySystem),
     /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
-    UriLinkage(#[cfg_attr(feature = "serde", serde(borrow))] UriLinkage<'a>),
+    UriLinkage(UriLinkage<'a>),
     /// `0x15` — AC-4 (annex D).
-    Ac4(#[cfg_attr(feature = "serde", serde(borrow))] Ac4<'a>),
+    Ac4(Ac4<'a>),
     /// `0x16` — C2_bundle_delivery_system (Table 139, §6.4.6.4).
     C2BundleDeliverySystem(C2BundleDeliverySystem),
     /// `0x17` — S2X_satellite_delivery_system (Table 140, §6.4.6.5.2).
-    S2XSatelliteDeliverySystem(
-        #[cfg_attr(feature = "serde", serde(borrow))] S2XSatelliteDeliverySystem<'a>,
-    ),
+    S2XSatelliteDeliverySystem(S2XSatelliteDeliverySystem<'a>),
     /// `0x19` — audio_preselection (Table 110, §6.4.1).
-    AudioPreselection(#[cfg_attr(feature = "serde", serde(borrow))] AudioPreselection<'a>),
+    AudioPreselection(AudioPreselection<'a>),
     /// `0x20` — TTML_subtitling (EN 303 560 Table 1, §5.2.1.1).
-    TtmlSubtitling(#[cfg_attr(feature = "serde", serde(borrow))] TtmlSubtitling<'a>),
+    TtmlSubtitling(TtmlSubtitling<'a>),
     /// Any not-yet-typed / unknown / user-defined discriminant: selector bytes verbatim.
-    Raw(#[cfg_attr(feature = "serde", serde(borrow))] &'a [u8]),
+    Raw(&'a [u8]),
 }
 
 // ===========================================================================
@@ -182,8 +180,7 @@ pub enum ExtensionBody<'a> {
 // ===========================================================================
 /// T2_delivery_system body (Table 133). `cell_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct T2DeliverySystem<'a> {
     /// PLP identifier.
     pub plp_id: u8,
@@ -202,7 +199,6 @@ pub struct T2DeliverySystem<'a> {
     /// tfs_flag(1), present with `siso_miso`.
     pub tfs_flag: Option<bool>,
     /// Raw cell loop (Table 133 inner `for`), kept raw (SAT precedent).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub cell_loop: &'a [u8],
 }
 
@@ -211,8 +207,7 @@ pub struct T2DeliverySystem<'a> {
 // ===========================================================================
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SupplementaryAudio<'a> {
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
@@ -223,7 +218,6 @@ pub struct SupplementaryAudio<'a> {
     /// ISO_639_language_code(24), present iff `language_code_present`.
     pub iso_639_language_code: Option<LangCode>,
     /// Trailing private_data_byte run.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 
@@ -235,11 +229,9 @@ pub struct SupplementaryAudio<'a> {
 // ===========================================================================
 /// network_change_notify body (Table 149); `cell_loop` is the raw outer loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NetworkChangeNotify<'a> {
     /// Raw `for(cell)` loop body.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub cell_loop: &'a [u8],
 }
 
@@ -248,7 +240,7 @@ pub struct NetworkChangeNotify<'a> {
 // ===========================================================================
 /// message body (Table 148).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Message<'a> {
     /// message_id(8).
     pub message_id: u8,
@@ -266,13 +258,11 @@ pub struct Message<'a> {
 // ===========================================================================
 /// target_region body (Table 156); `region_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TargetRegion<'a> {
     /// Leading country_code(24).
     pub country_code: LangCode,
     /// Raw region loop.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub region_loop: &'a [u8],
 }
 
@@ -281,15 +271,13 @@ pub struct TargetRegion<'a> {
 // ===========================================================================
 /// target_region_name body (Table 157); `region_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TargetRegionName<'a> {
     /// country_code(24).
     pub country_code: LangCode,
     /// ISO_639_language_code(24).
     pub iso_639_language_code: LangCode,
     /// Raw region loop (length-delimited name entries).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub region_loop: &'a [u8],
 }
 
@@ -298,7 +286,7 @@ pub struct TargetRegionName<'a> {
 // ===========================================================================
 /// service_relocated body (Table 152) — fully typed, fixed 6 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceRelocated {
     /// old_original_network_id(16).
     pub old_original_network_id: u16,
@@ -313,7 +301,7 @@ pub struct ServiceRelocated {
 // ===========================================================================
 /// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct C2DeliverySystem {
     /// plp_id(8).
     pub plp_id: u8,
@@ -337,18 +325,15 @@ pub struct C2DeliverySystem {
 // ===========================================================================
 /// URI_linkage body (Table 159).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UriLinkage<'a> {
     /// uri_linkage_type(8).
     pub uri_linkage_type: u8,
     /// Length-delimited URI bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub uri: &'a [u8],
     /// min_polling_interval(16), present iff `uri_linkage_type` is 0x00 or 0x01.
     pub min_polling_interval: Option<u16>,
     /// Trailing private_data_byte run.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 
@@ -361,8 +346,7 @@ pub struct UriLinkage<'a> {
 // ===========================================================================
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ac4<'a> {
     /// ac4_config_flag(1).
     pub ac4_config_flag: bool,
@@ -373,10 +357,8 @@ pub struct Ac4<'a> {
     /// ac4_channel_mode(2), present iff `ac4_config_flag`.
     pub ac4_channel_mode: Option<u8>,
     /// Length-delimited ac4_dsi bytes, present iff `ac4_toc_flag`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub toc: Option<&'a [u8]>,
     /// Trailing additional_info_byte run.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub additional_info: &'a [u8],
 }
 
@@ -387,7 +369,7 @@ pub struct Ac4<'a> {
 // ===========================================================================
 /// One C2 bundle entry (Table 139 inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct C2BundleEntry {
     /// plp_id(8).
     pub plp_id: u8,
@@ -407,7 +389,7 @@ pub struct C2BundleEntry {
 
 /// C2_bundle_delivery_system body (Table 139) — fully typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct C2BundleDeliverySystem {
     /// Bundle entries in wire order.
     pub entries: Vec<C2BundleEntry>,
@@ -423,8 +405,7 @@ pub struct C2BundleDeliverySystem {
 // ===========================================================================
 /// S2X_satellite_delivery_system body (Table 140); `tail` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct S2XSatelliteDeliverySystem<'a> {
     /// receiver_profiles(5) — Table 141.
     pub receiver_profiles: u8,
@@ -455,7 +436,6 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     /// timeslice_number(8), present iff `s2x_mode == 2`.
     pub timeslice_number: Option<u8>,
     /// Raw remainder: S2X_mode==3 channel-bond loop + reserved tail.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub tail: &'a [u8],
 }
 
@@ -468,13 +448,11 @@ pub struct S2XSatelliteDeliverySystem<'a> {
 // ===========================================================================
 /// audio_preselection body (Table 110); `preselection_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AudioPreselection<'a> {
     /// num_preselections(5).
     pub num_preselections: u8,
     /// Raw preselection loop.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub preselection_loop: &'a [u8],
 }
 
@@ -488,8 +466,7 @@ pub struct AudioPreselection<'a> {
 // ===========================================================================
 /// TTML_subtitling body (EN 303 560 Table 1); `tail` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TtmlSubtitling<'a> {
     /// ISO_639_language_code(24).
     pub iso_639_language_code: LangCode,
@@ -504,13 +481,12 @@ pub struct TtmlSubtitling<'a> {
     /// dvb_ttml_profile_count(4).
     pub dvb_ttml_profile_count: u8,
     /// Raw remainder: profile list + optional qualifier + font list + text + reserved.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub tail: &'a [u8],
 }
 
 /// Extension descriptor (EN 300 468 Table 54, §6.2.18.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: ExtensionBody contains DvbText
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ExtensionDescriptor<'a> {
     /// `descriptor_tag_extension` (raw `u8`; see [`ExtensionTag`] for names).
     pub tag_extension: u8,
@@ -1731,7 +1707,7 @@ mod tests {
     }
 
     /// Serialization is deterministic for an all-owned typed body (no borrowed
-    /// slices). `ExtensionDescriptor` no longer derives `Deserialize` because
+    /// slices). `ExtensionDescriptor` is serialize-only because
     /// `ExtensionBody::Message` contains `DvbText` which is serialize-only; we
     /// therefore assert serialize stability rather than a round-trip.
     #[cfg(feature = "serde")]

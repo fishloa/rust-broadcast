@@ -20,15 +20,13 @@ const TEXT_LEN_FIELD: usize = 1;
 
 /// Data Broadcast Descriptor (tag 0x64).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
-#[cfg_attr(feature = "serde", serde(bound = ""))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DataBroadcastDescriptor<'a> {
     /// 16-bit data_broadcast_id (ETSI TS 101 162 registration).
     pub data_broadcast_id: u16,
     /// component_tag linking this entry to a stream_identifier_descriptor.
     pub component_tag: u8,
     /// Raw selector_byte tail — interpretation depends on data_broadcast_id.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub selector: &'a [u8],
     /// ISO 639-2 language code of the text description.
     pub language_code: LangCode,

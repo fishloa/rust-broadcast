@@ -437,10 +437,10 @@ impl serde::Serialize for DescriptorLoop<'_> {
         s.collect_seq(self.iter().map(Entry))
     }
 }
-// Deliberately NO Deserialize: the typed walk decodes DVB text and dispatches
-// per-tag — there is no lossless way to reconstruct the raw loop bytes from the
-// serialized form. Structs holding a DescriptorLoop derive Serialize only
-// (3.0 break). To reconstruct, keep the wire bytes and re-`parse` the table.
+// Serialize-only: the typed walk decodes DVB text and dispatches per-tag —
+// there is no lossless way to reconstruct the raw loop bytes from the
+// serialized form. Structs holding a DescriptorLoop derive Serialize only.
+// To reconstruct, keep the wire bytes and re-`parse` the table.
 
 #[cfg(test)]
 mod tests {

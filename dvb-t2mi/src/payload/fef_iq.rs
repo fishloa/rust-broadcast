@@ -8,7 +8,7 @@ use super::fef_null::S1Field;
 
 /// FEF part: I/Q data payload (type 0x31) per ETSI TS 102 773 §5.2.10.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FefIqPayload<'a> {
     /// FEF index within super-frame.
     pub fef_idx: u8,
@@ -17,7 +17,6 @@ pub struct FefIqPayload<'a> {
     /// S2 field per EN 302 755 §7.2.1.
     pub s2_field: u8,
     /// Complex time-domain samples: 12-bit two's complement I, then 12-bit Q.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub fef_part_data: &'a [u8],
 }
 

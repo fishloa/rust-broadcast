@@ -30,7 +30,7 @@ const TS_HEADER_LEN: usize = 6;
 
 /// NIT kind — distinguishes `0x40` (actual) from `0x41` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum NitKind {
     /// NIT for the transport stream the receiver is tuned to.
     Actual,
@@ -47,7 +47,6 @@ pub struct NitTransportStream<'a> {
     /// original_network_id of the described TS.
     pub original_network_id: u16,
     /// Raw descriptor bytes for this transport stream.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
@@ -70,12 +69,10 @@ pub struct Nit<'a> {
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
     /// Raw network-wide descriptor bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     /// Network descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub network_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub transport_streams: Vec<NitTransportStream<'a>>,
 }
 

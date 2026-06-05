@@ -14,7 +14,7 @@ const ENTRY_LEN: usize = 2;
 
 /// One content classification entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ContentEntry {
     /// content_nibble_level_1 (4 bits) — broad genre (ETSI Table 29).
     pub nibble_1: u8,
@@ -26,7 +26,7 @@ pub struct ContentEntry {
 
 /// Content Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ContentDescriptor {
     /// Entries in wire order. EIT events can carry multiple genre entries.
     pub entries: Vec<ContentEntry>,

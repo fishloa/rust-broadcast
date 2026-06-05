@@ -16,12 +16,11 @@ const ID_LEN: usize = 2;
 
 /// Data Broadcast Id Descriptor (tag 0x66).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DataBroadcastIdDescriptor<'a> {
     /// 16-bit data_broadcast_id (ETSI TS 101 162 registration).
     pub data_broadcast_id: u16,
     /// Raw id_selector_byte tail — interpretation depends on data_broadcast_id.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub id_selector: &'a [u8],
 }
 

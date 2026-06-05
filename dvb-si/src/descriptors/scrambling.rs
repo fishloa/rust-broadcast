@@ -16,7 +16,7 @@ const BODY_LEN: u8 = 1;
 
 /// Scrambling Descriptor (tag 0x65).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ScramblingDescriptor {
     /// 8-bit scrambling_mode (ETSI Table 87, PDF p. 99).
     pub scrambling_mode: u8,
@@ -164,7 +164,7 @@ mod tests {
             scrambling_mode: 0x02,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: ScramblingDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(d, back);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

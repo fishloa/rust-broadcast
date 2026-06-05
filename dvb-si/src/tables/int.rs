@@ -134,7 +134,6 @@ pub struct Int<'a> {
     /// operational_descriptor_loop length field followed by operational
     /// descriptors.  Callers iterate this by walking the 2-byte length headers
     /// in sequence.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub loops: &'a [u8],
 }
 

@@ -46,29 +46,26 @@ const DDB_FIXED_LEN: usize = 6;
 
 /// DownloadServerInitiate (§7.3.6, messageId 0x1006).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Dsi<'a> {
     /// 32-bit transactionId. DVB (TR 101 202 §4.7.9): the 2 LSBs are 0x0000
     /// for a DSI; bit 31 toggles on update.
     pub transaction_id: u32,
     /// Raw dsmccAdaptationHeader bytes (usually empty).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub adaptation: &'a [u8],
     /// 20-byte serverId — all 0xFF under the DVB profile.
     pub server_id: [u8; SERVER_ID_LEN],
     /// compatibilityDescriptor() body after its 16-bit length field, raw
     /// (TS 102 006 Table 15 documents the structure).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub compatibility_descriptor: &'a [u8],
     /// privateData, raw. SSU: GroupInfoIndication (TS 102 006 Table 6);
     /// object carousel: ServiceGatewayInfo (TR 101 202 Table 4.15).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 
 /// One module entry in a DII (§7.3.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DiiModule<'a> {
     /// moduleId referenced by DDB messages.
     pub module_id: u16,
@@ -78,19 +75,16 @@ pub struct DiiModule<'a> {
     pub module_version: u8,
     /// moduleInfo, raw (object carousel: BIOP::ModuleInfo, TR 101 202
     /// Table 4.14).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub module_info: &'a [u8],
 }
 
 /// DownloadInfoIndication (§7.3.3, messageId 0x1002).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Dii<'a> {
     /// 32-bit transactionId (TR 101 202 Table 4.1 sub-fields).
     pub transaction_id: u32,
     /// Raw dsmccAdaptationHeader bytes (usually empty).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub adaptation: &'a [u8],
     /// downloadId — links this DII to its DDB messages.
     pub download_id: u32,
@@ -105,36 +99,32 @@ pub struct Dii<'a> {
     /// tCDownloadScenario.
     pub t_c_download_scenario: u32,
     /// compatibilityDescriptor() body after its 16-bit length field, raw.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub compatibility_descriptor: &'a [u8],
     /// Module entries in wire order.
     pub modules: Vec<DiiModule<'a>>,
     /// privateData, raw.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 
 /// A U-N download control message — payload of a table_id 0x3B DSM-CC
 /// section, discriminated by `messageId`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum UnMessage<'a> {
     /// DownloadServerInitiate (messageId 0x1006).
-    Dsi(#[cfg_attr(feature = "serde", serde(borrow))] Dsi<'a>),
+    Dsi(Dsi<'a>),
     /// DownloadInfoIndication (messageId 0x1002).
-    Dii(#[cfg_attr(feature = "serde", serde(borrow))] Dii<'a>),
+    Dii(Dii<'a>),
 }
 
 /// DownloadDataBlock (§7.3.7.1, messageId 0x1003) — payload of a table_id
 /// 0x3C DSM-CC section, including its dsmccDownloadDataHeader.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DownloadDataBlock<'a> {
     /// downloadId from the dsmccDownloadDataHeader — matches the DII.
     pub download_id: u32,
     /// Raw dsmccAdaptationHeader bytes (usually empty).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub adaptation: &'a [u8],
     /// moduleId of the module this block belongs to.
     pub module_id: u16,
@@ -143,7 +133,6 @@ pub struct DownloadDataBlock<'a> {
     /// Block index; byte offset within the module = blockNumber × blockSize.
     pub block_number: u16,
     /// The block payload.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub block_data: &'a [u8],
 }
 

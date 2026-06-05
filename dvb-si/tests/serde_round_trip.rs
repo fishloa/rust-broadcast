@@ -1,15 +1,11 @@
 //! Serde coverage for the dvb_si tables.
 //!
-//! Owned tables (no `&'a [u8]` fields) are exercised with a full
-//! `to_string` -> `from_str` JSON round-trip and `assert_eq!`.
-//!
-//! Borrowed tables cannot do a true JSON round-trip: JSON encodes `&[u8]`
-//! as an array of integers, which is not contiguous in the wire form and
-//! therefore cannot be borrowed back during deserialize. For those, this
-//! file constructs the struct directly, calls `serde_json::to_string`,
-//! and verifies the output is valid JSON containing the wire-relevant
-//! top-level fields. Round-trip via a borrowing-friendly format
-//! (postcard, bincode) is a separate concern.
+//! Serde is **Serialize-only** across the workspace (3.0.1): JSON is a
+//! display/export format and parsing FROM JSON is deliberately unsupported —
+//! re-parse from the wire bytes instead. Every table is therefore exercised by
+//! constructing it (directly or via a parsed fixture), calling
+//! `serde_json::to_string`/`to_value`, and asserting the serialized shape
+//! (valid JSON with the wire-relevant fields / typed sub-values).
 //!
 //! Coverage now also includes the companion tables — `Container`,
 //! `MpeDatagramSection`, `MpeFec`, `MpeIfec`, `ProtectionMessageSection`,
@@ -52,10 +48,10 @@ use dvb_si::tables::{
 };
 use dvb_si::text::{DvbText, LangCode};
 
-// --- Owned tables: full JSON round-trip via a parsed fixture --------------
+// --- Tables: serialize emits valid JSON -----------------------------------
 
 #[test]
-fn pat_round_trips_via_json() {
+fn pat_serializes_to_valid_json() {
     let bytes: Vec<u8> = vec![
         0x00, 0xB0, 0x0D, // table_id, section_length=13
         0x12, 0x34, // tsid
@@ -65,33 +61,30 @@ fn pat_round_trips_via_json() {
     ];
     let parsed = Pat::parse(&bytes).expect("parse PAT");
     let j = serde_json::to_string(&parsed).expect("serialize PAT");
-    let back: Pat = serde_json::from_str(&j).expect("deserialize PAT");
-    assert_eq!(parsed, back);
+    assert_valid_json_with_keys(&j, &["transport_stream_id", "entries"]);
 }
 
 #[test]
-fn tdt_round_trips_via_json() {
+fn tdt_serializes_to_valid_json() {
     let bytes: Vec<u8> = vec![
         0x70, 0x70, 0x05, // table_id=0x70, section_length=5
         0xDA, 0x06, 0x12, 0x34, 0x56, // 5-byte UTC time
     ];
     let parsed = Tdt::parse(&bytes).expect("parse TDT");
     let j = serde_json::to_string(&parsed).expect("serialize TDT");
-    let back: Tdt = serde_json::from_str(&j).expect("deserialize TDT");
-    assert_eq!(parsed, back);
+    assert_valid_json_with_keys(&j, &["utc_time_raw"]);
 }
 
 #[test]
-fn st_round_trips_via_json() {
+fn st_serializes_to_valid_json() {
     let bytes: Vec<u8> = vec![0x72, 0x30, 0x03, 0x00, 0x00, 0x00];
     let parsed = St::parse(&bytes).expect("parse ST");
     let j = serde_json::to_string(&parsed).expect("serialize ST");
-    let back: St = serde_json::from_str(&j).expect("deserialize ST");
-    assert_eq!(parsed, back);
+    assert_valid_json_with_keys(&j, &["payload"]);
 }
 
 #[test]
-fn pat_with_multiple_entries_round_trips() {
+fn pat_with_multiple_entries_serializes() {
     let p = Pat {
         transport_stream_id: 0x1234,
         version_number: 5,
@@ -113,12 +106,12 @@ fn pat_with_multiple_entries_round_trips() {
             },
         ],
     };
-    let j = serde_json::to_string(&p).expect("serialize");
-    let back: Pat = serde_json::from_str(&j).expect("deserialize");
-    assert_eq!(p, back);
+    let v = serde_json::to_value(&p).expect("serialize");
+    assert_eq!(v["transport_stream_id"], 0x1234);
+    assert_eq!(v["entries"].as_array().unwrap().len(), 3);
+    assert_eq!(v["entries"][1]["program_number"], 1);
+    assert_eq!(v["entries"][1]["pid"], 0x100);
 }
-
-// --- Borrowed tables: serialize emits valid JSON --------------------------
 
 fn assert_valid_json_with_keys(j: &str, keys: &[&str]) {
     let v: serde_json::Value = serde_json::from_str(j).expect("emitted JSON parses");
@@ -371,6 +364,7 @@ fn dit_serializes_to_valid_json() {
 
 #[test]
 fn sit_serializes_to_valid_json() {
+    use dvb_si::tables::sit::SitService;
     let sit = Sit {
         table_id_extension: 0xFFFF,
         version_number: 0,
@@ -378,10 +372,25 @@ fn sit_serializes_to_valid_json() {
         section_number: 0,
         last_section_number: 0,
         transmission_info_descriptors: DescriptorLoop::new(&[]),
-        service_loop: &[],
+        services: vec![SitService {
+            service_id: 0x0001,
+            running_status: 4,
+            // service_descriptor (tag 0x48): type 0x01, "BBC"/"ONE".
+            descriptors: DescriptorLoop::new(&[
+                0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
+            ]),
+        }],
     };
-    let j = serde_json::to_string(&sit).expect("serialize SIT");
-    assert_valid_json_with_keys(&j, &["table_id_extension", "service_loop"]);
+    let v = serde_json::to_value(&sit).expect("serialize SIT");
+    assert!(v.is_object(), "expected JSON object, got {v}");
+    assert!(v["transmission_info_descriptors"].is_array());
+    assert_eq!(v["services"][0]["service_id"], 1);
+    assert_eq!(v["services"][0]["running_status"], 4);
+    // Typed descriptors render inside the service.
+    assert_eq!(
+        v["services"][0]["descriptors"][0]["service"]["service_name"],
+        "ONE"
+    );
 }
 
 #[test]
@@ -631,8 +640,8 @@ fn un_message_dii_serializes_to_valid_json() {
     assert_valid_json_with_keys(&j, &["Dii"]);
 }
 
-// ── 2.0 decoded-text serde: DvbText/LangCode fields serialize as decoded
-//    strings (serialize-stable; these structs are deliberately not Deserialize) ──
+// ── decoded-text serde: DvbText/LangCode fields serialize as decoded
+//    strings (serialize-only; re-parse from wire bytes to reconstruct) ──
 
 #[test]
 fn short_event_serializes_decoded_strings() {
@@ -663,7 +672,7 @@ fn service_serializes_decoded_strings() {
 }
 
 #[test]
-fn parental_rating_round_trips_lang_code_json() {
+fn parental_rating_serializes_lang_code_as_string() {
     use dvb_si::descriptors::parental_rating::{ParentalRatingDescriptor, RatingEntry};
     let d = ParentalRatingDescriptor {
         entries: vec![
@@ -677,11 +686,10 @@ fn parental_rating_round_trips_lang_code_json() {
             },
         ],
     };
-    let j = serde_json::to_string(&d).unwrap();
-    // LangCode serializes as a plain string; verify the JSON contains them.
-    assert!(j.contains("\"FRA\""), "expected FRA in {j}");
-    assert!(j.contains("\"GBR\""), "expected GBR in {j}");
-    // ParentalRatingDescriptor derives Deserialize — full round-trip.
-    let back: ParentalRatingDescriptor = serde_json::from_str(&j).unwrap();
-    assert_eq!(d, back);
+    let v = serde_json::to_value(&d).unwrap();
+    // LangCode serializes as a plain string (serialize-only).
+    assert_eq!(v["entries"][0]["country_code"], "FRA");
+    assert_eq!(v["entries"][0]["rating"], 0x05);
+    assert_eq!(v["entries"][1]["country_code"], "GBR");
+    assert_eq!(v["entries"][1]["rating"], 0x01);
 }

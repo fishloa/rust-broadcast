@@ -145,8 +145,8 @@ impl serde::Serialize for DvbText<'_> {
         s.serialize_str(&self.decode())
     }
 }
-// Deliberately NO Deserialize: re-encoding decoded text into DVB charset
-// bytes is lossy. Structs holding DvbText derive Serialize only (2.0 break).
+// Serialize-only: re-encoding decoded text into DVB charset bytes is lossy.
+// Structs holding DvbText derive Serialize only; re-parse from wire bytes.
 
 /// ISO 639-2 language code or ISO 3166 country code — 3 raw bytes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,18 +183,6 @@ impl std::fmt::Debug for LangCode {
 impl serde::Serialize for LangCode {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.as_str())
-    }
-}
-
-#[cfg(feature = "serde")]
-impl<'de> serde::Deserialize<'de> for LangCode {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = <std::borrow::Cow<'_, str>>::deserialize(d)?;
-        let b = s.as_bytes();
-        if b.len() != 3 {
-            return Err(serde::de::Error::invalid_length(b.len(), &"a 3-byte code"));
-        }
-        Ok(LangCode([b[0], b[1], b[2]]))
     }
 }
 
@@ -859,16 +847,10 @@ mod tests {
 
     #[cfg(feature = "serde")]
     #[test]
-    fn lang_code_serde_round_trip() {
+    fn lang_code_serializes_as_string() {
+        // Serialize-only: LangCode renders as its decoded string. Parsing FROM
+        // JSON is deliberately unsupported (re-parse from wire bytes instead).
         let lc = LangCode(*b"FRA");
-        let json = serde_json::to_string(&lc).unwrap();
-        assert_eq!(json, "\"FRA\"");
-        assert_eq!(serde_json::from_str::<LangCode>(&json).unwrap(), lc);
-        assert!(serde_json::from_str::<LangCode>("\"FRAN\"").is_err()); // not 3 bytes
-                                                                        // escaped JSON must also deserialize (Cow path, not zero-copy &str)
-        assert_eq!(
-            serde_json::from_str::<LangCode>("\"\\u0046RA\"").unwrap(),
-            LangCode(*b"FRA")
-        );
+        assert_eq!(serde_json::to_string(&lc).unwrap(), "\"FRA\"");
     }
 }

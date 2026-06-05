@@ -8,7 +8,7 @@
 /// construction (`0x0000..=0x1FFF`), matching the transport header field
 /// width (ISO/IEC 13818-1 §2.4.3.2).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Pid(u16);
 

@@ -17,7 +17,7 @@ const LEN_FIELD: usize = 1;
 
 /// One localised (provider name, service name) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceNameEntry<'a> {
     /// ISO 639-2 language code.
     pub language_code: LangCode,
@@ -29,7 +29,7 @@ pub struct ServiceNameEntry<'a> {
 
 /// Multilingual Service Name Descriptor (tag 0x5D).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MultilingualServiceNameDescriptor<'a> {
     /// Localised name pairs in wire order.
     pub entries: Vec<ServiceNameEntry<'a>>,

@@ -15,7 +15,7 @@ const LANG_LEN: usize = 3;
 
 /// Short Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShortEventDescriptor<'a> {
     /// ISO 639-2 language code of the event name / text.
     pub language_code: LangCode,

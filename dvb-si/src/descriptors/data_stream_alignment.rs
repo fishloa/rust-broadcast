@@ -15,7 +15,7 @@ const BODY_LEN: u8 = 1;
 
 /// Alignment type values per ISO/IEC 13818-1 Table 2-39.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum AlignmentType {
     /// Video access units start at the beginning of a PES packet.
@@ -30,7 +30,7 @@ pub enum AlignmentType {
 
 /// Data Stream Alignment Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DataStreamAlignmentDescriptor {
     /// Alignment type (see [`AlignmentType`]).
     pub alignment_type: u8,

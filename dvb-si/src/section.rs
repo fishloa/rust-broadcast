@@ -52,7 +52,7 @@ const CRC_LEN: usize = 4;
 /// Created via `Section::parse(bytes)`. Does **not** validate the CRC on
 /// construction — call [`Section::validate_crc`] explicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Section<'a> {
     /// Table identifier.
     pub table_id: u8,
@@ -79,7 +79,6 @@ pub struct Section<'a> {
     /// Section payload: excludes the header bytes and the trailing CRC for
     /// long-form sections. For short-form sections this is bytes
     /// `3..(section_length + 3)`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: &'a [u8],
     /// Declared CRC value (last 4 bytes, big-endian). `None` for short-form
     /// sections which carry no CRC.

@@ -10,7 +10,7 @@ use num_enum::TryFromPrimitive;
 /// are not listed as enum variants; see [`Self::eit_schedule_actual_segment`] and
 /// [`Self::eit_schedule_other_segment`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 #[allow(missing_docs)]
 #[rustfmt::skip] // deliberate column-aligned discriminants

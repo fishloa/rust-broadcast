@@ -20,12 +20,11 @@ const FORMAT_IDENTIFIER_LEN: usize = 4;
 /// stream. Any bytes beyond the 4-byte identifier are treated as opaque
 /// additional identification info.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct RegistrationDescriptor<'a> {
     /// 4-byte format identifier (e.g. b"AC-3", b"HDMV", b"dtsx").
     pub format_identifier: [u8; FORMAT_IDENTIFIER_LEN],
     /// Optional additional identification bytes following the format identifier.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub additional_identification_info: &'a [u8],
 }
 

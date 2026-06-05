@@ -17,7 +17,7 @@ const UTC_TIME_LEN: usize = 5;
 
 /// Time and Date Table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Tdt {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS) per
     /// EN 300 468 Annex C.

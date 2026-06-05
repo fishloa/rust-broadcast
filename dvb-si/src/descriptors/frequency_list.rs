@@ -23,7 +23,7 @@ pub const RESERVED_BITS_MASK: u8 = 0xFC;
 
 /// Coding type selects the interpretation of each 4-byte BCD frequency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum CodingType {
     /// Not defined (coding_type = 0b00).
     Undefined,
@@ -37,7 +37,7 @@ pub enum CodingType {
 
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FrequencyListDescriptor {
     /// Interpretation of every `centre_frequencies_bcd` entry.
     pub coding_type: CodingType,

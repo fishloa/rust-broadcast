@@ -33,7 +33,7 @@ pub const SUBCELL_LEN: usize = 5;
 
 /// One transposer sub-cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CellFrequencyLinkSubcell {
     /// 8-bit cell_id_extension.
     pub cell_id_extension: u8,
@@ -43,7 +43,7 @@ pub struct CellFrequencyLinkSubcell {
 
 /// One cell-frequency association with its sub-cell list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CellFrequencyLinkEntry {
     /// 16-bit cell_id.
     pub cell_id: u16,
@@ -55,7 +55,7 @@ pub struct CellFrequencyLinkEntry {
 
 /// Cell Frequency Link Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CellFrequencyLinkDescriptor {
     /// Outer cell entries in wire order.
     pub entries: Vec<CellFrequencyLinkEntry>,
@@ -361,7 +361,7 @@ mod tests {
             }],
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: CellFrequencyLinkDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, d);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

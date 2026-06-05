@@ -16,7 +16,7 @@ const LANG_LEN: usize = 3;
 
 /// One teletext component.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TeletextEntry {
     /// ISO 639-2 language code of this teletext service.
     pub language_code: LangCode,
@@ -30,7 +30,7 @@ pub struct TeletextEntry {
 
 /// Teletext Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TeletextDescriptor {
     /// Teletext components listed in wire order.
     pub entries: Vec<TeletextEntry>,

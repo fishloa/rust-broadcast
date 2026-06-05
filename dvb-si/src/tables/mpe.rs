@@ -69,7 +69,7 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 /// (`MAC_1..MAC_6`, most-significant first), so `mac_address[0]` is `MAC_1`
 /// and `mac_address[5]` is `MAC_6`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MpeDatagramSection<'a> {
     /// `section_syntax_indicator` bit. When `true` the trailer is a computed
     /// `CRC_32`; when `false` it is an ISO/IEC 13818-6 checksum preserved
@@ -109,7 +109,6 @@ pub struct MpeDatagramSection<'a> {
     /// IP datagram bytes — plus any trailing `stuffing_byte`s — kept as one
     /// borrowed slice running from byte 12 to the 4-byte trailer. We do not
     /// parse LLC/SNAP or IP, nor split out stuffing (EN 301 192 §7.1).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: &'a [u8],
 
     /// Verbatim trailer bytes when `section_syntax_indicator == false` (an

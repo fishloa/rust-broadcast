@@ -1,4 +1,10 @@
-# Migrating `dvb-si` 2.x → 3.0
+# Migrating `dvb-si` 2.x → 3.0.x
+
+> **3.0.1 note.** 3.0.1 effectively replaces 3.0.0 (yanked). On top of the 3.0.0
+> changes below it adds two breaks: serde is now **Serialize-only** across the
+> whole workspace (all `Deserialize` derives/impls removed — see §5) and the SIT
+> **service loop is now typed** (`Vec<SitService>` instead of a raw `&[u8]` —
+> see §6). Everything in §§1–4 still applies.
 
 3.0 finishes the `DvbText` story for descriptor loops. In 2.0, individual text
 fields became [`text::DvbText`] (decode on demand, serialize as decoded UTF-8).
@@ -73,8 +79,9 @@ These are **not** flat SI descriptor loops, so they remain raw byte slices:
   descriptor sequences.
 - `rct.link_info_loop` — link_info() entries (their own 12-bit-length framing).
 - `rnt.resolution_providers` — resolution-provider records.
-- `sit.service_loop` — per-service records (`service_id` + `running_status` +
-  inner descriptor loop), now a borrowed `&'a [u8]` (was `Vec<u8>`).
+
+(In **3.0.0** `sit.service_loop` was a borrowed `&'a [u8]`. In **3.0.1** it
+became the typed `Sit.services: Vec<SitService>` — see §6.)
 
 ## 2. Three tables moved from owned to borrowed
 
@@ -149,9 +156,63 @@ As in 2.0, the **variant key** is camelCase (`service`, `shortEvent`) while the
 inner struct **field names stay snake_case** (`service_name`, `provider_name`) —
 only `AnyDescriptor` carries `rename_all = "camelCase"`.
 
+## 5. serde is Serialize-only across the whole workspace (3.0.1)
+
+JSON is a **display/export format only**. As of 3.0.1, **every** `Deserialize`
+derive and impl is removed from `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, and
+`dvb-common`. Parsing FROM JSON is deliberately unsupported — to reconstruct a
+value, re-`parse` the wire bytes. `Serialize` is unchanged: every table,
+descriptor, and payload still serializes exactly as before.
+
+```rust
+// 3.0.0 — owned/plain tables still round-tripped through JSON
+let pat: Pat = serde_json::from_str(&json)?;   // 3.0.1: no longer compiles
+
+// 3.0.1 — serialize for display/export; reconstruct by re-parsing wire bytes
+let json = serde_json::to_string(&pat)?;       // Serialize: unchanged
+let pat  = Pat::parse(&section_bytes)?;         // Parse, not Deserialize
+```
+
+This also removes the manual `Deserialize` impl for `text::LangCode` and the
+now-dead `serde(borrow)` / `serde(bound(deserialize = …))` attributes (they only
+served the derived `Deserialize`). Types that still derived `Deserialize` in
+3.0.0 — plain enums (`SdtKind`, …), value structs (`PatEntry`,
+`ParentalRatingDescriptor`, `RealTimeParameters`, …) and the `dvb-t2mi` /
+`dvb-bbframe` owned types — are now `Serialize` only.
+
+## 6. SIT service loop is typed (3.0.1, #23)
+
+The SIT per-service loop, raw `&'a [u8]` in 3.0.0, is now a typed
+`Vec<SitService>` — mirroring `SdtService` and completing table consistency.
+
+```rust
+// 3.0.0 — raw bytes, walk them yourself
+let sit = Sit::parse(&section)?;
+let loop_bytes: &[u8] = sit.service_loop;
+
+// 3.0.1 — typed entries
+let sit = Sit::parse(&section)?;
+for svc in &sit.services {                       // Vec<SitService<'a>>
+    println!("service {} status {}", svc.service_id, svc.running_status);
+    for d in svc.descriptors.iter() { /* typed AnyDescriptor */ }
+}
+```
+
+```rust
+pub struct SitService<'a> {
+    pub service_id: u16,
+    pub running_status: u8,          // 3 bits
+    pub descriptors: DescriptorLoop<'a>,
+}
+```
+
+The JSON shape changes accordingly: `service_loop` (a raw byte array) is gone;
+`services` is now an array of typed objects, each with its own typed
+`descriptors` sequence (same shape as `SdtService`).
+
 ---
 
-See `CHANGELOG.md` for the complete 3.0.0 entry and the
+See `CHANGELOG.md` for the complete 3.0.x entries and the
 [crate docs](https://docs.rs/dvb-si) for the full API. The 2.0 guide
 ([MIGRATION-2.0.md](MIGRATION-2.0.md)) is unchanged and still applies for the
 1.x → 2.0 jump.

@@ -14,7 +14,7 @@ const FIXED_FIELDS_LEN: usize = 7;
 
 /// Linkage Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LinkageDescriptor<'a> {
     /// transport_stream_id of the linked-to TS.
     pub transport_stream_id: u16,
@@ -28,7 +28,6 @@ pub struct LinkageDescriptor<'a> {
     /// 0x06 data_broadcast, 0x07 RCS_map, 0x08 mobile_hand-over, etc.
     pub linkage_type: u8,
     /// Raw private_data_byte tail — interpretation depends on linkage_type.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
 }
 

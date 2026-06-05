@@ -56,6 +56,13 @@
 //! A complete, working version of this chain (synthetic fixture, every layer
 //! built and asserted) lives in `dvb-t2mi/tests/chain.rs`.
 //!
+//! # Features
+//!
+//! | Feature | Default | Enables |
+//! |---|---|---|
+//! | `ts` | on | [`pump::T2miPump`] — PID-filtered TS reassembly + CRC validation. Off → bring your own complete T2-MI packet bytes. |
+//! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every packet/payload type. |
+//!
 //! # Header-only example
 //!
 //! ```

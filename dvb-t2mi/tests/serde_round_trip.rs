@@ -1,15 +1,9 @@
 //! Serde coverage for the dvb_t2mi types.
 //!
-//! Owned types (no `&'a [u8]` fields) are exercised with a full
-//! `to_string` -> `from_str` JSON round-trip and `assert_eq!`.
-//!
-//! Borrowed types cannot do a true JSON round-trip: JSON encodes `&[u8]`
-//! as an array of integers, which is not contiguous in the wire form and
-//! therefore cannot be borrowed back during deserialize. For those, this
-//! file constructs the struct directly, calls `serde_json::to_string`,
-//! and verifies the output is valid JSON containing the wire-relevant
-//! top-level fields. Round-trip via a borrowing-friendly format
-//! (postcard, bincode) is a separate concern.
+//! Serde is **Serialize-only** (3.0.1): JSON is a display/export format and
+//! parsing FROM JSON is deliberately unsupported — re-parse from wire bytes.
+//! Each type is serialized and its shape asserted (valid JSON with the
+//! wire-relevant fields).
 #![cfg(feature = "serde")]
 
 use dvb_t2mi::packet::{Header, PacketType};
@@ -26,10 +20,10 @@ fn assert_valid_json_with_keys(j: &str, keys: &[&str]) {
     }
 }
 
-// --- Owned types: full JSON round-trip ------------------------------------
+// --- Types: serialize emits valid JSON ------------------------------------
 
 #[test]
-fn header_round_trips_via_json() {
+fn header_serializes_to_valid_json() {
     let h = Header {
         packet_type: PacketType::BasebandFrame,
         packet_count: 0x12,
@@ -37,13 +31,14 @@ fn header_round_trips_via_json() {
         t2mi_stream_id: 5,
         payload_len_bits: 1024,
     };
-    let j = serde_json::to_string(&h).expect("serialize Header");
-    let back: Header = serde_json::from_str(&j).expect("deserialize Header");
-    assert_eq!(h, back);
+    let v = serde_json::to_value(h).expect("serialize Header");
+    assert!(v.is_object(), "expected JSON object, got {v}");
+    assert_eq!(v["packet_count"], 0x12);
+    assert_eq!(v["payload_len_bits"], 1024);
 }
 
 #[test]
-fn t2_timestamp_payload_round_trips_via_json() {
+fn t2_timestamp_payload_serializes_to_valid_json() {
     let ts = T2TimestampPayload {
         bw: Bandwidth::Mhz8,
         seconds_since_2000: 0x01_02_03_04_05,
@@ -51,12 +46,8 @@ fn t2_timestamp_payload_round_trips_via_json() {
         utco: 0x0123,
     };
     let j = serde_json::to_string(&ts).expect("serialize T2TimestampPayload");
-    let back: T2TimestampPayload =
-        serde_json::from_str(&j).expect("deserialize T2TimestampPayload");
-    assert_eq!(ts, back);
+    assert_valid_json_with_keys(&j, &["bw", "seconds_since_2000", "subseconds", "utco"]);
 }
-
-// --- Borrowed types: serialize emits valid JSON ---------------------------
 
 #[test]
 fn bbframe_payload_serializes_to_valid_json() {

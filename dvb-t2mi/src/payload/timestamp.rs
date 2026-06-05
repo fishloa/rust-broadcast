@@ -10,7 +10,7 @@ use dvb_common::{Parse, Serialize};
 
 /// Bandwidth per §5.2.7 Table 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum Bandwidth {
     /// 1.7 MHz bandwidth.
@@ -51,7 +51,7 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
 /// - subseconds (27 bits): bytes 6-8 + byte 9 `[7:5]`
 /// - utco (13 bits): byte 9 `[4:0]` + byte 10 — UTC offset in seconds
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct T2TimestampPayload {
     /// Bandwidth (determines Tsub units).
     pub bw: Bandwidth,

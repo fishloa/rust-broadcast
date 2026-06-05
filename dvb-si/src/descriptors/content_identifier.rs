@@ -22,24 +22,23 @@ const CRID_LOCATION_MASK: u8 = 0x03;
 /// (it cannot know how many bytes the entry occupies) rather than producing
 /// an un-round-trippable value.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum CridLocation<'a> {
     /// Location 0b00 — CRID carried inline as raw ASCII bytes.
-    Inline(#[cfg_attr(feature = "serde", serde(borrow))] &'a [u8]),
+    Inline(&'a [u8]),
     /// Location 0b01 — CRID reference (CIT index).
     Reference(u16),
 }
 
 /// One CRID entry within a Content Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CridEntry<'a> {
     /// crid_type byte — identifies what the entry references.
     /// Per TS 102 323 Table 8: 0x01 = episode, 0x02 = series,
     /// 0x03 = recommendation, 0x31..=0x3F = user-defined.
     pub crid_type: u8,
     /// crid_location and its payload.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub location: CridLocation<'a>,
 }
 
@@ -48,8 +47,7 @@ pub struct CridEntry<'a> {
 /// Holds a sequence of CRID entries that identify programme content
 /// for recording, scheduling, or recommendation purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ContentIdentifierDescriptor<'a> {
     /// Entries in wire order.
     pub entries: Vec<CridEntry<'a>>,

@@ -7,7 +7,7 @@ use dvb_common::{Parse, Serialize};
 /// Layout: `frame_idx(8) | rfu(17) | num_active_bias_cells_per_p2(15)` = 40 bits
 /// = 5 bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct P2BiasPayload {
     /// FRAME_IDX of the T2 frame carrying the bias balancing cells.
     pub frame_idx: u8,

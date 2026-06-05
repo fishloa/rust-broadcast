@@ -10,7 +10,7 @@ use dvb_common::{Parse, Serialize};
 
 /// S1 field (3 bits) per EN 302 755 §7.2.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum S1Field {
     /// S1 value V0.
@@ -48,7 +48,7 @@ impl From<num_enum::TryFromPrimitiveError<S1Field>> for crate::error::Error {
 
 /// FEF part: Null payload (type 0x30) per ETSI TS 102 773 §5.2.9.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FefNullPayload {
     /// FEF index within super-frame.
     pub fef_idx: u8,

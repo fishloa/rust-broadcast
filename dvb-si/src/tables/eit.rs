@@ -37,7 +37,7 @@ const EVENT_HEADER_LEN: usize = 12;
 
 /// EIT variant distinguished by table_id range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum EitKind {
     /// Present/Following, actual TS.
     PresentFollowingActual,
@@ -113,7 +113,6 @@ pub struct Eit<'a> {
     /// last_table_id (for schedule sub-table grouping).
     pub last_table_id: u8,
     /// Events in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub events: Vec<EitEvent<'a>>,
 }
 

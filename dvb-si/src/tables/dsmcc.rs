@@ -27,7 +27,7 @@ const CRC_LEN: usize = 4;
 /// A DSM-CC section — minimal wrapper that validates header framing
 /// and carries the raw payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DsmccSection<'a> {
     /// The table_id byte (0x3A..=0x3F).
     pub table_id: u8,
@@ -42,7 +42,6 @@ pub struct DsmccSection<'a> {
     /// last_section_number.
     pub last_section_number: u8,
     /// Raw payload bytes (everything between the extension header and the CRC).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: &'a [u8],
 }
 

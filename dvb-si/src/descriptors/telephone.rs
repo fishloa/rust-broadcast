@@ -39,27 +39,21 @@ const MAX_CORE_NUMBER: usize = 0x0F; // 4 bits
 
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TelephoneDescriptor<'a> {
     /// When true, the number may be dialled from outside the prefix's country.
     pub foreign_availability: bool,
     /// 5-bit connection_type (meaning out of scope of EN 300 468).
     pub connection_type: u8,
     /// country_prefix_char bytes (≤ 3, ISO 8859-1).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub country_prefix: &'a [u8],
     /// international_area_code_char bytes (≤ 7).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub international_area_code: &'a [u8],
     /// operator_code_char bytes (≤ 3).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub operator_code: &'a [u8],
     /// national_area_code_char bytes (≤ 7).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub national_area_code: &'a [u8],
     /// core_number_char bytes (≤ 15).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub core_number: &'a [u8],
 }
 

@@ -27,7 +27,7 @@ const RESERVED_ZERO_MASK: u8 = 0x3F;
 
 /// Optional extension carried when descriptor_length > 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AacExtension<'a> {
     /// SAOC_DE_flag — embedded SAOC-DE parametric data present (Table H.2).
     pub saoc_de_flag: bool,
@@ -35,19 +35,16 @@ pub struct AacExtension<'a> {
     /// `Some` iff AAC_type_flag was set.
     pub aac_type: Option<u8>,
     /// Trailing additional_info bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub additional_info: &'a [u8],
 }
 
 /// AAC Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(bound(deserialize = "'de: 'a")))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AacDescriptor<'a> {
     /// 8-bit profile_and_level (MPEG-4_audio_profile_and_level).
     pub profile_and_level: u8,
     /// Optional extension; `None` means the body was a single byte.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub extension: Option<AacExtension<'a>>,
 }
 

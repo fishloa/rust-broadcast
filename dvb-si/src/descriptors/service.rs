@@ -14,7 +14,7 @@ const HEADER_LEN: usize = 2;
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))] // Deserialize dropped: DvbText is serialize-only
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceDescriptor<'a> {
     /// service_type byte (ETSI Table 87).
     pub service_type: u8,

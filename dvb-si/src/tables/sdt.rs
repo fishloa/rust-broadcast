@@ -27,7 +27,7 @@ const SERVICE_HEADER_LEN: usize = 5;
 
 /// SDT kind — distinguishes `0x42` (actual) from `0x46` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum SdtKind {
     /// Services on the transport stream the receiver is tuned to.
     Actual,
@@ -73,7 +73,6 @@ pub struct Sdt<'a> {
     /// original_network_id of the described TS.
     pub original_network_id: u16,
     /// Services in wire order.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub services: Vec<SdtService<'a>>,
 }
 

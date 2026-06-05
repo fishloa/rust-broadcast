@@ -28,7 +28,7 @@ pub const CONTROL_REMOTE_ACCESS_MAX: u8 = 0b11;
 
 /// FTA Content Management Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FtaContentManagementDescriptor {
     /// 1-bit user_defined flag.
     pub user_defined: bool,
@@ -241,7 +241,7 @@ mod tests {
             do_not_apply_revocation: true,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: FtaContentManagementDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, d);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

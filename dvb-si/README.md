@@ -302,6 +302,9 @@ for service in &sdt.services {
 Default: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` (TS packet +
 `SectionReassembler`), `serde`.
 
+`serde` is **Serialize-only** — for display/export (JSON via `serde_json`);
+parsing FROM JSON is deliberately unsupported, re-parse from the wire bytes.
+
 ```toml
 dvb-si = { version = "3.0", default-features = false }  # tight build
 ```

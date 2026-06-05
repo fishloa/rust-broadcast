@@ -19,7 +19,7 @@ const FLAG_ASVC: u8 = 0x10;
 
 /// AC-3 Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ac3Descriptor<'a> {
     /// AC-3 component_type (layout per Annex D).
     pub component_type: Option<u8>,
@@ -30,7 +30,6 @@ pub struct Ac3Descriptor<'a> {
     /// Associated service id.
     pub asvc: Option<u8>,
     /// Raw trailing additional_info bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub additional_info: &'a [u8],
 }
 

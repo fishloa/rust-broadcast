@@ -19,7 +19,7 @@ pub const BODY_LEN: usize = 1;
 
 /// Ancillary Data Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AncillaryDataDescriptor {
     /// 8-bit ancillary_data_identifier flag field (Table 16).
     pub ancillary_data_identifier: u8,
@@ -160,7 +160,7 @@ mod tests {
             ancillary_data_identifier: 0xA3,
         };
         let json = serde_json::to_string(&d).unwrap();
-        let back: AncillaryDataDescriptor = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, d);
+        // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
+        let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
     }
 }

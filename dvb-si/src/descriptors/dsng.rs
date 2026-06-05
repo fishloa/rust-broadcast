@@ -16,10 +16,9 @@ pub const HEADER_LEN: usize = 2;
 
 /// DSNG Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DsngDescriptor<'a> {
     /// Raw DSNG identifier bytes (ASCII per §6.2.15).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub bytes: &'a [u8],
 }
 

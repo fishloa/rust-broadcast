@@ -13,12 +13,11 @@ use dvb_common::{Parse, Serialize};
 /// - byte 1: rfu (8 bits) — must be 0
 /// - bytes 2..: l1_future_data (variable)
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct L1FuturePayload<'a> {
     /// FRAME_IDX of T2 frame.
     pub frame_idx: u8,
     /// L1-future data containing L1DYN_NEXT, L1DYN_NEXT2, and optional in-band loops.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub l1_future_data: &'a [u8],
 }
 

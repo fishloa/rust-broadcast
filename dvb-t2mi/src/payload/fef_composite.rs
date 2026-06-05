@@ -19,7 +19,7 @@ use super::fef_null::S1Field;
 /// - bytes 2-5: rfu2 (32 bits) — must be 0
 /// - bytes 6-7: num_subparts (16 bits)
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FefCompositePayload {
     /// FEF index within super-frame.
     pub fef_idx: u8,

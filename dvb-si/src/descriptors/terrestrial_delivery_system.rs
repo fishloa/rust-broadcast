@@ -38,7 +38,7 @@ const TRAILING_RESERVED: u32 = 0xFFFF_FFFF;
 
 /// Channel bandwidth (§6.2.13.4 Table 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Bandwidth {
     /// 8 MHz.
     Mhz8,
@@ -54,7 +54,7 @@ pub enum Bandwidth {
 
 /// Constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Constellation {
     /// QPSK.
     Qpsk,
@@ -68,7 +68,7 @@ pub enum Constellation {
 
 /// Hierarchy mode — combines native/in-depth interleaver and α.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Hierarchy {
     /// Non-hierarchical + native.
     NonHierarchicalNative,
@@ -92,7 +92,7 @@ pub enum Hierarchy {
 
 /// Convolutional code rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum CodeRate {
     /// 1/2.
     Rate1_2,
@@ -110,7 +110,7 @@ pub enum CodeRate {
 
 /// Guard interval fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum GuardInterval {
     /// 1/32.
     G1_32,
@@ -124,7 +124,7 @@ pub enum GuardInterval {
 
 /// Transmission mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum TransmissionMode {
     /// 2k mode.
     Mode2k,
@@ -138,7 +138,7 @@ pub enum TransmissionMode {
 
 /// Terrestrial Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TerrestrialDeliverySystemDescriptor {
     /// Centre frequency in units of 10 Hz.
     pub centre_frequency_10hz: u32,

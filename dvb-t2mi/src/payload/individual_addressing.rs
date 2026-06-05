@@ -11,7 +11,7 @@ use dvb_common::{Parse, Serialize};
 
 /// Function tags per §5.2.8.2 Table 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 pub enum AddressingFunctionTag {
     /// Transmitter time offset.
@@ -73,12 +73,11 @@ impl fmt::Display for AddressingFunctionTag {
 
 /// A single function entry within individual addressing.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FunctionEntry<'a> {
     /// Function tag identifying the entry type.
     pub tag: AddressingFunctionTag,
     /// Raw function body (including tag + length bytes).
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub raw: &'a [u8],
 }
 
@@ -91,13 +90,12 @@ pub struct FunctionEntry<'a> {
 ///   `tx_identifier(16) · function_loop_length(8) · function()…`. The tx_identifier
 ///   lives INSIDE each entry, not at the top level; the loop is kept raw here.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct IndividualAddressingPayload<'a> {
     /// Reserved-for-future-use byte (byte 0); preserved verbatim for round-trip.
     pub rfu: u8,
     /// Raw individual_addressing_data loop. Length is the 8-bit
     /// `individual_addressing_length` field, derived from this slice on serialize.
-    #[cfg_attr(feature = "serde", serde(borrow))]
     pub individual_addressing_data: &'a [u8],
 }
 
