@@ -1,5 +1,75 @@
 # Changelog
 
+## 2.0.0 — 2026-06-05
+
+Typed, trait-driven client API: feed 188-byte TS packets, get decoded `SectionEvent`s
+with structured typed tables and descriptors. See [`MIGRATION-2.0.md`](MIGRATION-2.0.md)
+for every breaking change with before/after code. Tracks issue #16.
+
+### Breaking
+
+- **`DvbText<'a>` replaces `&'a [u8]` for Annex-A text fields.** Fields such as
+  `event_name`, `service_name`, `provider_name`, `network_name`, and all multilingual
+  name fields are now `DvbText<'a>`. Call `.raw()` to recover the wire bytes, `.decode()`
+  for a `Cow<str>`, or rely on `Deref<Target=[u8]>` for length/indexing — all work as
+  before. See [MIGRATION-2.0.md §1](MIGRATION-2.0.md#1-text-fields-u8--dvbtexta).
+- **`LangCode` replaces `[u8; 3]` for language / country codes.** The raw bytes are in
+  `.0`; `as_str()` returns a lossy `Cow<str>`; `Deref<Target=[u8;3]>` still works. See
+  [MIGRATION-2.0.md §2](MIGRATION-2.0.md#2-language--country-codes-u8-3--langcode).
+- **`Deserialize` dropped on text-bearing structs.** Structs that contain `DvbText` now
+  derive `Serialize` only (re-encoding decoded UTF-8 back to DVB charset bytes is lossy).
+  Affected: `BouquetNameDescriptor`, `ComponentDescriptor`, `DataBroadcastDescriptor`,
+  `ExtendedEventDescriptor`, `ExtensionDescriptor`,
+  `MultilingualBouquetNameDescriptor`, `MultilingualComponentDescriptor`,
+  `MultilingualNetworkNameDescriptor`, `MultilingualServiceNameDescriptor`,
+  `NetworkNameDescriptor`, `ServiceDescriptor`, `ShortEventDescriptor`. See
+  [MIGRATION-2.0.md §3](MIGRATION-2.0.md#3-deserialize-dropped-on-text-bearing-structs).
+- **Subset `Descriptor` enum removed — replaced by `AnyDescriptor` + `parse_loop`.**
+  The 1.x `descriptors::Descriptor` enum (a handful of context-free tags) is gone.
+  Use `descriptors::parse_loop(loop_bytes)` for a lazy iterator that covers all
+  0x05–0x7F tags plus `Unknown` passthrough, and `AnyDescriptor` as the item type. See
+  [MIGRATION-2.0.md §4](MIGRATION-2.0.md#4-subset-descriptor-enum-removed--anydescriptor--parse_loop).
+- **serde JSON shape changed.** `DvbText` serializes as a decoded UTF-8 string (not a
+  byte array); `LangCode` serializes as a 3-char string. `AnyTable` / `AnyDescriptor`
+  use external camelCase tagging (`{"shortEvent":{…}}`); inner struct field names stay
+  `snake_case`. See
+  [MIGRATION-2.0.md §5](MIGRATION-2.0.md#5-serde-json-shape-change).
+- **`pid::well_known` constants are now `Pid` values, not `u16`.** Call `.value()` or
+  `u16::from(pid)` to recover the raw integer. See
+  [MIGRATION-2.0.md §6](MIGRATION-2.0.md#6-pidwell_known-constants-u16--pid).
+
+### Added
+
+- **`demux::SiDemux`** (feature `ts`) — PID-filtered, version-gated, PAT-following
+  section pump. Feed 188-byte TS packets with `SiDemux::feed(&packet)`, iterate over
+  `SectionEvent` values for changed sections only. Builder: `follow_pat`, `dvb_si_pids`,
+  `.pid(Pid)`, `emit_repeats`, `gate_capacity`. Stats in `SiDemux::stats()`.
+- **`demux::SectionEvent`** — owning-`Bytes` event: `.pid()`, `.table_id()`,
+  `.version()`, `.table() -> Result<AnyTable<'_>>`, `.parse::<T>()`.
+- **`tables::AnyTable`** — macro-generated dispatch enum; `AnyTable::parse(bytes)`
+  dispatches on `table_id` across all 29 implemented table types; `Unknown` fallthrough.
+  Driven by `TableDef` trait + `declare_tables!` macro (single source of truth, drift
+  tested).
+- **`descriptors::AnyDescriptor`** — macro-generated dispatch enum covering all
+  0x05–0x7F tags plus `LogicalChannel` (opt-in via `DescriptorRegistry`) and `Unknown`.
+  Driven by `DescriptorDef` trait + `declare_descriptors!` macro.
+- **`descriptors::parse_loop`** — lazy `DescriptorIter` over a raw descriptor loop.
+  Never panics; per-descriptor parse errors yield `Err` and iteration continues;
+  truncated tail yields one `Err` then fuses; unknown tags become `Unknown`.
+- **`descriptors::DescriptorRegistry`** — runtime registration of private/context-
+  dependent descriptors (`register::<T>()`); `.with_logical_channel()` enables the 0x83
+  built-in. `Other { tag, value }` variant supports `downcast_ref::<T>()`; `erased-serde`
+  serializes custom types when `serde` feature is active.
+- **`pid::Pid`** newtype — `Copy`, `Ord`, `Hash`, `Display` as `0xNNNN`; `well_known`
+  constants upgraded to this type.
+- **`examples/si_dump.rs`** — CLI demux tool: `cargo run -p dvb-si --example si_dump
+  -- file.ts [--json]`. Prints one line per changed section; `--json` emits decoded JSON.
+- **End-to-end capture tests** — `tests/demux_e2e.rs` runs the full M6 HbbTV fixture
+  through `SiDemux`, asserts typed variant coverage, double-feed produces zero events,
+  and EIT descriptor JSON contains decoded text strings.
+- **Hostility suite** — `tests/hostility.rs`: 10 000 PRNG-garbage + every truncation
+  length into `SiDemux` / `parse_loop` — no panics, counters advance. Issue #16.
+
 ## 1.1.0 — 2026-06-04
 
 **Coverage milestone: every allocated `descriptor_tag` in EN 300 468 V1.19.1

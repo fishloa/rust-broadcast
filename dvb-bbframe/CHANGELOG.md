@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-06-05
+
+Version-lockstep release with the workspace (dvb-si 2.0 typed client API);
+no functional changes.
+
 ## [1.1.0] — 2026-06-04
 
 Version-lockstep release with the workspace (dvb-si: complete EN 300 468
