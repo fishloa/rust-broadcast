@@ -42,6 +42,7 @@ $ cargo run -p dvb-si --example si_dump -- dvb-si/tests/fixtures/m6-single.ts --
   "pat": {
     "transport_stream_id": 1,
     "entries": [ { "program_number": 1025, "pid": 100 } ]
+    // … (other fields elided for brevity)
   }
 }
 ```

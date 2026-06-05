@@ -5,7 +5,7 @@ MPEG-2 PSI tables it builds on, the DVB-allocated companion tables, and the
 DSM-CC data carousel.
 
 **Complete coverage: every allocated `table_id` in EN 300 468 V1.19.1
-Table 2 (29 tables) and every allocated `descriptor_tag` in Table 12
+Table 2 (29 table types; 28 dispatched by `AnyTable` + the type-keyed MPE datagram view) and every allocated `descriptor_tag` in Table 12
 (0x40–0x7F, 64 descriptors) is implemented**, each with a symmetric
 `Parse` / `Serialize` pair and round-trip tests. Layouts are derived from the
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and

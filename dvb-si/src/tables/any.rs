@@ -69,7 +69,7 @@ macro_rules! declare_tables {
         /// Every crate-implemented table, plus an `Unknown` fallthrough.
         ///
         /// serde uses external tagging with camelCase variant keys — a parsed
-        /// PAT serializes as `{"programAssociation": {…}}`.
+        /// PAT serializes as `{"pat": {…}}`.
         /// Variant names map 1:1 to the table modules; see each module for the
         /// wire layout.
         ///
