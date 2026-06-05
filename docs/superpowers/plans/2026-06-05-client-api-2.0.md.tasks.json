@@ -65,7 +65,7 @@
     {
       "id": 8,
       "subject": "Task 8: t2mi PayloadDef + AnyPayload",
-      "status": "pending",
+      "status": "completed",
       "description": "**Goal:** declare_payloads! over 12 packet types, drift-tested.\n\n```json:metadata\n{\"files\": [\"dvb-t2mi/src/payload/any.rs\", \"dvb-t2mi/src/traits.rs\"], \"verifyCommand\": \"cargo test -p dvb-t2mi --all-features\", \"acceptanceCriteria\": [\"12 types dispatch\", \"completeness\"]}\n```"
     },
     {
@@ -106,5 +106,5 @@
       "description": "**Goal:** Lockstep 2.0.0, PR Closes #16, tag v2.0.0 -> CI publish, GitHub Release notes (no artifacts), verify crates.io + docs.rs.\n\n```json:metadata\n{\"files\": [\"dvb-si/Cargo.toml\", \"docs/release-notes/v2.0.0.md\"], \"verifyCommand\": \"cargo fmt --all --check && cargo test --workspace --all-features --locked\", \"acceptanceCriteria\": [\"gates green\", \"published x4\", \"release notes live\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T16:20:00Z"
+  "lastUpdated": "2026-06-05T17:00:00Z"
 }
