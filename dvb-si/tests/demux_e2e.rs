@@ -34,8 +34,6 @@
 use std::collections::BTreeSet;
 
 use dvb_si::demux::SiDemux;
-use dvb_si::descriptors::any::parse_loop;
-use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::pid::Pid;
 use dvb_si::tables::AnyTable;
 use dvb_si::ts::TS_PACKET_SIZE;
@@ -398,7 +396,11 @@ fn tnt_decoded_json_acceptance() {
     let mut demux = SiDemux::builder().build();
     let (_names, events) = feed_all(&mut demux, &data);
 
-    // ── SDT service_name acceptance ──────────────────────────────────────
+    // ── SDT service_name acceptance (typed loop, no manual parse_loop) ────
+    // Serialize the whole SDT TABLE with serde_json::to_value. The
+    // SdtService.descriptors field is a DescriptorLoop that serializes as the
+    // typed descriptor sequence, so the decoded service_name "TF1" must appear
+    // inside the table JSON without any manual descriptor walking.
     {
         let sdt_event = events
             .iter()
@@ -406,25 +408,28 @@ fn tnt_decoded_json_acceptance() {
             .expect("no SDT event found in tnt-5w");
 
         let sdt = Sdt::parse(sdt_event.bytes()).expect("SDT parse");
+        let table_json = serde_json::to_value(&sdt).expect("serialize SDT table");
 
+        // Find the first service descriptor's decoded service_name in the
+        // typed loop emitted by serde — purely by walking the JSON value.
         let mut found_name: Option<String> = None;
-        'sdt: for svc in &sdt.services {
-            if svc.descriptors.is_empty() {
-                continue;
-            }
-            for item in parse_loop(svc.descriptors).filter_map(|r| r.ok()) {
-                if let AnyDescriptor::Service(sd) = &item {
-                    let name = sd.service_name.decode().to_string();
+        'sdt: for svc in table_json["services"].as_array().expect("services array") {
+            for entry in svc["descriptors"].as_array().expect("typed loop array") {
+                if let Some(name) = entry
+                    .get("service")
+                    .and_then(|s| s.get("service_name"))
+                    .and_then(|v| v.as_str())
+                {
                     if !name.is_empty() {
-                        println!("tnt-5w SDT service_name: {name:?}");
-                        found_name = Some(name);
+                        println!("tnt-5w SDT service_name (via typed loop JSON): {name:?}");
+                        found_name = Some(name.to_string());
                         break 'sdt;
                     }
                 }
             }
         }
 
-        let svc_name = found_name.expect("no non-empty service_name found in tnt-5w SDT");
+        let svc_name = found_name.expect("no non-empty service_name in tnt-5w SDT table JSON");
 
         // Pinned: first service with a non-empty name in the first SDT section.
         assert_eq!(
@@ -454,7 +459,7 @@ fn tnt_decoded_json_acceptance() {
                 if ev.descriptors.is_empty() {
                     continue;
                 }
-                let items: Vec<_> = parse_loop(ev.descriptors).filter_map(|r| r.ok()).collect();
+                let items: Vec<_> = ev.descriptors.iter().filter_map(|r| r.ok()).collect();
                 let json = serde_json::to_value(&items).expect("serde_json");
                 for entry in json.as_array().unwrap() {
                     if let Some(se) = entry.get("shortEvent") {

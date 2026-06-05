@@ -7,6 +7,7 @@
 //! - `0x50..=0x5F` — Schedule sub-tables for the actual TS
 //! - `0x60..=0x6F` — Schedule sub-tables for another TS
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -68,7 +69,7 @@ impl EitKind {
 
 /// One event in the EIT.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EitEvent<'a> {
     /// 16-bit event_id.
     pub event_id: u16,
@@ -80,14 +81,14 @@ pub struct EitEvent<'a> {
     pub running_status: u8,
     /// free_CA_mode flag.
     pub free_ca_mode: bool,
-    /// Raw descriptors for this event.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Descriptor loop for this event. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// Event Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Eit<'a> {
     /// Variant based on table_id.
     pub kind: EitKind,
@@ -193,7 +194,7 @@ impl<'a> Parse<'a> for Eit<'a> {
                 duration_raw,
                 running_status,
                 free_ca_mode,
-                descriptors: &bytes[desc_start..desc_end],
+                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
             });
             pos = desc_end;
         }
@@ -258,7 +259,8 @@ impl Serialize for Eit<'_> {
                 | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 11] = (dll & 0xFF) as u8;
             let desc_start = pos + EVENT_HEADER_LEN;
-            buf[desc_start..desc_start + ev.descriptors.len()].copy_from_slice(ev.descriptors);
+            buf[desc_start..desc_start + ev.descriptors.len()]
+                .copy_from_slice(ev.descriptors.raw());
             pos = desc_start + ev.descriptors.len();
         }
 
@@ -420,7 +422,7 @@ mod tests {
         let eit = Eit::parse(&bytes).unwrap();
         assert_eq!(eit.events.len(), 1);
         assert_eq!(eit.events[0].event_id, 42);
-        assert_eq!(eit.events[0].descriptors, &desc[..]);
+        assert_eq!(eit.events[0].descriptors.raw(), &desc[..]);
     }
 
     #[test]
@@ -471,7 +473,7 @@ mod tests {
                     duration_raw: [0x00, 0x30, 0x00],
                     running_status: 4,
                     free_ca_mode: false,
-                    descriptors: &desc1,
+                    descriptors: DescriptorLoop::new(&desc1),
                 },
                 EitEvent {
                     event_id: 2,
@@ -479,7 +481,7 @@ mod tests {
                     duration_raw: [0x01, 0x00, 0x00],
                     running_status: 1,
                     free_ca_mode: true,
-                    descriptors: &[],
+                    descriptors: DescriptorLoop::new(&[]),
                 },
             ],
         };
@@ -507,7 +509,7 @@ mod tests {
             duration_raw: [0, 0, 0],
             running_status: 0,
             free_ca_mode: false,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         };
         let dt = ev.start_time().unwrap();
         use chrono::Datelike;

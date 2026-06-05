@@ -332,6 +332,116 @@ impl<'a> Iterator for DescriptorIter<'a> {
 
 impl std::iter::FusedIterator for DescriptorIter<'_> {}
 
+/// A raw descriptor loop, borrowed from the section. Zero-copy: walk it
+/// typed via [`DescriptorLoop::iter`]; serde serializes the typed walk.
+///
+/// This is the table-loop analogue of [`crate::text::DvbText`]: it wraps the
+/// raw `descriptor()` sequence (the variable-length region inside a table) and
+/// decodes — i.e. dispatches each entry to a typed [`AnyDescriptor`] — only on
+/// demand. Parsing stays zero-copy; the typed walk happens when you call
+/// [`DescriptorLoop::iter`] or serialize.
+///
+/// ```
+/// use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop};
+///
+/// // short_event (tag 0x4D, "eng" / "Hi") then an unknown private tag 0xA7.
+/// let raw = [
+///     0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00,
+///     0xA7, 0x02, 0xCA, 0xFE,
+/// ];
+/// let loop_ = DescriptorLoop::new(&raw);
+/// let items: Vec<_> = loop_.iter().collect();
+/// assert_eq!(items.len(), 2);
+/// assert!(matches!(items[0].as_ref().unwrap(), AnyDescriptor::ShortEvent(_)));
+/// assert_eq!(loop_.raw(), &raw[..]); // bytes preserved verbatim
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DescriptorLoop<'a>(&'a [u8]);
+
+impl<'a> DescriptorLoop<'a> {
+    /// Wrap a raw descriptor-loop slice (the `descriptor()` bytes only — no
+    /// enclosing length field).
+    #[must_use]
+    pub const fn new(raw: &'a [u8]) -> Self {
+        Self(raw)
+    }
+
+    /// The raw wire bytes of the loop, verbatim. These are what a serializer
+    /// writes back; use them for the byte length of the loop.
+    #[must_use]
+    pub const fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+
+    /// Lazily walk the loop, yielding one typed [`AnyDescriptor`] per entry
+    /// (or [`AnyDescriptor::Unknown`] for tags with no implementation).
+    /// Delegates to [`parse_loop`]; never panics.
+    #[must_use]
+    pub fn iter(&self) -> DescriptorIter<'a> {
+        parse_loop(self.0)
+    }
+}
+
+impl<'a> std::ops::Deref for DescriptorLoop<'a> {
+    /// Derefs to the raw wire bytes — `len()`/indexing are **byte counts for
+    /// serialization, not entry counts**. To count entries, use
+    /// [`DescriptorLoop::iter`].
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl<'a> From<&'a [u8]> for DescriptorLoop<'a> {
+    fn from(raw: &'a [u8]) -> Self {
+        Self(raw)
+    }
+}
+
+impl std::fmt::Debug for DescriptorLoop<'_> {
+    /// Cheap: prints the byte length, not the decoded entries.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DescriptorLoop(<{} bytes>)", self.0.len())
+    }
+}
+
+impl<'a> IntoIterator for &DescriptorLoop<'a> {
+    type Item = crate::Result<AnyDescriptor<'a>>;
+    type IntoIter = DescriptorIter<'a>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for DescriptorLoop<'_> {
+    /// Serializes as a sequence of the typed walk: each `Ok(d)` becomes the
+    /// [`AnyDescriptor`] (camelCase external tagging), and each `Err(e)`
+    /// becomes a `{"parseError": "<Display>"}` map — parse errors are surfaced,
+    /// never silently dropped.
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        struct Entry<'a>(crate::Result<AnyDescriptor<'a>>);
+        impl serde::Serialize for Entry<'_> {
+            fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+                match &self.0 {
+                    Ok(d) => d.serialize(s),
+                    Err(e) => {
+                        use serde::ser::SerializeMap;
+                        let mut m = s.serialize_map(Some(1))?;
+                        m.serialize_entry("parseError", &e.to_string())?;
+                        m.end()
+                    }
+                }
+            }
+        }
+        s.collect_seq(self.iter().map(Entry))
+    }
+}
+// Deliberately NO Deserialize: the typed walk decodes DVB text and dispatches
+// per-tag — there is no lossless way to reconstruct the raw loop bytes from the
+// serialized form. Structs holding a DescriptorLoop derive Serialize only
+// (3.0 break). To reconstruct, keep the wire bytes and re-`parse` the table.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +476,63 @@ mod tests {
             items[0].as_ref().unwrap(),
             AnyDescriptor::Unknown { tag: 0x83, .. }
         ));
+    }
+
+    #[test]
+    fn descriptor_loop_iter_matches_parse_loop() {
+        let raw = [
+            0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, // short_event
+            0xA7, 0x02, 0xCA, 0xFE, // unknown 0xA7
+        ];
+        let via_loop: Vec<_> = DescriptorLoop::new(&raw)
+            .iter()
+            .map(|r| format!("{r:?}"))
+            .collect();
+        let via_fn: Vec<_> = parse_loop(&raw).map(|r| format!("{r:?}")).collect();
+        assert_eq!(via_loop, via_fn);
+        // raw()/Deref expose the wire bytes (byte length, not entry count).
+        assert_eq!(DescriptorLoop::new(&raw).raw(), &raw[..]);
+        assert_eq!(DescriptorLoop::new(&raw).len(), raw.len());
+        // IntoIterator for &DescriptorLoop.
+        let count = (&DescriptorLoop::new(&raw)).into_iter().count();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn descriptor_loop_debug_is_cheap() {
+        let raw = [0x4D, 0x02, 0x01, 0x02];
+        assert_eq!(
+            format!("{:?}", DescriptorLoop::new(&raw)),
+            "DescriptorLoop(<4 bytes>)"
+        );
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn descriptor_loop_serializes_typed_unknown_and_parse_error() {
+        // [valid short_event, unknown tag 0xA7, truncated final entry].
+        // A truncated final entry (declared len 5, only 1 body byte present)
+        // makes the walker yield a final Err → {"parseError": …}.
+        let raw = [
+            0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, // short_event
+            0xA7, 0x02, 0xCA, 0xFE, // unknown 0xA7
+            0x55, 0x05, 0x00, // parental_rating header claims 5 bytes; only 1 present
+        ];
+        let v = serde_json::to_value(DescriptorLoop::new(&raw)).unwrap();
+        let arr = v.as_array().expect("sequence");
+        assert_eq!(arr.len(), 3);
+        // 1. typed short_event under the camelCase variant key.
+        assert!(arr[0].get("shortEvent").is_some(), "got {}", arr[0]);
+        assert_eq!(arr[0]["shortEvent"]["event_name"], "Hi");
+        // 2. unknown tag carries its raw body bytes.
+        let unknown = arr[1].get("unknown").expect("unknown variant");
+        assert_eq!(unknown["tag"], 0xA7);
+        assert_eq!(unknown["body"], serde_json::json!([0xCA, 0xFE]));
+        // 3. truncated entry → parseError, never silently dropped.
+        assert!(
+            arr[2].get("parseError").is_some(),
+            "expected parseError, got {}",
+            arr[2]
+        );
     }
 }

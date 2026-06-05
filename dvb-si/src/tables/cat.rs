@@ -8,6 +8,7 @@
 //! A single-section table per CAS standard.
 
 use crate::descriptors::ca::CaDescriptor;
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -37,8 +38,8 @@ pub struct CatCaEntry {
 
 /// Conditional Access Table.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Cat {
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Cat<'a> {
     /// 5-bit version_number from the section header.
     pub version_number: u8,
     /// current_next_indicator bit.
@@ -47,14 +48,15 @@ pub struct Cat {
     pub section_number: u8,
     /// last_section_number (typically 0).
     pub last_section_number: u8,
-    /// Raw descriptor-loop bytes (byte 8 → CRC), preserved verbatim. ISO/IEC
-    /// 13818-1 §2.4.4.6 permits descriptors other than CA in this loop; keeping
-    /// the loop raw makes parse → serialize identity hold for all of them. Use
+    /// Descriptor loop (byte 8 → CRC), preserved verbatim. ISO/IEC 13818-1
+    /// §2.4.4.6 permits descriptors other than CA in this loop; keeping the loop
+    /// raw makes parse → serialize identity hold for all of them. Serializes as
+    /// the typed descriptor sequence; `.raw()` yields the wire bytes. Use
     /// [`Cat::ca_descriptors`] for the typed CA (tag 0x09) view.
-    pub descriptors: Vec<u8>,
+    pub descriptors: DescriptorLoop<'a>,
 }
 
-impl Cat {
+impl<'a> Cat<'a> {
     /// Typed view of the CA descriptors (tag 0x09) in the descriptor loop.
     /// Non-CA descriptors are skipped; a truncated trailing descriptor ends
     /// the walk.
@@ -84,7 +86,7 @@ impl Cat {
     }
 }
 
-impl<'a> Parse<'a> for Cat {
+impl<'a> Parse<'a> for Cat<'a> {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -130,12 +132,12 @@ impl<'a> Parse<'a> for Cat {
             current_next_indicator,
             section_number,
             last_section_number,
-            descriptors: bytes[8..descriptors_end].to_vec(),
+            descriptors: DescriptorLoop::new(&bytes[8..descriptors_end]),
         })
     }
 }
 
-impl Serialize for Cat {
+impl Serialize for Cat<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
@@ -161,7 +163,8 @@ impl Serialize for Cat {
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[desc_start..desc_start + self.descriptors.len()].copy_from_slice(&self.descriptors);
+        buf[desc_start..desc_start + self.descriptors.len()]
+            .copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
@@ -169,12 +172,12 @@ impl Serialize for Cat {
     }
 }
 
-impl<'a> Table<'a> for Cat {
+impl<'a> Table<'a> for Cat<'a> {
     const TABLE_ID: u8 = TABLE_ID;
     const PID: u16 = PID;
 }
 
-impl<'a> crate::traits::TableDef<'a> for Cat {
+impl<'a> crate::traits::TableDef<'a> for Cat<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "CONDITIONAL_ACCESS";
 }
@@ -283,11 +286,11 @@ mod tests {
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[1].ca_system_id, 0x0650);
         // The unknown descriptor survives the round trip verbatim.
-        assert_eq!(cat.descriptors, desc);
+        assert_eq!(cat.descriptors.raw(), desc);
         let mut buf = vec![0u8; cat.serialized_len()];
         cat.serialize_into(&mut buf).unwrap();
         let re = Cat::parse(&buf).unwrap();
-        assert_eq!(re.descriptors, desc);
+        assert_eq!(re.descriptors.raw(), desc);
     }
 
     #[test]
@@ -295,7 +298,8 @@ mod tests {
         let mut desc = Vec::new();
         desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
         desc.extend_from_slice(&ca_descriptor(0x0650, 0x0062));
-        let cat = Cat::parse(&build_cat(3, &desc)).unwrap();
+        let bytes = build_cat(3, &desc);
+        let cat = Cat::parse(&bytes).unwrap();
         let mut buf = vec![0u8; cat.serialized_len()];
         cat.serialize_into(&mut buf).unwrap();
         assert_eq!(Cat::parse(&buf).unwrap(), cat);
@@ -303,14 +307,23 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<Cat as Table>::TABLE_ID, 0x01);
-        assert_eq!(<Cat as Table>::PID, 0x0001);
+        assert_eq!(<Cat<'_> as Table>::TABLE_ID, 0x01);
+        assert_eq!(<Cat<'_> as Table>::PID, 0x0001);
     }
 
+    /// CAT now borrows its descriptor loop (3.0): the loop serializes as the
+    /// typed descriptor sequence and the struct is serialize-only (no
+    /// Deserialize). Verify the CA descriptor decodes inside the JSON.
     #[test]
-    fn serde_json_round_trip() {
-        let cat = Cat::parse(&build_cat(1, &ca_descriptor(0x0500, 0x0050))).unwrap();
-        let j = serde_json::to_string(&cat).unwrap();
-        assert_eq!(serde_json::from_str::<Cat>(&j).unwrap(), cat);
+    fn serde_json_serializes_typed_loop() {
+        let bytes = build_cat(1, &ca_descriptor(0x0500, 0x0050));
+        let cat = Cat::parse(&bytes).unwrap();
+        let v = serde_json::to_value(&cat).unwrap();
+        let loop_ = v["descriptors"]
+            .as_array()
+            .expect("typed descriptor sequence");
+        assert_eq!(loop_.len(), 1);
+        assert_eq!(loop_[0]["ca"]["ca_system_id"], 0x0500);
+        assert_eq!(loop_[0]["ca"]["ca_pid"], 0x0050);
     }
 }

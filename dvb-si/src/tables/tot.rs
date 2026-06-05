@@ -9,6 +9,7 @@
 //! [`crate::section::Section`] short-form path — it would fold the CRC into
 //! the payload. Parse with [`Tot::parse`] directly.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -25,13 +26,15 @@ const CRC_LEN: usize = 4;
 
 /// Time Offset Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Tot<'a> {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS).
     pub utc_time_raw: [u8; 5],
     /// Raw descriptor bytes (typically local_time_offset_descriptor tag 0x58).
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 impl<'a> Parse<'a> for Tot<'a> {
@@ -73,7 +76,7 @@ impl<'a> Parse<'a> for Tot<'a> {
         }
         Ok(Tot {
             utc_time_raw,
-            descriptors: &bytes[d_start..d_end],
+            descriptors: DescriptorLoop::new(&bytes[d_start..d_end]),
         })
     }
 }
@@ -102,7 +105,7 @@ impl Serialize for Tot<'_> {
         buf[8] = 0xF0 | ((dl >> 8) as u8 & 0x0F);
         buf[9] = (dl & 0xFF) as u8;
         let d_end = 10 + self.descriptors.len();
-        buf[10..d_end].copy_from_slice(self.descriptors);
+        buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
@@ -145,7 +148,7 @@ mod tests {
         let bytes = build_tot(&[]);
         let tot = Tot::parse(&bytes).unwrap();
         assert_eq!(tot.utc_time_raw, [0xE4, 0x09, 0x12, 0x34, 0x56]);
-        assert_eq!(tot.descriptors, &[] as &[u8]);
+        assert_eq!(tot.descriptors.raw(), &[] as &[u8]);
     }
 
     #[test]
@@ -156,7 +159,7 @@ mod tests {
         ];
         let bytes = build_tot(&lto);
         let tot = Tot::parse(&bytes).unwrap();
-        assert_eq!(tot.descriptors, &lto[..]);
+        assert_eq!(tot.descriptors.raw(), &lto[..]);
     }
 
     #[test]

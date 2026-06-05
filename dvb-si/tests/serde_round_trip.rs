@@ -19,6 +19,7 @@
 
 use dvb_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
+use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::{
     ait::{Ait, AitApplication, ApplicationIdentifier},
     bat::{Bat, BatTransportStream},
@@ -134,11 +135,11 @@ fn pmt_serializes_to_valid_json() {
         version_number: 0,
         current_next_indicator: true,
         pcr_pid: 0x64,
-        program_info: &[],
+        program_info: DescriptorLoop::new(&[]),
         streams: vec![PmtStream {
             stream_type: 0x02,
             elementary_pid: 0xC8,
-            es_info: &[],
+            es_info: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&pmt).expect("serialize PMT");
@@ -161,11 +162,49 @@ fn sdt_serializes_to_valid_json() {
             eit_present_following_flag: true,
             running_status: 4,
             free_ca_mode: false,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&sdt).expect("serialize SDT");
     assert_valid_json_with_keys(&j, &["kind", "transport_stream_id", "services"]);
+}
+
+/// 3.0 typed descriptor loop: an `SdtService` whose `descriptors`
+/// `DescriptorLoop` carries a service_descriptor (tag 0x48) serializes such
+/// that `services[0].descriptors[0].service.service_name` is the decoded name.
+#[test]
+fn sdt_service_descriptor_loop_serializes_decoded_name() {
+    // service_descriptor: tag 0x48, len, service_type=0x01,
+    // provider_name_length=3 "BBC", service_name_length=3 "ONE".
+    let raw_loop: &[u8] = &[
+        0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
+    ];
+    let sdt = Sdt {
+        kind: SdtKind::Actual,
+        transport_stream_id: 0x1234,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        original_network_id: 0x0020,
+        services: vec![SdtService {
+            service_id: 1,
+            eit_schedule_flag: false,
+            eit_present_following_flag: true,
+            running_status: 4,
+            free_ca_mode: false,
+            descriptors: DescriptorLoop::new(raw_loop),
+        }],
+    };
+    let v = serde_json::to_value(&sdt).expect("serialize SDT");
+    assert_eq!(
+        v["services"][0]["descriptors"][0]["service"]["service_name"],
+        "ONE"
+    );
+    assert_eq!(
+        v["services"][0]["descriptors"][0]["service"]["provider_name"],
+        "BBC"
+    );
 }
 
 #[test]
@@ -188,7 +227,7 @@ fn eit_serializes_to_valid_json() {
             duration_raw: [0x00, 0x00, 0x10],
             running_status: 4,
             free_ca_mode: false,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&eit).expect("serialize EIT");
@@ -204,11 +243,11 @@ fn nit_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        network_descriptors: &[],
+        network_descriptors: DescriptorLoop::new(&[]),
         transport_streams: vec![NitTransportStream {
             transport_stream_id: 0x1234,
             original_network_id: 0x0020,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&nit).expect("serialize NIT");
@@ -219,7 +258,7 @@ fn nit_serializes_to_valid_json() {
 fn tot_serializes_to_valid_json() {
     let tot = Tot {
         utc_time_raw: [0xDA, 0x06, 0x12, 0x34, 0x56],
-        descriptors: &[],
+        descriptors: DescriptorLoop::new(&[]),
     };
     let j = serde_json::to_string(&tot).expect("serialize TOT");
     assert_valid_json_with_keys(&j, &["utc_time_raw", "descriptors"]);
@@ -234,14 +273,14 @@ fn ait_serializes_to_valid_json() {
         test_application_flag: false,
         section_number: 0,
         last_section_number: 0,
-        common_descriptors: &[],
+        common_descriptors: DescriptorLoop::new(&[]),
         applications: vec![AitApplication {
             identifier: ApplicationIdentifier {
                 organisation_id: 0x0001_0001,
                 application_id: 0x0001,
             },
             control_code: 1,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&ait).expect("serialize AIT");
@@ -267,7 +306,7 @@ fn cat_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        descriptors: vec![0x09, 0x04, 0x06, 0x48, 0xE0, 0x50],
+        descriptors: DescriptorLoop::new(&[0x09, 0x04, 0x06, 0x48, 0xE0, 0x50]),
     };
     let j = serde_json::to_string(&cat).expect("serialize CAT");
     assert_valid_json_with_keys(&j, &["version_number", "descriptors"]);
@@ -281,7 +320,7 @@ fn tsdt_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        descriptors: vec![0x42, 0x00],
+        descriptors: DescriptorLoop::new(&[0x42, 0x00]),
     };
     let j = serde_json::to_string(&tsdt).expect("serialize TSDT");
     assert_valid_json_with_keys(&j, &["table_id_extension", "descriptors"]);
@@ -295,11 +334,11 @@ fn bat_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        bouquet_descriptors: &[],
+        bouquet_descriptors: DescriptorLoop::new(&[]),
         transport_streams: vec![BatTransportStream {
             transport_stream_id: 0x1234,
             original_network_id: 0x0020,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
     };
     let j = serde_json::to_string(&bat).expect("serialize BAT");
@@ -338,8 +377,8 @@ fn sit_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        transmission_info_descriptors: vec![],
-        service_loop: vec![],
+        transmission_info_descriptors: DescriptorLoop::new(&[]),
+        service_loop: &[],
     };
     let j = serde_json::to_string(&sit).expect("serialize SIT");
     assert_valid_json_with_keys(&j, &["table_id_extension", "service_loop"]);
@@ -371,7 +410,7 @@ fn unt_serializes_to_valid_json() {
         last_section_number: 0,
         oui: 0x00_00_01,
         processing_order: 0,
-        common_descriptors: &[],
+        common_descriptors: DescriptorLoop::new(&[]),
         platform_loop: &[],
     };
     let j = serde_json::to_string(&unt).expect("serialize UNT");
@@ -389,7 +428,7 @@ fn int_serializes_to_valid_json() {
         last_section_number: 0,
         platform_id: 0x00_00_01,
         processing_order: 0,
-        platform_descriptors: &[],
+        platform_descriptors: DescriptorLoop::new(&[]),
         loops: &[],
     };
     let j = serde_json::to_string(&int).expect("serialize INT");
@@ -408,7 +447,7 @@ fn rct_serializes_to_valid_json() {
         year_offset: 0x07D3,
         link_count: 0,
         link_info_loop: &[],
-        descriptors: &[],
+        descriptors: DescriptorLoop::new(&[]),
     };
     let j = serde_json::to_string(&rct).expect("serialize RCT");
     assert_valid_json_with_keys(&j, &["service_id", "year_offset", "link_info_loop"]);
@@ -441,7 +480,7 @@ fn rnt_serializes_to_valid_json() {
         section_number: 0,
         last_section_number: 0,
         context_id_type: 0,
-        common_descriptors: &[],
+        common_descriptors: DescriptorLoop::new(&[]),
         resolution_providers: &[],
     };
     let j = serde_json::to_string(&rnt).expect("serialize RNT");

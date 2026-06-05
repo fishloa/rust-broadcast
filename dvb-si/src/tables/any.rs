@@ -238,9 +238,9 @@ macro_rules! declare_tables {
 declare_tables! {'a;
     // MPEG-2 systems tables (ISO/IEC 13818-1).
     Pat       = [0x00..=0x00] => crate::tables::pat::Pat,
-    Cat       = [0x01..=0x01] => crate::tables::cat::Cat,
+    Cat       = [0x01..=0x01] => crate::tables::cat::Cat<'a>,
     Pmt       = [0x02..=0x02] => crate::tables::pmt::Pmt<'a>,
-    Tsdt      = [0x03..=0x03] => crate::tables::tsdt::Tsdt,
+    Tsdt      = [0x03..=0x03] => crate::tables::tsdt::Tsdt<'a>,
     // DSM-CC sections (ISO/IEC 13818-6) — 0x3E is included; the MPE typed
     // view (`MpeDatagramSection`) is reachable via `AnyTable::parse_as` or
     // `MpeDatagramSection::parse`.
@@ -267,7 +267,7 @@ declare_tables! {'a;
     ProtectionMessage    = [0x7B..=0x7B] => crate::tables::protection_message::ProtectionMessageSection<'a>,
     DownloadableFontInfo = [0x7C..=0x7C] => crate::tables::downloadable_font_info::DownloadableFontInfoSection<'a>,
     Dit       = [0x7E..=0x7E] => crate::tables::dit::Dit,
-    Sit       = [0x7F..=0x7F] => crate::tables::sit::Sit;
+    Sit       = [0x7F..=0x7F] => crate::tables::sit::Sit<'a>;
     // MPE datagram_section (ETSI EN 301 192 §7.1): table_id 0x3E overlaps
     // the DsmccSection range above, so it is NOT auto-dispatched. Use
     // `AnyTable::parse_as::<MpeDatagramSection>(bytes)` for the typed view.

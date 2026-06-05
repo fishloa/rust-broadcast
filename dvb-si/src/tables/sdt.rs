@@ -5,6 +5,7 @@
 //! split into two variants by table_id: `0x42` for the actual TS the
 //! receiver is tuned to, `0x46` for services on other TSes.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -36,7 +37,7 @@ pub enum SdtKind {
 
 /// One service entry in an SDT.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdtService<'a> {
     /// service_id (matches `program_number` in the PAT).
     pub service_id: u16,
@@ -48,14 +49,14 @@ pub struct SdtService<'a> {
     pub running_status: u8,
     /// free_CA_mode: `true` = at least one elementary stream is scrambled.
     pub free_ca_mode: bool,
-    /// Raw descriptor bytes for this service (descriptor parsing lives elsewhere).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Descriptor loop for this service (service_descriptor etc.). Serializes
+    /// as the typed descriptor sequence; `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// Service Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Sdt<'a> {
     /// Variant discriminator (table_id 0x42 vs 0x46).
     pub kind: SdtKind,
@@ -143,7 +144,7 @@ impl<'a> Parse<'a> for Sdt<'a> {
                 eit_present_following_flag,
                 running_status,
                 free_ca_mode,
-                descriptors: &bytes[desc_start..desc_end],
+                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
             });
             pos = desc_end;
         }
@@ -207,7 +208,8 @@ impl Serialize for Sdt<'_> {
                 | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 4] = (dll & 0xFF) as u8;
             let desc_start = pos + SERVICE_HEADER_LEN;
-            buf[desc_start..desc_start + svc.descriptors.len()].copy_from_slice(svc.descriptors);
+            buf[desc_start..desc_start + svc.descriptors.len()]
+                .copy_from_slice(svc.descriptors.raw());
             pos = desc_start + svc.descriptors.len();
         }
 
@@ -308,7 +310,7 @@ mod tests {
         assert_eq!(sdt.services[0].running_status, 4);
         assert!(!sdt.services[0].free_ca_mode);
         assert_eq!(
-            sdt.services[0].descriptors,
+            sdt.services[0].descriptors.raw(),
             &[0x48, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05][..]
         );
     }
@@ -374,7 +376,7 @@ mod tests {
                     eit_present_following_flag: false,
                     running_status: 4,
                     free_ca_mode: false,
-                    descriptors: &desc1,
+                    descriptors: DescriptorLoop::new(&desc1),
                 },
                 SdtService {
                     service_id: 101,
@@ -382,7 +384,7 @@ mod tests {
                     eit_present_following_flag: true,
                     running_status: 2,
                     free_ca_mode: true,
-                    descriptors: &[],
+                    descriptors: DescriptorLoop::new(&[]),
                 },
             ],
         };

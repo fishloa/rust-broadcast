@@ -5,6 +5,7 @@
 //! table is split into two variants by table_id: `0x40` for the actual
 //! TS the receiver is tuned to, `0x41` for other TSes in the same network.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -39,7 +40,7 @@ pub enum NitKind {
 
 /// One transport-stream entry inside the NIT transport_stream_loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NitTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -47,12 +48,14 @@ pub struct NitTransportStream<'a> {
     pub original_network_id: u16,
     /// Raw descriptor bytes for this transport stream.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// Network Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Nit<'a> {
     /// Variant discriminator (table_id 0x40 vs 0x41).
     pub kind: NitKind,
@@ -68,7 +71,9 @@ pub struct Nit<'a> {
     pub last_section_number: u8,
     /// Raw network-wide descriptor bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub network_descriptors: &'a [u8],
+    /// Network descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub network_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub transport_streams: Vec<NitTransportStream<'a>>,
@@ -131,7 +136,7 @@ impl<'a> Parse<'a> for Nit<'a> {
             });
         }
 
-        let network_descriptors = &bytes[network_desc_start..network_desc_end];
+        let network_descriptors = DescriptorLoop::new(&bytes[network_desc_start..network_desc_end]);
 
         // Parse transport stream loop starting after network descriptors
         let ts_loop_start = network_desc_end;
@@ -190,7 +195,7 @@ impl<'a> Parse<'a> for Nit<'a> {
             transport_streams.push(NitTransportStream {
                 transport_stream_id,
                 original_network_id,
-                descriptors: &bytes[desc_start..desc_end],
+                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
             });
 
             pos = desc_end;
@@ -260,7 +265,7 @@ impl Serialize for Nit<'_> {
 
         let net_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[net_desc_start..net_desc_start + self.network_descriptors.len()]
-            .copy_from_slice(self.network_descriptors);
+            .copy_from_slice(self.network_descriptors.raw());
 
         let ts_loop_start = net_desc_start + self.network_descriptors.len();
         let ts_loop_length: u16 = (len - ts_loop_start - 2 - CRC_LEN) as u16;
@@ -275,7 +280,8 @@ impl Serialize for Nit<'_> {
             buf[pos + 4] = 0xF0 | ((ts_dll >> 8) as u8 & 0x0F);
             buf[pos + 5] = (ts_dll & 0xFF) as u8;
             let desc_start = pos + TS_HEADER_LEN;
-            buf[desc_start..desc_start + ts.descriptors.len()].copy_from_slice(ts.descriptors);
+            buf[desc_start..desc_start + ts.descriptors.len()]
+                .copy_from_slice(ts.descriptors.raw());
             pos = desc_start + ts.descriptors.len();
         }
 
@@ -372,7 +378,7 @@ mod tests {
         let net_desc: [u8; 4] = [0x40, 0x02, 0x4E, 0x65]; // network_name descriptor
         let bytes = build_nit(NitKind::Actual, 0x0001, &net_desc, &[]);
         let nit = Nit::parse(&bytes).unwrap();
-        assert_eq!(nit.network_descriptors, &net_desc[..]);
+        assert_eq!(nit.network_descriptors.raw(), &net_desc[..]);
     }
 
     #[test]
@@ -395,7 +401,7 @@ mod tests {
         assert_eq!(nit.transport_streams[0].transport_stream_id, 0x1234);
         assert_eq!(nit.transport_streams[0].original_network_id, 0x0020);
         assert_eq!(
-            nit.transport_streams[0].descriptors,
+            nit.transport_streams[0].descriptors.raw(),
             &[0x43, 0x07, 0x0B, 0xB8, 0x00, 0x02, 0x00, 0x05][..]
         );
         assert_eq!(nit.transport_streams[1].transport_stream_id, 0x5678);
@@ -421,17 +427,17 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            network_descriptors: &net_desc,
+            network_descriptors: DescriptorLoop::new(&net_desc),
             transport_streams: vec![
                 NitTransportStream {
                     transport_stream_id: 0x1234,
                     original_network_id: 0x0020,
-                    descriptors: &ts_desc,
+                    descriptors: DescriptorLoop::new(&ts_desc),
                 },
                 NitTransportStream {
                     transport_stream_id: 0x5678,
                     original_network_id: 0x0020,
-                    descriptors: &[],
+                    descriptors: DescriptorLoop::new(&[]),
                 },
             ],
         };
@@ -474,7 +480,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            network_descriptors: &[],
+            network_descriptors: DescriptorLoop::new(&[]),
             transport_streams: vec![],
         };
         let mut buf = vec![0u8; 2];

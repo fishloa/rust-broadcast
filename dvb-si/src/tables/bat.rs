@@ -5,6 +5,7 @@
 //! table_id 0x4A. Structure mirrors NIT: bouquet-level descriptors +
 //! transport_stream loop with per-TS descriptors.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -26,7 +27,7 @@ const TS_HEADER_LEN: usize = 6;
 
 /// One transport-stream entry inside the BAT transport_stream_loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct BatTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -34,12 +35,14 @@ pub struct BatTransportStream<'a> {
     pub original_network_id: u16,
     /// Raw descriptor bytes for this transport stream.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Bat<'a> {
     /// Bouquet identifier (table_id_extension at bytes 3-4).
     pub bouquet_id: u16,
@@ -53,7 +56,9 @@ pub struct Bat<'a> {
     pub last_section_number: u8,
     /// Raw bouquet-descriptor bytes (may contain bouquet_name_descriptor 0x47).
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub bouquet_descriptors: &'a [u8],
+    /// Bouquet descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub bouquet_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub transport_streams: Vec<BatTransportStream<'a>>,
@@ -134,7 +139,7 @@ impl<'a> Parse<'a> for Bat<'a> {
             });
         }
 
-        let bouquet_descriptors = &bytes[bouquet_desc_start..bouquet_desc_end];
+        let bouquet_descriptors = DescriptorLoop::new(&bytes[bouquet_desc_start..bouquet_desc_end]);
 
         // Transport stream loop: starts right after bouquet_descriptors.
         // First 2 bytes: reserved(4) | transport_stream_loop_length(12).
@@ -189,7 +194,7 @@ impl<'a> Parse<'a> for Bat<'a> {
             transport_streams.push(BatTransportStream {
                 transport_stream_id,
                 original_network_id,
-                descriptors: &bytes[desc_start..desc_end],
+                descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
             });
 
             pos = desc_end;
@@ -257,7 +262,7 @@ impl Serialize for Bat<'_> {
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[bouquet_desc_start..bouquet_desc_start + self.bouquet_descriptors.len()]
-            .copy_from_slice(self.bouquet_descriptors);
+            .copy_from_slice(self.bouquet_descriptors.raw());
 
         let ts_loop_start = bouquet_desc_start + self.bouquet_descriptors.len();
         let ts_loop_length: u16 = (len - ts_loop_start - 2 - CRC_LEN) as u16;
@@ -272,7 +277,8 @@ impl Serialize for Bat<'_> {
             buf[pos + 4] = 0xF0 | ((tdl >> 8) as u8 & 0x0F);
             buf[pos + 5] = (tdl & 0xFF) as u8;
             let desc_start = pos + TS_HEADER_LEN;
-            buf[desc_start..desc_start + ts.descriptors.len()].copy_from_slice(ts.descriptors);
+            buf[desc_start..desc_start + ts.descriptors.len()]
+                .copy_from_slice(ts.descriptors.raw());
             pos = desc_start + ts.descriptors.len();
         }
 
@@ -314,7 +320,7 @@ mod tests {
             .map(|(tsid, onid, d)| BatTransportStream {
                 transport_stream_id: *tsid,
                 original_network_id: *onid,
-                descriptors: d,
+                descriptors: DescriptorLoop::new(d),
             })
             .collect();
         let bat = Bat {
@@ -323,7 +329,7 @@ mod tests {
             current_next_indicator: true,
             section_number,
             last_section_number,
-            bouquet_descriptors: bouquet_desc,
+            bouquet_descriptors: DescriptorLoop::new(bouquet_desc),
             transport_streams: ts_streams,
         };
         let mut buf = vec![0u8; bat.serialized_len()];
@@ -385,7 +391,7 @@ mod tests {
         let private_desc: Vec<u8> = vec![0x80, 0x04, 0xDE, 0xAD, 0xBE, 0xEF];
         let bytes = build_bat(0x0001, 0, 0, 0, &private_desc, &[]);
         let bat = Bat::parse(&bytes).unwrap();
-        assert_eq!(bat.bouquet_descriptors, &private_desc[..]);
+        assert_eq!(bat.bouquet_descriptors.raw(), &private_desc[..]);
     }
 
     #[test]
@@ -410,7 +416,7 @@ mod tests {
         assert_eq!(bat.transport_streams[0].transport_stream_id, 0x1234);
         assert_eq!(bat.transport_streams[0].original_network_id, 0x0020);
         assert_eq!(
-            bat.transport_streams[0].descriptors,
+            bat.transport_streams[0].descriptors.raw(),
             &[0x43, 0x07, 0x0B, 0xB8, 0x00, 0x02, 0x00, 0x05][..]
         );
         assert_eq!(bat.transport_streams[1].transport_stream_id, 0x5678);
@@ -434,17 +440,17 @@ mod tests {
             current_next_indicator: true,
             section_number: 1,
             last_section_number: 2,
-            bouquet_descriptors: &name_desc,
+            bouquet_descriptors: DescriptorLoop::new(&name_desc),
             transport_streams: vec![
                 BatTransportStream {
                     transport_stream_id: 0x1234,
                     original_network_id: 0x0020,
-                    descriptors: &ts_desc,
+                    descriptors: DescriptorLoop::new(&ts_desc),
                 },
                 BatTransportStream {
                     transport_stream_id: 0x5678,
                     original_network_id: 0x0020,
-                    descriptors: &[],
+                    descriptors: DescriptorLoop::new(&[]),
                 },
             ],
         };
@@ -490,7 +496,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            bouquet_descriptors: &[],
+            bouquet_descriptors: DescriptorLoop::new(&[]),
             transport_streams: vec![],
         };
         let mut buf = vec![0u8; 2];

@@ -13,6 +13,7 @@
 //!   reserved_future_use(4) | descriptor_loop_length(12) | descriptors |
 //!   CRC_32(32)
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -61,7 +62,7 @@ const MIN_SECTION_LEN: usize =
 /// The `descriptors` field holds the raw bytes of the trailing descriptor loop.
 /// Neither is parsed further; the integrator walks them using the spec tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Rct<'a> {
     /// `table_id_extension_flag` (bit 6 of byte 1).
     ///
@@ -102,10 +103,10 @@ pub struct Rct<'a> {
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub link_info_loop: &'a [u8],
 
-    /// Raw bytes of the trailing descriptor loop
+    /// Trailing descriptor loop
     /// (`for k=0; k<descriptor_loop_length` from §10.4.2 Table 109).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Serializes as the typed descriptor sequence; `.raw()` yields the bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 // ── Parse ────────────────────────────────────────────────────────────────────
@@ -210,7 +211,7 @@ impl<'a> Parse<'a> for Rct<'a> {
             });
         }
 
-        let descriptors = &bytes[desc_start..desc_end];
+        let descriptors = DescriptorLoop::new(&bytes[desc_start..desc_end]);
 
         Ok(Rct {
             table_id_extension_flag,
@@ -294,7 +295,7 @@ impl Serialize for Rct<'_> {
 
         let desc_start = loop_end + DESC_LOOP_LEN_FIELD;
         let desc_end = desc_start + self.descriptors.len();
-        buf[desc_start..desc_end].copy_from_slice(self.descriptors);
+        buf[desc_start..desc_end].copy_from_slice(self.descriptors.raw());
 
         // CRC-32: compute over everything up to (but not including) the CRC slot.
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..desc_end]);
@@ -349,7 +350,7 @@ mod tests {
             year_offset,
             link_count,
             link_info_loop: link_info_loop_bytes,
-            descriptors,
+            descriptors: DescriptorLoop::new(descriptors),
         };
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
@@ -372,7 +373,7 @@ mod tests {
         assert_eq!(rct.year_offset, 0x07D3);
         assert_eq!(rct.link_count, 0);
         assert_eq!(rct.link_info_loop, &[] as &[u8]);
-        assert_eq!(rct.descriptors, &[] as &[u8]);
+        assert_eq!(rct.descriptors.raw(), &[] as &[u8]);
     }
 
     #[test]
@@ -391,7 +392,7 @@ mod tests {
         assert_eq!(rct.version_number, 7);
         assert_eq!(rct.link_count, 1);
         assert_eq!(rct.link_info_loop, link_payload);
-        assert_eq!(rct.descriptors, desc);
+        assert_eq!(rct.descriptors.raw(), desc);
         assert_eq!(rct.section_number, 1);
         assert_eq!(rct.last_section_number, 3);
         assert_eq!(rct.year_offset, 2003);
@@ -430,7 +431,7 @@ mod tests {
             year_offset: 2024,
             link_count: 1,
             link_info_loop: link_loop,
-            descriptors: desc,
+            descriptors: DescriptorLoop::new(desc),
         };
 
         let mut buf = vec![0u8; rct.serialized_len()];
