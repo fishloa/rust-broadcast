@@ -31,3 +31,8 @@ dvb-bbframe = { path = "../dvb-bbframe" }
 default = ["ts"]
 ts      = ["dep:bytes"]
 serde   = ["dep:serde"]
+
+# t2mi_dump: pump a TS/T2-MI stream (feature `ts` for feed_ts).
+[[example]]
+name              = "t2mi_dump"
+required-features = ["ts"]

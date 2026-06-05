@@ -12,6 +12,28 @@
 //! `Err` and iteration continues; a truncated final header/body yields one
 //! final `Err` and then fuses.
 //!
+//! ```
+//! use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+//!
+//! // A two-descriptor loop: short_event (tag 0x4D, "eng" / "News") then an
+//! // unrecognised private tag 0xA7 — the walker yields a typed value for the
+//! // first and `Unknown` for the second, never panicking.
+//! let loop_bytes = [
+//!     0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, // short_event
+//!     0xA7, 0x02, 0xCA, 0xFE,                               // unknown 0xA7
+//! ];
+//! let items: Vec<_> = parse_loop(&loop_bytes).collect();
+//! assert_eq!(items.len(), 2);
+//! match items[0].as_ref().unwrap() {
+//!     AnyDescriptor::ShortEvent(se) => {
+//!         assert_eq!(se.language_code.as_str(), "eng");
+//!         assert_eq!(se.event_name.decode(), "Hi");
+//!     }
+//!     other => panic!("expected ShortEvent, got {other:?}"),
+//! }
+//! assert!(matches!(items[1].as_ref().unwrap(), AnyDescriptor::Unknown { tag: 0xA7, .. }));
+//! ```
+//!
 //! # Adding a descriptor
 //!
 //! 1. Create the module with the wire layout, a `pub const TAG: u8`, and the

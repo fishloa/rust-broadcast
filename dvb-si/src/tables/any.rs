@@ -17,6 +17,26 @@
 //! [`crate::tables::mpe::MpeDatagramSection`] for a `0x3E` section that the
 //! default dispatcher would route to `DsmccSection`.
 //!
+//! ```
+//! use dvb_common::Serialize;
+//! use dvb_si::tables::AnyTable;
+//! use dvb_si::tables::pat::{Pat, PatEntry};
+//!
+//! // Serialize a small PAT, then dispatch the bytes back through AnyTable::parse.
+//! let pat = Pat {
+//!     transport_stream_id: 1, version_number: 0, current_next_indicator: true,
+//!     section_number: 0, last_section_number: 0,
+//!     entries: vec![PatEntry { program_number: 1, pid: 0x0100 }],
+//! };
+//! let mut section = vec![0u8; pat.serialized_len()];
+//! pat.serialize_into(&mut section).unwrap();
+//!
+//! match AnyTable::parse(&section).unwrap() {
+//!     AnyTable::Pat(parsed) => assert_eq!(parsed.entries[0].pid, 0x0100),
+//!     other => panic!("expected Pat, got {other:?}"),
+//! }
+//! ```
+//!
 //! # Adding a table
 //!
 //! 1. Create the module with the wire layout, a `pub const TABLE_ID: u8` (or

@@ -13,6 +13,25 @@
 //! "Character code table 00 - Latin alphabet with Unicode equivalents"
 //! (PDF p. 159, vendored at `specs/etsi_en_300_468_v01.19.01_dvb_si.pdf`;
 //! transcription in `dvb-si/docs/en_300_468.md`).
+//!
+//! [`DvbText`] wraps the raw wire bytes and decodes only on demand — parsing
+//! stays zero-copy; decoding happens when you call [`DvbText::decode`], `Display`,
+//! or serde:
+//!
+//! ```
+//! use dvb_si::text::{DvbText, LangCode};
+//!
+//! // Leading 0x15 is the Annex A UTF-8 selector; "café" follows.
+//! let name = DvbText::new(&[0x15, b'c', b'a', b'f', 0xC3, 0xA9]);
+//! assert_eq!(name.decode(), "café");
+//! assert_eq!(name.raw(), &[0x15, b'c', b'a', b'f', 0xC3, 0xA9]); // selector kept
+//!
+//! // A selector-less default-Latin (ISO 6937) sequence: combining acute + e → é.
+//! assert_eq!(DvbText::new(&[0xC2, b'e']).decode(), "é");
+//!
+//! // LangCode is 3 raw bytes (ISO 639-2 / ISO 3166) decoded lossily on demand.
+//! assert_eq!(LangCode(*b"fre").as_str(), "fre");
+//! ```
 
 use std::borrow::Cow;
 

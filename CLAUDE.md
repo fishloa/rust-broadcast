@@ -28,6 +28,11 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --lock
 cargo test -p dvb-si --all-features                # one crate
 cargo test -p dvb-si --test round_trip             # one integration test file
 cargo test -p dvb-si descriptors::pdc              # tests matching a path
+
+# Examples (debug CLIs):
+cargo run -p dvb-si --example si_dump -- dvb-si/tests/fixtures/m6-single.ts
+cargo run -p dvb-si --example si_dump -- dvb-si/tests/fixtures/m6-single.ts --json
+cargo run -p dvb-t2mi --example t2mi_dump -- <file.ts> [--pid 0xNNN|raw]
 ```
 
 Formatting is rustfmt-clean and CI-gated (`cargo fmt --all --check`). The deliberately column-aligned enums (`TableId`, `DescriptorTag`) carry `#[rustfmt::skip]` — keep the attribute (and the alignment) when editing them, and use the same pattern for any new aligned table. Cargo.toml manifests keep their manual column alignment (rustfmt doesn't touch them).
@@ -62,11 +67,29 @@ Every parser has a symmetric serializer and a **round-trip test** (parse → ser
 ### dvb-si layout
 
 - `tables/` — one file per table (pat, pmt, sdt, eit, nit, …). Tables expose typed header fields; descriptor loops are borrowed `&[u8]` slices the caller walks with the descriptor parsers.
-- `descriptors/` — one file per descriptor tag. Each module exports a `TAG` const, length consts, a `XxxDescriptor<'a>` struct, and the Parse/Serialize impls. The `Descriptor` enum in `descriptors/mod.rs` is **not** a full dispatcher — it only covers context-free MPEG-2 descriptors; everything else is consumed via the specific module.
+- `descriptors/` — one file per descriptor tag. Each module exports a `TAG` const, length consts, a `XxxDescriptor<'a>` struct, and the Parse/Serialize impls. `descriptors/any.rs` defines `AnyDescriptor` + `parse_loop` (the lazy descriptor-loop walker); `descriptors/registry.rs` adds `DescriptorRegistry` for private tags.
 - `carousel/` — DSM-CC DSI/DII/DDB messages + `ModuleReassembler`, layered on `tables/dsmcc.rs` section framing.
-- `text/` — EN 300 468 Annex A string decoding (default Latin table glyph-faithful to Figure A.1, ISO 8859-n, UTF-8, UCS-2).
-- `section.rs` / `ts.rs` (feature `ts`) — MPEG-TS packet handling and `SectionReassembler`.
+- `text/` — EN 300 468 Annex A string decoding. `DvbText<'a>` wraps raw wire bytes and decodes on demand (`.decode()`/`Display`/serde); `LangCode` is the 3-byte language/country newtype. Serde serializes both as decoded strings; `DvbText`-bearing structs are serialize-only.
+- `demux.rs` (feature `ts`) — `SiDemux`: PID-filtered, version-gated, PAT-following section pump. Feed 188-byte TS packets, get a `SectionEvent` per *changed* section; `event.table()` gives an `AnyTable`. `section.rs`/`ts.rs` provide the underlying TS packet handling and `SectionReassembler`.
 - Features: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts`, `serde` — all on by default; everything must also build `--no-default-features`.
+
+### Trait-driven dispatch (the `*Def` trait + `declare_*!` macro pattern)
+
+Each crate's unified dispatch enum — `dvb_si` `AnyTable`/`AnyDescriptor`,
+`dvb_t2mi` `AnyPayload` — is generated from a single declarative list (the
+`declare_tables!` / `declare_descriptors!` / `declare_payloads!` macro). One line
+per type produces the enum variant, the `From<T>` impl, the dispatcher arm, and a
+**drift test** that pins each table_id/tag/packet_type literal to the type's
+`TableDef`/`DescriptorDef`/`PayloadDef` trait const (`TABLE_ID_RANGES`/`TAG`/
+`PACKET_TYPE` + a SCREAMING_SNAKE `NAME`). The list is the single source of truth,
+so the dispatcher can never silently drift from the implemented set. To add a
+type: implement the module + the `*Def` trait, then add one line to the macro
+invocation — the integration completeness test walks the generated set
+automatically.
+
+The runnable debug CLIs (`dvb-si/examples/si_dump.rs`,
+`dvb-t2mi/examples/t2mi_dump.rs`) wire the pump → dispatch → decode story together
+with no new dependencies (plain `std::env::args`).
 
 ### Spec grounding (the project's defining discipline)
 

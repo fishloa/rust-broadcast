@@ -11,17 +11,38 @@
 //! cheap to clone; typed views ([`SectionEvent::table`],
 //! [`SectionEvent::parse`]) borrow the event lazily.
 //!
-//! ```no_run
+//! ```
+//! use dvb_common::Serialize;
 //! use dvb_si::demux::SiDemux;
 //! use dvb_si::tables::AnyTable;
+//! use dvb_si::tables::pat::{Pat, PatEntry};
+//!
+//! // Build one PAT section and wrap it in a single 188-byte TS packet so the
+//! // example is self-contained. In real code `packet` comes from your source.
+//! let pat = Pat {
+//!     transport_stream_id: 1, version_number: 0, current_next_indicator: true,
+//!     section_number: 0, last_section_number: 0,
+//!     entries: vec![PatEntry { program_number: 1, pid: 0x0100 }],
+//! };
+//! let mut section = vec![0u8; pat.serialized_len()];
+//! pat.serialize_into(&mut section).unwrap();
+//! let mut packet = [0xFFu8; 188];
+//! packet[0] = 0x47;  // sync
+//! packet[1] = 0x40;  // PUSI=1, PID hi=0
+//! packet[2] = 0x00;  // PID lo=0 (PAT)
+//! packet[3] = 0x10;  // payload only
+//! packet[4] = 0x00;  // pointer_field
+//! packet[5..5 + section.len()].copy_from_slice(&section);
 //!
 //! let mut demux = SiDemux::builder().build();
-//! let packet: [u8; 188] = [0u8; 188]; // a real TS packet from your source
-//! for event in demux.feed(&packet) {
-//!     if let Ok(AnyTable::Pat(pat)) = event.table() {
-//!         println!("PAT v{} on {}", event.version().unwrap_or(0), event.pid());
-//!         let _ = pat;
+//! let events: Vec<_> = demux.feed(&packet).collect();
+//! assert_eq!(events.len(), 1);
+//! match events[0].table() {
+//!     Ok(AnyTable::Pat(pat)) => {
+//!         println!("PAT v{} on {}", events[0].version().unwrap_or(0), events[0].pid());
+//!         assert_eq!(pat.entries[0].pid, 0x0100);
 //!     }
+//!     other => panic!("expected PAT, got {other:?}"),
 //! }
 //! ```
 //!

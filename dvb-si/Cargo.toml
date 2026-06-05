@@ -40,3 +40,8 @@ ts       = ["dep:bytes"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to chrono.
 serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde"]
+
+# si_dump: demux a .ts (feature `ts`) and emit decoded JSON (feature `serde`).
+[[example]]
+name              = "si_dump"
+required-features = ["ts", "serde"]
