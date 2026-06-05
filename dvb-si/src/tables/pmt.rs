@@ -25,6 +25,7 @@ const STREAM_HEADER_LEN: usize = 5;
 /// One elementary stream entry in the PMT's ES loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct PmtStream<'a> {
     /// MPEG-2 stream_type byte (ISO/IEC 13818-1 Table 2-34).
     pub stream_type: u8,
@@ -39,6 +40,7 @@ pub struct PmtStream<'a> {
 /// Program Map Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Pmt<'a> {
     /// Programme number from the table_id_extension field.
     pub program_number: u16,

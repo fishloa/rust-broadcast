@@ -19,6 +19,7 @@ const TEXT_LEN_FIELD: usize = 1;
 /// One localised component description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ComponentTextEntry<'a> {
     /// ISO 639-2 language code.
     pub language_code: LangCode,
@@ -29,6 +30,7 @@ pub struct ComponentTextEntry<'a> {
 /// Multilingual Component Descriptor (tag 0x5E).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct MultilingualComponentDescriptor<'a> {
     /// component_tag linking this descriptor to a stream_identifier_descriptor.
     pub component_tag: u8,

@@ -60,6 +60,7 @@ const AUTH_FIXED_PREFIX: usize = 5;
 /// `reference_length`; `hash` length is the section-wide `section_hash_length`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct SectionHashEntry<'a> {
     /// 4-bit `reference_type` (§9.4.3 Table 45): 1 = same ES, 2 = component_tag ES.
     pub reference_type: u8,
@@ -105,6 +106,7 @@ pub enum ProtectionMessageBody<'a> {
 /// carries the typed, discriminated body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ProtectionMessageSection<'a> {
     /// `table_id_extension` — `authentication_group_id` for authentication
     /// messages, `trust_message_id` (0x0100) for certificate collections.

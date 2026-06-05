@@ -27,6 +27,7 @@ const CRC_LEN: usize = 4;
 /// Time Offset Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Tot<'a> {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS).
     pub utc_time_raw: [u8; 5],

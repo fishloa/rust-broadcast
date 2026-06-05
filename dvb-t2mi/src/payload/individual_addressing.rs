@@ -74,6 +74,7 @@ impl fmt::Display for AddressingFunctionTag {
 /// A single function entry within individual addressing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct FunctionEntry<'a> {
     /// Function tag identifying the entry type.
     pub tag: AddressingFunctionTag,
@@ -91,6 +92,7 @@ pub struct FunctionEntry<'a> {
 ///   lives INSIDE each entry, not at the top level; the loop is kept raw here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct IndividualAddressingPayload<'a> {
     /// Reserved-for-future-use byte (byte 0); preserved verbatim for round-trip.
     pub rfu: u8,

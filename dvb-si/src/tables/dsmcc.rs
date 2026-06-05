@@ -28,6 +28,7 @@ const CRC_LEN: usize = 4;
 /// and carries the raw payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DsmccSection<'a> {
     /// The table_id byte (0x3A..=0x3F).
     pub table_id: u8,

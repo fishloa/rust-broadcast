@@ -70,6 +70,7 @@ impl EitKind {
 /// One event in the EIT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct EitEvent<'a> {
     /// 16-bit event_id.
     pub event_id: u16,
@@ -89,6 +90,7 @@ pub struct EitEvent<'a> {
 /// Event Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Eit<'a> {
     /// Variant based on table_id.
     pub kind: EitKind,

@@ -40,6 +40,7 @@ const MAX_CORE_NUMBER: usize = 0x0F; // 4 bits
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TelephoneDescriptor<'a> {
     /// When true, the number may be dialled from outside the prefix's country.
     pub foreign_availability: bool,

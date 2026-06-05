@@ -38,6 +38,7 @@ pub enum SdtKind {
 /// One service entry in an SDT.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct SdtService<'a> {
     /// service_id (matches `program_number` in the PAT).
     pub service_id: u16,
@@ -57,6 +58,7 @@ pub struct SdtService<'a> {
 /// Service Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Sdt<'a> {
     /// Variant discriminator (table_id 0x42 vs 0x46).
     pub kind: SdtKind,

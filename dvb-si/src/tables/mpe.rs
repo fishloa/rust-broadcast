@@ -70,6 +70,7 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 /// and `mac_address[5]` is `MAC_6`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct MpeDatagramSection<'a> {
     /// `section_syntax_indicator` bit. When `true` the trailer is a computed
     /// `CRC_32`; when `false` it is an ISO/IEC 13818-6 checksum preserved

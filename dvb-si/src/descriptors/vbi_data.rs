@@ -28,6 +28,7 @@ const MAX_SERVICE_LEN: usize = u8::MAX as usize;
 /// One VBI data service entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct VbiDataEntry<'a> {
     /// data_service_id (EN 300 468 Table 107): 0x01 = EBU teletext,
     /// 0x02 = inverted teletext, 0x04 = VPS, 0x05 = WSS, 0x06 = closed
@@ -41,6 +42,7 @@ pub struct VbiDataEntry<'a> {
 /// VBI Data Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct VbiDataDescriptor<'a> {
     /// Service entries in wire order.
     pub entries: Vec<VbiDataEntry<'a>>,

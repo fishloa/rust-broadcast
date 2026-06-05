@@ -53,6 +53,7 @@ pub enum SatTableId {
 /// body whose structure depends on [`Sat::satellite_table_id`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Sat<'a> {
     /// 6-bit discriminant selecting the body structure (see [`SatTableId`]).
     pub satellite_table_id: u8,

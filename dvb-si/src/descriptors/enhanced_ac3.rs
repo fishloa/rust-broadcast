@@ -16,6 +16,7 @@ const HEADER_LEN: usize = 2;
 /// parsing is deferred; we preserve the bytes verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct EnhancedAc3Descriptor<'a> {
     /// Raw payload (everything after the 2-byte header).
     pub body: &'a [u8],

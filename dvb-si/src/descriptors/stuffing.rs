@@ -21,6 +21,7 @@ const MAX_BODY_LEN: usize = u8::MAX as usize;
 /// opaque borrowed slice and round-trips byte-for-byte.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct StuffingDescriptor<'a> {
     /// Arbitrary stuffing bytes (any value), in wire order.
     pub stuffing_bytes: &'a [u8],

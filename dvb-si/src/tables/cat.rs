@@ -39,6 +39,7 @@ pub struct CatCaEntry {
 /// Conditional Access Table.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Cat<'a> {
     /// 5-bit version_number from the section header.
     pub version_number: u8,

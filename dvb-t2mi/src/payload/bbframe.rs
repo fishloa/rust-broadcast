@@ -12,6 +12,7 @@ use dvb_common::{Parse, Serialize};
 /// - bytes 3..: bbframe (Kbch bits) — encoded BBFRAME body
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct BbframePayload<'a> {
     /// FRAME_IDX of first T2 frame the IF is mapped to.
     pub frame_idx: u8,

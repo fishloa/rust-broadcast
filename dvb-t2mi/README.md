@@ -35,6 +35,7 @@ Each T2-MI packet is 6-byte header + variable payload + 4-byte CRC-32, encapsula
 |---------|---------|-------------|
 | `ts` | on | MPEG-2 TS reassembler (`ts::PacketReassembler`); pulls in `bytes` |
 | `serde` | off | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on the header and all payload types |
+| `yoke` | off | `yoke::Yokeable` on the zero-copy payload view types so a parsed T2-MI payload can outlive its input buffer's borrow without a re-parse |
 
 `no_std` is not yet supported (`thiserror` requires `std`).
 

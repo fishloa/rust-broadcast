@@ -103,6 +103,7 @@ pub enum FontInfo<'a> {
 /// Downloadable Font Information Section (EN 303 560 §5.3.2.3.1, Table 22).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DownloadableFontInfoSection<'a> {
     /// 9-bit `font_id_extension` — spec-mandated all-zero; together with
     /// `font_id` forms the 16-bit table_id_extension.

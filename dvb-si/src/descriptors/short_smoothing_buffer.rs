@@ -17,6 +17,7 @@ const FIXED_LEN: usize = 1;
 /// Short Smoothing Buffer Descriptor (tag 0x61).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ShortSmoothingBufferDescriptor<'a> {
     /// 2-bit sb_size (ETSI Table 95, PDF p. 103): 1 = 1 536 bytes, others reserved.
     pub sb_size: u8,

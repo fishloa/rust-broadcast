@@ -31,6 +31,7 @@ const TIME_SLICE_FEC_ID_MAX: u8 = 0x0F;
 /// Time Slice and FEC Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TimeSliceFecIdentifierDescriptor<'a> {
     /// 1-bit time_slicing flag (1 = time slicing used).
     pub time_slicing: bool,

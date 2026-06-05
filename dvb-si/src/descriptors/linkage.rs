@@ -15,6 +15,7 @@ const FIXED_FIELDS_LEN: usize = 7;
 /// Linkage Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct LinkageDescriptor<'a> {
     /// transport_stream_id of the linked-to TS.
     pub transport_stream_id: u16,

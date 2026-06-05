@@ -33,6 +33,7 @@ pub enum CridLocation<'a> {
 /// One CRID entry within a Content Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct CridEntry<'a> {
     /// crid_type byte — identifies what the entry references.
     /// Per TS 102 323 Table 8: 0x01 = episode, 0x02 = series,
@@ -48,6 +49,7 @@ pub struct CridEntry<'a> {
 /// for recording, scheduling, or recommendation purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ContentIdentifierDescriptor<'a> {
     /// Entries in wire order.
     pub entries: Vec<CridEntry<'a>>,

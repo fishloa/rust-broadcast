@@ -20,6 +20,7 @@ const FLAG_ASVC: u8 = 0x10;
 /// AC-3 Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Ac3Descriptor<'a> {
     /// AC-3 component_type (layout per Annex D).
     pub component_type: Option<u8>,

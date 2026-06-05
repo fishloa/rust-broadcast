@@ -18,6 +18,7 @@ pub const HEADER_LEN: usize = 2;
 /// Transport Stream Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TransportStreamDescriptor<'a> {
     /// Raw `byte` loop — DVB-compliance marker (conventionally `b"DVB"`).
     pub bytes: &'a [u8],

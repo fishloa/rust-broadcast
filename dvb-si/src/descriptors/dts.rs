@@ -34,6 +34,7 @@ const EXTENDED_SURROUND_MAX: u8 = 0x03; // 2 bits
 /// DTS Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DtsDescriptor<'a> {
     /// 4-bit sample_rate_code (SFREQ, Table G.2).
     pub sample_rate_code: u8,

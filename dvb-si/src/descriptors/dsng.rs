@@ -17,6 +17,7 @@ pub const HEADER_LEN: usize = 2;
 /// DSNG Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DsngDescriptor<'a> {
     /// Raw DSNG identifier bytes (ASCII per §6.2.15).
     pub bytes: &'a [u8],

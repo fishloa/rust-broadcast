@@ -19,6 +19,7 @@ const MIN_BODY_LEN: usize = 4; // ca_system_id (2) + ca_pid (2)
 /// Messages (ECMs) or Entitlement Management Messages (EMMs) can be found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct CaDescriptor<'a> {
     /// Conditional Access System ID.
     ///

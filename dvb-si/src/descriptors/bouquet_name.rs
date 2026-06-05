@@ -15,6 +15,7 @@ pub const HEADER_LEN: usize = 2;
 /// a bouquet in its BAT's `bouquet_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct BouquetNameDescriptor<'a> {
     /// DVB Annex-A encoded bouquet name (EN 300 468 §6.2.6).
     pub bouquet_name: DvbText<'a>,

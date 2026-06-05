@@ -28,6 +28,7 @@ const RESERVED_ZERO_MASK: u8 = 0x3F;
 /// Optional extension carried when descriptor_length > 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AacExtension<'a> {
     /// SAOC_DE_flag — embedded SAOC-DE parametric data present (Table H.2).
     pub saoc_de_flag: bool,
@@ -41,6 +42,7 @@ pub struct AacExtension<'a> {
 /// AAC Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AacDescriptor<'a> {
     /// 8-bit profile_and_level (MPEG-4_audio_profile_and_level).
     pub profile_and_level: u8,

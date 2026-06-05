@@ -9,6 +9,7 @@ use super::fef_null::S1Field;
 /// FEF part: I/Q data payload (type 0x31) per ETSI TS 102 773 §5.2.10.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct FefIqPayload<'a> {
     /// FEF index within super-frame.
     pub fef_idx: u8,

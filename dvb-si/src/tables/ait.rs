@@ -33,6 +33,7 @@ pub struct ApplicationIdentifier {
 /// One application entry in the AIT application loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AitApplication<'a> {
     /// Application identifier.
     pub identifier: ApplicationIdentifier,
@@ -47,6 +48,7 @@ pub struct AitApplication<'a> {
 /// Application Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Ait<'a> {
     /// 15-bit application_type (e.g. 0x0010 for HbbTV).
     pub application_type: u16,

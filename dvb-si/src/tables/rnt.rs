@@ -38,6 +38,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_FIELD
 /// loops) is not parsed further.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Rnt<'a> {
     /// 16-bit context identifier (table_id_extension at bytes 3–4).
     pub context_id: u16,

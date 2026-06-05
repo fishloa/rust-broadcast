@@ -60,6 +60,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// header and the CRC-32 trailer) without parsing its internal structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Container<'a> {
     /// `private_indicator` bit from byte 1 (this is a private section).
     pub private_indicator: bool,

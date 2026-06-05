@@ -13,6 +13,7 @@ use dvb_common::{Parse, Serialize};
 /// - bytes 8..: arbitrary_cell_data (variable I/Q pairs)
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ArbitraryCellsPayload<'a> {
     /// FRAME_IDX of T2 frame.
     pub frame_idx: u8,

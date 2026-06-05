@@ -20,6 +20,7 @@ const AUX_ID_MAX: u8 = 0x0F;
 /// - bytes 3..: aux_stream_data (variable, 12-bit I + 12-bit Q samples)
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AuxIqPayload<'a> {
     /// FRAME_IDX of the T2 frame.
     pub frame_idx: u8,

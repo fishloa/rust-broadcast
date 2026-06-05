@@ -16,6 +16,7 @@ const LANG_LEN: usize = 3;
 /// Short Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ShortEventDescriptor<'a> {
     /// ISO 639-2 language code of the event name / text.
     pub language_code: LangCode,

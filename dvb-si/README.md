@@ -271,10 +271,11 @@ for item in eit_event.descriptors.iter() {       // DescriptorLoop::iter()
 }
 ```
 
-> **Upgrading from 2.x?** Table descriptor-loop fields are now `DescriptorLoop`
-> (call `.iter()` / `.raw()`), three tables (`Cat`, `Tsdt`, `Sit`) became
-> borrowed, and those loops serialize as typed JSON arrays. See
-> **[MIGRATION-3.0.md](MIGRATION-3.0.md)**. (1.x → 2.0:
+> **Upgrading from 1.x / 2.x?** Table descriptor-loop fields are now
+> `DescriptorLoop` (call `.iter()` / `.raw()`), three tables (`Cat`, `Tsdt`,
+> `Sit`) became borrowed, serde is Serialize-only, the SIT service loop is typed,
+> and those loops serialize as typed JSON arrays. See
+> **[MIGRATION-3.1.md](MIGRATION-3.1.md)**. (1.x → 2.0:
 > [MIGRATION-2.0.md](MIGRATION-2.0.md).)
 
 ## Usage
@@ -305,8 +306,25 @@ Default: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` (TS packet +
 `serde` is **Serialize-only** — for display/export (JSON via `serde_json`);
 parsing FROM JSON is deliberately unsupported, re-parse from the wire bytes.
 
+Optional (off by default):
+
+`yoke` — `yoke::Yokeable` on every zero-copy view type plus an `Owned<T>`
+wrapper, so you can own a parsed view past the input buffer's borrow (store it
+in a struct field, a cache, a `watch`/broadcast channel, or send it across a
+thread) without re-parsing or a hand-written mirror type:
+
+```rust
+use std::sync::Arc;
+use dvb_si::{owned::Owned, tables::pmt::Pmt};
+use dvb_common::Parse;
+
+let bytes: Arc<[u8]> = Arc::from(section);             // own the section
+let pmt: Owned<Pmt<'static>> = Owned::try_new(bytes, |b| Pmt::parse(b))?;
+let view: &Pmt = pmt.get();                            // no re-parse, no lifetime
+```
+
 ```toml
-dvb-si = { version = "3.0", default-features = false }  # tight build
+dvb-si = { version = "3.1", default-features = false }  # tight build
 ```
 
 ## Family

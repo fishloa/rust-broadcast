@@ -35,6 +35,8 @@ pub const TS_SYNC_BYTE: u8 = 0x47;
 ///
 /// Each item is a `[u8; 188]` with the sync byte restored to 0x47,
 /// replacing the CRC-8 byte that occupies position 0 in the data field.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NmTsIter<'a> {
     data: &'a [u8],
     pos: usize,
@@ -81,6 +83,8 @@ impl Iterator for NmTsIter<'_> {
 /// Each item is a `[u8; 188]` with the sync byte prepended (0x47).
 /// The 187-byte user packets in the data field have no sync byte.
 /// If NPD is active, DNP bytes are skipped automatically.
+#[derive(Clone, Copy)]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct HemTsIter<'a> {
     data: &'a [u8],
     pos: usize,

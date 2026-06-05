@@ -15,6 +15,7 @@ const HEADER_LEN: usize = 2;
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceDescriptor<'a> {
     /// service_type byte (ETSI Table 87).
     pub service_type: u8,

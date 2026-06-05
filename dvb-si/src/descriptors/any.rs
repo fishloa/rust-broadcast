@@ -68,6 +68,11 @@ macro_rules! declare_descriptors {
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
         #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+        // Every variant is covariant in `$lt`: typed variants hold only
+        // lifetime-parametrised views, `Unknown` holds `&$lt [u8]`, and the
+        // `Other` value is a `'static` `Box<dyn DescriptorObject>`. The derive
+        // accepts the `'static` field unchanged, so the impl is sound.
+        #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
         #[non_exhaustive]
         pub enum AnyDescriptor<$lt> {
             $(
@@ -356,6 +361,7 @@ impl std::iter::FusedIterator for DescriptorIter<'_> {}
 /// assert_eq!(loop_.raw(), &raw[..]); // bytes preserved verbatim
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DescriptorLoop<'a>(&'a [u8]);
 
 impl<'a> DescriptorLoop<'a> {

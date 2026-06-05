@@ -36,6 +36,7 @@ const MAX_SERVICE_DESC_LEN: usize = 0x0FFF;
 /// service_descriptors_length(12) + descriptors`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct SitService<'a> {
     /// service_id of this service.
     pub service_id: u16,
@@ -49,6 +50,7 @@ pub struct SitService<'a> {
 /// Selection Information Table (§7.1.2, Table 164).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Sit<'a> {
     /// 16-bit field after section_length — reserved_future_use for the SIT
     /// (conventionally 0xFFFF); retained verbatim.

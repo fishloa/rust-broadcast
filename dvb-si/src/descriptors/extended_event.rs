@@ -20,6 +20,7 @@ const TEXT_LEN_FIELD: usize = 1;
 /// One (description, value) item — e.g. "Director" → "Alice Smith".
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ExtendedEventItem<'a> {
     /// DVB Annex-A encoded item description.
     pub description: DvbText<'a>,
@@ -30,6 +31,7 @@ pub struct ExtendedEventItem<'a> {
 /// Extended Event Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ExtendedEventDescriptor<'a> {
     /// 0-based fragment index within the extended event series.
     pub descriptor_number: u8,

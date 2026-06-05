@@ -91,6 +91,7 @@ const OFF_PLATFORM_DESC_LEN: usize = 12;
 /// described by the spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Int<'a> {
     /// Semantics of this INT announcement — 0x01 = stream announcement/location.
     pub action_type: u8,

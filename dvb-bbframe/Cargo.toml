@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-bbframe"
-version = "3.0.1"
+version = "3.1.0"
 edition = "2021"
 description = "ETSI DVB-S2 / S2X / T2 BBFrame parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -16,13 +16,19 @@ exclude = ["docs/**", "tests/fixtures/**", "TODO.md"]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "3.0" }
+dvb-common = { path = "../dvb-common", version = "3.1" }
 thiserror  = "2"
 num_enum   = "0.7"
 serde      = { version = "1", optional = true, features = ["derive"] }
+yoke       = { version = "0.7", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1.0"
 
 [features]
 serde = ["dep:serde"]
+
+# yoke::Yokeable on the zero-copy user-packet iterator view types (mirrors
+# dvb-si's `yoke` feature) — retain a parsed view past the input buffer's
+# borrow without a re-parse.
+yoke  = ["dep:yoke"]

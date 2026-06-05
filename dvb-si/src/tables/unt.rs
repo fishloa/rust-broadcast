@@ -123,6 +123,7 @@ const RESERVED_NIBBLE: u8 = 0xF0;
 ///   walk individual platform entries must parse this field manually.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Unt<'a> {
     /// Action type (Table 12 of ETSI TS 102 006):
     /// 0x01 = System Software Update, 0x80–0xFF = user defined.

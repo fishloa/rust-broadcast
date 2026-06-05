@@ -90,6 +90,7 @@ pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
 /// body bytes; decoding happens only on [`DvbText::decode`] / `Display` /
 /// serde — never in the parse hot path.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DvbText<'a>(&'a [u8]);
 
 impl<'a> DvbText<'a> {

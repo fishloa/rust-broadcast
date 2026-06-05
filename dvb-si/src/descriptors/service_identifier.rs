@@ -16,6 +16,7 @@ const HEADER_LEN: usize = 2;
 /// Service Identifier Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceIdentifierDescriptor<'a> {
     /// Raw textual_service_identifier bytes (ASCII).
     pub textual_service_identifier: &'a [u8],

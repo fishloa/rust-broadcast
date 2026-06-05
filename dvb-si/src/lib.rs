@@ -87,9 +87,10 @@
 //! | `chrono` | on | MJD + BCD time fields decode to `chrono::DateTime<Utc>` (EIT `start_time()`, TDT/TOT). Off → raw bytes. |
 //! | `ts` | on | [`demux::SiDemux`], [`ts::SectionReassembler`], TS packet parsing. Off → bring your own complete section bytes. |
 //! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
+//! | `yoke` | off | [`yoke::Yokeable`] on every zero-copy view type + the [`owned::Owned`] wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
 //!
 //! ```toml
-//! dvb-si = { version = "2.0", default-features = false }  # tight, no_std-ish build
+//! dvb-si = { version = "3.1", default-features = false }  # tight, no_std-ish build
 //! ```
 //!
 //! # Entry points
@@ -127,6 +128,9 @@ pub mod table_id;
 pub mod tables;
 pub mod text;
 pub mod traits;
+
+#[cfg(feature = "yoke")]
+pub mod owned;
 
 #[cfg(feature = "ts")]
 pub mod demux;

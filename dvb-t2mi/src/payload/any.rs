@@ -49,6 +49,9 @@ macro_rules! declare_payloads {
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
         #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+        // Covariant in `$lt`: every variant holds only lifetime-parametrised
+        // payload views or `&$lt [u8]` (`Unknown`), so the derive is sound.
+        #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
         #[non_exhaustive]
         pub enum AnyPayload<$lt> {
             $(

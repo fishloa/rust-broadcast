@@ -41,6 +41,7 @@ pub enum NitKind {
 /// One transport-stream entry inside the NIT transport_stream_loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NitTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -55,6 +56,7 @@ pub struct NitTransportStream<'a> {
 /// Network Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Nit<'a> {
     /// Variant discriminator (table_id 0x40 vs 0x41).
     pub kind: NitKind,

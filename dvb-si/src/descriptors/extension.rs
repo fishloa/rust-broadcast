@@ -181,6 +181,7 @@ pub enum ExtensionBody<'a> {
 /// T2_delivery_system body (Table 133). `cell_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct T2DeliverySystem<'a> {
     /// PLP identifier.
     pub plp_id: u8,
@@ -208,6 +209,7 @@ pub struct T2DeliverySystem<'a> {
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct SupplementaryAudio<'a> {
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
@@ -230,6 +232,7 @@ pub struct SupplementaryAudio<'a> {
 /// network_change_notify body (Table 149); `cell_loop` is the raw outer loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NetworkChangeNotify<'a> {
     /// Raw `for(cell)` loop body.
     pub cell_loop: &'a [u8],
@@ -241,6 +244,7 @@ pub struct NetworkChangeNotify<'a> {
 /// message body (Table 148).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Message<'a> {
     /// message_id(8).
     pub message_id: u8,
@@ -259,6 +263,7 @@ pub struct Message<'a> {
 /// target_region body (Table 156); `region_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TargetRegion<'a> {
     /// Leading country_code(24).
     pub country_code: LangCode,
@@ -272,6 +277,7 @@ pub struct TargetRegion<'a> {
 /// target_region_name body (Table 157); `region_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TargetRegionName<'a> {
     /// country_code(24).
     pub country_code: LangCode,
@@ -326,6 +332,7 @@ pub struct C2DeliverySystem {
 /// URI_linkage body (Table 159).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct UriLinkage<'a> {
     /// uri_linkage_type(8).
     pub uri_linkage_type: u8,
@@ -347,6 +354,7 @@ pub struct UriLinkage<'a> {
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Ac4<'a> {
     /// ac4_config_flag(1).
     pub ac4_config_flag: bool,
@@ -406,6 +414,7 @@ pub struct C2BundleDeliverySystem {
 /// S2X_satellite_delivery_system body (Table 140); `tail` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct S2XSatelliteDeliverySystem<'a> {
     /// receiver_profiles(5) — Table 141.
     pub receiver_profiles: u8,
@@ -449,6 +458,7 @@ pub struct S2XSatelliteDeliverySystem<'a> {
 /// audio_preselection body (Table 110); `preselection_loop` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AudioPreselection<'a> {
     /// num_preselections(5).
     pub num_preselections: u8,
@@ -467,6 +477,7 @@ pub struct AudioPreselection<'a> {
 /// TTML_subtitling body (EN 303 560 Table 1); `tail` is the raw remainder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TtmlSubtitling<'a> {
     /// ISO_639_language_code(24).
     pub iso_639_language_code: LangCode,
@@ -487,6 +498,7 @@ pub struct TtmlSubtitling<'a> {
 /// Extension descriptor (EN 300 468 Table 54, §6.2.18.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ExtensionDescriptor<'a> {
     /// `descriptor_tag_extension` (raw `u8`; see [`ExtensionTag`] for names).
     pub tag_extension: u8,

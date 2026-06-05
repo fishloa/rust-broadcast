@@ -17,6 +17,7 @@ const NAME_LEN_FIELD: usize = 1;
 /// One localised bouquet name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct BouquetNameEntry<'a> {
     /// ISO 639-2 language code.
     pub language_code: LangCode,
@@ -27,6 +28,7 @@ pub struct BouquetNameEntry<'a> {
 /// Multilingual Bouquet Name Descriptor (tag 0x5C).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct MultilingualBouquetNameDescriptor<'a> {
     /// Localised names in wire order.
     pub entries: Vec<BouquetNameEntry<'a>>,

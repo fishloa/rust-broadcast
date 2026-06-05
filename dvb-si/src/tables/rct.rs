@@ -63,6 +63,7 @@ const MIN_SECTION_LEN: usize =
 /// Neither is parsed further; the integrator walks them using the spec tables.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Rct<'a> {
     /// `table_id_extension_flag` (bit 6 of byte 1).
     ///

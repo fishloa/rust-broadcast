@@ -21,6 +21,7 @@ const TEXT_LEN_FIELD: usize = 1;
 /// Data Broadcast Descriptor (tag 0x64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DataBroadcastDescriptor<'a> {
     /// 16-bit data_broadcast_id (ETSI TS 101 162 registration).
     pub data_broadcast_id: u16,

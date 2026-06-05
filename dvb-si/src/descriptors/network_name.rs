@@ -15,6 +15,7 @@ pub const HEADER_LEN: usize = 2;
 /// a DVB network in its NIT's `network_descriptors_loop`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct NetworkNameDescriptor<'a> {
     /// DVB Annex-A encoded network name (EN 300 468 §6.2.28).
     pub network_name: DvbText<'a>,

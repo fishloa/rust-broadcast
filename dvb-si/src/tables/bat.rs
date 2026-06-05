@@ -28,6 +28,7 @@ const TS_HEADER_LEN: usize = 6;
 /// One transport-stream entry inside the BAT transport_stream_loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct BatTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -42,6 +43,7 @@ pub struct BatTransportStream<'a> {
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Bat<'a> {
     /// Bouquet identifier (table_id_extension at bytes 3-4).
     pub bouquet_id: u16,

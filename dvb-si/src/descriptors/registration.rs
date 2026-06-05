@@ -21,6 +21,7 @@ const FORMAT_IDENTIFIER_LEN: usize = 4;
 /// additional identification info.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct RegistrationDescriptor<'a> {
     /// 4-byte format identifier (e.g. b"AC-3", b"HDMV", b"dtsx").
     pub format_identifier: [u8; FORMAT_IDENTIFIER_LEN],

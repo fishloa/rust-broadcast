@@ -17,6 +17,7 @@ const FIXED_LEN: usize = 4;
 /// ECM Repetition Rate Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct EcmRepetitionRateDescriptor<'a> {
     /// 16-bit CA_system_ID this rate applies to.
     pub ca_system_id: u16,

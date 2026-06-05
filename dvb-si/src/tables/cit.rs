@@ -50,6 +50,7 @@ const CRC_LEN: usize = 4;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct Cit<'a> {
     /// `private_indicator` bit from byte 1.
     pub private_indicator: bool,

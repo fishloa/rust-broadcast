@@ -118,6 +118,7 @@ impl RealTimeParameters {
 /// MPE-FEC section (ETSI EN 301 192 v1.7.1 §9.9).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct MpeFec<'a> {
     /// `private_indicator` bit from byte 1 (MPE-FEC is a private section).
     pub private_indicator: bool,

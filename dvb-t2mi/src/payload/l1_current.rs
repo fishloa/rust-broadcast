@@ -44,6 +44,7 @@ impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Er
 /// - bytes 2..: l1_current_data (variable bytes)
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct L1CurrentPayload<'a> {
     /// FRAME_IDX of T2 frame where L1 is carried.
     pub frame_idx: u8,
