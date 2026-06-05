@@ -13,7 +13,7 @@
 //!    (EIT short_event is used for tnt-5w since that capture carries EIT; the
 //!    M6 capture is too short to include SDT/EIT, so the JSON test is only run
 //!    against the tnt-5w fixture).
-//! 4. PAT-follow proof: at least one `AnyTable::Pmt` event was emitted.
+//! 4. Pmt in the pinned set also proves PAT-follow (PMT PIDs are only discoverable via the PAT).
 //! 5. Stats sanity: `crc_failures` and `malformed_packets` pinned to observed
 //!    values.
 //!
@@ -108,8 +108,8 @@ fn variant_name(result: Result<&AnyTable<'_>, &dvb_si::error::Error>) -> String 
             AnyTable::Unknown { table_id, .. } => {
                 return format!("Unknown(0x{table_id:02X})");
             }
-            // non_exhaustive catch-all so new variants don't break this helper.
-            _ => "UnknownVariant",
+            // a new AnyTable variant reached the capture — pin it in the expected set
+            _ => "UNPINNED_NEW_VARIANT",
         }
         .to_string(),
     }
@@ -194,22 +194,7 @@ fn m6_table_set() {
     );
 }
 
-/// Test 2 — m6-single.ts: PAT-follow proof.
-///
-/// The PAT maps programme IDs → PMT PIDs; follow_pat auto-adds those PIDs.
-/// At least one `Pmt` event must be emitted.
-#[test]
-fn m6_pat_follow_emits_pmt() {
-    let data = read_fixture("m6-single.ts");
-    let mut demux = m6_demux();
-    let (names, _events) = feed_all(&mut demux, &data);
-    assert!(
-        names.contains("Pmt"),
-        "m6-single.ts: expected at least one Pmt event from PAT-follow, got {names:?}"
-    );
-}
-
-/// Test 3 — m6-single.ts: version-gate proof.
+/// Test 2 — m6-single.ts: version-gate proof.
 ///
 /// Feed the capture once, record emitted and sections_completed.  Feed the
 /// SAME capture again through the SAME demux.
@@ -228,6 +213,7 @@ fn m6_version_gate_suppresses_second_pass() {
     let (_names, _events) = feed_all(&mut demux, &data);
     let first_emitted = demux.stats().emitted;
     let first_sections = demux.stats().sections_completed;
+    let pre_suppressed = demux.stats().suppressed;
     println!(
         "m6 gate test: first pass emitted={first_emitted}, sections_completed={first_sections}"
     );
@@ -266,10 +252,14 @@ fn m6_version_gate_suppresses_second_pass() {
 
     // suppressed must have grown by at least first_sections (every section
     // from the second pass was gated).
-    let total_suppressed = demux.stats().suppressed;
+    let post_suppressed = demux.stats().suppressed;
     assert!(
-        total_suppressed >= first_sections,
-        "m6-single.ts: suppressed ({total_suppressed}) < first-pass sections_completed ({first_sections})"
+        post_suppressed >= pre_suppressed + first_sections,
+        "m6-single.ts: suppressed growth ({} + {} = {}) but post_suppressed = {}",
+        pre_suppressed,
+        first_sections,
+        pre_suppressed + first_sections,
+        post_suppressed
     );
 
     assert_eq!(demux.stats().emitted, first_emitted);
@@ -344,19 +334,7 @@ fn tnt_table_set() {
     );
 }
 
-/// Test 5 — tnt-5w fixture: PAT-follow proof.
-#[test]
-fn tnt_pat_follow_emits_pmt() {
-    let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
-    let (names, _events) = feed_all(&mut demux, &data);
-    assert!(
-        names.contains("Pmt"),
-        "tnt-5w: expected at least one Pmt event from PAT-follow, got {names:?}"
-    );
-}
-
-/// Test 6 — tnt-5w fixture: version-gate proof.
+/// Test 3 — tnt-5w fixture: version-gate proof.
 ///
 /// No carousel in this capture, so all SI tables are stable.  Strict zero
 /// re-emissions expected on the second pass.
@@ -398,7 +376,7 @@ fn tnt_version_gate_suppresses_second_pass() {
     assert_eq!(demux.stats().emitted, first_emitted);
 }
 
-/// Test 7 — tnt-5w fixture: decoded-JSON acceptance (issue #16).
+/// Test 4 — tnt-5w fixture: decoded-JSON acceptance (issue #16).
 ///
 /// The tnt-5w capture carries EIT p/f (table_id 0x4E). Find an EIT event
 /// with a short_event_descriptor, run `parse_loop` over its descriptor loop,
