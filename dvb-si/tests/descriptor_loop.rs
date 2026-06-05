@@ -111,3 +111,13 @@ fn loop_serializes_decoded_json() {
     assert_eq!(json[0]["shortEvent"]["event_name"], "Journal");
     assert_eq!(json[0]["shortEvent"]["language_code"], "fre");
 }
+
+/// `AnyDescriptor::name()` reflects `DescriptorDef::NAME`; UNKNOWN for unknowns.
+#[test]
+fn name_maps_variant_to_descriptordef_name() {
+    // stuffing descriptor: tag 0x42, len 1, one byte.
+    let bytes = [0x42, 0x01, 0xFF, 0xA7, 0x01, 0x00];
+    let items: Vec<_> = parse_loop(&bytes).collect();
+    assert_eq!(items[0].as_ref().unwrap().name(), "STUFFING");
+    assert_eq!(items[1].as_ref().unwrap().name(), "UNKNOWN");
+}

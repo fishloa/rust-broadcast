@@ -84,8 +84,8 @@ fn main() -> ExitCode {
 
     let print_event = |event: dvb_t2mi::pump::T2miEvent| match event.header() {
         Ok(hdr) => println!(
-            "type={:?} (0x{:02X}) count={} superframe_idx={} stream_id={} payload_bits={}",
-            hdr.packet_type,
+            "type={} (0x{:02X}) count={} superframe_idx={} stream_id={} payload_bits={}",
+            event.payload().map(|p| p.name()).unwrap_or("PARSE_ERROR"),
             event.packet_type(),
             hdr.packet_count,
             hdr.superframe_idx,

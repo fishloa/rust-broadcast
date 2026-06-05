@@ -123,6 +123,25 @@ macro_rules! declare_tables {
             pub const DISPATCHED_RANGES: &'static [(u8, u8)] =
                 &[$( $( ($lo, $hi) ),+ ),+];
 
+            /// Diagnostic name of the contained table — the type's
+            /// [`TableDef::NAME`](crate::traits::TableDef::NAME)
+            /// (`"EVENT_INFORMATION"`, `"PROGRAM_ASSOCIATION"`, …);
+            /// `"UNKNOWN"` for [`AnyTable::Unknown`].
+            #[must_use]
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$variant(_) =>
+                            <$($path)::+ as crate::traits::TableDef>::NAME,
+                    )+
+                    $($(
+                        Self::$nd_variant(_) =>
+                            <$($nd_path)::+ as crate::traits::TableDef>::NAME,
+                    )+)?
+                    Self::Unknown { .. } => "UNKNOWN",
+                }
+            }
+
             /// Dispatch one complete section by its table_id (byte 0).
             ///
             /// Returns `Err(BufferTooShort)` when `bytes` is empty.

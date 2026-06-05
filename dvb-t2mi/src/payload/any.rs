@@ -78,6 +78,21 @@ macro_rules! declare_payloads {
             /// [`AnyPayload::Unknown`]).
             pub const DISPATCHED_TYPES: &'static [u8] = &[$($ptype),+];
 
+            /// Diagnostic name of the contained payload — the type's
+            /// [`PayloadDef::NAME`](crate::traits::PayloadDef::NAME)
+            /// (`"BBFRAME"`, `"L1_CURRENT"`, …); `"UNKNOWN"` for
+            /// [`AnyPayload::Unknown`].
+            #[must_use]
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$variant(_) =>
+                            <$($path)::+ as crate::traits::PayloadDef>::NAME,
+                    )+
+                    Self::Unknown { .. } => "UNKNOWN",
+                }
+            }
+
             /// Parse one payload by its `packet_type`.
             ///
             /// `payload_bytes` must be the **payload-only slice** (bytes after
@@ -147,6 +162,20 @@ mod tests {
     use super::*;
 
     // ── Completeness ─────────────────────────────────────────────────────────
+
+    /// `AnyPayload::name()` reflects `PayloadDef::NAME`; `UNKNOWN` for unknowns.
+    #[test]
+    fn name_maps_variant_to_payloaddef_name() {
+        let bb = AnyPayload::dispatch(0x00, &[0x00, 0x00, 0x00])
+            .expect("dispatched")
+            .expect("valid bbframe payload");
+        assert_eq!(bb.name(), "BBFRAME");
+        let unknown = AnyPayload::Unknown {
+            packet_type: 0x7F,
+            body: &[],
+        };
+        assert_eq!(unknown.name(), "UNKNOWN");
+    }
 
     /// Every entry in DISPATCHED_TYPES must dispatch to a non-Unknown variant.
     #[test]

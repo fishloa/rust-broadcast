@@ -409,3 +409,14 @@ fn every_table_id_variant_is_dispatched() {
         }
     }
 }
+
+/// `AnyTable::name()` reflects the contained type's `TableDef::NAME`.
+#[test]
+fn name_maps_variant_to_tabledef_name() {
+    let pat = build_pat(0x0001, 0, &[(1, 0x0100)]);
+    let table = AnyTable::parse(&pat).expect("valid PAT");
+    assert_eq!(table.name(), "PROGRAM_ASSOCIATION");
+
+    let unknown = AnyTable::parse(&[0x90, 0x01, 0x00]).expect("unknown ok");
+    assert_eq!(unknown.name(), "UNKNOWN");
+}

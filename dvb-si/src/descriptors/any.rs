@@ -123,6 +123,27 @@ macro_rules! declare_descriptors {
             /// variants and [`AnyDescriptor::Unknown`]).
             pub const DISPATCHED_TAGS: &'static [u8] = &[$($tag),+];
 
+            /// Diagnostic name of the contained descriptor — the type's
+            /// [`DescriptorDef::NAME`](crate::traits::DescriptorDef::NAME)
+            /// (`"SHORT_EVENT"`, `"NETWORK_NAME"`, …); `"CUSTOM"` for
+            /// [`AnyDescriptor::Other`] (runtime-registered) and `"UNKNOWN"`
+            /// for [`AnyDescriptor::Unknown`].
+            #[must_use]
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$variant(_) =>
+                            <$($path)::+ as crate::traits::DescriptorDef>::NAME,
+                    )+
+                    $($(
+                        Self::$nd_variant(_) =>
+                            <$($nd_path)::+ as crate::traits::DescriptorDef>::NAME,
+                    )+)?
+                    Self::Other { .. } => "CUSTOM",
+                    Self::Unknown { .. } => "UNKNOWN",
+                }
+            }
+
             /// Parse one full descriptor (2-byte header included) by its tag.
             ///
             /// `None` means no typed implementation exists for `tag` (the

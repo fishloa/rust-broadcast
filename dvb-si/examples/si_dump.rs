@@ -15,48 +15,14 @@ use std::process::ExitCode;
 
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTable;
-use dvb_si::traits::TableDef;
 use dvb_si::ts::TS_PACKET_SIZE;
 
-/// SCREAMING_SNAKE `NAME` for an `AnyTable` variant, via each type's `TableDef`.
+/// Label for an `AnyTable` — the macro-generated `name()`, with the table_id
+/// appended for unknowns.
 fn table_name(table: &AnyTable<'_>) -> String {
-    use dvb_si::tables;
     match table {
-        AnyTable::Pat(_) => tables::pat::Pat::NAME.to_string(),
-        AnyTable::Cat(_) => tables::cat::Cat::NAME.to_string(),
-        AnyTable::Pmt(_) => tables::pmt::Pmt::NAME.to_string(),
-        AnyTable::Tsdt(_) => tables::tsdt::Tsdt::NAME.to_string(),
-        AnyTable::DsmccSection(_) => tables::dsmcc::DsmccSection::NAME.to_string(),
-        AnyTable::Nit(_) => tables::nit::Nit::NAME.to_string(),
-        AnyTable::Sdt(_) => tables::sdt::Sdt::NAME.to_string(),
-        AnyTable::Bat(_) => tables::bat::Bat::NAME.to_string(),
-        AnyTable::Unt(_) => tables::unt::Unt::NAME.to_string(),
-        AnyTable::Int(_) => tables::int::Int::NAME.to_string(),
-        AnyTable::Sat(_) => tables::sat::Sat::NAME.to_string(),
-        AnyTable::Eit(_) => tables::eit::Eit::NAME.to_string(),
-        AnyTable::Tdt(_) => tables::tdt::Tdt::NAME.to_string(),
-        AnyTable::Rst(_) => tables::rst::Rst::NAME.to_string(),
-        AnyTable::St(_) => tables::st::St::NAME.to_string(),
-        AnyTable::Tot(_) => tables::tot::Tot::NAME.to_string(),
-        AnyTable::Ait(_) => tables::ait::Ait::NAME.to_string(),
-        AnyTable::Container(_) => tables::container::Container::NAME.to_string(),
-        AnyTable::Rct(_) => tables::rct::Rct::NAME.to_string(),
-        AnyTable::Cit(_) => tables::cit::Cit::NAME.to_string(),
-        AnyTable::MpeFec(_) => tables::mpe_fec::MpeFec::NAME.to_string(),
-        AnyTable::Rnt(_) => tables::rnt::Rnt::NAME.to_string(),
-        AnyTable::MpeIfec(_) => tables::mpe_ifec::MpeIfec::NAME.to_string(),
-        AnyTable::ProtectionMessage(_) => {
-            tables::protection_message::ProtectionMessageSection::NAME.to_string()
-        }
-        AnyTable::DownloadableFontInfo(_) => {
-            tables::downloadable_font_info::DownloadableFontInfoSection::NAME.to_string()
-        }
-        AnyTable::Dit(_) => tables::dit::Dit::NAME.to_string(),
-        AnyTable::Sit(_) => tables::sit::Sit::NAME.to_string(),
-        AnyTable::MpeDatagram(_) => tables::mpe::MpeDatagramSection::NAME.to_string(),
         AnyTable::Unknown { table_id, .. } => format!("UNKNOWN(0x{table_id:02X})"),
-        // `AnyTable` is #[non_exhaustive]; any future variant prints its id.
-        _ => "OTHER".to_string(),
+        t => t.name().to_string(),
     }
 }
 
