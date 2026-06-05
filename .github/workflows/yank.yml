@@ -1,0 +1,35 @@
+name: Yank
+
+# Manually yank (or un-yank) one version of all four crates on crates.io.
+# Uses the CARGO_REGISTRY_TOKEN repository secret — the CLI never holds the
+# token (publishing and yanking are CI-only operations in this repo).
+#
+#   gh workflow run yank.yml -f version=3.0.0
+#   gh workflow run yank.yml -f version=3.0.0 -f undo=true
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to yank (e.g. 3.0.0)"
+        required: true
+      undo:
+        description: "Un-yank instead"
+        type: boolean
+        default: false
+
+jobs:
+  yank:
+    name: yank crates.io ${{ inputs.version }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Yank all four crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          FLAG=""
+          if [ "${{ inputs.undo }}" = "true" ]; then FLAG="--undo"; fi
+          for c in dvb-common dvb-si dvb-t2mi dvb-bbframe; do
+            cargo yank $FLAG --version "${{ inputs.version }}" "$c"
+          done
