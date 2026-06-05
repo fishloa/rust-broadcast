@@ -56,6 +56,21 @@ macro_rules! declare_descriptors {
                 #[allow(missing_docs)]
                 $nd_variant($($nd_path)::+ $(<$nd_plt>)?),
             )+)?
+            /// Runtime-registered custom descriptor (see [`DescriptorRegistry`]).
+            ///
+            /// [`DescriptorRegistry`]: crate::descriptors::registry::DescriptorRegistry
+            Other {
+                /// The raw descriptor_tag byte.
+                tag: u8,
+                /// The parsed, type-erased descriptor value. Use
+                /// [`DescriptorObject::as_any`][crate::descriptors::registry::DescriptorObject::as_any]
+                /// followed by `downcast_ref` to recover the concrete type.
+                #[cfg_attr(
+                    feature = "serde",
+                    serde(serialize_with = "crate::descriptors::registry::serialize_erased")
+                )]
+                value: Box<dyn crate::descriptors::registry::DescriptorObject>,
+            },
             /// Tag with no typed implementation; `body` is the payload sans
             /// the 2-byte (tag, length) header.
             Unknown {

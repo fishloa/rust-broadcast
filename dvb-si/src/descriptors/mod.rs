@@ -52,6 +52,7 @@ pub mod pdc;
 pub mod private_data_indicator;
 pub mod private_data_specifier;
 pub mod registration;
+pub mod registry;
 pub mod related_content;
 pub mod s2_satellite_delivery_system;
 pub mod satellite_delivery_system;
@@ -84,3 +85,4 @@ pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
 
 pub use any::{parse_loop, AnyDescriptor, DescriptorIter};
+pub use registry::{DescriptorObject, DescriptorRegistry};
