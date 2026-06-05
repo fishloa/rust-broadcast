@@ -24,7 +24,7 @@
 //!         0x00AA (AIT), 0x00AB (DSM-CC carousel).
 //!   No SDT/NIT/EIT/TDT-TOT in this short clip.
 //!   Table set with explicit PID watch: {Ait, DsmccSection, Pat, Pmt}.
-//!   Stats: emitted=6, sections_completed=53, crc_failures=0, malformed=0.
+//!   Stats: emitted=6, sections_completed=50, crc_failures=0, malformed=0.
 //!
 //! `tnt-5w-12732v-isi6-10s.ts` (13 515 packets / 2 540 820 bytes):
 //!   Standard SI PIDs present: 0x0010 (NIT), 0x0011 (SDT), 0x0012 (EIT).
@@ -171,7 +171,17 @@ fn m6_table_set() {
         events.len()
     );
 
-    // Stats sanity: clean TNT capture, no CRC failures.
+    // Stats sanity: clean capture, no CRC failures. Pin emitted/sections_completed.
+    assert_eq!(
+        demux.stats().emitted,
+        6,
+        "m6-single.ts: pinned emitted changed — verify fixture stability"
+    );
+    assert_eq!(
+        demux.stats().sections_completed,
+        50,
+        "m6-single.ts: pinned sections_completed changed — verify fixture stability"
+    );
     assert_eq!(
         demux.stats().crc_failures,
         0,
@@ -293,8 +303,9 @@ fn tnt_table_set() {
     );
 
     // Pinned table set — discovered from `-- --nocapture` run.
-    // Note: 0x0014 (TDT/TOT) is absent from this capture; 0x0015 is
-    // NETWORK_SYNC (RST table_id 0x13 there), not watched by default.
+    // Note: 0x0014 (TDT/TOT) is absent from this capture. 0x0013 (RST,
+    // table_id 0x71) is watched by default but carries no sections here;
+    // 0x0015 is NETWORK_SYNC and not SI.
     let expected: BTreeSet<String> = ["Eit", "Nit", "Pat", "Pmt", "Sdt"]
         .iter()
         .map(|s| s.to_string())
@@ -310,7 +321,17 @@ fn tnt_table_set() {
         events.len()
     );
 
-    // Stats: clean satellite capture — zero failures observed.
+    // Stats: clean satellite capture — zero failures observed. Pin emitted/sections_completed.
+    assert_eq!(
+        demux.stats().emitted,
+        44,
+        "tnt-5w: pinned emitted changed — verify fixture stability"
+    );
+    assert_eq!(
+        demux.stats().sections_completed,
+        247,
+        "tnt-5w: pinned sections_completed changed — verify fixture stability"
+    );
     assert_eq!(
         demux.stats().crc_failures,
         0,
