@@ -246,6 +246,11 @@ impl<'a> Table<'a> for Cit<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Cit<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x77, 0x77)];
+    const NAME: &'static str = "CONTENT_IDENTIFIER";
+}
+
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

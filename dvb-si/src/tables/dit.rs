@@ -88,6 +88,11 @@ impl<'a> Table<'a> for Dit {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Dit {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x7E, 0x7E)];
+    const NAME: &'static str = "DISCONTINUITY_INFORMATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

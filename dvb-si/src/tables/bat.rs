@@ -289,6 +289,11 @@ impl<'a> Table<'a> for Bat<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Bat<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x4A, 0x4A)];
+    const NAME: &'static str = "BOUQUET_ASSOCIATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

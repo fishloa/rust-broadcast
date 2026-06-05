@@ -287,6 +287,15 @@ impl<'a> Table<'a> for MpeDatagramSection<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for MpeDatagramSection<'a> {
+    /// `0x3E` is included in `DsmccSection`'s range `[(0x3A, 0x3F)]` and is
+    /// NOT auto-dispatched to this type by the default dispatcher. Use
+    /// `AnyTable::parse_as::<MpeDatagramSection>` or
+    /// `MpeDatagramSection::parse` to obtain the typed MPE view.
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x3E, 0x3E)];
+    const NAME: &'static str = "MPE_DATAGRAM_SECTION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

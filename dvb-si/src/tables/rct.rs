@@ -311,6 +311,11 @@ impl<'a> Table<'a> for Rct<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Rct<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x76, 0x76)];
+    const NAME: &'static str = "RELATED_CONTENT";
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

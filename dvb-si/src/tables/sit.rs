@@ -156,6 +156,11 @@ impl<'a> Table<'a> for Sit {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Sit {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x7F, 0x7F)];
+    const NAME: &'static str = "SELECTION_INFORMATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

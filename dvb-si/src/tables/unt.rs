@@ -327,6 +327,11 @@ impl<'a> Table<'a> for Unt<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Unt<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x4B, 0x4B)];
+    const NAME: &'static str = "UPDATE_NOTIFICATION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

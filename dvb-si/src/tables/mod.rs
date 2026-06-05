@@ -3,6 +3,9 @@
 //! Tables live in submodules: one file per table or per SAT variant.
 //! Submodules land incrementally as phases complete.
 
+pub mod any;
+pub use any::AnyTable;
+
 pub mod ait;
 pub mod bat;
 pub mod cat;

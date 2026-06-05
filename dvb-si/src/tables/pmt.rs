@@ -206,6 +206,11 @@ impl<'a> Table<'a> for Pmt<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Pmt<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x02, 0x02)];
+    const NAME: &'static str = "PROGRAM_MAP";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -157,6 +157,11 @@ impl<'a> Table<'a> for Pat {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Pat {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x00, 0x00)];
+    const NAME: &'static str = "PROGRAM_ASSOCIATION";
+}
+
 impl Pat {
     /// Program entries excluding the NIT entry.
     pub fn programmes(&self) -> impl Iterator<Item = &PatEntry> {

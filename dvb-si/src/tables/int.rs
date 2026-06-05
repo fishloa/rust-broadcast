@@ -296,6 +296,11 @@ impl<'a> Table<'a> for Int<'a> {
     const PID: u16 = PID;
 }
 
+impl<'a> crate::traits::TableDef<'a> for Int<'a> {
+    const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x4C, 0x4C)];
+    const NAME: &'static str = "IP_MAC_NOTIFICATION";
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
