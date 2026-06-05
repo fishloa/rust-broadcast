@@ -67,6 +67,115 @@ pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
     Cow::Owned(decode_dvb_string(bytes))
 }
 
+/// Borrowed DVB-encoded text (EN 300 468 Annex A). Wraps the raw selector +
+/// body bytes; decoding happens only on [`DvbText::decode`] / `Display` /
+/// serde — never in the parse hot path.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DvbText<'a>(&'a [u8]);
+
+impl<'a> DvbText<'a> {
+    /// Wrap raw Annex A bytes (charset selector included, if any).
+    #[must_use]
+    pub const fn new(raw: &'a [u8]) -> Self {
+        Self(raw)
+    }
+    /// The raw wire bytes, selector included.
+    #[must_use]
+    pub const fn raw(&self) -> &'a [u8] {
+        self.0
+    }
+    /// Decode per Annex A (Table A.3 selector + control codes). Borrows for
+    /// pure-ASCII input, allocates otherwise.
+    #[must_use]
+    pub fn decode(&self) -> Cow<'a, str> {
+        decode(self.0)
+    }
+}
+
+impl std::ops::Deref for DvbText<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+impl std::fmt::Display for DvbText<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.decode())
+    }
+}
+
+impl std::fmt::Debug for DvbText<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DvbText({:?})", self.decode())
+    }
+}
+
+impl<'a> From<&'a [u8]> for DvbText<'a> {
+    fn from(raw: &'a [u8]) -> Self {
+        Self(raw)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for DvbText<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.decode())
+    }
+}
+// Deliberately NO Deserialize: re-encoding decoded text into DVB charset
+// bytes is lossy. Structs holding DvbText derive Serialize only (2.0 break).
+
+/// ISO 639-2 language code or ISO 3166 country code — 3 raw bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LangCode(pub [u8; 3]);
+
+impl LangCode {
+    /// The code as a string; lossy (U+FFFD) for non-ASCII garbage.
+    #[must_use]
+    pub fn as_str(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(&self.0)
+    }
+}
+
+impl std::ops::Deref for LangCode {
+    type Target = [u8; 3];
+    fn deref(&self) -> &[u8; 3] {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for LangCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.as_str())
+    }
+}
+
+impl std::fmt::Debug for LangCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LangCode({})", self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for LangCode {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for LangCode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = <&str>::deserialize(d)?;
+        let b = s.as_bytes();
+        if b.len() != 3 {
+            return Err(serde::de::Error::invalid_length(b.len(), &"a 3-byte code"));
+        }
+        Ok(LangCode([b[0], b[1], b[2]]))
+    }
+}
+
 #[derive(Debug)]
 enum Charset {
     Iso6937,
@@ -702,5 +811,37 @@ mod tests {
         assert_eq!(decode_dvb_string(&[0x00, 0xC9, b'a']), "\u{FFFD}a");
         assert_eq!(decode_dvb_string(&[0x00, 0xCC, b'a']), "\u{FFFD}a");
         assert_eq!(decode_dvb_string(&[0x00, 0xC2]), "\u{FFFD}");
+    }
+
+    #[test]
+    fn dvb_text_decodes_with_charset_selector() {
+        let t = DvbText::new(&[0x15, 0xC3, 0xA9]); // UTF-8 selector + é
+        assert_eq!(t.decode(), "é");
+        assert_eq!(t.raw(), &[0x15, 0xC3, 0xA9]);
+        assert_eq!(&t[..], &[0x15, 0xC3, 0xA9]); // Deref
+        assert_eq!(format!("{t}"), "é");
+    }
+
+    #[test]
+    fn lang_code_as_str() {
+        assert_eq!(LangCode(*b"fre").as_str(), "fre");
+        assert_eq!(LangCode([0xFF, b'r', b'e']).as_str(), "\u{FFFD}re"); // lossy, no panic
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn dvb_text_serializes_decoded() {
+        let t = DvbText::new(&[0x15, 0xC3, 0xA9]);
+        assert_eq!(serde_json::to_string(&t).unwrap(), "\"é\"");
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn lang_code_serde_round_trip() {
+        let lc = LangCode(*b"FRA");
+        let json = serde_json::to_string(&lc).unwrap();
+        assert_eq!(json, "\"FRA\"");
+        assert_eq!(serde_json::from_str::<LangCode>(&json).unwrap(), lc);
+        assert!(serde_json::from_str::<LangCode>("\"FRAN\"").is_err()); // not 3 bytes
     }
 }
