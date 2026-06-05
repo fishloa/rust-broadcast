@@ -311,6 +311,7 @@ fn chain_t2mi_bbframe_si_pat() {
 // ── Hostility: T2-MI garbage and truncation ───────────────────────────────────
 
 /// Simple deterministic LCG (no external deps).
+/// Deliberately duplicated (chain.rs <-> hostility.rs): no shared test-helper crate; keep constants in sync.
 struct Lcg(u64);
 impl Lcg {
     fn new(seed: u64) -> Self {
@@ -341,10 +342,11 @@ fn hostility_t2mi_garbage_feed_ts() {
     }
 
     let s = pump.stats();
-    // At least one counter must have moved (malformed or ts_packets).
+    assert_eq!(s.ts_packets, 10_000);
     assert!(
-        s.ts_packets > 0,
-        "ts_packets counter must move; got stats: {s:?}"
+        s.malformed_packets > 9_000,
+        "garbage must be counted malformed (got {})",
+        s.malformed_packets
     );
 }
 
@@ -359,7 +361,15 @@ fn hostility_t2mi_garbage_feed_raw() {
         let data: Vec<u8> = (0..len).map(|_| lcg.next_u8()).collect();
         let _: Vec<_> = pump.feed_raw(&data).collect();
     }
-    // No panic is the acceptance criterion.
+    let s = pump.stats();
+    // garbage feed_raw is buffered; occasional decoding as plausible packet headers
+    // generates CRC failures but no outright malformed packets (no sync errors when
+    // raw bytes happen to decode as valid header + payload). These events still move
+    // counters.
+    assert!(
+        s.t2mi_packets + s.crc_failures + s.malformed_packets > 0,
+        "garbage feed_raw must move some counter; got stats: {s:?}"
+    );
 }
 
 /// Every truncation of a valid T2-MI packet through feed_raw — no panic.

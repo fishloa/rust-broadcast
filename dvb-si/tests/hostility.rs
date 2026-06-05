@@ -20,6 +20,7 @@ use dvb_si::tables::sdt::{Sdt, SdtKind};
 // ── Deterministic LCG (no deps) ───────────────────────────────────────────────
 
 /// Simple 64-bit LCG. Numerical Recipes constants; fully deterministic.
+/// Deliberately duplicated (chain.rs <-> hostility.rs): no shared test-helper crate; keep constants in sync.
 struct Lcg(u64);
 
 impl Lcg {
@@ -85,11 +86,11 @@ fn hostility_garbage_ts_packets_no_panic() {
 
     let s = demux.stats();
     assert_eq!(s.packets, N as u64, "packets counter must equal feed count");
-    // Some packets will be counted as malformed (sync ≠ 0x47) or parsed.
-    // At minimum one counter beyond `packets` must have moved.
+    // LCG garbage rarely has 0x47 sync — nearly all 10k must count as malformed.
     assert!(
-        s.malformed_packets + s.sections_completed > 0,
-        "expected at least some activity; stats: {s:?}"
+        s.malformed_packets > 9_000,
+        "LCG garbage rarely has 0x47 sync — nearly all 10k must count as malformed (got {})",
+        s.malformed_packets
     );
 }
 
