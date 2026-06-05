@@ -80,7 +80,7 @@
     {
       "id": 10,
       "subject": "Task 10: Chain test + hostility smoke",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         9,
         7
@@ -106,5 +106,5 @@
       "description": "**Goal:** Lockstep 2.0.0, PR Closes #16, tag v2.0.0 -> CI publish, GitHub Release notes (no artifacts), verify crates.io + docs.rs.\n\n```json:metadata\n{\"files\": [\"dvb-si/Cargo.toml\", \"docs/release-notes/v2.0.0.md\"], \"verifyCommand\": \"cargo fmt --all --check && cargo test --workspace --all-features --locked\", \"acceptanceCriteria\": [\"gates green\", \"published x4\", \"release notes live\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T17:50:00Z"
+  "lastUpdated": "2026-06-05T18:30:00Z"
 }
