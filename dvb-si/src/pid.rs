@@ -2,6 +2,57 @@
 //!
 //! Values are fixed by ETSI EN 300 468 §5.1.3 Table 1 and ISO/IEC 13818-1.
 
+/// A 13-bit MPEG-TS Packet Identifier.
+///
+/// Thin newtype over the wire `u16`. Values are masked to 13 bits on
+/// construction (`0x0000..=0x1FFF`), matching the transport header field
+/// width (ISO/IEC 13818-1 §2.4.3.2).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Pid(u16);
+
+impl Pid {
+    /// Mask covering the 13 valid PID bits.
+    pub const MASK: u16 = 0x1FFF;
+
+    /// Construct a `Pid`, masking to the low 13 bits.
+    #[must_use]
+    pub const fn new(value: u16) -> Self {
+        Self(value & Self::MASK)
+    }
+
+    /// The raw 13-bit value.
+    #[must_use]
+    pub const fn value(self) -> u16 {
+        self.0
+    }
+}
+
+impl From<u16> for Pid {
+    fn from(value: u16) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<Pid> for u16 {
+    fn from(pid: Pid) -> Self {
+        pid.0
+    }
+}
+
+impl core::fmt::Debug for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Pid(0x{:04X})", self.0)
+    }
+}
+
+impl core::fmt::Display for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "0x{:04X}", self.0)
+    }
+}
+
 /// Well-known PIDs. The transport stream MUST carry the corresponding tables
 /// on these PIDs.
 pub mod well_known {

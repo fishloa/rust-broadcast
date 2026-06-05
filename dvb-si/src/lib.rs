@@ -30,6 +30,8 @@ pub mod text;
 pub mod traits;
 
 #[cfg(feature = "ts")]
+pub mod demux;
+#[cfg(feature = "ts")]
 pub mod ts;
 
 pub use descriptor_tag::DescriptorTag;
