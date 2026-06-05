@@ -99,7 +99,9 @@ name = "dvb-t2mi"
 version = "1.1.0"
 dependencies = [
  "bytes",
+ "dvb-bbframe",
  "dvb-common",
+ "dvb-si",
  "num_enum",
  "serde",
  "serde_json",
