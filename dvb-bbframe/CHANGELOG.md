@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-06-05
+
+Lockstep release with `dvb-si` 3.0.1 (effectively replaces 3.0.0, yanked).
+
+### Breaking
+- **serde is Serialize-only.** Every `Deserialize` derive is removed from
+  `Bbheader`, `Issy`, and the matype/mode types. JSON is a display/export
+  format; re-`parse` from wire bytes to reconstruct. `Serialize` output is
+  unchanged.
+
 ## [3.0.0] — 2026-06-05
 
 Lockstep release with `dvb-si` 3.0.0 (typed `DescriptorLoop` descriptor loops).

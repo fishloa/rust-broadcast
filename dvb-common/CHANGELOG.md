@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] — 2026-06-05
+
+Lockstep release with `dvb-si` 3.0.1 (effectively replaces 3.0.0, yanked). The
+workspace-wide move to Serialize-only serde does not affect this crate — its
+`Parse` / `Serialize` traits are first-party (not serde) and it never carried
+any serde `Deserialize`. No functional changes.
+
 ## [3.0.0] — 2026-06-05
 
 Lockstep release with `dvb-si` 3.0.0 (typed `DescriptorLoop` descriptor loops).
