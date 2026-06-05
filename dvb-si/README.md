@@ -252,16 +252,17 @@ See [`examples/si_dump.rs`](examples/si_dump.rs) for a complete file-reading CLI
 ## Typed dispatch
 
 You rarely match table_ids or descriptor_tags by hand. `AnyTable::parse`
-dispatches a complete section to the right typed table; `parse_loop` walks a
-descriptor loop yielding `AnyDescriptor` values (typed where known, `Unknown`
-otherwise, never panicking); and `DescriptorRegistry` lets you plug in private
-descriptors at runtime. All three are generated from a single declarative list
-so the dispatcher can never drift from the implemented set.
+dispatches a complete section to the right typed table; a table's descriptor-loop
+field is a `DescriptorLoop` whose `.iter()` yields `AnyDescriptor` values (typed
+where known, `Unknown` otherwise, never panicking — `parse_loop` does the same
+for a free byte slice); and `DescriptorRegistry` lets you plug in private
+descriptors at runtime. All are generated from a single declarative list so the
+dispatcher can never drift from the implemented set.
 
 ```rust
-use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+use dvb_si::descriptors::AnyDescriptor;
 
-for item in parse_loop(eit_event.descriptors) {
+for item in eit_event.descriptors.iter() {       // DescriptorLoop::iter()
     match item? {
         AnyDescriptor::ShortEvent(se) => println!("{}", se.event_name.decode()),
         AnyDescriptor::Unknown { tag, .. } => eprintln!("unknown 0x{tag:02X}"),
@@ -270,10 +271,11 @@ for item in parse_loop(eit_event.descriptors) {
 }
 ```
 
-> **Upgrading from 1.x?** Text fields are now `DvbText`, language codes are
-> `LangCode`, the JSON shape changed, and the subset `Descriptor` enum is gone.
-> See **[MIGRATION-2.0.md](MIGRATION-2.0.md)** for every break with before/after
-> code.
+> **Upgrading from 2.x?** Table descriptor-loop fields are now `DescriptorLoop`
+> (call `.iter()` / `.raw()`), three tables (`Cat`, `Tsdt`, `Sit`) became
+> borrowed, and those loops serialize as typed JSON arrays. See
+> **[MIGRATION-3.0.md](MIGRATION-3.0.md)**. (1.x → 2.0:
+> [MIGRATION-2.0.md](MIGRATION-2.0.md).)
 
 ## Usage
 
@@ -301,7 +303,7 @@ Default: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts` (TS packet +
 `SectionReassembler`), `serde`.
 
 ```toml
-dvb-si = { version = "2.0", default-features = false }  # tight build
+dvb-si = { version = "3.0", default-features = false }  # tight build
 ```
 
 ## Family
