@@ -2,7 +2,7 @@
 
 ## 3.0.1 — 2026-06-05
 
-Effectively replaces 3.0.0 (yanked). serde is now Serialize-only across the
+Supersedes 3.0.0 (use 3.0.1; any `"3.0"` requirement resolves to it). serde is now Serialize-only across the
 workspace (Deserialize removed — JSON is a display format); SIT service loop
 typed (`Vec<SitService>`), completing table consistency (#23). See
 [`MIGRATION-3.0.md`](MIGRATION-3.0.md) §§5–6.
