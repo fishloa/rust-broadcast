@@ -117,6 +117,11 @@ impl<'a> Descriptor<'a> for ContentDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ContentDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "CONTENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

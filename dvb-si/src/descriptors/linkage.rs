@@ -119,6 +119,11 @@ impl<'a> Descriptor<'a> for LinkageDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for LinkageDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "LINKAGE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

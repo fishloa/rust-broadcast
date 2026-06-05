@@ -259,6 +259,11 @@ impl<'a> Descriptor<'a> for CellListDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for CellListDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "CELL_LIST";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

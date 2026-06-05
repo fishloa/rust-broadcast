@@ -117,6 +117,11 @@ impl<'a> Descriptor<'a> for ServiceDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ServiceDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SERVICE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

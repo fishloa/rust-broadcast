@@ -9,7 +9,7 @@
 /// Typed descriptor tag.
 ///
 /// Unknown or reserved tags are returned as
-/// [`crate::descriptors::Descriptor::Unknown`] during parse and should not
+/// [`crate::descriptors::AnyDescriptor::Unknown`] during parse and should not
 /// appear here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

@@ -148,6 +148,11 @@ impl<'a> Descriptor<'a> for Ac3Descriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for Ac3Descriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "AC3";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

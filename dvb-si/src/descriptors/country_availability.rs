@@ -134,6 +134,11 @@ impl<'a> Descriptor<'a> for CountryAvailabilityDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for CountryAvailabilityDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "COUNTRY_AVAILABILITY";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -97,6 +97,11 @@ impl<'a> Descriptor<'a> for ServiceMoveDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ServiceMoveDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SERVICE_MOVE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

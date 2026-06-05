@@ -15,6 +15,17 @@ pub trait Descriptor<'a>: Parse<'a> + Serialize {
     fn descriptor_length(&self) -> u8;
 }
 
+/// Implemented by every typed descriptor; drives [`crate::descriptors::AnyDescriptor`]
+/// dispatch. `TAG` is the wire descriptor_tag this type parses.
+pub trait DescriptorDef<'a>: Parse<'a, Error = crate::error::Error> {
+    /// Wire descriptor_tag.
+    const TAG: u8;
+    /// Diagnostic name. Convention (workspace-wide): SCREAMING_SNAKE,
+    /// suffix-free — `SHORT_EVENT`, `EXTENSION`, `NETWORK_NAME`
+    /// (no `_descriptor` suffix).
+    const NAME: &'static str;
+}
+
 /// Contract every section-carried table implements.
 pub trait Table<'a>: Parse<'a> + Serialize {
     /// Expected `table_id` for this table.

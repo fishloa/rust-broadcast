@@ -157,6 +157,11 @@ impl<'a> Descriptor<'a> for MultilingualComponentDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualComponentDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_COMPONENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

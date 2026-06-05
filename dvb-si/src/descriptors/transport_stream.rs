@@ -89,6 +89,11 @@ impl<'a> Descriptor<'a> for TransportStreamDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TransportStreamDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TRANSPORT_STREAM";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

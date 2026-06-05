@@ -264,6 +264,11 @@ impl<'a> Descriptor<'a> for CableDeliverySystemDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for CableDeliverySystemDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "CABLE_DELIVERY_SYSTEM";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

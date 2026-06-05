@@ -90,6 +90,11 @@ impl<'a> Descriptor<'a> for TimeShiftedEventDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TimeShiftedEventDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TIME_SHIFTED_EVENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

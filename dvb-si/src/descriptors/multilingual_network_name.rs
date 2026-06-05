@@ -142,6 +142,11 @@ impl<'a> Descriptor<'a> for MultilingualNetworkNameDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualNetworkNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_NETWORK_NAME";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

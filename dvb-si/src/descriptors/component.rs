@@ -121,6 +121,11 @@ impl<'a> Descriptor<'a> for ComponentDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ComponentDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "COMPONENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

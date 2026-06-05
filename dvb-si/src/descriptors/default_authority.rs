@@ -79,6 +79,11 @@ impl<'a> Descriptor<'a> for DefaultAuthorityDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for DefaultAuthorityDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DEFAULT_AUTHORITY";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -87,6 +87,11 @@ impl<'a> Descriptor<'a> for BouquetNameDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for BouquetNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "BOUQUET_NAME";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

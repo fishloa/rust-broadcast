@@ -129,6 +129,11 @@ impl<'a> Descriptor<'a> for VbiTeletextDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for VbiTeletextDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "VBI_TELETEXT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

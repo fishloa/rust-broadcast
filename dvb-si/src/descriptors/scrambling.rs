@@ -87,6 +87,11 @@ impl<'a> Descriptor<'a> for ScramblingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ScramblingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SCRAMBLING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

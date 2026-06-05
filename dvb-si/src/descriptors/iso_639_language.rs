@@ -104,6 +104,11 @@ impl<'a> Descriptor<'a> for Iso639LanguageDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for Iso639LanguageDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "ISO_639_LANGUAGE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

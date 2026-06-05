@@ -142,6 +142,11 @@ impl<'a> Descriptor<'a> for MultilingualBouquetNameDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualBouquetNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_BOUQUET_NAME";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

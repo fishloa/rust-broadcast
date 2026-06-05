@@ -126,6 +126,11 @@ impl<'a> Descriptor<'a> for ShortEventDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ShortEventDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SHORT_EVENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

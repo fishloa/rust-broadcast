@@ -1199,6 +1199,11 @@ impl<'a> Descriptor<'a> for ExtensionDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ExtensionDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "EXTENSION";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

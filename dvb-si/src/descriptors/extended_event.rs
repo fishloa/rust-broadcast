@@ -199,6 +199,11 @@ impl<'a> Descriptor<'a> for ExtendedEventDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ExtendedEventDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "EXTENDED_EVENT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

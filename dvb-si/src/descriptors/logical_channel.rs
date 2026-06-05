@@ -135,6 +135,11 @@ impl<'a> Descriptor<'a> for LogicalChannelDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for LogicalChannelDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "LOGICAL_CHANNEL";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -267,6 +267,11 @@ impl<'a> Descriptor<'a> for SatelliteDeliverySystemDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for SatelliteDeliverySystemDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SATELLITE_DELIVERY_SYSTEM";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -391,6 +391,11 @@ impl<'a> Descriptor<'a> for MosaicDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for MosaicDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MOSAIC";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -102,6 +102,11 @@ impl<'a> Descriptor<'a> for DataBroadcastIdDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for DataBroadcastIdDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "DATA_BROADCAST_ID";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

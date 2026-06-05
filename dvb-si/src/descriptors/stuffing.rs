@@ -94,6 +94,11 @@ impl<'a> Descriptor<'a> for StuffingDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for StuffingDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "STUFFING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

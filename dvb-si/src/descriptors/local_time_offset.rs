@@ -146,6 +146,11 @@ impl<'a> Descriptor<'a> for LocalTimeOffsetDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for LocalTimeOffsetDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "LOCAL_TIME_OFFSET";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

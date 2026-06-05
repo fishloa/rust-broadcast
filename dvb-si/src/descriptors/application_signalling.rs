@@ -142,6 +142,11 @@ impl<'a> Descriptor<'a> for ApplicationSignallingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ApplicationSignallingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "APPLICATION_SIGNALLING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

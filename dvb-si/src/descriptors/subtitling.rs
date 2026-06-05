@@ -116,6 +116,11 @@ impl<'a> Descriptor<'a> for SubtitlingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for SubtitlingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "SUBTITLING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

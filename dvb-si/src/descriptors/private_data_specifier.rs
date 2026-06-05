@@ -93,6 +93,11 @@ impl<'a> Descriptor<'a> for PrivateDataSpecifierDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for PrivateDataSpecifierDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "PRIVATE_DATA_SPECIFIER";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

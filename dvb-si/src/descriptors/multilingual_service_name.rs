@@ -177,6 +177,11 @@ impl<'a> Descriptor<'a> for MultilingualServiceNameDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for MultilingualServiceNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "MULTILINGUAL_SERVICE_NAME";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

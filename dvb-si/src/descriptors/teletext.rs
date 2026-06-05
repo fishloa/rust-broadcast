@@ -119,6 +119,11 @@ impl<'a> Descriptor<'a> for TeletextDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TeletextDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TELETEXT";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

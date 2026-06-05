@@ -103,6 +103,11 @@ impl<'a> Descriptor<'a> for CaIdentifierDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for CaIdentifierDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "CA_IDENTIFIER";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

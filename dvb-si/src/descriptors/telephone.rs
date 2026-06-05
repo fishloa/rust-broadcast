@@ -210,6 +210,11 @@ impl<'a> Descriptor<'a> for TelephoneDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TelephoneDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TELEPHONE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

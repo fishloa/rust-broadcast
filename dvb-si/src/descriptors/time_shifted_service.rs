@@ -86,6 +86,11 @@ impl<'a> Descriptor<'a> for TimeShiftedServiceDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for TimeShiftedServiceDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "TIME_SHIFTED_SERVICE";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

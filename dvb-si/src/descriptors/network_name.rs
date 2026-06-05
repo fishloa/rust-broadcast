@@ -87,6 +87,11 @@ impl<'a> Descriptor<'a> for NetworkNameDescriptor<'a> {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for NetworkNameDescriptor<'a> {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "NETWORK_NAME";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

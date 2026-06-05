@@ -122,6 +122,11 @@ impl<'a> Descriptor<'a> for ParentalRatingDescriptor {
     }
 }
 
+impl<'a> crate::traits::DescriptorDef<'a> for ParentalRatingDescriptor {
+    const TAG: u8 = TAG;
+    const NAME: &'static str = "PARENTAL_RATING";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
