@@ -1,50 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## 3.1.0 — 2026-06-05
 
-### Added
-
-- **`yoke` feature (off by default).** `yoke::Yokeable` is derived on every
-  public zero-copy view type — all table views (`Pmt`/`PmtStream`, `Sdt`/
-  `SdtService`, `Eit`/`EitEvent`, `Nit`/`Bat`/`Cat`/`Tsdt`/`Sit`/`Ait`/`Tot`/
-  `Int`/`Unt`/`Rct`/`Rnt`/`Cit`/`Container`, the DSM-CC/MPE/protection/SAT/font
-  sections, …), every borrowing descriptor struct, `DescriptorLoop`, `DvbText`,
-  and the `AnyTable` / `AnyDescriptor` enums. A new `owned` module adds
-  `Owned<Y>`, a `'static`, `Send + Sync`, cheaply-`Clone` bundle of the backing
-  `Arc<[u8]>` and the parsed view: own a parsed table past the input buffer's
-  borrow (struct field, cache, `watch`/broadcast channel, cross-thread) without
-  re-parsing or a hand-written mirror type. The feature is optional and adds no
-  dependencies to default builds. (#27)
-
-## 3.0.1 — 2026-06-05
-
-Supersedes 3.0.0 (use 3.0.1; any `"3.0"` requirement resolves to it). serde is now Serialize-only across the
-workspace (Deserialize removed — JSON is a display format); SIT service loop
-typed (`Vec<SitService>`), completing table consistency (#23). See
-[`MIGRATION-3.0.md`](MIGRATION-3.0.md) §§5–6.
-
-### Breaking
-
-- **serde is Serialize-only.** Every `Deserialize` derive/impl is removed
-  (including the manual `text::LangCode` impl) along with the now-dead
-  `serde(borrow)` / `serde(bound(deserialize = …))` attributes. JSON is a
-  display/export format; reconstruct values by re-`parse`-ing the wire bytes.
-  `Serialize` output is unchanged.
-- **SIT service loop is typed.** `Sit.service_loop: &'a [u8]` is replaced by
-  `Sit.services: Vec<SitService<'a>>`, where
-  `SitService { service_id: u16, running_status: u8, descriptors: DescriptorLoop<'a> }`
-  — mirroring `SdtService` (EN 300 468 §7.1.2, Table 164). The serialized JSON
-  drops the raw `service_loop` byte array in favour of typed `services` entries,
-  each with their own typed `descriptors` sequence. (#23)
-
-## 3.0.0 — 2026-06-05
-
-Finishes the `DvbText` pattern for descriptor loops: every SI descriptor-loop
-field on a table is now a typed, zero-copy `DescriptorLoop` that walks into
-`AnyDescriptor`s on demand and serializes as the typed sequence. Wire parsing is
-byte-identical — only field types and JSON output change. See
-[`MIGRATION-3.0.md`](MIGRATION-3.0.md) for every breaking change with
-before/after code. Closes #21.
+The 3.x line: descriptor loops become typed, zero-copy `DescriptorLoop`s; serde
+goes Serialize-only across the workspace (JSON is a display/export format); the
+SIT service loop is typed; `Cat`/`Tsdt`/`Sit` move from owned to borrowed; and a
+new optional `yoke` feature lets a parsed view outlive its input buffer. Wire
+parsing is byte-identical throughout — only field types and JSON output change.
+See [`MIGRATION-3.1.md`](MIGRATION-3.1.md) for every breaking change with
+before/after code. (#21, #23, #27)
 
 ### Breaking
 
@@ -61,23 +25,31 @@ before/after code. Closes #21.
   `Rnt.common_descriptors`, `Int.platform_descriptors`,
   `Unt.common_descriptors`, `Cat.descriptors`, `Tsdt.descriptors`,
   `Sit.transmission_info_descriptors`.
-  See [MIGRATION-3.0.md §1](MIGRATION-3.0.md#1-descriptor-loop-fields-u8--vecu8--descriptorloopa).
+  See [MIGRATION-3.1.md §1](MIGRATION-3.1.md#1-descriptor-loop-fields-u8--vecu8--descriptorloopa).
 - **`Cat`, `Tsdt`, `Sit` are now borrowed (`<'a>`).** They previously owned their
   loops (`Vec<u8>`) and had no lifetime; they now borrow the section bytes like
-  every other table. `Sit.service_loop` is now a borrowed `&'a [u8]` (was
-  `Vec<u8>`). See
-  [MIGRATION-3.0.md §2](MIGRATION-3.0.md#2-three-tables-moved-from-owned-to-borrowed).
-- **`Deserialize` dropped on tables/structs that hold a `DescriptorLoop`.** The
-  typed loop is serialize-only, so its container structs derive `Serialize` only:
-  `Sdt`, `SdtService`, `Eit`, `EitEvent`, `Pmt`, `PmtStream`, `Nit`,
+  every other table. See
+  [MIGRATION-3.1.md §2](MIGRATION-3.1.md#2-three-tables-moved-from-owned-to-borrowed).
+- **`Deserialize` dropped — serde is Serialize-only.** Every `Deserialize`
+  derive/impl is removed (including the manual `text::LangCode` impl) along with
+  the now-dead `serde(borrow)` / `serde(bound(deserialize = …))` attributes. JSON
+  is a display/export format; reconstruct values by re-`parse`-ing the wire bytes.
+  `Serialize` output is unchanged. Affected container structs include `Sdt`,
+  `SdtService`, `Eit`, `EitEvent`, `Pmt`, `PmtStream`, `Nit`,
   `NitTransportStream`, `Bat`, `BatTransportStream`, `Ait`, `AitApplication`,
-  `Tot`, `Rct`, `Rnt`, `Int`, `Unt`, `Cat`, `Tsdt`, `Sit`. Reconstruct by
-  re-`parse`-ing the wire bytes. See
-  [MIGRATION-3.0.md §3](MIGRATION-3.0.md#3-deserialize-dropped-on-tablesstructs-that-hold-a-loop).
+  `Tot`, `Rct`, `Rnt`, `Int`, `Unt`, `Cat`, `Tsdt`, `Sit`. See
+  [MIGRATION-3.1.md §3](MIGRATION-3.1.md#3-deserialize-dropped--serde-is-serialize-only).
 - **serde JSON shape change.** A descriptor-loop field serializes as an array of
   typed, decoded descriptors (camelCase variant keys) instead of an array of raw
   bytes; per-entry parse errors surface as `{"parseError": "…"}`. See
-  [MIGRATION-3.0.md §4](MIGRATION-3.0.md#4-serde-json-shape-change).
+  [MIGRATION-3.1.md §4](MIGRATION-3.1.md#4-serde-json-shape-change).
+- **SIT service loop is typed.** `Sit.service_loop: &'a [u8]` is replaced by
+  `Sit.services: Vec<SitService<'a>>`, where
+  `SitService { service_id: u16, running_status: u8, descriptors: DescriptorLoop<'a> }`
+  — mirroring `SdtService` (EN 300 468 §7.1.2, Table 164). The serialized JSON
+  drops the raw `service_loop` byte array in favour of typed `services` entries,
+  each with their own typed `descriptors` sequence. See
+  [MIGRATION-3.1.md §5](MIGRATION-3.1.md#5-sit-service-loop-is-typed).
 
 ### Added
 
@@ -85,6 +57,18 @@ before/after code. Closes #21.
   newtype (the table-loop analogue of `DvbText`): `new`/`raw`/`iter`,
   `Deref<[u8]>`, `From<&[u8]>`, `IntoIterator`, a cheap `Debug`
   (`DescriptorLoop(<N bytes>)`), and serialize-only serde over the typed walk.
+- **`yoke` feature (off by default, additive).** `yoke::Yokeable` is derived on
+  every public zero-copy view type — all table views (`Pmt`/`PmtStream`, `Sdt`/
+  `SdtService`, `Eit`/`EitEvent`, `Nit`/`Bat`/`Cat`/`Tsdt`/`Sit`/`Ait`/`Tot`/
+  `Int`/`Unt`/`Rct`/`Rnt`/`Cit`/`Container`, the DSM-CC/MPE/protection/SAT/font
+  sections, …), every borrowing descriptor struct, `DescriptorLoop`, `DvbText`,
+  and the `AnyTable` / `AnyDescriptor` enums. A new `owned` module adds
+  `Owned<Y>`, a `'static`, `Send + Sync`, cheaply-`Clone` bundle of the backing
+  `Arc<[u8]>` and the parsed view: own a parsed table past the input buffer's
+  borrow (struct field, cache, `watch`/broadcast channel, cross-thread) without
+  re-parsing or a hand-written mirror type. The feature is optional and adds no
+  dependencies to default builds. See
+  [MIGRATION-3.1.md §6](MIGRATION-3.1.md#6-owning-a-parsed-view-the-yoke-feature). (#27)
 
 ## 2.1.0 — 2026-06-05
 

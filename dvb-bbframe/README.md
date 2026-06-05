@@ -21,7 +21,8 @@ field; it does **not** implement the physical layer (LDPC/BCH coding, modulation
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `serde` | off | `Serialize`/`Deserialize` derives on `Bbheader`, `Matype`, `TsGs`, `Mode`, `Issy` |
+| `serde` | off | **Serialize-only** — `Serialize` on `Bbheader`, `Matype`, `TsGs`, `Mode`, `Issy` (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes |
+| `yoke` | off | `yoke::Yokeable` on the zero-copy user-packet iterator view types (`NmTsIter`, `HemTsIter`) so a parsed view can outlive its input buffer's borrow without a re-parse |
 
 `no_std` is not supported (`thiserror` requires `std`).
 

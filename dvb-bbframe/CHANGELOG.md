@@ -5,11 +5,9 @@ All notable changes to the `dvb_bbframe` crate are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.1.0] — 2026-06-05
 
-## [3.0.1] — 2026-06-05
-
-Lockstep release with `dvb-si` 3.0.1 (effectively replaces 3.0.0, yanked).
+Lockstep release with the `dvb-si` 3.x line.
 
 ### Breaking
 - **serde is Serialize-only.** Every `Deserialize` derive is removed from
@@ -17,10 +15,13 @@ Lockstep release with `dvb-si` 3.0.1 (effectively replaces 3.0.0, yanked).
   format; re-`parse` from wire bytes to reconstruct. `Serialize` output is
   unchanged.
 
-## [3.0.0] — 2026-06-05
-
-Lockstep release with `dvb-si` 3.0.0 (typed `DescriptorLoop` descriptor loops).
-No functional changes to this crate.
+### Added
+- **`yoke` feature (off by default, additive).** `yoke::Yokeable` is derived on
+  the public borrowing user-packet iterator view types `NmTsIter<'a>` and
+  `HemTsIter<'a>` (both also gain `Clone`/`Copy`), so a parsed view can be
+  retained past the input buffer's borrow without a re-parse. (`Bbheader`, the
+  crate's actual parse output, is a fully owned `Copy` struct with no lifetime
+  and needs no yoking.) Optional; adds no dependencies to default builds.
 
 ## [2.1.0] — 2026-06-05
 

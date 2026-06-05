@@ -62,6 +62,7 @@
 //! |---|---|---|
 //! | `ts` | on | [`pump::T2miPump`] — PID-filtered TS reassembly + CRC validation. Off → bring your own complete T2-MI packet bytes. |
 //! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every packet/payload type. |
+//! | `yoke` | off | [`yoke::Yokeable`] on the zero-copy payload view types — own a parsed T2-MI payload past the input buffer's borrow without re-parsing. |
 //!
 //! # Header-only example
 //!

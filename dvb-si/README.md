@@ -271,10 +271,11 @@ for item in eit_event.descriptors.iter() {       // DescriptorLoop::iter()
 }
 ```
 
-> **Upgrading from 2.x?** Table descriptor-loop fields are now `DescriptorLoop`
-> (call `.iter()` / `.raw()`), three tables (`Cat`, `Tsdt`, `Sit`) became
-> borrowed, and those loops serialize as typed JSON arrays. See
-> **[MIGRATION-3.0.md](MIGRATION-3.0.md)**. (1.x → 2.0:
+> **Upgrading from 1.x / 2.x?** Table descriptor-loop fields are now
+> `DescriptorLoop` (call `.iter()` / `.raw()`), three tables (`Cat`, `Tsdt`,
+> `Sit`) became borrowed, serde is Serialize-only, the SIT service loop is typed,
+> and those loops serialize as typed JSON arrays. See
+> **[MIGRATION-3.1.md](MIGRATION-3.1.md)**. (1.x → 2.0:
 > [MIGRATION-2.0.md](MIGRATION-2.0.md).)
 
 ## Usage
@@ -323,7 +324,7 @@ let view: &Pmt = pmt.get();                            // no re-parse, no lifeti
 ```
 
 ```toml
-dvb-si = { version = "3.0", default-features = false }  # tight build
+dvb-si = { version = "3.1", default-features = false }  # tight build
 ```
 
 ## Family
