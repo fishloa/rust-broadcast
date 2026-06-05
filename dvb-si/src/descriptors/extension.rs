@@ -221,8 +221,7 @@ pub struct SupplementaryAudio<'a> {
     /// language_code_present(1).
     pub language_code_present: bool,
     /// ISO_639_language_code(24), present iff `language_code_present`.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub iso_639_language_code: Option<&'a [u8]>,
+    pub iso_639_language_code: Option<LangCode>,
     /// Trailing private_data_byte run.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
@@ -608,7 +607,7 @@ fn parse_supplementary_audio(sel: &[u8]) -> Result<SupplementaryAudio<'_>> {
         }
         let lc = &sel[pos..pos + ISO_639_LEN];
         pos += ISO_639_LEN;
-        Some(lc)
+        Some(LangCode([lc[0], lc[1], lc[2]]))
     } else {
         None
     };
@@ -964,7 +963,7 @@ impl ExtensionBody<'_> {
                     + b.cell_loop.len()
             }
             ExtensionBody::SupplementaryAudio(b) => {
-                1 + b.iso_639_language_code.map_or(0, <[u8]>::len) + b.private_data.len()
+                1 + b.iso_639_language_code.map_or(0, |_| ISO_639_LEN) + b.private_data.len()
             }
             ExtensionBody::NetworkChangeNotify(b) => b.cell_loop.len(),
             ExtensionBody::Message(b) => 1 + ISO_639_LEN + b.text.len(),
@@ -1033,8 +1032,8 @@ impl ExtensionBody<'_> {
                     | u8::from(b.language_code_present);
                 let mut p = 1;
                 if let Some(lc) = b.iso_639_language_code {
-                    out[p..p + lc.len()].copy_from_slice(lc);
-                    p += lc.len();
+                    out[p..p + ISO_639_LEN].copy_from_slice(&lc.0);
+                    p += ISO_639_LEN;
                 }
                 out[p..p + b.private_data.len()].copy_from_slice(b.private_data);
             }
@@ -1313,7 +1312,7 @@ mod tests {
                 assert!(b.mix_type);
                 assert_eq!(b.editorial_classification, 0x17);
                 assert!(b.language_code_present);
-                assert_eq!(b.iso_639_language_code, Some(b"fre".as_slice()));
+                assert_eq!(b.iso_639_language_code, Some(LangCode(*b"fre")));
                 assert_eq!(b.private_data, &[0xAA]);
             }
             other => panic!("expected SupplementaryAudio, got {other:?}"),
