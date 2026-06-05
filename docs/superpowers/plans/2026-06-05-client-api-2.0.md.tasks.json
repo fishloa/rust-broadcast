@@ -1,0 +1,30 @@
+{
+  "planPath": "docs/superpowers/plans/2026-06-05-client-api-2.0.md",
+  "tasks": [
+    { "id": 1, "subject": "Task 1: DvbText + LangCode newtypes", "status": "pending",
+      "description": "**Goal:** Borrowed DVB-text and 3-byte-code newtypes with decode-on-demand and decoded serde.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/text/mod.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features text::\", \"acceptanceCriteria\": [\"DvbText decode/Deref/Display\", \"serde decoded strings\", \"LangCode round-trip\"]}\n```" },
+    { "id": 2, "subject": "Task 2: Migrate text/lang fields (2.0 field break)", "status": "pending", "blockedBy": [1],
+      "description": "**Goal:** Annex-A text fields -> DvbText; 3-byte codes -> LangCode; affected structs drop Deserialize.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/descriptors/*.rs\", \"dvb-si/tests/serde_round_trip.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features\", \"acceptanceCriteria\": [\"greps empty\", \"round-trips green\"]}\n```" },
+    { "id": 3, "subject": "Task 3: DescriptorDef + AnyDescriptor + parse_loop", "status": "pending", "blockedBy": [2],
+      "description": "**Goal:** declare_descriptors! generated dispatch + lazy DescriptorIter; removes subset enum.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/descriptors/any.rs\", \"dvb-si/src/traits.rs\", \"dvb-si/tests/descriptor_loop.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features\", \"acceptanceCriteria\": [\"completeness test\", \"no panics\", \"issue #16 JSON\"]}\n```" },
+    { "id": 4, "subject": "Task 4: DescriptorRegistry (open registration)", "status": "pending", "blockedBy": [3],
+      "description": "**Goal:** Runtime registration; AnyDescriptor::Other dyn hatch; erased serde.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/descriptors/registry.rs\", \"dvb-si/Cargo.toml\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features\", \"acceptanceCriteria\": [\"register/downcast\", \"erased serde\", \"no-default-features builds\"]}\n```" },
+    { "id": 5, "subject": "Task 5: TableDef + AnyTable dispatch", "status": "pending", "blockedBy": [3],
+      "description": "**Goal:** declare_tables! range dispatch over all 29 tables, drift-tested.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/tables/any.rs\", \"dvb-si/src/traits.rs\", \"dvb-si/tests/table_dispatch.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features\", \"acceptanceCriteria\": [\"range dispatch\", \"completeness\", \"disjoint ranges\"]}\n```" },
+    { "id": 6, "subject": "Task 6: SiDemux + SectionEvent", "status": "pending", "blockedBy": [5],
+      "description": "**Goal:** Version-gated, PAT-following pump; owning-Bytes events; stats.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/demux.rs\", \"dvb-si/tests/demux.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features demux\", \"acceptanceCriteria\": [\"version gate\", \"PAT follow\", \"stats\", \"no panics\"]}\n```" },
+    { "id": 7, "subject": "Task 7: dvb-si end-to-end fixture tests", "status": "pending", "blockedBy": [6, 4],
+      "description": "**Goal:** Capture-driven: table set pinned, twice-feed zero events, decoded-JSON acceptance.\n\n```json:metadata\n{\"files\": [\"dvb-si/tests/demux_e2e.rs\"], \"verifyCommand\": \"cargo test -p dvb-si --all-features --test demux_e2e\", \"acceptanceCriteria\": [\"table set\", \"gate proof\", \"decoded JSON\"]}\n```" },
+    { "id": 8, "subject": "Task 8: t2mi PayloadDef + AnyPayload", "status": "pending",
+      "description": "**Goal:** declare_payloads! over 12 packet types, drift-tested.\n\n```json:metadata\n{\"files\": [\"dvb-t2mi/src/payload/any.rs\", \"dvb-t2mi/src/traits.rs\"], \"verifyCommand\": \"cargo test -p dvb-t2mi --all-features\", \"acceptanceCriteria\": [\"12 types dispatch\", \"completeness\"]}\n```" },
+    { "id": 9, "subject": "Task 9: T2miPump + T2miEvent", "status": "pending", "blockedBy": [8],
+      "description": "**Goal:** Feed-and-iterate T2-MI pump, CRC gate, owning-Bytes events.\n\n```json:metadata\n{\"files\": [\"dvb-t2mi/src/pump.rs\", \"dvb-t2mi/tests/pump.rs\"], \"verifyCommand\": \"cargo test -p dvb-t2mi --all-features pump\", \"acceptanceCriteria\": [\"pid filter\", \"CRC gate\", \"lazy payload\"]}\n```" },
+    { "id": 10, "subject": "Task 10: Chain test + hostility smoke", "status": "pending", "blockedBy": [9, 7],
+      "description": "**Goal:** t2mi->bbframe->si chain + garbage/truncation no-panic sweeps.\n\n```json:metadata\n{\"files\": [\"dvb-t2mi/tests/chain.rs\", \"dvb-si/tests/hostility.rs\"], \"verifyCommand\": \"cargo test --workspace --all-features\", \"acceptanceCriteria\": [\"chain typed table\", \"no panics\"]}\n```" },
+    { "id": 11, "subject": "Task 11: Documentation — rustdoc, examples, READMEs, migration guide", "status": "pending", "blockedBy": [10],
+      "description": "**Goal:** Quickstart doctests, si_dump/t2mi_dump examples, root README, MIGRATION-2.0.md, CLAUDE.md refresh.\n\n```json:metadata\n{\"files\": [\"dvb-si/src/lib.rs\", \"dvb-si/examples/si_dump.rs\", \"README.md\", \"dvb-si/MIGRATION-2.0.md\"], \"verifyCommand\": \"cargo test --workspace --all-features --doc\", \"acceptanceCriteria\": [\"doctests compile\", \"si_dump runs\", \"migration 1:1 with CHANGELOG\"]}\n```" },
+    { "id": 12, "subject": "Task 12: 2.0.0 release — bumps, release notes, publish", "status": "pending", "blockedBy": [11],
+      "description": "**Goal:** Lockstep 2.0.0, PR Closes #16, tag v2.0.0 -> CI publish, GitHub Release notes (no artifacts), verify crates.io + docs.rs.\n\n```json:metadata\n{\"files\": [\"dvb-si/Cargo.toml\", \"docs/release-notes/v2.0.0.md\"], \"verifyCommand\": \"cargo fmt --all --check && cargo test --workspace --all-features --locked\", \"acceptanceCriteria\": [\"gates green\", \"published x4\", \"release notes live\"]}\n```" }
+  ],
+  "lastUpdated": "2026-06-05T12:00:00Z"
+}
