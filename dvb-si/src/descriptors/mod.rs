@@ -84,5 +84,5 @@ pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
 
-pub use any::{parse_loop, AnyDescriptor, DescriptorIter};
+pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
 pub use registry::{DescriptorObject, DescriptorRegistry};

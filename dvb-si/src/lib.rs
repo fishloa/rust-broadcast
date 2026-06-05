@@ -8,12 +8,12 @@
 //! # 30-second quickstart
 //!
 //! Build a [`demux::SiDemux`], feed it TS packets, match on [`tables::AnyTable`],
-//! walk the descriptor loop with [`descriptors::parse_loop`], and print decoded
-//! text via [`text::DvbText::decode`]:
+//! walk the descriptor loop with [`descriptors::DescriptorLoop::iter`], and print
+//! decoded text via [`text::DvbText::decode`]:
 //!
 //! ```
 //! use dvb_si::demux::SiDemux;
-//! use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+//! use dvb_si::descriptors::AnyDescriptor;
 //! use dvb_si::tables::AnyTable;
 //!
 //! let mut demux = SiDemux::builder().build();
@@ -26,7 +26,7 @@
 //!     match event.table() {
 //!         Ok(AnyTable::Sdt(sdt)) => {
 //!             for service in &sdt.services {
-//!                 for item in parse_loop(service.descriptors).flatten() {
+//!                 for item in service.descriptors.iter().flatten() {
 //!                     if let AnyDescriptor::Service(svc) = item {
 //!                         // DvbText decodes EN 300 468 Annex A → UTF-8.
 //!                         println!("service: {}", svc.service_name.decode());

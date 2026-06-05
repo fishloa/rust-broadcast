@@ -10,6 +10,7 @@
 //! Both loops are exposed as raw bytes for the caller to walk with the
 //! descriptor parsers.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -26,8 +27,8 @@ const CRC_LEN: usize = 4;
 
 /// Selection Information Table (§7.1.2, Table 164).
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Sit {
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Sit<'a> {
     /// 16-bit field after section_length — reserved_future_use for the SIT
     /// (conventionally 0xFFFF); retained verbatim.
     pub table_id_extension: u16,
@@ -39,13 +40,15 @@ pub struct Sit {
     pub section_number: u8,
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
-    /// Transmission-info descriptor loop bytes (the first loop).
-    pub transmission_info_descriptors: Vec<u8>,
+    /// Transmission-info descriptor loop (the first loop). Serializes as the
+    /// typed descriptor sequence; `.raw()` yields the wire bytes.
+    pub transmission_info_descriptors: DescriptorLoop<'a>,
     /// Per-service loop bytes (service_id + running_status + descriptors), raw.
-    pub service_loop: Vec<u8>,
+    /// Not a flat descriptor loop, so kept as raw bytes.
+    pub service_loop: &'a [u8],
 }
 
-impl<'a> Parse<'a> for Sit {
+impl<'a> Parse<'a> for Sit<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -97,15 +100,15 @@ impl<'a> Parse<'a> for Sit {
             current_next_indicator,
             section_number,
             last_section_number,
-            transmission_info_descriptors: bytes[ti_start..ti_end].to_vec(),
+            transmission_info_descriptors: DescriptorLoop::new(&bytes[ti_start..ti_end]),
             // Everything between the transmission-info loop and the CRC is the
             // per-service loop, kept raw.
-            service_loop: bytes[ti_end..crc_start].to_vec(),
+            service_loop: &bytes[ti_end..crc_start],
         })
     }
 }
 
-impl Serialize for Sit {
+impl Serialize for Sit<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
@@ -140,9 +143,9 @@ impl Serialize for Sit {
         buf[dl_pos + 1] = (ti_len & 0xFF) as u8;
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + self.transmission_info_descriptors.len();
-        buf[ti_start..ti_end].copy_from_slice(&self.transmission_info_descriptors);
+        buf[ti_start..ti_end].copy_from_slice(self.transmission_info_descriptors.raw());
         let sl_end = ti_end + self.service_loop.len();
-        buf[ti_end..sl_end].copy_from_slice(&self.service_loop);
+        buf[ti_end..sl_end].copy_from_slice(self.service_loop);
 
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
@@ -151,12 +154,12 @@ impl Serialize for Sit {
     }
 }
 
-impl<'a> Table<'a> for Sit {
+impl<'a> Table<'a> for Sit<'a> {
     const TABLE_ID: u8 = TABLE_ID;
     const PID: u16 = PID;
 }
 
-impl<'a> crate::traits::TableDef<'a> for Sit {
+impl<'a> crate::traits::TableDef<'a> for Sit<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "SELECTION_INFORMATION";
 }
@@ -214,7 +217,8 @@ mod tests {
 
     #[test]
     fn parse_empty() {
-        let sit = Sit::parse(&build_sit(0x1234, 5, &[], &[])).unwrap();
+        let bytes = build_sit(0x1234, 5, &[], &[]);
+        let sit = Sit::parse(&bytes).unwrap();
         assert_eq!(sit.table_id_extension, 0x1234);
         assert_eq!(sit.version_number, 5);
         assert!(sit.current_next_indicator);
@@ -227,8 +231,9 @@ mod tests {
         let ti = [0x4D, 0x02, 0x01, 0x02]; // a transmission-info descriptor
                                            // one service entry: service_id=0x0001, running_status=4, svc_desc_len=0
         let service = [0x00, 0x01, 0x80 | (4 << 4), 0x00];
-        let sit = Sit::parse(&build_sit(0xABCD, 7, &ti, &service)).unwrap();
-        assert_eq!(sit.transmission_info_descriptors, &ti[..]);
+        let bytes = build_sit(0xABCD, 7, &ti, &service);
+        let sit = Sit::parse(&bytes).unwrap();
+        assert_eq!(sit.transmission_info_descriptors.raw(), &ti[..]);
         assert_eq!(sit.service_loop, &service[..]);
     }
 
@@ -236,7 +241,8 @@ mod tests {
     fn serialize_round_trip() {
         let ti = [0x4D, 0x02, 0x01, 0x02];
         let service = [0x00, 0x01, 0xC0, 0x00];
-        let sit = Sit::parse(&build_sit(0xCAFE, 3, &ti, &service)).unwrap();
+        let bytes = build_sit(0xCAFE, 3, &ti, &service);
+        let sit = Sit::parse(&bytes).unwrap();
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
         assert_eq!(Sit::parse(&buf).unwrap(), sit);
@@ -244,7 +250,8 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty() {
-        let sit = Sit::parse(&build_sit(0x0001, 0, &[], &[])).unwrap();
+        let bytes = build_sit(0x0001, 0, &[], &[]);
+        let sit = Sit::parse(&bytes).unwrap();
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
         assert_eq!(Sit::parse(&buf).unwrap(), sit);
@@ -252,20 +259,21 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<Sit as Table>::TABLE_ID, 0x7F);
-        assert_eq!(<Sit as Table>::PID, 0x001F);
+        assert_eq!(<Sit<'_> as Table>::TABLE_ID, 0x7F);
+        assert_eq!(<Sit<'_> as Table>::PID, 0x001F);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
-    fn sit_round_trips_via_json() {
-        let sit = Sit::parse(&build_sit(
-            0xDEAD,
-            9,
-            &[0x4D, 0x00],
-            &[0x00, 0x01, 0xC0, 0x00],
-        ))
-        .unwrap();
-        let j = serde_json::to_string(&sit).unwrap();
-        assert_eq!(serde_json::from_str::<Sit>(&j).unwrap(), sit);
+    fn sit_serializes_typed_loop() {
+        // SIT now borrows both loops (3.0): serialize-only. The
+        // transmission_info loop serializes as the typed descriptor sequence.
+        let bytes = build_sit(0xDEAD, 9, &[0x4D, 0x00], &[0x00, 0x01, 0xC0, 0x00]);
+        let sit = Sit::parse(&bytes).unwrap();
+        let v = serde_json::to_value(&sit).unwrap();
+        assert!(
+            v["transmission_info_descriptors"].is_array(),
+            "transmission_info_descriptors must serialize as a typed sequence, got {v}"
+        );
     }
 }

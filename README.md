@@ -51,7 +51,7 @@ In code, the same pipeline is a feed-and-match loop:
 
 ```rust
 use dvb_si::demux::SiDemux;
-use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTable;
 
 let mut demux = SiDemux::builder().build();
@@ -59,7 +59,7 @@ for packet in ts_packets {                       // each aligned 188-byte packet
     for event in demux.feed(&packet) {           // changed sections only
         if let Ok(AnyTable::Sdt(sdt)) = event.table() {
             for service in &sdt.services {
-                for item in parse_loop(service.descriptors).flatten() {
+                for item in service.descriptors.iter().flatten() {
                     if let AnyDescriptor::Service(svc) = item {
                         println!("{}", svc.service_name.decode()); // Annex A → UTF-8
                     }
@@ -93,6 +93,7 @@ discipline is spec fidelity, verified several ways over:
 ## Documentation
 
 - Per-crate front pages: [dvb-si](dvb-si/README.md) · [dvb-t2mi](dvb-t2mi/README.md) · [dvb-bbframe](dvb-bbframe/README.md) · [dvb-common](dvb-common/README.md)
+- [`dvb-si` 3.0 migration guide](dvb-si/MIGRATION-3.0.md) — 2.x → 3.0 breaking changes (typed `DescriptorLoop`) with before/after code.
 - [`dvb-si` 2.0 migration guide](dvb-si/MIGRATION-2.0.md) — 1.x → 2.0 breaking changes with before/after code.
 - API docs: [docs.rs/dvb-si](https://docs.rs/dvb-si) (each crate's docs.rs front page carries a runnable quickstart).
 

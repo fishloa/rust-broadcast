@@ -4,6 +4,7 @@
 //! Carried on a per-programme PID signalled by the PAT, with table_id 0x02.
 //! Descriptor parsing is out of scope for this commit — raw bytes only.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -23,7 +24,7 @@ const STREAM_HEADER_LEN: usize = 5;
 
 /// One elementary stream entry in the PMT's ES loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PmtStream<'a> {
     /// MPEG-2 stream_type byte (ISO/IEC 13818-1 Table 2-34).
     pub stream_type: u8,
@@ -31,12 +32,14 @@ pub struct PmtStream<'a> {
     pub elementary_pid: u16,
     /// Raw ES_info descriptor bytes; parsing lives in crate::descriptors.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub es_info: &'a [u8],
+    /// Elementary-stream descriptor loop. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub es_info: DescriptorLoop<'a>,
 }
 
 /// Program Map Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Pmt<'a> {
     /// Programme number from the table_id_extension field.
     pub program_number: u16,
@@ -48,7 +51,9 @@ pub struct Pmt<'a> {
     pub pcr_pid: u16,
     /// Raw program_info descriptor bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub program_info: &'a [u8],
+    /// Program-info descriptor loop. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub program_info: DescriptorLoop<'a>,
     /// Elementary streams in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub streams: Vec<PmtStream<'a>>,
@@ -100,7 +105,7 @@ impl<'a> Parse<'a> for Pmt<'a> {
                 available: stream_loop_end - prog_info_start,
             });
         }
-        let program_info = &bytes[prog_info_start..prog_info_end];
+        let program_info = DescriptorLoop::new(&bytes[prog_info_start..prog_info_end]);
 
         let mut streams = Vec::new();
         let mut pos = prog_info_end;
@@ -120,7 +125,7 @@ impl<'a> Parse<'a> for Pmt<'a> {
             streams.push(PmtStream {
                 stream_type,
                 elementary_pid,
-                es_info: &bytes[es_start..es_end],
+                es_info: DescriptorLoop::new(&bytes[es_start..es_end]),
             });
             pos = es_end;
         }
@@ -179,7 +184,7 @@ impl Serialize for Pmt<'_> {
         let prog_info_start =
             MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES;
         buf[prog_info_start..prog_info_start + self.program_info.len()]
-            .copy_from_slice(self.program_info);
+            .copy_from_slice(self.program_info.raw());
 
         let mut pos = prog_info_start + self.program_info.len();
         for stream in &self.streams {
@@ -190,7 +195,7 @@ impl Serialize for Pmt<'_> {
             buf[pos + 3] = 0xF0 | ((esl >> 8) as u8 & 0x0F);
             buf[pos + 4] = (esl & 0xFF) as u8;
             let es_start = pos + STREAM_HEADER_LEN;
-            buf[es_start..es_start + stream.es_info.len()].copy_from_slice(stream.es_info);
+            buf[es_start..es_start + stream.es_info.len()].copy_from_slice(stream.es_info.raw());
             pos = es_start + stream.es_info.len();
         }
 
@@ -266,7 +271,7 @@ mod tests {
         assert_eq!(pmt.version_number, 5);
         assert!(pmt.current_next_indicator);
         assert_eq!(pmt.pcr_pid, 0x0100);
-        assert_eq!(pmt.program_info, &[0xAA, 0xBB]);
+        assert_eq!(pmt.program_info.raw(), &[0xAA, 0xBB]);
         assert_eq!(pmt.streams.len(), 0);
     }
 
@@ -283,10 +288,10 @@ mod tests {
         assert_eq!(pmt.streams.len(), 2);
         assert_eq!(pmt.streams[0].stream_type, 0x02);
         assert_eq!(pmt.streams[0].elementary_pid, 0x102);
-        assert_eq!(pmt.streams[0].es_info, &[0x11, 0x22]);
+        assert_eq!(pmt.streams[0].es_info.raw(), &[0x11, 0x22]);
         assert_eq!(pmt.streams[1].stream_type, 0x1B);
         assert_eq!(pmt.streams[1].elementary_pid, 0x103);
-        assert_eq!(pmt.streams[1].es_info, &[0x33]);
+        assert_eq!(pmt.streams[1].es_info.raw(), &[0x33]);
     }
 
     #[test]
@@ -313,7 +318,7 @@ mod tests {
             version_number: 0,
             current_next_indicator: true,
             pcr_pid: 0x100,
-            program_info: &[],
+            program_info: DescriptorLoop::new(&[]),
             streams: vec![],
         };
         let mut buf = vec![0u8; pmt.serialized_len()];
@@ -332,22 +337,22 @@ mod tests {
             version_number: 7,
             current_next_indicator: true,
             pcr_pid: 0x1F0,
-            program_info: &prog_info,
+            program_info: DescriptorLoop::new(&prog_info),
             streams: vec![
                 PmtStream {
                     stream_type: 0x02,
                     elementary_pid: 0x100,
-                    es_info: &es1,
+                    es_info: DescriptorLoop::new(&es1),
                 },
                 PmtStream {
                     stream_type: 0x03,
                     elementary_pid: 0x101,
-                    es_info: &es2,
+                    es_info: DescriptorLoop::new(&es2),
                 },
                 PmtStream {
                     stream_type: 0x1B,
                     elementary_pid: 0x102,
-                    es_info: &[],
+                    es_info: DescriptorLoop::new(&[]),
                 },
             ],
         };
@@ -369,6 +374,6 @@ mod tests {
         let pi = vec![0x09, 0x04, 0x01, 0x02, 0x03, 0x04];
         let bytes = build_pmt(1, 0, 0x100, &pi, &[]);
         let pmt = Pmt::parse(&bytes).unwrap();
-        assert_eq!(pmt.program_info, &pi[..]);
+        assert_eq!(pmt.program_info.raw(), &pi[..]);
     }
 }

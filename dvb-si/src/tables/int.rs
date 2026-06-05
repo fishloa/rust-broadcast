@@ -20,6 +20,7 @@
 //!   [...-4]  CRC_32
 //! ```
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -89,7 +90,7 @@ const OFF_PLATFORM_DESC_LEN: usize = 12;
 /// walk the raw bytes using the same 4-bit-reserved + 12-bit-length framing
 /// described by the spec.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Int<'a> {
     /// Semantics of this INT announcement — 0x01 = stream announcement/location.
     pub action_type: u8,
@@ -120,10 +121,10 @@ pub struct Int<'a> {
     /// 0x00 means no ordering constraint.
     pub processing_order: u8,
 
-    /// Raw bytes of the `platform_descriptor_loop` (descriptors only, not the
-    /// 2-byte length field).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub platform_descriptors: &'a [u8],
+    /// The `platform_descriptor_loop` (descriptors only, not the 2-byte length
+    /// field). Serializes as the typed descriptor sequence; `.raw()` yields the
+    /// wire bytes.
+    pub platform_descriptors: DescriptorLoop<'a>,
 
     /// Raw bytes of all `N × (target_descriptor_loop | operational_descriptor_loop)`
     /// entries that follow the platform_descriptor_loop and precede the CRC.
@@ -199,7 +200,7 @@ impl<'a> Parse<'a> for Int<'a> {
             });
         }
 
-        let platform_descriptors = &bytes[plat_desc_start..plat_desc_end];
+        let platform_descriptors = DescriptorLoop::new(&bytes[plat_desc_start..plat_desc_end]);
 
         // 6. Remainder (target/operational loops) — everything between end of
         //    platform_descriptors and CRC.
@@ -273,7 +274,7 @@ impl Serialize for Int<'_> {
         // platform_descriptors.
         let plat_start = OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD;
         let plat_end = plat_start + self.platform_descriptors.len();
-        buf[plat_start..plat_end].copy_from_slice(self.platform_descriptors);
+        buf[plat_start..plat_end].copy_from_slice(self.platform_descriptors.raw());
 
         // loops (raw target/operational iterations).
         let loops_start = plat_end;
@@ -334,7 +335,7 @@ mod tests {
             last_section_number,
             platform_id,
             processing_order,
-            platform_descriptors: platform_desc,
+            platform_descriptors: DescriptorLoop::new(platform_desc),
             loops,
         };
         let mut buf = vec![0u8; int.serialized_len()];
@@ -368,7 +369,10 @@ mod tests {
         assert_eq!(int.last_section_number, 0);
         assert_eq!(int.platform_id, 0x00_12_34);
         assert_eq!(int.processing_order, 0x00);
-        assert_eq!(int.platform_descriptors, &[0x81, 0x02, 0xAB, 0xCD][..]);
+        assert_eq!(
+            int.platform_descriptors.raw(),
+            &[0x81, 0x02, 0xAB, 0xCD][..]
+        );
         assert_eq!(int.loops, &[] as &[u8]);
     }
 
@@ -451,7 +455,7 @@ mod tests {
         assert_eq!(re.last_section_number, 3);
         assert_eq!(re.platform_id, 0x00_AB_CD);
         assert_eq!(re.processing_order, 0x00);
-        assert_eq!(re.platform_descriptors, &plat_desc[..]);
+        assert_eq!(re.platform_descriptors.raw(), &plat_desc[..]);
         assert_eq!(re.loops, &fake_loops[..]);
     }
 
@@ -466,7 +470,7 @@ mod tests {
             last_section_number: 0,
             platform_id: 0,
             processing_order: 0,
-            platform_descriptors: &[],
+            platform_descriptors: DescriptorLoop::new(&[]),
             loops: &[],
         };
         let mut buf = vec![0u8; 2]; // far too small

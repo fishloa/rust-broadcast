@@ -56,7 +56,7 @@ fn build_sdt_bytes() -> Vec<u8> {
             eit_present_following_flag: true,
             running_status: 4,
             free_ca_mode: false,
-            descriptors: &[],
+            descriptors: dvb_si::descriptors::DescriptorLoop::new(&[]),
         }],
     };
     let mut buf = vec![0u8; sdt.serialized_len()];

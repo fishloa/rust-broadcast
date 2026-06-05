@@ -7,6 +7,7 @@
 //! CRID authority sub-loops) are kept as raw bytes — callers that need them
 //! can walk `resolution_providers` directly.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -36,7 +37,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_FIELD
 /// sub-structure (provider names, per-provider descriptors, CRID authority
 /// loops) is not parsed further.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Rnt<'a> {
     /// 16-bit context identifier (table_id_extension at bytes 3–4).
     pub context_id: u16,
@@ -51,9 +52,9 @@ pub struct Rnt<'a> {
     /// context_id_type byte (0x00 = bouquet_id, 0x01 = original_network_id,
     /// 0x02 = network_id, 0x03–0x7F DVB reserved, 0x80–0xFF user defined).
     pub context_id_type: u8,
-    /// Raw bytes of the common descriptor loop (`common_descriptors_length` bytes).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub common_descriptors: &'a [u8],
+    /// Common descriptor loop (`common_descriptors_length` bytes). Serializes
+    /// as the typed descriptor sequence; `.raw()` yields the wire bytes.
+    pub common_descriptors: DescriptorLoop<'a>,
     /// Raw bytes of the resolution-provider loop (everything after the common
     /// descriptors up to, but not including, the CRC-32 trailer).
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -119,7 +120,7 @@ impl<'a> Parse<'a> for Rnt<'a> {
             });
         }
 
-        let common_descriptors = &bytes[common_desc_start..common_desc_end];
+        let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         // Everything from the end of the common descriptor loop up to (but not
         // including) the 4-byte CRC trailer is the resolution-provider loop.
@@ -184,7 +185,7 @@ impl Serialize for Rnt<'_> {
         // Common descriptors.
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
         let cd_end = cd_start + self.common_descriptors.len();
-        buf[cd_start..cd_end].copy_from_slice(self.common_descriptors);
+        buf[cd_start..cd_end].copy_from_slice(self.common_descriptors.raw());
 
         // Resolution-provider loop (opaque bytes).
         let rp_end = cd_end + self.resolution_providers.len();
@@ -234,7 +235,7 @@ mod tests {
             section_number,
             last_section_number,
             context_id_type,
-            common_descriptors: common_desc,
+            common_descriptors: DescriptorLoop::new(common_desc),
             resolution_providers,
         };
         let mut buf = vec![0u8; rnt.serialized_len()];
@@ -259,7 +260,7 @@ mod tests {
         assert_eq!(rnt.section_number, 0);
         assert_eq!(rnt.last_section_number, 0);
         assert_eq!(rnt.context_id_type, 0x01);
-        assert_eq!(rnt.common_descriptors, &common_desc[..]);
+        assert_eq!(rnt.common_descriptors.raw(), &common_desc[..]);
         assert_eq!(rnt.resolution_providers, &rp_bytes[..]);
     }
 
@@ -301,7 +302,7 @@ mod tests {
             section_number: 1,
             last_section_number: 2,
             context_id_type: 0x02,
-            common_descriptors: &common_desc,
+            common_descriptors: DescriptorLoop::new(&common_desc),
             resolution_providers: &rp_bytes,
         };
 
@@ -320,7 +321,7 @@ mod tests {
             section_number: 0,
             last_section_number: 0,
             context_id_type: 0x00,
-            common_descriptors: &[],
+            common_descriptors: DescriptorLoop::new(&[]),
             resolution_providers: &[],
         };
         let mut buf = vec![0u8; 2];

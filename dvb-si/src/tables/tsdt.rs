@@ -3,6 +3,7 @@
 //! TSDT is carried on PID 0x0002 with table_id 0x03. It provides a
 //! means of describing the transport stream using descriptors.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -18,8 +19,8 @@ const CRC_LEN: usize = 4;
 
 /// Transport Stream Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Tsdt {
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Tsdt<'a> {
     /// 16-bit table_id_extension.
     pub table_id_extension: u16,
     /// 5-bit version_number.
@@ -30,11 +31,12 @@ pub struct Tsdt {
     pub section_number: u8,
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
-    /// Descriptor loop bytes (owned copy).
-    pub descriptors: Vec<u8>,
+    /// Descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
-impl<'a> Parse<'a> for Tsdt {
+impl<'a> Parse<'a> for Tsdt<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -81,12 +83,12 @@ impl<'a> Parse<'a> for Tsdt {
             current_next_indicator,
             section_number,
             last_section_number,
-            descriptors: bytes[desc_start..desc_end].to_vec(),
+            descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
         })
     }
 }
 
-impl Serialize for Tsdt {
+impl Serialize for Tsdt<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
@@ -112,7 +114,8 @@ impl Serialize for Tsdt {
         buf[7] = self.last_section_number;
 
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[desc_start..desc_start + self.descriptors.len()].copy_from_slice(&self.descriptors);
+        buf[desc_start..desc_start + self.descriptors.len()]
+            .copy_from_slice(self.descriptors.raw());
 
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
@@ -122,12 +125,12 @@ impl Serialize for Tsdt {
     }
 }
 
-impl<'a> Table<'a> for Tsdt {
+impl<'a> Table<'a> for Tsdt<'a> {
     const TABLE_ID: u8 = TABLE_ID;
     const PID: u16 = PID;
 }
 
-impl<'a> crate::traits::TableDef<'a> for Tsdt {
+impl<'a> crate::traits::TableDef<'a> for Tsdt<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "TRANSPORT_STREAM_DESCRIPTION";
 }
@@ -186,7 +189,7 @@ mod tests {
         let tsdt = Tsdt::parse(&bytes).unwrap();
         assert_eq!(tsdt.table_id_extension, 0xABCD);
         assert_eq!(tsdt.version_number, 7);
-        assert_eq!(tsdt.descriptors, &descriptors[..]);
+        assert_eq!(tsdt.descriptors.raw(), &descriptors[..]);
     }
 
     #[test]
@@ -212,18 +215,22 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<Tsdt as Table>::TABLE_ID, 0x03);
-        assert_eq!(<Tsdt as Table>::PID, 0x0002);
+        assert_eq!(<Tsdt<'_> as Table>::TABLE_ID, 0x03);
+        assert_eq!(<Tsdt<'_> as Table>::PID, 0x0002);
     }
 
     #[cfg(feature = "serde")]
     #[test]
-    fn tsdt_round_trips_via_json() {
-        let descriptors = [0x4D, 0x02, 0x01, 0x02];
+    fn tsdt_serializes_typed_loop() {
+        // TSDT now borrows its descriptor loop (3.0): serialize-only, the loop
+        // emits the typed descriptor sequence (here a short_event, tag 0x4D).
+        let descriptors = [0x4D, 0x02, b'e', b'n']; // valid short_event header bytes
         let bytes = build_tsdt(0xDEAD, 9, &descriptors);
         let tsdt = Tsdt::parse(&bytes).unwrap();
-        let j = serde_json::to_string(&tsdt).unwrap();
-        let back: Tsdt = serde_json::from_str(&j).unwrap();
-        assert_eq!(tsdt, back);
+        let v = serde_json::to_value(&tsdt).unwrap();
+        assert!(
+            v["descriptors"].is_array(),
+            "descriptors must serialize as a typed sequence, got {v}"
+        );
     }
 }

@@ -3,6 +3,7 @@
 //! AIT carries application metadata for HbbTV / interactive-TV services.
 //! Carried on a per-service PID with table_id 0x74.
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -31,7 +32,7 @@ pub struct ApplicationIdentifier {
 
 /// One application entry in the AIT application loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AitApplication<'a> {
     /// Application identifier.
     pub identifier: ApplicationIdentifier,
@@ -39,12 +40,14 @@ pub struct AitApplication<'a> {
     pub control_code: u8,
     /// Raw descriptor bytes for this application.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub descriptors: &'a [u8],
+    /// Per-application descriptor loop. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// Application Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ait<'a> {
     /// 15-bit application_type (e.g. 0x0010 for HbbTV).
     pub application_type: u16,
@@ -60,7 +63,9 @@ pub struct Ait<'a> {
     pub last_section_number: u8,
     /// Raw common descriptor bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub common_descriptors: &'a [u8],
+    /// Common descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
+    pub common_descriptors: DescriptorLoop<'a>,
     /// Applications in wire order.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub applications: Vec<AitApplication<'a>>,
@@ -116,7 +121,7 @@ impl<'a> Parse<'a> for Ait<'a> {
                 available: app_loop_end - common_desc_start,
             });
         }
-        let common_descriptors = &bytes[common_desc_start..common_desc_end];
+        let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         let app_loop_length =
             (((bytes[common_desc_end] & 0x0F) as usize) << 8) | bytes[common_desc_end + 1] as usize;
@@ -154,7 +159,7 @@ impl<'a> Parse<'a> for Ait<'a> {
                     application_id,
                 },
                 control_code,
-                descriptors: &bytes[app_desc_start..app_desc_end],
+                descriptors: DescriptorLoop::new(&bytes[app_desc_start..app_desc_end]),
             });
             pos = app_desc_end;
         }
@@ -215,7 +220,7 @@ impl Serialize for Ait<'_> {
 
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
         buf[common_desc_start..common_desc_start + self.common_descriptors.len()]
-            .copy_from_slice(self.common_descriptors);
+            .copy_from_slice(self.common_descriptors.raw());
 
         let app_loop_start = common_desc_start + self.common_descriptors.len();
         let app_bytes: usize = self
@@ -236,7 +241,8 @@ impl Serialize for Ait<'_> {
             buf[pos + 7] = 0xF0 | ((adl >> 8) as u8 & 0x0F);
             buf[pos + 8] = (adl & 0xFF) as u8;
             let desc_start = pos + APP_HEADER_LEN;
-            buf[desc_start..desc_start + app.descriptors.len()].copy_from_slice(app.descriptors);
+            buf[desc_start..desc_start + app.descriptors.len()]
+                .copy_from_slice(app.descriptors.raw());
             pos = desc_start + app.descriptors.len();
         }
 
@@ -351,7 +357,7 @@ mod tests {
         let desc = vec![0x00, 0x02, 0xAA, 0xBB];
         let bytes = build_ait(0x0010, false, 0, &desc, &[]);
         let ait = Ait::parse(&bytes).unwrap();
-        assert_eq!(ait.common_descriptors, &desc[..]);
+        assert_eq!(ait.common_descriptors.raw(), &desc[..]);
     }
 
     #[test]
@@ -369,7 +375,7 @@ mod tests {
         assert_eq!(ait.applications[0].identifier.organisation_id, 0x12345678);
         assert_eq!(ait.applications[0].identifier.application_id, 0xABCD);
         assert_eq!(ait.applications[0].control_code, 0x01);
-        assert_eq!(ait.applications[0].descriptors, &desc[..]);
+        assert_eq!(ait.applications[0].descriptors.raw(), &desc[..]);
     }
 
     #[test]
@@ -401,7 +407,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            common_descriptors: &[],
+            common_descriptors: DescriptorLoop::new(&[]),
             applications: vec![],
         };
         let mut buf = vec![0u8; ait.serialized_len()];
@@ -420,7 +426,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 1,
             last_section_number: 2,
-            common_descriptors: &[0x01, 0x00],
+            common_descriptors: DescriptorLoop::new(&[0x01, 0x00]),
             applications: vec![
                 AitApplication {
                     identifier: ApplicationIdentifier {
@@ -428,7 +434,7 @@ mod tests {
                         application_id: 0xABCD,
                     },
                     control_code: 0x01,
-                    descriptors: &desc1,
+                    descriptors: DescriptorLoop::new(&desc1),
                 },
                 AitApplication {
                     identifier: ApplicationIdentifier {
@@ -436,7 +442,7 @@ mod tests {
                         application_id: 0x00EF,
                     },
                     control_code: 0x02,
-                    descriptors: &[],
+                    descriptors: DescriptorLoop::new(&[]),
                 },
             ],
         };

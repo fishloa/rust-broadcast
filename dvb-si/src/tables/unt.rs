@@ -22,6 +22,7 @@
 //!   `platform_loop_length(16)` then target and operational descriptor loops
 //! - CRC_32 (32 bit)
 
+use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
@@ -121,7 +122,7 @@ const RESERVED_NIBBLE: u8 = 0xF0;
 ///   corresponding target / operational descriptor loops. Callers that need to
 ///   walk individual platform entries must parse this field manually.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Unt<'a> {
     /// Action type (Table 12 of ETSI TS 102 006):
     /// 0x01 = System Software Update, 0x80–0xFF = user defined.
@@ -155,11 +156,11 @@ pub struct Unt<'a> {
     /// subsequent (ascending), 0xFF = no ordering implied.
     pub processing_order: u8,
 
-    /// Raw body of `common_descriptor_loop()` — the bytes AFTER the
-    /// 12-bit length field.  Contains zero or more standard SI descriptors
-    /// (tag + length + payload), as defined in §9.4.2.1.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub common_descriptors: &'a [u8],
+    /// Body of `common_descriptor_loop()` — the bytes AFTER the 12-bit length
+    /// field.  Contains zero or more standard SI descriptors (tag + length +
+    /// payload), as defined in §9.4.2.1. Serializes as the typed descriptor
+    /// sequence; `.raw()` yields the wire bytes.
+    pub common_descriptors: DescriptorLoop<'a>,
 
     /// Raw bytes of the entire platform loop region — everything after
     /// `common_descriptor_loop()` up to (but not including) the CRC_32.
@@ -235,7 +236,7 @@ impl<'a> Parse<'a> for Unt<'a> {
                 available: (total - CRC_LEN).saturating_sub(common_desc_start),
             });
         }
-        let common_descriptors = &bytes[common_desc_start..common_desc_end];
+        let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
         // ── 6. platform_loop ─────────────────────────────────────────────────
         let platform_loop_start = common_desc_end;
@@ -307,7 +308,7 @@ impl Serialize for Unt<'_> {
         // ── common_descriptors body ──────────────────────────────────────────
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
         let common_end = common_start + self.common_descriptors.len();
-        buf[common_start..common_end].copy_from_slice(self.common_descriptors);
+        buf[common_start..common_end].copy_from_slice(self.common_descriptors.raw());
 
         // ── platform_loop ────────────────────────────────────────────────────
         let plat_end = common_end + self.platform_loop.len();
@@ -431,7 +432,7 @@ mod tests {
         assert_eq!(unt.last_section_number, 0);
         assert_eq!(unt.oui, oui);
         assert_eq!(unt.processing_order, 0x00);
-        assert_eq!(unt.common_descriptors, common_descs);
+        assert_eq!(unt.common_descriptors.raw(), common_descs);
         assert_eq!(unt.platform_loop, &[] as &[u8]);
     }
 
@@ -493,7 +494,7 @@ mod tests {
             last_section_number: 0,
             oui: 0x00015A,
             processing_order: 0x00,
-            common_descriptors: &[],
+            common_descriptors: DescriptorLoop::new(&[]),
             platform_loop: &[],
         };
         let mut buf = vec![0u8; unt.serialized_len() - 1];
@@ -520,7 +521,7 @@ mod tests {
             last_section_number: 5,
             oui: 0x00015A,
             processing_order: 0x02,
-            common_descriptors: common_descs,
+            common_descriptors: DescriptorLoop::new(common_descs),
             platform_loop: plat,
         };
 

@@ -1,5 +1,54 @@
 # Changelog
 
+## 3.0.0 — 2026-06-05
+
+Finishes the `DvbText` pattern for descriptor loops: every SI descriptor-loop
+field on a table is now a typed, zero-copy `DescriptorLoop` that walks into
+`AnyDescriptor`s on demand and serializes as the typed sequence. Wire parsing is
+byte-identical — only field types and JSON output change. See
+[`MIGRATION-3.0.md`](MIGRATION-3.0.md) for every breaking change with
+before/after code. Closes #21.
+
+### Breaking
+
+- **`DescriptorLoop<'a>` replaces raw descriptor-loop byte fields.** Every true
+  SI descriptor loop on a table is now `DescriptorLoop<'a>` instead of `&'a [u8]`
+  (or `Vec<u8>`). Call `.iter()` to walk it into typed `AnyDescriptor`s, `.raw()`
+  for the wire bytes, or rely on `Deref<Target=[u8]>` for length/indexing.
+  `parse_loop` is unchanged and still works on free slices.
+  Affected fields: `SdtService.descriptors`, `EitEvent.descriptors`,
+  `PmtStream.es_info`, `Pmt.program_info`, `NitTransportStream.descriptors`,
+  `Nit.network_descriptors`, `BatTransportStream.descriptors`,
+  `Bat.bouquet_descriptors`, `AitApplication.descriptors`,
+  `Ait.common_descriptors`, `Tot.descriptors`, `Rct.descriptors`,
+  `Rnt.common_descriptors`, `Int.platform_descriptors`,
+  `Unt.common_descriptors`, `Cat.descriptors`, `Tsdt.descriptors`,
+  `Sit.transmission_info_descriptors`.
+  See [MIGRATION-3.0.md §1](MIGRATION-3.0.md#1-descriptor-loop-fields-u8--vecu8--descriptorloopa).
+- **`Cat`, `Tsdt`, `Sit` are now borrowed (`<'a>`).** They previously owned their
+  loops (`Vec<u8>`) and had no lifetime; they now borrow the section bytes like
+  every other table. `Sit.service_loop` is now a borrowed `&'a [u8]` (was
+  `Vec<u8>`). See
+  [MIGRATION-3.0.md §2](MIGRATION-3.0.md#2-three-tables-moved-from-owned-to-borrowed).
+- **`Deserialize` dropped on tables/structs that hold a `DescriptorLoop`.** The
+  typed loop is serialize-only, so its container structs derive `Serialize` only:
+  `Sdt`, `SdtService`, `Eit`, `EitEvent`, `Pmt`, `PmtStream`, `Nit`,
+  `NitTransportStream`, `Bat`, `BatTransportStream`, `Ait`, `AitApplication`,
+  `Tot`, `Rct`, `Rnt`, `Int`, `Unt`, `Cat`, `Tsdt`, `Sit`. Reconstruct by
+  re-`parse`-ing the wire bytes. See
+  [MIGRATION-3.0.md §3](MIGRATION-3.0.md#3-deserialize-dropped-on-tablesstructs-that-hold-a-loop).
+- **serde JSON shape change.** A descriptor-loop field serializes as an array of
+  typed, decoded descriptors (camelCase variant keys) instead of an array of raw
+  bytes; per-entry parse errors surface as `{"parseError": "…"}`. See
+  [MIGRATION-3.0.md §4](MIGRATION-3.0.md#4-serde-json-shape-change).
+
+### Added
+
+- `descriptors::DescriptorLoop<'a>` — a borrowed, zero-copy descriptor-loop
+  newtype (the table-loop analogue of `DvbText`): `new`/`raw`/`iter`,
+  `Deref<[u8]>`, `From<&[u8]>`, `IntoIterator`, a cheap `Debug`
+  (`DescriptorLoop(<N bytes>)`), and serialize-only serde over the typed walk.
+
 ## 2.1.0 — 2026-06-05
 
 ### Added
