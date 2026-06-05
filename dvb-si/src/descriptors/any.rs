@@ -11,6 +11,18 @@
 //! entry. It never panics: a malformed entry whose length is known yields an
 //! `Err` and iteration continues; a truncated final header/body yields one
 //! final `Err` and then fuses.
+//!
+//! # Adding a descriptor
+//!
+//! 1. Create the module with the wire layout, a `pub const TAG: u8`, and the
+//!    symmetric [`dvb_common::Parse`]/[`dvb_common::Serialize`] impls +
+//!    round-trip tests (copy an existing module).
+//! 2. `impl DescriptorDef` for the type (`TAG` from the module const, `NAME`
+//!    in SCREAMING_SNAKE without the `_descriptor` suffix).
+//! 3. Add one line to the `declare_descriptors!` invocation below — the enum
+//!    variant, dispatcher arm, and drift test are generated from it.
+//! 4. The integration completeness test walks the generated
+//!    [`AnyDescriptor::DISPATCHED_TAGS`] automatically — no test edits needed.
 
 /// Declares [`AnyDescriptor`] + its dispatcher from one tag list.
 ///
@@ -29,6 +41,8 @@ macro_rules! declare_descriptors {
         ///
         /// serde uses external tagging with camelCase variant keys —
         /// a parsed short_event_descriptor serializes as `{"shortEvent": {…}}`.
+        /// Variant names map 1:1 to the descriptor modules; see each module
+        /// for the wire layout.
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
         #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -68,6 +82,10 @@ macro_rules! declare_descriptors {
         )+)?
 
         impl<$lt> AnyDescriptor<$lt> {
+            /// Every tag the generated dispatcher routes (excludes `@no_dispatch`
+            /// variants and [`AnyDescriptor::Unknown`]).
+            pub const DISPATCHED_TAGS: &'static [u8] = &[$($tag),+];
+
             /// Parse one full descriptor (2-byte header included) by its tag.
             ///
             /// `None` means no typed implementation exists for `tag` (the

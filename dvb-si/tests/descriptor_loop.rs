@@ -3,25 +3,11 @@
 
 use dvb_si::descriptors::{parse_loop, AnyDescriptor};
 
-/// Every tag with a dispatcher entry (the full README matrix except the
-/// private 0x83 logical_channel). The completeness probe below feeds each of
-/// these into `parse_loop` and asserts the result is NOT `Unknown` — proving
-/// the dispatcher routes the tag to a typed parser. (Whether that parser then
-/// succeeds or returns a structured `Err` is irrelevant to coverage; both
-/// prove the tag is dispatched, neither is `Unknown`.)
-const DISPATCHED_TAGS: &[u8] = &[
-    0x05, 0x06, 0x09, 0x0A, 0x0F, // MPEG-2 subset
-    0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
-    0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, 0x5B, 0x5C, 0x5D, 0x5E, 0x5F,
-    0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
-    0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F,
-];
-
 /// Completeness: every dispatched README-matrix tag routes to a typed parser
 /// (never falls through to `Unknown`).
 #[test]
 fn every_dispatched_tag_is_not_unknown() {
-    for &tag in DISPATCHED_TAGS {
+    for &tag in AnyDescriptor::DISPATCHED_TAGS {
         // A generous but well-formed-length single descriptor: 8 zero body
         // bytes. The dispatcher routes on the tag regardless of body content;
         // a body the typed parser rejects yields `Err`, never `Unknown`.
@@ -43,7 +29,7 @@ fn every_dispatched_tag_is_not_unknown() {
 #[test]
 fn undispatched_tags_yield_unknown() {
     for tag in 0u8..=0xFF {
-        if DISPATCHED_TAGS.contains(&tag) {
+        if AnyDescriptor::DISPATCHED_TAGS.contains(&tag) {
             continue;
         }
         let bytes = [tag, 0x01, 0x00];
