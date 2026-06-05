@@ -84,8 +84,9 @@ impl<'a> DvbText<'a> {
     pub const fn raw(&self) -> &'a [u8] {
         self.0
     }
-    /// Decode per Annex A (Table A.3 selector + control codes). Borrows for
-    /// pure-ASCII input, allocates otherwise.
+    /// Decode per Annex A (Table A.3 selector + control codes). Borrows only
+    /// for selector-less printable-ASCII input; any charset selector byte
+    /// forces an owned decode.
     #[must_use]
     pub fn decode(&self) -> Cow<'a, str> {
         decode(self.0)
@@ -93,6 +94,8 @@ impl<'a> DvbText<'a> {
 }
 
 impl std::ops::Deref for DvbText<'_> {
+    /// Derefs to the raw wire bytes (selector included) — `len()`/indexing are
+    /// byte counts for serialization, not decoded character counts.
     type Target = [u8];
     fn deref(&self) -> &[u8] {
         self.0
@@ -167,7 +170,7 @@ impl serde::Serialize for LangCode {
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for LangCode {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = <&str>::deserialize(d)?;
+        let s = <std::borrow::Cow<'_, str>>::deserialize(d)?;
         let b = s.as_bytes();
         if b.len() != 3 {
             return Err(serde::de::Error::invalid_length(b.len(), &"a 3-byte code"));
@@ -843,5 +846,10 @@ mod tests {
         assert_eq!(json, "\"FRA\"");
         assert_eq!(serde_json::from_str::<LangCode>(&json).unwrap(), lc);
         assert!(serde_json::from_str::<LangCode>("\"FRAN\"").is_err()); // not 3 bytes
+                                                                        // escaped JSON must also deserialize (Cow path, not zero-copy &str)
+        assert_eq!(
+            serde_json::from_str::<LangCode>("\"\\u0046RA\"").unwrap(),
+            LangCode(*b"FRA")
+        );
     }
 }
