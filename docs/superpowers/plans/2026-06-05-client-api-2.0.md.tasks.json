@@ -55,7 +55,7 @@
     {
       "id": 7,
       "subject": "Task 7: dvb-si end-to-end fixture tests",
-      "status": "pending",
+      "status": "completed",
       "blockedBy": [
         6,
         4
@@ -106,5 +106,5 @@
       "description": "**Goal:** Lockstep 2.0.0, PR Closes #16, tag v2.0.0 -> CI publish, GitHub Release notes (no artifacts), verify crates.io + docs.rs.\n\n```json:metadata\n{\"files\": [\"dvb-si/Cargo.toml\", \"docs/release-notes/v2.0.0.md\"], \"verifyCommand\": \"cargo fmt --all --check && cargo test --workspace --all-features --locked\", \"acceptanceCriteria\": [\"gates green\", \"published x4\", \"release notes live\"]}\n```"
     }
   ],
-  "lastUpdated": "2026-06-05T15:30:00Z"
+  "lastUpdated": "2026-06-05T16:20:00Z"
 }
