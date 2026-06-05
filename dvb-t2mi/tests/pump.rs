@@ -87,7 +87,7 @@ fn ts_valid_packet_emits_one_event_with_typed_payload() {
     assert_eq!(s.ts_packets, 1);
     assert_eq!(s.t2mi_packets, 1);
     assert_eq!(s.crc_failures, 0);
-    assert_eq!(s.malformed, 0);
+    assert_eq!(s.malformed_packets, 0);
 }
 
 // ── (b) corrupted CRC → zero events, crc_failures=1 ─────────────────────────
@@ -134,7 +134,7 @@ fn feed_raw_packet_split_yields_one_event() {
     let s = pump.stats();
     assert_eq!(s.t2mi_packets, 1);
     assert_eq!(s.crc_failures, 0);
-    assert_eq!(s.malformed, 0);
+    assert_eq!(s.malformed_packets, 0);
 }
 
 // ── (d) garbage TS packet → malformed counted, no panic ──────────────────────
@@ -147,7 +147,7 @@ fn garbage_ts_packet_counted_no_panic() {
     let garbage = [0x00u8; 188]; // 0x00 ≠ 0x47 → bad sync
     let events: Vec<_> = pump.feed_ts(&garbage).collect();
     assert_eq!(events.len(), 0);
-    assert_eq!(pump.stats().malformed, 1);
+    assert_eq!(pump.stats().malformed_packets, 1);
     assert_eq!(pump.stats().ts_packets, 1);
 }
 
@@ -170,7 +170,7 @@ fn wrong_pid_packet_ignored_no_stats_movement() {
             ts_packets: 1,
             t2mi_packets: 0,
             crc_failures: 0,
-            malformed: 0,
+            malformed_packets: 0,
         }
     );
 }
@@ -226,4 +226,19 @@ fn two_t2mi_packets_in_one_ts_payload_both_emit() {
 
     assert_eq!(events.len(), 2, "both packets must emit");
     assert_eq!(pump.stats().t2mi_packets, 2);
+}
+
+// ── additional: truncated TS input counted, no panic ──────────────────────────
+
+/// Feeding a truncated TS packet (10 bytes, not a full 188-byte packet) to a
+/// TS-mode pump counts as malformed and does not panic.
+#[test]
+fn truncated_ts_input_counted_no_panic() {
+    let mut pump = T2miPump::new(0x0006);
+    let truncated = [0x47u8; 10]; // good sync but too short
+    let events: Vec<_> = pump.feed_ts(&truncated).collect();
+
+    assert_eq!(events.len(), 0, "truncated packet must not emit");
+    assert_eq!(pump.stats().ts_packets, 1);
+    assert_eq!(pump.stats().malformed_packets, 1);
 }

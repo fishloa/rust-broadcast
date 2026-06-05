@@ -178,7 +178,7 @@ impl T2miEvent {
 /// Accumulated pump statistics (monotonically growing across all `feed` calls).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-    /// TS packets fed via [`T2miPump::feed_ts`] (always 0 in raw mode).
+    /// TS packets fed via [`T2miPump::feed_ts`].
     pub ts_packets: u64,
     /// Complete T2-MI packets produced by the reassembler (pre-CRC check).
     pub t2mi_packets: u64,
@@ -186,7 +186,7 @@ pub struct Stats {
     pub crc_failures: u64,
     /// Malformed inputs: bad TS sync byte, truncated TS packet, overflowed
     /// adaptation field, or `feed_ts` called on a raw-mode pump.
-    pub malformed: u64,
+    pub malformed_packets: u64,
 }
 
 // ── T2miPump ──────────────────────────────────────────────────────────────────
@@ -272,7 +272,7 @@ impl T2miPump {
     }
 
     /// Feed one 188-byte MPEG-TS packet. Infallible: malformed packets are
-    /// counted in [`Stats::malformed`] and discarded.
+    /// counted in [`Stats::malformed_packets`] and discarded.
     ///
     /// Packets on the wrong PID are silently ignored (only [`Stats::ts_packets`]
     /// is incremented).
@@ -280,17 +280,17 @@ impl T2miPump {
     /// Returns a draining iterator over any T2-MI events completed by this feed.
     pub fn feed_ts(&mut self, packet: &[u8]) -> impl Iterator<Item = T2miEvent> + '_ {
         self.scratch.clear();
-        self.stats.ts_packets += 1;
 
         match self.mode {
             PumpMode::Raw => {
                 // feed_ts on a raw-mode pump is a caller error.
-                self.stats.malformed += 1;
+                self.stats.malformed_packets += 1;
             }
             PumpMode::Ts { pid: filter_pid } => {
+                self.stats.ts_packets += 1;
                 match parse_ts_header(packet) {
                     None => {
-                        self.stats.malformed += 1;
+                        self.stats.malformed_packets += 1;
                     }
                     Some(info) => {
                         if info.pid == filter_pid {
@@ -323,7 +323,7 @@ impl T2miPump {
         match self.mode {
             PumpMode::Ts { .. } => {
                 // feed_raw on a TS-mode pump is a caller error.
-                self.stats.malformed += 1;
+                self.stats.malformed_packets += 1;
             }
             PumpMode::Raw => {
                 if !self.raw_started {
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(stats.ts_packets, 1);
         assert_eq!(stats.t2mi_packets, 1);
         assert_eq!(stats.crc_failures, 0);
-        assert_eq!(stats.malformed, 0);
+        assert_eq!(stats.malformed_packets, 0);
     }
 
     // ── (b) corrupted CRC → zero events, crc_failures=1 ─────────────────────
@@ -512,7 +512,7 @@ mod tests {
         let garbage = [0x00u8; 188]; // bad sync byte
         let events: Vec<_> = pump.feed_ts(&garbage).collect();
         assert_eq!(events.len(), 0);
-        assert_eq!(pump.stats().malformed, 1);
+        assert_eq!(pump.stats().malformed_packets, 1);
         assert_eq!(pump.stats().ts_packets, 1);
     }
 
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(stats.ts_packets, 1);
         assert_eq!(stats.t2mi_packets, 0);
         assert_eq!(stats.crc_failures, 0);
-        assert_eq!(stats.malformed, 0);
+        assert_eq!(stats.malformed_packets, 0);
     }
 
     // ── additional: header() lazy parse ──────────────────────────────────────
