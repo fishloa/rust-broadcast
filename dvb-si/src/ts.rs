@@ -207,16 +207,38 @@ impl SectionReassembler {
                 return;
             }
             let pointer = payload[0] as usize;
+
+            // The `pointer_field` counts bytes that belong to a section still
+            // in progress from a previous packet (ISO/IEC 13818-1 §2.4.4): the
+            // `pointer` bytes immediately after it are that section's tail and
+            // must complete it BEFORE new sections begin at `1 + pointer`.
+            // Skipping them (or clearing `buf` first) drops any section that
+            // spans into a PUSI packet — silent loss biased toward whichever
+            // section happens to straddle a packet boundary.
+            if !self.buf.is_empty() && pointer > 0 {
+                let avail = payload.len() - 1;
+                let tail_len = pointer.min(avail);
+                if self.buf.len() + tail_len > MAX_SECTION_SIZE {
+                    self.buf.clear();
+                    self.expected = 0;
+                } else {
+                    self.buf.extend_from_slice(&payload[1..1 + tail_len]);
+                    self.drain_complete_sections();
+                }
+            }
+
+            // New sections start at `1 + pointer`; anything still buffered is
+            // an incomplete (corrupt / lost-packet) section — discard it.
+            self.buf.clear();
+            self.expected = 0;
+
             let start = 1 + pointer;
             if start >= payload.len() {
-                self.buf.clear();
+                // Pointer spans to (or past) the end — no new section here.
                 return;
             }
-            self.buf.clear();
             let new_data = &payload[start..];
-            if self.buf.len() + new_data.len() > MAX_SECTION_SIZE {
-                self.buf.clear();
-                self.expected = 0;
+            if new_data.len() > MAX_SECTION_SIZE {
                 return;
             }
             self.buf.extend_from_slice(new_data);
@@ -490,6 +512,71 @@ mod tests {
         reasm.feed(&payload2, false);
         let second = reasm.pop_section().expect("second pops after continuation");
         assert_eq!(second.as_ref(), &s2[..]);
+    }
+
+    #[test]
+    fn reassembler_completes_section_spanning_into_pusi_packet() {
+        // Issue #29 (second case): a section starts late in packet A and spills
+        // into packet B, but B is itself PUSI=1 because new sections begin in it.
+        // B's pointer_field = the count of leading tail bytes belonging to the
+        // section from A. Those bytes MUST complete A's section before new
+        // sections start. 3.1.1 cleared buf + skipped them → the spanning
+        // section was lost (the SHARED EMM the smartcard needed).
+        let spanning = build_section(0x42, &[0x5Au8; 62]); // 65 bytes
+        let head = 41;
+        let tail = &spanning[head..]; // 24 bytes — lands in packet B
+        assert_eq!(tail.len(), 24);
+
+        // New section that begins in packet B after the spanning tail.
+        let next = build_section(0x46, &[0x77, 0x88]); // 5 bytes
+
+        // Packet A (PUSI): pointer 0, then the 41-byte head (incomplete).
+        let payload_a = build_pusi_payload(0, &[], &spanning[..head]);
+        // Packet B (PUSI): pointer = 24 (tail of A's section), then `next`.
+        let payload_b = build_pusi_payload(24, tail, &next);
+
+        let mut reasm = SectionReassembler::default();
+        reasm.feed(&payload_a, true);
+        assert!(reasm.pop_section().is_none(), "head alone is incomplete");
+
+        reasm.feed(&payload_b, true);
+        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        assert_eq!(got.len(), 2, "spanning section + new section must both pop");
+        assert_eq!(
+            got[0].as_ref(),
+            &spanning[..],
+            "spanning section completed from B's pointer tail"
+        );
+        assert_eq!(got[1].as_ref(), &next[..]);
+    }
+
+    #[test]
+    fn reassembler_pusi_pointer_spans_whole_payload() {
+        // A section spans into a PUSI packet whose pointer covers the ENTIRE
+        // remaining payload (no new section starts here) — the tail must be
+        // appended and the section completed once the count is satisfied.
+        let spanning = build_section(0x42, &[0x33u8; 40]); // 43 bytes
+        let head = 20;
+        let payload_a = build_pusi_payload(0, &[], &spanning[..head]);
+        let tail = &spanning[head..]; // 23 bytes — exactly the rest of payload B
+
+        let mut reasm = SectionReassembler::default();
+        reasm.feed(&payload_a, true);
+        // Packet B: pointer = 23 = all remaining bytes; no new section follows.
+        reasm.feed(&payload_b_pointer_only(tail), true);
+
+        let out = reasm.pop_section().expect("spanning section completes");
+        assert_eq!(out.as_ref(), &spanning[..]);
+        assert!(reasm.pop_section().is_none());
+    }
+
+    /// Build a PUSI payload whose `pointer_field` equals the whole tail (so the
+    /// pointer spans to the end of the payload and no new section starts).
+    fn payload_b_pointer_only(tail: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(1 + tail.len());
+        v.push(tail.len() as u8);
+        v.extend_from_slice(tail);
+        v
     }
 
     #[test]

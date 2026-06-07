@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.2 — 2026-06-07
+
+### Fixed
+- `ts::SectionReassembler::feed` now completes a section that spans **into a
+  PUSI packet**. When a section started in packet A and spilled into packet B,
+  and B was itself PUSI=1 (new sections begin in it), the `pointer_field` tail
+  bytes belonging to A's section were skipped and the buffer cleared — so the
+  spanning section was dropped (ISO/IEC 13818-1 §2.4.4: those bytes complete
+  the in-progress section before new ones begin). Complements the 3.1.1
+  within-payload concatenation fix; together they close all of #29. On a real
+  EIT-heavy DVB-T2 capture this recovered emitted sections 51 → 237 (484
+  completed), all CRC-valid. (#29)
+
 ## 3.1.1 — 2026-06-07
 
 ### Fixed
