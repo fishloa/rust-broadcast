@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.1 — 2026-06-07
+
+### Fixed
+- `ts::SectionReassembler::feed` now extracts **all** sections concatenated in
+  a single TS payload, not just the first. Sections packed after the
+  `pointer_field` (legal per EN 300 468 §5.1.4; common on EMM PIDs) were
+  silently dropped — table-agnostic SI/EMM data loss. Consumers should drain
+  with `while let Some(s) = r.pop_section()`. (#29)
+
 ## 3.1.0 — 2026-06-05
 
 The 3.x line: descriptor loops become typed, zero-copy `DescriptorLoop`s; serde

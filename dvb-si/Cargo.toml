@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "3.1.0"
+version      = "3.1.1"
 edition      = "2021"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"

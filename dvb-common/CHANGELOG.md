@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+## [3.1.1] — 2026-06-07
+
+Version-lockstep release with the workspace (dvb-si `SectionReassembler`
+concatenated-section fix); no changes to this crate.
+
 All notable changes to the `dvb_common` crate are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
