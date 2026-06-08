@@ -56,9 +56,18 @@ fn eit_schedule_section_with_version(
 }
 
 fn pat_section(section_number: u8, last_section_number: u8, pid: u16) -> Vec<u8> {
+    pat_section_versioned(2, section_number, last_section_number, pid)
+}
+
+fn pat_section_versioned(
+    version_number: u8,
+    section_number: u8,
+    last_section_number: u8,
+    pid: u16,
+) -> Vec<u8> {
     let pat = PatSection {
         transport_stream_id: 0x1111,
-        version_number: 2,
+        version_number,
         current_next_indicator: true,
         section_number,
         last_section_number,
@@ -228,4 +237,74 @@ fn eit_collector_retain_logical_prunes_schedule_state() {
 
     assert_eq!(collector.section_set_len(), 0);
     assert_eq!(collector.schedule_len(), 0);
+}
+
+// A complete set is emitted exactly once: re-pushing already-present sections
+// of the same version must not re-emit (the `emitted` flag on the retained
+// partial set). Pins the emit-once half of the 4.0 SectionSetCollector contract.
+#[test]
+fn collector_emits_complete_once_then_none() {
+    let section0 = pat_section(0, 1, 0x0100);
+    let section1 = pat_section(1, 1, 0x0101);
+
+    let mut collector = SectionSetCollector::new();
+    assert!(collector.push_section(&section0).unwrap().is_none());
+
+    // First time every section is present -> emit.
+    assert!(
+        collector.push_section(&section1).unwrap().is_some(),
+        "completing the set emits the complete table",
+    );
+
+    // Re-pushing already-present sections of the same version must NOT re-emit.
+    assert!(
+        collector.push_section(&section1).unwrap().is_none(),
+        "re-pushing the completing section does not re-emit (emit-once)",
+    );
+    assert!(
+        collector.push_section(&section0).unwrap().is_none(),
+        "re-pushing an earlier section does not re-emit (emit-once)",
+    );
+}
+
+// A new `version_number` for the same logical table drops the stale partial,
+// re-collects, and emits the new complete table. The key excludes version but
+// includes current_next_indicator, so cni is held constant here (a cni flip is
+// a *different* logical table and keys separately). Asserts via the public API
+// — `meta().version_number` and a follow-up emit-once check that the entry was
+// reset in place (one key, no duplicate accumulation) — never `len()`.
+#[test]
+fn collector_reemits_on_version_bump() {
+    let v1_section0 = pat_section_versioned(1, 0, 1, 0x0100);
+    let v1_section1 = pat_section_versioned(1, 1, 1, 0x0101);
+    let v2_section0 = pat_section_versioned(2, 0, 1, 0x0200);
+    let v2_section1 = pat_section_versioned(2, 1, 1, 0x0201);
+
+    let mut collector = SectionSetCollector::new();
+
+    assert!(collector.push_section(&v1_section0).unwrap().is_none());
+    let v1 = collector
+        .push_section(&v1_section1)
+        .unwrap()
+        .expect("version 1 completes once both sections are present");
+    assert_eq!(v1.meta().version_number, 1);
+
+    // The new version resets the stale v1 partial in place; its first section
+    // does not complete the set on its own.
+    assert!(
+        collector.push_section(&v2_section0).unwrap().is_none(),
+        "first section of the new version re-collects from scratch",
+    );
+    let v2 = collector
+        .push_section(&v2_section1)
+        .unwrap()
+        .expect("version 2 completes after re-collection");
+    assert_eq!(v2.meta().version_number, 2);
+
+    // Emit-once still holds for the re-collected version: the v2 partial reused
+    // the single retained entry rather than accumulating a duplicate.
+    assert!(
+        collector.push_section(&v2_section1).unwrap().is_none(),
+        "re-collected version is also emit-once (single retained entry per key)",
+    );
 }
