@@ -104,12 +104,14 @@ impl SatelliteDeliverySystemDescriptor {
     /// 1 kHz resolution (sub-kHz precision is truncated).
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
     /// exceeds the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
-        self.frequency_bcd =
-            super::encode_bcd_field(hz / 1_000, 8, "SatelliteDeliverySystemDescriptor::frequency")?
-                as u32;
+        self.frequency_bcd = super::encode_bcd_field(
+            hz / 1_000,
+            8,
+            "SatelliteDeliverySystemDescriptor::frequency",
+        )? as u32;
         Ok(())
     }
 
@@ -125,7 +127,7 @@ impl SatelliteDeliverySystemDescriptor {
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
     /// the 7-digit BCD field.
     pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
         self.symbol_rate_bcd = super::encode_bcd_field(
@@ -148,7 +150,7 @@ impl SatelliteDeliverySystemDescriptor {
     /// resolution. The east/west `east` flag is a separate field.
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if negative or
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if negative or
     /// beyond the 4-digit BCD field.
     pub fn set_orbital_position_deg(&mut self, deg: f64) -> crate::Result<()> {
         if !(0.0..=6_553.5).contains(&deg) {

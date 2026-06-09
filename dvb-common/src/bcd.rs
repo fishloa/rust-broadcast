@@ -41,7 +41,7 @@ pub fn bcd_to_decimal(raw: u64, nibbles: u8) -> Option<u64> {
     }
     let mut acc = 0u64;
     for i in (0..nibbles).rev() {
-        let digit = ((raw >> (i * 4)) & 0x0F) as u64;
+        let digit = (raw >> (i * 4)) & 0x0F;
         if digit > 9 {
             return None;
         }

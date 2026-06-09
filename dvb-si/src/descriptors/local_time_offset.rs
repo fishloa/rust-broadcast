@@ -35,6 +35,102 @@ pub struct LocalTimeOffsetEntry {
     pub next_time_offset_bcd: u16,
 }
 
+/// Decode a BCD `HHMM` offset to a signed [`chrono::Duration`] (negative when
+/// `negative`). `None` if a BCD nibble is out of range.
+#[cfg(feature = "chrono")]
+fn decode_hhmm(bcd: u16, negative: bool) -> Option<chrono::Duration> {
+    let h = dvb_common::bcd::from_bcd_byte((bcd >> 8) as u8)?;
+    let m = dvb_common::bcd::from_bcd_byte((bcd & 0xFF) as u8)?;
+    let mins = i64::from(h) * 60 + i64::from(m);
+    Some(chrono::Duration::minutes(if negative {
+        -mins
+    } else {
+        mins
+    }))
+}
+
+/// Encode a signed offset to `(negative, BCD HHMM)`. `None` if the magnitude is
+/// 100 hours or longer.
+#[cfg(feature = "chrono")]
+fn encode_hhmm(offset: chrono::Duration) -> Option<(bool, u16)> {
+    let negative = offset < chrono::Duration::zero();
+    let total_min = offset.num_minutes().unsigned_abs();
+    let h = total_min / 60;
+    let m = total_min % 60;
+    if h > 99 {
+        return None;
+    }
+    let hb = dvb_common::bcd::to_bcd_byte(h as u8)?;
+    let mb = dvb_common::bcd::to_bcd_byte(m as u8)?;
+    Some((negative, (u16::from(hb) << 8) | u16::from(mb)))
+}
+
+#[cfg(feature = "chrono")]
+impl LocalTimeOffsetEntry {
+    /// Decode `local_time_offset` (BCD `HHMM`, signed by
+    /// `local_time_offset_negative`) to a [`chrono::Duration`]. `None` if the
+    /// BCD nibbles are out of range.
+    #[must_use]
+    pub fn local_time_offset(&self) -> Option<chrono::Duration> {
+        decode_hhmm(self.local_time_offset_bcd, self.local_time_offset_negative)
+    }
+
+    /// Decode `next_time_offset` (BCD `HHMM`) to a [`chrono::Duration`]. It
+    /// shares the single `local_time_offset_negative` polarity bit (EN 300 468
+    /// §6.2.20). `None` if the BCD nibbles are out of range.
+    #[must_use]
+    pub fn next_time_offset(&self) -> Option<chrono::Duration> {
+        decode_hhmm(self.next_time_offset_bcd, self.local_time_offset_negative)
+    }
+
+    /// Decode `time_of_change_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC
+    /// datetime. `None` if the date/time fields are out of range.
+    #[must_use]
+    pub fn time_of_change(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        dvb_common::time::decode_mjd_bcd_utc(self.time_of_change_raw)
+    }
+
+    /// Set the `time_of_change`, encoding it into the 40-bit raw field.
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_time_of_change(&mut self, dt: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        self.time_of_change_raw =
+            dvb_common::time::encode_mjd_bcd_utc(dt).ok_or(Error::ValueOutOfRange {
+                field: "LocalTimeOffsetEntry::time_of_change",
+                reason: "date not representable in 16-bit MJD",
+            })?;
+        Ok(())
+    }
+
+    /// Set both offsets and the shared polarity bit from signed durations.
+    ///
+    /// The wire format carries one polarity bit for both offsets, so `local`
+    /// and `next` must share a sign (zero matches either).
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the two
+    /// offsets disagree in sign or a magnitude is 100 hours or longer.
+    pub fn set_offsets(&mut self, local: chrono::Duration, next: chrono::Duration) -> Result<()> {
+        let oor = |reason| Error::ValueOutOfRange {
+            field: "LocalTimeOffsetEntry offsets",
+            reason,
+        };
+        let local_neg = local < chrono::Duration::zero();
+        let next_neg = next < chrono::Duration::zero();
+        if local_neg != next_neg && !local.is_zero() && !next.is_zero() {
+            return Err(oor("local and next offsets must share a sign"));
+        }
+        let (lneg, lbcd) = encode_hhmm(local).ok_or(oor("local offset magnitude too large"))?;
+        let (nneg, nbcd) = encode_hhmm(next).ok_or(oor("next offset magnitude too large"))?;
+        self.local_time_offset_negative = lneg || nneg;
+        self.local_time_offset_bcd = lbcd;
+        self.next_time_offset_bcd = nbcd;
+        Ok(())
+    }
+}
+
 /// Local Time Offset Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

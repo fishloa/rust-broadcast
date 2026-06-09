@@ -78,8 +78,10 @@ pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
     let l = if month <= 2 { 1.0 } else { 0.0 };
     let y = f64::from(year - 1900);
     let m = f64::from(month);
-    let mjd =
-        14_956.0 + f64::from(day) + ((y - l) * 365.25).floor() + ((m + 1.0 + l * 12.0) * 30.6001).floor();
+    let mjd = 14_956.0
+        + f64::from(day)
+        + ((y - l) * 365.25).floor()
+        + ((m + 1.0 + l * 12.0) * 30.6001).floor();
     if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
         Some(mjd as u16)
     } else {
@@ -169,7 +171,7 @@ mod tests {
         for &(y, m, d) in &[(1993, 10, 13), (2000, 1, 1), (2023, 6, 8), (1900, 3, 1)] {
             let date = NaiveDate::from_ymd_opt(y, m, d).unwrap();
             let expected = (date - epoch).num_days() as u16;
-            assert_eq!(ymd_to_mjd(y, m as u32, d as u32), Some(expected), "{y}-{m}-{d}");
+            assert_eq!(ymd_to_mjd(y, m, d), Some(expected), "{y}-{m}-{d}");
         }
     }
 

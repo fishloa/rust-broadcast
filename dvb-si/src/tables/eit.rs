@@ -296,7 +296,7 @@ impl EitEvent<'_> {
     /// Set the event duration, encoding it into the 24-bit BCD `duration` field.
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the duration
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the duration
     /// is 100 hours or longer (the `HH` field holds only two BCD digits).
     pub fn set_duration(&mut self, duration: core::time::Duration) -> crate::Result<()> {
         self.duration_raw = dvb_common::time::encode_bcd_duration(duration).ok_or(
@@ -323,7 +323,7 @@ impl EitEvent<'_> {
     /// Set the event start time, encoding it into the 40-bit `start_time` field.
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
     pub fn set_start_time(
         &mut self,

@@ -109,11 +109,12 @@ impl CableDeliverySystemDescriptor {
     /// 100 Hz resolution (finer precision is truncated).
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
     /// the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
         self.frequency_bcd =
-            super::encode_bcd_field(hz / 100, 8, "CableDeliverySystemDescriptor::frequency")? as u32;
+            super::encode_bcd_field(hz / 100, 8, "CableDeliverySystemDescriptor::frequency")?
+                as u32;
         Ok(())
     }
 
@@ -127,7 +128,7 @@ impl CableDeliverySystemDescriptor {
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
     /// the 7-digit BCD field.
     pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
         self.symbol_rate_bcd =

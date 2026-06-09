@@ -55,6 +55,57 @@ impl FrequencyListDescriptor {
             .map(|b| u32::from_be_bytes(*b))
             .collect()
     }
+
+    /// Hz per BCD-decoded unit for the current `coding_type`, or `None` for
+    /// `Undefined`. Satellite entries decode like
+    /// [`SatelliteDeliverySystemDescriptor`](super::satellite_delivery_system::SatelliteDeliverySystemDescriptor)
+    /// (1 kHz units); cable/terrestrial entries are 100 Hz units.
+    fn hz_per_unit(&self) -> Option<u64> {
+        match self.coding_type {
+            CodingType::Satellite => Some(1_000),
+            CodingType::Cable | CodingType::Terrestrial => Some(100),
+            CodingType::Undefined => None,
+        }
+    }
+
+    /// Decode every `centre_frequencies_bcd` entry to Hz, interpreted per
+    /// `coding_type`. Each element is `None` if its BCD is invalid or
+    /// `coding_type` is `Undefined`.
+    #[must_use]
+    pub fn centre_frequencies_hz(&self) -> Vec<Option<u64>> {
+        let scale = self.hz_per_unit();
+        self.centre_frequencies_bcd
+            .iter()
+            .map(|b| {
+                let value = dvb_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
+                Some(value * scale?)
+            })
+            .collect()
+    }
+
+    /// Replace the entries by encoding each Hz value to a 4-byte BCD entry per
+    /// `coding_type` (values truncate to the field's resolution).
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if `coding_type`
+    /// is `Undefined` or a value exceeds the 8-digit BCD entry.
+    pub fn set_centre_frequencies_hz(&mut self, frequencies_hz: &[u64]) -> crate::Result<()> {
+        let scale = self.hz_per_unit().ok_or(crate::Error::ValueOutOfRange {
+            field: "FrequencyListDescriptor::centre_frequency",
+            reason: "coding_type is Undefined; cannot encode frequencies",
+        })?;
+        let mut out = Vec::with_capacity(frequencies_hz.len());
+        for &hz in frequencies_hz {
+            let bcd = super::encode_bcd_field(
+                hz / scale,
+                8,
+                "FrequencyListDescriptor::centre_frequency",
+            )?;
+            out.push((bcd as u32).to_be_bytes());
+        }
+        self.centre_frequencies_bcd = out;
+        Ok(())
+    }
 }
 
 impl<'a> Parse<'a> for FrequencyListDescriptor {

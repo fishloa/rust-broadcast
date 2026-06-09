@@ -29,6 +29,54 @@ pub struct PdcDescriptor {
     pub programme_identification_label: u32,
 }
 
+impl PdcDescriptor {
+    /// Day-of-month component of the `programme_identification_label`
+    /// (5 bits `[19:15]`, EN 300 468 §6.2.29).
+    #[must_use]
+    pub fn pil_day(&self) -> u8 {
+        ((self.programme_identification_label >> 15) & 0x1F) as u8
+    }
+
+    /// Month component (4 bits `[14:11]`).
+    #[must_use]
+    pub fn pil_month(&self) -> u8 {
+        ((self.programme_identification_label >> 11) & 0x0F) as u8
+    }
+
+    /// Hour component (5 bits `[10:6]`).
+    #[must_use]
+    pub fn pil_hour(&self) -> u8 {
+        ((self.programme_identification_label >> 6) & 0x1F) as u8
+    }
+
+    /// Minute component (6 bits `[5:0]`).
+    #[must_use]
+    pub fn pil_minute(&self) -> u8 {
+        (self.programme_identification_label & 0x3F) as u8
+    }
+
+    /// Set the `programme_identification_label` from its day/month/hour/minute
+    /// components.
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if any
+    /// component exceeds its bit field (`day` ≤ 31, `month` ≤ 15, `hour` ≤ 31,
+    /// `minute` ≤ 63).
+    pub fn set_pil(&mut self, day: u8, month: u8, hour: u8, minute: u8) -> crate::Result<()> {
+        if day > 0x1F || month > 0x0F || hour > 0x1F || minute > 0x3F {
+            return Err(crate::Error::ValueOutOfRange {
+                field: "PdcDescriptor::programme_identification_label",
+                reason: "a day/month/hour/minute component exceeds its bit field",
+            });
+        }
+        self.programme_identification_label = (u32::from(day) << 15)
+            | (u32::from(month) << 11)
+            | (u32::from(hour) << 6)
+            | u32::from(minute);
+        Ok(())
+    }
+}
+
 impl<'a> Parse<'a> for PdcDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {

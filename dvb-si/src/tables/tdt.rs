@@ -37,15 +37,14 @@ impl TdtSection {
     /// Set the UTC time, encoding it into the 40-bit `utc_time` field.
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
     pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
-        self.utc_time_raw = dvb_common::time::encode_mjd_bcd_utc(utc_time).ok_or(
-            Error::ValueOutOfRange {
+        self.utc_time_raw =
+            dvb_common::time::encode_mjd_bcd_utc(utc_time).ok_or(Error::ValueOutOfRange {
                 field: "TdtSection::utc_time",
                 reason: "date not representable in 16-bit MJD",
-            },
-        )?;
+            })?;
         Ok(())
     }
 }

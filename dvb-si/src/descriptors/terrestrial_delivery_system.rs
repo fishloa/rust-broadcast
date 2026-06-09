@@ -178,7 +178,7 @@ impl TerrestrialDeliverySystemDescriptor {
     /// resolution (finer precision is truncated).
     ///
     /// # Errors
-    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
     /// exceeds the 32-bit (×10 Hz) field.
     pub fn set_centre_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
         let units = hz / 10;

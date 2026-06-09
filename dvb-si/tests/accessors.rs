@@ -20,7 +20,8 @@ fn eit_event() -> EitEvent<'static> {
 #[test]
 fn eit_event_duration_round_trips() {
     let mut ev = eit_event();
-    ev.set_duration(Duration::from_secs(3600 + 30 * 60 + 45)).unwrap();
+    ev.set_duration(Duration::from_secs(3600 + 30 * 60 + 45))
+        .unwrap();
     // Wrote the duration field (not start_time), BCD-encoded HHMMSS.
     assert_eq!(ev.duration_raw, [0x01, 0x30, 0x45]);
     assert_eq!(ev.duration(), Some(Duration::from_secs(5445)));
@@ -120,4 +121,95 @@ fn terrestrial_delivery_centre_frequency_hz() {
 
     d.set_centre_frequency_hz(490_000_000).unwrap(); // multiple of 10 Hz
     assert_eq!(d.centre_frequency_hz(), 490_000_000);
+}
+
+#[test]
+fn pdc_label_components_round_trip() {
+    use dvb_si::descriptors::pdc::PdcDescriptor;
+    let mut d = PdcDescriptor {
+        programme_identification_label: 0,
+    };
+    d.set_pil(15, 6, 20, 30).unwrap();
+    assert_eq!(
+        (d.pil_day(), d.pil_month(), d.pil_hour(), d.pil_minute()),
+        (15, 6, 20, 30)
+    );
+    // day exceeds its 5-bit field.
+    assert!(d.set_pil(32, 1, 1, 1).is_err());
+}
+
+#[test]
+fn frequency_list_decoded_accessors() {
+    use dvb_si::descriptors::frequency_list::{CodingType, FrequencyListDescriptor};
+
+    // Cable: 100 Hz units.
+    let mut cable = FrequencyListDescriptor {
+        coding_type: CodingType::Cable,
+        centre_frequencies_bcd: vec![],
+    };
+    cable
+        .set_centre_frequencies_hz(&[346_000_000, 474_000_000])
+        .unwrap();
+    assert_eq!(
+        cable.centre_frequencies_hz(),
+        vec![Some(346_000_000), Some(474_000_000)]
+    );
+
+    // Satellite: 1 kHz units (consistent with the satellite delivery descriptor).
+    let mut sat = FrequencyListDescriptor {
+        coding_type: CodingType::Satellite,
+        centre_frequencies_bcd: vec![],
+    };
+    sat.set_centre_frequencies_hz(&[11_725_000_000]).unwrap();
+    assert_eq!(sat.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
+
+    // Undefined coding cannot be interpreted or encoded.
+    let undef = FrequencyListDescriptor {
+        coding_type: CodingType::Undefined,
+        centre_frequencies_bcd: vec![[0x11, 0x72, 0x50, 0x00]],
+    };
+    assert_eq!(undef.centre_frequencies_hz(), vec![None]);
+    let mut undef_mut = FrequencyListDescriptor {
+        coding_type: CodingType::Undefined,
+        centre_frequencies_bcd: vec![],
+    };
+    assert!(undef_mut.set_centre_frequencies_hz(&[1_000]).is_err());
+}
+
+#[cfg(feature = "chrono")]
+#[test]
+fn local_time_offset_decoded_accessors() {
+    use chrono::{Duration, TimeZone, Utc};
+    use dvb_si::descriptors::local_time_offset::LocalTimeOffsetEntry;
+    use dvb_si::text::LangCode;
+
+    let mut e = LocalTimeOffsetEntry {
+        country_code: LangCode(*b"GBR"),
+        country_region_id: 0,
+        local_time_offset_negative: false,
+        local_time_offset_bcd: 0,
+        time_of_change_raw: [0; 5],
+        next_time_offset_bcd: 0,
+    };
+
+    e.set_offsets(Duration::hours(1), Duration::hours(2))
+        .unwrap();
+    assert!(!e.local_time_offset_negative);
+    assert_eq!(e.local_time_offset(), Some(Duration::hours(1)));
+    assert_eq!(e.next_time_offset(), Some(Duration::hours(2)));
+
+    // Negative (west) offsets share the single polarity bit.
+    e.set_offsets(Duration::minutes(-330), Duration::minutes(-270))
+        .unwrap();
+    assert!(e.local_time_offset_negative);
+    assert_eq!(e.local_time_offset(), Some(Duration::minutes(-330)));
+
+    // Mixed signs can't be represented by one polarity bit.
+    assert!(e
+        .set_offsets(Duration::hours(1), Duration::hours(-1))
+        .is_err());
+
+    let dt = Utc.with_ymd_and_hms(2024, 3, 31, 1, 0, 0).unwrap();
+    e.set_time_of_change(dt).unwrap();
+    assert_eq!(e.time_of_change(), Some(dt));
 }
