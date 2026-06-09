@@ -28,10 +28,16 @@ pub struct Module {
     pub data: Vec<u8>,
 }
 
+/// Internal map key: one slot per module instance, version held in the
+/// [`Slot`] — so the stale-version check in `note_dii` is a single keyed
+/// lookup instead of a scan over every in-progress module.
+type SlotKey = (u32, u16); // (download_id, module_id)
+
 /// Per-module collection state. `received` is a bitset (one bit per block) so
 /// a hostile `blockSize = 1` DII costs ~1/8 of the module size in tracking
 /// overhead instead of one `bool` per byte.
 struct Slot {
+    module_version: u8,
     block_size: usize,
     data: Vec<u8>,
     received: Vec<u64>,
@@ -54,6 +60,13 @@ pub const DEFAULT_MAX_MODULE_SIZE: u32 = 64 * 1024 * 1024;
 /// hostile carousel rotating downloadId/moduleId/moduleVersion can otherwise
 /// multiply the per-module cap without bound.
 pub const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
+/// Default cap on the number of in-progress module slots. The byte budget
+/// alone does not model the per-slot map entry + bitset overhead, so many
+/// distinct *small*-module announcements must be bounded separately. 16 384
+/// slots is far above any real carousel (a DII announces at most 65 535
+/// modules per `numberOfModules`, real ones tens) while capping worst-case
+/// map overhead at a few MiB.
+pub const DEFAULT_MAX_SLOTS: usize = 16 * 1024;
 
 /// Collects DDB blocks into complete modules.
 ///
@@ -63,16 +76,26 @@ pub const DEFAULT_MAX_TOTAL_BYTES: usize = 256 * 1024 * 1024;
 /// announced by a DII are ignored — carousels repeat, so the block comes
 /// round again after the DII has been seen.
 ///
-/// Memory bounds: each announced module is capped at `max_module_size`, and
-/// the aggregate of all in-progress module buffers at `max_total_bytes` —
-/// announcements that would exceed the budget are skipped until completed
-/// modules free space. Block tracking is a bitset (~`moduleSize/blockSize/8`
-/// bytes), so the worst-case overhead for a `blockSize = 1` announcement is
-/// ~12.5% on top of the data buffer.
+/// Memory bounds: each announced module is capped at `max_module_size`, the
+/// aggregate of all in-progress module buffers at `max_total_bytes`, and the
+/// number of in-progress slots at `max_slots` (the byte budget alone does not
+/// model per-slot map/bitset overhead, so many distinct small modules are
+/// bounded separately) — announcements that would exceed any cap are skipped
+/// until completed modules free space, and `moduleSize == 0` announcements
+/// are rejected outright. Block tracking is a bitset
+/// (~`moduleSize/blockSize/8` bytes), so the worst-case overhead for a
+/// `blockSize = 1` announcement is ~12.5% on top of the data buffer.
+///
+/// Liveness on lossy streams: the skip-until-space policy means that when the
+/// budget is held by large modules that never complete (sustained loss),
+/// later small announcements are starved until the large slots complete or
+/// are version-bumped. This is by design — drop and recreate the reassembler
+/// to recover from a wedged stream.
 pub struct ModuleReassembler {
-    slots: HashMap<ModuleKey, Slot>,
+    slots: HashMap<SlotKey, Slot>,
     max_module_size: u32,
     max_total_bytes: usize,
+    max_slots: usize,
     total_bytes: usize,
 }
 
@@ -97,54 +120,53 @@ impl ModuleReassembler {
         Self::with_limits(max_module_size, DEFAULT_MAX_TOTAL_BYTES)
     }
 
-    /// New reassembler with explicit per-module and aggregate byte caps.
+    /// New reassembler with explicit per-module and aggregate byte caps
+    /// (slot-count cap stays at [`DEFAULT_MAX_SLOTS`]).
     #[must_use]
     pub fn with_limits(max_module_size: u32, max_total_bytes: usize) -> Self {
         Self {
             slots: HashMap::new(),
             max_module_size,
             max_total_bytes,
+            max_slots: DEFAULT_MAX_SLOTS,
             total_bytes: 0,
         }
     }
 
-    /// Register the modules announced by a DII. Skipped: modules over the
-    /// per-module cap, `blockSize == 0`, and modules that would push the
-    /// aggregate budget over `max_total_bytes`. Re-announcement of an
-    /// in-progress (same-version) module is a no-op; a new version replaces
-    /// the old slot (freeing its budget first).
+    /// Replace the in-progress slot-count cap (default
+    /// [`DEFAULT_MAX_SLOTS`]). Announcements past the cap are skipped until
+    /// completed modules free slots — the same skip-until-space policy as the
+    /// byte budget.
+    #[must_use]
+    pub fn with_max_slots(mut self, max_slots: usize) -> Self {
+        self.max_slots = max_slots;
+        self
+    }
+
+    /// Register the modules announced by a DII. Skipped: `moduleSize == 0`
+    /// (nothing to reassemble), modules over the per-module cap,
+    /// `blockSize == 0`, and modules that would push the aggregate budget
+    /// over `max_total_bytes` or the slot count to `max_slots`.
+    /// Re-announcement of an in-progress (same-version) module is a no-op; a
+    /// new version replaces the old slot (freeing its budget first).
     pub fn note_dii(&mut self, dii: &Dii<'_>) {
         for m in &dii.modules {
-            if m.module_size > self.max_module_size || dii.block_size == 0 {
+            if m.module_size == 0 || m.module_size > self.max_module_size || dii.block_size == 0 {
                 continue;
             }
-            let key = ModuleKey {
-                download_id: dii.download_id,
-                module_id: m.module_id,
-                module_version: m.module_version,
-            };
-            // Drop any older version of the same module, releasing its budget.
-            let stale: Vec<ModuleKey> = self
-                .slots
-                .keys()
-                .filter(|k| {
-                    k.download_id == key.download_id
-                        && k.module_id == key.module_id
-                        && k.module_version != key.module_version
-                })
-                .copied()
-                .collect();
-            for k in stale {
-                if let Some(s) = self.slots.remove(&k) {
-                    self.total_bytes -= s.data.len();
+            let key: SlotKey = (dii.download_id, m.module_id);
+            if let Some(existing) = self.slots.get(&key) {
+                if existing.module_version == m.module_version {
+                    continue; // carousel repeat — keep accumulated blocks
                 }
-            }
-            if self.slots.contains_key(&key) {
-                continue; // carousel repeat — keep accumulated blocks
+                // Older version — drop it, releasing its budget.
+                let s = self.slots.remove(&key).expect("just found");
+                self.total_bytes -= s.data.len();
             }
             let size = m.module_size as usize;
-            if self.total_bytes + size > self.max_total_bytes {
-                continue; // aggregate budget exhausted — skip until space frees
+            if self.total_bytes + size > self.max_total_bytes || self.slots.len() >= self.max_slots
+            {
+                continue; // budget or slot cap exhausted — skip until space frees
             }
             let block_size = dii.block_size as usize;
             let n_blocks = size.div_ceil(block_size).max(1);
@@ -152,6 +174,7 @@ impl ModuleReassembler {
             self.slots.insert(
                 key,
                 Slot {
+                    module_version: m.module_version,
                     block_size,
                     data: vec![0u8; size],
                     received: vec![0u64; n_blocks.div_ceil(64)],
@@ -167,14 +190,10 @@ impl ModuleReassembler {
     /// triples, out-of-range block numbers, repeats, and blocks whose length
     /// disagrees with the DII geometry are ignored.
     pub fn feed_ddb(&mut self, ddb: &DownloadDataBlock<'_>) -> Option<Module> {
-        let key = ModuleKey {
-            download_id: ddb.download_id,
-            module_id: ddb.module_id,
-            module_version: ddb.module_version,
-        };
+        let key: SlotKey = (ddb.download_id, ddb.module_id);
         let slot = self.slots.get_mut(&key)?;
         let n = ddb.block_number as usize;
-        if n >= slot.n_blocks || slot.is_received(n) {
+        if slot.module_version != ddb.module_version || n >= slot.n_blocks || slot.is_received(n) {
             return None;
         }
         let offset = n * slot.block_size;
@@ -191,7 +210,11 @@ impl ModuleReassembler {
         let slot = self.slots.remove(&key).expect("slot exists");
         self.total_bytes -= slot.data.len();
         Some(Module {
-            key,
+            key: ModuleKey {
+                download_id: ddb.download_id,
+                module_id: ddb.module_id,
+                module_version: slot.module_version,
+            },
             data: slot.data,
         })
     }
@@ -202,7 +225,14 @@ impl ModuleReassembler {
         self.slots.len()
     }
 
-    /// Total bytes currently held by in-progress module buffers.
+    /// Total announced `moduleSize` bytes currently held by in-progress
+    /// module buffers — the quantity charged against `max_total_bytes`.
+    ///
+    /// This counts data-buffer bytes only, not the per-slot map entry and
+    /// block-bitset overhead, so it understates true retained memory (the
+    /// slot-count cap bounds that overhead instead). Do not use it as a
+    /// memory-pressure signal; use [`pending`](Self::pending) × expected
+    /// module size for a rough upper bound.
     #[must_use]
     pub fn pending_bytes(&self) -> usize {
         self.total_bytes
@@ -346,6 +376,35 @@ mod tests {
         let mut r = ModuleReassembler::new();
         r.note_dii(&dii(1, 0, vec![module(1, 4, 0)]));
         assert_eq!(r.pending(), 0);
+    }
+
+    /// `moduleSize == 0` announcements are rejected: a module with no data has
+    /// nothing to reassemble, and zero-size slots cost zero budget — a hostile
+    /// carousel rotating ids could otherwise grow the slot map without bound.
+    #[test]
+    fn zero_size_module_announcement_ignored() {
+        let mut r = ModuleReassembler::new();
+        r.note_dii(&dii(1, 4, vec![module(1, 0, 0)]));
+        assert_eq!(r.pending(), 0);
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 0, &[])).is_none());
+    }
+
+    /// The slot-count cap bounds the map itself: data bytes alone don't model
+    /// the per-slot map/bitset overhead, so many distinct small-module
+    /// announcements must also be bounded. Completing a module frees its slot
+    /// for later announcements.
+    #[test]
+    fn slot_count_capped() {
+        let mut r = ModuleReassembler::new().with_max_slots(3);
+        let modules: Vec<_> = (0..5).map(|i| module(i, 1, 0)).collect();
+        r.note_dii(&dii(1, 4, modules));
+        assert_eq!(r.pending(), 3); // first three announcements; rest skipped
+                                    // Completing one frees a slot...
+        assert!(r.feed_ddb(&ddb(1, 0, 0, 0, &[0xAA])).is_some());
+        assert_eq!(r.pending(), 2);
+        // ...so a re-announcement of a skipped module now fits.
+        r.note_dii(&dii(1, 4, vec![module(4, 1, 0)]));
+        assert_eq!(r.pending(), 3);
     }
 
     /// The aggregate budget bounds rotating-key amplification: announcements

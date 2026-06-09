@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+Hardening of the DSM-CC `ModuleReassembler` against hostile carousel input
+(2026-06-09 audit findings, #42 / #43).
+
+### Fixed
+
+- **`ModuleReassembler` slot growth is now bounded** (#42). The aggregate byte
+  budget counts only announced `moduleSize` data bytes, so announcements with
+  zero (or tiny) `moduleSize` could grow the slot map without limit. Zero-size
+  announcements are now rejected (a module with no data has nothing to
+  reassemble), and a new slot-count cap (`DEFAULT_MAX_SLOTS`, tunable via
+  `ModuleReassembler::with_max_slots`) bounds the map itself.
+  `pending_bytes()` docs now state exactly what it counts — data-buffer bytes,
+  not total retained memory — and the lossy-stream starvation behaviour of the
+  skip-until-space policy is documented on the type.
+- **`note_dii` stale-version detection is O(1) per announced module** (#43).
+  It previously scanned every in-progress slot for each announced module —
+  O(n²) across a DII, a CPU-DoS vector at 65 535 modules per DII. Slots are
+  now keyed by `(downloadId, moduleId)` with the version held inside the
+  slot, so version replacement is a single keyed lookup. Behaviour is
+  unchanged: same-version re-announcements keep accumulated blocks, version
+  bumps restart the module, mismatched-version DDBs are ignored.
+
 ## 4.1.0 — 2026-06-09
 
 Decoded getters and symmetric `set_*` encoders so consumers stop hand-decoding
