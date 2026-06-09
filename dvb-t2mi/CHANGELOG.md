@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-06-09
+
+### Fixed
+- Crate-root quickstart doctest is gated on the `ts` feature, so
+  `cargo test --no-default-features --doc` no longer fails to compile its
+  `pump`-based example.
+
+Otherwise version-lockstep with the workspace (`dvb-si` decoded accessors).
+
 ## [4.0.0] — 2026-06-08
 
 Version-lockstep release with the workspace (the `dvb-si` 4.0 section/table

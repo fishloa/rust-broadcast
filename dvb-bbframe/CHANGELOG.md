@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-06-09
+
+Version-lockstep release with the workspace (`dvb-si` decoded accessors); no
+changes to this crate.
+
 ## [4.0.0] — 2026-06-08
 
 Version-lockstep release with the workspace (the `dvb-si` 4.0 section/table

@@ -1,5 +1,38 @@
 # Changelog
 
+## 4.1.0 — 2026-06-09
+
+Decoded getters and symmetric `set_*` encoders so consumers stop hand-decoding
+BCD/MJD wire fields (#37, #38). No wire-format change; purely additive.
+
+### Added
+
+- **Time:** `EitEvent::duration()` / `set_duration()` (ungated — a duration is
+  plain elapsed seconds); `EitEvent::start_time()` gains `set_start_time()`;
+  `TotSection::utc_time()` / `set_utc_time()` (the raw field existed but, unlike
+  TDT, had no decoder); `TdtSection::set_utc_time()`; and
+  `CompleteEitEvent::start_time()` / `duration()` on the collect-layer view.
+- **Delivery descriptors:** `SatelliteDeliverySystemDescriptor` /
+  `CableDeliverySystemDescriptor` gain `frequency_hz()`, `symbol_rate_sps()`
+  (+ satellite `orbital_position_deg()`); `TerrestrialDeliverySystemDescriptor`
+  gains `centre_frequency_hz()`; all with `set_*` encoders. Frequencies are
+  exposed in **Hz** (`u64`) because cable (100 Hz) and terrestrial (10 Hz) are
+  finer than 1 kHz and an integer kHz would silently round.
+- **Other BCD/packed fields:**
+  `FrequencyListDescriptor::centre_frequencies_hz()` /
+  `set_centre_frequencies_hz()` (interpreted per `coding_type`);
+  `LocalTimeOffsetEntry::local_time_offset()` / `next_time_offset()` /
+  `time_of_change()` with setters (the two offsets share one polarity bit);
+  `PdcDescriptor::pil_day()` / `pil_month()` / `pil_hour()` / `pil_minute()` /
+  `set_pil()`.
+- `Error::ValueOutOfRange` for decoded values a `set_*` accessor cannot encode.
+
+### Changed
+
+- The shared BCD/MJD codec now lives in `dvb-common` (`bcd` / `time`); the
+  `chrono` feature enables `dvb-common/chrono`. The MJD/BCD helpers formerly
+  duplicated in `tables::eit` and `tables::tdt` are removed in favour of it.
+
 ## 4.0.0 — 2026-06-08
 
 A deliberate API break that separates **one wire section** from a **complete

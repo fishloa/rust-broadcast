@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [4.1.0] — 2026-06-09
+
+### Added
+- `bcd` module — binary-coded-decimal codec (`from_bcd_byte` / `to_bcd_byte`,
+  `bcd_to_decimal` / `decimal_to_bcd`), dependency-free.
+- `time` module — BCD `HHMMSS` duration codec (`decode_bcd_duration` /
+  `encode_bcd_duration`, dependency-free) plus a MJD↔calendar UTC codec
+  (`mjd_to_ymd` / `ymd_to_mjd`, `decode_mjd_bcd_utc` / `encode_mjd_bcd_utc`;
+  EN 300 468 Annex C) behind a new optional **`chrono`** feature. The default
+  build stays dependency-free. These de-dup the MJD/BCD logic previously copied
+  in `dvb-si`.
+
 ## [4.0.0] — 2026-06-08
 
 Version-lockstep release with the workspace (the `dvb-si` 4.0 section/table
