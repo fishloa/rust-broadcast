@@ -22,6 +22,7 @@
 //! dispatches to a typed [`payload::AnyPayload`]:
 //!
 //! ```no_run
+//! # #[cfg(feature = "ts")] {
 //! use dvb_t2mi::pump::T2miPump;
 //! use dvb_t2mi::payload::AnyPayload;
 //!
@@ -34,6 +35,7 @@
 //!         }
 //!     }
 //! }
+//! # }
 //! ```
 //!
 //! # The full signal chain
