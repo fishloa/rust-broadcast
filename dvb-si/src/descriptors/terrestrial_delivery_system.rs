@@ -166,6 +166,33 @@ pub struct TerrestrialDeliverySystemDescriptor {
     pub other_frequency_flag: bool,
 }
 
+impl TerrestrialDeliverySystemDescriptor {
+    /// Centre frequency in Hz. The `centre_frequency_10hz` field stores units of
+    /// 10 Hz (EN 300 468 §6.2.13.4), so this conversion is exact.
+    #[must_use]
+    pub fn centre_frequency_hz(&self) -> u64 {
+        u64::from(self.centre_frequency_10hz) * 10
+    }
+
+    /// Set the centre frequency from Hz, encoding to the field's 10 Hz
+    /// resolution (finer precision is truncated).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
+    /// exceeds the 32-bit (×10 Hz) field.
+    pub fn set_centre_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
+        let units = hz / 10;
+        if units > u64::from(u32::MAX) {
+            return Err(crate::Error::ValueOutOfRange {
+                field: "TerrestrialDeliverySystemDescriptor::centre_frequency",
+                reason: "frequency exceeds the 32-bit (10 Hz) field",
+            });
+        }
+        self.centre_frequency_10hz = units as u32;
+        Ok(())
+    }
+}
+
 fn parse_bandwidth(raw: u8) -> Bandwidth {
     match raw {
         0 => Bandwidth::Mhz8,

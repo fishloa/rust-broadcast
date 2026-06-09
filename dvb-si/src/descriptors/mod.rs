@@ -86,3 +86,14 @@ pub use registration::RegistrationDescriptor;
 
 pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
 pub use registry::{DescriptorObject, DescriptorRegistry};
+
+/// Encode `value` to `nibbles` packed-BCD digits for a `set_*` accessor,
+/// mapping overflow to a [`ValueOutOfRange`](crate::Error::ValueOutOfRange)
+/// error tagged with the descriptor `field`. Shared by the delivery-system
+/// descriptors.
+pub(crate) fn encode_bcd_field(value: u64, nibbles: u8, field: &'static str) -> crate::Result<u64> {
+    dvb_common::bcd::decimal_to_bcd(value, nibbles).ok_or(crate::Error::ValueOutOfRange {
+        field,
+        reason: "value exceeds the BCD field width",
+    })
+}

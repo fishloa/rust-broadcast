@@ -90,6 +90,83 @@ pub struct SatelliteDeliverySystemDescriptor {
     pub fec_inner: u8,
 }
 
+impl SatelliteDeliverySystemDescriptor {
+    /// Decode the 32-bit BCD `frequency` to Hz (1 kHz field resolution,
+    /// EN 300 468 §6.2.13.2). `None` if the BCD nibbles are out of range.
+    ///
+    /// e.g. `0x1172_5000` → `11_725_000_000` Hz (11.725 GHz).
+    #[must_use]
+    pub fn frequency_hz(&self) -> Option<u64> {
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|khz| khz * 1_000)
+    }
+
+    /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
+    /// 1 kHz resolution (sub-kHz precision is truncated).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
+    /// exceeds the 8-digit BCD field.
+    pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
+        self.frequency_bcd =
+            super::encode_bcd_field(hz / 1_000, 8, "SatelliteDeliverySystemDescriptor::frequency")?
+                as u32;
+        Ok(())
+    }
+
+    /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s
+    /// resolution). `None` if the BCD nibbles are out of range.
+    ///
+    /// e.g. `0x027_5000` → `27_500_000` (27.5 Msym/s).
+    #[must_use]
+    pub fn symbol_rate_sps(&self) -> Option<u64> {
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+    }
+
+    /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// the 7-digit BCD field.
+    pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
+        self.symbol_rate_bcd = super::encode_bcd_field(
+            sps / 100,
+            7,
+            "SatelliteDeliverySystemDescriptor::symbol_rate",
+        )? as u32;
+        Ok(())
+    }
+
+    /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
+    /// `None` if the BCD nibbles are out of range. e.g. `0x1920` → `192.0`.
+    #[must_use]
+    pub fn orbital_position_deg(&self) -> Option<f64> {
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.orbital_position_bcd), 4)
+            .map(|tenths| tenths as f64 / 10.0)
+    }
+
+    /// Set `orbital_position` in degrees, rounded to the field's tenth-degree
+    /// resolution. The east/west `east` flag is a separate field.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if negative or
+    /// beyond the 4-digit BCD field.
+    pub fn set_orbital_position_deg(&mut self, deg: f64) -> crate::Result<()> {
+        if !(0.0..=6_553.5).contains(&deg) {
+            return Err(crate::Error::ValueOutOfRange {
+                field: "SatelliteDeliverySystemDescriptor::orbital_position",
+                reason: "degrees must be in 0.0..=6553.5",
+            });
+        }
+        let tenths = (deg * 10.0).round() as u64;
+        self.orbital_position_bcd = super::encode_bcd_field(
+            tenths,
+            4,
+            "SatelliteDeliverySystemDescriptor::orbital_position",
+        )? as u16;
+        Ok(())
+    }
+}
+
 impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {

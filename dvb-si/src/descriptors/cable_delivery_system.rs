@@ -95,6 +95,48 @@ pub struct CableDeliverySystemDescriptor {
     pub fec_inner: FecInner,
 }
 
+impl CableDeliverySystemDescriptor {
+    /// Decode the 32-bit BCD `frequency` to Hz (100 Hz field resolution).
+    /// `None` if the BCD nibbles are out of range.
+    ///
+    /// e.g. `0x0346_0000` → `346_000_000` Hz (346.0000 MHz).
+    #[must_use]
+    pub fn frequency_hz(&self) -> Option<u64> {
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 100)
+    }
+
+    /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
+    /// 100 Hz resolution (finer precision is truncated).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// the 8-digit BCD field.
+    pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
+        self.frequency_bcd =
+            super::encode_bcd_field(hz / 100, 8, "CableDeliverySystemDescriptor::frequency")? as u32;
+        Ok(())
+    }
+
+    /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s
+    /// resolution). `None` if the BCD nibbles are out of range.
+    #[must_use]
+    pub fn symbol_rate_sps(&self) -> Option<u64> {
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+    }
+
+    /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) on overflow of
+    /// the 7-digit BCD field.
+    pub fn set_symbol_rate_sps(&mut self, sps: u64) -> crate::Result<()> {
+        self.symbol_rate_bcd =
+            super::encode_bcd_field(sps / 100, 7, "CableDeliverySystemDescriptor::symbol_rate")?
+                as u32;
+        Ok(())
+    }
+}
+
 fn parse_fec_outer(raw: u8) -> FecOuter {
     match raw {
         0x00 => FecOuter::NotDefined,

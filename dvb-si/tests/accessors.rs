@@ -70,3 +70,54 @@ fn tdt_utc_time_round_trips() {
     tdt.set_utc_time(dt).unwrap();
     assert_eq!(tdt.utc_time(), Some(dt));
 }
+
+#[test]
+fn satellite_delivery_decoded_accessors() {
+    use dvb_common::Parse;
+    use dvb_si::descriptors::satellite_delivery_system::SatelliteDeliverySystemDescriptor;
+    // tag, len, freq 0x11725000, orbital 0x1920, flags 0x00, symbol_rate+fec.
+    let raw = [
+        0x43, 11, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00, 0x00,
+    ];
+    let mut d = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+    assert_eq!(d.frequency_hz(), Some(11_725_000_000)); // 11.725 GHz
+    assert_eq!(d.symbol_rate_sps(), Some(27_500_000)); // 27.5 Msym/s
+    assert_eq!(d.orbital_position_deg(), Some(192.0));
+
+    // Setters round-trip at the field resolutions.
+    d.set_frequency_hz(12_500_750_000).unwrap();
+    assert_eq!(d.frequency_hz(), Some(12_500_750_000));
+    d.set_symbol_rate_sps(22_000_000).unwrap();
+    assert_eq!(d.symbol_rate_sps(), Some(22_000_000));
+    d.set_orbital_position_deg(28.5).unwrap();
+    assert_eq!(d.orbital_position_deg(), Some(28.5));
+}
+
+#[test]
+fn cable_delivery_decoded_accessors() {
+    use dvb_common::Parse;
+    use dvb_si::descriptors::cable_delivery_system::CableDeliverySystemDescriptor;
+    let raw = [
+        0x44, 11, 0x03, 0x46, 0x00, 0x00, 0xFF, 0xF1, 0x05, 0x00, 0x00, 0x00, 0x03,
+    ];
+    let mut d = CableDeliverySystemDescriptor::parse(&raw).unwrap();
+    assert_eq!(d.frequency_hz(), Some(346_000_000)); // 346.0000 MHz, 100 Hz resolution
+
+    d.set_frequency_hz(474_000_100).unwrap(); // multiple of 100 Hz
+    assert_eq!(d.frequency_hz(), Some(474_000_100));
+}
+
+#[test]
+fn terrestrial_delivery_centre_frequency_hz() {
+    use dvb_common::Parse;
+    use dvb_si::descriptors::terrestrial_delivery_system::TerrestrialDeliverySystemDescriptor;
+    let raw = [
+        0x5A, 11, 0x04, 0xA8, 0x58, 0xF0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,
+    ];
+    let mut d = TerrestrialDeliverySystemDescriptor::parse(&raw).unwrap();
+    // 0x04A858F0 = 78_141_680 units of 10 Hz = 781.4168 MHz.
+    assert_eq!(d.centre_frequency_hz(), 781_416_800);
+
+    d.set_centre_frequency_hz(490_000_000).unwrap(); // multiple of 10 Hz
+    assert_eq!(d.centre_frequency_hz(), 490_000_000);
+}
