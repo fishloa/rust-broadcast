@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 4.2.0 — 2026-06-09
 
 Hardening of the DSM-CC `ModuleReassembler` against hostile carousel input
 (2026-06-09 audit findings, #42 / #43).

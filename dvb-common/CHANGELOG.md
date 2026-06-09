@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-06-09
+
+Version-lockstep release with the workspace (dvb-si DSM-CC `ModuleReassembler`
+hardening, #42 / #43); no changes to this crate.
+
 ## [4.1.0] — 2026-06-09
 
 ### Added
