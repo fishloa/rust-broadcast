@@ -60,6 +60,17 @@ pub enum Error {
         bytes: [u8; 4],
     },
 
+    /// A decoded value passed to a `set_*` accessor could not be encoded to the
+    /// field's fixed wire representation (e.g. a duration ≥ 100 hours, or a date
+    /// outside the 16-bit MJD range).
+    #[error("value out of range for {field}: {reason}")]
+    ValueOutOfRange {
+        /// Field being set.
+        field: &'static str,
+        /// Why the value is not representable.
+        reason: &'static str,
+    },
+
     /// A `section_length` declared more bytes than the containing buffer could hold.
     #[error("section_length {declared} exceeds remaining buffer ({available} bytes)")]
     SectionLengthOverflow {

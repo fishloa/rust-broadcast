@@ -78,6 +78,9 @@ dependencies = [
 [[package]]
 name = "dvb-common"
 version = "4.0.0"
+dependencies = [
+ "chrono",
+]
 
 [[package]]
 name = "dvb-si"

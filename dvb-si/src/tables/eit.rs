@@ -283,51 +283,60 @@ impl<'a> crate::traits::TableDef<'a> for EitSection<'a> {
     const NAME: &'static str = "EVENT_INFORMATION";
 }
 
+impl EitEvent<'_> {
+    /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
+    ///
+    /// Returns `None` if the BCD nibbles are out of range. Available without the
+    /// `chrono` feature — a duration is a plain elapsed-seconds value.
+    #[must_use]
+    pub fn duration(&self) -> Option<core::time::Duration> {
+        dvb_common::time::decode_bcd_duration(self.duration_raw)
+    }
+
+    /// Set the event duration, encoding it into the 24-bit BCD `duration` field.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the duration
+    /// is 100 hours or longer (the `HH` field holds only two BCD digits).
+    pub fn set_duration(&mut self, duration: core::time::Duration) -> crate::Result<()> {
+        self.duration_raw = dvb_common::time::encode_bcd_duration(duration).ok_or(
+            crate::Error::ValueOutOfRange {
+                field: "EitEvent::duration",
+                reason: "duration must be < 100 hours",
+            },
+        )?;
+        Ok(())
+    }
+}
+
 #[cfg(feature = "chrono")]
 impl EitEvent<'_> {
     /// Decode `start_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
-    /// Returns `None` if the BCD nibbles are out of range.
     ///
-    /// MJD→calendar conversion per ETSI EN 300 468 Annex C.
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
     pub fn start_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        use chrono::{NaiveDate, NaiveDateTime, TimeZone};
-        let mjd = u16::from_be_bytes([self.start_time_raw[0], self.start_time_raw[1]]);
-        let (y, m, d) = mjd_to_ymd(mjd);
-        let h = bcd_byte(self.start_time_raw[2])?;
-        let mi = bcd_byte(self.start_time_raw[3])?;
-        let s = bcd_byte(self.start_time_raw[4])?;
-        let date = NaiveDate::from_ymd_opt(y, m, d)?;
-        let time = chrono::NaiveTime::from_hms_opt(u32::from(h), u32::from(mi), u32::from(s))?;
-        let naive = NaiveDateTime::new(date, time);
-        chrono::Utc.from_local_datetime(&naive).single()
+        dvb_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
-}
 
-#[cfg(feature = "chrono")]
-fn bcd_byte(b: u8) -> Option<u8> {
-    let hi = b >> 4;
-    let lo = b & 0x0F;
-    if hi > 9 || lo > 9 {
-        return None;
+    /// Set the event start time, encoding it into the 40-bit `start_time` field.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_start_time(
+        &mut self,
+        start_time: chrono::DateTime<chrono::Utc>,
+    ) -> crate::Result<()> {
+        self.start_time_raw = dvb_common::time::encode_mjd_bcd_utc(start_time).ok_or(
+            crate::Error::ValueOutOfRange {
+                field: "EitEvent::start_time",
+                reason: "date not representable in 16-bit MJD",
+            },
+        )?;
+        Ok(())
     }
-    Some(hi * 10 + lo)
-}
-
-#[cfg(feature = "chrono")]
-fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
-    // ETSI EN 300 468 Annex C: Y', M', K, Y, M, D via the Zeller-like formula.
-    let mjd = i64::from(mjd);
-    let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor()) / 30.6001) as i64;
-    let d = mjd
-        - 14_956
-        - (y_prime as f64 * 365.25).floor() as i64
-        - (m_prime as f64 * 30.6001).floor() as i64;
-    let k = if m_prime == 14 || m_prime == 15 { 1 } else { 0 };
-    let y = y_prime + k + 1900;
-    let m = m_prime - 1 - k * 12;
-    (y as i32, m as u32, d as u32)
 }
 
 #[cfg(test)]

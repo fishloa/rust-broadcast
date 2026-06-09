@@ -34,7 +34,7 @@ serde_json = "1.0"
 default = ["chrono", "ts", "serde"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
-chrono   = ["dep:chrono"]
+chrono   = ["dep:chrono", "dvb-common/chrono"]
 
 # MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
 ts       = ["dep:bytes"]

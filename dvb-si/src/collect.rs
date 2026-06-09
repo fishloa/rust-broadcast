@@ -1055,6 +1055,26 @@ pub struct CompleteEitEvent<'a> {
     pub descriptors: ParsedDescriptorLoop<'a>,
 }
 
+impl CompleteEitEvent<'_> {
+    /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
+    ///
+    /// Returns `None` if the BCD nibbles are out of range.
+    #[must_use]
+    pub fn duration(&self) -> Option<core::time::Duration> {
+        dvb_common::time::decode_bcd_duration(self.duration_raw)
+    }
+
+    /// Decode `start_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
+    ///
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C.
+    #[cfg(feature = "chrono")]
+    #[must_use]
+    pub fn start_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        dvb_common::time::decode_mjd_bcd_utc(self.start_time_raw)
+    }
+}
+
 /// Complete EIT for one exact table_id/extension section sequence.
 ///
 /// EIT schedule collection across `last_table_id` is intentionally represented

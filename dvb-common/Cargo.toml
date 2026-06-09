@@ -14,6 +14,13 @@ rust-version = "1.75"
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+# MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
+# helpers remain available; only the chrono-typed UTC functions are gated.
+chrono = ["dep:chrono"]
+
 [dependencies]
-# intentionally empty — consumers of dvb_common must pay for nothing they
-# aren't already paying for in the downstream DVB crates.
+# Default build stays dependency-free — consumers of dvb_common pay for nothing
+# they aren't already paying for downstream. `chrono` is pulled only when the
+# `chrono` feature is enabled (e.g. by dvb-si's own `chrono` feature).
+chrono = { version = "0.4", optional = true, default-features = false }

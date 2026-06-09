@@ -37,6 +37,33 @@ pub struct TotSection<'a> {
     pub descriptors: DescriptorLoop<'a>,
 }
 
+#[cfg(feature = "chrono")]
+impl TotSection<'_> {
+    /// Decode `utc_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
+    ///
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C.
+    #[must_use]
+    pub fn utc_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        dvb_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
+    }
+
+    /// Set the UTC time, encoding it into the 40-bit `utc_time` field.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        self.utc_time_raw = dvb_common::time::encode_mjd_bcd_utc(utc_time).ok_or(
+            Error::ValueOutOfRange {
+                field: "TotSection::utc_time",
+                reason: "date not representable in 16-bit MJD",
+            },
+        )?;
+        Ok(())
+    }
+}
+
 impl<'a> Parse<'a> for TotSection<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {

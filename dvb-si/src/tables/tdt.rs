@@ -24,48 +24,30 @@ pub struct TdtSection {
     pub utc_time_raw: [u8; 5],
 }
 
+#[cfg(feature = "chrono")]
 impl TdtSection {
     /// Decode the UTC time to a chrono DateTime when the `chrono` feature is on.
-    #[cfg(feature = "chrono")]
+    ///
+    /// MJD→calendar conversion per ETSI EN 300 468 Annex C.
     #[must_use]
     pub fn utc_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        use chrono::{NaiveDate, NaiveDateTime, TimeZone};
-        let mjd = u16::from_be_bytes([self.utc_time_raw[0], self.utc_time_raw[1]]);
-        let (y, m, d) = mjd_to_ymd(mjd);
-        let h = bcd(self.utc_time_raw[2])?;
-        let mi = bcd(self.utc_time_raw[3])?;
-        let s = bcd(self.utc_time_raw[4])?;
-        let date = NaiveDate::from_ymd_opt(y, m, d)?;
-        let time = chrono::NaiveTime::from_hms_opt(h.into(), mi.into(), s.into())?;
-        chrono::Utc
-            .from_local_datetime(&NaiveDateTime::new(date, time))
-            .single()
+        dvb_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
     }
-}
 
-#[cfg(feature = "chrono")]
-fn bcd(b: u8) -> Option<u8> {
-    let hi = b >> 4;
-    let lo = b & 0x0F;
-    if hi > 9 || lo > 9 {
-        return None;
+    /// Set the UTC time, encoding it into the 40-bit `utc_time` field.
+    ///
+    /// # Errors
+    /// [`Error::ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
+        self.utc_time_raw = dvb_common::time::encode_mjd_bcd_utc(utc_time).ok_or(
+            Error::ValueOutOfRange {
+                field: "TdtSection::utc_time",
+                reason: "date not representable in 16-bit MJD",
+            },
+        )?;
+        Ok(())
     }
-    Some(hi * 10 + lo)
-}
-
-#[cfg(feature = "chrono")]
-fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
-    let mjd = i64::from(mjd);
-    let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor()) / 30.6001) as i64;
-    let d = mjd
-        - 14_956
-        - (y_prime as f64 * 365.25).floor() as i64
-        - (m_prime as f64 * 30.6001).floor() as i64;
-    let k = if m_prime == 14 || m_prime == 15 { 1 } else { 0 };
-    let y = y_prime + k + 1900;
-    let m = m_prime - 1 - k * 12;
-    (y as i32, m as u32, d as u32)
 }
 
 impl<'a> Parse<'a> for TdtSection {
