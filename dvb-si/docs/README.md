@@ -15,3 +15,7 @@ are the authoritative source. Excluded from the published crate.
 | [ts_102_772_mpe_ifec.md](ts_102_772_mpe_ifec.md) | TS 102 772 v1.1.1 — MPE-IFEC | MPE-IFEC (0x7A) |
 | [en_303_560_ttml.md](en_303_560_ttml.md) | EN 303 560 v1.1.1 — TTML subtitling | DFIS (0x7C) |
 | [iso_13818_6_carousel.md](iso_13818_6_carousel.md) | ISO/IEC 13818-6 — DSM-CC carousel | DSM-CC carousel layouts (hand-transcribed — NOT extractor-generated) |
+| [iso_13818_1_systems.md](iso_13818_1_systems.md) | ISO/IEC 13818-1:2007 — MPEG-2 Systems | adaptation field + PCR (Table 2-6), pointer_field / PSI packetization, PAT/PMT cross-check (hand-transcribed — source PDF is a paid ISO standard, consulted locally, NOT vendored) |
+| [tr_101_211.md](tr_101_211.md) | TR 101 211 v1.9.1 — SI implementation guidelines | running_status semantics, name/text fields; SI repetition rates §4.4 (repetition sections hand-transcribed) |
+| [tr_101_290.md](tr_101_290.md) | TR 101 290 v1.4.1 — Measurement guidelines | TS monitoring indicator tables 5.1/5.2/5.3 (hand-transcribed — condition tables, outside the extractor's syntax-table model) |
+| [ts_101_154_av_coding.md](ts_101_154_av_coding.md) | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding | codec-level semantics behind component/AC-4/audio-preselection descriptors |

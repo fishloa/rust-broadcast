@@ -1,12 +1,18 @@
-# Vendored ETSI specification PDFs
+# Vendored specification PDFs
 
 Canonical source-of-truth standards for the `rust-dvb` crates. The
 structured markdown under each crate's `docs/` is transcribed from these.
 Kept in-repo so the parsers can always be checked against the spec they
 claim to implement.
 
-These are freely-downloadable ETSI deliverables, redistributed here for
-reference. ETSI retains copyright; see <https://www.etsi.org/>.
+These are freely-downloadable deliverables (ETSI, DVB Project, and SCTE —
+all published at no cost), redistributed here for reference. Each publisher
+retains copyright; see <https://www.etsi.org/>, <https://dvb.org/>,
+<https://www.scte.org/>.
+
+Paid ISO standards (e.g. ISO/IEC 13818-1) are **never** vendored: they are
+consulted locally (gitignored as `specs/iso_iec_*.pdf`) and only the
+provenance-documented hand transcriptions under `*/docs/` are committed.
 
 | File | Standard | Used by |
 |---|---|---|
@@ -23,6 +29,10 @@ reference. ETSI retains copyright; see <https://www.etsi.org/>.
 | `etsi_en_302_307_2_v01.04.01_dvb_s2x.pdf` | EN 302 307-2 — DVB-S2X | `dvb-bbframe` |
 | `etsi_en_302_755_v01.04.01_dvb_t2.pdf` | EN 302 755 v1.4.1 — DVB-T2 | `dvb-bbframe`, `dvb-t2mi` |
 | `etsi_ts_102_773_v01.04.01_dvb_t2_modulator_interface.pdf` | TS 102 773 v1.4.1 — T2-MI | `dvb-t2mi` |
+| `etsi_tr_101_290_v01.04.01_dvb_measurement.pdf` | TR 101 290 v1.4.1 — Measurement guidelines for DVB systems | planned `dvb-conformance` (#57); tables in `dvb-si/docs/tr_101_290.md` |
+| `etsi_tr_101_211_v01.09.01_dvb_si_guidelines.pdf` | TR 101 211 v1.9.1 — SI implementation guidelines | `dvb-si` (SI repetition rates — packetizer/SiMux #56, conformance #57) |
+| `ansi_scte_35_2023r1_dpi_cueing.pdf` | ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message | planned `dvb-scte35` (#58); tables in `dvb-scte35/docs/scte_35.md` |
+| `dvb_a001r18_draft_ts_101_154_v02.07.01_av_coding.pdf` | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding in broadcast/broadband | `dvb-si` (component/AC-4/audio-preselection semantics, #53) |
 
 Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf
@@ -38,3 +48,7 @@ Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/302300_302399/30230702/01.04.01_60/en_30230702v010401p.pdf
 - https://www.etsi.org/deliver/etsi_en/302700_302799/302755/01.04.01_60/en_302755v010401p.pdf
 - https://www.etsi.org/deliver/etsi_ts/102700_102799/102773/01.04.01_60/ts_102773v010401p.pdf
+- https://www.etsi.org/deliver/etsi_tr/101200_101299/101290/01.04.01_60/tr_101290v010401p.pdf
+- https://www.etsi.org/deliver/etsi_tr/101200_101299/101211/01.09.01_60/tr_101211v010901p.pdf
+- https://dutchguild.nl/event/13/attachments/82/203/SCTE_35_2023r1.pdf (public mirror; canonical source is the SCTE standards library request form)
+- https://dvb.org/wp-content/uploads/2021/02/A001r18_Use-of-Video-and-Audio-Coding-in-Broadcast-and-Broadband-Applications_Draft_TS_101-154-v271_Nov-2021.pdf

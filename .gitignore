@@ -1,5 +1,7 @@
 target/
 **/*.rs.bk
 .DS_Store
+# Paid ISO standards: consulted locally for hand transcription, never vendored.
+specs/iso_iec_*.pdf
 tools/dvb-si-audit/.venv/
 tools/dvb-si-audit/out/
