@@ -10,6 +10,11 @@
   (no chrono dependency). Civil-UTC conversion (applying the `utco` leap-second
   offset) is intentionally deferred pending verification against a real capture.
 
+- **Real-capture test** (`tests/real_capture.rs`): a 1.1 MB conformant T2-MI
+  slice (Capital TV Colombia, via tsduck.io; PAT+PMT+T2-MI PID, stuffing
+  stripped, packet-capped) validates the pump → `AnyPayload` → decoded-timestamp
+  path on real broadcast bytes. Fixture excluded from the published crate.
+
 ## [4.2.0] — 2026-06-09
 
 Version-lockstep release with the workspace (dvb-si DSM-CC `ModuleReassembler`
