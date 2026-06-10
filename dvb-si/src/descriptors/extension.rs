@@ -188,6 +188,101 @@ pub enum ExtensionBody<'a> {
     Raw(&'a [u8]),
 }
 
+/// Per-body metadata for the extension-descriptor sub-dispatch — the
+/// `descriptor_tag_extension` value and a diagnostic name. Mirrors
+/// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
+pub trait ExtensionBodyDef {
+    /// The `descriptor_tag_extension` value this body is selected by.
+    const TAG_EXTENSION: u8;
+    /// SCREAMING_SNAKE diagnostic name, suffix-free.
+    const NAME: &'static str;
+}
+
+impl ExtensionBodyDef for T2DeliverySystem<'_> {
+    const TAG_EXTENSION: u8 = 0x04;
+    const NAME: &'static str = "T2_DELIVERY_SYSTEM";
+}
+
+impl ExtensionBodyDef for SupplementaryAudio<'_> {
+    const TAG_EXTENSION: u8 = 0x06;
+    const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
+}
+
+impl ExtensionBodyDef for NetworkChangeNotify<'_> {
+    const TAG_EXTENSION: u8 = 0x07;
+    const NAME: &'static str = "NETWORK_CHANGE_NOTIFY";
+}
+
+impl ExtensionBodyDef for Message<'_> {
+    const TAG_EXTENSION: u8 = 0x08;
+    const NAME: &'static str = "MESSAGE";
+}
+
+impl ExtensionBodyDef for TargetRegion<'_> {
+    const TAG_EXTENSION: u8 = 0x09;
+    const NAME: &'static str = "TARGET_REGION";
+}
+
+impl ExtensionBodyDef for TargetRegionName<'_> {
+    const TAG_EXTENSION: u8 = 0x0A;
+    const NAME: &'static str = "TARGET_REGION_NAME";
+}
+
+impl ExtensionBodyDef for ServiceRelocated {
+    const TAG_EXTENSION: u8 = 0x0B;
+    const NAME: &'static str = "SERVICE_RELOCATED";
+}
+
+impl ExtensionBodyDef for C2DeliverySystem {
+    const TAG_EXTENSION: u8 = 0x0D;
+    const NAME: &'static str = "C2_DELIVERY_SYSTEM";
+}
+
+impl ExtensionBodyDef for VideoDepthRangeDescriptor<'_> {
+    const TAG_EXTENSION: u8 = 0x10;
+    const NAME: &'static str = "VIDEO_DEPTH_RANGE";
+}
+
+impl ExtensionBodyDef for T2miDescriptor<'_> {
+    const TAG_EXTENSION: u8 = 0x11;
+    const NAME: &'static str = "T2MI";
+}
+
+impl ExtensionBodyDef for UriLinkage<'_> {
+    const TAG_EXTENSION: u8 = 0x13;
+    const NAME: &'static str = "URI_LINKAGE";
+}
+
+impl ExtensionBodyDef for Ac4<'_> {
+    const TAG_EXTENSION: u8 = 0x15;
+    const NAME: &'static str = "AC4";
+}
+
+impl ExtensionBodyDef for C2BundleDeliverySystem {
+    const TAG_EXTENSION: u8 = 0x16;
+    const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
+}
+
+impl ExtensionBodyDef for S2XSatelliteDeliverySystem<'_> {
+    const TAG_EXTENSION: u8 = 0x17;
+    const NAME: &'static str = "S2X_SATELLITE_DELIVERY_SYSTEM";
+}
+
+impl ExtensionBodyDef for AudioPreselection<'_> {
+    const TAG_EXTENSION: u8 = 0x19;
+    const NAME: &'static str = "AUDIO_PRESELECTION";
+}
+
+impl ExtensionBodyDef for TtmlSubtitling<'_> {
+    const TAG_EXTENSION: u8 = 0x20;
+    const NAME: &'static str = "TTML_SUBTITLING";
+}
+
+impl ExtensionBodyDef for VvcSubpicturesDescriptor<'_> {
+    const TAG_EXTENSION: u8 = 0x23;
+    const NAME: &'static str = "VVC_SUBPICTURES";
+}
+
 // ===========================================================================
 //  Section 0x04 — T2_delivery_system_descriptor (Table 133, §6.4.6.3)
 // ---------------------------------------------------------------------------
@@ -2411,5 +2506,63 @@ mod tests {
         assert!(json.contains("\"tag_extension\":35"));
         assert!(json.contains("\"VvcSubpictures\""));
         assert!(json.contains("\"service_description\":\"Hi\""));
+    }
+}
+
+#[cfg(test)]
+mod dispatch_drift {
+    use super::*;
+
+    macro_rules! assert_entry {
+        ($tag:literal, $variant:ident, $type:ty) => {
+            assert_eq!(
+                $tag,
+                <$type as ExtensionBodyDef>::TAG_EXTENSION,
+                concat!("TAG_EXTENSION drift for ", stringify!($type)),
+            );
+            assert!(
+                !<$type as ExtensionBodyDef>::NAME.is_empty(),
+                concat!("empty NAME for ", stringify!($type)),
+            );
+            assert_eq!(
+                ExtensionDescriptor {
+                    tag_extension: $tag,
+                    body: ExtensionBody::Raw(&[]),
+                }
+                .kind(),
+                Some(ExtensionTag::$variant),
+                concat!(
+                    "kind() drift for tag ",
+                    stringify!($tag),
+                    " / ",
+                    stringify!($variant),
+                ),
+            );
+        };
+    }
+
+    #[test]
+    fn ext_dispatch_single_source() {
+        assert_entry!(0x04, T2DeliverySystem, T2DeliverySystem<'_>);
+        assert_entry!(0x06, SupplementaryAudio, SupplementaryAudio<'_>);
+        assert_entry!(0x07, NetworkChangeNotify, NetworkChangeNotify<'_>);
+        assert_entry!(0x08, Message, Message<'_>);
+        assert_entry!(0x09, TargetRegion, TargetRegion<'_>);
+        assert_entry!(0x0A, TargetRegionName, TargetRegionName<'_>);
+        assert_entry!(0x0B, ServiceRelocated, ServiceRelocated);
+        assert_entry!(0x0D, C2DeliverySystem, C2DeliverySystem);
+        assert_entry!(0x10, VideoDepthRange, VideoDepthRangeDescriptor<'_>);
+        assert_entry!(0x11, T2mi, T2miDescriptor<'_>);
+        assert_entry!(0x13, UriLinkage, UriLinkage<'_>);
+        assert_entry!(0x15, Ac4, Ac4<'_>);
+        assert_entry!(0x16, C2BundleDeliverySystem, C2BundleDeliverySystem);
+        assert_entry!(
+            0x17,
+            S2XSatelliteDeliverySystem,
+            S2XSatelliteDeliverySystem<'_>
+        );
+        assert_entry!(0x19, AudioPreselection, AudioPreselection<'_>);
+        assert_entry!(0x20, TtmlSubtitling, TtmlSubtitling<'_>);
+        assert_entry!(0x23, VvcSubpictures, VvcSubpicturesDescriptor<'_>);
     }
 }

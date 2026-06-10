@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **`ExtensionBodyDef` trait** — each typed extension body declares its
+  `TAG_EXTENSION` + `NAME` as associated consts, with a drift test pinning the
+  `kind()` dispatch and those consts to one canonical list (ADR-0001 stage 1).
 - **T2-MI extension descriptor (`descriptor_tag_extension` 0x11)** now typed as
   `T2miDescriptor` (`t2mi_stream_id`, `num_t2mi_streams_minus_one`,
   `pcr_iscr_common_clock_flag`, reserved tail) per EN 300 468 §6.4.14 Table 158;
