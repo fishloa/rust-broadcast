@@ -1,3 +1,4 @@
+//! URI Linkage Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x13).
 use super::*;
 
 impl super::sealed::Sealed for UriLinkage<'_> {}
@@ -5,13 +6,6 @@ impl ExtensionBodyDef for UriLinkage<'_> {
     const TAG_EXTENSION: u8 = 0x13;
     const NAME: &'static str = "URI_LINKAGE";
 }
-
-// ===========================================================================
-//  Section 0x13 — URI_linkage_descriptor (Table 159, §6.4.16.1)
-// ---------------------------------------------------------------------------
-//  uri_linkage_type, length-delimited URI, an optional min_polling_interval
-//  (only for types 0x00/0x01), then trailing private_data. All typed.
-// ===========================================================================
 /// URI_linkage body (Table 159).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

@@ -1,3 +1,4 @@
+//! Message Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x08).
 use super::*;
 
 impl super::sealed::Sealed for Message<'_> {}
@@ -5,10 +6,6 @@ impl ExtensionBodyDef for Message<'_> {
     const TAG_EXTENSION: u8 = 0x08;
     const NAME: &'static str = "MESSAGE";
 }
-
-// ===========================================================================
-//  Section 0x08 — message_descriptor (Table 148, §6.4.9)
-// ===========================================================================
 /// message body (Table 148).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

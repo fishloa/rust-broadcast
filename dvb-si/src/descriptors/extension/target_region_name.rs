@@ -1,3 +1,4 @@
+//! Target Region Name Descriptor — ETSI EN 300 468 §6.4.13 (tag_extension 0x0A).
 use super::*;
 
 impl super::sealed::Sealed for TargetRegionName<'_> {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for TargetRegionName<'_> {
     const TAG_EXTENSION: u8 = 0x0A;
     const NAME: &'static str = "TARGET_REGION_NAME";
 }
-
-// ===========================================================================
-//  Section 0x0A — target_region_name_descriptor (Table 157, §6.4.13)
-// ---------------------------------------------------------------------------
-//  Leading country_code(24) + ISO_639_language_code(24) then a region-name
-//  loop whose entries are region_depth-conditional; the loop is unfolded
-//  into typed entries.
-// ===========================================================================
 /// target_region_name body (Table 157, §6.4.13). The region loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

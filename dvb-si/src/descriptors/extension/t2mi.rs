@@ -1,3 +1,7 @@
+//! T2-MI Descriptor — ETSI EN 300 468 §6.4.14 (tag_extension 0x11).
+//!
+//! The `reserved_tail` field holds trailing `reserved_zero_future_use` bytes
+//! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
 impl super::sealed::Sealed for T2miDescriptor<'_> {}
@@ -5,10 +9,6 @@ impl ExtensionBodyDef for T2miDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x11;
     const NAME: &'static str = "T2MI";
 }
-
-// ===========================================================================
-//  Section 0x11 — T2MI_descriptor (Table 158, §6.4.14)
-// ===========================================================================
 /// T2MI body (Table 158) — fully typed, fixed 3-byte lead-in + reserved tail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

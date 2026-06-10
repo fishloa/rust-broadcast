@@ -1,3 +1,4 @@
+//! T2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.3 (tag_extension 0x04).
 use super::*;
 
 impl super::sealed::Sealed for T2DeliverySystem {}
@@ -5,15 +6,6 @@ impl ExtensionBodyDef for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;
     const NAME: &'static str = "T2_DELIVERY_SYSTEM";
 }
-
-// ===========================================================================
-//  Section 0x04 — T2_delivery_system_descriptor (Table 133, §6.4.6.3)
-// ---------------------------------------------------------------------------
-//  plp_id(8) T2_system_id(16) then, if descriptor_length > 4, a packed flags
-//  block (SISO_MISO 2 | bandwidth 4 | reserved 2 ; guard 3 | tx_mode 3 | off 1 |
-//  tfs 1) followed by a variable cell loop (cells carry tfs-conditional
-//  frequency lists + subcell loops). The full cell loop is unfolded.
-// ===========================================================================
 
 /// One T2 cell (Table 133 inner `for`).
 #[derive(Debug, Clone, PartialEq, Eq)]

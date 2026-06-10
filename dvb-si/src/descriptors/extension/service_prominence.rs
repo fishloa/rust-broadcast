@@ -1,3 +1,4 @@
+//! Service Prominence Descriptor — ETSI EN 300 468 §6.4.18 (tag_extension 0x22).
 use super::*;
 
 impl super::sealed::Sealed for ServiceProminence<'_> {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for ServiceProminence<'_> {
     const TAG_EXTENSION: u8 = 0x22;
     const NAME: &'static str = "SERVICE_PROMINENCE";
 }
-
-// ===========================================================================
-//  Section 0x22 — service_prominence_descriptor (Table 162c, §6.4.18)
-// ---------------------------------------------------------------------------
-//  SOGI_list_length then a variable-length SOGI loop (unfolded as Vec<SogiEntry>);
-//  each entry's target_region sub-loop is kept raw (region_depth-irregular,
-//  same precedent as TargetRegion). Trailing private_data_byte run.
-// ===========================================================================
 
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
 /// each entry's target_region loop is kept raw (region entries are

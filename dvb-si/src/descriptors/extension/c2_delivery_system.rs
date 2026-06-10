@@ -1,3 +1,4 @@
+//! C2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D).
 use super::*;
 
 impl super::sealed::Sealed for C2DeliverySystem {}
@@ -5,10 +6,6 @@ impl ExtensionBodyDef for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";
 }
-
-// ===========================================================================
-//  Section 0x0D — C2_delivery_system_descriptor (Table 115, §6.4.6.1)
-// ===========================================================================
 /// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

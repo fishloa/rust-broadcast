@@ -1,3 +1,7 @@
+//! TTML Subtitling Descriptor — ETSI EN 303 560 §5.2.1.1 (tag_extension 0x20).
+//!
+//! The `reserved_tail` field holds trailing `reserved_zero_future_use` bytes
+//! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
 impl super::sealed::Sealed for TtmlSubtitling<'_> {}
@@ -5,14 +9,6 @@ impl ExtensionBodyDef for TtmlSubtitling<'_> {
     const TAG_EXTENSION: u8 = 0x20;
     const NAME: &'static str = "TTML_SUBTITLING";
 }
-
-// ===========================================================================
-//  Section 0x20 — TTML_subtitling_descriptor (EN 303 560 Table 1, §5.2.1.1)
-// ---------------------------------------------------------------------------
-//  Fully typed: ISO_639 prefix, packed flags, a profile list, optional
-//  qualifier and font-id loop, a length-delimited DVB text field, and an
-//  opaque reserved-zero tail to end-of-body.
-// ===========================================================================
 
 /// TTML_subtitling body (EN 303 560 Table 1, §5.2.1.1).
 #[derive(Debug, Clone, PartialEq, Eq)]

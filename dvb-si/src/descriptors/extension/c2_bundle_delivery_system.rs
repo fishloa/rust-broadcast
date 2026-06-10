@@ -1,3 +1,4 @@
+//! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
 
 impl super::sealed::Sealed for C2BundleDeliverySystem {}
@@ -5,12 +6,6 @@ impl ExtensionBodyDef for C2BundleDeliverySystem {
     const TAG_EXTENSION: u8 = 0x16;
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }
-
-// ===========================================================================
-//  Section 0x16 — C2_bundle_delivery_system_descriptor (Table 139, §6.4.6.4)
-// ---------------------------------------------------------------------------
-//  A flat array of fixed 8-byte entries; fully typed.
-// ===========================================================================
 /// One C2 bundle entry (Table 139 inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

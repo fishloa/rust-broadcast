@@ -1,3 +1,4 @@
+//! Supplementary Audio Descriptor — ETSI EN 300 468 §6.4.11 (tag_extension 0x06).
 use super::*;
 
 impl super::sealed::Sealed for SupplementaryAudio<'_> {}
@@ -5,10 +6,6 @@ impl ExtensionBodyDef for SupplementaryAudio<'_> {
     const TAG_EXTENSION: u8 = 0x06;
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
 }
-
-// ===========================================================================
-//  Section 0x06 — supplementary_audio_descriptor (Table 153, §6.4.11)
-// ===========================================================================
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

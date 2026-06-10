@@ -259,6 +259,16 @@ macro_rules! declare_extension_bodies {
             }
         }
 
+        /// Map a `descriptor_tag_extension` byte to its known [`ExtensionTag`].
+        fn kind_from_tag(tag_extension: u8) -> Option<ExtensionTag> {
+            Some(match tag_extension {
+                $(
+                    $tag => ExtensionTag::$variant,
+                )+
+                _ => return None,
+            })
+        }
+
         #[cfg(test)]
         mod dispatch_drift {
             use super::*;
@@ -368,29 +378,7 @@ impl ExtensionDescriptor<'_> {
     /// Typed view of [`Self::tag_extension`], or `None` if not a known tag.
     #[must_use]
     pub fn kind(&self) -> Option<ExtensionTag> {
-        Some(match self.tag_extension {
-            0x00 => ExtensionTag::ImageIcon,
-            0x04 => ExtensionTag::T2DeliverySystem,
-            0x05 => ExtensionTag::ShDeliverySystem,
-            0x06 => ExtensionTag::SupplementaryAudio,
-            0x07 => ExtensionTag::NetworkChangeNotify,
-            0x08 => ExtensionTag::Message,
-            0x09 => ExtensionTag::TargetRegion,
-            0x0A => ExtensionTag::TargetRegionName,
-            0x0B => ExtensionTag::ServiceRelocated,
-            0x0D => ExtensionTag::C2DeliverySystem,
-            0x10 => ExtensionTag::VideoDepthRange,
-            0x11 => ExtensionTag::T2mi,
-            0x13 => ExtensionTag::UriLinkage,
-            0x15 => ExtensionTag::Ac4,
-            0x16 => ExtensionTag::C2BundleDeliverySystem,
-            0x17 => ExtensionTag::S2XSatelliteDeliverySystem,
-            0x19 => ExtensionTag::AudioPreselection,
-            0x20 => ExtensionTag::TtmlSubtitling,
-            0x22 => ExtensionTag::ServiceProminence,
-            0x23 => ExtensionTag::VvcSubpictures,
-            _ => return None,
-        })
+        kind_from_tag(self.tag_extension)
     }
 }
 

@@ -1,3 +1,4 @@
+//! AC-4 Descriptor — ETSI EN 300 468 Annex D, §D.5 (tag_extension 0x15).
 use super::*;
 
 impl super::sealed::Sealed for Ac4<'_> {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for Ac4<'_> {
     const TAG_EXTENSION: u8 = 0x15;
     const NAME: &'static str = "AC4";
 }
-
-// ===========================================================================
-//  Section 0x15 — AC-4_descriptor (annex D, §D.5)
-// ---------------------------------------------------------------------------
-//  Two flags + a packed config byte (when ac4_config_flag set), a
-//  length-delimited TOC, then additional_info bytes. The TOC + extra are kept
-//  raw; flags + config are typed.
-// ===========================================================================
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

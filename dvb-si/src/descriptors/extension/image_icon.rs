@@ -1,3 +1,4 @@
+//! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
 
 impl super::sealed::Sealed for ImageIcon<'_> {}
@@ -5,17 +6,6 @@ impl ExtensionBodyDef for ImageIcon<'_> {
     const TAG_EXTENSION: u8 = 0x00;
     const NAME: &'static str = "IMAGE_ICON";
 }
-
-// ===========================================================================
-//  Section 0x00 — image_icon_descriptor (Table 145, §6.4.7;
-//               icon_transport_mode Table 146, §6.4.8;
-//               coordinate_system Table 147, §6.4.8)
-// ---------------------------------------------------------------------------
-//  A fully typed length-determined descriptor. descriptor_number 0 carries
-//  metadata + first payload chunk; descriptor_number ≠ 0 are continuations
-//  with icon_data only. The caller reassembles the icon across the
-//  descriptor_number 0..=last_descriptor_number sequence.
-// ===========================================================================
 
 /// image_icon body (Table 145). One descriptor instance; a full icon
 /// spans `descriptor_number` 0..=`last_descriptor_number`, reassembled

@@ -1,3 +1,4 @@
+//! SH Delivery System Descriptor — ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05).
 use super::*;
 
 impl super::sealed::Sealed for ShDeliverySystem {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
     const NAME: &'static str = "SH_DELIVERY_SYSTEM";
 }
-
-// ===========================================================================
-//  Section 0x05 — SH_delivery_system_descriptor (Table 119, §6.4.6.2)
-// ---------------------------------------------------------------------------
-//  diversity_mode(4) then a variable modulation loop whose entries carry
-//  conditional TDM/OFDM modulation parameters (Tables 120-131)
-//  and optional interleaver blocks (Table 122). Fully typed.
-// ===========================================================================
 
 /// SH_delivery_system body (Table 119, §6.4.6.2). The modulation loop is
 /// unfolded; `modulation_type` (Table 121) selects Tdm/Ofdm,

@@ -1,3 +1,4 @@
+//! VVC Subpictures Descriptor — ETSI EN 300 468 §6.4.17 (tag_extension 0x23).
 use super::*;
 
 impl super::sealed::Sealed for VvcSubpicturesDescriptor<'_> {}
@@ -5,16 +6,6 @@ impl ExtensionBodyDef for VvcSubpicturesDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x23;
     const NAME: &'static str = "VVC_SUBPICTURES";
 }
-
-// ===========================================================================
-//  Section 0x23 — vvc_subpictures_descriptor (Table 162a, §6.4.17)
-// ---------------------------------------------------------------------------
-//  byte 0: default_service_mode(1) service_description_present(1)
-//          number_of_vvc_subpictures(6)
-//  then a loop of (component_tag, vvc_subpicture_id) entries,
-//  then one packed byte with processing_mode(3),
-//  then optional length-delimited service_description text.
-// ===========================================================================
 
 /// One VVC subpicture entry (Table 162a inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

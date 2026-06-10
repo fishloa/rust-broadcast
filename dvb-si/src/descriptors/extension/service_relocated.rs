@@ -1,3 +1,4 @@
+//! Service Relocated Descriptor — ETSI EN 300 468 §6.4.10 (tag_extension 0x0B).
 use super::*;
 
 impl super::sealed::Sealed for ServiceRelocated {}
@@ -5,10 +6,6 @@ impl ExtensionBodyDef for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
     const NAME: &'static str = "SERVICE_RELOCATED";
 }
-
-// ===========================================================================
-//  Section 0x0B — service_relocated_descriptor (Table 152, §6.4.10)
-// ===========================================================================
 /// service_relocated body (Table 152) — fully typed, fixed 6 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

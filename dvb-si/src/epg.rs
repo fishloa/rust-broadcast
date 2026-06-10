@@ -18,7 +18,7 @@
 //! * **`max_services`** (default [`DEFAULT_MAX_SERVICES`]) — caps the number of
 //!   distinct [`ServiceKey`] entries. When the cap is reached, incoming events
 //!   for new services are skipped until a service is removed via
-//!   [`retain_services`](Self::retain_services) or [`clear`](Self::clear).
+//!   [`EpgStore::retain_services`] or [`EpgStore::clear`].
 //! * **`max_events_per_service`** (default [`DEFAULT_MAX_EVENTS_PER_SERVICE`]) —
 //!   caps the number of events stored per service. When a service's cap is
 //!   reached, new events (by `event_id`) are skipped; existing event_ids are

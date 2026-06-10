@@ -1,3 +1,7 @@
+//! S2X Satellite Delivery System Descriptor — ETSI EN 300 468 §6.4.6.5.2 (tag_extension 0x17).
+//!
+//! The `reserved_tail` field holds trailing `reserved_future_use` bytes
+//! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
 impl super::sealed::Sealed for S2XSatelliteDeliverySystem<'_> {}
@@ -5,10 +9,6 @@ impl ExtensionBodyDef for S2XSatelliteDeliverySystem<'_> {
     const TAG_EXTENSION: u8 = 0x17;
     const NAME: &'static str = "S2X_SATELLITE_DELIVERY_SYSTEM";
 }
-
-// ===========================================================================
-//  Section 0x17 — S2X_satellite_delivery_system_descriptor (Table 140, §6.4.6.5.2)
-// ===========================================================================
 /// A single channel-bond entry (Table 140 inner `for` loop).
 ///
 /// Layout mirrors the primary channel: frequency(4) + orbital_position(2) +

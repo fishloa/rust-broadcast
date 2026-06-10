@@ -1,3 +1,4 @@
+//! Audio Preselection Descriptor — ETSI EN 300 468 §6.4.1 (tag_extension 0x19).
 use super::*;
 
 impl super::sealed::Sealed for AudioPreselection<'_> {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for AudioPreselection<'_> {
     const TAG_EXTENSION: u8 = 0x19;
     const NAME: &'static str = "AUDIO_PRESELECTION";
 }
-
-// ===========================================================================
-//  Section 0x19 — audio_preselection_descriptor (Table 110, §6.4.1)
-// ---------------------------------------------------------------------------
-//  num_preselections(5) | reserved_zero_future_use(3), then a preselection
-//  loop whose entries carry conditional language / message / aux-component /
-//  future-extension fields. The loop is fully unfolded into typed entries.
-// ===========================================================================
 /// audio_preselection body (Table 110, §6.4.1). The preselection loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

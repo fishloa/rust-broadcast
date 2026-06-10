@@ -1,3 +1,4 @@
+//! Video Depth Range Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10).
 use super::*;
 
 impl super::sealed::Sealed for VideoDepthRangeDescriptor<'_> {}
@@ -5,14 +6,6 @@ impl ExtensionBodyDef for VideoDepthRangeDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x10;
     const NAME: &'static str = "VIDEO_DEPTH_RANGE";
 }
-
-// ===========================================================================
-//  Section 0x10 — video_depth_range_descriptor (Table 160, §6.4.16.1)
-// ---------------------------------------------------------------------------
-//  A variable-length loop: each entry has range_type(8) + range_length(8)
-//  followed by range_length selector bytes interpreted per Table 161.
-//  Fully typed — the loop is materialised as a Vec<DepthRange>.
-// ===========================================================================
 
 /// One depth range entry (Table 160 inner loop).
 #[derive(Debug, Clone, PartialEq, Eq)]
