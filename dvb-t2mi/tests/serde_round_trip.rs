@@ -8,8 +8,8 @@
 
 use dvb_t2mi::packet::{Header, PacketType};
 use dvb_t2mi::payload::{
-    Bandwidth, BbframePayload, FefSubPartPayload, IndividualAddressingPayload, SubpartVariety,
-    T2TimestampPayload,
+    AcePaprBody, Bandwidth, BbframePayload, FefSubPartPayload, FunctionBody, FunctionEntry,
+    IndividualAddressingPayload, SubpartVariety, T2TimestampPayload, TransmitterEntry,
 };
 
 fn assert_valid_json_with_keys(j: &str, keys: &[&str]) {
@@ -65,10 +65,21 @@ fn bbframe_payload_serializes_to_valid_json() {
 fn individual_addressing_payload_serializes_to_valid_json() {
     let ia = IndividualAddressingPayload {
         rfu: 0,
-        individual_addressing_data: &[0x10, 0x20, 0x30],
+        transmitters: vec![TransmitterEntry {
+            transmitter_id: 0x0001,
+            functions: vec![FunctionEntry {
+                tag: 0x10,
+                body: FunctionBody::AcePapr(AcePaprBody {
+                    ace_gain: 1,
+                    ace_maximal_extension: 2,
+                    ace_clipping_threshold: 3,
+                    rfu: false,
+                }),
+            }],
+        }],
     };
     let j = serde_json::to_string(&ia).expect("serialize IndividualAddressingPayload");
-    assert_valid_json_with_keys(&j, &["rfu", "individual_addressing_data"]);
+    assert_valid_json_with_keys(&j, &["rfu", "transmitters"]);
 }
 
 #[test]

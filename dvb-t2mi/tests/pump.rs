@@ -164,15 +164,11 @@ fn wrong_pid_packet_ignored_no_stats_movement() {
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
     assert_eq!(events.len(), 0);
-    assert_eq!(
-        pump.stats(),
-        Stats {
-            ts_packets: 1,
-            t2mi_packets: 0,
-            crc_failures: 0,
-            malformed_packets: 0,
-        }
-    );
+    let s = pump.stats();
+    assert_eq!(s.ts_packets, 1);
+    assert_eq!(s.t2mi_packets, 0);
+    assert_eq!(s.crc_failures, 0);
+    assert_eq!(s.malformed_packets, 0);
 }
 
 // ── additional: Stats default is all-zero ────────────────────────────────────
