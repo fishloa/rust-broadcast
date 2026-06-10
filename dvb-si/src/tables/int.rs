@@ -113,10 +113,10 @@ impl<'a> Parse<'a> for IntSection<'a> {
 
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
         let total = OUTER_HEADER_LEN + section_length;
-        if bytes.len() < total {
+        if bytes.len() < total || total < MIN_SECTION_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length,
-                available: bytes.len() - OUTER_HEADER_LEN,
+                available: bytes.len().saturating_sub(OUTER_HEADER_LEN),
             });
         }
 
@@ -438,6 +438,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            IntSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
     fn platform_id_24bit_boundary() {
         let int = IntSection {
             action_type: 0x01,
@@ -455,5 +470,20 @@ mod tests {
         int.serialize_into(&mut buf).unwrap();
         let parsed = IntSection::parse(&buf).unwrap();
         assert_eq!(parsed.platform_id, 0x00FF_FFFF);
+    }
+
+    #[test]
+    fn parse_handwritten_int_no_loops() {
+        let mut bytes: Vec<u8> = vec![
+            0x4C, 0xF0, 0x0F, 0x01, 0x00, 0xC7, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0xF0, 0x00,
+        ];
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        let int = IntSection::parse(&bytes).unwrap();
+        assert_eq!(int.action_type, 0x01);
+        assert_eq!(int.platform_id, 0x000001);
+        assert_eq!(int.version_number, 3);
+        assert!(int.current_next_indicator);
+        assert!(int.loops.is_empty());
     }
 }

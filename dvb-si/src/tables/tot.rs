@@ -165,7 +165,8 @@ mod tests {
         v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
         v.push((dl & 0xFF) as u8);
         v.extend_from_slice(desc);
-        v.extend_from_slice(&[0, 0, 0, 0]);
+        let crc = dvb_common::crc32_mpeg2::compute(&v);
+        v.extend_from_slice(&crc.to_be_bytes());
         v
     }
 
@@ -205,6 +206,7 @@ mod tests {
         let tot = TotSection::parse(&bytes).unwrap();
         let mut buf = vec![0u8; tot.serialized_len()];
         tot.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes, "TOT byte-identity against hand-built input");
         let re = TotSection::parse(&buf).unwrap();
         assert_eq!(tot, re);
     }

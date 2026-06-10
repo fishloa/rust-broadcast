@@ -61,19 +61,18 @@ pub struct UntPlatform<'a> {
     /// `compatibilityDescriptorLength` prefix. Kept raw because it uses the
     /// ISO/IEC 13818-6 groupInfo framing, not the standard SI tag/length form.
     pub compatibility_descriptor: &'a [u8],
-    /// Target descriptor loop (after the 12-bit length field).
-    pub target_descriptors: DescriptorLoop<'a>,
-    /// Operational descriptor loop (after the 12-bit length field).
-    pub operational_descriptors: DescriptorLoop<'a>,
+    /// N pairs of (target_descriptor_loop, operational_descriptor_loop) per
+    /// TS 102 006 Table 11.
+    pub target_operational_pairs: Vec<(DescriptorLoop<'a>, DescriptorLoop<'a>)>,
 }
 
 fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
     p.compatibility_descriptor.len()
         + PLATFORM_LOOP_LEN_FIELD
-        + DESC_LOOP_LEN_FIELD
-        + p.target_descriptors.len()
-        + DESC_LOOP_LEN_FIELD
-        + p.operational_descriptors.len()
+        + p.target_operational_pairs
+            .iter()
+            .map(|(t, o)| DESC_LOOP_LEN_FIELD + t.len() + DESC_LOOP_LEN_FIELD + o.len())
+            .sum::<usize>()
 }
 
 /// Update Notification Table (UNT), ETSI TS 102 006 v1.4.1 §9.4, Table 11.
@@ -130,10 +129,10 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let section_length =
             (((bytes[1] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8) | bytes[2] as usize;
         let total = HEADER_LEN + section_length;
-        if bytes.len() < total {
+        if bytes.len() < total || total < MIN_SECTION_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length,
-                available: bytes.len() - HEADER_LEN,
+                available: bytes.len().saturating_sub(HEADER_LEN),
             });
         }
 
@@ -200,55 +199,58 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 });
             }
 
-            let mut target_descriptors = DescriptorLoop::new(&[]);
-            let mut operational_descriptors = DescriptorLoop::new(&[]);
-            if platform_loop_length > 0 {
-                let inner_end = platform_end;
-                if pos + DESC_LOOP_LEN_FIELD > inner_end {
+            let mut target_operational_pairs = Vec::new();
+            while pos < platform_end {
+                if pos + DESC_LOOP_LEN_FIELD > platform_end {
                     return Err(Error::BufferTooShort {
                         need: pos + DESC_LOOP_LEN_FIELD,
-                        have: inner_end,
+                        have: platform_end,
                         what: "UntSection target_descriptor_loop length",
                     });
                 }
                 let target_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
                 let target_start = pos + DESC_LOOP_LEN_FIELD;
                 let target_end = target_start + target_len;
-                if target_end > inner_end {
+                if target_end > platform_end {
                     return Err(Error::SectionLengthOverflow {
                         declared: target_len,
-                        available: inner_end.saturating_sub(target_start),
+                        available: platform_end.saturating_sub(target_start),
                     });
                 }
-                target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
+                let target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
                 pos = target_end;
 
-                if pos + DESC_LOOP_LEN_FIELD > inner_end {
+                if pos + DESC_LOOP_LEN_FIELD > platform_end {
                     return Err(Error::BufferTooShort {
                         need: pos + DESC_LOOP_LEN_FIELD,
-                        have: inner_end,
+                        have: platform_end,
                         what: "UntSection operational_descriptor_loop length",
                     });
                 }
                 let op_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
                 let op_start = pos + DESC_LOOP_LEN_FIELD;
                 let op_end = op_start + op_len;
-                if op_end > inner_end {
+                if op_end > platform_end {
                     return Err(Error::SectionLengthOverflow {
                         declared: op_len,
-                        available: inner_end.saturating_sub(op_start),
+                        available: platform_end.saturating_sub(op_start),
                     });
                 }
-                operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
+                let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
-            } else {
-                pos = platform_end;
+
+                target_operational_pairs.push((target_descriptors, operational_descriptors));
+            }
+            if pos != platform_end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: platform_loop_length,
+                    available: pos.saturating_sub(platform_end - platform_loop_length),
+                });
             }
 
             platforms.push(UntPlatform {
                 compatibility_descriptor,
-                target_descriptors,
-                operational_descriptors,
+                target_operational_pairs,
             });
         }
 
@@ -325,29 +327,32 @@ impl Serialize for UntSection<'_> {
                 .copy_from_slice(platform.compatibility_descriptor);
             pos += platform.compatibility_descriptor.len();
 
-            let inner_len: usize = DESC_LOOP_LEN_FIELD
-                + platform.target_descriptors.len()
-                + DESC_LOOP_LEN_FIELD
-                + platform.operational_descriptors.len();
+            let inner_len: usize = platform
+                .target_operational_pairs
+                .iter()
+                .map(|(t, o)| DESC_LOOP_LEN_FIELD + t.len() + DESC_LOOP_LEN_FIELD + o.len())
+                .sum();
             buf[pos..pos + PLATFORM_LOOP_LEN_FIELD]
                 .copy_from_slice(&(inner_len as u16).to_be_bytes());
             pos += PLATFORM_LOOP_LEN_FIELD;
 
-            let tl = platform.target_descriptors.len() as u16;
-            buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8 & 0x0F);
-            buf[pos + 1] = (tl & 0xFF) as u8;
-            pos += DESC_LOOP_LEN_FIELD;
-            buf[pos..pos + platform.target_descriptors.len()]
-                .copy_from_slice(platform.target_descriptors.raw());
-            pos += platform.target_descriptors.len();
+            for (target_descriptors, operational_descriptors) in &platform.target_operational_pairs
+            {
+                let tl = target_descriptors.len() as u16;
+                buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8 & 0x0F);
+                buf[pos + 1] = (tl & 0xFF) as u8;
+                pos += DESC_LOOP_LEN_FIELD;
+                buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
+                pos += target_descriptors.len();
 
-            let ol = platform.operational_descriptors.len() as u16;
-            buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8 & 0x0F);
-            buf[pos + 1] = (ol & 0xFF) as u8;
-            pos += DESC_LOOP_LEN_FIELD;
-            buf[pos..pos + platform.operational_descriptors.len()]
-                .copy_from_slice(platform.operational_descriptors.raw());
-            pos += platform.operational_descriptors.len();
+                let ol = operational_descriptors.len() as u16;
+                buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8 & 0x0F);
+                buf[pos + 1] = (ol & 0xFF) as u8;
+                pos += DESC_LOOP_LEN_FIELD;
+                buf[pos..pos + operational_descriptors.len()]
+                    .copy_from_slice(operational_descriptors.raw());
+                pos += operational_descriptors.len();
+            }
         }
 
         let crc_pos = len - CRC_LEN;
@@ -389,8 +394,10 @@ mod tests {
             common_descriptors: DescriptorLoop::new(common_descs),
             platforms: vec![UntPlatform {
                 compatibility_descriptor: cd,
-                target_descriptors: DescriptorLoop::new(&[]),
-                operational_descriptors: DescriptorLoop::new(&[]),
+                target_operational_pairs: vec![(
+                    DescriptorLoop::new(&[]),
+                    DescriptorLoop::new(&[]),
+                )],
             }],
         };
         let sl = unt.serialized_len();
@@ -445,8 +452,10 @@ mod tests {
             common_descriptors: DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
             platforms: vec![UntPlatform {
                 compatibility_descriptor: cd,
-                target_descriptors: DescriptorLoop::new(target_desc),
-                operational_descriptors: DescriptorLoop::new(op_desc),
+                target_operational_pairs: vec![(
+                    DescriptorLoop::new(target_desc),
+                    DescriptorLoop::new(op_desc),
+                )],
             }],
         };
         let mut buf = vec![0u8; unt.serialized_len()];
@@ -457,8 +466,56 @@ mod tests {
         let re = UntSection::parse(&buf).unwrap();
         assert_eq!(re.platforms.len(), 1);
         assert_eq!(re.platforms[0].compatibility_descriptor, cd);
-        assert_eq!(re.platforms[0].target_descriptors.raw(), target_desc);
-        assert_eq!(re.platforms[0].operational_descriptors.raw(), op_desc);
+        assert_eq!(re.platforms[0].target_operational_pairs.len(), 1);
+        assert_eq!(
+            re.platforms[0].target_operational_pairs[0].0.raw(),
+            target_desc
+        );
+        assert_eq!(re.platforms[0].target_operational_pairs[0].1.raw(), op_desc);
+    }
+
+    #[test]
+    fn round_trip_platform_with_multiple_pairs() {
+        // TS 102 006 Table 11: platform_loop_length wraps N (target, operational)
+        // descriptor-loop pairs. This bites the multi-pair parse loop — the old
+        // code stopped after the first pair.
+        let cd: &[u8] = &[0x00, 0x02, 0x00, 0x00];
+        let t0: &[u8] = &[0x09, 0x01, 0xAA];
+        let o0: &[u8] = &[0x0A, 0x01, 0xBB];
+        let t1: &[u8] = &[0x01, 0x02, 0xCC, 0xDD];
+        let o1: &[u8] = &[]; // empty operational loop in the 2nd pair
+        let unt = UntSection {
+            action_type: 0x01,
+            oui_hash: 0x5B,
+            version_number: 15,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            oui: 0x00015A,
+            processing_order: 0x02,
+            common_descriptors: DescriptorLoop::new(&[]),
+            platforms: vec![UntPlatform {
+                compatibility_descriptor: cd,
+                target_operational_pairs: vec![
+                    (DescriptorLoop::new(t0), DescriptorLoop::new(o0)),
+                    (DescriptorLoop::new(t1), DescriptorLoop::new(o1)),
+                ],
+            }],
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).unwrap();
+        let re = UntSection::parse(&buf).unwrap();
+        assert_eq!(re.platforms.len(), 1);
+        let pairs = &re.platforms[0].target_operational_pairs;
+        assert_eq!(pairs.len(), 2, "both pairs must survive the round-trip");
+        assert_eq!(pairs[0].0.raw(), t0);
+        assert_eq!(pairs[0].1.raw(), o0);
+        assert_eq!(pairs[1].0.raw(), t1);
+        assert_eq!(pairs[1].1.raw(), o1);
+        // serialize is deterministic.
+        let mut buf2 = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 
     #[test]
@@ -511,5 +568,34 @@ mod tests {
             unt.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            UntSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_handwritten_unt_no_platforms() {
+        let mut bytes: Vec<u8> = vec![
+            0x4B, 0xF0, 0x0F, 0x01, 0x5B, 0xC1, 0x00, 0x00, 0x00, 0x01, 0x5A, 0x00, 0xF0, 0x00,
+        ];
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        let unt = UntSection::parse(&bytes).unwrap();
+        assert_eq!(unt.action_type, 0x01);
+        assert_eq!(unt.oui, 0x00015A);
+        assert!(unt.current_next_indicator);
+        assert!(unt.platforms.is_empty());
     }
 }

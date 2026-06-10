@@ -624,10 +624,10 @@ impl<'a> Parse<'a> for RctSection<'a> {
         let table_id_extension_flag = (bytes[1] & 0x40) != 0;
         let section_length = (((bytes[1] & 0x0F) as u16) << 8) | bytes[2] as u16;
         let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total {
+        if bytes.len() < total || total < MIN_SECTION_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length as usize,
-                available: bytes.len() - MIN_HEADER_LEN,
+                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
             });
         }
 
@@ -988,5 +988,33 @@ mod tests {
             rct.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            RctSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_handwritten_rct_no_links() {
+        let mut bytes: Vec<u8> = vec![
+            0x76, 0x80, 0x0E, 0x00, 0x64, 0xC7, 0x00, 0x00, 0x07, 0xD3, 0x00, 0xF0, 0x00,
+        ];
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        let rct = RctSection::parse(&bytes).unwrap();
+        assert_eq!(rct.service_id, 0x0064);
+        assert_eq!(rct.year_offset, 0x07D3);
+        assert!(rct.links.is_empty());
     }
 }
