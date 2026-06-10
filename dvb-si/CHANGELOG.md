@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`epg` module (feature `chrono`)** — an `EpgStore` convenience layer over
+  `EitCollector` (#51). Keyed by `(original_network_id, transport_stream_id,
+  service_id)`, it maintains a deduplicated, time-ordered event list and
+  decodes the commonly needed fields per event: short-event name/text,
+  extended-event text concatenated across fragments per EN 300 468 §6.2.15,
+  content genre, parental ratings, and CRIDs. `now_and_next(key, at)` returns
+  the on-air and next events; `feed_sdt` joins service names from the SDT;
+  `retain_services` / `clear` bound long-running memory. Serialize-only serde
+  export of the store.
+
 ## 4.2.0 — 2026-06-09
 
 Hardening of the DSM-CC `ModuleReassembler` against hostile carousel input

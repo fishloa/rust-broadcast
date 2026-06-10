@@ -85,6 +85,12 @@ pub struct ServiceKey {
 /// Extracted from [`crate::collect::CompleteEitEvent`] with commonly needed
 /// descriptor fields pre-decoded and extended text concatenated per
 /// EN 300 468 §6.2.15.
+///
+/// # Limitations
+///
+/// Only the first descriptor of each kind (short_event, content,
+/// parental_rating, content_identifier) is decoded per event; EIT events
+/// may carry multiple language variants and only the first is taken.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
@@ -145,6 +151,36 @@ struct ServiceData {
 /// event list per service. Optionally accepts SDT data to attach service names.
 ///
 /// Serde export serializes the cache as a map of `ServiceKey` → service data.
+///
+/// # Limitations
+///
+/// Events are deduplicated by (start_time, event_id) and never evicted
+/// once stored: events removed from a re-versioned schedule, or events
+/// already in the past, remain in the store. Call [`clear()`](Self::clear)
+/// or [`retain_services()`](Self::retain_services) to bound long-running
+/// memory.
+///
+/// # Example
+///
+/// ```no_run
+/// use dvb_si::epg::{EpgStore, ServiceKey};
+/// use chrono::Utc;
+///
+/// let mut store = EpgStore::new();
+/// // store.feed(&eit_section_bytes).unwrap();
+///
+/// let key = ServiceKey {
+///     original_network_id: 1,
+///     transport_stream_id: 1,
+///     service_id: 100,
+/// };
+///
+/// if let Some((now_evt, _next_evt)) = store.now_and_next(key, Utc::now()) {
+///     if let Some(e) = now_evt {
+///         println!("Now playing: {:?}", e.event_name);
+///     }
+/// }
+/// ```
 #[derive(Debug, Default)]
 pub struct EpgStore {
     collector: crate::collect::EitCollector,
@@ -556,6 +592,7 @@ mod tests {
     /// Build the bytes of a minimal EIT present/following section
     /// with one event. Returns bytes formated as a complete TS section
     /// (including CRC-32).
+    #[allow(clippy::too_many_arguments)]
     fn eit_pf_section(
         service_id: u16,
         ts_id: u16,
@@ -681,7 +718,7 @@ mod tests {
             crids: Vec::new(),
         };
 
-        let mut events = vec![&invalid, &valid];
+        let mut events = [&invalid, &valid];
         events.sort_by(|a, b| match (a.start_time, b.start_time) {
             (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
             (Some(_), None) => std::cmp::Ordering::Less,
