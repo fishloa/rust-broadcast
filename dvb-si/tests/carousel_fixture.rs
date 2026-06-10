@@ -10,6 +10,7 @@
 
 use dvb_common::{Parse, Serialize};
 use dvb_si::carousel::{DownloadDataBlock, ModuleReassembler, UnMessage};
+use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::tables::dsmcc::DsmccSection;
 use dvb_si::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
 
@@ -205,7 +206,9 @@ fn synthetic_full_pipeline_reassembles_module() {
         ack_period: 0,
         t_c_download_window: 0,
         t_c_download_scenario: 0,
-        compatibility_descriptor: &[],
+        compatibility_descriptor: CompatibilityDescriptor {
+            descriptors: vec![],
+        },
         modules: vec![DiiModule {
             module_id: 41,
             module_size: module_bytes.len() as u32,

@@ -9,6 +9,7 @@
 //! table_id 0x3B; data messages (DDB) of table_id 0x3C — see
 //! [`crate::tables::dsmcc`] for the section framing.
 
+use crate::compatibility::CompatibilityDescriptor;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
@@ -55,9 +56,8 @@ pub struct Dsi<'a> {
     pub adaptation: &'a [u8],
     /// 20-byte serverId — all 0xFF under the DVB profile.
     pub server_id: [u8; SERVER_ID_LEN],
-    /// compatibilityDescriptor() body after its 16-bit length field, raw
-    /// (TS 102 006 Table 15 documents the structure).
-    pub compatibility_descriptor: &'a [u8],
+    /// compatibilityDescriptor() — TS 102 006 Table 15 / ISO/IEC 13818-6.
+    pub compatibility_descriptor: CompatibilityDescriptor<'a>,
     /// privateData, raw. SSU: GroupInfoIndication (TS 102 006 Table 6);
     /// object carousel: ServiceGatewayInfo (TR 101 202 Table 4.15).
     pub private_data: &'a [u8],
@@ -98,8 +98,8 @@ pub struct Dii<'a> {
     pub t_c_download_window: u32,
     /// tCDownloadScenario.
     pub t_c_download_scenario: u32,
-    /// compatibilityDescriptor() body after its 16-bit length field, raw.
-    pub compatibility_descriptor: &'a [u8],
+    /// compatibilityDescriptor() — TS 102 006 Table 15 / ISO/IEC 13818-6.
+    pub compatibility_descriptor: CompatibilityDescriptor<'a>,
     /// Module entries in wire order.
     pub modules: Vec<DiiModule<'a>>,
     /// privateData, raw.
@@ -253,7 +253,19 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 }
                 let mut server_id = [0u8; SERVER_ID_LEN];
                 server_id.copy_from_slice(&payload[..SERVER_ID_LEN]);
-                let (compatibility_descriptor, pos) = length_prefixed(payload, SERVER_ID_LEN, end)?;
+                let compat_desc_len =
+                    u16::from_be_bytes([payload[SERVER_ID_LEN], payload[SERVER_ID_LEN + 1]])
+                        as usize;
+                let compat_end = SERVER_ID_LEN + COMPAT_LEN_FIELD + compat_desc_len;
+                if compat_end > end {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: compat_desc_len,
+                        available: end - SERVER_ID_LEN - COMPAT_LEN_FIELD,
+                    });
+                }
+                let compatibility_descriptor =
+                    CompatibilityDescriptor::parse(&payload[SERVER_ID_LEN..compat_end])?;
+                let pos = compat_end;
                 let (private_data, _pos) = length_prefixed(payload, pos, end)?;
                 Ok(UnMessage::Dsi(Dsi {
                     transaction_id,
@@ -280,8 +292,20 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
                 let t_c_download_scenario =
                     u32::from_be_bytes([payload[12], payload[13], payload[14], payload[15]]);
-                let (compatibility_descriptor, mut pos) =
-                    length_prefixed(payload, DII_FIXED_LEN, end)?;
+                let (compatibility_descriptor, mut pos) = {
+                    let compat_desc_len =
+                        u16::from_be_bytes([payload[DII_FIXED_LEN], payload[DII_FIXED_LEN + 1]])
+                            as usize;
+                    let compat_end = DII_FIXED_LEN + COMPAT_LEN_FIELD + compat_desc_len;
+                    if compat_end > end {
+                        return Err(Error::SectionLengthOverflow {
+                            declared: compat_desc_len,
+                            available: end - DII_FIXED_LEN - COMPAT_LEN_FIELD,
+                        });
+                    }
+                    let cd = CompatibilityDescriptor::parse(&payload[DII_FIXED_LEN..compat_end])?;
+                    (cd, compat_end)
+                };
                 if pos + 2 > end {
                     return Err(Error::BufferTooShort {
                         need: pos + 2,
@@ -358,8 +382,7 @@ impl Serialize for UnMessage<'_> {
                 MESSAGE_HEADER_LEN
                     + dsi.adaptation.len()
                     + SERVER_ID_LEN
-                    + COMPAT_LEN_FIELD
-                    + dsi.compatibility_descriptor.len()
+                    + dsi.compatibility_descriptor.serialized_len()
                     + PRIVATE_LEN_FIELD
                     + dsi.private_data.len()
             }
@@ -367,8 +390,7 @@ impl Serialize for UnMessage<'_> {
                 MESSAGE_HEADER_LEN
                     + dii.adaptation.len()
                     + DII_FIXED_LEN
-                    + COMPAT_LEN_FIELD
-                    + dii.compatibility_descriptor.len()
+                    + dii.compatibility_descriptor.serialized_len()
                     + 2 // numberOfModules
                     + dii
                         .modules
@@ -401,7 +423,10 @@ impl Serialize for UnMessage<'_> {
                 )?;
                 buf[pos..pos + SERVER_ID_LEN].copy_from_slice(&dsi.server_id);
                 pos += SERVER_ID_LEN;
-                pos = put_length_prefixed(buf, pos, dsi.compatibility_descriptor)?;
+                let written = dsi
+                    .compatibility_descriptor
+                    .serialize_into(&mut buf[pos..])?;
+                pos += written;
                 put_length_prefixed(buf, pos, dsi.private_data)?;
             }
             UnMessage::Dii(dii) => {
@@ -420,7 +445,10 @@ impl Serialize for UnMessage<'_> {
                 buf[pos + 8..pos + 12].copy_from_slice(&dii.t_c_download_window.to_be_bytes());
                 buf[pos + 12..pos + 16].copy_from_slice(&dii.t_c_download_scenario.to_be_bytes());
                 pos += DII_FIXED_LEN;
-                pos = put_length_prefixed(buf, pos, dii.compatibility_descriptor)?;
+                let written = dii
+                    .compatibility_descriptor
+                    .serialize_into(&mut buf[pos..])?;
+                pos += written;
                 if dii.modules.len() > u16::MAX as usize {
                     return Err(Error::SectionLengthOverflow {
                         declared: dii.modules.len(),
@@ -536,7 +564,9 @@ mod tests {
             transaction_id: 0x8000_0000,
             adaptation: &[],
             server_id: [0xFF; 20],
-            compatibility_descriptor: &[],
+            compatibility_descriptor: CompatibilityDescriptor {
+                descriptors: vec![],
+            },
             private_data: &[0x0A, 0x0B],
         })
     }
@@ -551,7 +581,9 @@ mod tests {
             ack_period: 0,
             t_c_download_window: 0,
             t_c_download_scenario: 0,
-            compatibility_descriptor: &[],
+            compatibility_descriptor: CompatibilityDescriptor {
+                descriptors: vec![],
+            },
             modules: vec![
                 DiiModule {
                     module_id: 1,

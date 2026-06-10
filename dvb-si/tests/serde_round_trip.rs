@@ -15,6 +15,7 @@
 
 use dvb_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
+use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::{
     ait::{AitApplication, AitSection, ApplicationIdentifier},
@@ -627,7 +628,9 @@ fn un_message_dii_serializes_to_valid_json() {
         ack_period: 0,
         t_c_download_window: 0,
         t_c_download_scenario: 0,
-        compatibility_descriptor: &[],
+        compatibility_descriptor: CompatibilityDescriptor {
+            descriptors: vec![],
+        },
         modules: vec![DiiModule {
             module_id: 1,
             module_size: 8000,

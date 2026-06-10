@@ -7,9 +7,11 @@
 //! the associated elementary PID is the one carrying UNT sections.
 //!
 //! The platform loop is unfolded into [`UntPlatform`] entries (Tables 11/15/17/18,
-//! §9.4.2.2–9.4.2.4). The `compatibilityDescriptor()` block is kept raw
-//! (ISO/IEC 13818-6 groupInfo form — NOT a standard SI tag/length descriptor).
+//! §9.4.2.2–9.4.2.4). The `compatibilityDescriptor()` block is typed as
+//! [`CompatibilityDescriptor`] (ISO/IEC 13818-6 groupInfo form — NOT a standard
+//! SI tag/length descriptor).
 
+use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
@@ -50,24 +52,22 @@ const DESC_LOOP_LEN_FIELD: usize = 2;
 /// A single platform entry in the UNT platform loop
 /// (Tables 11/15/17/18, §9.4.2.2–9.4.2.4).
 ///
-/// Each entry consists of a `compatibilityDescriptor()` block (kept raw — it
-/// is an ISO/IEC 13818-6 groupInfo structure, not a standard SI descriptor),
-/// followed by a `platform_loop_length` field and target/operational
-/// descriptor-loop pairs.
+/// Each entry consists of a `compatibilityDescriptor()` block (typed as
+/// [`CompatibilityDescriptor`] — ISO/IEC 13818-6 groupInfo structure, not a
+/// standard SI descriptor), followed by a `platform_loop_length` field and
+/// target/operational descriptor-loop pairs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UntPlatform<'a> {
-    /// Raw `compatibilityDescriptor()` block — includes the 2-byte
-    /// `compatibilityDescriptorLength` prefix. Kept raw because it uses the
-    /// ISO/IEC 13818-6 groupInfo framing, not the standard SI tag/length form.
-    pub compatibility_descriptor: &'a [u8],
+    /// `compatibilityDescriptor()` — TS 102 006 Table 15 / ISO/IEC 13818-6.
+    pub compatibility_descriptor: CompatibilityDescriptor<'a>,
     /// N pairs of (target_descriptor_loop, operational_descriptor_loop) per
     /// TS 102 006 Table 11.
     pub target_operational_pairs: Vec<(DescriptorLoop<'a>, DescriptorLoop<'a>)>,
 }
 
 fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
-    p.compatibility_descriptor.len()
+    p.compatibility_descriptor.serialized_len()
         + PLATFORM_LOOP_LEN_FIELD
         + p.target_operational_pairs
             .iter()
@@ -78,8 +78,9 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
 /// Update Notification Table (UNT), ETSI TS 102 006 v1.4.1 §9.4, Table 11.
 ///
 /// The platform loop has been unfolded into typed [`UntPlatform`] entries.
-/// The `compatibilityDescriptor()` within each entry is kept raw (ISO/IEC
-/// 13818-6 groupInfo form — not a standard SI tag/length descriptor).
+/// The `compatibilityDescriptor()` within each entry is typed as
+/// [`CompatibilityDescriptor`] (ISO/IEC 13818-6 groupInfo form — not a
+/// standard SI tag/length descriptor).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
@@ -179,7 +180,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     available: payload_end.saturating_sub(pos + COMPAT_DESC_LEN_FIELD),
                 });
             }
-            let compatibility_descriptor = &bytes[pos..pos + compat_total];
+            let compatibility_descriptor =
+                CompatibilityDescriptor::parse(&bytes[pos..pos + compat_total])?;
             pos += compat_total;
 
             if pos + PLATFORM_LOOP_LEN_FIELD > payload_end {
@@ -323,9 +325,10 @@ impl Serialize for UntSection<'_> {
 
         let mut pos = common_end;
         for platform in &self.platforms {
-            buf[pos..pos + platform.compatibility_descriptor.len()]
-                .copy_from_slice(platform.compatibility_descriptor);
-            pos += platform.compatibility_descriptor.len();
+            let written = platform
+                .compatibility_descriptor
+                .serialize_into(&mut buf[pos..])?;
+            pos += written;
 
             let inner_len: usize = platform
                 .target_operational_pairs
@@ -381,7 +384,6 @@ mod tests {
         let oui: u32 = 0x00_01_5A;
         let oui_hash: u8 = 0x01 ^ 0x5A;
         let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
-        let cd: &[u8] = &[0x00, 0x00];
         let unt = UntSection {
             action_type: 0x01,
             oui_hash,
@@ -393,7 +395,9 @@ mod tests {
             processing_order: 0x00,
             common_descriptors: DescriptorLoop::new(common_descs),
             platforms: vec![UntPlatform {
-                compatibility_descriptor: cd,
+                compatibility_descriptor: CompatibilityDescriptor {
+                    descriptors: vec![],
+                },
                 target_operational_pairs: vec![(
                     DescriptorLoop::new(&[]),
                     DescriptorLoop::new(&[]),
@@ -411,7 +415,10 @@ mod tests {
         assert_eq!(parsed.oui, oui);
         assert_eq!(parsed.common_descriptors.raw(), common_descs);
         assert_eq!(parsed.platforms.len(), 1);
-        assert_eq!(parsed.platforms[0].compatibility_descriptor, cd);
+        assert!(parsed.platforms[0]
+            .compatibility_descriptor
+            .descriptors
+            .is_empty());
     }
 
     #[test]
@@ -437,7 +444,6 @@ mod tests {
 
     #[test]
     fn byte_exact_round_trip() {
-        let cd: &[u8] = &[0x00, 0x02, 0x00, 0x00];
         let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
         let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
         let unt = UntSection {
@@ -451,7 +457,9 @@ mod tests {
             processing_order: 0x02,
             common_descriptors: DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
             platforms: vec![UntPlatform {
-                compatibility_descriptor: cd,
+                compatibility_descriptor: CompatibilityDescriptor {
+                    descriptors: vec![],
+                },
                 target_operational_pairs: vec![(
                     DescriptorLoop::new(target_desc),
                     DescriptorLoop::new(op_desc),
@@ -465,7 +473,10 @@ mod tests {
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         let re = UntSection::parse(&buf).unwrap();
         assert_eq!(re.platforms.len(), 1);
-        assert_eq!(re.platforms[0].compatibility_descriptor, cd);
+        assert!(re.platforms[0]
+            .compatibility_descriptor
+            .descriptors
+            .is_empty());
         assert_eq!(re.platforms[0].target_operational_pairs.len(), 1);
         assert_eq!(
             re.platforms[0].target_operational_pairs[0].0.raw(),
@@ -479,11 +490,10 @@ mod tests {
         // TS 102 006 Table 11: platform_loop_length wraps N (target, operational)
         // descriptor-loop pairs. This bites the multi-pair parse loop — the old
         // code stopped after the first pair.
-        let cd: &[u8] = &[0x00, 0x02, 0x00, 0x00];
         let t0: &[u8] = &[0x09, 0x01, 0xAA];
         let o0: &[u8] = &[0x0A, 0x01, 0xBB];
         let t1: &[u8] = &[0x01, 0x02, 0xCC, 0xDD];
-        let o1: &[u8] = &[]; // empty operational loop in the 2nd pair
+        let o1: &[u8] = &[];
         let unt = UntSection {
             action_type: 0x01,
             oui_hash: 0x5B,
@@ -495,7 +505,9 @@ mod tests {
             processing_order: 0x02,
             common_descriptors: DescriptorLoop::new(&[]),
             platforms: vec![UntPlatform {
-                compatibility_descriptor: cd,
+                compatibility_descriptor: CompatibilityDescriptor {
+                    descriptors: vec![],
+                },
                 target_operational_pairs: vec![
                     (DescriptorLoop::new(t0), DescriptorLoop::new(o0)),
                     (DescriptorLoop::new(t1), DescriptorLoop::new(o1)),

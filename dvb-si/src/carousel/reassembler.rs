@@ -243,6 +243,7 @@ impl ModuleReassembler {
 mod tests {
     use super::super::messages::DiiModule;
     use super::*;
+    use crate::compatibility::CompatibilityDescriptor;
 
     fn dii(download_id: u32, block_size: u16, modules: Vec<DiiModule<'static>>) -> Dii<'static> {
         Dii {
@@ -254,7 +255,9 @@ mod tests {
             ack_period: 0,
             t_c_download_window: 0,
             t_c_download_scenario: 0,
-            compatibility_descriptor: &[],
+            compatibility_descriptor: CompatibilityDescriptor {
+                descriptors: vec![],
+            },
             modules,
             private_data: &[],
         }
