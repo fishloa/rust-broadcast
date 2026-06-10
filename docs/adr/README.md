@@ -11,3 +11,4 @@ the `rust-dvb` workspace — the *why*, not the *how*. Format: lightweight
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-macro-driven-drift-tested-dispatch.md) | Macro-driven, drift-tested dispatch for all tag/type enums | Accepted |
+| [0002](0002-keep-per-crate-dispatch-macros-separate.md) | Keep the per-crate dispatch macros separate (don't hoist into `dvb-common`) | Accepted |
