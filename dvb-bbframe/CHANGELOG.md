@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-06-10
+
 ### Added
 - `CarryOverExtractor::feed_hem_into` / `feed_nm_into` — buffer-reusing variants
   that append completed TS packets into a caller-provided `Vec` (cleared each

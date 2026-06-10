@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-06-10
+
 ### Added
 - **Decoded T2-MI timestamp accessors** (#47): `Bandwidth::subseconds_per_second`
   (the T_sub unit per ETSI TS 102 773 §5.2.7 Table 4),

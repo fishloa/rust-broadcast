@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-06-10
+
+Version-lockstep release with the workspace (dvb-si epg / resync /
+adaptation-field+PCR, dvb-t2mi decoded timestamps, dvb-bbframe buffer-reusing
+extractor); no changes to this crate.
+
 ## [4.2.0] — 2026-06-09
 
 Version-lockstep release with the workspace (dvb-si DSM-CC `ModuleReassembler`

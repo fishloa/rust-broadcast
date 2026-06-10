@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "4.2.0"
+version      = "4.3.0"
 edition      = "2021"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ exclude      = ["docs/**", "tests/fixtures/**"]
 all-features = true
 
 [dependencies]
-dvb-common  = { path = "../dvb-common", version = "4.2" }
+dvb-common  = { path = "../dvb-common", version = "4.3" }
 thiserror   = "2"
 num_enum    = "0.7"
 chrono      = { version = "0.4", optional = true, default-features = false, features = ["clock"] }

@@ -1,37 +1,35 @@
 # Changelog
 
-### Changed
-- `SiDemux::feed` now does a single `pids` map lookup per packet (was 2+N:
-  one `contains_key`, one `get_mut`, plus one per completed section) by
-  draining sections under one borrow then processing them — behaviour
-  unchanged (#44).
-- Removed the dead write-only `expected` field from `SectionReassembler` and
-  corrected its doc comment (it never affected behaviour) (#46).
+## 4.3.0 — 2026-06-10
 
-## Unreleased
+Decoded accessors and analysis building blocks across the workspace; all
+additive (one perf change, one internal cleanup), no breaking changes.
 
 ### Added
-- **Typed adaptation field + PCR** — `TsPacket::adaptation_field()` decodes the
-  discontinuity / random-access / ES-priority flags, PCR/OPCR (`Pcr`, with
-  `as_27mhz()`), and splice countdown per ISO/IEC 13818-1:2007 §2.4.3.4 (the
-  field was previously skipped). `TsPacket` captures the adaptation-field bytes
-  internally; section-parsing behaviour is unchanged (#48).
+- **`epg` module (feature `chrono`)** — an `EpgStore` convenience layer over
+  `EitCollector` (#51). Keyed by `(original_network_id, transport_stream_id,
+  service_id)`, it maintains a deduplicated, time-ordered event list and decodes
+  the commonly needed fields per event: short-event name/text, extended-event
+  text concatenated across fragments per EN 300 468 §6.2.15, content genre,
+  parental ratings, and CRIDs. `now_and_next(key, at)` returns the on-air and
+  next events; `feed_sdt` joins service names from the SDT; `services()`
+  enumerates cached services; `retain_services` / `clear` bound long-running
+  memory. Serialize-only serde export.
 - **`resync` module** — `TsResync`, a byte-stream resynchroniser that recovers
   188-byte TS packet alignment from arbitrary input (junk prefixes, mid-stream
   loss) and detects/strips 204-byte Reed-Solomon packets, with resync/dropped
   stats. Sync byte 0x47 per ISO/IEC 13818-1 §2.4.3.2 (#61).
+- **Typed adaptation field + PCR** — `TsPacket::adaptation_field()` decodes the
+  discontinuity / random-access / ES-priority flags, PCR/OPCR (`Pcr`, with
+  `as_27mhz()`), and splice countdown per ISO/IEC 13818-1:2007 §2.4.3.4 (the
+  field was previously skipped) (#48).
 
-- **`epg` module (feature `chrono`)** — an `EpgStore` convenience layer over
-  `EitCollector` (#51). Keyed by `(original_network_id, transport_stream_id,
-  service_id)`, it maintains a deduplicated, time-ordered event list and
-  decodes the commonly needed fields per event: short-event name/text,
-  extended-event text concatenated across fragments per EN 300 468 §6.2.15,
-  content genre, parental ratings, and CRIDs. `now_and_next(key, at)` returns
-  the on-air and next events; `feed_sdt` joins service names from the SDT;
-  `retain_services` / `clear` bound long-running memory. Serialize-only serde
-  export of the store.
-- **`EpgStore::services()`** — iterate cached service keys so callers can walk
-  the whole EPG without knowing service ids in advance (#51).
+### Changed
+- `SiDemux::feed` now does a single `pids` map lookup per packet (was 2+N) by
+  draining all sections under one borrow then processing them — behaviour
+  unchanged (#44).
+- Removed the dead write-only `expected` field from `SectionReassembler` and
+  corrected its doc comment (no behavioural change) (#46).
 
 ## 4.2.0 — 2026-06-09
 
