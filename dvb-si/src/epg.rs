@@ -28,18 +28,17 @@
 //!
 //! // Query now/next (requires EIT present/following data to be fed first)
 //! let now = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
-//! if let Some((now_evt, next_evt)) = store.now_and_next(key, now) {
-//!     if let Some(evt) = now_evt {
-//!         println!("Now:  {} (until {})",
-//!             evt.event_name.as_deref().unwrap_or("?"),
-//!             evt.start_time.map(|t| t + evt.duration.unwrap_or_default())
-//!                 .map(|e| e.to_string()).unwrap_or_default());
-//!     }
-//!     if let Some(evt) = next_evt {
-//!         println!("Next: {} at {}",
-//!             evt.event_name.as_deref().unwrap_or("?"),
-//!             evt.start_time.map(|t| t.to_string()).unwrap_or_default());
-//!     }
+//! let (now_evt, next_evt) = store.now_and_next(key, now);
+//! if let Some(evt) = now_evt {
+//!     println!("Now:  {} (until {})",
+//!         evt.event_name.as_deref().unwrap_or("?"),
+//!         evt.start_time.map(|t| t + evt.duration.unwrap_or_default())
+//!             .map(|e| e.to_string()).unwrap_or_default());
+//! }
+//! if let Some(evt) = next_evt {
+//!     println!("Next: {} at {}",
+//!         evt.event_name.as_deref().unwrap_or("?"),
+//!         evt.start_time.map(|t| t.to_string()).unwrap_or_default());
 //! }
 //! // Print tonight's schedule (events from 20:00 to midnight)
 //! let tonight = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
@@ -91,7 +90,7 @@ pub struct ServiceKey {
 /// Only the first descriptor of each kind (short_event, content,
 /// parental_rating, content_identifier) is decoded per event; EIT events
 /// may carry multiple language variants and only the first is taken.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EpgEvent {
@@ -175,10 +174,9 @@ struct ServiceData {
 ///     service_id: 100,
 /// };
 ///
-/// if let Some((now_evt, _next_evt)) = store.now_and_next(key, Utc::now()) {
-///     if let Some(e) = now_evt {
-///         println!("Now playing: {:?}", e.event_name);
-///     }
+/// let (now_evt, _next) = store.now_and_next(key, Utc::now());
+/// if let Some(e) = now_evt {
+///     println!("Now playing: {:?}", e.event_name);
 /// }
 /// ```
 #[derive(Debug, Default)]
@@ -259,16 +257,15 @@ impl EpgStore {
     ///
     /// An event ending exactly at `at` is NOT considered "now" (exclusive end).
     ///
-    /// Returns `None` if no events are available for this service.
+    /// Returns `(None, None)` when the service is unknown or no event matches.
     pub fn now_and_next(
         &self,
         key: ServiceKey,
         at: chrono::DateTime<chrono::Utc>,
-    ) -> Option<(Option<&EpgEvent>, Option<&EpgEvent>)> {
-        let svc = self.cache.get(&key)?;
-        if svc.events.is_empty() {
-            return Some((None, None));
-        }
+    ) -> (Option<&EpgEvent>, Option<&EpgEvent>) {
+        let Some(svc) = self.cache.get(&key) else {
+            return (None, None);
+        };
 
         let now = svc.events.values().find(|e| {
             if let (Some(start), Some(dur)) = (e.start_time, e.duration) {
@@ -285,7 +282,7 @@ impl EpgStore {
             false
         });
 
-        Some((now, next))
+        (now, next)
     }
 
     /// Query events with start times in the half-open range `[from, to)`.
@@ -676,7 +673,7 @@ mod tests {
             transport_stream_id: 1,
             service_id: 100,
         };
-        assert!(store.now_and_next(key, now).is_none());
+        assert_eq!(store.now_and_next(key, now), (None, None));
     }
 
     #[test]
@@ -872,19 +869,19 @@ mod tests {
 
         // At 10:30 — now=Event 1, next=Event 2
         let at = Utc.with_ymd_and_hms(2026, 6, 10, 10, 30, 0).unwrap();
-        let (now, next) = store.now_and_next(key, at).unwrap();
+        let (now, next) = store.now_and_next(key, at);
         assert_eq!(now.unwrap().event_id, 1);
         assert_eq!(next.unwrap().event_id, 2);
 
         // At 11:00 exactly — event 1 just ended (exclusive end),
         // now=None, next=Event 2
-        let (now, next) = store.now_and_next(key, t1100).unwrap();
+        let (now, next) = store.now_and_next(key, t1100);
         assert!(now.is_none(), "event ending at query time must NOT be now");
         assert_eq!(next.unwrap().event_id, 2);
 
         // At 12:00 exactly — now=Event 2 (start == at, inclusive start),
         // next=None
-        let (now, next) = store.now_and_next(key, t1200).unwrap();
+        let (now, next) = store.now_and_next(key, t1200);
         assert_eq!(now.unwrap().event_id, 2);
         assert!(next.is_none());
     }

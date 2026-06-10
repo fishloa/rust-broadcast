@@ -73,9 +73,7 @@ fn isi6_real_epg_build_and_now_next() {
         .expect("an event with a start time");
     let start = first.start_time.expect("checked");
 
-    let (now, _next) = store
-        .now_and_next(key, start)
-        .expect("queried service is present");
+    let (now, _next) = store.now_and_next(key, start);
     assert_eq!(
         now.map(|e| e.event_id),
         Some(first.event_id),

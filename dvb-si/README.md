@@ -32,6 +32,14 @@ validated against live broadcast captures.
   through `last_table_id`; ordinary section-number collection is not enough for
   schedule EIT. EIT schedule sub-tables version independently, and the
   collector exposes `clear()` / `retain_logical()` for long-running EPG pruning.
+- `epg::EpgStore` (feature `chrono`) builds an electronic programme guide over
+  `EitCollector`: deduplicated, time-ordered events with decoded short and
+  extended (§6.2.15 fragment-concatenated) text, content/ratings/CRIDs,
+  `now_and_next(key, at)`, SDT service-name join, and `services()` to enumerate.
+- `resync::TsResync` recovers 188-byte (and 204-byte Reed-Solomon) packet
+  alignment from an arbitrary byte stream — junk prefixes, mid-stream loss.
+- `TsPacket::adaptation_field()` decodes the adaptation field: discontinuity /
+  random-access flags, PCR & OPCR (`Pcr::as_27mhz()`), and splice countdown.
 - `TableId` variants use Rust CamelCase names (`TableId::Pat`,
   `TableId::NetworkInformationActual`, `TableId::MpeFec`), while section parser
   types carry the `Section` suffix.

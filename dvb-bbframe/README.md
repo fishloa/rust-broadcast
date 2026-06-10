@@ -13,7 +13,7 @@ field; it does **not** implement the physical layer (LDPC/BCH coding, modulation
 | Module | Purpose |
 |---|---|
 | `header` | `Bbheader` — the 10-byte BBHEADER (MATYPE-1/2, UPL, DFL, SYNC, SYNCD, CRC-8), parse + serialize. Decodes `Mode` (NM/HEM), `TsGs`, and the MATYPE flags (SIS/MIS, CCM/ACM, ISSYI, NPD, ext, ISI). |
-| `packet` | `up_iter` — user-packet extraction from the data field, honouring SYNCD and the UPL stride. |
+| `packet` | `up_iter` — user-packet extraction from the data field, honouring SYNCD and the UPL stride. `CarryOverExtractor` reassembles user packets that span BBFrame boundaries (`feed_hem`/`feed_nm`, plus buffer-reusing `feed_hem_into`/`feed_nm_into`). |
 | `crc` | `crc8` — CRC-8 per EN 302 307-1 §5.1.4 / EN 302 755 Annex F. The NM/HEM mode is recovered from `computed_crc8 ^ stored_byte`. |
 | `issy` | ISSY (Input Stream Synchronizer) field parser, EN 302 755 Annex C. |
 

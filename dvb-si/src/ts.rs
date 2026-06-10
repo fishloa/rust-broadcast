@@ -62,10 +62,10 @@ pub struct TsPacket<'a> {
     /// Slice into the packet's payload, or `None` when `has_payload == false`
     /// or the adaptation field consumed the whole packet body.
     pub payload: Option<&'a [u8]>,
-    /// The adaptation-field bytes (after the length byte), or `None` when the
-    /// packet has no adaptation field or it is zero-length. Decode with
-    /// [`adaptation_field`](Self::adaptation_field).
-    pub adaptation: Option<&'a [u8]>,
+    /// The adaptation-field bytes (after the length byte). Internal capture
+    /// feeding [`adaptation_field`](Self::adaptation_field); not public.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    adaptation: Option<&'a [u8]>,
     /// The raw 188 bytes of the packet — kept for cheap forwarding.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub raw: &'a [u8; TS_PACKET_SIZE],
