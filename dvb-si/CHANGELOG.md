@@ -1,6 +1,10 @@
 # Changelog
 
 ### Changed
+- `SiDemux::feed` now does a single `pids` map lookup per packet (was 2+N:
+  one `contains_key`, one `get_mut`, plus one per completed section) by
+  draining sections under one borrow then processing them — behaviour
+  unchanged (#44).
 - Removed the dead write-only `expected` field from `SectionReassembler` and
   corrected its doc comment (it never affected behaviour) (#46).
 

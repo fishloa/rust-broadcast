@@ -367,23 +367,23 @@ impl SiDemux {
             Err(_) => self.stats.malformed_packets += 1,
             Ok(ts) => {
                 let pid = Pid::new(ts.header.pid);
-                // Cheap miss: one map lookup for non-watched PIDs.
-                if self.pids.contains_key(&pid) {
-                    let payload = ts.payload.unwrap_or(&[]);
-                    // Feed the reassembler; the borrow is released before
-                    // `consider` (which may insert new PMT PIDs into the map).
-                    self.pids
-                        .get_mut(&pid)
-                        .expect("checked above")
-                        .feed(payload, ts.header.pusi);
-                    while let Some(section) = self
-                        .pids
-                        .get_mut(&pid)
-                        .and_then(SectionReassembler::pop_section)
-                    {
-                        self.stats.sections_completed += 1;
-                        self.consider(pid, section);
+                let payload = ts.payload.unwrap_or(&[]);
+                // Single map lookup: feed and drain every section this packet
+                // completed while holding the reassembler borrow, then process
+                // them after the borrow ends (`consider` may insert new PMT
+                // PIDs into the map, so it cannot run while the borrow is live).
+                // A non-watched PID costs exactly one lookup and stops here;
+                // `completed` does not allocate until a section actually pops.
+                let mut completed: Vec<Bytes> = Vec::new();
+                if let Some(reasm) = self.pids.get_mut(&pid) {
+                    reasm.feed(payload, ts.header.pusi);
+                    while let Some(section) = reasm.pop_section() {
+                        completed.push(section);
                     }
+                }
+                self.stats.sections_completed += completed.len() as u64;
+                for section in completed {
+                    self.consider(pid, section);
                 }
             }
         }
