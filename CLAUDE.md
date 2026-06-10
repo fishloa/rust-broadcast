@@ -10,6 +10,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding, TS packet / section reassembly.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
+- **dvb-scte35** — reserved crate (planned; directory exists but is not yet a workspace member).
 
 MSRV is **1.75** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 
@@ -88,12 +89,12 @@ Every parser has a symmetric serializer and a **round-trip test** (parse → ser
 - `descriptors/` — one file per descriptor tag. Each module exports a `TAG` const, length consts, a `XxxDescriptor<'a>` struct, and the Parse/Serialize impls. `descriptors/any.rs` defines `AnyDescriptor` + `parse_loop` (the lazy descriptor-loop walker); `descriptors/registry.rs` adds `DescriptorRegistry` for private tags.
 - `carousel/` — DSM-CC DSI/DII/DDB messages + `ModuleReassembler`, layered on `tables/dsmcc.rs` section framing.
 - `text/` — EN 300 468 Annex A string decoding. `DvbText<'a>` wraps raw wire bytes and decodes on demand (`.decode()`/`Display`/serde); `LangCode` is the 3-byte language/country newtype. Serde serializes both as decoded strings; `DvbText`-bearing structs are serialize-only.
-- `demux.rs` (feature `ts`) — `SiDemux`: PID-filtered, version-gated, PAT-following section pump. Feed 188-byte TS packets, get a `SectionEvent` per *changed* section; `event.table()` gives an `AnyTable`. `section.rs`/`ts.rs` provide the underlying TS packet handling and `SectionReassembler`.
+- `demux.rs` (feature `ts`) — `SiDemux`: PID-filtered, version-gated, PAT-following section pump. Feed 188-byte TS packets, get a `SectionEvent` per *changed* section; `event.table_section()` gives an `AnyTableSection`. `section.rs`/`ts.rs` provide the underlying TS packet handling and `SectionReassembler`.
 - Features: `chrono` (MJD+BCD → `DateTime<Utc>`), `ts`, `serde` — all on by default; everything must also build `--no-default-features`.
 
 ### Trait-driven dispatch (the `*Def` trait + `declare_*!` macro pattern)
 
-Each crate's unified dispatch enum — `dvb_si` `AnyTable`/`AnyDescriptor`,
+Each crate's unified dispatch enum — `dvb_si` `AnyTableSection`/`AnyDescriptor`,
 `dvb_t2mi` `AnyPayload` — is generated from a single declarative list (the
 `declare_tables!` / `declare_descriptors!` / `declare_payloads!` macro). One line
 per type produces the enum variant, the `From<T>` impl, the dispatcher arm, and a

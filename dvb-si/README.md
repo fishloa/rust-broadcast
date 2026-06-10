@@ -198,22 +198,28 @@ round-trips losslessly.
 
 | tag_ext | Extension | Status |
 |---|---|---|
-| 0x04 | T2_delivery_system | ✅ typed (first level; cell loop raw) |
+| 0x00 | image_icon | ✅ typed |
+| 0x04 | T2_delivery_system | ✅ typed (cell loop unfolded) |
+| 0x05 | SH_delivery_system | ✅ typed |
 | 0x06 | supplementary_audio | ✅ typed |
-| 0x07 | network_change_notify | ✅ typed (cell loop raw) |
+| 0x07 | network_change_notify | ✅ typed (cell loop unfolded) |
 | 0x08 | message | ✅ typed |
-| 0x09 | target_region | ✅ typed (region loop raw) |
-| 0x0A | target_region_name | ✅ typed (region loop raw) |
+| 0x09 | target_region | ✅ typed (region loop unfolded) |
+| 0x0A | target_region_name | ✅ typed (region loop unfolded) |
 | 0x0B | service_relocated | ✅ typed |
 | 0x0D | C2_delivery_system | ✅ typed |
+| 0x10 | video_depth_range | ✅ typed (range loop unfolded) |
+| 0x11 | T2MI | ✅ typed |
 | 0x13 | URI_linkage | ✅ typed (uri/private split) |
-| 0x15 | AC-4 | ✅ typed (first level; toc/extra raw) |
+| 0x15 | AC-4 | ✅ typed (first level; toc/extra raw — tracked #102) |
 | 0x16 | C2_bundle_delivery_system | ✅ typed (full fixed loop) |
-| 0x17 | S2X_satellite_delivery_system | ✅ typed (primary channel; bonding tail raw) |
-| 0x19 | audio_preselection | ✅ typed (preselection loop raw) |
+| 0x17 | S2X_satellite_delivery_system | ✅ typed (channel-bond entries typed; reserved tail raw) |
+| 0x19 | audio_preselection | ✅ typed (preselection loop unfolded) |
 | 0x20 | TTML_subtitling | ✅ typed (EN 303 560) |
-| 0x00 image_icon · 0x05 SH_delivery_system · 0x10 video_depth_range · 0x11 T2MI · 0x22–0x24 | niche; deferred | raw-preserved |
-| 0x01–0x03 CPCM (TS 102 825) · 0x0C XAIT_PID (TS 102 727) · 0x0E/0x0F/0x21 DTS family · 0x14 CI_ancillary (TS 103 205) · 0x18 protection_message (TS 102 809) | spec not vendored | raw-preserved |
+| 0x22 | service_prominence | ✅ typed |
+| 0x23 | vvc_subpictures | ✅ typed |
+| 0x24 | S2Xv2 | raw-preserved (not in vendored spec) |
+| 0x01–0x03 | CPCM (TS 102 825) · 0x0C XAIT_PID (TS 102 727) · 0x0E/0x0F/0x21 DTS family · 0x14 CI_ancillary (TS 103 205) · 0x18 protection_message (TS 102 809) | spec not vendored | raw-preserved |
 
 ## Text decoding
 

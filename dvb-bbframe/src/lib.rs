@@ -8,6 +8,13 @@
 //! - [`packet::up_iter`] — user packet extraction from the data field.
 //! - [`crc::crc8`] — CRC-8 encoder (EN 302 307-1 §5.1.4 / EN 302 755 Annex F).
 //! - [`issy`] — ISSY field parser (EN 302 755 Annex C).
+//!
+//! # RFU policy
+//!
+//! BBFrame `reserved_future_use` bits are **emitted as 1** and
+//! `reserved_zero_future_use` bits as **0**, following the DVB convention.
+//! Parsers accept any value (no rejection on non-zero RFU) for forward
+//! compatibility.
 
 #![warn(missing_docs)]
 
