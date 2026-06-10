@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- `CarryOverExtractor::feed_hem_into` / `feed_nm_into` — buffer-reusing variants
+  that append completed TS packets into a caller-provided `Vec` (cleared each
+  call), avoiding the per-frame allocation of `feed_hem`/`feed_nm` (now thin
+  wrappers). Behaviour unchanged (#45).
+
 ## [4.2.0] — 2026-06-09
 
 Version-lockstep release with the workspace (dvb-si DSM-CC `ModuleReassembler`

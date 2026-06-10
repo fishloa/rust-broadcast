@@ -185,13 +185,29 @@ impl CarryOverExtractor {
         data_field: &[u8],
         npd: bool,
     ) -> Vec<[u8; NM_UP_SIZE]> {
+        let mut out = Vec::new();
+        self.feed_hem_into(bbheader_bytes, data_field, npd, &mut out);
+        out
+    }
+
+    /// Buffer-reusing variant of [`feed_hem`](Self::feed_hem). Clears `out`,
+    /// then appends the TS packets that completed during this frame. Reuse the
+    /// same `Vec` across frames to avoid a per-frame heap allocation.
+    pub fn feed_hem_into(
+        &mut self,
+        bbheader_bytes: &[u8; BBHEADER_LEN],
+        data_field: &[u8],
+        npd: bool,
+        out: &mut Vec<[u8; NM_UP_SIZE]>,
+    ) {
+        out.clear();
         assert!(
             !npd,
             "CarryOverExtractor does not yet implement NPD/DNP reinsertion"
         );
         let hdr = match Bbheader::parse(bbheader_bytes) {
             Ok(h) => h,
-            Err(_) => return Vec::new(),
+            Err(_) => return,
         };
         assert_eq!(
             hdr.mode,
@@ -203,8 +219,6 @@ impl CarryOverExtractor {
         let syncd_bytes = (hdr.syncd / 8) as usize;
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
-
-        let mut out = Vec::new();
 
         // Complete the partial UP from the previous frame.
         if self.pos > 0 {
@@ -239,8 +253,6 @@ impl CarryOverExtractor {
         } else {
             self.pos = 0;
         }
-
-        out
     }
 
     /// Feed an NM BBFrame. Stride=188, `byte[0]` of each UP is the CRC-8 of
@@ -250,9 +262,24 @@ impl CarryOverExtractor {
         bbheader_bytes: &[u8; BBHEADER_LEN],
         data_field: &[u8],
     ) -> Vec<[u8; NM_UP_SIZE]> {
+        let mut out = Vec::new();
+        self.feed_nm_into(bbheader_bytes, data_field, &mut out);
+        out
+    }
+
+    /// Buffer-reusing variant of [`feed_nm`](Self::feed_nm). Clears `out`, then
+    /// appends the TS packets that completed during this frame. Reuse the same
+    /// `Vec` across frames to avoid a per-frame heap allocation.
+    pub fn feed_nm_into(
+        &mut self,
+        bbheader_bytes: &[u8; BBHEADER_LEN],
+        data_field: &[u8],
+        out: &mut Vec<[u8; NM_UP_SIZE]>,
+    ) {
+        out.clear();
         let hdr = match Bbheader::parse(bbheader_bytes) {
             Ok(h) => h,
-            Err(_) => return Vec::new(),
+            Err(_) => return,
         };
         assert_eq!(hdr.mode, Mode::Normal, "feed_nm called on non-NM header");
 
@@ -260,8 +287,6 @@ impl CarryOverExtractor {
         let syncd_bytes = (hdr.syncd / 8) as usize;
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
-
-        let mut out = Vec::new();
 
         // Complete partial UP from previous frame.
         if self.pos > 0 {
@@ -293,8 +318,6 @@ impl CarryOverExtractor {
         } else {
             self.pos = 0;
         }
-
-        out
     }
 }
 
@@ -551,6 +574,47 @@ mod tests {
         assert_eq!(
             packets2[0][0], 0x47,
             "first emitted packet has sync byte prepended"
+        );
+    }
+
+    #[test]
+    fn feed_into_matches_allocating_api() {
+        // Run the same two-frame HEM sequence (partial UP carried across the
+        // boundary) through the allocating `feed_hem` and the buffer-reusing
+        // `feed_hem_into` (one Vec reused across both frames). Identical output
+        // proves `_into` clears + appends equivalently — if it failed to clear,
+        // frame 2's buffer would still hold frame 1's packets and diverge.
+        let make_hem_header = |syncd_bits: u16, dfl_bits: u16| -> [u8; 10] {
+            let mut h = [0u8; 10];
+            h[0] = 0xF0;
+            h[4] = (dfl_bits >> 8) as u8;
+            h[5] = (dfl_bits & 0xFF) as u8;
+            h[7] = (syncd_bits >> 8) as u8;
+            h[8] = (syncd_bits & 0xFF) as u8;
+            let crc = crate::crc::crc8(&h[..9]);
+            h[9] = crc ^ 1;
+            h
+        };
+        let f1 = (0..70u8).map(|i| 0xA0 | (i & 0x0F)).collect::<Vec<u8>>();
+        let f2 = (0..200u8).map(|i| 0xB0 | (i & 0x0F)).collect::<Vec<u8>>();
+        let h1 = make_hem_header(0, (f1.len() * 8) as u16);
+        let h2 = make_hem_header(0, (f2.len() * 8) as u16);
+
+        let mut alloc = CarryOverExtractor::new();
+        let a1 = alloc.feed_hem(&h1, &f1, false);
+        let a2 = alloc.feed_hem(&h2, &f2, false);
+
+        let mut reuse = CarryOverExtractor::new();
+        let mut buf = Vec::new();
+        reuse.feed_hem_into(&h1, &f1, false, &mut buf);
+        let b1 = buf.clone();
+        reuse.feed_hem_into(&h2, &f2, false, &mut buf);
+        let b2 = buf.clone();
+
+        assert_eq!(a1, b1, "frame 1 output matches across APIs");
+        assert_eq!(
+            a2, b2,
+            "frame 2 (carry-over) output matches; buffer was cleared"
         );
     }
 }
