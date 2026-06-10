@@ -8,6 +8,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
@@ -34,8 +35,8 @@ const RESERVED_NIBBLE: u8 = 0xF0;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CridAuthority<'a> {
-    /// CRID authority name bytes.
-    pub name: &'a [u8],
+    /// CRID authority name (EN 300 468 Annex A text).
+    pub name: DvbText<'a>,
     /// `CRID_authority_policy` — 2-bit value (Table 3):
     /// 0 = permanent, 1 = transient, 2 = either, 3 = reserved.
     pub crid_authority_policy: u8,
@@ -47,8 +48,8 @@ pub struct CridAuthority<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ResolutionProvider<'a> {
-    /// Resolution provider name bytes.
-    pub name: &'a [u8],
+    /// Resolution provider name (EN 300 468 Annex A text).
+    pub name: DvbText<'a>,
     /// Per-provider descriptor loop.
     pub descriptors: DescriptorLoop<'a>,
     /// CRID authority sub-entries.
@@ -184,7 +185,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     what: "RntSection resolution_provider_name",
                 });
             }
-            let name = &bytes[pos..pos + name_len];
+            let name = DvbText::new(&bytes[pos..pos + name_len]);
             pos += name_len;
 
             if pos + RP_DESC_LEN_FIELD > rp_end {
@@ -225,7 +226,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                         what: "RntSection CRID_authority_name",
                     });
                 }
-                let ca_name = &bytes[pos..pos + ca_name_len];
+                let ca_name = DvbText::new(&bytes[pos..pos + ca_name_len]);
                 pos += ca_name_len;
 
                 if pos + CA_HEADER_LEN > rp_end {
@@ -333,7 +334,7 @@ impl Serialize for RntSection<'_> {
 
             buf[pos] = rp.name.len() as u8;
             pos += RP_NAME_LEN_FIELD;
-            buf[pos..pos + rp.name.len()].copy_from_slice(rp.name);
+            buf[pos..pos + rp.name.len()].copy_from_slice(rp.name.raw());
             pos += rp.name.len();
 
             let rdl = rp.descriptors.len() as u16;
@@ -346,7 +347,7 @@ impl Serialize for RntSection<'_> {
             for ca in &rp.crid_authorities {
                 buf[pos] = ca.name.len() as u8;
                 pos += CA_NAME_LEN_FIELD;
-                buf[pos..pos + ca.name.len()].copy_from_slice(ca.name);
+                buf[pos..pos + ca.name.len()].copy_from_slice(ca.name.raw());
                 pos += ca.name.len();
 
                 let adl = ca.descriptors.len() as u16;
@@ -384,10 +385,10 @@ mod tests {
     fn parse_happy_path() {
         let common_desc = [0x83u8, 0x02, 0xAB, 0xCD];
         let rp = ResolutionProvider {
-            name: b"bb",
+            name: DvbText::new(b"bb"),
             descriptors: DescriptorLoop::new(&[]),
             crid_authorities: vec![CridAuthority {
-                name: b"au",
+                name: DvbText::new(b"au"),
                 crid_authority_policy: 1,
                 descriptors: DescriptorLoop::new(&[]),
             }],
@@ -410,14 +411,16 @@ mod tests {
         assert!(parsed.current_next_indicator);
         assert_eq!(parsed.context_id_type, 0x01);
         assert_eq!(parsed.resolution_providers.len(), 1);
-        assert_eq!(parsed.resolution_providers[0].name, b"bb");
+        assert_eq!(parsed.resolution_providers[0].name.raw(), b"bb");
         assert_eq!(parsed.resolution_providers[0].crid_authorities.len(), 1);
         assert_eq!(
             parsed.resolution_providers[0].crid_authorities[0].crid_authority_policy,
             1
         );
         assert_eq!(
-            parsed.resolution_providers[0].crid_authorities[0].name,
+            parsed.resolution_providers[0].crid_authorities[0]
+                .name
+                .raw(),
             b"au"
         );
     }
@@ -444,16 +447,16 @@ mod tests {
     #[test]
     fn byte_exact_round_trip() {
         let rp = ResolutionProvider {
-            name: b"provider",
+            name: DvbText::new(b"provider"),
             descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
             crid_authorities: vec![
                 CridAuthority {
-                    name: b"auth1",
+                    name: DvbText::new(b"auth1"),
                     crid_authority_policy: 0,
                     descriptors: DescriptorLoop::new(&[]),
                 },
                 CridAuthority {
-                    name: b"auth2",
+                    name: DvbText::new(b"auth2"),
                     crid_authority_policy: 2,
                     descriptors: DescriptorLoop::new(&[0x42, 0x00]),
                 },
@@ -476,7 +479,7 @@ mod tests {
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         let re = RntSection::parse(&buf).unwrap();
         assert_eq!(re.resolution_providers.len(), 1);
-        assert_eq!(re.resolution_providers[0].name, b"provider");
+        assert_eq!(re.resolution_providers[0].name.raw(), b"provider");
         assert_eq!(re.resolution_providers[0].crid_authorities.len(), 2);
         assert_eq!(
             re.resolution_providers[0].crid_authorities[1].crid_authority_policy,

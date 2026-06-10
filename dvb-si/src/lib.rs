@@ -158,6 +158,7 @@
 
 pub mod carousel;
 pub mod collect;
+pub mod compatibility;
 pub mod descriptor_tag;
 pub mod descriptors;
 #[cfg(feature = "chrono")]
