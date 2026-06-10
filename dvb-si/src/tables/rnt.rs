@@ -3,62 +3,99 @@
 //! Carries the locations of CRI (Content Referencing Information) and metadata
 //! for CRID authorities. Carried on PID 0x0016 with table_id 0x79.
 //!
-//! The resolution-provider loop internals (name bytes, per-provider descriptors,
-//! CRID authority sub-loops) are kept as raw bytes — callers that need them
-//! can walk `resolution_providers` directly.
+//! The resolution-provider loop is unfolded into [`ResolutionProvider`] and
+//! [`CridAuthority`] entries (Table 1, §5.2.2).
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
-/// table_id for the Resolution provider Notification Table.
+/// `table_id` for the Resolution provider Notification Table.
 pub const TABLE_ID: u8 = 0x79;
 /// Well-known PID on which RNT sections are carried.
 pub const PID: u16 = 0x0016;
 
-/// Byte offset of the 3-byte outer header (table_id + section_length word).
 const HEADER_LEN: usize = 3;
-/// Bytes in the extension header: context_id(2) + version/cni byte(1)
-/// + section_number(1) + last_section_number(1) + context_id_type(1) = 6.
 const EXTENSION_HEADER_LEN: usize = 6;
-/// Bytes for the common_descriptors_length field (2, carries a reserved nibble + 12-bit length).
 const COMMON_DESC_LEN_FIELD: usize = 2;
-/// Bytes consumed by the CRC-32 trailer.
 const CRC_LEN: usize = 4;
-/// Minimum total bytes required to attempt parsing.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
-/// Resolution provider Notification Table (ETSI TS 102 323 v1.4.1 §5.2.2).
+const RP_INFO_LEN_FIELD: usize = 2;
+const RP_NAME_LEN_FIELD: usize = 1;
+const RP_DESC_LEN_FIELD: usize = 2;
+const CA_NAME_LEN_FIELD: usize = 1;
+const CA_HEADER_LEN: usize = 2;
+
+const RESERVED_NIBBLE: u8 = 0xF0;
+
+/// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CridAuthority<'a> {
+    /// CRID authority name bytes.
+    pub name: &'a [u8],
+    /// `CRID_authority_policy` — 2-bit value (Table 3):
+    /// 0 = permanent, 1 = transient, 2 = either, 3 = reserved.
+    pub crid_authority_policy: u8,
+    /// CRID authority descriptor loop.
+    pub descriptors: DescriptorLoop<'a>,
+}
+
+/// A resolution-provider entry (Table 1, §5.2.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ResolutionProvider<'a> {
+    /// Resolution provider name bytes.
+    pub name: &'a [u8],
+    /// Per-provider descriptor loop.
+    pub descriptors: DescriptorLoop<'a>,
+    /// CRID authority sub-entries.
+    pub crid_authorities: Vec<CridAuthority<'a>>,
+}
+
+fn crid_authority_serialized_len(ca: &CridAuthority) -> usize {
+    CA_NAME_LEN_FIELD + ca.name.len() + CA_HEADER_LEN + ca.descriptors.len()
+}
+
+fn resolution_provider_serialized_len(rp: &ResolutionProvider) -> usize {
+    RP_NAME_LEN_FIELD
+        + rp.name.len()
+        + RP_DESC_LEN_FIELD
+        + rp.descriptors.len()
+        + rp.crid_authorities
+            .iter()
+            .map(crid_authority_serialized_len)
+            .sum::<usize>()
+}
+
+/// Resolution provider Notification Table (ETSI TS 102 323 v1.4.1 §5.2.2,
+/// Table 1).
 ///
-/// Variable-length fields are kept as borrowed byte slices so no allocation is
-/// required. The `resolution_providers` slice contains everything between the
-/// end of the common-descriptor loop and the CRC-32 trailer; the internal
-/// sub-structure (provider names, per-provider descriptors, CRID authority
-/// loops) is not parsed further.
+/// The resolution-provider loop has been unfolded into typed
+/// [`ResolutionProvider`] entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct RntSection<'a> {
-    /// 16-bit context identifier (table_id_extension at bytes 3–4).
+    /// 16-bit context identifier (table_id_extension).
     pub context_id: u16,
     /// 5-bit version_number.
     pub version_number: u8,
-    /// current_next_indicator bit.
+    /// `current_next_indicator` bit.
     pub current_next_indicator: bool,
     /// section_number in the sub-table sequence.
     pub section_number: u8,
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
-    /// context_id_type byte (0x00 = bouquet_id, 0x01 = original_network_id,
-    /// 0x02 = network_id, 0x03–0x7F DVB reserved, 0x80–0xFF user defined).
+    /// `context_id_type` byte (Table 2).
     pub context_id_type: u8,
-    /// Common descriptor loop (`common_descriptors_length` bytes). Serializes
-    /// as the typed descriptor sequence; `.raw()` yields the wire bytes.
+    /// Common descriptor loop. Serializes as the typed descriptor sequence;
+    /// `.raw()` yields the wire bytes.
     pub common_descriptors: DescriptorLoop<'a>,
-    /// Raw bytes of the resolution-provider loop (everything after the common
-    /// descriptors up to, but not including, the CRC-32 trailer).
-    pub resolution_providers: &'a [u8],
+    /// Resolution-provider entries — unfolded per Table 1.
+    pub resolution_providers: Vec<ResolutionProvider<'a>>,
 }
 
 impl<'a> Parse<'a> for RntSection<'a> {
@@ -72,7 +109,6 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 what: "RntSection",
             });
         }
-
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -81,8 +117,6 @@ impl<'a> Parse<'a> for RntSection<'a> {
             });
         }
 
-        // bytes[1] = section_syntax_indicator(1) | reserved(1) | reserved(2) | section_length[11:8](4)
-        // bytes[2] = section_length[7:0]
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
         let total = HEADER_LEN + section_length as usize;
         if bytes.len() < total {
@@ -92,12 +126,6 @@ impl<'a> Parse<'a> for RntSection<'a> {
             });
         }
 
-        // Extension header (bytes 3–8):
-        //   bytes[3..5]  = context_id (table_id_extension)
-        //   bytes[5]     = reserved(2) | version_number(5) | current_next_indicator(1)
-        //   bytes[6]     = section_number
-        //   bytes[7]     = last_section_number
-        //   bytes[8]     = context_id_type
         let context_id = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
@@ -105,28 +133,137 @@ impl<'a> Parse<'a> for RntSection<'a> {
         let last_section_number = bytes[7];
         let context_id_type = bytes[8];
 
-        // bytes[9..11] = reserved(4) | common_descriptors_length(12)
         let common_desc_len_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
         let common_descriptors_length = (((bytes[common_desc_len_pos] & 0x0F) as usize) << 8)
             | bytes[common_desc_len_pos + 1] as usize;
-
         let common_desc_start = common_desc_len_pos + COMMON_DESC_LEN_FIELD;
         let common_desc_end = common_desc_start + common_descriptors_length;
-
         if common_desc_end > total - CRC_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: common_descriptors_length,
                 available: (total - CRC_LEN).saturating_sub(common_desc_start),
             });
         }
-
         let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
-        // Everything from the end of the common descriptor loop up to (but not
-        // including) the 4-byte CRC trailer is the resolution-provider loop.
-        let rp_start = common_desc_end;
-        let rp_end = total - CRC_LEN;
-        let resolution_providers = &bytes[rp_start..rp_end];
+        let payload_end = total - CRC_LEN;
+        let mut pos = common_desc_end;
+        let mut resolution_providers = Vec::new();
+
+        while pos < payload_end {
+            if pos + RP_INFO_LEN_FIELD > payload_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + RP_INFO_LEN_FIELD,
+                    have: payload_end,
+                    what: "RntSection resolution_provider_info_length",
+                });
+            }
+            let rp_info_length = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            pos += RP_INFO_LEN_FIELD;
+            let rp_end = pos + rp_info_length;
+            if rp_end > payload_end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: rp_info_length,
+                    available: payload_end.saturating_sub(pos),
+                });
+            }
+
+            if pos + RP_NAME_LEN_FIELD > rp_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + RP_NAME_LEN_FIELD,
+                    have: rp_end,
+                    what: "RntSection resolution_provider_name_length",
+                });
+            }
+            let name_len = bytes[pos] as usize;
+            pos += RP_NAME_LEN_FIELD;
+            if pos + name_len > rp_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + name_len,
+                    have: rp_end,
+                    what: "RntSection resolution_provider_name",
+                });
+            }
+            let name = &bytes[pos..pos + name_len];
+            pos += name_len;
+
+            if pos + RP_DESC_LEN_FIELD > rp_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + RP_DESC_LEN_FIELD,
+                    have: rp_end,
+                    what: "RntSection resolution_provider_descriptors_length",
+                });
+            }
+            let rp_desc_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+            pos += RP_DESC_LEN_FIELD;
+            let rp_desc_start = pos;
+            let rp_desc_end = rp_desc_start + rp_desc_len;
+            if rp_desc_end > rp_end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: rp_desc_len,
+                    available: rp_end.saturating_sub(rp_desc_start),
+                });
+            }
+            let descriptors = DescriptorLoop::new(&bytes[rp_desc_start..rp_desc_end]);
+            pos = rp_desc_end;
+
+            let mut crid_authorities = Vec::new();
+            while pos < rp_end {
+                if pos + CA_NAME_LEN_FIELD > rp_end {
+                    return Err(Error::BufferTooShort {
+                        need: pos + CA_NAME_LEN_FIELD,
+                        have: rp_end,
+                        what: "RntSection CRID_authority_name_length",
+                    });
+                }
+                let ca_name_len = bytes[pos] as usize;
+                pos += CA_NAME_LEN_FIELD;
+                if pos + ca_name_len > rp_end {
+                    return Err(Error::BufferTooShort {
+                        need: pos + ca_name_len,
+                        have: rp_end,
+                        what: "RntSection CRID_authority_name",
+                    });
+                }
+                let ca_name = &bytes[pos..pos + ca_name_len];
+                pos += ca_name_len;
+
+                if pos + CA_HEADER_LEN > rp_end {
+                    return Err(Error::BufferTooShort {
+                        need: pos + CA_HEADER_LEN,
+                        have: rp_end,
+                        what: "RntSection CRID_authority header",
+                    });
+                }
+                let ca_packed = bytes[pos];
+                let crid_authority_policy = (ca_packed >> 4) & 0x03;
+                let ca_desc_len = (((ca_packed & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                pos += CA_HEADER_LEN;
+                let ca_desc_start = pos;
+                let ca_desc_end = ca_desc_start + ca_desc_len;
+                if ca_desc_end > rp_end {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: ca_desc_len,
+                        available: rp_end.saturating_sub(ca_desc_start),
+                    });
+                }
+                let ca_descriptors = DescriptorLoop::new(&bytes[ca_desc_start..ca_desc_end]);
+                pos = ca_desc_end;
+
+                crid_authorities.push(CridAuthority {
+                    name: ca_name,
+                    crid_authority_policy,
+                    descriptors: ca_descriptors,
+                });
+            }
+
+            resolution_providers.push(ResolutionProvider {
+                name,
+                descriptors,
+                crid_authorities,
+            });
+            pos = rp_end;
+        }
 
         Ok(RntSection {
             context_id,
@@ -149,7 +286,11 @@ impl Serialize for RntSection<'_> {
             + EXTENSION_HEADER_LEN
             + COMMON_DESC_LEN_FIELD
             + self.common_descriptors.len()
-            + self.resolution_providers.len()
+            + self
+                .resolution_providers
+                .iter()
+                .map(|rp| RP_INFO_LEN_FIELD + resolution_provider_serialized_len(rp))
+                .sum::<usize>()
             + CRC_LEN
     }
 
@@ -162,39 +303,65 @@ impl Serialize for RntSection<'_> {
             });
         }
 
-        // Outer header.
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
         buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
-        // Extension header.
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = self.context_id_type;
 
-        // common_descriptors_length field (reserved nibble = 0xF).
         let cdl = self.common_descriptors.len() as u16;
         let cdl_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[cdl_pos] = 0xF0 | ((cdl >> 8) as u8 & 0x0F);
+        buf[cdl_pos] = RESERVED_NIBBLE | ((cdl >> 8) as u8 & 0x0F);
         buf[cdl_pos + 1] = (cdl & 0xFF) as u8;
 
-        // Common descriptors.
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
         let cd_end = cd_start + self.common_descriptors.len();
         buf[cd_start..cd_end].copy_from_slice(self.common_descriptors.raw());
 
-        // Resolution-provider loop (opaque bytes).
-        let rp_end = cd_end + self.resolution_providers.len();
-        buf[cd_end..rp_end].copy_from_slice(self.resolution_providers);
+        let mut pos = cd_end;
+        for rp in &self.resolution_providers {
+            let rp_body_len = resolution_provider_serialized_len(rp);
+            let rp_info_length = rp_body_len as u16;
+            buf[pos] = RESERVED_NIBBLE | ((rp_info_length >> 8) as u8 & 0x0F);
+            buf[pos + 1] = (rp_info_length & 0xFF) as u8;
+            pos += RP_INFO_LEN_FIELD;
 
-        // CRC-32: compute over everything up to (but not including) the CRC slot.
+            buf[pos] = rp.name.len() as u8;
+            pos += RP_NAME_LEN_FIELD;
+            buf[pos..pos + rp.name.len()].copy_from_slice(rp.name);
+            pos += rp.name.len();
+
+            let rdl = rp.descriptors.len() as u16;
+            buf[pos] = RESERVED_NIBBLE | ((rdl >> 8) as u8 & 0x0F);
+            buf[pos + 1] = (rdl & 0xFF) as u8;
+            pos += RP_DESC_LEN_FIELD;
+            buf[pos..pos + rp.descriptors.len()].copy_from_slice(rp.descriptors.raw());
+            pos += rp.descriptors.len();
+
+            for ca in &rp.crid_authorities {
+                buf[pos] = ca.name.len() as u8;
+                pos += CA_NAME_LEN_FIELD;
+                buf[pos..pos + ca.name.len()].copy_from_slice(ca.name);
+                pos += ca.name.len();
+
+                let adl = ca.descriptors.len() as u16;
+                buf[pos] =
+                    0xC0 | ((ca.crid_authority_policy & 0x03) << 4) | ((adl >> 8) as u8 & 0x0F);
+                buf[pos + 1] = (adl & 0xFF) as u8;
+                pos += CA_HEADER_LEN;
+                buf[pos..pos + ca.descriptors.len()].copy_from_slice(ca.descriptors.raw());
+                pos += ca.descriptors.len();
+            }
+        }
+
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
-
         Ok(len)
     }
 }
@@ -213,87 +380,85 @@ impl<'a> crate::traits::TableDef<'a> for RntSection<'a> {
 mod tests {
     use super::*;
 
-    /// Build a complete RNT section byte vector with the given field values.
-    /// `common_desc` and `resolution_providers` are pasted in verbatim; the
-    /// CRC slot is zeroed (matching the serialize contract).
-    #[allow(clippy::too_many_arguments)]
-    fn build_rnt(
-        context_id: u16,
-        version: u8,
-        current_next: bool,
-        section_number: u8,
-        last_section_number: u8,
-        context_id_type: u8,
-        common_desc: &[u8],
-        resolution_providers: &[u8],
-    ) -> Vec<u8> {
+    #[test]
+    fn parse_happy_path() {
+        let common_desc = [0x83u8, 0x02, 0xAB, 0xCD];
+        let rp = ResolutionProvider {
+            name: b"bb",
+            descriptors: DescriptorLoop::new(&[]),
+            crid_authorities: vec![CridAuthority {
+                name: b"au",
+                crid_authority_policy: 1,
+                descriptors: DescriptorLoop::new(&[]),
+            }],
+        };
         let rnt = RntSection {
-            context_id,
-            version_number: version,
-            current_next_indicator: current_next,
-            section_number,
-            last_section_number,
-            context_id_type,
-            common_descriptors: DescriptorLoop::new(common_desc),
-            resolution_providers,
+            context_id: 0x0042,
+            version_number: 3,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            context_id_type: 0x01,
+            common_descriptors: DescriptorLoop::new(&common_desc),
+            resolution_providers: vec![rp],
         };
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
-        buf
-    }
-
-    #[test]
-    fn parse_happy_path() {
-        // context_id 0x0042, version 3, CNI=true, section 0/0,
-        // context_id_type 0x01 (original_network_id),
-        // one dummy common descriptor (tag=0x83, length=2, data=[0xAB, 0xCD]),
-        // one minimal resolution-provider stub (6 opaque bytes).
-        let common_desc = [0x83u8, 0x02, 0xAB, 0xCD];
-        let rp_bytes = [0xF0u8, 0x00, 0x02, b'b', b'b', 0xF0, 0x00];
-        let bytes = build_rnt(0x0042, 3, true, 0, 0, 0x01, &common_desc, &rp_bytes);
-
-        let rnt = RntSection::parse(&bytes).unwrap();
-        assert_eq!(rnt.context_id, 0x0042);
-        assert_eq!(rnt.version_number, 3);
-        assert!(rnt.current_next_indicator);
-        assert_eq!(rnt.section_number, 0);
-        assert_eq!(rnt.last_section_number, 0);
-        assert_eq!(rnt.context_id_type, 0x01);
-        assert_eq!(rnt.common_descriptors.raw(), &common_desc[..]);
-        assert_eq!(rnt.resolution_providers, &rp_bytes[..]);
+        let parsed = RntSection::parse(&buf).unwrap();
+        assert_eq!(parsed.context_id, 0x0042);
+        assert_eq!(parsed.version_number, 3);
+        assert!(parsed.current_next_indicator);
+        assert_eq!(parsed.context_id_type, 0x01);
+        assert_eq!(parsed.resolution_providers.len(), 1);
+        assert_eq!(parsed.resolution_providers[0].name, b"bb");
+        assert_eq!(parsed.resolution_providers[0].crid_authorities.len(), 1);
+        assert_eq!(
+            parsed.resolution_providers[0].crid_authorities[0].crid_authority_policy,
+            1
+        );
+        assert_eq!(
+            parsed.resolution_providers[0].crid_authorities[0].name,
+            b"au"
+        );
     }
 
     #[test]
     fn parse_no_descriptors_no_providers() {
-        let bytes = build_rnt(0x0000, 0, false, 0, 0, 0x00, &[], &[]);
-        let rnt = RntSection::parse(&bytes).unwrap();
-        assert_eq!(rnt.common_descriptors.len(), 0);
-        assert_eq!(rnt.resolution_providers.len(), 0);
+        let rnt = RntSection {
+            context_id: 0x0000,
+            version_number: 0,
+            current_next_indicator: false,
+            section_number: 0,
+            last_section_number: 0,
+            context_id_type: 0x00,
+            common_descriptors: DescriptorLoop::new(&[]),
+            resolution_providers: Vec::new(),
+        };
+        let mut buf = vec![0u8; rnt.serialized_len()];
+        rnt.serialize_into(&mut buf).unwrap();
+        let parsed = RntSection::parse(&buf).unwrap();
+        assert_eq!(parsed.common_descriptors.len(), 0);
+        assert!(parsed.resolution_providers.is_empty());
     }
 
     #[test]
-    fn parse_rejects_wrong_table_id() {
-        let mut bytes = build_rnt(0x0001, 0, true, 0, 0, 0x00, &[], &[]);
-        bytes[0] = 0x70; // not 0x79
-        let err = RntSection::parse(&bytes).unwrap_err();
-        assert!(matches!(
-            err,
-            Error::UnexpectedTableId { table_id: 0x70, .. }
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_short_buffer() {
-        let err = RntSection::parse(&[0x79, 0x00]).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort { .. }));
-    }
-
-    #[test]
-    fn serialize_round_trip() {
-        let common_desc = [0x40u8, 0x03, b'R', b'N', b'T'];
-        // Minimal resolution-provider entry: 2-byte length header (0 bytes length),
-        // 1-byte name length (0), 2-byte provider descriptors length (0).
-        let rp_bytes = [0xF0u8, 0x03, 0x00, 0xF0, 0x00];
+    fn byte_exact_round_trip() {
+        let rp = ResolutionProvider {
+            name: b"provider",
+            descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            crid_authorities: vec![
+                CridAuthority {
+                    name: b"auth1",
+                    crid_authority_policy: 0,
+                    descriptors: DescriptorLoop::new(&[]),
+                },
+                CridAuthority {
+                    name: b"auth2",
+                    crid_authority_policy: 2,
+                    descriptors: DescriptorLoop::new(&[0x42, 0x00]),
+                },
+            ],
+        };
         let rnt = RntSection {
             context_id: 0xABCD,
             version_number: 15,
@@ -301,14 +466,51 @@ mod tests {
             section_number: 1,
             last_section_number: 2,
             context_id_type: 0x02,
-            common_descriptors: DescriptorLoop::new(&common_desc),
-            resolution_providers: &rp_bytes,
+            common_descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            resolution_providers: vec![rp],
         };
-
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
-        let parsed = RntSection::parse(&buf).unwrap();
-        assert_eq!(rnt, parsed);
+        let mut buf2 = vec![0u8; rnt.serialized_len()];
+        rnt.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
+        let re = RntSection::parse(&buf).unwrap();
+        assert_eq!(re.resolution_providers.len(), 1);
+        assert_eq!(re.resolution_providers[0].name, b"provider");
+        assert_eq!(re.resolution_providers[0].crid_authorities.len(), 2);
+        assert_eq!(
+            re.resolution_providers[0].crid_authorities[1].crid_authority_policy,
+            2
+        );
+    }
+
+    #[test]
+    fn parse_rejects_wrong_table_id() {
+        let rnt = RntSection {
+            context_id: 0x0001,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            context_id_type: 0x00,
+            common_descriptors: DescriptorLoop::new(&[]),
+            resolution_providers: Vec::new(),
+        };
+        let mut buf = vec![0u8; rnt.serialized_len()];
+        rnt.serialize_into(&mut buf).unwrap();
+        buf[0] = 0x70;
+        assert!(matches!(
+            RntSection::parse(&buf).unwrap_err(),
+            Error::UnexpectedTableId { table_id: 0x70, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_short_buffer() {
+        assert!(matches!(
+            RntSection::parse(&[0x79, 0x00]).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
     }
 
     #[test]
@@ -321,10 +523,12 @@ mod tests {
             last_section_number: 0,
             context_id_type: 0x00,
             common_descriptors: DescriptorLoop::new(&[]),
-            resolution_providers: &[],
+            resolution_providers: Vec::new(),
         };
         let mut buf = vec![0u8; 2];
-        let err = rnt.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+        assert!(matches!(
+            rnt.serialize_into(&mut buf).unwrap_err(),
+            Error::OutputBufferTooSmall { .. }
+        ));
     }
 }

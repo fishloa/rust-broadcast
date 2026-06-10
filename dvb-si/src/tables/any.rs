@@ -257,7 +257,7 @@ declare_tables! {'a;
     BatSection       = [0x4A..=0x4A] => crate::tables::bat::BatSection<'a>,
     UntSection       = [0x4B..=0x4B] => crate::tables::unt::UntSection<'a>,
     IntSection       = [0x4C..=0x4C] => crate::tables::int::IntSection<'a>,
-    SatSection       = [0x4D..=0x4D] => crate::tables::sat::SatSection<'a>,
+    SatSection       = [0x4D..=0x4D] => crate::tables::sat::SatSection,
     EitSection       = [0x4E..=0x6F] => crate::tables::eit::EitSection<'a>,
     TdtSection       = [0x70..=0x70] => crate::tables::tdt::TdtSection,
     RstSection       = [0x71..=0x71] => crate::tables::rst::RstSection,
