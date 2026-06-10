@@ -127,3 +127,51 @@ impl Serialize for T2DeliverySystem<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_t2_minimal() {
+        // body = plp + system_id = 3 bytes ⇒ no flags block
+        let sel = [0x07, 0x12, 0x34];
+        let bytes = wrap(0x04, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::T2DeliverySystem(b) => {
+                assert_eq!(b.plp_id, 0x07);
+                assert_eq!(b.t2_system_id, 0x1234);
+                assert_eq!(b.siso_miso, None);
+                assert!(b.cell_loop.is_empty());
+            }
+            other => panic!("expected T2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_t2_with_flags_and_cells() {
+        // prefix + flags block (siso=1, bw=2, gi=3, tm=4, off=1, tfs=0) + cell loop
+        let b0 = (0x01 << 6) | (0x02 << 2);
+        let b1 = (0x03 << 5) | (0x04 << 2) | 0x02; // off=1, tfs=0
+        let sel = [0x07, 0x12, 0x34, b0, b1, 0xCA, 0xFE];
+        let bytes = wrap(0x04, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::T2DeliverySystem(b) => {
+                assert_eq!(b.siso_miso, Some(0x01));
+                assert_eq!(b.bandwidth, Some(0x02));
+                assert_eq!(b.guard_interval, Some(0x03));
+                assert_eq!(b.transmission_mode, Some(0x04));
+                assert_eq!(b.other_frequency_flag, Some(true));
+                assert_eq!(b.tfs_flag, Some(false));
+                assert_eq!(b.cell_loop, &[0xCA, 0xFE]);
+            }
+            other => panic!("expected T2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

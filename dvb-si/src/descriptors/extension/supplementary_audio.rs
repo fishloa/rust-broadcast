@@ -83,3 +83,49 @@ impl Serialize for SupplementaryAudio<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use crate::text::LangCode;
+
+    #[test]
+    fn parse_supplementary_audio_with_language() {
+        // mix_type=1, editorial=0x17, reserved=1, language_code_present=1,
+        // then "fre", private 0xAA
+        let flags = 0x80 | (0x17 << 2) | 0x02 | 0x01;
+        let sel = [flags, b'f', b'r', b'e', 0xAA];
+        let bytes = wrap(0x06, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::SupplementaryAudio(b) => {
+                assert!(b.mix_type);
+                assert_eq!(b.editorial_classification, 0x17);
+                assert!(b.language_code_present);
+                assert_eq!(b.iso_639_language_code, Some(LangCode(*b"fre")));
+                assert_eq!(b.private_data, &[0xAA]);
+            }
+            other => panic!("expected SupplementaryAudio, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_supplementary_audio_no_language() {
+        let flags = ((0x01 << 2) & 0x7C) | 0x02; // mix=0, editorial=1, reserved=1, lang=0
+        let sel = [flags];
+        let bytes = wrap(0x06, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::SupplementaryAudio(b) => {
+                assert!(!b.language_code_present);
+                assert_eq!(b.iso_639_language_code, None);
+                assert!(b.private_data.is_empty());
+            }
+            other => panic!("expected SupplementaryAudio, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

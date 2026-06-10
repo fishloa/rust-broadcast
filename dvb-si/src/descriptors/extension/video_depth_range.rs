@@ -160,3 +160,148 @@ impl Serialize for VideoDepthRangeDescriptor<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_video_depth_range_two_entries_round_trip() {
+        // Two depth ranges in one selector:
+        //   entry 1: range_type 0x00, range_length 3, disparity max=100 min=-50
+        //   entry 2: range_type 0x05, range_length 2, raw [0xAA, 0xBB]
+        // max=100 -> 0x0074 bits -> sext12=100; min=-50 -> 0x0032 bits,
+        // two's complement of 50 is 0x0FCE, sext12 -> -50.
+        let max_val: i16 = 100;
+        let min_val: i16 = -50;
+        let max_b = max_val as u16 & 0x0FFF; // 0x0064
+        let min_b = min_val as u16 & 0x0FFF; // 0x0FCE
+        let sel = [
+            0x00,
+            0x03,
+            (max_b >> 4) as u8,
+            (((max_b & 0x0F) << 4) | ((min_b >> 8) & 0x0F)) as u8,
+            min_b as u8,
+            0x05,
+            0x02,
+            0xAA,
+            0xBB,
+        ];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::VideoDepthRange));
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 2);
+                assert_eq!(b.ranges[0].range_type, 0x00);
+                match &b.ranges[0].body {
+                    DepthRangeBody::ProductionDisparityHint { max, min } => {
+                        assert_eq!(*max, 100);
+                        assert_eq!(*min, -50);
+                    }
+                    _ => panic!("expected ProductionDisparityHint"),
+                }
+                assert_eq!(b.ranges[1].range_type, 0x05);
+                match &b.ranges[1].body {
+                    DepthRangeBody::Other(s) => assert_eq!(s, &[0xAA, 0xBB]),
+                    _ => panic!("expected Other"),
+                }
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        // parse → serialize → parse round-trip (byte-identical)
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_negative_edge_round_trip() {
+        // ProductionDisparityHint with max=-1 (0x0FFF), min=0
+        let max_val: i16 = -1;
+        let min_val: i16 = 0;
+        let max_b = max_val as u16 & 0x0FFF;
+        let min_b = min_val as u16 & 0x0FFF;
+        let sel = [
+            0x00,
+            0x03,
+            (max_b >> 4) as u8,
+            (((max_b & 0x0F) << 4) | ((min_b >> 8) & 0x0F)) as u8,
+            min_b as u8,
+        ];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 1);
+                match &b.ranges[0].body {
+                    DepthRangeBody::ProductionDisparityHint { max, min } => {
+                        assert_eq!(*max, -1);
+                        assert_eq!(*min, 0);
+                    }
+                    _ => panic!("expected ProductionDisparityHint"),
+                }
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_multi_region_sei_round_trip() {
+        // range_type 0x01 with empty body
+        let sel = [0x01, 0x00, 0x01, 0x00];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 2);
+                assert!(matches!(b.ranges[0].body, DepthRangeBody::MultiRegionSei));
+                assert!(matches!(b.ranges[1].body, DepthRangeBody::MultiRegionSei));
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_empty_selector() {
+        let bytes = wrap(0x10, &[]);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert!(b.ranges.is_empty());
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_rejects_truncated() {
+        // Only range_type byte, no range_length
+        let sel = [0x00];
+        let bytes = wrap(0x10, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_video_depth_range_rejects_overrun() {
+        // range_length=5 but only 2 bytes follow
+        let sel = [0x00, 0x05, 0xAA, 0xBB];
+        let bytes = wrap(0x10, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+}

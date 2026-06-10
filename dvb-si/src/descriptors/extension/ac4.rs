@@ -110,3 +110,47 @@ impl Serialize for Ac4<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_ac4_full() {
+        // config_flag=1, toc_flag=1; config byte de=1 cm=2; toc len 2 = [0x11,0x22]; extra 0x33
+        let sel = [0xC0, 0x80 | (0x02 << 5), 0x02, 0x11, 0x22, 0x33];
+        let bytes = wrap(0x15, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::Ac4(b) => {
+                assert!(b.ac4_config_flag);
+                assert!(b.ac4_toc_flag);
+                assert_eq!(b.ac4_dialog_enhancement_enabled, Some(true));
+                assert_eq!(b.ac4_channel_mode, Some(0x02));
+                assert_eq!(b.toc, Some([0x11u8, 0x22].as_slice()));
+                assert_eq!(b.additional_info, &[0x33]);
+            }
+            other => panic!("expected Ac4, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_ac4_minimal() {
+        let sel = [0x00]; // no config, no toc, no extra
+        let bytes = wrap(0x15, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::Ac4(b) => {
+                assert!(!b.ac4_config_flag);
+                assert!(!b.ac4_toc_flag);
+                assert_eq!(b.toc, None);
+                assert!(b.additional_info.is_empty());
+            }
+            other => panic!("expected Ac4, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

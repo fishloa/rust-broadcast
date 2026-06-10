@@ -91,3 +91,62 @@ impl Serialize for UriLinkage<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_uri_linkage_with_polling() {
+        let uri = b"http://x";
+        let mut sel = vec![0x00, uri.len() as u8];
+        sel.extend_from_slice(uri);
+        sel.extend_from_slice(&0x1234u16.to_be_bytes());
+        sel.push(0xFE); // private
+        let bytes = wrap(0x13, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::UriLinkage(b) => {
+                assert_eq!(b.uri_linkage_type, 0x00);
+                assert_eq!(b.uri, uri);
+                assert_eq!(b.min_polling_interval, Some(0x1234));
+                assert_eq!(b.private_data, &[0xFE]);
+            }
+            other => panic!("expected UriLinkage, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_uri_linkage_no_polling() {
+        // type 0x02 ⇒ no min_polling_interval
+        let uri = b"dvb:";
+        let mut sel = vec![0x02, uri.len() as u8];
+        sel.extend_from_slice(uri);
+        let bytes = wrap(0x13, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::UriLinkage(b) => {
+                assert_eq!(b.min_polling_interval, None);
+                assert!(b.private_data.is_empty());
+            }
+            other => panic!("expected UriLinkage, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_uri_linkage_rejects_overrun() {
+        let sel = [0x02, 0x10, 0xAA]; // uri_length 16 but 1 byte present
+        let bytes = wrap(0x13, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+}

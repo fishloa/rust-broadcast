@@ -66,3 +66,30 @@ impl Serialize for C2DeliverySystem {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_c2_delivery_system() {
+        let packed = (0x02 << 6) | (0x01 << 3) | 0x01;
+        let sel = [0x05, 0x09, 0x12, 0x34, 0x56, 0x78, packed];
+        let bytes = wrap(0x0D, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2DeliverySystem(b) => {
+                assert_eq!(b.plp_id, 0x05);
+                assert_eq!(b.data_slice_id, 0x09);
+                assert_eq!(b.c2_system_tuning_frequency, 0x1234_5678);
+                assert_eq!(b.c2_system_tuning_frequency_type, 0x02);
+                assert_eq!(b.active_ofdm_symbol_duration, 0x01);
+                assert_eq!(b.guard_interval, 0x01);
+            }
+            other => panic!("expected C2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

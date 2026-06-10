@@ -76,3 +76,34 @@ impl Serialize for TtmlSubtitling<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use crate::text::LangCode;
+
+    #[test]
+    fn parse_ttml_subtitling() {
+        // ISO "eng", subtitle_purpose=0x10, tts=0x1, font=0, qualifier=0, count=1, then tail
+        let b3 = (0x10 << 2) | 0x01;
+        let b4 = 0x01; // font=0 qual=0 reserved=0 count=1
+        let sel = [b'e', b'n', b'g', b3, b4, 0x00, 0x02, b'h', b'i'];
+        let bytes = wrap(0x20, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::TtmlSubtitling(b) => {
+                assert_eq!(b.iso_639_language_code, LangCode(*b"eng"));
+                assert_eq!(b.subtitle_purpose, 0x10);
+                assert_eq!(b.tts_suitability, 0x01);
+                assert!(!b.essential_font_usage_flag);
+                assert!(!b.qualifier_present_flag);
+                assert_eq!(b.dvb_ttml_profile_count, 1);
+                assert_eq!(b.tail, &[0x00, 0x02, b'h', b'i']);
+            }
+            other => panic!("expected TtmlSubtitling, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

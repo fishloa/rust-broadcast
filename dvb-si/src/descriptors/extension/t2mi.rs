@@ -66,3 +66,67 @@ impl Serialize for T2miDescriptor<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_t2mi_round_trip() {
+        // t2mi_stream_id=5, num_t2mi_streams_minus_one=2,
+        // pcr_iscr_common_clock_flag=true, 2-byte reserved tail.
+        let sel = [0x05, 0x02, 0x01, 0x00, 0x00];
+        let bytes = wrap(0x11, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::T2mi));
+        match &d.body {
+            ExtensionBody::T2mi(b) => {
+                assert_eq!(b.t2mi_stream_id, 5);
+                assert_eq!(b.num_t2mi_streams_minus_one, 2);
+                assert!(b.pcr_iscr_common_clock_flag);
+                assert_eq!(b.reserved_tail, &[0x00, 0x00]);
+            }
+            other => panic!("expected T2mi, got {other:?}"),
+        }
+        // parse → serialize → parse round-trip (byte-identical)
+        round_trip(&d);
+        // Also verify that serialize → parse round-trips the flag false variant
+        let sel2 = [0x07, 0x00, 0x00, 0xFF];
+        let bytes2 = wrap(0x11, &sel2);
+        let d2 = ExtensionDescriptor::parse(&bytes2).unwrap();
+        round_trip(&d2);
+    }
+
+    #[test]
+    fn parse_t2mi_minimal() {
+        // Only the 3 mandatory bytes, no reserved tail.
+        let sel = [0x01, 0x03, 0x01];
+        let bytes = wrap(0x11, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::T2mi(b) => {
+                assert_eq!(b.t2mi_stream_id, 1);
+                assert_eq!(b.num_t2mi_streams_minus_one, 3);
+                assert!(b.pcr_iscr_common_clock_flag);
+                assert!(b.reserved_tail.is_empty());
+            }
+            other => panic!("expected T2mi, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_t2mi_rejects_truncated() {
+        let sel = [0xAA, 0xBB]; // only 2 bytes, need >= 3
+        let bytes = wrap(0x11, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+}
