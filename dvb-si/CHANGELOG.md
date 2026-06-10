@@ -7,6 +7,11 @@
   `T2miDescriptor` (`t2mi_stream_id`, `num_t2mi_streams_minus_one`,
   `pcr_iscr_common_clock_flag`, reserved tail) per EN 300 468 §6.4.14 Table 158;
   previously fell through to `ExtensionBody::Raw` (#53).
+- **video_depth_range extension descriptor (`descriptor_tag_extension` 0x10)**
+  now typed as `VideoDepthRangeDescriptor` — a loop of `DepthRange` entries with
+  typed `ProductionDisparityHint { max, min }` (12-bit two's-complement),
+  `MultiRegionSei`, or raw `Other` bodies, per EN 300 468 §6.4.16.1 Tables
+  160–162 (#53).
 
 ## 4.3.0 — 2026-06-10
 

@@ -39,6 +39,7 @@
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
 //! - `0x0D` C2_delivery_system (Table 115, §6.4.6.1).
 //! - `0x11` T2MI (Table 158, §6.4.14).
+//! - `0x10` video_depth_range (Table 160, §6.4.16.1) — fully typed range loop.
 //! - `0x13` URI_linkage (Table 159, §6.4.16.1) — uri/private split typed.
 //! - `0x15` AC-4 (annex D syntax table, §D.5) — first level; toc/extra raw.
 //! - `0x16` C2_bundle_delivery_system (Table 139, §6.4.6.4) — full fixed loop.
@@ -54,7 +55,6 @@
 //! - `0x05` SH_delivery_system — niche (satellite-to-handheld); deferred.
 //! - `0x0C` XAIT_PID — deferred (TS 102 727 PDF vendored, no extracted syntax table yet).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
-//! - `0x10` video_depth_range — niche (3D disparity); deferred.
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
 //! - `0x18` protection_message — spec not vendored (ETSI TS 102 809).
 //! - `0x22` service_prominence / `0x23` vvc_subpictures / `0x24` S2Xv2 — niche; deferred.
@@ -89,6 +89,10 @@ const S2X_SCRAMBLING_LEN: usize = 3;
 const TTML_FIXED_LEN: usize = ISO_639_LEN + 2; // ISO_639(3) + 2 packed bytes
 /// Minimum T2MI selector length (Table 158 §6.4.14): 3 fixed bytes before the reserved tail.
 const T2MI_MIN_LEN: usize = 3;
+/// Range header bytes per depth-range entry (Table 160): `range_type` + `range_length`.
+const VD_RANGE_HDR_LEN: usize = 2;
+/// Production disparity hint body length (Table 162): 3 bytes — two 12-bit signed values.
+const VD_DISPARITY_LEN: usize = 3;
 
 /// Known `descriptor_tag_extension` values (EN 300 468 Table 109, §6.4.0).
 ///
@@ -120,6 +124,8 @@ pub enum ExtensionTag {
     C2DeliverySystem = 0x0D,
     /// T2-MI_descriptor (Table 158, §6.4.14).
     T2mi = 0x11,
+    /// video_depth_range_descriptor (Table 160, §6.4.16.1).
+    VideoDepthRange = 0x10,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
     /// AC-4_descriptor (annex D).
@@ -159,6 +165,8 @@ pub enum ExtensionBody<'a> {
     C2DeliverySystem(C2DeliverySystem),
     /// `0x11` — T2-MI (Table 158, §6.4.14).
     T2mi(T2miDescriptor<'a>),
+    /// `0x10` — video_depth_range (Table 160, §6.4.16.1).
+    VideoDepthRange(VideoDepthRangeDescriptor<'a>),
     /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
     UriLinkage(UriLinkage<'a>),
     /// `0x15` — AC-4 (annex D).
@@ -345,6 +353,54 @@ pub struct T2miDescriptor<'a> {
     pub pcr_iscr_common_clock_flag: bool,
     /// Trailing reserved_zero_future_use byte loop (Table 158 inner `for`).
     pub reserved_tail: &'a [u8],
+}
+
+// ===========================================================================
+//  Section 0x10 — video_depth_range_descriptor (Table 160, §6.4.16.1)
+// ---------------------------------------------------------------------------
+//  A variable-length loop: each entry has range_type(8) + range_length(8)
+//  followed by range_length selector bytes interpreted per Table 161.
+//  Fully typed — the loop is materialised as a Vec<DepthRange>.
+// ===========================================================================
+
+/// One depth range entry (Table 160 inner loop).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub struct DepthRange<'a> {
+    /// range_type(8) — Table 161.
+    pub range_type: u8,
+    /// Body interpreted by `range_type`.
+    pub body: DepthRangeBody<'a>,
+}
+
+/// Body of a [`DepthRange`], keyed on `range_type` (Table 161).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub enum DepthRangeBody<'a> {
+    /// `0x00` — production_disparity_hint_info() (Table 162).
+    /// Two 12-bit two's-complement signed values packed into 3 bytes.
+    ProductionDisparityHint {
+        /// video_max_disparity_hint (12 tcimsbf).
+        max: i16,
+        /// video_min_disparity_hint (12 tcimsbf).
+        min: i16,
+    },
+    /// `0x01` — multi-region SEI present (empty body).
+    MultiRegionSei,
+    /// Any other `range_type`: raw `range_selector` bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    Other(&'a [u8]),
+}
+
+/// video_depth_range body (Table 160) — fully typed loop.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub struct VideoDepthRangeDescriptor<'a> {
+    /// Depth range entries in wire order.
+    pub ranges: Vec<DepthRange<'a>>,
 }
 
 // ===========================================================================
@@ -544,6 +600,7 @@ impl ExtensionDescriptor<'_> {
             0x0A => ExtensionTag::TargetRegionName,
             0x0B => ExtensionTag::ServiceRelocated,
             0x0D => ExtensionTag::C2DeliverySystem,
+            0x10 => ExtensionTag::VideoDepthRange,
             0x11 => ExtensionTag::T2mi,
             0x13 => ExtensionTag::UriLinkage,
             0x15 => ExtensionTag::Ac4,
@@ -913,6 +970,62 @@ fn parse_ttml(sel: &[u8]) -> Result<TtmlSubtitling<'_>> {
     })
 }
 
+/// Sign-extend a 12-bit two's-complement value to `i16` (bit 11 is the sign).
+fn sext12(v: u16) -> i16 {
+    if v & 0x800 != 0 {
+        (v | 0xF000) as i16
+    } else {
+        v as i16
+    }
+}
+
+fn parse_video_depth_range(sel: &[u8]) -> Result<VideoDepthRangeDescriptor<'_>> {
+    let mut pos = 0;
+    let mut ranges = Vec::new();
+    loop {
+        if pos == sel.len() {
+            break;
+        }
+        // Need at least range_type + range_length (Table 160).
+        if sel.len() - pos < VD_RANGE_HDR_LEN {
+            return Err(invalid("video_depth_range: truncated"));
+        }
+        let range_type = sel[pos];
+        let range_length = sel[pos + 1] as usize;
+        pos += VD_RANGE_HDR_LEN;
+        if sel.len() < pos + range_length {
+            return Err(invalid("video_depth_range: range body overruns selector"));
+        }
+        let body = match range_type {
+            // Table 161: production_disparity_hint_info() — Table 162.
+            0x00 => {
+                if range_length < VD_DISPARITY_LEN {
+                    return Err(invalid(
+                        "video_depth_range: production_disparity_hint requires 3+ bytes",
+                    ));
+                }
+                // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
+                let b0 = sel[pos];
+                let b1 = sel[pos + 1];
+                let b2 = sel[pos + 2];
+                let max = sext12((u16::from(b0) << 4) | (u16::from(b1) >> 4));
+                let min = sext12(((u16::from(b1) & 0x0F) << 8) | u16::from(b2));
+                // Any extra bytes beyond 3 are ignored per Table 162 — slice only
+                // what the spec defines and treat the tail as unconsumed (range_length
+                // already >3 would be non-spec but we only consume the defined 3).
+                DepthRangeBody::ProductionDisparityHint { max, min }
+            }
+            // Table 161: multi-region SEI present (no body).
+            0x01 => DepthRangeBody::MultiRegionSei,
+            // Any other range_type: raw range_selector bytes.
+            _ => DepthRangeBody::Other(&sel[pos..pos + range_length]),
+        };
+        ranges.push(DepthRange { range_type, body });
+        pos += range_length;
+    }
+    Ok(VideoDepthRangeDescriptor { ranges })
+}
+
 fn parse_body(tag_extension: u8, sel: &[u8]) -> Result<ExtensionBody<'_>> {
     Ok(match tag_extension {
         0x04 => ExtensionBody::T2DeliverySystem(parse_t2(sel)?),
@@ -923,6 +1036,7 @@ fn parse_body(tag_extension: u8, sel: &[u8]) -> Result<ExtensionBody<'_>> {
         0x0A => ExtensionBody::TargetRegionName(parse_target_region_name(sel)?),
         0x0B => ExtensionBody::ServiceRelocated(parse_service_relocated(sel)?),
         0x0D => ExtensionBody::C2DeliverySystem(parse_c2(sel)?),
+        0x10 => ExtensionBody::VideoDepthRange(parse_video_depth_range(sel)?),
         0x11 => ExtensionBody::T2mi(parse_t2mi(sel)?),
         0x13 => ExtensionBody::UriLinkage(parse_uri_linkage(sel)?),
         0x15 => ExtensionBody::Ac4(parse_ac4(sel)?),
@@ -1002,6 +1116,18 @@ impl ExtensionBody<'_> {
             ExtensionBody::ServiceRelocated(_) => SERVICE_RELOCATED_LEN,
             ExtensionBody::C2DeliverySystem(_) => C2_LEN,
             ExtensionBody::T2mi(b) => T2MI_MIN_LEN + b.reserved_tail.len(),
+            ExtensionBody::VideoDepthRange(b) => b
+                .ranges
+                .iter()
+                .map(|r| {
+                    VD_RANGE_HDR_LEN
+                        + match &r.body {
+                            DepthRangeBody::ProductionDisparityHint { .. } => VD_DISPARITY_LEN,
+                            DepthRangeBody::MultiRegionSei => 0,
+                            DepthRangeBody::Other(s) => s.len(),
+                        }
+                })
+                .sum(),
             ExtensionBody::UriLinkage(b) => {
                 2 + b.uri.len()
                     + if b.min_polling_interval.is_some() {
@@ -1109,6 +1235,34 @@ impl ExtensionBody<'_> {
                 out[2] = u8::from(b.pcr_iscr_common_clock_flag);
                 out[T2MI_MIN_LEN..T2MI_MIN_LEN + b.reserved_tail.len()]
                     .copy_from_slice(b.reserved_tail);
+            }
+            ExtensionBody::VideoDepthRange(b) => {
+                let mut p = 0;
+                for r in &b.ranges {
+                    out[p] = r.range_type;
+                    match &r.body {
+                        DepthRangeBody::ProductionDisparityHint { max, min } => {
+                            // Table 162: two 12-bit tcimsbf values packed into 3 bytes.
+                            out[p + 1] = VD_DISPARITY_LEN as u8;
+                            let max_bits = *max as u16 & 0x0FFF;
+                            let min_bits = *min as u16 & 0x0FFF;
+                            out[p + 2] = (max_bits >> 4) as u8;
+                            out[p + 3] =
+                                (((max_bits & 0x0F) << 4) | ((min_bits >> 8) & 0x0F)) as u8;
+                            out[p + 4] = min_bits as u8;
+                            p += VD_RANGE_HDR_LEN + VD_DISPARITY_LEN;
+                        }
+                        DepthRangeBody::MultiRegionSei => {
+                            out[p + 1] = 0;
+                            p += VD_RANGE_HDR_LEN;
+                        }
+                        DepthRangeBody::Other(s) => {
+                            out[p + 1] = s.len() as u8;
+                            out[p + 2..p + 2 + s.len()].copy_from_slice(s);
+                            p += VD_RANGE_HDR_LEN + s.len();
+                        }
+                    }
+                }
             }
             ExtensionBody::UriLinkage(b) => {
                 out[0] = b.uri_linkage_type;
@@ -1824,6 +1978,138 @@ mod tests {
         };
         // tag_ext(1) + message_id(1) + iso(3) + text(5) = 10
         assert_eq!(d.descriptor_length(), 10);
+    }
+
+    #[test]
+    fn parse_video_depth_range_two_entries_round_trip() {
+        // Two depth ranges in one selector:
+        //   entry 1: range_type 0x00, range_length 3, disparity max=100 min=-50
+        //   entry 2: range_type 0x05, range_length 2, raw [0xAA, 0xBB]
+        // max=100 -> 0x0074 bits -> sext12=100; min=-50 -> 0x0032 bits,
+        // two's complement of 50 is 0x0FCE, sext12 -> -50.
+        let max_val: i16 = 100;
+        let min_val: i16 = -50;
+        let max_b = max_val as u16 & 0x0FFF; // 0x0064
+        let min_b = min_val as u16 & 0x0FFF; // 0x0FCE
+        let sel = [
+            0x00,
+            0x03,
+            (max_b >> 4) as u8,
+            (((max_b & 0x0F) << 4) | ((min_b >> 8) & 0x0F)) as u8,
+            min_b as u8,
+            0x05,
+            0x02,
+            0xAA,
+            0xBB,
+        ];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::VideoDepthRange));
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 2);
+                assert_eq!(b.ranges[0].range_type, 0x00);
+                match &b.ranges[0].body {
+                    DepthRangeBody::ProductionDisparityHint { max, min } => {
+                        assert_eq!(*max, 100);
+                        assert_eq!(*min, -50);
+                    }
+                    _ => panic!("expected ProductionDisparityHint"),
+                }
+                assert_eq!(b.ranges[1].range_type, 0x05);
+                match &b.ranges[1].body {
+                    DepthRangeBody::Other(s) => assert_eq!(s, &[0xAA, 0xBB]),
+                    _ => panic!("expected Other"),
+                }
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        // parse → serialize → parse round-trip (byte-identical)
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_negative_edge_round_trip() {
+        // ProductionDisparityHint with max=-1 (0x0FFF), min=0
+        let max_val: i16 = -1;
+        let min_val: i16 = 0;
+        let max_b = max_val as u16 & 0x0FFF;
+        let min_b = min_val as u16 & 0x0FFF;
+        let sel = [
+            0x00,
+            0x03,
+            (max_b >> 4) as u8,
+            (((max_b & 0x0F) << 4) | ((min_b >> 8) & 0x0F)) as u8,
+            min_b as u8,
+        ];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 1);
+                match &b.ranges[0].body {
+                    DepthRangeBody::ProductionDisparityHint { max, min } => {
+                        assert_eq!(*max, -1);
+                        assert_eq!(*min, 0);
+                    }
+                    _ => panic!("expected ProductionDisparityHint"),
+                }
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_multi_region_sei_round_trip() {
+        // range_type 0x01 with empty body
+        let sel = [0x01, 0x00, 0x01, 0x00];
+        let bytes = wrap(0x10, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert_eq!(b.ranges.len(), 2);
+                assert!(matches!(b.ranges[0].body, DepthRangeBody::MultiRegionSei));
+                assert!(matches!(b.ranges[1].body, DepthRangeBody::MultiRegionSei));
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_empty_selector() {
+        let bytes = wrap(0x10, &[]);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VideoDepthRange(b) => {
+                assert!(b.ranges.is_empty());
+            }
+            other => panic!("expected VideoDepthRange, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_video_depth_range_rejects_truncated() {
+        // Only range_type byte, no range_length
+        let sel = [0x00];
+        let bytes = wrap(0x10, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_video_depth_range_rejects_overrun() {
+        // range_length=5 but only 2 bytes follow
+        let sel = [0x00, 0x05, 0xAA, 0xBB];
+        let bytes = wrap(0x10, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
     }
 
     /// Serialization is deterministic for an all-owned typed body (no borrowed
