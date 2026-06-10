@@ -5,6 +5,7 @@ use super::{CompleteSectionSet, ParsedDescriptorLoop};
 
 /// Transport-stream entry in a complete BAT.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteBatTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -16,6 +17,7 @@ pub struct CompleteBatTransportStream<'a> {
 
 /// Complete logical Bouquet Association Table.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteBat<'a> {
     /// Bouquet identifier.
     pub bouquet_id: u16,

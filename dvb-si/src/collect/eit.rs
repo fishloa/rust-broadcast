@@ -486,6 +486,7 @@ impl CompleteEitSchedule {
 
 /// Event entry in a complete EIT.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteEitEvent<'a> {
     /// 16-bit event_id.
     pub event_id: u16,
@@ -527,6 +528,7 @@ impl CompleteEitEvent<'_> {
 /// as multiple complete section sets: one per schedule table_id. That preserves
 /// the DVB schedule sub-table structure while still exposing flattened events.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteEit<'a> {
     /// Variant based on table_id.
     pub kind: eit::EitKind,

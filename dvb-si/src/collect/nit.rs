@@ -5,6 +5,7 @@ use super::{CompleteSectionSet, ParsedDescriptorLoop};
 
 /// Transport-stream entry in a complete NIT.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteNitTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -16,6 +17,7 @@ pub struct CompleteNitTransportStream<'a> {
 
 /// Complete logical Network Information Table.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteNit<'a> {
     /// Variant discriminator.
     pub kind: nit::NitKind,
