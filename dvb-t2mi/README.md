@@ -27,6 +27,7 @@ Each T2-MI packet is 6-byte header + variable payload + 4-byte CRC-32, encapsula
 | Payload parsing | Every payload type with Parse/Serialize symmetry | ✅ |
 | CRC-32 validation | MPEG-2 Annex A polynomial (0x04C1_1DB7) | ✅ |
 | TS reassembler | MPEG-2 TS decapsulation per §6.1.1 (PUSI + pointer_field) | ✅ |
+| Decoded timestamps | `T2TimestampPayload::emission_offset` + per-bandwidth `T_sub` units (§5.2.7 Table 4); `is_null`/`is_relative` | ✅ |
 | Zero-copy fan-out | All parsed payloads return `&[u8]` slices | ✅ |
 
 ### Cargo features
