@@ -29,6 +29,7 @@ Each T2-MI packet is 6-byte header + variable payload + 4-byte CRC-32, encapsula
 | TS reassembler | MPEG-2 TS decapsulation per §6.1.1 (PUSI + pointer_field) | ✅ |
 | Decoded timestamps | `T2TimestampPayload::emission_offset` + per-bandwidth `T_sub` units (§5.2.7 Table 4); `is_null`/`is_relative` | ✅ |
 | Zero-copy fan-out | All parsed payloads return `&[u8]` slices | ✅ |
+| Private packet types | `PayloadRegistry` + `payload_with` / `dispatch_with` for runtime-registered custom types | ✅ |
 
 ### Cargo features
 
@@ -91,6 +92,15 @@ for packet in ts_packets {                       // each aligned 188-byte packet
 For un-encapsulated `.t2mi` byte streams use `T2miPump::raw()` + `feed_raw`. The
 [`t2mi_dump`](examples/t2mi_dump.rs) example is a complete CLI
 (`cargo run -p dvb-t2mi --example t2mi_dump -- file.ts [--pid 0xNNN|raw]`).
+
+### Private / custom packet types
+
+`PayloadRegistry` lets you register owned types for packet_type values not in
+`PacketType` (or override built-in ones).  Call `event.payload_with(&reg)`
+instead of `event.payload()`; the registry's parser wins, producing
+`AnyPayload::Other { packet_type, value }` where `value` can be downcast to
+your concrete type.  Unregistered types still fall through to
+`AnyPayload::Unknown`.
 
 The pump composes with the rest of the workspace into the full signal chain —
 `T2miPump → AnyPayload::Bbframe → dvb_bbframe::Bbheader + up_iter → inner TS →

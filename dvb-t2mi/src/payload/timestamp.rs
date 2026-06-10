@@ -368,13 +368,7 @@ mod tests {
     #[test]
     fn null_timestamp_all_ones() {
         let mut buf = [0xFFu8; 11];
-        buf[0] = 0x0F; // bw = max valid (5), rest RFU = 1 (should fail)
-                       // Actually for null timestamp, RFU bits should still be 0
-        buf[0] = 0x0F; // rfu=0(4 bits) + bw=1111=0xF (but F=15 is invalid per TryFrom)
-                       // Let me set bw=0, rest=1
-        buf[0] = 0x00; // rfu=0, bw=0 — but then seconds_since_2000 bits...
-                       // For null timestamp: all bits of seconds, subseconds, utco = 1, but bw + rfu normal
-        buf[0] = 0x02; // bw=6MHz
+        buf[0] = 0x02; // bw = 6 MHz; top 4 rfu bits = 0
         buf[1..11].fill(0xFF);
         let result = T2TimestampPayload::parse(&buf);
         assert!(result.is_ok());

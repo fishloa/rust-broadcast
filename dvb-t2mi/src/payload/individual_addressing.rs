@@ -77,22 +77,7 @@ impl From<AddressingFunctionTag> for u8 {
 
 impl fmt::Display for AddressingFunctionTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AddressingFunctionTag::TimeOffset => write!(f, "TimeOffset"),
-            AddressingFunctionTag::FrequencyOffset => write!(f, "FrequencyOffset"),
-            AddressingFunctionTag::Power => write!(f, "Power"),
-            AddressingFunctionTag::PrivateData => write!(f, "PrivateData"),
-            AddressingFunctionTag::CellId => write!(f, "CellId"),
-            AddressingFunctionTag::Enable => write!(f, "Enable"),
-            AddressingFunctionTag::Bandwidth => write!(f, "Bandwidth"),
-            AddressingFunctionTag::AcePapr => write!(f, "AcePapr"),
-            AddressingFunctionTag::MisoGroup => write!(f, "MisoGroup"),
-            AddressingFunctionTag::TrPapr => write!(f, "TrPapr"),
-            AddressingFunctionTag::L1AcePapr => write!(f, "L1AcePapr"),
-            AddressingFunctionTag::TxSigFefSeqNum => write!(f, "TxSigFefSeqNum"),
-            AddressingFunctionTag::TxSigAuxStreamTxId => write!(f, "TxSigAuxStreamTxId"),
-            AddressingFunctionTag::Frequency => write!(f, "Frequency"),
-        }
+        write!(f, "{self:?}")
     }
 }
 
@@ -207,7 +192,6 @@ pub struct TxSigAuxStreamTxIdBody {
 ///
 /// Layout (40 bits = 5 bytes):
 /// - byte 0 `[7:5]`: rf_idx (3 bits)
-/// - byte 0 `[4:0]` + bytes 1-3 `[7:5]` overlap → see bit layout below
 /// - byte 0 `[4:0]`: frequency `[31:27]`
 /// - bytes 1-3: frequency `[26:3]`
 /// - byte 4 `[7:5]`: frequency `[2:0]`
@@ -451,33 +435,43 @@ fn parse_frequency(body: &[u8]) -> Result<FrequencyBody, crate::Error> {
 
 /// Try to parse a typed body for `tag` from `body_bytes`.
 /// Returns `None` if the tag is known but `body_bytes.len()` doesn't match
-/// the expected size (fall back to Raw).  Returns `Some(Err)` if the length
-/// matches but the body can't be parsed (shouldn't happen for valid data).
-/// Returns `None` for unknown tags.
+/// the expected size (fall back to Raw).  Returns `None` for unknown tags.
+/// (A length-matched body parse cannot fail for valid data; the per-helper
+/// `BufferTooShort` checks are defensive and unreachable at this call site.)
 fn try_parse_typed_body(
     tag: u8,
     body_bytes: &[u8],
 ) -> Option<Result<FunctionBody<'_>, crate::Error>> {
     match tag {
-        0x10 if body_bytes.len() == ACE_PAPR_BODY_LEN => {
+        t if t == AddressingFunctionTag::AcePapr as u8 && body_bytes.len() == ACE_PAPR_BODY_LEN => {
             Some(parse_ace_papr(body_bytes).map(FunctionBody::AcePapr))
         }
-        0x11 if body_bytes.len() == MISO_GROUP_BODY_LEN => {
+        t if t == AddressingFunctionTag::MisoGroup as u8
+            && body_bytes.len() == MISO_GROUP_BODY_LEN =>
+        {
             Some(parse_miso_group(body_bytes).map(FunctionBody::MisoGroup))
         }
-        0x12 if body_bytes.len() == TR_PAPR_BODY_LEN => {
+        t if t == AddressingFunctionTag::TrPapr as u8 && body_bytes.len() == TR_PAPR_BODY_LEN => {
             Some(parse_tr_papr(body_bytes).map(FunctionBody::TrPapr))
         }
-        0x13 if body_bytes.len() == L1_ACE_PAPR_BODY_LEN => {
+        t if t == AddressingFunctionTag::L1AcePapr as u8
+            && body_bytes.len() == L1_ACE_PAPR_BODY_LEN =>
+        {
             Some(parse_l1_ace_papr(body_bytes).map(FunctionBody::L1AcePapr))
         }
-        0x15 if body_bytes.len() == TX_SIG_FEF_SEQ_NUM_BODY_LEN => {
+        t if t == AddressingFunctionTag::TxSigFefSeqNum as u8
+            && body_bytes.len() == TX_SIG_FEF_SEQ_NUM_BODY_LEN =>
+        {
             Some(parse_tx_sig_fef_seq_num(body_bytes).map(FunctionBody::TxSigFefSeqNum))
         }
-        0x16 if body_bytes.len() == TX_SIG_AUX_STREAM_TX_ID_BODY_LEN => {
+        t if t == AddressingFunctionTag::TxSigAuxStreamTxId as u8
+            && body_bytes.len() == TX_SIG_AUX_STREAM_TX_ID_BODY_LEN =>
+        {
             Some(parse_tx_sig_aux_stream_tx_id(body_bytes).map(FunctionBody::TxSigAuxStreamTxId))
         }
-        0x17 if body_bytes.len() == FREQUENCY_BODY_LEN => {
+        t if t == AddressingFunctionTag::Frequency as u8
+            && body_bytes.len() == FREQUENCY_BODY_LEN =>
+        {
             Some(parse_frequency(body_bytes).map(FunctionBody::Frequency))
         }
         _ => None,
@@ -1173,7 +1167,7 @@ mod tests {
         let mut functions = Vec::new();
         for _ in 0..100 {
             functions.push(FunctionEntry {
-                tag: 0x11,
+                tag: AddressingFunctionTag::MisoGroup as u8,
                 body: FunctionBody::MisoGroup(MisoGroupBody {
                     miso_group: false,
                     rfu: 0,
@@ -1187,9 +1181,15 @@ mod tests {
                 functions,
             }],
         };
-        let buf = vec![0u8; payload.serialized_len()];
-        let result = payload.serialize_into(&mut buf.clone());
-        assert!(result.is_err() || payload.serialized_len() <= u8::MAX as usize + HEADER_LEN);
+        let mut buf = vec![0u8; payload.serialized_len()];
+        let result = payload.serialize_into(&mut buf);
+        assert!(
+            matches!(
+                result.unwrap_err(),
+                crate::Error::ReservedBitsViolation { .. }
+            ),
+            "expected ReservedBitsViolation for overflowing length field"
+        );
     }
 
     #[test]

@@ -5,6 +5,9 @@
 //!   symmetric contracts every payload type implements.
 //! - [`packet`] — T2-MI packet header and type parsing.
 //! - [`payload`] — BBFrame, L1, FEF, timestamp, and addressing payload types.
+//! - [`payload::PayloadRegistry`] / [`pump::T2miEvent::payload_with`] — register
+//!   private packet types and dispatch through the registry.
+//! - [`payload::AnyPayload::dispatch_with`] — registry-aware dispatch for custom types.
 //! - [`crc`] — CRC-32 per Annex A.
 //!
 //! # RFU policy

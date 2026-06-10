@@ -143,6 +143,39 @@ impl Header {
         HEADER_LEN + self.payload_len_bytes() + super::crc::CRC_LEN
     }
 
+    /// Slice the payload bytes out of a raw T2-MI packet buffer without
+    /// requiring the `packet_type` byte to be a known [`PacketType`].
+    ///
+    /// Reads `payload_len_bits` from bytes `[4..6]`, computes
+    /// `ceil(payload_len_bits / 8)`, and returns
+    /// `packet[HEADER_LEN..HEADER_LEN + payload_len_bytes]`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::BufferTooShort`](crate::error::Error::BufferTooShort)
+    /// if `packet.len() < HEADER_LEN`.
+    /// Returns [`Error::PayloadLengthMismatch`](crate::error::Error::PayloadLengthMismatch)
+    /// if the buffer is too short for the declared `payload_len_bits`.
+    pub fn raw_payload_bytes(packet: &[u8]) -> Result<&[u8], crate::error::Error> {
+        if packet.len() < HEADER_LEN {
+            return Err(crate::error::Error::BufferTooShort {
+                need: HEADER_LEN,
+                have: packet.len(),
+                what: "T2MI Header",
+            });
+        }
+        let payload_len_bits = u16::from_be_bytes([packet[4], packet[5]]);
+        let payload_len_bytes = (payload_len_bits as usize).div_ceil(8);
+        let end = HEADER_LEN + payload_len_bytes;
+        if packet.len() < end {
+            return Err(crate::error::Error::PayloadLengthMismatch {
+                declared_bits: payload_len_bits,
+                remaining_bytes: packet.len().saturating_sub(HEADER_LEN),
+            });
+        }
+        Ok(&packet[HEADER_LEN..end])
+    }
+
     /// Slice the payload bytes out of the full packet buffer this header was
     /// parsed from (the 6 header bytes, then `payload_len_bytes()` of payload,
     /// then the 4-byte CRC trailer).

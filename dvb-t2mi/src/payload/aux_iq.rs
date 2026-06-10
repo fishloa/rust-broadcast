@@ -125,14 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_rejects_aux_id_above_f() {
-        let _buf = [0x00u8, 0xF0, 0x00, 0xCA];
-        // aux_id = (0xF0 >> 4) & 0x0F = 0x0F → valid max
-        // Actually this IS valid. Let's test truly invalid:
-        let buf2 = [0x00u8, 0x01, 0x00, 0xCA];
-        // aux_id = (0x01 >> 4) & 0x0F = 0x00 → invalid
-        let result2 = AuxIqPayload::parse(&buf2);
-        assert!(result2.is_err());
+    fn parse_accepts_max_aux_id() {
+        let buf = [0x00u8, 0xF0, 0x00, 0xCA];
+        let result = AuxIqPayload::parse(&buf).unwrap();
+        assert_eq!(result.aux_id, 0x0F);
     }
 
     #[test]
