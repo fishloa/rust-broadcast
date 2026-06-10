@@ -209,7 +209,6 @@ pub(crate) type CustomParse =
 pub struct DescriptorRegistry {
     custom: HashMap<(Option<u32>, u8), CustomParse>,
     logical_channel: bool,
-    ext: Option<crate::descriptors::extension::registry::ExtensionRegistry>,
 }
 
 impl DescriptorRegistry {
@@ -288,17 +287,6 @@ impl DescriptorRegistry {
         self
     }
 
-    /// Attach an [`ExtensionRegistry`](crate::descriptors::extension::registry::ExtensionRegistry)
-    /// so that [`iter_with_extensions`](super::any::DescriptorLoop::iter_with_extensions)
-    /// can surface custom-registered extension bodies during a descriptor-loop walk.
-    pub fn with_extension_registry(
-        &mut self,
-        ext: crate::descriptors::extension::registry::ExtensionRegistry,
-    ) -> &mut Self {
-        self.ext = Some(ext);
-        self
-    }
-
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -335,6 +323,39 @@ pub struct RegistryIter<'r, 'a> {
     current_pds: Option<u32>,
 }
 
+/// Shared precedence ladder for both [`RegistryIter`] and [`ExtRegistryIter`].
+///
+/// Returns the [`AnyDescriptor`] that results from applying the 4-step
+/// precedence: PDS-scoped custom → PDS-agnostic custom → logical-channel
+/// opt-in → built-in dispatch → Unknown.
+pub(crate) fn dispatch_entry<'a>(
+    registry: &DescriptorRegistry,
+    current_pds: Option<u32>,
+    tag: u8,
+    full: &'a [u8],
+) -> crate::Result<AnyDescriptor<'a>> {
+    if let Some(pds) = current_pds {
+        if let Some(parse_fn) = registry.custom.get(&(Some(pds), tag)) {
+            return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
+        }
+    }
+    if let Some(parse_fn) = registry.custom.get(&(None, tag)) {
+        return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
+    }
+    if registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
+        use dvb_common::Parse;
+        return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
+            .map(AnyDescriptor::LogicalChannel);
+    }
+    if let Some(res) = AnyDescriptor::dispatch(tag, full) {
+        return res;
+    }
+    Ok(AnyDescriptor::Unknown {
+        tag,
+        body: &full[2..],
+    })
+}
+
 impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
@@ -348,7 +369,6 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        // --- PDS tracking: 0x5F updates current_pds ---
         if tag == crate::descriptors::private_data_specifier::TAG {
             use dvb_common::Parse;
             if let Ok(pds) =
@@ -360,40 +380,7 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
             }
         }
 
-        // --- precedence ---
-        // 1. PDS-scoped custom parser (if current_pds matches)
-        if let Some(pds) = self.current_pds {
-            if let Some(parse_fn) = self.registry.custom.get(&(Some(pds), tag)) {
-                return Some(match parse_fn(full) {
-                    Ok(value) => Ok(AnyDescriptor::Other { tag, value }),
-                    Err(e) => Err(e),
-                });
-            }
-        }
-        // 2. PDS-agnostic custom-registered parser
-        if let Some(parse_fn) = self.registry.custom.get(&(None, tag)) {
-            return Some(match parse_fn(full) {
-                Ok(value) => Ok(AnyDescriptor::Other { tag, value }),
-                Err(e) => Err(e),
-            });
-        }
-        // 3. Logical-channel opt-in (0x83)
-        if self.registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
-            use dvb_common::Parse;
-            return Some(
-                crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
-                    .map(AnyDescriptor::LogicalChannel),
-            );
-        }
-        // 4. Built-in dispatch
-        if let Some(res) = AnyDescriptor::dispatch(tag, full) {
-            return Some(res);
-        }
-        // 5. Unknown
-        Some(Ok(AnyDescriptor::Unknown {
-            tag,
-            body: &full[2..],
-        }))
+        Some(dispatch_entry(self.registry, self.current_pds, tag, full))
     }
 }
 
@@ -479,7 +466,6 @@ impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        // PDS tracking
         if tag == crate::descriptors::private_data_specifier::TAG {
             use dvb_common::Parse;
             if let Ok(pds) =
@@ -491,7 +477,6 @@ impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
             }
         }
 
-        // Extension descriptor with custom registry lookup
         let len = full.len() - 2;
         if tag == crate::descriptors::extension::TAG && len >= 1 {
             let tag_extension = full[2];
@@ -514,35 +499,9 @@ impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
             }
         }
 
-        // Regular precedence (same as RegistryIter)
-        if let Some(pds) = self.current_pds {
-            if let Some(parse_fn) = self.desc_reg.custom.get(&(Some(pds), tag)) {
-                return Some(match parse_fn(full) {
-                    Ok(value) => Ok(ExtIterItem::Descriptor(AnyDescriptor::Other { tag, value })),
-                    Err(e) => Err(e),
-                });
-            }
-        }
-        if let Some(parse_fn) = self.desc_reg.custom.get(&(None, tag)) {
-            return Some(match parse_fn(full) {
-                Ok(value) => Ok(ExtIterItem::Descriptor(AnyDescriptor::Other { tag, value })),
-                Err(e) => Err(e),
-            });
-        }
-        if self.desc_reg.logical_channel && tag == crate::descriptors::logical_channel::TAG {
-            use dvb_common::Parse;
-            return Some(
-                crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
-                    .map(|d| ExtIterItem::Descriptor(AnyDescriptor::LogicalChannel(d))),
-            );
-        }
-        if let Some(res) = AnyDescriptor::dispatch(tag, full) {
-            return Some(res.map(ExtIterItem::Descriptor));
-        }
-        Some(Ok(ExtIterItem::Descriptor(AnyDescriptor::Unknown {
-            tag,
-            body: &full[2..],
-        })))
+        Some(
+            dispatch_entry(self.desc_reg, self.current_pds, tag, full).map(ExtIterItem::Descriptor),
+        )
     }
 }
 
@@ -800,8 +759,7 @@ mod tests {
         let mut ext_reg = ExtensionRegistry::new();
         ext_reg.register::<MyCustomExt>();
 
-        let mut desc_reg = DescriptorRegistry::new();
-        desc_reg.with_extension_registry(ext_reg);
+        let desc_reg = DescriptorRegistry::new();
 
         // Build a descriptor loop with a short_event + a 0x7F extension with tag_extension 0x42
         let mut loop_bytes = vec![
@@ -812,7 +770,7 @@ mod tests {
 
         let dl = DescriptorLoop::new(&loop_bytes);
         let items: Vec<_> = dl
-            .iter_with_extensions(&desc_reg, desc_reg.ext.as_ref().unwrap())
+            .iter_with_extensions(&desc_reg, &ext_reg)
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(items.len(), 2);

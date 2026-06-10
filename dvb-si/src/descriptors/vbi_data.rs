@@ -6,7 +6,7 @@
 //! many service-descriptor bytes.
 //!
 //! The first loop level (data_service_id + length-delimited service block) is
-//! typed. For `data_service_id` values `0x01`–`0x07` (Table 106/107), each
+//! typed. For `data_service_id` values `0x01`–`0x02`, `0x04`–`0x07` (Table 106/107), each
 //! service-descriptor byte encodes `reserved(2)|field_parity(1)|line_offset(5)`;
 //! other values are kept as raw reserved bytes.
 
@@ -25,12 +25,14 @@ const MAX_SERVICE_LEN: usize = u8::MAX as usize;
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub enum VbiService<'a> {
-    /// `data_service_id` 0x01–0x07: each byte is
-    /// `reserved(2)|field_parity(1)|line_offset(5)` (Table 106).
+    /// `data_service_id` 0x01–0x02, 0x04–0x07: each byte is
+    /// `reserved_future_use(2)|field_parity(1)|line_offset(5)` (Table 106).
     Lines(Vec<VbiLine>),
-    /// `data_service_id` 0x00 or 0x08+: raw reserved bytes.
+    /// `data_service_id` 0x00, 0x03, or 0x08+: raw reserved bytes.
     Reserved(&'a [u8]),
 }
 
@@ -53,7 +55,7 @@ pub struct VbiDataEntry<'a> {
     /// 0x02 = inverted teletext, 0x04 = VPS, 0x05 = WSS, 0x06 = closed
     /// captioning, 0x07 = monochrome 4:2:2 samples; others reserved/user.
     pub data_service_id: u8,
-    /// Per-service content, typed for ids 0x01–0x07.
+    /// Per-service content, typed for ids 0x01–0x02, 0x04–0x07.
     pub service_descriptor: VbiService<'a>,
 }
 
@@ -95,7 +97,7 @@ impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
             }
             let svc_bytes = &body[pos..pos + svc_len];
             pos += svc_len;
-            let service_descriptor = if (1..=7).contains(&data_service_id) {
+            let service_descriptor = if matches!(data_service_id, 0x01 | 0x02 | 0x04..=0x07) {
                 let lines = svc_bytes
                     .iter()
                     .map(|&b| VbiLine {
@@ -168,7 +170,8 @@ impl Serialize for VbiDataDescriptor<'_> {
             match &e.service_descriptor {
                 VbiService::Lines(lines) => {
                     for line in lines {
-                        buf[pos] = (u8::from(line.field_parity) << 5) | (line.line_offset & 0x1F);
+                        buf[pos] =
+                            0xC0 | (u8::from(line.field_parity) << 5) | (line.line_offset & 0x1F);
                         pos += 1;
                     }
                 }
@@ -349,6 +352,26 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(VbiDataDescriptor::parse(&buf).unwrap(), d);
+    }
+
+    #[test]
+    fn byte_identity_with_reserved_bits() {
+        let bytes = [TAG, 4, 0x01, 0x02, 0xC1, 0xC2];
+        let d = VbiDataDescriptor::parse(&bytes).unwrap();
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
+
+    #[test]
+    fn data_service_id_0x03_is_reserved() {
+        let bytes = [TAG, 3, 0x03, 0x01, 0xAA];
+        let d = VbiDataDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.entries[0].data_service_id, 0x03);
+        match &d.entries[0].service_descriptor {
+            VbiService::Reserved(b) => assert_eq!(*b, &[0xAA]),
+            other => panic!("expected Reserved for id 0x03, got {other:?}"),
+        }
     }
 
     #[test]

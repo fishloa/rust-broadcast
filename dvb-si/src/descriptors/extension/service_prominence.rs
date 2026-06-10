@@ -6,6 +6,9 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const NAME: &'static str = "SERVICE_PROMINENCE";
 }
 
+/// `[4]` of the SOGI-entry packed byte: `reserved_future_use` = 1 per DVB convention.
+const SOGI_RESERVED_FUTURE_USE: u8 = 0x10;
+
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
 /// each entry's target_region loop uses the typed
 /// [`TargetRegionEntry`]/[`RegionCodes`] from `target_region.rs`
@@ -134,8 +137,8 @@ impl Serialize for ServiceProminence<'_> {
             .sogi_list
             .iter()
             .map(|e| {
-                2 + if e.service_flag { 2 } else { 0 }
-                    + if e.target_region_flag {
+                2 + if e.service_id.is_some() { 2 } else { 0 }
+                    + if e.target_region_loop.is_some() {
                         1 + e.target_region_loop.as_ref().map_or(0, |entries| {
                             super::target_region::region_entries_serialized_len(entries)
                         })
@@ -159,20 +162,17 @@ impl Serialize for ServiceProminence<'_> {
         let mut p = 1;
         for e in &self.sogi_list {
             buf[p] = ((e.sogi_flag as u8) << 7)
-                | ((e.target_region_flag as u8) << 6)
-                | ((e.service_flag as u8) << 5)
-                | 0x10
+                | ((e.target_region_loop.is_some() as u8) << 6)
+                | ((e.service_id.is_some() as u8) << 5)
+                | SOGI_RESERVED_FUTURE_USE
                 | ((e.sogi_priority >> 8) as u8 & 0x0F);
             buf[p + 1] = e.sogi_priority as u8;
             p += 2;
-            if e.service_flag {
-                if let Some(id) = e.service_id {
-                    buf[p..p + 2].copy_from_slice(&id.to_be_bytes());
-                }
+            if let Some(id) = e.service_id {
+                buf[p..p + 2].copy_from_slice(&id.to_be_bytes());
                 p += 2;
             }
-            if e.target_region_flag {
-                let entries = e.target_region_loop.as_deref().unwrap_or(&[]);
+            if let Some(entries) = &e.target_region_loop {
                 let entries_len = super::target_region::region_entries_serialized_len(entries);
                 buf[p] = entries_len as u8;
                 p += 1;

@@ -20,8 +20,8 @@ pub struct TtmlSubtitling<'a> {
     pub subtitle_purpose: u8,
     /// TTS_suitability(2) — Table 3.
     pub tts_suitability: u8,
-    /// dvb_ttml_profile bytes (count is their length).
-    pub dvb_ttml_profiles: &'a [u8],
+    /// dvb_ttml_profile codes (one `Vec` entry per profile byte, EN 303 560).
+    pub dvb_ttml_profiles: Vec<u8>,
     /// qualifier(32), present iff qualifier_present_flag.
     pub qualifier: Option<u32>,
     /// font_id(7) values (one per font), present iff essential_font_usage_flag.
@@ -61,7 +61,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
                 what: "TTML_subtitling body",
             });
         }
-        let dvb_ttml_profiles = &sel[pos..pos + dvb_ttml_profile_count];
+        let dvb_ttml_profiles = sel[pos..pos + dvb_ttml_profile_count].to_vec();
         pos += dvb_ttml_profile_count;
 
         // conditional qualifier
@@ -175,7 +175,7 @@ impl Serialize for TtmlSubtitling<'_> {
         let mut pos = TTML_FIXED_LEN;
 
         // dvb_ttml_profile loop
-        buf[pos..pos + self.dvb_ttml_profiles.len()].copy_from_slice(self.dvb_ttml_profiles);
+        buf[pos..pos + self.dvb_ttml_profiles.len()].copy_from_slice(&self.dvb_ttml_profiles);
         pos += self.dvb_ttml_profiles.len();
 
         // conditional qualifier

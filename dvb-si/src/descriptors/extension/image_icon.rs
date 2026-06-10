@@ -63,7 +63,9 @@ pub struct ImageIconFirst<'a> {
 /// descriptor (Table 146, §6.4.8).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub enum IconLocation<'a> {
     /// `icon_transport_mode` 0: raw icon data bytes (PNG, JPEG, etc.).
     Data(&'a [u8]),
