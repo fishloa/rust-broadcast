@@ -73,11 +73,13 @@ pub struct TsPacket<'a> {
 
 impl TsHeader {
     /// Parse a 4-byte TS transport header.
-    ///
-    /// Returns `None` if `raw4` is shorter than 4 bytes.
-    pub fn parse(raw4: &[u8]) -> Option<Self> {
+    pub fn parse(raw4: &[u8]) -> Result<Self> {
         if raw4.len() < 4 {
-            return None;
+            return Err(Error::BufferTooShort {
+                need: 4,
+                have: raw4.len(),
+                what: "TsHeader",
+            });
         }
         let b1 = raw4[1];
         let b2 = raw4[2];
@@ -91,7 +93,7 @@ impl TsHeader {
         let has_payload = (b3 & PAYLOAD_FLAG) != 0;
         let continuity_counter = b3 & CC_MASK;
 
-        Some(Self {
+        Ok(Self {
             tei,
             pusi,
             pid,
@@ -102,14 +104,19 @@ impl TsHeader {
         })
     }
 
+    /// Number of bytes written by [`serialize_into`](Self::serialize_into).
+    pub const fn serialized_len() -> usize {
+        4
+    }
+
     /// Serialize this header into the first 4 bytes of `buf`.
-    ///
-    /// Panics if `buf` is shorter than 4 bytes.
-    pub fn serialize_into(&self, buf: &mut [u8]) {
-        assert!(
-            buf.len() >= 4,
-            "buffer must have at least 4 bytes for TS header"
-        );
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if buf.len() < 4 {
+            return Err(Error::OutputBufferTooSmall {
+                need: 4,
+                have: buf.len(),
+            });
+        }
         buf[0] = TS_SYNC_BYTE;
         buf[1] = 0;
         if self.tei {
@@ -128,6 +135,27 @@ impl TsHeader {
             buf[3] |= PAYLOAD_FLAG;
         }
         buf[3] |= self.continuity_counter & CC_MASK;
+        Ok(4)
+    }
+}
+
+impl<'a> dvb_common::Parse<'a> for TsHeader {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        TsHeader::parse(bytes)
+    }
+}
+
+impl dvb_common::Serialize for TsHeader {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        TsHeader::serialized_len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        TsHeader::serialize_into(self, buf)
     }
 }
 
@@ -142,7 +170,7 @@ impl<'a> TsPacket<'a> {
             return Err(Error::BufferTooShort {
                 need: TS_PACKET_SIZE,
                 have: buf.len(),
-                what: "TsPacket::parse",
+                what: "TsPacket",
             });
         }
         if buf[0] != TS_SYNC_BYTE {
@@ -158,8 +186,7 @@ impl<'a> TsPacket<'a> {
                     what: "TsPacket::parse (array conversion)",
                 })?;
 
-        let header = TsHeader::parse(&raw[..4])
-            .expect("raw is 188 bytes so first 4 bytes are always present");
+        let header = TsHeader::parse(&raw[..4])?;
 
         let mut cursor = 4usize;
         let mut payload = None;

@@ -2,6 +2,9 @@
 
 use num_enum::TryFromPrimitive;
 
+/// T2-MI packet header size (ETSI TS 102 773 §5.1).
+const HEADER_LEN: usize = 6;
+
 /// Packet types per ETSI TS 102 773 Table 1.
 ///
 /// Reserved for future use: `0x22..=0x2F`, `0x34..=0xFF`.
@@ -80,9 +83,9 @@ impl<'a> dvb_common::Parse<'a> for Header {
         use super::error::Error;
 
         let len = bytes.len();
-        if len < 6 {
+        if len < HEADER_LEN {
             return Err(Error::BufferTooShort {
-                need: 6,
+                need: HEADER_LEN,
                 have: len,
                 what: "T2MI Header",
             });
@@ -137,7 +140,7 @@ impl Header {
     /// = 6 (header) + ceil(payload_len_bits / 8) (payload + padding) + 4 (CRC).
     #[must_use]
     pub fn total_bytes(&self) -> usize {
-        6 + self.payload_len_bytes() + super::crc::CRC_LEN
+        HEADER_LEN + self.payload_len_bytes() + super::crc::CRC_LEN
     }
 
     /// Slice the payload bytes out of the full packet buffer this header was
@@ -147,14 +150,14 @@ impl Header {
     /// Errors with [`Error::PayloadLengthMismatch`](crate::error::Error::PayloadLengthMismatch) when the buffer is too
     /// short for the declared `payload_len_bits`.
     pub fn payload_bytes<'a>(&self, packet: &'a [u8]) -> Result<&'a [u8], crate::error::Error> {
-        let end = 6 + self.payload_len_bytes();
+        let end = HEADER_LEN + self.payload_len_bytes();
         if packet.len() < end {
             return Err(crate::error::Error::PayloadLengthMismatch {
                 declared_bits: self.payload_len_bits,
-                remaining_bytes: packet.len().saturating_sub(6),
+                remaining_bytes: packet.len().saturating_sub(HEADER_LEN),
             });
         }
-        Ok(&packet[6..end])
+        Ok(&packet[HEADER_LEN..end])
     }
 }
 
@@ -162,15 +165,15 @@ impl dvb_common::Serialize for Header {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        6
+        HEADER_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, crate::error::Error> {
         use super::error::Error;
 
-        if buf.len() < 6 {
+        if buf.len() < HEADER_LEN {
             return Err(Error::OutputBufferTooSmall {
-                need: 6,
+                need: HEADER_LEN,
                 have: buf.len(),
             });
         }
@@ -190,7 +193,7 @@ impl dvb_common::Serialize for Header {
         buf[4] = len_be[0];
         buf[5] = len_be[1];
 
-        Ok(6)
+        Ok(HEADER_LEN)
     }
 }
 
@@ -247,7 +250,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         if let crate::Error::BufferTooShort { need, have, what } = err {
-            assert_eq!(need, 6);
+            assert_eq!(need, HEADER_LEN);
             assert_eq!(have, 5);
             assert_eq!(what, "T2MI Header");
         } else {
@@ -374,7 +377,7 @@ mod tests {
         };
         let mut buf = [0u8; 256];
         let written = hdr.serialize_into(&mut buf).unwrap();
-        assert_eq!(written, 6);
+        assert_eq!(written, HEADER_LEN);
         assert_eq!(buf[0], 0x00);
         assert_eq!(buf[1], 42);
         assert_eq!(buf[2], (7 << 4) | 3);
@@ -396,7 +399,7 @@ mod tests {
                 t2mi_stream_id: 2,
                 payload_len_bits: 512,
             };
-            let mut buf = [0u8; 6];
+            let mut buf = [0u8; HEADER_LEN];
             original.serialize_into(&mut buf).unwrap();
             let parsed = Header::parse(&buf).unwrap();
             assert_eq!(original, parsed, "Round-trip failed for type {:#04x}", t);
@@ -426,7 +429,7 @@ mod tests {
             t2mi_stream_id: 8,
             payload_len_bits: 0,
         };
-        let mut buf = [0u8; 6];
+        let mut buf = [0u8; HEADER_LEN];
         let result = hdr.serialize_into(&mut buf);
         assert!(result.is_err());
     }
