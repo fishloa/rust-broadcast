@@ -100,6 +100,17 @@
 //! caller with a bare descriptor loop can call [`descriptors::parse_loop`] on it.
 //! Use [`collect`] when a table spans multiple sections.
 //!
+//! # RFU policy
+//!
+//! DVB reserved-bit fields carry a semantic distinction:
+//! - `reserved_future_use` bits are **emitted as 1** (the DVB convention that
+//!   future equipment sees a "1" for unimplemented bits).
+//! - `reserved_zero_future_use` bits are **emitted as 0**.
+//!
+//! Parsers **accept** any value (no rejection on non-zero RFU) — unlike
+//! `dvb-t2mi`, which validates RFU bits. This crate prioritises forward
+//! compatibility with future broadcast streams.
+//!
 //! # Features
 //!
 //! | Feature | Default | Enables |
