@@ -3,6 +3,7 @@
 //! Supports both Normal Mode (NM) and High Efficiency Mode (HEM)
 //! per EN 302 755 v1.4.1 §5.1.7.
 
+use dvb_common::{Parse, Serialize};
 use num_enum::TryFromPrimitive;
 
 use crate::crc::crc8;
@@ -178,17 +179,15 @@ pub struct Bbheader {
     pub issy_in_header: Option<[u8; 3]>,
 }
 
-impl Bbheader {
-    /// Parse a 10-byte BBHEADER, detecting NM vs HEM automatically.
-    ///
-    /// Mode detection per EN 302 755 §5.1.7:
-    /// `mode = crc8(bytes[0..9]) ^ bytes[9]` (0 = NM, 1 = HEM).
-    /// Values other than 0 or 1 return `Error::InvalidMode`.
-    pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
+impl<'a> Parse<'a> for Bbheader {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self, Self::Error> {
         if bytes.len() < BBHEADER_LEN {
             return Err(Error::BufferTooShort {
                 need: BBHEADER_LEN,
                 have: bytes.len(),
+                what: "BBHEADER",
             });
         }
 
@@ -234,10 +233,23 @@ impl Bbheader {
             issy_in_header,
         })
     }
+}
 
-    /// Serialize the BBHEADER back to its 10-byte wire format.
-    pub fn serialize(&self) -> [u8; BBHEADER_LEN] {
-        let mut buf = [0u8; BBHEADER_LEN];
+impl Serialize for Bbheader {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BBHEADER_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize, Self::Error> {
+        if buf.len() < BBHEADER_LEN {
+            return Err(Error::OutputBufferTooSmall {
+                need: BBHEADER_LEN,
+                have: buf.len(),
+            });
+        }
+
         let ma = <[u8; 2]>::from(self.matype);
         buf[0] = ma[0];
         buf[1] = ma[1];
@@ -259,17 +271,14 @@ impl Bbheader {
                 if let Some(issy) = self.issy_in_header {
                     buf[2] = issy[0];
                     buf[3] = issy[1];
-                    // byte 4-5 = DFL
                     let dfl = self.dfl.to_be_bytes();
                     buf[4] = dfl[0];
                     buf[5] = dfl[1];
                     buf[6] = issy[2];
-                    // byte 7-8 = SYNCD
                     let syncd = self.syncd.to_be_bytes();
                     buf[7] = syncd[0];
                     buf[8] = syncd[1];
                 } else {
-                    // HEM without ISSY — zero the ISSY positions
                     let dfl = self.dfl.to_be_bytes();
                     buf[4] = dfl[0];
                     buf[5] = dfl[1];
@@ -284,6 +293,25 @@ impl Bbheader {
         let computed = crc8(&buf[..9]);
         buf[9] = computed ^ (self.mode as u8);
 
+        Ok(BBHEADER_LEN)
+    }
+}
+
+impl Bbheader {
+    /// Parse a 10-byte BBHEADER, detecting NM vs HEM automatically.
+    ///
+    /// Mode detection per EN 302 755 §5.1.7:
+    /// `mode = crc8(bytes[0..9]) ^ bytes[9]` (0 = NM, 1 = HEM).
+    /// Values other than 0 or 1 return `Error::InvalidMode`.
+    pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
+        <Self as Parse>::parse(bytes)
+    }
+
+    /// Serialize the BBHEADER back to its 10-byte wire format.
+    pub fn serialize(&self) -> [u8; BBHEADER_LEN] {
+        let v = <Self as Serialize>::to_bytes(self);
+        let mut buf = [0u8; BBHEADER_LEN];
+        buf.copy_from_slice(&v);
         buf
     }
 }
@@ -748,5 +776,64 @@ mod tests {
             }
         }
         assert_eq!(matched, 2, "expected 2 matched variants");
+    }
+
+    #[test]
+    fn trait_parse_and_serialize_round_trip() {
+        let orig = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Gse,
+                sis: true,
+                ccm: true,
+                issyi: true,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0xFF,
+            dfl: 32768,
+            syncd: 0,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        };
+        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let parsed = <Bbheader as Parse>::parse(&v).unwrap();
+        assert_eq!(orig.matype, parsed.matype);
+        assert_eq!(orig.upl, parsed.upl);
+        assert_eq!(orig.sync, parsed.sync);
+        assert_eq!(orig.dfl, parsed.dfl);
+        assert_eq!(orig.syncd, parsed.syncd);
+        assert_eq!(orig.mode, parsed.mode);
+    }
+
+    #[test]
+    fn serialize_into_rejects_buffer_too_small() {
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0x47,
+            dfl: 0,
+            syncd: 0,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        };
+        let mut small = [0u8; BBHEADER_LEN - 1];
+        let err = hdr.serialize_into(&mut small).unwrap_err();
+        assert_eq!(
+            err,
+            Error::OutputBufferTooSmall {
+                need: BBHEADER_LEN,
+                have: small.len(),
+            }
+        );
     }
 }

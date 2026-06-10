@@ -9,12 +9,14 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding.
-    #[error("buffer too short: need {need} bytes, have {have}")]
+    #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
     BufferTooShort {
         /// Bytes required to proceed.
         need: usize,
         /// Bytes actually available.
         have: usize,
+        /// Human-readable name of the type or field being parsed.
+        what: &'static str,
     },
 
     /// MODE field is neither 0 (NM) nor 1 (HEM).
@@ -61,9 +63,13 @@ mod tests {
 
     #[test]
     fn buffer_too_short_message_contains_values() {
-        let err = Error::BufferTooShort { need: 10, have: 5 };
+        let err = Error::BufferTooShort {
+            need: 10,
+            have: 5,
+            what: "BBHEADER",
+        };
         let msg = format!("{err}");
-        assert!(msg.contains("10") && msg.contains("5"));
+        assert!(msg.contains("10") && msg.contains("5") && msg.contains("BBHEADER"));
     }
 
     #[test]
