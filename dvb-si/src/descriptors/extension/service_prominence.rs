@@ -1,21 +1,20 @@
 //! Service Prominence Descriptor — ETSI EN 300 468 §6.4.18 (tag_extension 0x22).
 use super::*;
 
-impl super::sealed::Sealed for ServiceProminence<'_> {}
-impl ExtensionBodyDef for ServiceProminence<'_> {
+impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const TAG_EXTENSION: u8 = 0x22;
     const NAME: &'static str = "SERVICE_PROMINENCE";
 }
 
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
-/// each entry's target_region loop is kept raw (region entries are
-/// region_depth-irregular — same precedent as [`TargetRegion`]).
+/// each entry's target_region loop uses the typed
+/// [`TargetRegionEntry`]/[`RegionCodes`] from `target_region.rs`
+/// (Table 156, same shape as `target_region_descriptor`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceProminence<'a> {
     /// SOGI entries (the `SOGI_list_length`-delimited loop).
-    pub sogi_list: Vec<SogiEntry<'a>>,
+    pub sogi_list: Vec<SogiEntry>,
     /// Trailing `private_data_byte` run.
     pub private_data: &'a [u8],
 }
@@ -23,8 +22,7 @@ pub struct ServiceProminence<'a> {
 /// One SOGI entry (Table 162c inner loop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-pub struct SogiEntry<'a> {
+pub struct SogiEntry {
     /// `SOGI_flag` (1 bit).
     pub sogi_flag: bool,
     /// `target_region_flag` (1 bit) — true iff `target_region_loop` is `Some`.
@@ -35,8 +33,8 @@ pub struct SogiEntry<'a> {
     pub sogi_priority: u16,
     /// `service_id` (16 bits), present iff `service_flag`.
     pub service_id: Option<u16>,
-    /// Raw `target_region` loop (region_depth-irregular), present iff `target_region_flag`.
-    pub target_region_loop: Option<&'a [u8]>,
+    /// Typed `target_region` loop (Table 156 format), present iff `target_region_flag`.
+    pub target_region_loop: Option<Vec<super::target_region::TargetRegionEntry>>,
 }
 
 impl<'a> Parse<'a> for ServiceProminence<'a> {
@@ -106,9 +104,10 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
                         what: "service_prominence body",
                     });
                 }
-                let region = &sogi_slice[k..k + region_len];
+                let region_bytes = &sogi_slice[k..k + region_len];
                 k += region_len;
-                Some(region)
+                let entries = super::target_region::parse_region_entries(region_bytes, 0)?;
+                Some(entries)
             } else {
                 None
             };
@@ -137,7 +136,9 @@ impl Serialize for ServiceProminence<'_> {
             .map(|e| {
                 2 + if e.service_flag { 2 } else { 0 }
                     + if e.target_region_flag {
-                        1 + e.target_region_loop.map_or(0, |s| s.len())
+                        1 + e.target_region_loop.as_ref().map_or(0, |entries| {
+                            super::target_region::region_entries_serialized_len(entries)
+                        })
                     } else {
                         0
                     }
@@ -171,11 +172,12 @@ impl Serialize for ServiceProminence<'_> {
                 p += 2;
             }
             if e.target_region_flag {
-                let region = e.target_region_loop.unwrap_or(&[]);
-                buf[p] = region.len() as u8;
+                let entries = e.target_region_loop.as_deref().unwrap_or(&[]);
+                let entries_len = super::target_region::region_entries_serialized_len(entries);
+                buf[p] = entries_len as u8;
                 p += 1;
-                buf[p..p + region.len()].copy_from_slice(region);
-                p += region.len();
+                super::target_region::write_region_entries(entries, buf, p);
+                p += entries_len;
             }
         }
         buf[p..p + self.private_data.len()].copy_from_slice(self.private_data);
@@ -217,8 +219,8 @@ mod tests {
     #[test]
     fn parse_service_prominence_one_entry_target_region() {
         // One SOGI entry: service_flag=0, target_region_flag=1,
-        // sogi_priority=0x001, target_region_loop = [0xAA, 0xBB].
-        let sel = [0x05, 0x40, 0x01, 0x02, 0xAA, 0xBB];
+        // sogi_priority=0x001, target_region_loop = one entry (depth=0, no cc).
+        let sel = [0x04, 0x40, 0x01, 0x01, 0xF8];
         let bytes = wrap(0x22, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
@@ -230,7 +232,14 @@ mod tests {
                 assert!(!e.service_flag);
                 assert_eq!(e.sogi_priority, 0x0001);
                 assert!(e.service_id.is_none());
-                assert_eq!(e.target_region_loop, Some([0xAAu8, 0xBB].as_slice()));
+                assert!(e.target_region_loop.is_some());
+                let tr = e.target_region_loop.as_ref().unwrap();
+                assert_eq!(tr.len(), 1);
+                assert_eq!(tr[0].country_code, None);
+                assert_eq!(
+                    tr[0].region_codes,
+                    super::super::target_region::RegionCodes::None
+                );
                 assert!(b.private_data.is_empty());
             }
             other => panic!("expected ServiceProminence, got {other:?}"),
@@ -242,8 +251,8 @@ mod tests {
     fn parse_service_prominence_two_entries_plus_private() {
         // Two SOGI entries + private_data tail.
         // Entry 0: service_flag=1, sogi_priority=0xABC, service_id=0x1111.
-        // Entry 1: target_region_flag=1, sogi_priority=0x345, region=[0xCC].
-        let sel = [0x08, 0x2A, 0xBC, 0x11, 0x11, 0x43, 0x45, 0x01, 0xCC, 0xDD];
+        // Entry 1: target_region_flag=1, sogi_priority=0x345, region=[0xF8] (depth=0 entry).
+        let sel = [0x08, 0x2A, 0xBC, 0x11, 0x11, 0x43, 0x45, 0x01, 0xF8, 0xDD];
         let bytes = wrap(0x22, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
@@ -259,7 +268,8 @@ mod tests {
                 assert!(e1.target_region_flag);
                 assert!(!e1.service_flag);
                 assert_eq!(e1.sogi_priority, 0x0345);
-                assert_eq!(e1.target_region_loop, Some([0xCCu8].as_slice()));
+                assert!(e1.target_region_loop.is_some());
+                assert_eq!(e1.target_region_loop.as_ref().unwrap().len(), 1);
                 assert_eq!(b.private_data, &[0xDD]);
             }
             other => panic!("expected ServiceProminence, got {other:?}"),

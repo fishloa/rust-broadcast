@@ -1,8 +1,7 @@
 //! Audio Preselection Descriptor — ETSI EN 300 468 §6.4.1 (tag_extension 0x19).
 use super::*;
 
-impl super::sealed::Sealed for AudioPreselection<'_> {}
-impl ExtensionBodyDef for AudioPreselection<'_> {
+impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
     const TAG_EXTENSION: u8 = 0x19;
     const NAME: &'static str = "AUDIO_PRESELECTION";
 }

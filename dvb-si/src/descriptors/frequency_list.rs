@@ -47,16 +47,6 @@ pub struct FrequencyListDescriptor {
 }
 
 impl FrequencyListDescriptor {
-    /// Convenience: all entries as a single `Vec<u32>` of the BCD bytes
-    /// big-endian decoded (callers can interpret per `coding_type`).
-    #[must_use]
-    pub fn centre_frequencies_be(&self) -> Vec<u32> {
-        self.centre_frequencies_bcd
-            .iter()
-            .map(|b| u32::from_be_bytes(*b))
-            .collect()
-    }
-
     /// Hz per BCD-decoded unit for the current `coding_type`, or `None` for
     /// `Undefined`. Satellite entries decode like
     /// [`SatelliteDeliverySystemDescriptor`](super::satellite_delivery_system::SatelliteDeliverySystemDescriptor)

@@ -1,8 +1,7 @@
 //! Video Depth Range Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10).
 use super::*;
 
-impl super::sealed::Sealed for VideoDepthRangeDescriptor<'_> {}
-impl ExtensionBodyDef for VideoDepthRangeDescriptor<'_> {
+impl<'a> ExtensionBodyDef<'a> for VideoDepthRangeDescriptor<'a> {
     const TAG_EXTENSION: u8 = 0x10;
     const NAME: &'static str = "VIDEO_DEPTH_RANGE";
 }

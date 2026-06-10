@@ -1,8 +1,7 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
 
-impl super::sealed::Sealed for ImageIcon<'_> {}
-impl ExtensionBodyDef for ImageIcon<'_> {
+impl<'a> ExtensionBodyDef<'a> for ImageIcon<'a> {
     const TAG_EXTENSION: u8 = 0x00;
     const NAME: &'static str = "IMAGE_ICON";
 }
@@ -53,12 +52,25 @@ pub struct ImageIconFirst<'a> {
     pub icon_transport_mode: u8,
     /// `position` is `Some` iff `position_flag == 1`.
     pub position: Option<IconPosition>,
-    /// `icon_type_char` run (length-delimited in the wire).
-    pub icon_type: &'a [u8],
-    /// Transport-mode-dependent payload:
-    /// `icon_transport_mode` 0 → `icon_data` bytes;
-    /// 1 → URL bytes; 2-3 → empty.
-    pub payload: &'a [u8],
+    /// `icon_type_char` text run (length-delimited in the wire).
+    pub icon_type: crate::text::DvbText<'a>,
+    /// Transport-mode-dependent payload (Table 146):
+    /// `0` → icon data bytes; `1` → URL text; `2`-`3` → empty.
+    pub payload: IconLocation<'a>,
+}
+
+/// Transport-mode-dependent payload for the first segment of an image_icon
+/// descriptor (Table 146, §6.4.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub enum IconLocation<'a> {
+    /// `icon_transport_mode` 0: raw icon data bytes (PNG, JPEG, etc.).
+    Data(&'a [u8]),
+    /// `icon_transport_mode` 1: `url_char` text pointing to the icon resource.
+    Url(crate::text::DvbText<'a>),
+    /// `icon_transport_mode` 2–3: reserved/empty.
+    None,
 }
 
 /// Position data (present iff `position_flag == 1`).
@@ -144,12 +156,12 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                     what: "image_icon body",
                 });
             }
-            let icon_type = &sel[pos..pos + icon_type_length];
+            let icon_type = crate::text::DvbText::new(&sel[pos..pos + icon_type_length]);
             pos += icon_type_length;
 
             // Transport-mode-dependent payload
             let payload = match icon_transport_mode {
-                0 | 1 => {
+                0 => {
                     if sel.len() < pos + 1 {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -168,9 +180,30 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                     }
                     let p = &sel[pos..pos + payload_len];
                     pos += payload_len;
-                    p
+                    IconLocation::Data(p)
                 }
-                _ => &[][..],
+                1 => {
+                    if sel.len() < pos + 1 {
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "image_icon body",
+                        });
+                    }
+                    let payload_len = sel[pos] as usize;
+                    pos += 1;
+                    if sel.len() < pos + payload_len {
+                        return Err(Error::BufferTooShort {
+                            need: pos + payload_len,
+                            have: sel.len(),
+                            what: "image_icon body",
+                        });
+                    }
+                    let t = crate::text::DvbText::new(&sel[pos..pos + payload_len]);
+                    pos += payload_len;
+                    IconLocation::Url(t)
+                }
+                _ => IconLocation::None,
             };
 
             if pos != sel.len() {
@@ -225,9 +258,10 @@ impl Serialize for ImageIcon<'_> {
                     + if f.position.is_some() { 3 } else { 0 }
                     + 1 // icon_type_length
                     + f.icon_type.len()
-                    + match f.icon_transport_mode {
-                        0 | 1 => 1 + f.payload.len(),
-                        _ => 0,
+                    + match &f.payload {
+                        IconLocation::Data(d) => 1 + d.len(),
+                        IconLocation::Url(u) => 1 + u.len(),
+                        IconLocation::None => 0,
                     }
             }
             ImageIconBody::Continuation { icon_data } => 1 + icon_data.len(),
@@ -272,13 +306,21 @@ impl Serialize for ImageIcon<'_> {
                 // icon_type_length + run
                 buf[p] = f.icon_type.len() as u8;
                 p += 1;
-                buf[p..p + f.icon_type.len()].copy_from_slice(f.icon_type);
+                buf[p..p + f.icon_type.len()].copy_from_slice(f.icon_type.raw());
                 p += f.icon_type.len();
-                // Payload (mode 0 or 1 only)
-                if f.icon_transport_mode == 0 || f.icon_transport_mode == 1 {
-                    buf[p] = f.payload.len() as u8;
-                    p += 1;
-                    buf[p..p + f.payload.len()].copy_from_slice(f.payload);
+                // Payload
+                match &f.payload {
+                    IconLocation::Data(d) => {
+                        buf[p] = d.len() as u8;
+                        p += 1;
+                        buf[p..p + d.len()].copy_from_slice(d);
+                    }
+                    IconLocation::Url(u) => {
+                        buf[p] = u.len() as u8;
+                        p += 1;
+                        buf[p..p + u.len()].copy_from_slice(u.raw());
+                    }
+                    IconLocation::None => {}
                 }
             }
             ImageIconBody::Continuation { icon_data } => {
@@ -325,8 +367,11 @@ mod tests {
                         assert_eq!(pos.coordinate_system, 1);
                         assert_eq!(pos.icon_horizontal_origin, 100);
                         assert_eq!(pos.icon_vertical_origin, 200);
-                        assert_eq!(f.icon_type, &[0xDE, 0xAD]);
-                        assert_eq!(f.payload, &[0x01, 0x02, 0x03]);
+                        assert_eq!(f.icon_type.raw(), &[0xDE, 0xAD]);
+                        match &f.payload {
+                            IconLocation::Data(d) => assert_eq!(*d, &[0x01, 0x02, 0x03]),
+                            other => panic!("expected Data, got {other:?}"),
+                        }
                     }
                     other => panic!("expected First, got {other:?}"),
                 }
@@ -350,8 +395,11 @@ mod tests {
                 ImageIconBody::First(f) => {
                     assert_eq!(f.icon_transport_mode, 1);
                     assert!(f.position.is_none());
-                    assert_eq!(f.icon_type, &[0xAB]);
-                    assert_eq!(f.payload, b"http");
+                    assert_eq!(f.icon_type.raw(), &[0xAB]);
+                    match &f.payload {
+                        IconLocation::Url(u) => assert_eq!(u.decode(), "http"),
+                        other => panic!("expected Url, got {other:?}"),
+                    }
                 }
                 other => panic!("expected First, got {other:?}"),
             },
@@ -374,7 +422,7 @@ mod tests {
                     assert_eq!(f.icon_transport_mode, 2);
                     assert!(f.position.is_none());
                     assert!(f.icon_type.is_empty());
-                    assert!(f.payload.is_empty());
+                    assert!(matches!(f.payload, IconLocation::None));
                 }
                 other => panic!("expected First, got {other:?}"),
             },

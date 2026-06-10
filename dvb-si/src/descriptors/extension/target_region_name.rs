@@ -1,8 +1,7 @@
 //! Target Region Name Descriptor — ETSI EN 300 468 §6.4.13 (tag_extension 0x0A).
 use super::*;
 
-impl super::sealed::Sealed for TargetRegionName<'_> {}
-impl ExtensionBodyDef for TargetRegionName<'_> {
+impl<'a> ExtensionBodyDef<'a> for TargetRegionName<'a> {
     const TAG_EXTENSION: u8 = 0x0A;
     const NAME: &'static str = "TARGET_REGION_NAME";
 }

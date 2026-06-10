@@ -283,11 +283,11 @@ macro_rules! declare_extension_bodies {
                 $(
                     assert_eq!(
                         $tag,
-                        <$($path)::+ as ExtensionBodyDef>::TAG_EXTENSION,
+                        <$($path)::+ as ExtensionBodyDef<'_>>::TAG_EXTENSION,
                         concat!("TAG_EXTENSION drift for ", stringify!($variant)),
                     );
                     assert!(
-                        !<$($path)::+ as ExtensionBodyDef>::NAME.is_empty(),
+                        !<$($path)::+ as ExtensionBodyDef<'_>>::NAME.is_empty(),
                         concat!("empty NAME for ", stringify!($variant)),
                     );
                     assert_eq!(
@@ -349,17 +349,10 @@ declare_extension_bodies! {'a;
     VvcSubpictures = 0x23 => VvcSubpicturesDescriptor<'a>,
 }
 
-/// Sealed trait — kept for backward compatibility with existing per-body
-/// `impl Sealed` blocks. No longer required by [`ExtensionBodyDef`].
-#[allow(dead_code)]
-pub(crate) mod sealed {
-    pub trait Sealed {}
-}
-
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
 /// `descriptor_tag_extension` value and a diagnostic name. Mirrors
 /// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
-pub trait ExtensionBodyDef {
+pub trait ExtensionBodyDef<'a>: dvb_common::Parse<'a, Error = crate::error::Error> {
     /// The `descriptor_tag_extension` value this body is selected by.
     const TAG_EXTENSION: u8;
     /// SCREAMING_SNAKE diagnostic name, suffix-free.
@@ -393,39 +386,46 @@ pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::InvalidDescriptor { tag: TAG, reason }
 }
 
+/// Validate an extension_descriptor header and split into (tag_extension, selector).
+/// Shared by [`ExtensionDescriptor::parse`] and [`ExtensionRegistry::parse`].
+pub(crate) fn validate_and_split(bytes: &[u8]) -> Result<(u8, &[u8])> {
+    if bytes.len() < HEADER_LEN {
+        return Err(Error::BufferTooShort {
+            need: HEADER_LEN,
+            have: bytes.len(),
+            what: "ExtensionDescriptor header",
+        });
+    }
+    if bytes[0] != TAG {
+        return Err(Error::InvalidDescriptor {
+            tag: bytes[0],
+            reason: "unexpected tag for extension_descriptor",
+        });
+    }
+    let length = bytes[1] as usize;
+    let end = HEADER_LEN + length;
+    if bytes.len() < end {
+        return Err(Error::BufferTooShort {
+            need: end,
+            have: bytes.len(),
+            what: "ExtensionDescriptor body",
+        });
+    }
+    if length < MIN_BODY_LEN {
+        return Err(Error::InvalidDescriptor {
+            tag: TAG,
+            reason: "body must contain at least the descriptor_tag_extension byte",
+        });
+    }
+    let tag_extension = bytes[HEADER_LEN];
+    let sel = &bytes[HEADER_LEN + TAG_EXTENSION_LEN..end];
+    Ok((tag_extension, sel))
+}
+
 impl<'a> Parse<'a> for ExtensionDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ExtensionDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for extension_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ExtensionDescriptor body",
-            });
-        }
-        if length < MIN_BODY_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "body must contain at least the descriptor_tag_extension byte",
-            });
-        }
-        let tag_extension = bytes[HEADER_LEN];
-        let sel = &bytes[HEADER_LEN + TAG_EXTENSION_LEN..end];
+        let (tag_extension, sel) = validate_and_split(bytes)?;
         let body = parse_body(tag_extension, sel)?;
         Ok(Self {
             tag_extension,
@@ -672,8 +672,13 @@ mod tests {
                         assert_eq!(p.coordinate_system, 2);
                         assert_eq!(p.icon_horizontal_origin, 999);
                         assert_eq!(p.icon_vertical_origin, 456);
-                        assert_eq!(f.icon_type, b"image/png");
-                        assert_eq!(f.payload, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+                        assert_eq!(f.icon_type.decode(), "image/png");
+                        match &f.payload {
+                            IconLocation::Data(d) => {
+                                assert_eq!(*d, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF])
+                            }
+                            other => panic!("expected Data, got {other:?}"),
+                        }
                     }
                     other => panic!("expected First, got {other:?}"),
                 }

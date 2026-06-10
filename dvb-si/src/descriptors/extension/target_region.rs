@@ -1,8 +1,7 @@
 //! Target Region Descriptor — ETSI EN 300 468 §6.4.12 (tag_extension 0x09).
 use super::*;
 
-impl super::sealed::Sealed for TargetRegion {}
-impl ExtensionBodyDef for TargetRegion {
+impl<'a> ExtensionBodyDef<'a> for TargetRegion {
     const TAG_EXTENSION: u8 = 0x09;
     const NAME: &'static str = "TARGET_REGION";
 }
@@ -66,84 +65,7 @@ impl<'a> Parse<'a> for TargetRegion {
             });
         }
         let country_code = LangCode([sel[0], sel[1], sel[2]]);
-        let mut regions = Vec::new();
-        let mut pos = ISO_639_LEN;
-        while pos < sel.len() {
-            let flags = sel[pos];
-            pos += 1;
-            let country_code_flag = (flags >> 2) & 1;
-            let region_depth = flags & 0x03;
-            let country_code = if country_code_flag == 1 {
-                if pos + ISO_639_LEN > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + ISO_639_LEN,
-                        have: sel.len(),
-                        what: "target_region body",
-                    });
-                }
-                let cc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
-                pos += ISO_639_LEN;
-                Some(cc)
-            } else {
-                None
-            };
-            let region_codes = match region_depth {
-                0 => RegionCodes::None,
-                1 => {
-                    if pos >= sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 1,
-                            have: sel.len(),
-                            what: "target_region body",
-                        });
-                    }
-                    let primary = sel[pos];
-                    pos += 1;
-                    RegionCodes::Primary {
-                        primary_region_code: primary,
-                    }
-                }
-                2 => {
-                    if pos + 1 >= sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 2,
-                            have: sel.len(),
-                            what: "target_region body",
-                        });
-                    }
-                    let primary = sel[pos];
-                    let secondary = sel[pos + 1];
-                    pos += 2;
-                    RegionCodes::PrimarySecondary {
-                        primary_region_code: primary,
-                        secondary_region_code: secondary,
-                    }
-                }
-                3 => {
-                    if pos + 3 >= sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "target_region body",
-                        });
-                    }
-                    let primary = sel[pos];
-                    let secondary = sel[pos + 1];
-                    let tertiary = u16::from_be_bytes([sel[pos + 2], sel[pos + 3]]);
-                    pos += 4;
-                    RegionCodes::Full {
-                        primary_region_code: primary,
-                        secondary_region_code: secondary,
-                        tertiary_region_code: tertiary,
-                    }
-                }
-                _ => return Err(invalid("target_region: invalid region_depth")),
-            };
-            regions.push(TargetRegionEntry {
-                country_code,
-                region_codes,
-            });
-        }
+        let regions = parse_region_entries(sel, ISO_639_LEN)?;
         Ok(TargetRegion {
             country_code,
             regions,
@@ -151,26 +73,169 @@ impl<'a> Parse<'a> for TargetRegion {
     }
 }
 
+/// Parse the region entry loop (the variable-length sequence of entries
+/// starting at byte offset `start` in `sel`). Shared by
+/// [`TargetRegion::parse`] and
+/// [`ServiceProminence`](super::service_prominence::ServiceProminence)
+/// target_region sub-loop parsing.
+pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<TargetRegionEntry>> {
+    let mut regions = Vec::new();
+    let mut pos = start;
+    while pos < sel.len() {
+        let flags = sel[pos];
+        pos += 1;
+        let country_code_flag = (flags >> 2) & 1;
+        let region_depth = flags & 0x03;
+        let country_code = if country_code_flag == 1 {
+            if pos + ISO_639_LEN > sel.len() {
+                return Err(Error::BufferTooShort {
+                    need: pos + ISO_639_LEN,
+                    have: sel.len(),
+                    what: "target_region body",
+                });
+            }
+            let cc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
+            pos += ISO_639_LEN;
+            Some(cc)
+        } else {
+            None
+        };
+        let region_codes = match region_depth {
+            0 => RegionCodes::None,
+            1 => {
+                if pos >= sel.len() {
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "target_region body",
+                    });
+                }
+                let primary = sel[pos];
+                pos += 1;
+                RegionCodes::Primary {
+                    primary_region_code: primary,
+                }
+            }
+            2 => {
+                if pos + 1 >= sel.len() {
+                    return Err(Error::BufferTooShort {
+                        need: pos + 2,
+                        have: sel.len(),
+                        what: "target_region body",
+                    });
+                }
+                let primary = sel[pos];
+                let secondary = sel[pos + 1];
+                pos += 2;
+                RegionCodes::PrimarySecondary {
+                    primary_region_code: primary,
+                    secondary_region_code: secondary,
+                }
+            }
+            3 => {
+                if pos + 3 >= sel.len() {
+                    return Err(Error::BufferTooShort {
+                        need: pos + 4,
+                        have: sel.len(),
+                        what: "target_region body",
+                    });
+                }
+                let primary = sel[pos];
+                let secondary = sel[pos + 1];
+                let tertiary = u16::from_be_bytes([sel[pos + 2], sel[pos + 3]]);
+                pos += 4;
+                RegionCodes::Full {
+                    primary_region_code: primary,
+                    secondary_region_code: secondary,
+                    tertiary_region_code: tertiary,
+                }
+            }
+            _ => return Err(invalid("target_region: invalid region_depth")),
+        };
+        regions.push(TargetRegionEntry {
+            country_code,
+            region_codes,
+        });
+    }
+    Ok(regions)
+}
+
+/// Byte length of the serialized region entry loop (without the leading
+/// `country_code` of a `target_region_descriptor` body).
+pub(crate) fn region_entries_serialized_len(entries: &[TargetRegionEntry]) -> usize {
+    entries
+        .iter()
+        .map(|r| {
+            1 + if r.country_code.is_some() {
+                ISO_639_LEN
+            } else {
+                0
+            } + match &r.region_codes {
+                RegionCodes::None => 0,
+                RegionCodes::Primary { .. } => 1,
+                RegionCodes::PrimarySecondary { .. } => 2,
+                RegionCodes::Full { .. } => 4,
+            }
+        })
+        .sum()
+}
+
+/// Write the region entry loop into `buf` starting at `pos`. Returns the
+/// number of bytes written.
+pub(crate) fn write_region_entries(
+    entries: &[TargetRegionEntry],
+    buf: &mut [u8],
+    mut pos: usize,
+) -> usize {
+    let start = pos;
+    for region in entries {
+        let depth = match &region.region_codes {
+            RegionCodes::None => 0u8,
+            RegionCodes::Primary { .. } => 1,
+            RegionCodes::PrimarySecondary { .. } => 2,
+            RegionCodes::Full { .. } => 3,
+        };
+        buf[pos] = 0xF8 | ((region.country_code.is_some() as u8) << 2) | depth;
+        pos += 1;
+        if let Some(cc) = &region.country_code {
+            buf[pos..pos + ISO_639_LEN].copy_from_slice(&cc.0);
+            pos += ISO_639_LEN;
+        }
+        match &region.region_codes {
+            RegionCodes::None => {}
+            RegionCodes::Primary {
+                primary_region_code,
+            } => {
+                buf[pos] = *primary_region_code;
+                pos += 1;
+            }
+            RegionCodes::PrimarySecondary {
+                primary_region_code,
+                secondary_region_code,
+            } => {
+                buf[pos] = *primary_region_code;
+                buf[pos + 1] = *secondary_region_code;
+                pos += 2;
+            }
+            RegionCodes::Full {
+                primary_region_code,
+                secondary_region_code,
+                tertiary_region_code,
+            } => {
+                buf[pos] = *primary_region_code;
+                buf[pos + 1] = *secondary_region_code;
+                buf[pos + 2..pos + 4].copy_from_slice(&tertiary_region_code.to_be_bytes());
+                pos += 4;
+            }
+        }
+    }
+    pos - start
+}
+
 impl Serialize for TargetRegion {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        ISO_639_LEN
-            + self
-                .regions
-                .iter()
-                .map(|r| {
-                    1 + if r.country_code.is_some() {
-                        ISO_639_LEN
-                    } else {
-                        0
-                    } + match &r.region_codes {
-                        RegionCodes::None => 0,
-                        RegionCodes::Primary { .. } => 1,
-                        RegionCodes::PrimarySecondary { .. } => 2,
-                        RegionCodes::Full { .. } => 4,
-                    }
-                })
-                .sum::<usize>()
+        ISO_639_LEN + region_entries_serialized_len(&self.regions)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
@@ -181,48 +246,7 @@ impl Serialize for TargetRegion {
             });
         }
         buf[..ISO_639_LEN].copy_from_slice(&self.country_code.0);
-        let mut pos = ISO_639_LEN;
-        for region in &self.regions {
-            let depth = match &region.region_codes {
-                RegionCodes::None => 0u8,
-                RegionCodes::Primary { .. } => 1,
-                RegionCodes::PrimarySecondary { .. } => 2,
-                RegionCodes::Full { .. } => 3,
-            };
-            buf[pos] = 0xF8 | ((region.country_code.is_some() as u8) << 2) | depth;
-            pos += 1;
-            if let Some(cc) = &region.country_code {
-                buf[pos..pos + ISO_639_LEN].copy_from_slice(&cc.0);
-                pos += ISO_639_LEN;
-            }
-            match &region.region_codes {
-                RegionCodes::None => {}
-                RegionCodes::Primary {
-                    primary_region_code,
-                } => {
-                    buf[pos] = *primary_region_code;
-                    pos += 1;
-                }
-                RegionCodes::PrimarySecondary {
-                    primary_region_code,
-                    secondary_region_code,
-                } => {
-                    buf[pos] = *primary_region_code;
-                    buf[pos + 1] = *secondary_region_code;
-                    pos += 2;
-                }
-                RegionCodes::Full {
-                    primary_region_code,
-                    secondary_region_code,
-                    tertiary_region_code,
-                } => {
-                    buf[pos] = *primary_region_code;
-                    buf[pos + 1] = *secondary_region_code;
-                    buf[pos + 2..pos + 4].copy_from_slice(&tertiary_region_code.to_be_bytes());
-                    pos += 4;
-                }
-            }
-        }
+        write_region_entries(&self.regions, buf, ISO_639_LEN);
         Ok(len)
     }
 }

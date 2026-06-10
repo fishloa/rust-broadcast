@@ -209,6 +209,7 @@ pub(crate) type CustomParse =
 pub struct DescriptorRegistry {
     custom: HashMap<(Option<u32>, u8), CustomParse>,
     logical_channel: bool,
+    ext: Option<crate::descriptors::extension::registry::ExtensionRegistry>,
 }
 
 impl DescriptorRegistry {
@@ -287,6 +288,17 @@ impl DescriptorRegistry {
         self
     }
 
+    /// Attach an [`ExtensionRegistry`](crate::descriptors::extension::registry::ExtensionRegistry)
+    /// so that [`iter_with_extensions`](super::any::DescriptorLoop::iter_with_extensions)
+    /// can surface custom-registered extension bodies during a descriptor-loop walk.
+    pub fn with_extension_registry(
+        &mut self,
+        ext: crate::descriptors::extension::registry::ExtensionRegistry,
+    ) -> &mut Self {
+        self.ext = Some(ext);
+        self
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -327,32 +339,14 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.fused || self.pos >= self.bytes.len() {
-            return None;
-        }
-        let rem = &self.bytes[self.pos..];
-        // --- shared loop-walk arithmetic (mirrors DescriptorIter::next) ---
-        if rem.len() < 2 {
-            self.fused = true;
-            return Some(Err(crate::Error::BufferTooShort {
-                need: 2,
-                have: rem.len(),
-                what: "descriptor header in loop",
-            }));
-        }
-        let tag = rem[0];
-        let len = rem[1] as usize;
-        let total = 2 + len;
-        if rem.len() < total {
-            self.fused = true;
-            return Some(Err(crate::Error::BufferTooShort {
-                need: total,
-                have: rem.len(),
-                what: "descriptor body in loop",
-            }));
-        }
-        let full = &rem[..total];
-        self.pos += total;
+        let (tag, full) = match crate::descriptors::any::next_loop_entry(
+            self.bytes,
+            &mut self.pos,
+            &mut self.fused,
+        )? {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
 
         // --- PDS tracking: 0x5F updates current_pds ---
         if tag == crate::descriptors::private_data_specifier::TAG {
@@ -404,6 +398,155 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
 }
 
 impl std::iter::FusedIterator for RegistryIter<'_, '_> {}
+
+// ---------------------------------------------------------------------------
+// ExtIterItem — item type for iter_with_extensions
+// ---------------------------------------------------------------------------
+
+/// Item produced by [`DescriptorLoop::iter_with_extensions`](super::any::DescriptorLoop::iter_with_extensions).
+///
+/// Extends [`AnyDescriptor`] with a third arm for custom-registered extension
+/// bodies whose `descriptor_tag_extension` is recognised by an
+/// [`ExtensionRegistry`](super::extension::registry::ExtensionRegistry).
+/// The `value` field can be downcast to the concrete type via
+/// `downcast_ref` on the value (see [`ExtensionObject`](super::extension::registry::ExtensionObject))
+#[derive(Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+#[non_exhaustive]
+pub enum ExtIterItem<'a> {
+    /// A regular descriptor (including built-in extension descriptors).
+    Descriptor(AnyDescriptor<'a>),
+    /// A custom-registered extension body (tag `0x7F`, known `descriptor_tag_extension`).
+    CustomExtension {
+        /// The `descriptor_tag_extension` byte.
+        tag_extension: u8,
+        /// The parsed, type-erased extension body value. Call `downcast_ref`
+        /// on it (see [`ExtensionObject`](super::extension::registry::ExtensionObject)) to recover the concrete type.
+        #[cfg_attr(
+            feature = "serde",
+            serde(serialize_with = "super::extension::registry::serialize_erased")
+        )]
+        value: Box<dyn super::extension::registry::ExtensionObject>,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// ExtRegistryIter — iterator for iter_with_extensions
+// ---------------------------------------------------------------------------
+
+/// Lazy iterator over a raw descriptor loop, driven by both a
+/// [`DescriptorRegistry`] and an
+/// [`ExtensionRegistry`](super::extension::registry::ExtensionRegistry).
+///
+/// Returned by [`DescriptorLoop::iter_with_extensions`](super::any::DescriptorLoop::iter_with_extensions).
+pub struct ExtRegistryIter<'r, 'a> {
+    desc_reg: &'r DescriptorRegistry,
+    ext_reg: &'r super::extension::registry::ExtensionRegistry,
+    bytes: &'a [u8],
+    pos: usize,
+    fused: bool,
+    current_pds: Option<u32>,
+}
+
+impl<'r, 'a> ExtRegistryIter<'r, 'a> {
+    pub(crate) fn new(
+        desc_reg: &'r DescriptorRegistry,
+        ext_reg: &'r super::extension::registry::ExtensionRegistry,
+        bytes: &'a [u8],
+    ) -> Self {
+        Self {
+            desc_reg,
+            ext_reg,
+            bytes,
+            pos: 0,
+            fused: false,
+            current_pds: None,
+        }
+    }
+}
+
+impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
+    type Item = crate::Result<ExtIterItem<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (tag, full) = match crate::descriptors::any::next_loop_entry(
+            self.bytes,
+            &mut self.pos,
+            &mut self.fused,
+        )? {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
+
+        // PDS tracking
+        if tag == crate::descriptors::private_data_specifier::TAG {
+            use dvb_common::Parse;
+            if let Ok(pds) =
+                crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(
+                    full,
+                )
+            {
+                self.current_pds = Some(pds.private_data_specifier);
+            }
+        }
+
+        // Extension descriptor with custom registry lookup
+        let len = full.len() - 2;
+        if tag == crate::descriptors::extension::TAG && len >= 1 {
+            let tag_extension = full[2];
+            if self.ext_reg.has_custom(tag_extension) {
+                return Some(
+                    match self.ext_reg.parse_body(tag_extension, &full[3..2 + len]) {
+                        Ok(super::extension::registry::RegisteredExtension::Custom {
+                            tag_extension,
+                            value,
+                        }) => Ok(ExtIterItem::CustomExtension {
+                            tag_extension,
+                            value,
+                        }),
+                        Ok(super::extension::registry::RegisteredExtension::Builtin(d)) => {
+                            Ok(ExtIterItem::Descriptor(AnyDescriptor::Extension(d)))
+                        }
+                        Err(e) => Err(e),
+                    },
+                );
+            }
+        }
+
+        // Regular precedence (same as RegistryIter)
+        if let Some(pds) = self.current_pds {
+            if let Some(parse_fn) = self.desc_reg.custom.get(&(Some(pds), tag)) {
+                return Some(match parse_fn(full) {
+                    Ok(value) => Ok(ExtIterItem::Descriptor(AnyDescriptor::Other { tag, value })),
+                    Err(e) => Err(e),
+                });
+            }
+        }
+        if let Some(parse_fn) = self.desc_reg.custom.get(&(None, tag)) {
+            return Some(match parse_fn(full) {
+                Ok(value) => Ok(ExtIterItem::Descriptor(AnyDescriptor::Other { tag, value })),
+                Err(e) => Err(e),
+            });
+        }
+        if self.desc_reg.logical_channel && tag == crate::descriptors::logical_channel::TAG {
+            use dvb_common::Parse;
+            return Some(
+                crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
+                    .map(|d| ExtIterItem::Descriptor(AnyDescriptor::LogicalChannel(d))),
+            );
+        }
+        if let Some(res) = AnyDescriptor::dispatch(tag, full) {
+            return Some(res.map(ExtIterItem::Descriptor));
+        }
+        Some(Ok(ExtIterItem::Descriptor(AnyDescriptor::Unknown {
+            tag,
+            body: &full[2..],
+        })))
+    }
+}
+
+impl std::iter::FusedIterator for ExtRegistryIter<'_, '_> {}
 
 #[cfg(test)]
 mod tests {
@@ -626,6 +769,69 @@ mod tests {
                 assert!(value.downcast_ref::<Agnostic83>().is_none());
             }
             other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn iter_with_extensions_surfaces_custom_extension() {
+        use crate::descriptors::any::{AnyDescriptor, DescriptorLoop};
+        use crate::descriptors::extension::registry::ExtensionRegistry;
+
+        #[derive(Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        struct MyCustomExt {
+            payload: Vec<u8>,
+        }
+
+        impl<'a> dvb_common::Parse<'a> for MyCustomExt {
+            type Error = crate::error::Error;
+            fn parse(sel: &'a [u8]) -> crate::Result<Self> {
+                Ok(Self {
+                    payload: sel.to_vec(),
+                })
+            }
+        }
+
+        impl<'a> crate::descriptors::extension::ExtensionBodyDef<'a> for MyCustomExt {
+            const TAG_EXTENSION: u8 = 0x42;
+            const NAME: &'static str = "MY_CUSTOM_EXT";
+        }
+
+        let mut ext_reg = ExtensionRegistry::new();
+        ext_reg.register::<MyCustomExt>();
+
+        let mut desc_reg = DescriptorRegistry::new();
+        desc_reg.with_extension_registry(ext_reg);
+
+        // Build a descriptor loop with a short_event + a 0x7F extension with tag_extension 0x42
+        let mut loop_bytes = vec![
+            0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, // short_event
+        ];
+        // extension: tag=0x7F, length=3, tag_extension=0x42, selector=[0xAB, 0xCD]
+        loop_bytes.extend_from_slice(&[0x7F, 0x03, 0x42, 0xAB, 0xCD]);
+
+        let dl = DescriptorLoop::new(&loop_bytes);
+        let items: Vec<_> = dl
+            .iter_with_extensions(&desc_reg, desc_reg.ext.as_ref().unwrap())
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        // First item is a regular descriptor
+        assert!(matches!(
+            &items[0],
+            ExtIterItem::Descriptor(AnyDescriptor::ShortEvent(_))
+        ));
+        // Second item surfaces the custom extension body (not Raw!)
+        match &items[1] {
+            ExtIterItem::CustomExtension {
+                tag_extension,
+                value,
+            } => {
+                assert_eq!(*tag_extension, 0x42);
+                let concrete = value.downcast_ref::<MyCustomExt>().unwrap();
+                assert_eq!(concrete.payload, &[0xAB, 0xCD]);
+            }
+            other => panic!("expected CustomExtension, got {other:?}"),
         }
     }
 }

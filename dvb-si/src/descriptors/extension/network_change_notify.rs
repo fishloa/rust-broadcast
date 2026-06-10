@@ -56,10 +56,38 @@ pub struct InvariantTs {
     pub onid: u16,
 }
 
-impl super::sealed::Sealed for NetworkChangeNotify {}
-impl ExtensionBodyDef for NetworkChangeNotify {
+impl<'a> ExtensionBodyDef<'a> for NetworkChangeNotify {
     const TAG_EXTENSION: u8 = 0x07;
     const NAME: &'static str = "NETWORK_CHANGE_NOTIFY";
+}
+
+impl NetworkChange {
+    /// Decode `start_time_of_change` (40-bit MJD+BCD UTC) to a
+    /// [`chrono::DateTime<chrono::Utc>`]. `None` if the date/time fields
+    /// are out of range. Reuses the same helper as EIT/TOT/TDT.
+    #[cfg(feature = "chrono")]
+    #[must_use]
+    pub fn start_time_of_change_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let raw = self.start_time_of_change;
+        let bytes = [
+            (raw >> 32) as u8,
+            (raw >> 24) as u8,
+            (raw >> 16) as u8,
+            (raw >> 8) as u8,
+            raw as u8,
+        ];
+        dvb_common::time::decode_mjd_bcd_utc(bytes)
+    }
+
+    /// Decode `change_duration` (24-bit BCD `HHMMSS`) to seconds.
+    /// `None` if the BCD nibbles are out of range.
+    #[cfg(feature = "chrono")]
+    #[must_use]
+    pub fn change_duration_secs(&self) -> Option<u32> {
+        let raw = self.change_duration;
+        let bytes = [(raw >> 16) as u8, (raw >> 8) as u8, raw as u8];
+        dvb_common::time::decode_bcd_duration(bytes).map(|d| d.as_secs() as u32)
+    }
 }
 
 fn change_serialized_len(ch: &NetworkChange) -> usize {
@@ -352,5 +380,39 @@ mod tests {
             bytes[..],
             "byte-exact re-serialize for TSDuck vector"
         );
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn chrono_accessors_decode_start_time_and_duration() {
+        use chrono::{Datelike, Timelike};
+        // One cell with one change entry, no invariant_ts.
+        // cell_id=0x0001, loop_length=12, then one 12-byte change entry.
+        // MJD 0xE409 = 2018-01-01, BCD 12:34:56
+        // duration BCD 01:30:45
+        let sel: Vec<u8> = vec![
+            0x00, 0x01, // cell_id
+            12,   // loop_length
+            0x10, // network_change_id
+            0x20, // network_change_version
+            0xE4, 0x09, 0x12, 0x34, 0x56, // start_time_of_change
+            0x01, 0x30, 0x45, // change_duration
+            0x23, // packed: rec_cat=1, inv_ts=0, change_type=3
+            0x40, // message_id
+        ];
+        let bytes = wrap(0x07, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::NetworkChangeNotify(b) => {
+                assert_eq!(b.cells.len(), 1);
+                let ch = &b.cells[0].changes[0];
+                let utc = ch.start_time_of_change_utc().expect("should decode");
+                assert_eq!(utc.year(), 2018);
+                assert_eq!((utc.hour(), utc.minute(), utc.second()), (12, 34, 56));
+                let secs = ch.change_duration_secs().expect("should decode");
+                assert_eq!(secs, 5445); // 1h30m45s
+            }
+            other => panic!("expected NetworkChangeNotify, got {other:?}"),
+        }
     }
 }

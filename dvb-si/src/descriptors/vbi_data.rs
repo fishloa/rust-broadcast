@@ -6,11 +6,9 @@
 //! many service-descriptor bytes.
 //!
 //! The first loop level (data_service_id + length-delimited service block) is
-//! typed. The inner per-line content (each byte either
-//! `reserved(2)|field_parity(1)|line_offset(5)` for data_service_id ∈
-//! {0x01,0x02,0x04,0x05,0x06,0x07}, or 8 reserved bits otherwise) is kept raw
-//! as a borrowed `&[u8]` per house convention — its meaning is selected by
-//! `data_service_id`, so per-byte typing would be fragile (Table 106/107).
+//! typed. For `data_service_id` values `0x01`–`0x07` (Table 106/107), each
+//! service-descriptor byte encodes `reserved(2)|field_parity(1)|line_offset(5)`;
+//! other values are kept as raw reserved bytes.
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -20,11 +18,31 @@ use dvb_common::{Parse, Serialize};
 /// Descriptor tag for VBI_data_descriptor.
 pub const TAG: u8 = 0x45;
 const HEADER_LEN: usize = 2;
-const ENTRY_HEADER_LEN: usize = 2; // data_service_id + data_service_descriptor_length
-/// Maximum body length expressible in the 8-bit `descriptor_length` field.
+const ENTRY_HEADER_LEN: usize = 2;
 const MAX_BODY_LEN: usize = u8::MAX as usize;
-/// Maximum per-entry service block length (8-bit length field).
 const MAX_SERVICE_LEN: usize = u8::MAX as usize;
+
+/// Per-service-descriptor content, keyed by `data_service_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub enum VbiService<'a> {
+    /// `data_service_id` 0x01–0x07: each byte is
+    /// `reserved(2)|field_parity(1)|line_offset(5)` (Table 106).
+    Lines(Vec<VbiLine>),
+    /// `data_service_id` 0x00 or 0x08+: raw reserved bytes.
+    Reserved(&'a [u8]),
+}
+
+/// One VBI line entry (Table 106 per-byte layout for ids 0x01–0x07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct VbiLine {
+    /// `field_parity` (1 bit) — `[5]` of the service-descriptor byte.
+    pub field_parity: bool,
+    /// `line_offset` (5 bits) — `[4:0]` of the service-descriptor byte.
+    pub line_offset: u8,
+}
 
 /// One VBI data service entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,9 +53,8 @@ pub struct VbiDataEntry<'a> {
     /// 0x02 = inverted teletext, 0x04 = VPS, 0x05 = WSS, 0x06 = closed
     /// captioning, 0x07 = monochrome 4:2:2 samples; others reserved/user.
     pub data_service_id: u8,
-    /// Raw service-descriptor bytes (one byte per VBI line; layout selected by
-    /// `data_service_id` per Table 106). Kept opaque per house convention.
-    pub service_descriptor: &'a [u8],
+    /// Per-service content, typed for ids 0x01–0x07.
+    pub service_descriptor: VbiService<'a>,
 }
 
 /// VBI Data Descriptor.
@@ -76,8 +93,20 @@ impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
                     reason: "data_service_descriptor_length exceeds descriptor body",
                 });
             }
-            let service_descriptor = &body[pos..pos + svc_len];
+            let svc_bytes = &body[pos..pos + svc_len];
             pos += svc_len;
+            let service_descriptor = if (1..=7).contains(&data_service_id) {
+                let lines = svc_bytes
+                    .iter()
+                    .map(|&b| VbiLine {
+                        field_parity: (b & 0x20) != 0,
+                        line_offset: b & 0x1F,
+                    })
+                    .collect();
+                VbiService::Lines(lines)
+            } else {
+                VbiService::Reserved(svc_bytes)
+            };
             entries.push(VbiDataEntry {
                 data_service_id,
                 service_descriptor,
@@ -94,7 +123,13 @@ impl Serialize for VbiDataDescriptor<'_> {
             + self
                 .entries
                 .iter()
-                .map(|e| ENTRY_HEADER_LEN + e.service_descriptor.len())
+                .map(|e| {
+                    ENTRY_HEADER_LEN
+                        + match &e.service_descriptor {
+                            VbiService::Lines(lines) => lines.len(),
+                            VbiService::Reserved(b) => b.len(),
+                        }
+                })
                 .sum::<usize>()
     }
 
@@ -107,7 +142,6 @@ impl Serialize for VbiDataDescriptor<'_> {
             });
         }
         let body_len = len - HEADER_LEN;
-        // 8-bit descriptor_length field: error rather than silently truncate.
         if body_len > MAX_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
@@ -118,18 +152,31 @@ impl Serialize for VbiDataDescriptor<'_> {
         buf[1] = body_len as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            // 8-bit data_service_descriptor_length field: error on over-range.
-            if e.service_descriptor.len() > MAX_SERVICE_LEN {
+            let svc_len = match &e.service_descriptor {
+                VbiService::Lines(lines) => lines.len(),
+                VbiService::Reserved(b) => b.len(),
+            };
+            if svc_len > MAX_SERVICE_LEN {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "service_descriptor exceeds 255 bytes (8-bit length field)",
                 });
             }
             buf[pos] = e.data_service_id;
-            buf[pos + 1] = e.service_descriptor.len() as u8;
+            buf[pos + 1] = svc_len as u8;
             pos += ENTRY_HEADER_LEN;
-            buf[pos..pos + e.service_descriptor.len()].copy_from_slice(e.service_descriptor);
-            pos += e.service_descriptor.len();
+            match &e.service_descriptor {
+                VbiService::Lines(lines) => {
+                    for line in lines {
+                        buf[pos] = (u8::from(line.field_parity) << 5) | (line.line_offset & 0x1F);
+                        pos += 1;
+                    }
+                }
+                VbiService::Reserved(b) => {
+                    buf[pos..pos + b.len()].copy_from_slice(b);
+                    pos += b.len();
+                }
+            }
         }
         Ok(len)
     }
@@ -153,23 +200,53 @@ mod tests {
 
     #[test]
     fn parse_single_entry() {
-        // data_service_id=0x01 (EBU teletext), 2 line bytes
+        // data_service_id=0x01 (EBU teletext), 2 line bytes: 0xC1, 0xC2
+        // 0xC1 = reserved(2)=11 | field_parity=0 | line_offset=00001 → fp=false, lo=1
+        // 0xC2 = reserved(2)=11 | field_parity=0 | line_offset=00010 → fp=false, lo=2
         let bytes = [TAG, 4, 0x01, 0x02, 0xC1, 0xC2];
         let d = VbiDataDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].data_service_id, 0x01);
-        assert_eq!(d.entries[0].service_descriptor, &[0xC1, 0xC2]);
+        match &d.entries[0].service_descriptor {
+            VbiService::Lines(lines) => {
+                assert_eq!(lines.len(), 2);
+                assert!(!lines[0].field_parity);
+                assert_eq!(lines[0].line_offset, 0x01);
+                assert!(!lines[1].field_parity);
+                assert_eq!(lines[1].line_offset, 0x02);
+            }
+            other => panic!("expected Lines, got {other:?}"),
+        }
     }
 
     #[test]
     fn parse_multiple_entries() {
+        // 0xAA = 10_1_01010 → fp=true, lo=0x0A=10
+        // 0xBB = 10_1_11011 → fp=true, lo=0x1B=27
+        // 0xCC = 11_0_01100 → fp=false, lo=0x0C=12
         let bytes = [TAG, 7, 0x04, 0x01, 0xAA, 0x05, 0x02, 0xBB, 0xCC];
         let d = VbiDataDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
         assert_eq!(d.entries[0].data_service_id, 0x04);
-        assert_eq!(d.entries[0].service_descriptor, &[0xAA]);
+        match &d.entries[0].service_descriptor {
+            VbiService::Lines(lines) => {
+                assert_eq!(lines.len(), 1);
+                assert!(lines[0].field_parity);
+                assert_eq!(lines[0].line_offset, 0x0A);
+            }
+            other => panic!("expected Lines, got {other:?}"),
+        }
         assert_eq!(d.entries[1].data_service_id, 0x05);
-        assert_eq!(d.entries[1].service_descriptor, &[0xBB, 0xCC]);
+        match &d.entries[1].service_descriptor {
+            VbiService::Lines(lines) => {
+                assert_eq!(lines.len(), 2);
+                assert!(lines[0].field_parity);
+                assert_eq!(lines[0].line_offset, 0x1B);
+                assert!(!lines[1].field_parity);
+                assert_eq!(lines[1].line_offset, 0x0C);
+            }
+            other => panic!("expected Lines, got {other:?}"),
+        }
     }
 
     #[test]
@@ -177,7 +254,22 @@ mod tests {
         let bytes = [TAG, 2, 0x06, 0x00];
         let d = VbiDataDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert!(d.entries[0].service_descriptor.is_empty());
+        match &d.entries[0].service_descriptor {
+            VbiService::Lines(lines) => assert!(lines.is_empty()),
+            other => panic!("expected Lines, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_reserved_data_service_id() {
+        let bytes = [TAG, 4, 0x00, 0x02, 0xDE, 0xAD];
+        let d = VbiDataDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.entries.len(), 1);
+        assert_eq!(d.entries[0].data_service_id, 0x00);
+        match &d.entries[0].service_descriptor {
+            VbiService::Reserved(b) => assert_eq!(*b, &[0xDE, 0xAD]),
+            other => panic!("expected Reserved, got {other:?}"),
+        }
     }
 
     #[test]
@@ -220,13 +312,39 @@ mod tests {
             entries: vec![
                 VbiDataEntry {
                     data_service_id: 0x01,
-                    service_descriptor: &[0xC1, 0xC2, 0xC3],
+                    service_descriptor: VbiService::Lines(vec![
+                        VbiLine {
+                            field_parity: false,
+                            line_offset: 0x01,
+                        },
+                        VbiLine {
+                            field_parity: false,
+                            line_offset: 0x02,
+                        },
+                        VbiLine {
+                            field_parity: false,
+                            line_offset: 0x03,
+                        },
+                    ]),
                 },
                 VbiDataEntry {
                     data_service_id: 0x04,
-                    service_descriptor: &[],
+                    service_descriptor: VbiService::Lines(vec![]),
                 },
             ],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(VbiDataDescriptor::parse(&buf).unwrap(), d);
+    }
+
+    #[test]
+    fn serialize_round_trip_reserved() {
+        let d = VbiDataDescriptor {
+            entries: vec![VbiDataEntry {
+                data_service_id: 0x80,
+                service_descriptor: VbiService::Reserved(&[0xDE, 0xAD]),
+            }],
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -238,7 +356,10 @@ mod tests {
         let d = VbiDataDescriptor {
             entries: vec![VbiDataEntry {
                 data_service_id: 0x01,
-                service_descriptor: &[0xAA],
+                service_descriptor: VbiService::Lines(vec![VbiLine {
+                    field_parity: false,
+                    line_offset: 0x0A,
+                }]),
             }],
         };
         let mut tiny = [0u8; 3];
@@ -258,7 +379,16 @@ mod tests {
         let make = || VbiDataDescriptor {
             entries: vec![VbiDataEntry {
                 data_service_id: 0x01,
-                service_descriptor: &[0xC1, 0xC2],
+                service_descriptor: VbiService::Lines(vec![
+                    VbiLine {
+                        field_parity: false,
+                        line_offset: 0x01,
+                    },
+                    VbiLine {
+                        field_parity: false,
+                        line_offset: 0x02,
+                    },
+                ]),
             }],
         };
         let json = serde_json::to_string(&make()).unwrap();

@@ -1,8 +1,7 @@
 //! URI Linkage Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x13).
 use super::*;
 
-impl super::sealed::Sealed for UriLinkage<'_> {}
-impl ExtensionBodyDef for UriLinkage<'_> {
+impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {
     const TAG_EXTENSION: u8 = 0x13;
     const NAME: &'static str = "URI_LINKAGE";
 }
@@ -13,8 +12,8 @@ impl ExtensionBodyDef for UriLinkage<'_> {
 pub struct UriLinkage<'a> {
     /// uri_linkage_type(8).
     pub uri_linkage_type: u8,
-    /// Length-delimited URI bytes.
-    pub uri: &'a [u8],
+    /// Length-delimited `uri_char` text.
+    pub uri: crate::text::DvbText<'a>,
     /// min_polling_interval(16), present iff `uri_linkage_type` is 0x00 or 0x01.
     pub min_polling_interval: Option<u16>,
     /// Trailing private_data_byte run.
@@ -41,7 +40,7 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
                 what: "URI_linkage body",
             });
         }
-        let uri = &sel[pos..pos + uri_length];
+        let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type == 0x00 || uri_linkage_type == 0x01 {
             if sel.len() < pos + 2 {
@@ -88,7 +87,7 @@ impl Serialize for UriLinkage<'_> {
         buf[0] = self.uri_linkage_type;
         buf[1] = self.uri.len() as u8;
         let mut p = 2;
-        buf[p..p + self.uri.len()].copy_from_slice(self.uri);
+        buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
         p += self.uri.len();
         if let Some(mpi) = self.min_polling_interval {
             buf[p..p + 2].copy_from_slice(&mpi.to_be_bytes());
@@ -117,7 +116,8 @@ mod tests {
         match &d.body {
             ExtensionBody::UriLinkage(b) => {
                 assert_eq!(b.uri_linkage_type, 0x00);
-                assert_eq!(b.uri, uri);
+                assert_eq!(b.uri.raw(), uri);
+                assert_eq!(b.uri.decode(), "http://x");
                 assert_eq!(b.min_polling_interval, Some(0x1234));
                 assert_eq!(b.private_data, &[0xFE]);
             }
@@ -137,6 +137,7 @@ mod tests {
         match &d.body {
             ExtensionBody::UriLinkage(b) => {
                 assert_eq!(b.min_polling_interval, None);
+                assert_eq!(b.uri.decode(), "dvb:");
                 assert!(b.private_data.is_empty());
             }
             other => panic!("expected UriLinkage, got {other:?}"),

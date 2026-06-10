@@ -38,13 +38,6 @@ pub struct Ac3Descriptor<'a> {
 impl<'a> Parse<'a> for Ac3Descriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "Ac3Descriptor header",
-            });
-        }
         let body = descriptor_body(
             bytes,
             TAG,

@@ -1,8 +1,7 @@
 //! SH Delivery System Descriptor — ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05).
 use super::*;
 
-impl super::sealed::Sealed for ShDeliverySystem {}
-impl ExtensionBodyDef for ShDeliverySystem {
+impl<'a> ExtensionBodyDef<'a> for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
     const NAME: &'static str = "SH_DELIVERY_SYSTEM";
 }
