@@ -176,22 +176,66 @@ pub struct SectionSetCollector {
     partial: HashMap<SectionSetKey, PartialSectionSet>,
 }
 
+/// Default cap on the number of in-progress logical keys (section sets +
+/// schedule ranges) retained by [`EitCollector`].
+///
+/// 256 concurrent collections is generous — a real DVB network has at most a
+/// few dozen services per transponder — while bounding a hostile stream that
+/// rotates `original_network_id` / `transport_stream_id` / `service_id` (or
+/// `current_next_indicator`) to force unbounded map growth. The cap is applied
+/// independently to the sections map and the schedules map; each is limited to
+/// `max_logical_keys` entries. When a map is full, incoming sections for new
+/// keys are skipped until [`clear`](EitCollector::clear) or
+/// [`retain_logical`](EitCollector::retain_logical) frees capacity.
+pub const DEFAULT_MAX_LOGICAL_KEYS: usize = 256;
+
 /// EIT-specific collector.
 ///
 /// Present/following EITs complete as one normal section set. Schedule EITs
 /// complete only when every schedule table_id from the kind's first table_id
 /// through the advertised `last_table_id` has completed its own section set.
-#[derive(Debug, Default)]
+///
+/// # Memory bounds
+///
+/// The collector is bounded by [`DEFAULT_MAX_LOGICAL_KEYS`] (configurable via
+/// [`with_max_logical_keys`](Self::with_max_logical_keys)). When the sections
+/// or schedules map is full, incoming sections for new keys are skipped until
+/// space frees — the same skip-until-space policy as
+/// [`crate::carousel::ModuleReassembler`].
+#[derive(Debug)]
 pub struct EitCollector {
     sections: HashMap<EitSectionSetKey, PartialEitSectionSet>,
     schedules: HashMap<EitLogicalKey, PartialEitSchedule>,
+    max_logical_keys: usize,
+}
+
+impl Default for EitCollector {
+    fn default() -> Self {
+        Self {
+            sections: HashMap::new(),
+            schedules: HashMap::new(),
+            max_logical_keys: DEFAULT_MAX_LOGICAL_KEYS,
+        }
+    }
 }
 
 impl EitCollector {
-    /// Create an empty EIT collector.
+    /// Create an empty EIT collector with the default cap
+    /// ([`DEFAULT_MAX_LOGICAL_KEYS`]).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the logical-key cap (default [`DEFAULT_MAX_LOGICAL_KEYS`]).
+    /// The cap is applied independently to the sections and schedules maps.
+    /// Sections for new keys are skipped when the relevant map is full, until
+    /// [`clear`](Self::clear) or [`retain_logical`](Self::retain_logical)
+    /// frees capacity.
+    #[must_use]
+    pub fn with_max_logical_keys(mut self, max_logical_keys: usize) -> Self {
+        self.max_logical_keys = max_logical_keys;
+        self
     }
 
     /// Push one complete EIT section.
@@ -251,6 +295,11 @@ impl EitCollector {
         };
         let bytes: Arc<[u8]> = Arc::from(raw);
 
+        // Cap check: sections map
+        if !self.sections.contains_key(&key) && self.sections.len() >= self.max_logical_keys {
+            return Ok(None);
+        }
+
         let partial = self
             .sections
             .entry(key)
@@ -266,10 +315,10 @@ impl EitCollector {
             Some(complete) => complete,
             None => return Ok(None),
         };
-        partial.emitted = true;
 
         match eit.kind {
             eit::EitKind::PresentFollowingActual | eit::EitKind::PresentFollowingOther => {
+                partial.emitted = true;
                 Ok(Some(CompletedEit::PresentFollowing(complete)))
             }
             eit::EitKind::ScheduleActual | eit::EitKind::ScheduleOther => {
@@ -285,7 +334,17 @@ impl EitCollector {
                         last_table_id: eit.last_table_id,
                     });
                 }
-                let meta = EitScheduleMeta {
+
+                // Cap check: schedules map (before marking the section set emitted)
+                if !self.schedules.contains_key(&logical_key)
+                    && self.schedules.len() >= self.max_logical_keys
+                {
+                    return Ok(None);
+                }
+
+                partial.emitted = true;
+
+                let schedule_meta = EitScheduleMeta {
                     key: logical_key,
                     first_table_id,
                     last_table_id: eit.last_table_id,
@@ -293,9 +352,9 @@ impl EitCollector {
                 let schedule = self
                     .schedules
                     .entry(logical_key)
-                    .or_insert_with(|| PartialEitSchedule::new(meta));
-                if schedule.meta.last_table_id != meta.last_table_id {
-                    schedule.reset(meta);
+                    .or_insert_with(|| PartialEitSchedule::new(schedule_meta));
+                if schedule.meta.last_table_id != schedule_meta.last_table_id {
+                    schedule.reset(schedule_meta);
                 }
                 schedule.insert(eit.table_id, complete);
                 if let Some(complete) = schedule.to_complete() {
