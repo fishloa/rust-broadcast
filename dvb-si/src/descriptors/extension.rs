@@ -1220,17 +1220,19 @@ impl Serialize for ImageIcon<'_> {
         }
         // byte0: descriptor_number(4) | last_descriptor_number(4)
         buf[0] = (self.descriptor_number << 4) | (self.last_descriptor_number & 0x0F);
-        // byte1: reserved_future_use(5)=0 | icon_id(3)
-        buf[1] = self.icon_id & 0x07;
+        // byte1: reserved_future_use(5)=1 | icon_id(3)
+        buf[1] = 0xF8 | (self.icon_id & 0x07);
         let mut p = 2;
         match &self.body {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
                 let position_flag = u8::from(f.position.is_some());
                 if let Some(pos) = &f.position {
+                    // ... | coordinate_system(3) | reserved_future_use(2)=1
                     buf[p] = (f.icon_transport_mode << 6)
                         | (position_flag << 5)
-                        | ((pos.coordinate_system & 0x07) << 2);
+                        | ((pos.coordinate_system & 0x07) << 2)
+                        | 0x03;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
                     let h = pos.icon_horizontal_origin & 0x0FFF;
@@ -1240,7 +1242,8 @@ impl Serialize for ImageIcon<'_> {
                     buf[p + 2] = v as u8;
                     p += 3;
                 } else {
-                    buf[p] = (f.icon_transport_mode << 6) | (position_flag << 5);
+                    // ... | position_flag(1) | reserved_future_use(5)=1
+                    buf[p] = (f.icon_transport_mode << 6) | (position_flag << 5) | 0x1F;
                     p += 1;
                 }
                 // icon_type_length + run
@@ -1487,16 +1490,20 @@ impl Serialize for ShDeliverySystem {
                 have: buf.len(),
             });
         }
-        buf[0] = self.diversity_mode << 4;
+        // diversity_mode(4) | reserved_future_use(4)=1
+        buf[0] = (self.diversity_mode << 4) | 0x0F;
         let mut p = 1;
         for m in &self.modulations {
             let modulation_type_bit = matches!(m.modulation, ShModulationMode::Ofdm { .. }) as u8;
             let interleaver_presence_bit = m.interleaver.is_some() as u8;
             let interleaver_type_bit =
                 matches!(m.interleaver, Some(ShInterleaver::Type1 { .. })) as u8;
+            // modulation_type(1) | interleaver_presence(1) | interleaver_type(1)
+            //   | reserved_future_use(5)=1
             buf[p] = (modulation_type_bit << 7)
                 | (interleaver_presence_bit << 6)
-                | (interleaver_type_bit << 5);
+                | (interleaver_type_bit << 5)
+                | 0x1F;
             p += 1;
 
             match &m.modulation {
@@ -1511,7 +1518,8 @@ impl Serialize for ShDeliverySystem {
                         | ((roll_off & 0x03) << 4)
                         | ((modulation_mode & 0x03) << 2)
                         | ((code_rate >> 2) & 0x03);
-                    buf[p + 1] = ((code_rate & 0x03) << 6) | ((symbol_rate & 0x1F) << 1);
+                    // code_rate low 2 | symbol_rate(5) | reserved_future_use(1)=1
+                    buf[p + 1] = ((code_rate & 0x03) << 6) | ((symbol_rate & 0x1F) << 1) | 0x01;
                 }
                 ShModulationMode::Ofdm {
                     bandwidth,
@@ -1554,7 +1562,8 @@ impl Serialize for ShDeliverySystem {
                     p += 4;
                 }
                 Some(ShInterleaver::Type1 { common_multiplier }) => {
-                    buf[p] = (common_multiplier & 0x3F) << 2;
+                    // common_multiplier(6) | reserved_future_use(2)=1
+                    buf[p] = ((common_multiplier & 0x3F) << 2) | 0x03;
                     p += 1;
                 }
                 None => {}
@@ -2379,9 +2388,12 @@ impl Serialize for ServiceProminence<'_> {
         buf[0] = sogi_len as u8;
         let mut p = 1;
         for e in &self.sogi_list {
+            // SOGI_flag | target_region_flag | service_flag
+            //   | reserved_future_use(1)=1 | SOGI_priority high nibble
             buf[p] = ((e.sogi_flag as u8) << 7)
                 | ((e.target_region_flag as u8) << 6)
                 | ((e.service_flag as u8) << 5)
+                | 0x10
                 | ((e.sogi_priority >> 8) as u8 & 0x0F);
             buf[p + 1] = e.sogi_priority as u8;
             p += 2;
@@ -4142,5 +4154,98 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":5"));
         assert!(json.contains("\"ShDeliverySystem\""));
+    }
+
+    fn from_hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Cross-implementation conformance: exact extension-descriptor bytes
+    /// compiled by TSDuck (github.com/tsduck/tsduck-test, reference tests 015
+    /// and 115). Parsing then re-serializing must reproduce each descriptor
+    /// verbatim — this validates our wire layout (including
+    /// `reserved_future_use` bits = 1, per the DVB convention) against an
+    /// independent encoder, which a self-round-trip cannot.
+    #[test]
+    fn tsduck_reference_round_trip_byte_exact() {
+        let vectors = [
+            // service_prominence (test-115)
+            (
+                "7f20221a300c04d2f000092911fc465241fd47425211fa0102fb0b0c000ddeadbeef",
+                ExtensionTag::ServiceProminence,
+            ),
+            ("7f0a22000011223344556677", ExtensionTag::ServiceProminence),
+            (
+                "7f0d220b700e092906fe4742520102",
+                ExtensionTag::ServiceProminence,
+            ),
+            // image_icon (test-015)
+            (
+                "7f1a000cfc2b3e71c809696d6167652f706e67080123456789abcdef",
+                ExtensionTag::ImageIcon,
+            ),
+            (
+                "7f220007fe5f0a696d6167652f6a70656712687474703a2f2f666f6f2f6261722e6a7067",
+                ExtensionTag::ImageIcon,
+            ),
+            ("7f090033fe050123456789", ExtensionTag::ImageIcon),
+            // SH_delivery_system (test-015)
+            ("7f02055f", ExtensionTag::ShDeliverySystem),
+            (
+                "7f0d05afff94ac175f68831d8d99ad",
+                ExtensionTag::ShDeliverySystem,
+            ),
+        ];
+        for (hex, ext) in vectors {
+            let bytes = from_hex(hex);
+            let d =
+                ExtensionDescriptor::parse(&bytes).unwrap_or_else(|e| panic!("parse {hex}: {e:?}"));
+            assert_eq!(d.kind(), Some(ext), "kind for {hex}");
+            let mut out = vec![0u8; d.serialized_len()];
+            let n = d.serialize_into(&mut out).unwrap();
+            assert_eq!(out[..n], bytes[..], "byte-exact re-serialize for {hex}");
+        }
+
+        // Decoded-field spot checks (prove we interpret TSDuck's known values,
+        // not merely round-trip our own): the rich image_icon and the rich
+        // service_prominence from the XML sources of tests 015 / 115.
+        let icon = from_hex("7f1a000cfc2b3e71c809696d6167652f706e67080123456789abcdef");
+        match &ExtensionDescriptor::parse(&icon).unwrap().body {
+            ExtensionBody::ImageIcon(b) => {
+                assert_eq!(b.descriptor_number, 0);
+                assert_eq!(b.last_descriptor_number, 12);
+                assert_eq!(b.icon_id, 4);
+                match &b.body {
+                    ImageIconBody::First(f) => {
+                        assert_eq!(f.icon_transport_mode, 0);
+                        let p = f.position.as_ref().unwrap();
+                        assert_eq!(p.coordinate_system, 2);
+                        assert_eq!(p.icon_horizontal_origin, 999);
+                        assert_eq!(p.icon_vertical_origin, 456);
+                        assert_eq!(f.icon_type, b"image/png");
+                        assert_eq!(f.payload, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF]);
+                    }
+                    other => panic!("expected First, got {other:?}"),
+                }
+            }
+            other => panic!("expected ImageIcon, got {other:?}"),
+        }
+
+        let sp = from_hex("7f20221a300c04d2f000092911fc465241fd47425211fa0102fb0b0c000ddeadbeef");
+        match &ExtensionDescriptor::parse(&sp).unwrap().body {
+            ExtensionBody::ServiceProminence(b) => {
+                assert_eq!(b.sogi_list.len(), 2);
+                assert_eq!(b.sogi_list[0].sogi_priority, 12);
+                assert_eq!(b.sogi_list[0].service_id, Some(1234));
+                assert!(b.sogi_list[1].sogi_flag);
+                assert_eq!(b.sogi_list[1].service_id, Some(2345));
+                assert!(b.sogi_list[1].target_region_loop.is_some());
+                assert_eq!(b.private_data, &[0xDE, 0xAD, 0xBE, 0xEF]);
+            }
+            other => panic!("expected ServiceProminence, got {other:?}"),
+        }
     }
 }
