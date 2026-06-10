@@ -22,7 +22,7 @@ fn ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
         has_payload: true,
         continuity_counter: 0,
     };
-    header.serialize_into(&mut pkt);
+    header.serialize_into(&mut pkt).unwrap();
     pkt[4] = 0x00; // pointer_field
     let start = 5;
     assert!(start + section.len() <= TS_PACKET_SIZE, "section too big");

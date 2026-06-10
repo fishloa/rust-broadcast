@@ -44,13 +44,13 @@ use crate::ts::PacketReassembler;
 // ── TS header constants (ISO/IEC 13818-1 §2.4.3.2) ──────────────────────────
 
 /// TS sync byte.
-const TS_SYNC: u8 = 0x47;
+const TS_SYNC_BYTE: u8 = 0x47;
 /// Expected size of one MPEG-TS packet.
 const TS_PACKET_SIZE: usize = 188;
 /// Byte 1 bit 6 = PUSI (Payload Unit Start Indicator).
 const PUSI_MASK: u8 = 0x40;
 /// Byte 1 bits 4..=0 = PID upper 5 bits.
-const PID_HI_MASK: u8 = 0x1F;
+const PID_MASK_HI: u8 = 0x1F;
 /// Byte 3 bit 5 = adaptation_field_control bit 1 (adaptation field present).
 const ADAPTATION_FLAG: u8 = 0x20;
 /// Byte 3 bit 4 = adaptation_field_control bit 0 (payload present).
@@ -75,14 +75,14 @@ struct TsInfo {
 /// Citation: ISO/IEC 13818-1:2019 §2.4.3.2 (transport_packet header) and
 /// §2.4.3.5 (adaptation_field length).
 fn parse_ts_header(buf: &[u8]) -> Option<TsInfo> {
-    if buf.len() < TS_PACKET_SIZE || buf[0] != TS_SYNC {
+    if buf.len() < TS_PACKET_SIZE || buf[0] != TS_SYNC_BYTE {
         return None;
     }
     let b1 = buf[1];
     let b3 = buf[3];
 
     let pusi = (b1 & PUSI_MASK) != 0;
-    let pid = (((b1 & PID_HI_MASK) as u16) << 8) | (buf[2] as u16);
+    let pid = (((b1 & PID_MASK_HI) as u16) << 8) | (buf[2] as u16);
     let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
     let has_payload = (b3 & PAYLOAD_FLAG) != 0;
 
@@ -402,9 +402,9 @@ mod tests {
     /// The T2-MI bytes must fit in 183 bytes (188 − 4 header − 1 pointer).
     fn ts_packet(pid: u16, t2mi_data: &[u8], pusi: bool, pointer_field: u8) -> [u8; 188] {
         let mut pkt = [0xFFu8; 188];
-        pkt[0] = TS_SYNC;
+        pkt[0] = TS_SYNC_BYTE;
         pkt[1] = if pusi { PUSI_MASK } else { 0 };
-        pkt[1] |= ((pid >> 8) as u8) & PID_HI_MASK;
+        pkt[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
         pkt[2] = (pid & 0xFF) as u8;
         pkt[3] = PAYLOAD_FLAG; // payload present, no adaptation field
         if pusi {
