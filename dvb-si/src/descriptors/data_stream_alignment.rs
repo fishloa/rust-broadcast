@@ -17,6 +17,7 @@ const BODY_LEN: u8 = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum AlignmentType {
     /// Video access units start at the beginning of a PES packet.
     VideoAccessUnit = 0x01,

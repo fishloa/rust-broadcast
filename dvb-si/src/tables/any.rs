@@ -112,6 +112,7 @@ macro_rules! declare_tables {
                     Self::$variant(t)
                 }
             }
+            impl<$lt> crate::traits::sealed::Sealed for $($path)::+ $(<$plt>)? {}
         )+
         $($(
             impl<$lt> From<$($nd_path)::+ $(<$nd_plt>)?> for AnyTableSection<$lt> {
@@ -119,6 +120,7 @@ macro_rules! declare_tables {
                     Self::$nd_variant(t)
                 }
             }
+            impl<$lt> crate::traits::sealed::Sealed for $($nd_path)::+ $(<$nd_plt>)? {}
         )+)?
 
         impl<$lt> AnyTableSection<$lt> {

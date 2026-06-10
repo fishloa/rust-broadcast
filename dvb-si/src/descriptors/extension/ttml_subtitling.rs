@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for TtmlSubtitling<'_> {}
 impl ExtensionBodyDef for TtmlSubtitling<'_> {
     const TAG_EXTENSION: u8 = 0x20;
     const NAME: &'static str = "TTML_SUBTITLING";

@@ -56,6 +56,7 @@ impl std::fmt::Display for TsGs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum Mode {
     /// Normal Mode — UPL/SYNC/SYNCD present, CRC-8 per UP.
     Normal = 0,

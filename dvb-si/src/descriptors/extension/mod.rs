@@ -210,6 +210,8 @@ macro_rules! declare_extension_bodies {
         /// which carries the selector bytes verbatim so the descriptor round-trips.
         #[derive(Debug, Clone, PartialEq, Eq)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+        #[non_exhaustive]
         pub enum ExtensionBody<$lt> {
             $(
                 $(#[doc = $doc])*
@@ -335,10 +337,16 @@ declare_extension_bodies! {'a;
     VvcSubpictures = 0x23 => VvcSubpicturesDescriptor<'a>,
 }
 
+/// Sealed trait — no external implementors. Keeps `ExtensionBodyDef` extensible
+/// without breaking downstream implementors.
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
+
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
 /// `descriptor_tag_extension` value and a diagnostic name. Mirrors
 /// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
-pub trait ExtensionBodyDef {
+pub trait ExtensionBodyDef: sealed::Sealed {
     /// The `descriptor_tag_extension` value this body is selected by.
     const TAG_EXTENSION: u8;
     /// SCREAMING_SNAKE diagnostic name, suffix-free.
@@ -583,7 +591,7 @@ mod tests {
         let json = serde_json::to_string(&typed).unwrap();
         assert_eq!(json, serde_json::to_string(&typed.clone()).unwrap());
         assert!(json.contains("\"tag_extension\":13"));
-        assert!(json.contains("\"C2DeliverySystem\""));
+        assert!(json.contains("\"c2DeliverySystem\""));
     }
 
     /// Borrowed bodies (Raw, Message, …) serialize cleanly; the discriminant +
@@ -597,7 +605,7 @@ mod tests {
         };
         let json = serde_json::to_string(&raw).unwrap();
         assert!(json.contains("\"tag_extension\":66"));
-        assert!(json.contains("\"Raw\""));
+        assert!(json.contains("\"raw\""));
 
         let msg = ExtensionDescriptor {
             tag_extension: 0x08,

@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for AudioPreselection<'_> {}
 impl ExtensionBodyDef for AudioPreselection<'_> {
     const TAG_EXTENSION: u8 = 0x19;
     const NAME: &'static str = "AUDIO_PRESELECTION";

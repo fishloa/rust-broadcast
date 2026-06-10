@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for ServiceProminence<'_> {}
 impl ExtensionBodyDef for ServiceProminence<'_> {
     const TAG_EXTENSION: u8 = 0x22;
     const NAME: &'static str = "SERVICE_PROMINENCE";
@@ -312,6 +313,6 @@ mod tests {
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":34"));
-        assert!(json.contains("\"ServiceProminence\""));
+        assert!(json.contains("\"serviceProminence\""));
     }
 }

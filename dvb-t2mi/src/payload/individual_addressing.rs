@@ -13,6 +13,7 @@ use dvb_common::{Parse, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum AddressingFunctionTag {
     /// Transmitter time offset.
     TimeOffset = 0x00,

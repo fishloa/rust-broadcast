@@ -74,6 +74,7 @@ macro_rules! declare_payloads {
                     Self::$variant(p)
                 }
             }
+            impl<$lt> crate::traits::sealed::Sealed for $($path)::+ $(<$plt>)? {}
         )+
 
         impl<$lt> AnyPayload<$lt> {

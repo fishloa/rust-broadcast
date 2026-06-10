@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for ShDeliverySystem {}
 impl ExtensionBodyDef for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
     const NAME: &'static str = "SH_DELIVERY_SYSTEM";
@@ -585,6 +586,6 @@ mod tests {
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":5"));
-        assert!(json.contains("\"ShDeliverySystem\""));
+        assert!(json.contains("\"shDeliverySystem\""));
     }
 }

@@ -18,6 +18,7 @@ use dvb_common::{Parse, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum SubpartVariety {
     /// Null — `reserved_for_future_use(32)` = 0.
     Null = 0x0000,
@@ -50,6 +51,7 @@ impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Err
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum PrbsType {
     /// User-defined test/measurement.
     UserDefined = 0x00,

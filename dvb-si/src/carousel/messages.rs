@@ -110,6 +110,7 @@ pub struct Dii<'a> {
 /// section, discriminated by `messageId`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum UnMessage<'a> {
     /// DownloadServerInitiate (messageId 0x1006).
     Dsi(Dsi<'a>),

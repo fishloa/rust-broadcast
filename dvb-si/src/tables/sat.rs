@@ -34,6 +34,7 @@ const CRC_LEN: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum SatTableId {
     /// `satellite_position_v2_info` — TLE/SGP4 orbital elements (§5.2.11.2).
     PositionV2 = 0,

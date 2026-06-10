@@ -69,6 +69,7 @@ fn fixture_m6_un_messages_parse_typed() {
                 assert!(!dii.modules.is_empty(), "DII should describe modules");
                 dii_count += 1;
             }
+            _ => {}
         }
     }
     assert!(dsi_count >= 1, "capture should contain a DSI");

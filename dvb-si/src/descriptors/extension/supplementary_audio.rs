@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for SupplementaryAudio<'_> {}
 impl ExtensionBodyDef for SupplementaryAudio<'_> {
     const TAG_EXTENSION: u8 = 0x06;
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";

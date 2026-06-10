@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for T2miDescriptor<'_> {}
 impl ExtensionBodyDef for T2miDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x11;
     const NAME: &'static str = "T2MI";

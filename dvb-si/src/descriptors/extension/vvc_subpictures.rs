@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for VvcSubpicturesDescriptor<'_> {}
 impl ExtensionBodyDef for VvcSubpicturesDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x23;
     const NAME: &'static str = "VVC_SUBPICTURES";
@@ -274,7 +275,7 @@ mod tests {
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":35"));
-        assert!(json.contains("\"VvcSubpictures\""));
+        assert!(json.contains("\"vvcSubpictures\""));
         assert!(json.contains("\"service_description\":\"Hi\""));
     }
 }

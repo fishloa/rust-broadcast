@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for C2DeliverySystem {}
 impl ExtensionBodyDef for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";

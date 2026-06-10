@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for ServiceRelocated {}
 impl ExtensionBodyDef for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
     const NAME: &'static str = "SERVICE_RELOCATED";

@@ -10,6 +10,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 /// Spec references inside `#[error(...)]` strings quote clauses from
 /// ETSI TS 102 773 v1.4.1 where applicable.
 #[derive(Debug, Error, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]

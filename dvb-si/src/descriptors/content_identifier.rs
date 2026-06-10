@@ -23,6 +23,7 @@ const CRID_LOCATION_MASK: u8 = 0x03;
 /// an un-round-trippable value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum CridLocation<'a> {
     /// Location 0b00 — CRID carried inline as raw ASCII bytes.
     Inline(&'a [u8]),

@@ -73,6 +73,7 @@ pub struct SectionHashEntry<'a> {
 /// Discriminated protection-message body, selected by `table_id_extension`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ProtectionMessageBody<'a> {
     /// Authentication message (extension `0x0000..=0x00FF`; §9.4.3 Table 42).
     AuthenticationMessage {

@@ -8,6 +8,7 @@ use num_enum::TryFromPrimitive;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum PacketType {
     /// Baseband Frame (BBFRAME) — §5.2.1
     BasebandFrame = 0x00,

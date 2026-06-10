@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for Ac4<'_> {}
 impl ExtensionBodyDef for Ac4<'_> {
     const TAG_EXTENSION: u8 = 0x15;
     const NAME: &'static str = "AC4";

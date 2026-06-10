@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for VideoDepthRangeDescriptor<'_> {}
 impl ExtensionBodyDef for VideoDepthRangeDescriptor<'_> {
     const TAG_EXTENSION: u8 = 0x10;
     const NAME: &'static str = "VIDEO_DEPTH_RANGE";
@@ -28,6 +29,7 @@ pub struct DepthRange<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub enum DepthRangeBody<'a> {
     /// `0x00` — production_disparity_hint_info() (Table 162).
     /// Two 12-bit two's-complement signed values packed into 3 bytes.

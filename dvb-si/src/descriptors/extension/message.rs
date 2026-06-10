@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for Message<'_> {}
 impl ExtensionBodyDef for Message<'_> {
     const TAG_EXTENSION: u8 = 0x08;
     const NAME: &'static str = "MESSAGE";

@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for ImageIcon<'_> {}
 impl ExtensionBodyDef for ImageIcon<'_> {
     const TAG_EXTENSION: u8 = 0x00;
     const NAME: &'static str = "IMAGE_ICON";
@@ -427,6 +428,6 @@ mod tests {
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":0"));
-        assert!(json.contains("\"ImageIcon\""));
+        assert!(json.contains("\"imageIcon\""));
     }
 }

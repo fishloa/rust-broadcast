@@ -405,6 +405,7 @@ impl EitCollector {
 
 /// Completed EIT collection result.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CompletedEit {
     /// One completed present/following EIT section set.
     PresentFollowing(CompleteSectionSet),

@@ -69,6 +69,7 @@ const CRC_LEN: usize = 4;
 /// (0x04..=0xFF) are length-delimited and round-trip via [`FontInfo::LengthDelimited`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum FontInfo<'a> {
     /// `font_info_type == 0x00`: style(3) + weight(4) + reserved(1).
     StyleWeight {

@@ -17,6 +17,7 @@ use num_enum::TryFromPrimitive;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
 #[allow(missing_docs)]
+#[non_exhaustive]
 #[rustfmt::skip] // deliberate column-aligned discriminants
 pub enum TableId {
     // ── MPEG-2 tables ──────────────────────────────────────────────────────

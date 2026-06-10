@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for TargetRegion {}
 impl ExtensionBodyDef for TargetRegion {
     const TAG_EXTENSION: u8 = 0x09;
     const NAME: &'static str = "TARGET_REGION";

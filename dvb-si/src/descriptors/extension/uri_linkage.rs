@@ -1,5 +1,6 @@
 use super::*;
 
+impl super::sealed::Sealed for UriLinkage<'_> {}
 impl ExtensionBodyDef for UriLinkage<'_> {
     const TAG_EXTENSION: u8 = 0x13;
     const NAME: &'static str = "URI_LINKAGE";
