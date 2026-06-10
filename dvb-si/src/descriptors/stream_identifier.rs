@@ -3,6 +3,7 @@
 //! One-byte `component_tag` that anchors components named elsewhere (e.g. by
 //! component_descriptor).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -23,27 +24,20 @@ pub struct StreamIdentifierDescriptor {
 impl<'a> Parse<'a> for StreamIdentifierDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + BODY_LEN as usize {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN as usize,
-                have: bytes.len(),
-                what: "StreamIdentifierDescriptor",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for stream_identifier_descriptor",
-            });
-        }
-        if bytes[1] != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "StreamIdentifierDescriptor",
+            "unexpected tag for stream_identifier_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "stream_identifier_descriptor length must equal 1",
             });
         }
         Ok(Self {
-            component_tag: bytes[2],
+            component_tag: body[0],
         })
     }
 }

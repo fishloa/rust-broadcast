@@ -4,6 +4,7 @@
 
 use num_enum::TryFromPrimitive;
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -41,27 +42,20 @@ impl<'a> Parse<'a> for DataStreamAlignmentDescriptor {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + BODY_LEN as usize {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN as usize,
-                have: bytes.len(),
-                what: "DataStreamAlignmentDescriptor",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for data_stream_alignment_descriptor",
-            });
-        }
-        if bytes[1] != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DataStreamAlignmentDescriptor",
+            "unexpected tag for data_stream_alignment_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "data_stream_alignment_descriptor length must equal 1",
             });
         }
         Ok(Self {
-            alignment_type: bytes[2],
+            alignment_type: body[0],
         })
     }
 }

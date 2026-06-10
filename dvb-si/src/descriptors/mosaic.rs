@@ -39,6 +39,7 @@ const ELEM_CELL_ID_MASK: u8 = 0x3F; // low 6 bits
 /// Conditional linkage payload selected by `cell_linkage_info` (Table 75).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum CellLinkage {
     /// 0x00 — undefined (no payload).
     Undefined,

@@ -12,19 +12,19 @@ pub const TS_SYNC_BYTE: u8 = 0x47;
 /// 4098; the reassembler accepts the absolute ceiling.)
 const MAX_SECTION_SIZE: usize = 4098;
 
-/// ETSI EN 300 468 §3.2.3: transport header byte 1 bits 7 = tei (Transport Error Indicator).
+/// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
-/// ETSI EN 300 468 §3.2.3: byte 1 bits 6 = pusi (Payload Unit Start Indicator).
+/// ISO/IEC 13818-1 §2.4.3.3: byte 1 bit 6 = pusi (Payload Unit Start Indicator).
 const PUSI_MASK: u8 = 0x40;
-/// ETSI EN 300 468 §3.2.3: byte 1 bits 5..=1 = 13-bit PID (upper 5 bits).
+/// ISO/IEC 13818-1 §2.4.3.3: byte 1 bits `[4:0]` = 13-bit PID (upper 5 bits).
 pub const PID_MASK_HI: u8 = 0x1F;
-/// ETSI EN 300 468 §3.2.3: byte 3 bits 7..=6 = 2-bit scrambling control.
+/// ISO/IEC 13818-1 §2.4.3.3: byte 3 bits `[7:6]` = 2-bit scrambling control.
 pub const SCRAMBLING_MASK: u8 = 0xC0;
-/// ETSI EN 300 468 §3.2.3: byte 3 bit 4 = adaptation_field_control (bit 4 = 1 means adaptation present).
+/// ISO/IEC 13818-1 §2.4.3.3: byte 3 bit 5 = adaptation_field_control (bit 5 = 1 means adaptation present).
 pub const ADAPTATION_FLAG: u8 = 0x20;
-/// ETSI EN 300 468 §3.2.3: byte 3 bit 3 = adaptation_field_control (bit 3 = 1 means payload present).
+/// ISO/IEC 13818-1 §2.4.3.3: byte 3 bit 4 = adaptation_field_control (bit 4 = 1 means payload present).
 pub const PAYLOAD_FLAG: u8 = 0x10;
-/// ETSI EN 300 468 §3.2.3: byte 3 bits 3..=0 = 4-bit continuity_counter.
+/// ISO/IEC 13818-1 §2.4.3.3: byte 3 bits `[3:0]` = 4-bit continuity_counter.
 pub const CC_MASK: u8 = 0x0F;
 
 /// Parsed TS header — the 4-byte transport header fields.

@@ -23,36 +23,37 @@
 //! # Typed vs. raw bodies
 //!
 //! A body variant is typed only when its syntax table is vendored under
-//! `dvb-si/docs/`. For loop-heavy descriptors the first fixed level is typed and
-//! the variable-length inner loop is kept as a raw slice (SAT precedent —
-//! `tables/sat.rs` keeps bit-packed loops raw). Per-variant section comments
-//! cite the governing table + clause.
+//! `dvb-si/docs/`. Loop-heavy descriptors have the first fixed level typed and
+//! any variable-length inner loop that has no defined syntax kept as a raw
+//! slice (e.g. service_prominence target_region loop is raw). Per-variant
+//! section comments cite the governing table + clause.
 //!
 //! Typed (syntax table vendored in `en_300_468.md`, except TTML in
 //! `en_303_560_ttml.md`):
-//! - `0x04` T2_delivery_system (Table 133, §6.4.6.3) — first level; cell loop raw.
+//! - `0x00` image_icon (Table 145, §6.4.7) — fully typed; icon TransportMode per
+//!   Table 146, coordinate_system per Table 147.
+//! - `0x04` T2_delivery_system (Table 133, §6.4.6.3) — cell loop unfolded.
 //! - `0x05` SH_delivery_system (Table 119, §6.4.6.2) — fully typed modulation loop.
 //! - `0x06` supplementary_audio (Table 153, §6.4.11).
-//! - `0x07` network_change_notify (Table 149, §6.4.9) — cell loop raw.
+//! - `0x07` network_change_notify (Table 149, §6.4.9) — cell/change loop unfolded.
 //! - `0x08` message (Table 148, §6.4.9).
 //! - `0x09` target_region (Table 156, §6.4.12) — region loop unfolded.
 //! - `0x0A` target_region_name (Table 157, §6.4.13) — region loop unfolded.
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
 //! - `0x0D` C2_delivery_system (Table 115, §6.4.6.1).
-//! - `0x11` T2MI (Table 158, §6.4.14).
 //! - `0x10` video_depth_range (Table 160, §6.4.16.1) — fully typed range loop.
+//! - `0x11` T2MI (Table 158, §6.4.14).
 //! - `0x13` URI_linkage (Table 159, §6.4.16.1) — uri/private split typed.
 //! - `0x15` AC-4 (annex D syntax table, §D.5) — first level; toc/extra raw.
 //! - `0x16` C2_bundle_delivery_system (Table 139, §6.4.6.4) — full fixed loop.
 //! - `0x17` S2X_satellite_delivery_system (Table 140, §6.4.6.5.2) — primary
-//!   channel typed; channel-bonding / reserved tail kept raw.
-//! - `0x19` audio_preselection (Table 110, §6.4.1) — preselection loop raw.
+//!   channel + channel-bond entries typed; reserved_tail raw.
+//! - `0x19` audio_preselection (Table 110, §6.4.1) — preselection loop unfolded.
 //! - `0x20` TTML_subtitling (`en_303_560_ttml.md` Table 1, §5.2.1.1).
 //! - `0x22` service_prominence (Table 162c, §6.4.18) — SOGI loop typed; target_region loop raw.
 //! - `0x23` vvc_subpictures (Table 162a, §6.4.17) — fully typed.
 //!
 //! Kept [`ExtensionBody::Raw`] (tag value preserved), with reason:
-//! - `0x00` image_icon — syntax vendored (Table 145) but niche (carousel icons); deferred.
 //! - `0x01` cpcm_delivery_signalling — spec not vendored (ETSI TS 102 825).
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
 //! - `0x0C` XAIT_PID — deferred (TS 102 727 PDF vendored, no extracted syntax table yet).
@@ -151,7 +152,7 @@ pub(crate) const VD_DISPARITY_LEN: usize = 3;
 #[non_exhaustive]
 #[repr(u8)]
 pub enum ExtensionTag {
-    /// image_icon_descriptor (kept raw — see module docs).
+    /// image_icon_descriptor (Table 145, §6.4.7).
     ImageIcon = 0x00,
     /// T2_delivery_system_descriptor.
     T2DeliverySystem = 0x04,
@@ -171,10 +172,10 @@ pub enum ExtensionTag {
     ServiceRelocated = 0x0B,
     /// C2_delivery_system_descriptor.
     C2DeliverySystem = 0x0D,
-    /// T2-MI_descriptor (Table 158, §6.4.14).
-    T2mi = 0x11,
     /// video_depth_range_descriptor (Table 160, §6.4.16.1).
     VideoDepthRange = 0x10,
+    /// T2-MI_descriptor (Table 158, §6.4.14).
+    T2mi = 0x11,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
     /// AC-4_descriptor (annex D).
@@ -325,10 +326,10 @@ declare_extension_bodies! {'a;
     ServiceRelocated = 0x0B => ServiceRelocated,
     /// `0x0D` — C2_delivery_system (Table 115, §6.4.6.1).
     C2DeliverySystem = 0x0D => C2DeliverySystem,
-    /// `0x11` — T2-MI (Table 158, §6.4.14).
-    T2mi = 0x11 => T2miDescriptor<'a>,
     /// `0x10` — video_depth_range (Table 160, §6.4.16.1).
     VideoDepthRange = 0x10 => VideoDepthRangeDescriptor<'a>,
+    /// `0x11` — T2-MI (Table 158, §6.4.14).
+    T2mi = 0x11 => T2miDescriptor<'a>,
     /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
     UriLinkage = 0x13 => UriLinkage<'a>,
     /// `0x15` — AC-4 (annex D).

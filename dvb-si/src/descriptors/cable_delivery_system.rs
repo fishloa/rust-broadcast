@@ -3,6 +3,7 @@
 //! Carried inside NIT transport_stream_loop second descriptor loop for
 //! DVB-C transponders.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -220,38 +221,30 @@ fn serialize_fec_inner(fec: FecInner) -> u8 {
 impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + BODY_LEN as usize {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN as usize,
-                have: bytes.len(),
-                what: "CableDeliverySystemDescriptor",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for cable_delivery_system_descriptor",
-            });
-        }
-        let length = bytes[1];
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "CableDeliverySystemDescriptor",
+            "unexpected tag for cable_delivery_system_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body length must equal 11",
             });
         }
 
-        let frequency_bcd = u32::from_be_bytes(bytes[2..6].try_into().unwrap());
+        let frequency_bcd = u32::from_be_bytes(body[0..4].try_into().unwrap());
 
-        let bytes_6_7 = u16::from_be_bytes([bytes[6], bytes[7]]);
-        let fec_outer_raw = (bytes_6_7 & !RESERVED_FU_MASK) as u8;
+        let bytes_4_5 = u16::from_be_bytes([body[4], body[5]]);
+        let fec_outer_raw = (bytes_4_5 & !RESERVED_FU_MASK) as u8;
 
-        let modulation_byte = bytes[8];
+        let modulation_byte = body[6];
 
-        let spec_value = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
-        let symbol_rate_bcd = (spec_value << 4) | ((bytes[12] >> 4) & 0x0F) as u32;
+        let spec_value = u32::from_be_bytes([0, body[7], body[8], body[9]]);
+        let symbol_rate_bcd = (spec_value << 4) | ((body[10] >> 4) & 0x0F) as u32;
 
-        let fec_inner_raw = bytes[12] & 0x0F;
+        let fec_inner_raw = body[10] & 0x0F;
 
         Ok(Self {
             frequency_bcd,
@@ -386,12 +379,22 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_length() {
+        // Declared length (12) exceeds available bytes → descriptor_body floors first.
         let raw: [u8; 13] = [
             TAG, 12, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00,
         ];
+        let err = CableDeliverySystemDescriptor::parse(&raw).unwrap_err();
+        assert!(matches!(err, Error::BufferTooShort { .. }));
+
+        // Declared length fits the buffer but is not 11 → the body-length check bites.
+        let raw: [u8; 12] = [TAG, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let err = CableDeliverySystemDescriptor::parse(&raw).unwrap_err();
         assert!(matches!(
-            CableDeliverySystemDescriptor::parse(&raw).unwrap_err(),
-            Error::InvalidDescriptor { tag: TAG, .. }
+            err,
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "body length must equal 11"
+            }
         ));
     }
 

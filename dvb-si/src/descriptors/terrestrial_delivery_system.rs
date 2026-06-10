@@ -4,6 +4,7 @@
 //! DVB-T transponders. Expresses the full DVB-T PHY configuration needed to
 //! tune the carrier.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -326,45 +327,37 @@ fn serialize_transmission_mode(tm: TransmissionMode) -> u8 {
 impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + BODY_LEN as usize {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + BODY_LEN as usize,
-                have: bytes.len(),
-                what: "TerrestrialDeliverySystemDescriptor",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for terrestrial_delivery_system_descriptor",
-            });
-        }
-        let length = bytes[1];
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TerrestrialDeliverySystemDescriptor",
+            "unexpected tag for terrestrial_delivery_system_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body length must equal 11",
             });
         }
 
-        let centre_frequency_10hz = u32::from_be_bytes(bytes[2..6].try_into().unwrap());
+        let centre_frequency_10hz = u32::from_be_bytes(body[0..4].try_into().unwrap());
 
-        let byte6 = bytes[6];
-        let bw_raw = (byte6 & BW_MASK) >> BW_SHIFT;
-        let priority = (byte6 & PRIORITY_MASK) != 0;
-        let time_slicing_used = (byte6 & TIME_SLICING_MASK) == 0;
-        let mpe_fec_used = (byte6 & MPE_FEC_MASK) == 0;
+        let byte4 = body[4];
+        let bw_raw = (byte4 & BW_MASK) >> BW_SHIFT;
+        let priority = (byte4 & PRIORITY_MASK) != 0;
+        let time_slicing_used = (byte4 & TIME_SLICING_MASK) == 0;
+        let mpe_fec_used = (byte4 & MPE_FEC_MASK) == 0;
 
-        let byte7 = bytes[7];
-        let constellation_raw = (byte7 & CONSTELLATION_MASK) >> CONSTELLATION_SHIFT;
-        let hierarchy_raw = (byte7 & HIERARCHY_MASK) >> HIERARCHY_SHIFT;
-        let code_rate_hp_raw = byte7 & CODE_RATE_HP_MASK;
+        let byte5 = body[5];
+        let constellation_raw = (byte5 & CONSTELLATION_MASK) >> CONSTELLATION_SHIFT;
+        let hierarchy_raw = (byte5 & HIERARCHY_MASK) >> HIERARCHY_SHIFT;
+        let code_rate_hp_raw = byte5 & CODE_RATE_HP_MASK;
 
-        let byte8 = bytes[8];
-        let code_rate_lp_raw = (byte8 & CODE_RATE_LP_MASK) >> CODE_RATE_LP_SHIFT;
-        let guard_interval_raw = (byte8 & GUARD_INTERVAL_MASK) >> GUARD_INTERVAL_SHIFT;
-        let transmission_mode_raw = (byte8 & TRANSMISSION_MODE_MASK) >> TRANSMISSION_MODE_SHIFT;
-        let other_frequency_flag = (byte8 & OTHER_FREQ_FLAG_MASK) != 0;
+        let byte6 = body[6];
+        let code_rate_lp_raw = (byte6 & CODE_RATE_LP_MASK) >> CODE_RATE_LP_SHIFT;
+        let guard_interval_raw = (byte6 & GUARD_INTERVAL_MASK) >> GUARD_INTERVAL_SHIFT;
+        let transmission_mode_raw = (byte6 & TRANSMISSION_MODE_MASK) >> TRANSMISSION_MODE_SHIFT;
+        let other_frequency_flag = (byte6 & OTHER_FREQ_FLAG_MASK) != 0;
 
         Ok(Self {
             centre_frequency_10hz,

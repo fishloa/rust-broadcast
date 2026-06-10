@@ -66,9 +66,9 @@ only tables that go further or deliberately keep a nested structure raw.
 | 0x40/0x41 | NIT actual/other | EN 300 468 §5.2.1 | ✅ full (typed TS loop) |
 | 0x42/0x46 | SDT actual/other | EN 300 468 §5.2.3 | ✅ full (typed service loop) |
 | 0x4A | BAT — Bouquet Association | EN 300 468 §5.2.2 | ✅ full (typed TS loop) |
-| 0x4B | UNT — Update Notification (SSU) | TS 102 006 | ✅ full |
+| 0x4B | UNT — Update Notification (SSU) | TS 102 006 | ✅ full (typed platform entries) |
 | 0x4C | INT — IP/MAC Notification | EN 301 192 | ✅ full |
-| 0x4D | SAT — Satellite Access family | EN 300 468 §5.2.11 | ✅ header + `SatTableId` discriminant typed; variant bodies raw (bit-packed orbital data, layout in docs) |
+| 0x4D | SAT — Satellite Access family | EN 300 468 §5.2.11 | ✅ full (typed `SatBody`: Position V2/V3, cell fragment, time association, beamhopping) |
 | 0x4E–0x6F | EIT p/f + schedule, actual/other | EN 300 468 §5.2.4 | ✅ full (typed event loop; `chrono`-gated MJD+BCD `start_time()`) |
 | 0x70 | TDT — Time and Date | EN 300 468 §5.2.5 | ✅ full |
 | 0x71 | RST — Running Status | EN 300 468 §5.2.7 | ✅ full (typed event loop) |
@@ -216,7 +216,7 @@ round-trips losslessly.
 | 0x17 | S2X_satellite_delivery_system | ✅ typed (channel-bond entries typed; reserved tail raw) |
 | 0x19 | audio_preselection | ✅ typed (preselection loop unfolded) |
 | 0x20 | TTML_subtitling | ✅ typed (EN 303 560) |
-| 0x22 | service_prominence | ✅ typed |
+| 0x22 | service_prominence | ✅ typed (each SOGI entry's target_region loop kept raw) |
 | 0x23 | vvc_subpictures | ✅ typed |
 | 0x24 | S2Xv2 | raw-preserved (not in vendored spec) |
 | 0x01–0x03 | CPCM (TS 102 825) · 0x0C XAIT_PID (TS 102 727) · 0x0E/0x0F/0x21 DTS family · 0x14 CI_ancillary (TS 103 205) · 0x18 protection_message (TS 102 809) | spec not vendored | raw-preserved |
