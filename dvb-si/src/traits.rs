@@ -3,12 +3,6 @@
 
 use dvb_common::{Parse, Serialize};
 
-/// Sealed trait — no external implementors. Keeps `TableDef` extensible
-/// without breaking downstream implementors.
-pub(crate) mod sealed {
-    pub trait Sealed {}
-}
-
 /// Contract every DVB descriptor implements.
 ///
 /// Descriptors are length-prefixed payloads inside tables. The
@@ -35,9 +29,10 @@ pub trait DescriptorDef<'a>: Parse<'a, Error = crate::error::Error> {
 /// Implemented by every typed table-section parser; drives
 /// [`crate::tables::AnyTableSection`] dispatch. `TABLE_ID_RANGES` lists the
 /// inclusive `(lo, hi)` table_id ranges this type accepts.
-pub trait TableDef<'a>:
-    sealed::Sealed + dvb_common::Parse<'a, Error = crate::error::Error>
-{
+///
+/// Third-party types may implement this trait to register private table_ids
+/// via [`TableRegistry`][crate::tables::TableRegistry].
+pub trait TableDef<'a>: dvb_common::Parse<'a, Error = crate::error::Error> {
     /// Inclusive `(lo, hi)` table_id ranges this type parses.
     ///
     /// Single-id types use a single-element slice `&[(id, id)]`.
