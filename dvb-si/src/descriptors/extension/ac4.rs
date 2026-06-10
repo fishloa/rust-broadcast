@@ -25,7 +25,13 @@ pub struct Ac4<'a> {
     pub ac4_dialog_enhancement_enabled: Option<bool>,
     /// ac4_channel_mode(2), present iff `ac4_config_flag`.
     pub ac4_channel_mode: Option<u8>,
-    /// Length-delimited ac4_dsi bytes, present iff `ac4_toc_flag`.
+    /// Length-delimited `ac4_toc` bytes, present iff `ac4_toc_flag`.
+    ///
+    /// Kept opaque by design: EN 300 468 carries the AC-4 TOC as an
+    /// `ac4_toc_byte` run whose structure (`ac4_toc()`) is defined in the AC-4
+    /// codec spec — ETSI TS 103 190-2 §6.2.1 (vendored at
+    /// `specs/etsi_ts_103_190_2_v01.03.01_ac4.pdf`), not in DVB SI. Typing it is
+    /// a separate, nested codec-bitstream effort tracked in issue #102.
     pub toc: Option<&'a [u8]>,
     /// Trailing additional_info_byte run.
     pub additional_info: &'a [u8],
