@@ -29,6 +29,16 @@ pub use eit::*;
 pub use nit::*;
 pub use sdt::*;
 
+/// Default cap on the number of in-progress logical keys retained by
+/// [`SectionSetCollector`].
+///
+/// 256 concurrent collections is generous while bounding a hostile stream that
+/// rotates table_id / extension / current_next_indicator across PIDs to force
+/// unbounded map growth. The cap is applied to the partial-sections map. When
+/// the map is full, incoming sections for new keys are skipped until
+/// [`clear`](SectionSetCollector::clear) frees capacity.
+pub const DEFAULT_MAX_PARTIAL_KEYS: usize = 256;
+
 /// Result alias for collection operations.
 pub type CollectResult<T> = core::result::Result<T, CollectError>;
 
@@ -94,6 +104,7 @@ pub enum CollectError {
 /// The key deliberately excludes `version_number` and `section_number`. Version
 /// changes reset a collection; section numbers index into that collection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub struct SectionSetKey {
     /// Optional PID context supplied by the caller.
     pub pid: Option<u16>,
@@ -107,6 +118,7 @@ pub struct SectionSetKey {
 
 /// Metadata shared by every section in a complete section set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SectionSetMeta {
     /// Logical section-set key.
     pub key: SectionSetKey,
@@ -180,16 +192,40 @@ impl PartialSectionSet {
 
 /// Generic collector for long-form `section_number`/`last_section_number`
 /// sequences.
-#[derive(Debug, Default)]
+///
+/// The constructor [`SectionSetCollector::new`] uses the default cap
+/// [`DEFAULT_MAX_PARTIAL_KEYS`]; the cap is configurable via
+/// [`with_max_partial_keys`](Self::with_max_partial_keys).
+#[derive(Debug)]
 pub struct SectionSetCollector {
     partial: HashMap<SectionSetKey, PartialSectionSet>,
+    max_partial_keys: usize,
+}
+
+impl Default for SectionSetCollector {
+    fn default() -> Self {
+        Self {
+            partial: HashMap::new(),
+            max_partial_keys: DEFAULT_MAX_PARTIAL_KEYS,
+        }
+    }
 }
 
 impl SectionSetCollector {
-    /// Create an empty collector.
+    /// Create an empty collector with the default cap
+    /// ([`DEFAULT_MAX_PARTIAL_KEYS`]).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the partial-key cap (default [`DEFAULT_MAX_PARTIAL_KEYS`]).
+    /// Sections for new keys are skipped when the map is full, until
+    /// [`clear`](Self::clear) frees capacity.
+    #[must_use]
+    pub fn with_max_partial_keys(mut self, max_partial_keys: usize) -> Self {
+        self.max_partial_keys = max_partial_keys;
+        self
     }
 
     /// Push one complete section. Returns `Some` only when the logical section
@@ -245,6 +281,11 @@ impl SectionSetCollector {
             last_section_number: section.last_section_number,
         };
         let bytes: Arc<[u8]> = Arc::from(raw);
+
+        // Cap check: skip new keys when the map is full
+        if !self.partial.contains_key(&key) && self.partial.len() >= self.max_partial_keys {
+            return Ok(None);
+        }
 
         let partial = self
             .partial
@@ -441,5 +482,98 @@ impl<'a> ParsedDescriptorLoop<'a> {
     /// Typed descriptor parse results in wire order.
     pub fn descriptors(&self) -> &[crate::Result<AnyDescriptor<'a>>] {
         &self.descriptors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_TABLE_ID: u8 = 0x42;
+
+    fn min_section(extension_id: u16) -> Vec<u8> {
+        let section_length: u16 = 9; // 5 (ext_header) + 0 (payload) + 4 (crc)
+        let mut buf = vec![0u8; 12];
+        buf[0] = TEST_TABLE_ID;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        buf[3..5].copy_from_slice(&extension_id.to_be_bytes());
+        buf[5] = 0xC1;
+        buf[6] = 0;
+        buf[7] = 0;
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..8]);
+        buf[8..12].copy_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn collect_single_section_is_complete() {
+        let mut c = SectionSetCollector::new();
+        let sec = min_section(0);
+        let result = c.push_section(&sec).unwrap();
+        assert!(result.is_some());
+        assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn partial_keys_cap_skips_new_keys() {
+        let mut c = SectionSetCollector::new().with_max_partial_keys(3);
+
+        // Push sections for 3 distinct extension IDs — fills the cap.
+        for eid in 0..3u16 {
+            let sec = min_section(eid);
+            let result = c.push_section(&sec).unwrap();
+            assert!(
+                result.is_some(),
+                "single-section set for eid {eid} completes"
+            );
+        }
+        assert_eq!(c.len(), 3);
+
+        // Push a 4th distinct key — should be skipped (cap full).
+        let sec4 = min_section(3);
+        let result = c.push_section(&sec4).unwrap();
+        assert!(result.is_none(), "new key beyond cap must be skipped");
+        assert_eq!(c.len(), 3);
+
+        // Clear frees space — 4th key can now enter.
+        c.clear();
+        assert!(c.is_empty());
+        let result = c.push_section(&sec4).unwrap();
+        assert!(result.is_some());
+        assert_eq!(c.len(), 1);
+    }
+
+    #[test]
+    fn partial_keys_cap_does_not_skip_existing_key() {
+        let mut c = SectionSetCollector::new().with_max_partial_keys(1);
+
+        // Fill the cap with one multi-section NIT-like extension (section 0 of 1).
+        let sec0 = {
+            let mut buf = min_section(0xAB);
+            // Make section 0 of 1 be incomplete: change last_section_number to 1
+            buf[7] = 1;
+            // Recompute CRC
+            let crc = dvb_common::crc32_mpeg2::compute(&buf[..8]);
+            buf[8..12].copy_from_slice(&crc.to_be_bytes());
+            buf
+        };
+        let result = c.push_section(&sec0).unwrap();
+        assert!(result.is_none(), "incomplete section set yields None");
+
+        // Push section 1 of 1 for the same key — cap is full but key already
+        // exists, so it must NOT be skipped.
+        let mut sec1 = min_section(0xAB);
+        sec1[6] = 1; // section_number = 1
+        sec1[7] = 1; // last_section_number = 1
+        let crc = dvb_common::crc32_mpeg2::compute(&sec1[..8]);
+        sec1[8..12].copy_from_slice(&crc.to_be_bytes());
+
+        let result = c.push_section(&sec1).unwrap();
+        assert!(
+            result.is_some(),
+            "existing key must NOT be skipped when cap full"
+        );
+        assert_eq!(c.len(), 1);
     }
 }

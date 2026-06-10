@@ -459,7 +459,7 @@ impl EpgStore {
                 }
             })
             .collect();
-        events.sort_by_key(|a| a.start_time.unwrap());
+        events.sort_by(|a, b| cmp_event_by_start(a, b));
         Some(events)
     }
 
@@ -482,12 +482,7 @@ impl EpgStore {
     pub fn events(&self, key: ServiceKey) -> Option<Vec<&EpgEvent>> {
         let svc = self.cache.get(&key)?;
         let mut events: Vec<&EpgEvent> = svc.events.values().collect();
-        events.sort_by(|a, b| match (a.start_time, b.start_time) {
-            (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.event_id.cmp(&b.event_id),
-        });
+        events.sort_by(|a, b| cmp_event_by_start(a, b));
         Some(events)
     }
 
@@ -538,14 +533,7 @@ impl serde::Serialize for EpgStore {
                 service_name: svc.service_name.clone(),
                 events: {
                     let mut evts: Vec<EpgEvent> = svc.events.values().cloned().collect();
-                    evts.sort_by(|a, b| match (a.start_time, b.start_time) {
-                        (Some(at), Some(bt)) => {
-                            at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id))
-                        }
-                        (Some(_), None) => std::cmp::Ordering::Less,
-                        (None, Some(_)) => std::cmp::Ordering::Greater,
-                        (None, None) => a.event_id.cmp(&b.event_id),
-                    });
+                    evts.sort_by(cmp_event_by_start);
                     evts
                 },
             };
@@ -556,6 +544,15 @@ impl serde::Serialize for EpgStore {
             m.serialize_entry(&key_str, &data)?;
         }
         m.end()
+    }
+}
+
+fn cmp_event_by_start(a: &EpgEvent, b: &EpgEvent) -> std::cmp::Ordering {
+    match (a.start_time, b.start_time) {
+        (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.event_id.cmp(&b.event_id),
     }
 }
 
@@ -808,7 +805,7 @@ mod tests {
     /// Build start-time raw bytes (16-bit MJD + 24-bit BCD) for a given
     /// year/month/day/hour.
     fn start_raw(year: i32, month: u32, day: u32, hour: u32) -> [u8; 5] {
-        let mjd = mjd_approx(year, month, day, hour);
+        let mjd = mjd_approx(year, month, day);
         let mjd_bytes = mjd.to_be_bytes();
         let bcd_hour = ((hour / 10 * 16) + (hour % 10)) as u8;
         [
@@ -821,13 +818,45 @@ mod tests {
     }
 
     /// Quick MJD approximation for test dates (2026-06-10 = MJD 61785).
-    fn mjd_approx(year: i32, month: u32, day: u32, hour: u32) -> u16 {
-        let _ = hour;
-        // 2026-06-10 00:00 = MJD 61785
-        if year == 2026 && month == 6 && day == 10 {
-            return 61785;
+    fn mjd_approx(year: i32, month: u32, day: u32) -> u16 {
+        assert!(
+            (year, month, day) == (2026, 6, 10),
+            "mjd_approx only supports 2026-06-10"
+        );
+        61785
+    }
+
+    /// Build content_descriptor (tag 0x54) wire bytes.
+    fn content_descriptor_bytes(entries: &[(u8, u8, u8)]) -> Vec<u8> {
+        let mut v = vec![0x54u8, (entries.len() * 2) as u8];
+        for &(n1, n2, u) in entries {
+            v.push((n1 << 4) | n2);
+            v.push(u);
         }
-        0
+        v
+    }
+
+    /// Build parental_rating_descriptor (tag 0x55) wire bytes.
+    fn parental_rating_bytes(entries: &[([u8; 3], u8)]) -> Vec<u8> {
+        let mut v = vec![0x55u8, (entries.len() * 4) as u8];
+        for (country, rating) in entries {
+            v.extend_from_slice(country);
+            v.push(*rating);
+        }
+        v
+    }
+
+    /// Build content_identifier_descriptor (tag 0x76) wire bytes with inline
+    /// CRIDs.
+    fn content_identifier_bytes(entries: &[(u8, &[u8])]) -> Vec<u8> {
+        let body_len: usize = entries.iter().map(|(_, data)| 2 + data.len()).sum();
+        let mut v = vec![0x76u8, body_len as u8];
+        for (crid_type, data) in entries {
+            v.push(crid_type << 2); // location=0b00 inline
+            v.push(data.len() as u8);
+            v.extend_from_slice(data);
+        }
+        v
     }
 
     // ------------------------------------------------------------------
@@ -905,12 +934,7 @@ mod tests {
         let invalid = empty_event(2, None, None);
 
         let mut events = [&invalid, &valid];
-        events.sort_by(|a, b| match (a.start_time, b.start_time) {
-            (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => a.event_id.cmp(&b.event_id),
-        });
+        events.sort_by(|a, b| cmp_event_by_start(a, b));
         assert_eq!(events[0].event_id, 1);
         assert_eq!(events[1].event_id, 2);
     }
@@ -1145,6 +1169,136 @@ mod tests {
             next.event_id, 1,
             "next must be earliest future event (12:00), not first in iteration order"
         );
+    }
+
+    // ------------------------------------------------------------------
+    // extract_content / extract_ratings / extract_crids through feed
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn extract_content_ratings_crids_through_feed() {
+        let content = content_descriptor_bytes(&[(3, 1, 0xAA), (4, 2, 0xBB)]);
+        let ratings = parental_rating_bytes(&[(*b"FRA", 0x05), (*b"GBR", 0x01)]);
+        let crids = content_identifier_bytes(&[
+            (0x01, b"crid://bbc.co.uk/prog123"),
+            (0x03, b"crid://bbc.co.uk/rec456"),
+        ]);
+
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&content);
+        descriptors.extend_from_slice(&ratings);
+        descriptors.extend_from_slice(&crids);
+
+        let sr = start_raw(2026, 6, 10, 10);
+        let eit = eit_pf_section(100, 1, 1, 1, 0, sr, [1, 0, 0], &descriptors);
+
+        let mut store = EpgStore::new();
+        store.feed(&eit).unwrap();
+
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let events = store.events(key).unwrap();
+        assert_eq!(events.len(), 1);
+        let ev = &events[0];
+
+        assert_eq!(ev.content_nibbles.len(), 2);
+        assert_eq!(
+            ev.content_nibbles[0],
+            ContentNibble {
+                level_1: 3,
+                level_2: 1,
+                user: 0xAA
+            }
+        );
+        assert_eq!(
+            ev.content_nibbles[1],
+            ContentNibble {
+                level_1: 4,
+                level_2: 2,
+                user: 0xBB
+            }
+        );
+
+        assert_eq!(ev.ratings.len(), 2);
+        assert_eq!(ev.ratings[0].country, "FRA");
+        assert_eq!(ev.ratings[0].value, 0x05);
+        assert_eq!(ev.ratings[1].country, "GBR");
+        assert_eq!(ev.ratings[1].value, 0x01);
+
+        assert_eq!(ev.crids.len(), 1 + 1); // one series + one recommendation
+        assert_eq!(ev.crids[0].crid_type, 0x01);
+        assert_eq!(ev.crids[0].crid, "crid://bbc.co.uk/prog123");
+        assert_eq!(ev.crids[1].crid_type, 0x03);
+        assert_eq!(ev.crids[1].crid, "crid://bbc.co.uk/rec456");
+    }
+
+    #[test]
+    fn extract_service_name_through_feed_sdt() {
+        use crate::collect::SectionSetCollector;
+
+        // Build a service_descriptor (tag 0x48) with provider="BBC", service_name="BBC ONE HD"
+        let svc_desc = {
+            let provider = b"BBC";
+            let name = b"BBC ONE HD";
+            let mut v = vec![0x48u8, (1 + 1 + provider.len() + 1 + name.len()) as u8];
+            v.push(0x01); // service_type = TV SD
+            v.push(provider.len() as u8);
+            v.extend_from_slice(provider);
+            v.push(name.len() as u8);
+            v.extend_from_slice(name);
+            v
+        };
+
+        // Build an SDT section (table_id 0x42) with one service.
+        let sdt_bytes = {
+            let dll = svc_desc.len() as u16;
+            // Service entry: 5 bytes header + descriptors
+            let svc_entry_len = 5 + dll as usize;
+            // Section: 3 (header) + 5 (ext) + 3 (post_ext) = 11 + svc + 4 (crc)
+            let section_length: u16 = 5 + 3 + svc_entry_len as u16 + 4;
+            let mut buf = vec![0u8; 3 + section_length as usize];
+            buf[0] = 0x42; // SDT actual
+            buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+            buf[2] = (section_length & 0xFF) as u8;
+            buf[3..5].copy_from_slice(&1u16.to_be_bytes()); // ts_id
+            buf[5] = 0xC1; // version=0, cni=1
+            buf[6] = 0; // section_number
+            buf[7] = 0; // last_section_number
+            buf[8..10].copy_from_slice(&1u16.to_be_bytes()); // original_network_id
+            buf[10] = 0xFF; // reserved
+
+            // Service entry
+            let off = 11;
+            buf[off..off + 2].copy_from_slice(&100u16.to_be_bytes()); // service_id=100
+            buf[off + 2] = 0xFC; // flags
+            buf[off + 3] = ((dll >> 8) as u8) & 0x0F;
+            buf[off + 4] = (dll & 0xFF) as u8;
+            buf[off + 5..off + 5 + svc_desc.len()].copy_from_slice(&svc_desc);
+
+            // CRC
+            let crc_off = buf.len() - 4;
+            let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_off]);
+            buf[crc_off..].copy_from_slice(&crc.to_be_bytes());
+            buf
+        };
+
+        let mut collector = SectionSetCollector::new();
+        let complete = collector.push_section(&sdt_bytes).unwrap().unwrap();
+        let sdt = complete.sdt().unwrap();
+
+        let mut store = EpgStore::new();
+        store.feed_sdt(&sdt);
+
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        assert_eq!(store.service_name(key), Some("BBC ONE HD"));
+        assert_eq!(store.service_count(), 1);
     }
 
     // ------------------------------------------------------------------

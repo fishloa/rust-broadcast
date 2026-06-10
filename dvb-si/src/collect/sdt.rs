@@ -5,6 +5,7 @@ use super::{CompleteSectionSet, ParsedDescriptorLoop};
 
 /// Service entry in a complete SDT.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteSdtService<'a> {
     /// service_id.
     pub service_id: u16,
@@ -22,6 +23,7 @@ pub struct CompleteSdtService<'a> {
 
 /// Complete logical Service Description Table.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct CompleteSdt<'a> {
     /// Variant discriminator.
     pub kind: sdt::SdtKind,

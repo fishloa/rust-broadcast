@@ -80,3 +80,127 @@ fn isi6_real_epg_build_and_now_next() {
         "the event covering its own start instant must be 'now'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// _with_registry path: register a private descriptor, push through
+// EitCollector, verify it surfaces as AnyDescriptor::Other.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+struct MyPrivateDesc {
+    val: u8,
+}
+
+impl<'a> dvb_common::Parse<'a> for MyPrivateDesc {
+    type Error = dvb_si::Error;
+    fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
+        if bytes.len() < 3 {
+            return Err(dvb_si::Error::BufferTooShort {
+                need: 3,
+                have: bytes.len(),
+                what: "MyPrivateDesc",
+            });
+        }
+        Ok(Self { val: bytes[2] })
+    }
+}
+
+impl<'a> dvb_si::traits::DescriptorDef<'a> for MyPrivateDesc {
+    const TAG: u8 = MY_PRIVATE_TAG;
+    const NAME: &'static str = "MY_PRIVATE";
+}
+
+const MY_PRIVATE_TAG: u8 = 0xA7;
+
+#[test]
+fn eit_with_registry_surfaces_private_descriptor() {
+    use dvb_si::collect::EitCollector;
+    use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry};
+
+    // Build a minimal EIT p/f section with one event containing a private
+    // descriptor tag 0xA7 and payload byte 0x42.
+    let private_desc = {
+        // tag 0xA7, length 1, payload 0x42
+        [MY_PRIVATE_TAG, 0x01, 0x42u8]
+    };
+
+    let eit_bytes = {
+        let table_id: u8 = 0x4E; // EIT p/f actual
+        let service_id: u16 = 100;
+        let ts_id: u16 = 1;
+        let on_id: u16 = 1;
+        let event_id: u16 = 1;
+        let start_raw: [u8; 5] = [0; 5];
+        let dur_raw: [u8; 3] = [0; 3];
+
+        // Event: 12 + descriptors.len()
+        let ev_len = 12 + private_desc.len();
+        let section_length = 5 + 6 + ev_len + 4;
+        let total = 3 + section_length;
+
+        let mut buf = vec![0u8; total];
+        buf[0] = table_id;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        buf[3..5].copy_from_slice(&service_id.to_be_bytes());
+        buf[5] = 0xC1; // version=0, cni=1
+        buf[6] = 0; // section_number
+        buf[7] = 0; // last_section_number
+        buf[8..10].copy_from_slice(&ts_id.to_be_bytes());
+        buf[10..12].copy_from_slice(&on_id.to_be_bytes());
+        buf[12] = 0; // segment_last_section_number
+        buf[13] = 0x5F; // last_table_id
+
+        let ev_off = 14;
+        buf[ev_off..ev_off + 2].copy_from_slice(&event_id.to_be_bytes());
+        buf[ev_off + 2..ev_off + 7].copy_from_slice(&start_raw);
+        buf[ev_off + 7..ev_off + 10].copy_from_slice(&dur_raw);
+        let dll = private_desc.len() as u16;
+        buf[ev_off + 10] = ((dll >> 8) as u8) & 0x0F;
+        buf[ev_off + 11] = (dll & 0xFF) as u8;
+        buf[ev_off + 12..ev_off + 12 + private_desc.len()].copy_from_slice(&private_desc);
+
+        let crc_pos = total - 4;
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..].copy_from_slice(&crc.to_be_bytes());
+        buf
+    };
+
+    // Without registry: the private descriptor is Unknown.
+    {
+        let mut collector = EitCollector::new();
+        let completed = collector.push_section(&eit_bytes).unwrap().unwrap();
+        let tables = completed.tables().unwrap();
+        let ev = &tables[0].events[0];
+        let descs = ev.descriptors.descriptors();
+        assert_eq!(descs.len(), 1);
+        match &descs[0] {
+            Ok(AnyDescriptor::Unknown { tag, .. }) => {
+                assert_eq!(*tag, MY_PRIVATE_TAG);
+            }
+            other => panic!("expected Unknown (no registry), got {:?}", other),
+        }
+    }
+
+    // With registry: the private descriptor surfaces as Other.
+    {
+        let mut reg = DescriptorRegistry::new();
+        reg.register::<MyPrivateDesc>();
+
+        let mut collector = EitCollector::new();
+        let completed = collector.push_section(&eit_bytes).unwrap().unwrap();
+        let tables = completed.tables_with_registry(Some(&reg)).unwrap();
+        let ev = &tables[0].events[0];
+        let descs = ev.descriptors.descriptors();
+        assert_eq!(descs.len(), 1);
+        match &descs[0] {
+            Ok(AnyDescriptor::Other { tag, value }) => {
+                assert_eq!(*tag, MY_PRIVATE_TAG);
+                let concrete = value.downcast_ref::<MyPrivateDesc>().unwrap();
+                assert_eq!(concrete.val, 0x42);
+            }
+            other => panic!("expected Other (registry), got {:?}", other),
+        }
+    }
+}
