@@ -89,9 +89,9 @@ macro_rules! declare_descriptors {
             Other {
                 /// The raw descriptor_tag byte.
                 tag: u8,
-                /// The parsed, type-erased descriptor value. Use
-                /// [`DescriptorObject::as_any`][crate::descriptors::registry::DescriptorObject::as_any]
-                /// followed by `downcast_ref` to recover the concrete type.
+                /// The parsed, type-erased descriptor value. Call `downcast_ref`
+                /// on it (see [`DescriptorObject`](crate::descriptors::registry::DescriptorObject))
+                /// to recover the concrete type.
                 #[cfg_attr(
                     feature = "serde",
                     serde(serialize_with = "crate::descriptors::registry::serialize_erased")
@@ -571,7 +571,7 @@ mod tests {
         match &items[1] {
             AnyDescriptor::Other { tag, value } => {
                 assert_eq!(*tag, 0xA7);
-                assert_eq!(value.as_any().downcast_ref::<MyTag0xA7>().unwrap().x, 0xCA);
+                assert_eq!(value.downcast_ref::<MyTag0xA7>().unwrap().x, 0xCA);
             }
             other => panic!("expected Other, got {other:?}"),
         }

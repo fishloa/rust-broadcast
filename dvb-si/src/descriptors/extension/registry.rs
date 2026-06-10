@@ -79,6 +79,34 @@ where
     }
 }
 
+// Downcast helpers ON THE TRAIT OBJECT (not the blanket).
+//
+// The blanket `impl<T> ExtensionObject for T` also covers `Box<dyn
+// ExtensionObject>` itself whenever the box satisfies the bounds — it does
+// under `--no-default-features`, where the bound is just `Debug + Any + Send +
+// Sync`. So `the_box.as_any()` resolves to the *box's* impl and reports the
+// box's `TypeId`, not the inner value's — a silent downcast failure. (Under
+// `serde` the extra `serde::Serialize` bound excludes the box, which is why the
+// footgun only bites without default features.) Calling through `dyn
+// ExtensionObject` (which `Box` derefs to) always hits the inner value, so
+// always downcast via these methods rather than `the_box.as_any()`.
+impl dyn ExtensionObject {
+    /// Downcast a registered extension body to its concrete type `T`.
+    ///
+    /// Works for `Box<dyn ExtensionObject>` (it derefs to the trait object)
+    /// under every feature configuration.
+    #[must_use]
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.as_any().downcast_ref::<T>()
+    }
+
+    /// `true` if the registered extension body's concrete type is `T`.
+    #[must_use]
+    pub fn is<T: Any>(&self) -> bool {
+        self.as_any().is::<T>()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Erased serialisation helper (serde-gated)
 // ---------------------------------------------------------------------------
@@ -231,9 +259,8 @@ pub enum RegisteredExtension<'a> {
     Custom {
         /// The `descriptor_tag_extension` byte.
         tag_extension: u8,
-        /// The parsed, type-erased value. Use
-        /// [`ExtensionObject::as_any`] followed by `downcast_ref` to recover
-        /// the concrete type.
+        /// The parsed, type-erased value. Call `downcast_ref` on it (see
+        /// [`ExtensionObject`]) to recover the concrete type.
         #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_erased"))]
         value: Box<dyn ExtensionObject>,
     },
@@ -289,7 +316,6 @@ mod tests {
             } => {
                 assert_eq!(tag_extension, TEST_TAG_EXTENSION);
                 let concrete = value
-                    .as_any()
                     .downcast_ref::<MyExtBody>()
                     .expect("downcast should succeed");
                 assert_eq!(concrete.payload, sel);
