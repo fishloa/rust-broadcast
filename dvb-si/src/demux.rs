@@ -180,6 +180,21 @@ impl SectionEvent {
         crate::tables::AnyTableSection::parse(&self.bytes)
     }
 
+    /// Typed table-section view with custom-registry support (lazy, borrows
+    /// this event's bytes).
+    ///
+    /// Precedence: custom-registered parser → built-in dispatch → Unknown.
+    /// See [`AnyTableSection::parse_with`][crate::tables::AnyTableSection::parse_with].
+    ///
+    /// # Errors
+    /// Propagates the parse error from the dispatched table-section type.
+    pub fn table_section_with(
+        &self,
+        registry: &crate::tables::registry::TableRegistry,
+    ) -> crate::Result<crate::tables::AnyTableSection<'_>> {
+        crate::tables::AnyTableSection::parse_with(registry, &self.bytes)
+    }
+
     /// Type-keyed view: `event.parse::<EitSection>()`.
     ///
     /// # Errors
@@ -693,5 +708,82 @@ mod tests {
         assert_eq!(demux.feed(&pkt).count(), 1, "emit_repeats re-emits");
         assert_eq!(demux.stats().suppressed, 0);
         assert_eq!(demux.stats().emitted, 2);
+    }
+
+    #[test]
+    fn table_section_with_empty_registry_matches_table_section() {
+        use crate::tables::registry::TableRegistry;
+        use crate::tables::AnyTableSection;
+
+        let mut demux = SiDemux::builder().build();
+        let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
+        let evts: Vec<_> = demux.feed(&ts_packet(0x0000, &pat)).collect();
+        assert_eq!(evts.len(), 1);
+
+        let reg = TableRegistry::new();
+        let with_reg = evts[0].table_section_with(&reg).unwrap();
+        let without = evts[0].table_section().unwrap();
+        assert!(matches!(with_reg, AnyTableSection::PatSection(_)));
+        assert!(matches!(without, AnyTableSection::PatSection(_)));
+    }
+
+    #[test]
+    fn table_section_with_custom_registry_yields_other() {
+        use crate::tables::registry::TableRegistry;
+        use crate::tables::AnyTableSection;
+        use crate::traits::TableDef;
+        use dvb_common::Parse;
+
+        const PRIVATE_TID: u8 = 0x90;
+
+        #[derive(Debug)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        struct PrivateTable {
+            table_id: u8,
+        }
+
+        impl<'a> Parse<'a> for PrivateTable {
+            type Error = crate::Error;
+            fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+                if bytes.is_empty() {
+                    return Err(crate::Error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "PrivateTable",
+                    });
+                }
+                Ok(Self { table_id: bytes[0] })
+            }
+        }
+
+        impl<'a> TableDef<'a> for PrivateTable {
+            const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(PRIVATE_TID, PRIVATE_TID)];
+            const NAME: &'static str = "PRIVATE_TABLE";
+        }
+
+        let mut reg = TableRegistry::new();
+        reg.register::<PrivateTable>();
+
+        let mut demux = SiDemux::builder()
+            .dvb_si_pids(false)
+            .pid(Pid::new(0x0200))
+            .build();
+
+        let section = long_section(PRIVATE_TID, 0x0001, 0, 0, &[0x42]);
+        let evts: Vec<_> = demux.feed(&ts_packet(0x0200, &section)).collect();
+        assert_eq!(evts.len(), 1);
+
+        let result = evts[0].table_section_with(&reg).unwrap();
+        match result {
+            AnyTableSection::Other {
+                table_id,
+                ref value,
+            } => {
+                assert_eq!(table_id, PRIVATE_TID);
+                let pt = value.as_any().downcast_ref::<PrivateTable>().unwrap();
+                assert_eq!(pt.table_id, PRIVATE_TID);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
     }
 }

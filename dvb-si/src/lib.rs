@@ -133,6 +133,7 @@
 //! - [`collect`] — generic multi-section collection plus complete NIT/BAT/SDT/EIT
 //!   views with typed descriptor loops.
 //! - [`descriptors::DescriptorRegistry`] — register private descriptors at runtime.
+//! - [`tables::TableRegistry`] — register private table_ids at runtime.
 //! - [`text::DvbText`] / [`text::LangCode`] — decoded-on-demand Annex A text.
 //! - [`Parse`](dvb_common::Parse) / [`Serialize`](dvb_common::Serialize) — the two
 //!   symmetric contracts every table and descriptor implements.

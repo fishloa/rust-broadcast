@@ -96,6 +96,21 @@ macro_rules! declare_tables {
                 #[allow(missing_docs)]
                 $nd_variant($($nd_path)::+ $(<$nd_plt>)?),
             )+)?
+            /// Runtime-registered custom table section (see [`TableRegistry`]).
+            ///
+            /// [`TableRegistry`]: crate::tables::registry::TableRegistry
+            Other {
+                /// The raw table_id byte.
+                table_id: u8,
+                /// The parsed, type-erased table-section value. Use
+                /// [`TableObject::as_any`][crate::tables::registry::TableObject::as_any]
+                /// followed by `downcast_ref` to recover the concrete type.
+                #[cfg_attr(
+                    feature = "serde",
+                    serde(serialize_with = "crate::tables::registry::serialize_erased")
+                )]
+                value: Box<dyn crate::tables::registry::TableObject>,
+            },
             /// table_id with no typed implementation; `raw` is the full
             /// section bytes including the table_id header.
             Unknown {
@@ -112,7 +127,6 @@ macro_rules! declare_tables {
                     Self::$variant(t)
                 }
             }
-            impl<$lt> crate::traits::sealed::Sealed for $($path)::+ $(<$plt>)? {}
         )+
         $($(
             impl<$lt> From<$($nd_path)::+ $(<$nd_plt>)?> for AnyTableSection<$lt> {
@@ -120,7 +134,6 @@ macro_rules! declare_tables {
                     Self::$nd_variant(t)
                 }
             }
-            impl<$lt> crate::traits::sealed::Sealed for $($nd_path)::+ $(<$nd_plt>)? {}
         )+)?
 
         impl<$lt> AnyTableSection<$lt> {
@@ -144,6 +157,7 @@ macro_rules! declare_tables {
                         Self::$nd_variant(_) =>
                             <$($nd_path)::+ as crate::traits::TableDef>::NAME,
                     )+)?
+                    Self::Other { .. } => "CUSTOM",
                     Self::Unknown { .. } => "UNKNOWN",
                 }
             }
@@ -279,4 +293,32 @@ declare_tables! {'a;
     // `AnyTableSection::parse_as::<MpeDatagramSection>(bytes)` for the typed view.
     @no_dispatch
     MpeDatagram => crate::tables::mpe::MpeDatagramSection<'a>,
+}
+
+impl<'a> AnyTableSection<'a> {
+    /// Dispatch one complete section with custom-registry support.
+    ///
+    /// Precedence: (1) if the registry has a custom parser for the section's
+    /// table_id, use it → [`AnyTableSection::Other`]; (2) else delegate to
+    /// [`AnyTableSection::parse`] (built-in dispatch, which itself falls to
+    /// [`AnyTableSection::Unknown`]).
+    ///
+    /// # Errors
+    /// - [`crate::Error::BufferTooShort`] — `bytes` is empty.
+    /// - Any parse error from the dispatched type.
+    pub fn parse_with(
+        registry: &crate::tables::registry::TableRegistry,
+        bytes: &'a [u8],
+    ) -> crate::Result<Self> {
+        let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "section table_id",
+        })?;
+        if let Some(parse_fn) = registry.custom.get(&table_id) {
+            let value = parse_fn(bytes)?;
+            return Ok(Self::Other { table_id, value });
+        }
+        Self::parse(bytes)
+    }
 }

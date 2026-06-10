@@ -21,6 +21,9 @@ pub(crate) const SECTION_B1_FLAGS_DVB: u8 = 0xF0;
 pub mod any;
 pub use any::AnyTableSection;
 
+pub mod registry;
+pub use registry::{TableObject, TableRegistry};
+
 pub mod ait;
 pub mod bat;
 pub mod cat;
