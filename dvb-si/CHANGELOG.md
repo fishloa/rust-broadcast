@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **`resync` module** — `TsResync`, a byte-stream resynchroniser that recovers
+  188-byte TS packet alignment from arbitrary input (junk prefixes, mid-stream
+  loss) and detects/strips 204-byte Reed-Solomon packets, with resync/dropped
+  stats. Sync byte 0x47 per ISO/IEC 13818-1 §2.4.3.2 (#61).
 
 - **`epg` module (feature `chrono`)** — an `EpgStore` convenience layer over
   `EitCollector` (#51). Keyed by `(original_network_id, transport_stream_id,
