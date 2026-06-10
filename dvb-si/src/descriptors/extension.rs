@@ -758,17 +758,25 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvalidDescriptor { tag: TAG, reason }
 }
 
-fn parse_t2(sel: &[u8]) -> Result<T2DeliverySystem<'_>> {
-    if sel.len() < T2_FIXED_PREFIX_LEN {
-        return Err(invalid("T2_delivery_system: prefix truncated"));
-    }
-    let plp_id = sel[0];
-    let t2_system_id = u16::from_be_bytes([sel[1], sel[2]]);
-    let mut pos = T2_FIXED_PREFIX_LEN;
-    // descriptor_length > 4 ⇔ the optional packed flags block is present
-    // (the body is plp + system_id = 3 bytes when absent; >3 ⇒ block present).
-    let (siso_miso, bandwidth, guard_interval, transmission_mode, other_frequency_flag, tfs_flag) =
-        if sel.len() > T2_FIXED_PREFIX_LEN {
+impl<'a> Parse<'a> for T2DeliverySystem<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < T2_FIXED_PREFIX_LEN {
+            return Err(invalid("T2_delivery_system: prefix truncated"));
+        }
+        let plp_id = sel[0];
+        let t2_system_id = u16::from_be_bytes([sel[1], sel[2]]);
+        let mut pos = T2_FIXED_PREFIX_LEN;
+        // descriptor_length > 4 ⇔ the optional packed flags block is present
+        // (the body is plp + system_id = 3 bytes when absent; >3 ⇒ block present).
+        let (
+            siso_miso,
+            bandwidth,
+            guard_interval,
+            transmission_mode,
+            other_frequency_flag,
+            tfs_flag,
+        ) = if sel.len() > T2_FIXED_PREFIX_LEN {
             if sel.len() < T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN {
                 return Err(invalid("T2_delivery_system: flags block truncated"));
             }
@@ -786,389 +794,439 @@ fn parse_t2(sel: &[u8]) -> Result<T2DeliverySystem<'_>> {
         } else {
             (None, None, None, None, None, None)
         };
-    Ok(T2DeliverySystem {
-        plp_id,
-        t2_system_id,
-        siso_miso,
-        bandwidth,
-        guard_interval,
-        transmission_mode,
-        other_frequency_flag,
-        tfs_flag,
-        cell_loop: &sel[pos..],
-    })
+        Ok(T2DeliverySystem {
+            plp_id,
+            t2_system_id,
+            siso_miso,
+            bandwidth,
+            guard_interval,
+            transmission_mode,
+            other_frequency_flag,
+            tfs_flag,
+            cell_loop: &sel[pos..],
+        })
+    }
 }
 
-fn parse_supplementary_audio(sel: &[u8]) -> Result<SupplementaryAudio<'_>> {
-    if sel.is_empty() {
-        return Err(invalid("supplementary_audio: flags byte missing"));
-    }
-    let flags = sel[0];
-    let mix_type = (flags & 0x80) != 0;
-    let editorial_classification = (flags >> 2) & 0x1F;
-    let language_code_present = (flags & 0x01) != 0;
-    let mut pos = 1;
-    let iso_639_language_code = if language_code_present {
-        if sel.len() < pos + ISO_639_LEN {
-            return Err(invalid("supplementary_audio: language code truncated"));
+impl<'a> Parse<'a> for SupplementaryAudio<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.is_empty() {
+            return Err(invalid("supplementary_audio: flags byte missing"));
         }
-        let lc = &sel[pos..pos + ISO_639_LEN];
-        pos += ISO_639_LEN;
-        Some(LangCode([lc[0], lc[1], lc[2]]))
-    } else {
-        None
-    };
-    Ok(SupplementaryAudio {
-        mix_type,
-        editorial_classification,
-        language_code_present,
-        iso_639_language_code,
-        private_data: &sel[pos..],
-    })
+        let flags = sel[0];
+        let mix_type = (flags & 0x80) != 0;
+        let editorial_classification = (flags >> 2) & 0x1F;
+        let language_code_present = (flags & 0x01) != 0;
+        let mut pos = 1;
+        let iso_639_language_code = if language_code_present {
+            if sel.len() < pos + ISO_639_LEN {
+                return Err(invalid("supplementary_audio: language code truncated"));
+            }
+            let lc = &sel[pos..pos + ISO_639_LEN];
+            pos += ISO_639_LEN;
+            Some(LangCode([lc[0], lc[1], lc[2]]))
+        } else {
+            None
+        };
+        Ok(SupplementaryAudio {
+            mix_type,
+            editorial_classification,
+            language_code_present,
+            iso_639_language_code,
+            private_data: &sel[pos..],
+        })
+    }
 }
 
-fn parse_message(sel: &[u8]) -> Result<Message<'_>> {
-    if sel.len() < 1 + ISO_639_LEN {
-        return Err(invalid("message: header truncated"));
+impl<'a> Parse<'a> for NetworkChangeNotify<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        Ok(NetworkChangeNotify { cell_loop: sel })
     }
-    Ok(Message {
-        message_id: sel[0],
-        iso_639_language_code: LangCode([sel[1], sel[2], sel[3]]),
-        text: DvbText::new(&sel[1 + ISO_639_LEN..]),
-    })
 }
 
-fn parse_target_region(sel: &[u8]) -> Result<TargetRegion<'_>> {
-    if sel.len() < ISO_639_LEN {
-        return Err(invalid("target_region: country_code truncated"));
-    }
-    Ok(TargetRegion {
-        country_code: LangCode([sel[0], sel[1], sel[2]]),
-        region_loop: &sel[ISO_639_LEN..],
-    })
-}
-
-fn parse_target_region_name(sel: &[u8]) -> Result<TargetRegionName<'_>> {
-    if sel.len() < 2 * ISO_639_LEN {
-        return Err(invalid("target_region_name: header truncated"));
-    }
-    Ok(TargetRegionName {
-        country_code: LangCode([sel[0], sel[1], sel[2]]),
-        iso_639_language_code: LangCode([sel[3], sel[4], sel[5]]),
-        region_loop: &sel[2 * ISO_639_LEN..],
-    })
-}
-
-fn parse_service_relocated(sel: &[u8]) -> Result<ServiceRelocated> {
-    if sel.len() < SERVICE_RELOCATED_LEN {
-        return Err(invalid("service_relocated: truncated"));
-    }
-    Ok(ServiceRelocated {
-        old_original_network_id: u16::from_be_bytes([sel[0], sel[1]]),
-        old_transport_stream_id: u16::from_be_bytes([sel[2], sel[3]]),
-        old_service_id: u16::from_be_bytes([sel[4], sel[5]]),
-    })
-}
-
-fn parse_c2(sel: &[u8]) -> Result<C2DeliverySystem> {
-    if sel.len() < C2_LEN {
-        return Err(invalid("C2_delivery_system: truncated"));
-    }
-    let packed = sel[6];
-    Ok(C2DeliverySystem {
-        plp_id: sel[0],
-        data_slice_id: sel[1],
-        c2_system_tuning_frequency: u32::from_be_bytes([sel[2], sel[3], sel[4], sel[5]]),
-        c2_system_tuning_frequency_type: packed >> 6,
-        active_ofdm_symbol_duration: (packed >> 3) & 0x07,
-        guard_interval: packed & 0x07,
-    })
-}
-
-fn parse_t2mi(sel: &[u8]) -> Result<T2miDescriptor<'_>> {
-    if sel.len() < T2MI_MIN_LEN {
-        return Err(invalid("T2MI: body truncated"));
-    }
-    Ok(T2miDescriptor {
-        // Table 158 bytes 0-2:
-        //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
-        //   byte 1: reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
-        //   byte 2: reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-        t2mi_stream_id: sel[0] & 0x07,
-        num_t2mi_streams_minus_one: sel[1] & 0x07,
-        pcr_iscr_common_clock_flag: (sel[2] & 0x01) != 0,
-        reserved_tail: &sel[T2MI_MIN_LEN..],
-    })
-}
-
-fn parse_uri_linkage(sel: &[u8]) -> Result<UriLinkage<'_>> {
-    if sel.len() < 2 {
-        return Err(invalid("URI_linkage: header truncated"));
-    }
-    let uri_linkage_type = sel[0];
-    let uri_length = sel[1] as usize;
-    let mut pos = 2;
-    if sel.len() < pos + uri_length {
-        return Err(invalid("URI_linkage: uri overruns body"));
-    }
-    let uri = &sel[pos..pos + uri_length];
-    pos += uri_length;
-    let min_polling_interval = if uri_linkage_type == 0x00 || uri_linkage_type == 0x01 {
-        if sel.len() < pos + 2 {
-            return Err(invalid("URI_linkage: min_polling_interval truncated"));
+impl<'a> Parse<'a> for Message<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < 1 + ISO_639_LEN {
+            return Err(invalid("message: header truncated"));
         }
-        let v = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
-        pos += 2;
-        Some(v)
-    } else {
-        None
-    };
-    Ok(UriLinkage {
-        uri_linkage_type,
-        uri,
-        min_polling_interval,
-        private_data: &sel[pos..],
-    })
+        Ok(Message {
+            message_id: sel[0],
+            iso_639_language_code: LangCode([sel[1], sel[2], sel[3]]),
+            text: DvbText::new(&sel[1 + ISO_639_LEN..]),
+        })
+    }
 }
 
-fn parse_ac4(sel: &[u8]) -> Result<Ac4<'_>> {
-    if sel.is_empty() {
-        return Err(invalid("AC-4: flags byte missing"));
+impl<'a> Parse<'a> for TargetRegion<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < ISO_639_LEN {
+            return Err(invalid("target_region: country_code truncated"));
+        }
+        Ok(TargetRegion {
+            country_code: LangCode([sel[0], sel[1], sel[2]]),
+            region_loop: &sel[ISO_639_LEN..],
+        })
     }
-    let flags = sel[0];
-    let ac4_config_flag = (flags & 0x80) != 0;
-    let ac4_toc_flag = (flags & 0x40) != 0;
-    let mut pos = 1;
-    let (ac4_dialog_enhancement_enabled, ac4_channel_mode) = if ac4_config_flag {
-        if sel.len() < pos + 1 {
-            return Err(invalid("AC-4: config byte truncated"));
-        }
-        let c = sel[pos];
-        pos += 1;
-        (Some((c & 0x80) != 0), Some((c >> 5) & 0x03))
-    } else {
-        (None, None)
-    };
-    let toc = if ac4_toc_flag {
-        if sel.len() < pos + 1 {
-            return Err(invalid("AC-4: toc length truncated"));
-        }
-        let toc_len = sel[pos] as usize;
-        pos += 1;
-        if sel.len() < pos + toc_len {
-            return Err(invalid("AC-4: toc overruns body"));
-        }
-        let t = &sel[pos..pos + toc_len];
-        pos += toc_len;
-        Some(t)
-    } else {
-        None
-    };
-    Ok(Ac4 {
-        ac4_config_flag,
-        ac4_toc_flag,
-        ac4_dialog_enhancement_enabled,
-        ac4_channel_mode,
-        toc,
-        additional_info: &sel[pos..],
-    })
 }
 
-fn parse_c2_bundle(sel: &[u8]) -> Result<C2BundleDeliverySystem> {
-    if sel.len() % C2_BUNDLE_ENTRY_LEN != 0 {
-        return Err(invalid(
-            "C2_bundle_delivery_system: not a whole number of entries",
-        ));
+impl<'a> Parse<'a> for TargetRegionName<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < 2 * ISO_639_LEN {
+            return Err(invalid("target_region_name: header truncated"));
+        }
+        Ok(TargetRegionName {
+            country_code: LangCode([sel[0], sel[1], sel[2]]),
+            iso_639_language_code: LangCode([sel[3], sel[4], sel[5]]),
+            region_loop: &sel[2 * ISO_639_LEN..],
+        })
     }
-    let mut entries = Vec::with_capacity(sel.len() / C2_BUNDLE_ENTRY_LEN);
-    for chunk in sel.chunks_exact(C2_BUNDLE_ENTRY_LEN) {
-        let packed = chunk[6];
-        entries.push(C2BundleEntry {
-            plp_id: chunk[0],
-            data_slice_id: chunk[1],
-            c2_system_tuning_frequency: u32::from_be_bytes([
-                chunk[2], chunk[3], chunk[4], chunk[5],
-            ]),
+}
+
+impl<'a> Parse<'a> for ServiceRelocated {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < SERVICE_RELOCATED_LEN {
+            return Err(invalid("service_relocated: truncated"));
+        }
+        Ok(ServiceRelocated {
+            old_original_network_id: u16::from_be_bytes([sel[0], sel[1]]),
+            old_transport_stream_id: u16::from_be_bytes([sel[2], sel[3]]),
+            old_service_id: u16::from_be_bytes([sel[4], sel[5]]),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for C2DeliverySystem {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < C2_LEN {
+            return Err(invalid("C2_delivery_system: truncated"));
+        }
+        let packed = sel[6];
+        Ok(C2DeliverySystem {
+            plp_id: sel[0],
+            data_slice_id: sel[1],
+            c2_system_tuning_frequency: u32::from_be_bytes([sel[2], sel[3], sel[4], sel[5]]),
             c2_system_tuning_frequency_type: packed >> 6,
             active_ofdm_symbol_duration: (packed >> 3) & 0x07,
             guard_interval: packed & 0x07,
-            primary_channel: (chunk[7] & 0x80) != 0,
-        });
+        })
     }
-    Ok(C2BundleDeliverySystem { entries })
 }
 
-fn parse_s2x(sel: &[u8]) -> Result<S2XSatelliteDeliverySystem<'_>> {
-    // receiver_profiles byte + S2X mode/flags byte = 2 fixed bytes.
-    if sel.len() < 2 {
-        return Err(invalid("S2X: flags truncated"));
-    }
-    let receiver_profiles = sel[0] >> 3;
-    let b1 = sel[1];
-    // Table 140 byte 1, MSB-first: S2X_mode(2) scrambling_sequence_selector(1)
-    // reserved_zero_future_use(3) TS_GS_S2X_mode(2).
-    let s2x_mode = (b1 >> 6) & 0x03;
-    let scrambling_sequence_selector = (b1 & 0x20) != 0;
-    let ts_gs_s2x_mode = b1 & 0x03;
-    let mut pos = 2;
-    let scrambling_sequence_index = if scrambling_sequence_selector {
-        if sel.len() < pos + S2X_SCRAMBLING_LEN {
-            return Err(invalid("S2X: scrambling_sequence_index truncated"));
+impl<'a> Parse<'a> for T2miDescriptor<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < T2MI_MIN_LEN {
+            return Err(invalid("T2MI: body truncated"));
         }
-        let idx = (u32::from(sel[pos] & 0x03) << 16)
-            | (u32::from(sel[pos + 1]) << 8)
-            | u32::from(sel[pos + 2]);
-        pos += S2X_SCRAMBLING_LEN;
-        Some(idx)
-    } else {
-        None
-    };
-    // Primary channel (Table 140): frequency(32) orbital_position(16)
-    //   packed byte = west_east(1) polarization(2) mis(1) reserved(1) roll_off(3)
-    //   then reserved(4) | symbol_rate[27:24], and 3 bytes symbol_rate[23:0].
-    if sel.len() < pos + S2X_PRIMARY_LEN {
-        return Err(invalid("S2X: primary channel truncated"));
+        Ok(T2miDescriptor {
+            // Table 158 bytes 0-2:
+            //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
+            //   byte 1: reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
+            //   byte 2: reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
+            t2mi_stream_id: sel[0] & 0x07,
+            num_t2mi_streams_minus_one: sel[1] & 0x07,
+            pcr_iscr_common_clock_flag: (sel[2] & 0x01) != 0,
+            reserved_tail: &sel[T2MI_MIN_LEN..],
+        })
     }
-    let frequency = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
-    let orbital_position = u16::from_be_bytes([sel[pos + 4], sel[pos + 5]]);
-    let pb = sel[pos + 6];
-    let west_east_flag = (pb & 0x80) != 0;
-    let polarization = (pb >> 5) & 0x03;
-    let multiple_input_stream_flag = (pb & 0x10) != 0;
-    let roll_off = pb & 0x07;
-    let symbol_rate = (u32::from(sel[pos + 7] & 0x0F) << 24)
-        | (u32::from(sel[pos + 8]) << 16)
-        | (u32::from(sel[pos + 9]) << 8)
-        | u32::from(sel[pos + 10]);
-    pos += S2X_PRIMARY_LEN;
-    let input_stream_identifier = if multiple_input_stream_flag {
-        if sel.len() < pos + 1 {
-            return Err(invalid("S2X: input_stream_identifier truncated"));
+}
+
+impl<'a> Parse<'a> for UriLinkage<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < 2 {
+            return Err(invalid("URI_linkage: header truncated"));
         }
-        let isi = sel[pos];
-        pos += 1;
-        Some(isi)
-    } else {
-        None
-    };
-    let timeslice_number = if s2x_mode == 2 {
-        if sel.len() < pos + 1 {
-            return Err(invalid("S2X: timeslice_number truncated"));
+        let uri_linkage_type = sel[0];
+        let uri_length = sel[1] as usize;
+        let mut pos = 2;
+        if sel.len() < pos + uri_length {
+            return Err(invalid("URI_linkage: uri overruns body"));
         }
-        let ts = sel[pos];
-        pos += 1;
-        Some(ts)
-    } else {
-        None
-    };
-    Ok(S2XSatelliteDeliverySystem {
-        receiver_profiles,
-        s2x_mode,
-        scrambling_sequence_selector,
-        ts_gs_s2x_mode,
-        scrambling_sequence_index,
-        frequency,
-        orbital_position,
-        west_east_flag,
-        polarization,
-        multiple_input_stream_flag,
-        roll_off,
-        symbol_rate,
-        input_stream_identifier,
-        timeslice_number,
-        tail: &sel[pos..],
-    })
+        let uri = &sel[pos..pos + uri_length];
+        pos += uri_length;
+        let min_polling_interval = if uri_linkage_type == 0x00 || uri_linkage_type == 0x01 {
+            if sel.len() < pos + 2 {
+                return Err(invalid("URI_linkage: min_polling_interval truncated"));
+            }
+            let v = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
+            pos += 2;
+            Some(v)
+        } else {
+            None
+        };
+        Ok(UriLinkage {
+            uri_linkage_type,
+            uri,
+            min_polling_interval,
+            private_data: &sel[pos..],
+        })
+    }
 }
 
-fn parse_audio_preselection(sel: &[u8]) -> Result<AudioPreselection<'_>> {
-    if sel.is_empty() {
-        return Err(invalid("audio_preselection: count byte missing"));
+impl<'a> Parse<'a> for Ac4<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.is_empty() {
+            return Err(invalid("AC-4: flags byte missing"));
+        }
+        let flags = sel[0];
+        let ac4_config_flag = (flags & 0x80) != 0;
+        let ac4_toc_flag = (flags & 0x40) != 0;
+        let mut pos = 1;
+        let (ac4_dialog_enhancement_enabled, ac4_channel_mode) = if ac4_config_flag {
+            if sel.len() < pos + 1 {
+                return Err(invalid("AC-4: config byte truncated"));
+            }
+            let c = sel[pos];
+            pos += 1;
+            (Some((c & 0x80) != 0), Some((c >> 5) & 0x03))
+        } else {
+            (None, None)
+        };
+        let toc = if ac4_toc_flag {
+            if sel.len() < pos + 1 {
+                return Err(invalid("AC-4: toc length truncated"));
+            }
+            let toc_len = sel[pos] as usize;
+            pos += 1;
+            if sel.len() < pos + toc_len {
+                return Err(invalid("AC-4: toc overruns body"));
+            }
+            let t = &sel[pos..pos + toc_len];
+            pos += toc_len;
+            Some(t)
+        } else {
+            None
+        };
+        Ok(Ac4 {
+            ac4_config_flag,
+            ac4_toc_flag,
+            ac4_dialog_enhancement_enabled,
+            ac4_channel_mode,
+            toc,
+            additional_info: &sel[pos..],
+        })
     }
-    Ok(AudioPreselection {
-        num_preselections: sel[0] >> 3,
-        preselection_loop: &sel[1..],
-    })
 }
 
-fn parse_ttml(sel: &[u8]) -> Result<TtmlSubtitling<'_>> {
-    if sel.len() < TTML_FIXED_LEN {
-        return Err(invalid("TTML_subtitling: header truncated"));
-    }
-    let b3 = sel[ISO_639_LEN];
-    let b4 = sel[ISO_639_LEN + 1];
-    Ok(TtmlSubtitling {
-        iso_639_language_code: LangCode([sel[0], sel[1], sel[2]]),
-        subtitle_purpose: b3 >> 2,
-        tts_suitability: b3 & 0x03,
-        essential_font_usage_flag: (b4 & 0x80) != 0,
-        qualifier_present_flag: (b4 & 0x40) != 0,
-        dvb_ttml_profile_count: b4 & 0x0F,
-        tail: &sel[TTML_FIXED_LEN..],
-    })
-}
-
-fn parse_vvc_subpictures(sel: &[u8]) -> Result<VvcSubpicturesDescriptor<'_>> {
-    if sel.is_empty() {
-        return Err(invalid("vvc_subpictures: header byte missing"));
-    }
-    let byte0 = sel[0];
-    let default_service_mode = (byte0 & 0x80) != 0;
-    let service_description_present = (byte0 & 0x40) != 0;
-    let n = (byte0 & 0x3F) as usize;
-
-    // Table 162a: 1 fixed byte + n*2 subpicture bytes + 1 processing_mode byte.
-    let subpicture_bytes = n * 2;
-    let min_len = 1 + subpicture_bytes + 1;
-    if sel.len() < min_len {
-        return Err(invalid("vvc_subpictures: truncated"));
-    }
-
-    let mut pos = 1;
-    let mut subpictures = Vec::with_capacity(n);
-    for _ in 0..n {
-        let component_tag = sel[pos];
-        let vvc_subpicture_id = sel[pos + 1];
-        subpictures.push(VvcSubpicture {
-            component_tag,
-            vvc_subpicture_id,
-        });
-        pos += 2;
-    }
-
-    let processing_mode = sel[pos] & 0x07;
-    pos += 1;
-
-    let service_description = if service_description_present {
-        if sel.len() < pos + 1 {
+impl<'a> Parse<'a> for C2BundleDeliverySystem {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() % C2_BUNDLE_ENTRY_LEN != 0 {
             return Err(invalid(
-                "vvc_subpictures: service_description_length truncated",
+                "C2_bundle_delivery_system: not a whole number of entries",
             ));
         }
-        let len = sel[pos] as usize;
-        pos += 1;
-        if sel.len() < pos + len {
-            return Err(invalid(
-                "vvc_subpictures: service_description overruns body",
-            ));
+        let mut entries = Vec::with_capacity(sel.len() / C2_BUNDLE_ENTRY_LEN);
+        for chunk in sel.chunks_exact(C2_BUNDLE_ENTRY_LEN) {
+            let packed = chunk[6];
+            entries.push(C2BundleEntry {
+                plp_id: chunk[0],
+                data_slice_id: chunk[1],
+                c2_system_tuning_frequency: u32::from_be_bytes([
+                    chunk[2], chunk[3], chunk[4], chunk[5],
+                ]),
+                c2_system_tuning_frequency_type: packed >> 6,
+                active_ofdm_symbol_duration: (packed >> 3) & 0x07,
+                guard_interval: packed & 0x07,
+                primary_channel: (chunk[7] & 0x80) != 0,
+            });
         }
-        let text = DvbText::new(&sel[pos..pos + len]);
-        pos += len;
-        Some(text)
-    } else {
-        None
-    };
-
-    // Table 162a is exact; reject trailing bytes.
-    if pos != sel.len() {
-        return Err(invalid("vvc_subpictures: trailing data"));
+        Ok(C2BundleDeliverySystem { entries })
     }
+}
 
-    Ok(VvcSubpicturesDescriptor {
-        default_service_mode,
-        subpictures,
-        processing_mode,
-        service_description,
-    })
+impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        // receiver_profiles byte + S2X mode/flags byte = 2 fixed bytes.
+        if sel.len() < 2 {
+            return Err(invalid("S2X: flags truncated"));
+        }
+        let receiver_profiles = sel[0] >> 3;
+        let b1 = sel[1];
+        // Table 140 byte 1, MSB-first: S2X_mode(2) scrambling_sequence_selector(1)
+        // reserved_zero_future_use(3) TS_GS_S2X_mode(2).
+        let s2x_mode = (b1 >> 6) & 0x03;
+        let scrambling_sequence_selector = (b1 & 0x20) != 0;
+        let ts_gs_s2x_mode = b1 & 0x03;
+        let mut pos = 2;
+        let scrambling_sequence_index = if scrambling_sequence_selector {
+            if sel.len() < pos + S2X_SCRAMBLING_LEN {
+                return Err(invalid("S2X: scrambling_sequence_index truncated"));
+            }
+            let idx = (u32::from(sel[pos] & 0x03) << 16)
+                | (u32::from(sel[pos + 1]) << 8)
+                | u32::from(sel[pos + 2]);
+            pos += S2X_SCRAMBLING_LEN;
+            Some(idx)
+        } else {
+            None
+        };
+        // Primary channel (Table 140): frequency(32) orbital_position(16)
+        //   packed byte = west_east(1) polarization(2) mis(1) reserved(1) roll_off(3)
+        //   then reserved(4) | symbol_rate[27:24], and 3 bytes symbol_rate[23:0].
+        if sel.len() < pos + S2X_PRIMARY_LEN {
+            return Err(invalid("S2X: primary channel truncated"));
+        }
+        let frequency = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
+        let orbital_position = u16::from_be_bytes([sel[pos + 4], sel[pos + 5]]);
+        let pb = sel[pos + 6];
+        let west_east_flag = (pb & 0x80) != 0;
+        let polarization = (pb >> 5) & 0x03;
+        let multiple_input_stream_flag = (pb & 0x10) != 0;
+        let roll_off = pb & 0x07;
+        let symbol_rate = (u32::from(sel[pos + 7] & 0x0F) << 24)
+            | (u32::from(sel[pos + 8]) << 16)
+            | (u32::from(sel[pos + 9]) << 8)
+            | u32::from(sel[pos + 10]);
+        pos += S2X_PRIMARY_LEN;
+        let input_stream_identifier = if multiple_input_stream_flag {
+            if sel.len() < pos + 1 {
+                return Err(invalid("S2X: input_stream_identifier truncated"));
+            }
+            let isi = sel[pos];
+            pos += 1;
+            Some(isi)
+        } else {
+            None
+        };
+        let timeslice_number = if s2x_mode == 2 {
+            if sel.len() < pos + 1 {
+                return Err(invalid("S2X: timeslice_number truncated"));
+            }
+            let ts = sel[pos];
+            pos += 1;
+            Some(ts)
+        } else {
+            None
+        };
+        Ok(S2XSatelliteDeliverySystem {
+            receiver_profiles,
+            s2x_mode,
+            scrambling_sequence_selector,
+            ts_gs_s2x_mode,
+            scrambling_sequence_index,
+            frequency,
+            orbital_position,
+            west_east_flag,
+            polarization,
+            multiple_input_stream_flag,
+            roll_off,
+            symbol_rate,
+            input_stream_identifier,
+            timeslice_number,
+            tail: &sel[pos..],
+        })
+    }
+}
+
+impl<'a> Parse<'a> for AudioPreselection<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.is_empty() {
+            return Err(invalid("audio_preselection: count byte missing"));
+        }
+        Ok(AudioPreselection {
+            num_preselections: sel[0] >> 3,
+            preselection_loop: &sel[1..],
+        })
+    }
+}
+
+impl<'a> Parse<'a> for TtmlSubtitling<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.len() < TTML_FIXED_LEN {
+            return Err(invalid("TTML_subtitling: header truncated"));
+        }
+        let b3 = sel[ISO_639_LEN];
+        let b4 = sel[ISO_639_LEN + 1];
+        Ok(TtmlSubtitling {
+            iso_639_language_code: LangCode([sel[0], sel[1], sel[2]]),
+            subtitle_purpose: b3 >> 2,
+            tts_suitability: b3 & 0x03,
+            essential_font_usage_flag: (b4 & 0x80) != 0,
+            qualifier_present_flag: (b4 & 0x40) != 0,
+            dvb_ttml_profile_count: b4 & 0x0F,
+            tail: &sel[TTML_FIXED_LEN..],
+        })
+    }
+}
+
+impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        if sel.is_empty() {
+            return Err(invalid("vvc_subpictures: header byte missing"));
+        }
+        let byte0 = sel[0];
+        let default_service_mode = (byte0 & 0x80) != 0;
+        let service_description_present = (byte0 & 0x40) != 0;
+        let n = (byte0 & 0x3F) as usize;
+
+        // Table 162a: 1 fixed byte + n*2 subpicture bytes + 1 processing_mode byte.
+        let subpicture_bytes = n * 2;
+        let min_len = 1 + subpicture_bytes + 1;
+        if sel.len() < min_len {
+            return Err(invalid("vvc_subpictures: truncated"));
+        }
+
+        let mut pos = 1;
+        let mut subpictures = Vec::with_capacity(n);
+        for _ in 0..n {
+            let component_tag = sel[pos];
+            let vvc_subpicture_id = sel[pos + 1];
+            subpictures.push(VvcSubpicture {
+                component_tag,
+                vvc_subpicture_id,
+            });
+            pos += 2;
+        }
+
+        let processing_mode = sel[pos] & 0x07;
+        pos += 1;
+
+        let service_description = if service_description_present {
+            if sel.len() < pos + 1 {
+                return Err(invalid(
+                    "vvc_subpictures: service_description_length truncated",
+                ));
+            }
+            let len = sel[pos] as usize;
+            pos += 1;
+            if sel.len() < pos + len {
+                return Err(invalid(
+                    "vvc_subpictures: service_description overruns body",
+                ));
+            }
+            let text = DvbText::new(&sel[pos..pos + len]);
+            pos += len;
+            Some(text)
+        } else {
+            None
+        };
+
+        // Table 162a is exact; reject trailing bytes.
+        if pos != sel.len() {
+            return Err(invalid("vvc_subpictures: trailing data"));
+        }
+
+        Ok(VvcSubpicturesDescriptor {
+            default_service_mode,
+            subpictures,
+            processing_mode,
+            service_description,
+        })
+    }
 }
 
 /// Sign-extend a 12-bit two's-complement value to `i16` (bit 11 is the sign).
@@ -1180,72 +1238,79 @@ fn sext12(v: u16) -> i16 {
     }
 }
 
-fn parse_video_depth_range(sel: &[u8]) -> Result<VideoDepthRangeDescriptor<'_>> {
-    let mut pos = 0;
-    let mut ranges = Vec::new();
-    loop {
-        if pos == sel.len() {
-            break;
-        }
-        // Need at least range_type + range_length (Table 160).
-        if sel.len() - pos < VD_RANGE_HDR_LEN {
-            return Err(invalid("video_depth_range: truncated"));
-        }
-        let range_type = sel[pos];
-        let range_length = sel[pos + 1] as usize;
-        pos += VD_RANGE_HDR_LEN;
-        if sel.len() < pos + range_length {
-            return Err(invalid("video_depth_range: range body overruns selector"));
-        }
-        let body = match range_type {
-            // Table 161: production_disparity_hint_info() — Table 162.
-            0x00 => {
-                if range_length < VD_DISPARITY_LEN {
-                    return Err(invalid(
-                        "video_depth_range: production_disparity_hint requires 3+ bytes",
-                    ));
-                }
-                // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
-                let b0 = sel[pos];
-                let b1 = sel[pos + 1];
-                let b2 = sel[pos + 2];
-                let max = sext12((u16::from(b0) << 4) | (u16::from(b1) >> 4));
-                let min = sext12(((u16::from(b1) & 0x0F) << 8) | u16::from(b2));
-                // Any extra bytes beyond 3 are ignored per Table 162 — slice only
-                // what the spec defines and treat the tail as unconsumed (range_length
-                // already >3 would be non-spec but we only consume the defined 3).
-                DepthRangeBody::ProductionDisparityHint { max, min }
+impl<'a> Parse<'a> for VideoDepthRangeDescriptor<'a> {
+    type Error = crate::error::Error;
+    fn parse(sel: &'a [u8]) -> Result<Self> {
+        let mut pos = 0;
+        let mut ranges = Vec::new();
+        loop {
+            if pos == sel.len() {
+                break;
             }
-            // Table 161: multi-region SEI present (no body).
-            0x01 => DepthRangeBody::MultiRegionSei,
-            // Any other range_type: raw range_selector bytes.
-            _ => DepthRangeBody::Other(&sel[pos..pos + range_length]),
-        };
-        ranges.push(DepthRange { range_type, body });
-        pos += range_length;
+            // Need at least range_type + range_length (Table 160).
+            if sel.len() - pos < VD_RANGE_HDR_LEN {
+                return Err(invalid("video_depth_range: truncated"));
+            }
+            let range_type = sel[pos];
+            let range_length = sel[pos + 1] as usize;
+            pos += VD_RANGE_HDR_LEN;
+            if sel.len() < pos + range_length {
+                return Err(invalid("video_depth_range: range body overruns selector"));
+            }
+            let body = match range_type {
+                // Table 161: production_disparity_hint_info() — Table 162.
+                0x00 => {
+                    if range_length < VD_DISPARITY_LEN {
+                        return Err(invalid(
+                            "video_depth_range: production_disparity_hint requires 3+ bytes",
+                        ));
+                    }
+                    // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
+                    let b0 = sel[pos];
+                    let b1 = sel[pos + 1];
+                    let b2 = sel[pos + 2];
+                    let max = sext12((u16::from(b0) << 4) | (u16::from(b1) >> 4));
+                    let min = sext12(((u16::from(b1) & 0x0F) << 8) | u16::from(b2));
+                    // Any extra bytes beyond 3 are ignored per Table 162 — slice only
+                    // what the spec defines and treat the tail as unconsumed (range_length
+                    // already >3 would be non-spec but we only consume the defined 3).
+                    DepthRangeBody::ProductionDisparityHint { max, min }
+                }
+                // Table 161: multi-region SEI present (no body).
+                0x01 => DepthRangeBody::MultiRegionSei,
+                // Any other range_type: raw range_selector bytes.
+                _ => DepthRangeBody::Other(&sel[pos..pos + range_length]),
+            };
+            ranges.push(DepthRange { range_type, body });
+            pos += range_length;
+        }
+        Ok(VideoDepthRangeDescriptor { ranges })
     }
-    Ok(VideoDepthRangeDescriptor { ranges })
 }
 
 fn parse_body(tag_extension: u8, sel: &[u8]) -> Result<ExtensionBody<'_>> {
     Ok(match tag_extension {
-        0x04 => ExtensionBody::T2DeliverySystem(parse_t2(sel)?),
-        0x06 => ExtensionBody::SupplementaryAudio(parse_supplementary_audio(sel)?),
-        0x07 => ExtensionBody::NetworkChangeNotify(NetworkChangeNotify { cell_loop: sel }),
-        0x08 => ExtensionBody::Message(parse_message(sel)?),
-        0x09 => ExtensionBody::TargetRegion(parse_target_region(sel)?),
-        0x0A => ExtensionBody::TargetRegionName(parse_target_region_name(sel)?),
-        0x0B => ExtensionBody::ServiceRelocated(parse_service_relocated(sel)?),
-        0x0D => ExtensionBody::C2DeliverySystem(parse_c2(sel)?),
-        0x10 => ExtensionBody::VideoDepthRange(parse_video_depth_range(sel)?),
-        0x11 => ExtensionBody::T2mi(parse_t2mi(sel)?),
-        0x13 => ExtensionBody::UriLinkage(parse_uri_linkage(sel)?),
-        0x15 => ExtensionBody::Ac4(parse_ac4(sel)?),
-        0x16 => ExtensionBody::C2BundleDeliverySystem(parse_c2_bundle(sel)?),
-        0x17 => ExtensionBody::S2XSatelliteDeliverySystem(parse_s2x(sel)?),
-        0x19 => ExtensionBody::AudioPreselection(parse_audio_preselection(sel)?),
-        0x20 => ExtensionBody::TtmlSubtitling(parse_ttml(sel)?),
-        0x23 => ExtensionBody::VvcSubpictures(parse_vvc_subpictures(sel)?),
+        0x04 => ExtensionBody::T2DeliverySystem(<T2DeliverySystem as Parse>::parse(sel)?),
+        0x06 => ExtensionBody::SupplementaryAudio(<SupplementaryAudio as Parse>::parse(sel)?),
+        0x07 => ExtensionBody::NetworkChangeNotify(<NetworkChangeNotify as Parse>::parse(sel)?),
+        0x08 => ExtensionBody::Message(<Message as Parse>::parse(sel)?),
+        0x09 => ExtensionBody::TargetRegion(<TargetRegion as Parse>::parse(sel)?),
+        0x0A => ExtensionBody::TargetRegionName(<TargetRegionName as Parse>::parse(sel)?),
+        0x0B => ExtensionBody::ServiceRelocated(<ServiceRelocated as Parse>::parse(sel)?),
+        0x0D => ExtensionBody::C2DeliverySystem(<C2DeliverySystem as Parse>::parse(sel)?),
+        0x10 => ExtensionBody::VideoDepthRange(<VideoDepthRangeDescriptor as Parse>::parse(sel)?),
+        0x11 => ExtensionBody::T2mi(<T2miDescriptor as Parse>::parse(sel)?),
+        0x13 => ExtensionBody::UriLinkage(<UriLinkage as Parse>::parse(sel)?),
+        0x15 => ExtensionBody::Ac4(<Ac4 as Parse>::parse(sel)?),
+        0x16 => {
+            ExtensionBody::C2BundleDeliverySystem(<C2BundleDeliverySystem as Parse>::parse(sel)?)
+        }
+        0x17 => ExtensionBody::S2XSatelliteDeliverySystem(
+            <S2XSatelliteDeliverySystem as Parse>::parse(sel)?,
+        ),
+        0x19 => ExtensionBody::AudioPreselection(<AudioPreselection as Parse>::parse(sel)?),
+        0x20 => ExtensionBody::TtmlSubtitling(<TtmlSubtitling as Parse>::parse(sel)?),
+        0x23 => ExtensionBody::VvcSubpictures(<VvcSubpicturesDescriptor as Parse>::parse(sel)?),
         _ => ExtensionBody::Raw(sel),
     })
 }
