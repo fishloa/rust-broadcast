@@ -117,6 +117,7 @@ pub(crate) fn descriptor_body<'a>(
 }
 
 pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
+pub use extension::registry::{ExtensionObject, ExtensionRegistry, RegisteredExtension};
 pub use registry::{DescriptorObject, DescriptorRegistry};
 
 /// Encode `value` to `nibbles` packed-BCD digits for a `set_*` accessor,

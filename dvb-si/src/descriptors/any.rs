@@ -386,6 +386,21 @@ impl<'a> DescriptorLoop<'a> {
     pub fn iter(&self) -> DescriptorIter<'a> {
         parse_loop(self.0)
     }
+
+    /// Walk this loop through a [`DescriptorRegistry`](crate::descriptors::registry::DescriptorRegistry)
+    /// so registered private/custom descriptors (and PDS-scoped tags) are
+    /// produced as [`AnyDescriptor::Other`]; mirrors [`iter`](Self::iter)
+    /// otherwise.
+    ///
+    /// See [`DescriptorRegistry::parse_loop`](crate::descriptors::registry::DescriptorRegistry::parse_loop)
+    /// for precedence rules and PDS-scoped dispatch.
+    #[must_use]
+    pub fn iter_with<'r>(
+        &self,
+        registry: &'r crate::descriptors::registry::DescriptorRegistry,
+    ) -> crate::descriptors::registry::RegistryIter<'r, 'a> {
+        registry.parse_loop(self.0)
+    }
 }
 
 impl<'a> std::ops::Deref for DescriptorLoop<'a> {
@@ -511,6 +526,82 @@ mod tests {
             format!("{:?}", DescriptorLoop::new(&raw)),
             "DescriptorLoop(<4 bytes>)"
         );
+    }
+
+    #[test]
+    fn iter_with_custom_tag_yields_other() {
+        use crate::descriptors::registry::DescriptorRegistry;
+        use crate::traits::DescriptorDef;
+
+        #[derive(Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        struct MyTag0xA7 {
+            x: u8,
+        }
+
+        impl<'a> dvb_common::Parse<'a> for MyTag0xA7 {
+            type Error = crate::error::Error;
+            fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+                if bytes.len() < 3 {
+                    return Err(crate::error::Error::BufferTooShort {
+                        need: 3,
+                        have: bytes.len(),
+                        what: "MyTag0xA7",
+                    });
+                }
+                Ok(Self { x: bytes[2] })
+            }
+        }
+
+        impl<'a> DescriptorDef<'a> for MyTag0xA7 {
+            const TAG: u8 = 0xA7;
+            const NAME: &'static str = "MY_TAG_0xA7";
+        }
+
+        let mut reg = DescriptorRegistry::new();
+        reg.register::<MyTag0xA7>();
+
+        let raw = [
+            0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, 0xA7, 0x02, 0xCA, 0xFE,
+        ];
+        let loop_ = DescriptorLoop::new(&raw);
+        let items: Vec<_> = loop_.iter_with(&reg).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], AnyDescriptor::ShortEvent(_)));
+        match &items[1] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0xA7);
+                assert_eq!(value.as_any().downcast_ref::<MyTag0xA7>().unwrap().x, 0xCA);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn iter_with_empty_registry_matches_iter_for_builtin() {
+        let raw = [
+            0x4D, 0x07, b'e', b'n', b'g', 0x02, b'H', b'i', 0x00, 0xA7, 0x02, 0xCA, 0xFE,
+        ];
+        let loop_ = DescriptorLoop::new(&raw);
+        let reg = crate::descriptors::registry::DescriptorRegistry::new();
+        let via_iter: Vec<_> = loop_.iter().collect();
+        let via_iter_with: Vec<_> = loop_.iter_with(&reg).collect();
+
+        assert_eq!(via_iter.len(), via_iter_with.len());
+        for (a, b) in via_iter.iter().zip(via_iter_with.iter()) {
+            match (a, b) {
+                (Ok(AnyDescriptor::ShortEvent(_)), Ok(AnyDescriptor::ShortEvent(_))) => {}
+                (
+                    Ok(AnyDescriptor::Unknown { tag: t1, body: b1 }),
+                    Ok(AnyDescriptor::Unknown { tag: t2, body: b2 }),
+                ) => {
+                    assert_eq!(t1, t2);
+                    assert_eq!(b1, b2);
+                }
+                (Err(_), Err(_)) => {}
+                (l, r) => panic!("mismatch: {l:?} vs {r:?}"),
+            }
+        }
     }
 
     #[cfg(feature = "serde")]

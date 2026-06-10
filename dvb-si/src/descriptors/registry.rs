@@ -6,6 +6,16 @@
 //! parsers win over built-in dispatch; the 0x83 logical_channel built-in is
 //! opt-in via [`DescriptorRegistry::with_logical_channel`].
 //!
+//! # PDS-scoped registration
+//!
+//! DVB private descriptor tags (`0x80..=0xFE`) are ambiguous without a
+//! preceding [`private_data_specifier_descriptor`][crate::descriptors::private_data_specifier]
+//! (tag `0x5F`) that scopes them.  Use [`register_for_pds`][DescriptorRegistry::register_for_pds]
+//! to register a type that is only dispatched when the active
+//! `private_data_specifier` matches.  A PDS-scoped registration takes precedence
+//! over a PDS-agnostic [`register`][DescriptorRegistry::register] of the same tag when that
+//! PDS is active.
+//!
 //! # Owned types only
 //!
 //! Registered types must be `'static` (i.e. owned — no borrowed slices).
@@ -155,15 +165,18 @@ pub(crate) type CustomParse =
 ///
 /// # Precedence (per entry)
 ///
-/// 1. Custom-registered parser (tag in the [`custom`][Self::register] map) →
+/// 1. PDS-scoped custom parser (if the current `private_data_specifier` matches
+///    a [`register_for_pds`][Self::register_for_pds] entry) →
 ///    [`AnyDescriptor::Other`]
-/// 2. Logical-channel opt-in (tag 0x83 + [`with_logical_channel`][Self::with_logical_channel]
+/// 2. PDS-agnostic custom-registered parser (tag in the [`custom`][Self::register]
+///    map) → [`AnyDescriptor::Other`]
+/// 3. Logical-channel opt-in (tag 0x83 + [`with_logical_channel`][Self::with_logical_channel]
 ///    enabled) → [`AnyDescriptor::LogicalChannel`]
-/// 3. Built-in dispatch (internal `AnyDescriptor::dispatch`) → typed variant
-/// 4. Unknown → [`AnyDescriptor::Unknown`]
+/// 4. Built-in dispatch (internal `AnyDescriptor::dispatch`) → typed variant
+/// 5. Unknown → [`AnyDescriptor::Unknown`]
 #[derive(Default)]
 pub struct DescriptorRegistry {
-    custom: HashMap<u8, CustomParse>,
+    custom: HashMap<(Option<u32>, u8), CustomParse>,
     logical_channel: bool,
 }
 
@@ -189,16 +202,43 @@ impl DescriptorRegistry {
     /// Re-registering the same tag replaces the prior custom parser (last wins).
     /// A failing custom parse surfaces the client's `Parse::Error` unwrapped —
     /// embed identifying context (type/tag) in your error's `what`/`reason` fields.
+    ///
+    /// The registration is PDS-agnostic: it matches the tag regardless of which
+    /// `private_data_specifier` (if any) is active in the loop.  A
+    /// PDS-scoped registration via [`register_for_pds`][Self::register_for_pds]
+    /// takes precedence over this when the matching PDS is active.
     pub fn register<T>(&mut self) -> &mut Self
     where
         T: for<'a> crate::traits::DescriptorDef<'a> + DescriptorObject + 'static,
     {
-        // We need to name the TAG without a lifetime — use the 'static elision.
-        // `for<'a> DescriptorDef<'a>` guarantees the const is the same for all
-        // lifetimes, so calling it with 'static here is fine.
         let tag = <T as crate::traits::DescriptorDef<'static>>::TAG;
         self.custom.insert(
-            tag,
+            (None, tag),
+            Box::new(|b| {
+                Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
+            }),
+        );
+        self
+    }
+
+    /// Register an owned custom descriptor type scoped to a specific
+    /// `private_data_specifier` value.
+    ///
+    /// The type is only dispatched when a preceding
+    /// [`private_data_specifier_descriptor`][crate::descriptors::private_data_specifier]
+    /// (tag `0x5F`) in the same descriptor loop has set the active PDS to
+    /// `pds`.  A PDS-scoped registration takes precedence over a PDS-agnostic
+    /// [`register`][Self::register] of the same tag when that PDS is active.
+    ///
+    /// Re-registering the same `(pds, tag)` pair replaces the prior custom
+    /// parser (last wins).
+    pub fn register_for_pds<T>(&mut self, pds: u32) -> &mut Self
+    where
+        T: for<'a> crate::traits::DescriptorDef<'a> + DescriptorObject + 'static,
+    {
+        let tag = <T as crate::traits::DescriptorDef<'static>>::TAG;
+        self.custom.insert(
+            (Some(pds), tag),
             Box::new(|b| {
                 Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
             }),
@@ -221,6 +261,10 @@ impl DescriptorRegistry {
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
     /// parse errors yield `Err` and iteration continues; a truncated final
     /// header or body yields one `Err` then fuses.
+    ///
+    /// A `private_data_specifier_descriptor` (tag `0x5F`) in the loop
+    /// automatically updates the iterator's PDS context, scoping subsequent
+    /// private-tag dispatch.
     #[must_use]
     pub fn parse_loop<'r, 'a>(&'r self, bytes: &'a [u8]) -> RegistryIter<'r, 'a> {
         RegistryIter {
@@ -228,6 +272,7 @@ impl DescriptorRegistry {
             bytes,
             pos: 0,
             fused: false,
+            current_pds: None,
         }
     }
 }
@@ -244,6 +289,7 @@ pub struct RegistryIter<'r, 'a> {
     bytes: &'a [u8],
     pos: usize,
     fused: bool,
+    current_pds: Option<u32>,
 }
 
 impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
@@ -276,15 +322,37 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
         }
         let full = &rem[..total];
         self.pos += total;
+
+        // --- PDS tracking: 0x5F updates current_pds ---
+        if tag == crate::descriptors::private_data_specifier::TAG {
+            use dvb_common::Parse;
+            if let Ok(pds) =
+                crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(
+                    full,
+                )
+            {
+                self.current_pds = Some(pds.private_data_specifier);
+            }
+        }
+
         // --- precedence ---
-        // 1. Custom-registered parser
-        if let Some(parse_fn) = self.registry.custom.get(&tag) {
+        // 1. PDS-scoped custom parser (if current_pds matches)
+        if let Some(pds) = self.current_pds {
+            if let Some(parse_fn) = self.registry.custom.get(&(Some(pds), tag)) {
+                return Some(match parse_fn(full) {
+                    Ok(value) => Ok(AnyDescriptor::Other { tag, value }),
+                    Err(e) => Err(e),
+                });
+            }
+        }
+        // 2. PDS-agnostic custom-registered parser
+        if let Some(parse_fn) = self.registry.custom.get(&(None, tag)) {
             return Some(match parse_fn(full) {
                 Ok(value) => Ok(AnyDescriptor::Other { tag, value }),
                 Err(e) => Err(e),
             });
         }
-        // 2. Logical-channel opt-in (0x83)
+        // 3. Logical-channel opt-in (0x83)
         if self.registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
             use dvb_common::Parse;
             return Some(
@@ -292,11 +360,11 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
                     .map(AnyDescriptor::LogicalChannel),
             );
         }
-        // 3. Built-in dispatch
+        // 4. Built-in dispatch
         if let Some(res) = AnyDescriptor::dispatch(tag, full) {
             return Some(res);
         }
-        // 4. Unknown
+        // 5. Unknown
         Some(Ok(AnyDescriptor::Unknown {
             tag,
             body: &full[2..],
@@ -305,3 +373,228 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
 }
 
 impl std::iter::FusedIterator for RegistryIter<'_, '_> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::private_data_specifier;
+    use crate::traits::DescriptorDef;
+
+    const PDS_EACEM: u32 = 0x0000_0028;
+    const PDS_NORDIG: u32 = 0x0000_0031;
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    struct PdsEacem {
+        v: u8,
+    }
+
+    impl<'a> dvb_common::Parse<'a> for PdsEacem {
+        type Error = crate::error::Error;
+        fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+            if bytes.len() < 3 {
+                return Err(crate::error::Error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "PdsEacem",
+                });
+            }
+            Ok(Self { v: bytes[2] })
+        }
+    }
+
+    impl<'a> DescriptorDef<'a> for PdsEacem {
+        const TAG: u8 = 0x83;
+        const NAME: &'static str = "PDS_EACEM";
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    struct PdsNordig {
+        w: u8,
+    }
+
+    impl<'a> dvb_common::Parse<'a> for PdsNordig {
+        type Error = crate::error::Error;
+        fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+            if bytes.len() < 3 {
+                return Err(crate::error::Error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "PdsNordig",
+                });
+            }
+            Ok(Self { w: bytes[2] })
+        }
+    }
+
+    impl<'a> DescriptorDef<'a> for PdsNordig {
+        const TAG: u8 = 0x83;
+        const NAME: &'static str = "PDS_NORDIG";
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    struct PdsAgnostic {
+        z: u8,
+    }
+
+    impl<'a> dvb_common::Parse<'a> for PdsAgnostic {
+        type Error = crate::error::Error;
+        fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+            if bytes.len() < 3 {
+                return Err(crate::error::Error::BufferTooShort {
+                    need: 3,
+                    have: bytes.len(),
+                    what: "PdsAgnostic",
+                });
+            }
+            Ok(Self { z: bytes[2] })
+        }
+    }
+
+    impl<'a> DescriptorDef<'a> for PdsAgnostic {
+        const TAG: u8 = 0x84;
+        const NAME: &'static str = "PDS_AGNOSTIC";
+    }
+
+    fn pds_descriptor(pds: u32) -> Vec<u8> {
+        let mut v = vec![private_data_specifier::TAG, 4];
+        v.extend_from_slice(&pds.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn pds_scoped_same_tag_resolves_by_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.register_for_pds::<PdsEacem>(PDS_EACEM);
+        reg.register_for_pds::<PdsNordig>(PDS_NORDIG);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_EACEM));
+        bytes.extend_from_slice(&[0x83, 0x01, 0xAA]);
+
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], AnyDescriptor::PrivateDataSpecifier(_)));
+        match &items[1] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0x83);
+                let c = value.as_any().downcast_ref::<PdsEacem>().unwrap();
+                assert_eq!(c.v, 0xAA);
+            }
+            other => panic!("expected Other (PdsEacem), got {other:?}"),
+        }
+
+        let mut bytes2 = Vec::new();
+        bytes2.extend_from_slice(&pds_descriptor(PDS_NORDIG));
+        bytes2.extend_from_slice(&[0x83, 0x01, 0xBB]);
+
+        let items2: Vec<_> = reg.parse_loop(&bytes2).collect::<Result<_, _>>().unwrap();
+        match &items2[1] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0x83);
+                let c = value.as_any().downcast_ref::<PdsNordig>().unwrap();
+                assert_eq!(c.w, 0xBB);
+            }
+            other => panic!("expected Other (PdsNordig), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pds_scoped_does_not_match_wrong_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.register_for_pds::<PdsEacem>(PDS_EACEM);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_NORDIG));
+        bytes.extend_from_slice(&[0x83, 0x01, 0xCC]);
+
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], AnyDescriptor::PrivateDataSpecifier(_)));
+        match &items[1] {
+            AnyDescriptor::Unknown { tag, .. } => assert_eq!(*tag, 0x83),
+            other => panic!("expected Unknown (wrong PDS), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pds_agnostic_matches_without_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.register::<PdsAgnostic>();
+
+        let bytes = [0x84, 0x01, 0xDD];
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            AnyDescriptor::Other { tag, value } => {
+                assert_eq!(*tag, 0x84);
+                let c = value.as_any().downcast_ref::<PdsAgnostic>().unwrap();
+                assert_eq!(c.z, 0xDD);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pds_scoped_takes_precedence_over_agnostic() {
+        // Two parsers compete for the SAME tag 0x83: one PDS-agnostic, one
+        // scoped to EACEM. With no PDS active the agnostic one wins; once an
+        // EACEM private_data_specifier appears, the scoped one takes over.
+        #[derive(Debug, PartialEq, Eq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        struct Agnostic83 {
+            a: u8,
+        }
+
+        impl<'a> dvb_common::Parse<'a> for Agnostic83 {
+            type Error = crate::error::Error;
+            fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+                if bytes.len() < 3 {
+                    return Err(crate::error::Error::BufferTooShort {
+                        need: 3,
+                        have: bytes.len(),
+                        what: "Agnostic83",
+                    });
+                }
+                Ok(Self { a: bytes[2] })
+            }
+        }
+
+        impl<'a> DescriptorDef<'a> for Agnostic83 {
+            const TAG: u8 = 0x83;
+            const NAME: &'static str = "AGNOSTIC_83";
+        }
+
+        let mut reg = DescriptorRegistry::new();
+        reg.register::<Agnostic83>();
+        reg.register_for_pds::<PdsEacem>(PDS_EACEM);
+
+        // No PDS → agnostic wins
+        let items: Vec<_> = reg
+            .parse_loop(&[0x83, 0x01, 0xEE])
+            .collect::<Result<_, _>>()
+            .unwrap();
+        match &items[0] {
+            AnyDescriptor::Other { value, .. } => {
+                assert!(value.as_any().downcast_ref::<Agnostic83>().is_some());
+                assert!(value.as_any().downcast_ref::<PdsEacem>().is_none());
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+
+        // With PDS EACEM → PDS-scoped wins
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_EACEM));
+        bytes.extend_from_slice(&[0x83, 0x01, 0xFF]);
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        match &items[1] {
+            AnyDescriptor::Other { value, .. } => {
+                assert!(value.as_any().downcast_ref::<PdsEacem>().is_some());
+                assert!(value.as_any().downcast_ref::<Agnostic83>().is_none());
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+}

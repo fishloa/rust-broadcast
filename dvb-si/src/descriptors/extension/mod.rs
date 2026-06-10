@@ -75,6 +75,7 @@ mod c2_delivery_system;
 mod image_icon;
 mod message;
 mod network_change_notify;
+pub mod registry;
 mod s2x_satellite_delivery_system;
 mod service_prominence;
 mod service_relocated;
@@ -348,8 +349,9 @@ declare_extension_bodies! {'a;
     VvcSubpictures = 0x23 => VvcSubpicturesDescriptor<'a>,
 }
 
-/// Sealed trait — no external implementors. Keeps `ExtensionBodyDef` extensible
-/// without breaking downstream implementors.
+/// Sealed trait — kept for backward compatibility with existing per-body
+/// `impl Sealed` blocks. No longer required by [`ExtensionBodyDef`].
+#[allow(dead_code)]
 pub(crate) mod sealed {
     pub trait Sealed {}
 }
@@ -357,7 +359,7 @@ pub(crate) mod sealed {
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
 /// `descriptor_tag_extension` value and a diagnostic name. Mirrors
 /// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
-pub trait ExtensionBodyDef: sealed::Sealed {
+pub trait ExtensionBodyDef {
     /// The `descriptor_tag_extension` value this body is selected by.
     const TAG_EXTENSION: u8;
     /// SCREAMING_SNAKE diagnostic name, suffix-free.
