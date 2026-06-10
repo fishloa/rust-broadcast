@@ -8,6 +8,26 @@
 //! reassembly of EIT tables and maintains a deduplicated, time-ordered event list
 //! for each service keyed by `(original_network_id, transport_stream_id, service_id)`.
 //!
+//! # Memory bounds
+//!
+//! The store is bounded by default to prevent memory-exhaustion from hostile
+//! or pathological EIT input — an attacker who controls
+//! `original_network_id`/`transport_stream_id`/`service_id`/`event_id` could
+//! otherwise grow the cache without bound. Two caps apply:
+//!
+//! * **`max_services`** (default [`DEFAULT_MAX_SERVICES`]) — caps the number of
+//!   distinct [`ServiceKey`] entries. When the cap is reached, incoming events
+//!   for new services are skipped until a service is removed via
+//!   [`retain_services`](Self::retain_services) or [`clear`](Self::clear).
+//! * **`max_events_per_service`** (default [`DEFAULT_MAX_EVENTS_PER_SERVICE`]) —
+//!   caps the number of events stored per service. When a service's cap is
+//!   reached, new events (by `event_id`) are skipped; existing event_ids are
+//!   still updated on version churn.
+//!
+//! The policy is *skip-until-space* — the same as
+//! [`crate::carousel::ModuleReassembler`] — so long-running consumers should
+//! call `retain_services` or `clear` periodically to free capacity.
+//!
 //! # Quickstart
 //!
 //! ```rust
@@ -54,14 +74,14 @@
 //!
 //! # Pruning policy
 //!
-//! The store accumulates events indefinitely. To bound growth under schedule
-//! churn, use [`EpgStore::retain_services`] to remove services that are no longer
-//! of interest and [`EpgStore::clear`] to reset all state at a carousel boundary.
-//! The underlying [`crate::collect::EitCollector`] handles version-driven
-//! section-set replacement automatically — when the version_number on a
-//! sub-table changes, the old partial set is discarded and a new one begins.
-//! Callers scanning a full carousel cycle can `clear()` and start fresh, or
-//! `retain_services` to keep only the active service list.
+//! The store accumulates events within its configured caps. To bound growth
+//! under schedule churn, use [`EpgStore::retain_services`] to remove services
+//! that are no longer of interest and [`EpgStore::clear`] to reset all state at
+//! a carousel boundary.  The underlying [`crate::collect::EitCollector`] handles
+//! version-driven section-set replacement automatically — when the
+//! `version_number` on a sub-table changes, the old partial set is discarded and
+//! a new one begins.  Callers scanning a full carousel cycle can `clear()` and
+//! start fresh, or `retain_services` to keep only the active service list.
 
 use crate::collect::CollectResult;
 use std::collections::HashMap;
@@ -144,6 +164,20 @@ struct ServiceData {
     events: Vec<EpgEvent>,
 }
 
+/// Default cap on distinct [`ServiceKey`] entries (services with cached EPG data).
+///
+/// 1024 services is generous — a single DVB transponder typically carries 20–50
+/// services — while bounding a hostile stream that rotates `service_id` /
+/// `transport_stream_id` / `original_network_id` to force unbounded map growth.
+pub const DEFAULT_MAX_SERVICES: usize = 1024;
+
+/// Default cap on events stored per service.
+///
+/// 8192 events (~28 days of 5-minute-granularity schedule entries) is far
+/// above real 7-day EPG depth while bounding per-service event accumulation
+/// from a hostile stream that rotates `event_id` without re-versioning.
+pub const DEFAULT_MAX_EVENTS_PER_SERVICE: usize = 8192;
+
 /// A store for EIT data, providing high-level access to program events.
 ///
 /// Wraps a [`crate::collect::EitCollector`] and maintains a deduplicated,
@@ -151,13 +185,19 @@ struct ServiceData {
 ///
 /// Serde export serializes the cache as a map of `ServiceKey` → service data.
 ///
+/// # Memory bounds
+///
+/// The store is bounded by two configurable caps (see [module docs](self) for
+/// rationale and default values). Use [`with_max_services`](Self::with_max_services)
+/// and [`with_max_events_per_service`](Self::with_max_events_per_service) to
+/// tune them.
+///
 /// # Limitations
 ///
-/// Events are deduplicated by (start_time, event_id) and never evicted
-/// once stored: events removed from a re-versioned schedule, or events
-/// already in the past, remain in the store. Call [`clear()`](Self::clear)
-/// or [`retain_services()`](Self::retain_services) to bound long-running
-/// memory.
+/// Events are deduplicated by `event_id` and stored within the configured
+/// per-service cap. Events removed from a re-versioned schedule, or events
+/// already in the past, remain in the store until evicted by
+/// [`retain_services()`](Self::retain_services) or [`clear()`](Self::clear).
 ///
 /// # Example
 ///
@@ -179,10 +219,23 @@ struct ServiceData {
 ///     println!("Now playing: {:?}", e.event_name);
 /// }
 /// ```
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct EpgStore {
     collector: crate::collect::EitCollector,
     cache: HashMap<ServiceKey, ServiceEpg>,
+    max_services: usize,
+    max_events_per_service: usize,
+}
+
+impl Default for EpgStore {
+    fn default() -> Self {
+        Self {
+            collector: crate::collect::EitCollector::default(),
+            cache: HashMap::new(),
+            max_services: DEFAULT_MAX_SERVICES,
+            max_events_per_service: DEFAULT_MAX_EVENTS_PER_SERVICE,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -193,10 +246,40 @@ struct ServiceEpg {
 }
 
 impl EpgStore {
-    /// Create a new, empty EPG store.
+    /// Create a new, empty EPG store with default caps
+    /// ([`DEFAULT_MAX_SERVICES`], [`DEFAULT_MAX_EVENTS_PER_SERVICE`]).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Replace the service-count cap (default [`DEFAULT_MAX_SERVICES`]).
+    /// When the cap is reached, events for new services are skipped until
+    /// [`retain_services`](Self::retain_services) or [`clear`](Self::clear)
+    /// frees capacity.
+    #[must_use]
+    pub fn with_max_services(mut self, max_services: usize) -> Self {
+        self.max_services = max_services;
+        self
+    }
+
+    /// Replace the per-service event cap (default
+    /// [`DEFAULT_MAX_EVENTS_PER_SERVICE`]). When a service reaches its cap, new
+    /// events (by `event_id`) are skipped; existing event_ids are still updated
+    /// on version churn.
+    #[must_use]
+    pub fn with_max_events_per_service(mut self, max_events_per_service: usize) -> Self {
+        self.max_events_per_service = max_events_per_service;
+        self
+    }
+
+    /// Replace the underlying collector's logical-key cap (default
+    /// [`crate::collect::DEFAULT_MAX_LOGICAL_KEYS`]). See
+    /// [`crate::collect::EitCollector::with_max_logical_keys`].
+    #[must_use]
+    pub fn with_collector_max_logical_keys(mut self, max_logical_keys: usize) -> Self {
+        self.collector = self.collector.with_max_logical_keys(max_logical_keys);
+        self
     }
 
     /// Feed one EIT section into the store.
@@ -221,8 +304,16 @@ impl EpgStore {
                     transport_stream_id: table.transport_stream_id,
                     service_id: table.service_id,
                 };
+                if self.cache.len() >= self.max_services && !self.cache.contains_key(&key) {
+                    continue;
+                }
                 let svc = self.cache.entry(key).or_default();
                 for event in &table.events {
+                    if svc.events.len() >= self.max_events_per_service
+                        && !svc.events.contains_key(&event.event_id)
+                    {
+                        continue;
+                    }
                     svc.events.insert(event.event_id, event_to_epg(event));
                 }
             }
@@ -253,7 +344,8 @@ impl EpgStore {
     /// on reference time `at`.
     ///
     /// "now" is the event where `at` falls within `[start, start + duration)`.
-    /// "next" is the earliest event where `start > at`.
+    /// "next" is the event with the earliest `start_time` strictly after `at`
+    /// (not just the first such event in arbitrary iteration order).
     ///
     /// An event ending exactly at `at` is NOT considered "now" (exclusive end).
     ///
@@ -275,12 +367,17 @@ impl EpgStore {
             false
         });
 
-        let next = svc.events.values().find(|e| {
-            if let Some(start) = e.start_time {
-                return start > at;
-            }
-            false
-        });
+        let next = svc
+            .events
+            .values()
+            .filter(|e| {
+                if let Some(start) = e.start_time {
+                    start > at
+                } else {
+                    false
+                }
+            })
+            .min_by_key(|e| e.start_time);
 
         (now, next)
     }
@@ -647,6 +744,31 @@ mod tests {
         buf
     }
 
+    /// Build start-time raw bytes (16-bit MJD + 24-bit BCD) for a given
+    /// year/month/day/hour.
+    fn start_raw(year: i32, month: u32, day: u32, hour: u32) -> [u8; 5] {
+        let mjd = mjd_approx(year, month, day, hour);
+        let mjd_bytes = mjd.to_be_bytes();
+        let bcd_hour = ((hour / 10 * 16) + (hour % 10)) as u8;
+        [
+            mjd_bytes[0],
+            mjd_bytes[1],
+            bcd_hour,
+            0, // minute BCD
+            0, // second BCD
+        ]
+    }
+
+    /// Quick MJD approximation for test dates (2026-06-10 = MJD 61785).
+    fn mjd_approx(year: i32, month: u32, day: u32, hour: u32) -> u16 {
+        let _ = hour;
+        // 2026-06-10 00:00 = MJD 61785
+        if year == 2026 && month == 6 && day == 10 {
+            return 61785;
+        }
+        0
+    }
+
     // ------------------------------------------------------------------
     // Basic tests
     // ------------------------------------------------------------------
@@ -887,6 +1009,93 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // now_and_next: earliest-future-event selection (not arbitrary order)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn now_and_next_returns_earliest_future_event() {
+        // Build a service with events out of insertion order:
+        // Event 14:00 inserted first, Event 12:00 second, Event 16:00 third.
+        // Query at 10:00 — "next" must be Event 12:00 (earliest future),
+        // not Event 14:00 (which would win if the code used arbitrary
+        // HashMap iteration order).
+        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
+        let t1400 = Utc.with_ymd_and_hms(2026, 6, 10, 14, 0, 0).unwrap();
+        let t1600 = Utc.with_ymd_and_hms(2026, 6, 10, 16, 0, 0).unwrap();
+        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
+
+        let sec = core::time::Duration::from_secs(3600);
+
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        // Insert out of order — 14:00 first, 12:00 second, 16:00 third
+        svc.events.insert(
+            3,
+            EpgEvent {
+                event_id: 3,
+                start_time: Some(t1400),
+                duration: Some(sec),
+                running_status: 0,
+                free_ca_mode: false,
+                event_name: Some("Event 14".into()),
+                event_text: None,
+                extended_text: None,
+                extended_items: vec![],
+                content_nibbles: vec![],
+                ratings: vec![],
+                crids: vec![],
+            },
+        );
+        svc.events.insert(
+            1,
+            EpgEvent {
+                event_id: 1,
+                start_time: Some(t1200),
+                duration: Some(sec),
+                running_status: 0,
+                free_ca_mode: false,
+                event_name: Some("Event 12".into()),
+                event_text: None,
+                extended_text: None,
+                extended_items: vec![],
+                content_nibbles: vec![],
+                ratings: vec![],
+                crids: vec![],
+            },
+        );
+        svc.events.insert(
+            2,
+            EpgEvent {
+                event_id: 2,
+                start_time: Some(t1600),
+                duration: Some(sec),
+                running_status: 0,
+                free_ca_mode: false,
+                event_name: Some("Event 16".into()),
+                event_text: None,
+                extended_text: None,
+                extended_items: vec![],
+                content_nibbles: vec![],
+                ratings: vec![],
+                crids: vec![],
+            },
+        );
+
+        // "next" at 10:00 must be the earliest future — event 1 at 12:00
+        let (_now, next) = store.now_and_next(key, t1000);
+        let next = next.expect("next event must exist");
+        assert_eq!(
+            next.event_id, 1,
+            "next must be earliest future event (12:00), not first in iteration order"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // Version churn: bounded growth
     // ------------------------------------------------------------------
 
@@ -985,6 +1194,105 @@ mod tests {
         // [12:00, 13:00) → empty
         let events = store.schedule(key, t1200, t1100).unwrap();
         assert!(events.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // Cap enforcement: max_services bounds service-count growth
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn max_services_capped() {
+        // Feed 3 distinct services with a cap of 2 — only the first 2 should
+        // be retained; the third is skipped until space frees.
+        let mut store = EpgStore::new().with_max_services(2);
+
+        let desc = short_event_bytes(b"Test", b"");
+
+        // Service 100
+        let sr1 = start_raw(2026, 6, 10, 10);
+        let eit1 = eit_pf_section(100, 1, 1, 1, 0, sr1, [1, 0, 0], &desc);
+        store.feed(&eit1).unwrap();
+        assert_eq!(store.service_count(), 1);
+
+        // Service 200
+        let sr2 = start_raw(2026, 6, 10, 11);
+        let eit2 = eit_pf_section(200, 1, 1, 3, 0, sr2, [1, 0, 0], &desc);
+        store.feed(&eit2).unwrap();
+        assert_eq!(store.service_count(), 2);
+
+        // Service 300 — should be skipped (cap 2 already hit, new key)
+        let sr3 = start_raw(2026, 6, 10, 12);
+        let eit3 = eit_pf_section(300, 1, 1, 5, 0, sr3, [1, 0, 0], &desc);
+        store.feed(&eit3).unwrap();
+        assert_eq!(
+            store.service_count(),
+            2,
+            "third service must be rejected when cap is full"
+        );
+
+        // Verify service 300 has no entry
+        let key300 = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 300,
+        };
+        assert!(
+            store.events(key300).is_none(),
+            "rejected service must not appear"
+        );
+
+        // Clearing frees space — service 300 can now be stored
+        store.clear();
+        store.feed(&eit3).unwrap();
+        assert_eq!(store.service_count(), 1);
+        assert!(store.events(key300).is_some());
+    }
+
+    // ------------------------------------------------------------------
+    // Cap enforcement: max_events_per_service bounds per-service events
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn max_events_per_service_capped() {
+        // Feed 4 distinct event_ids into one service with a cap of 3.
+        // The 4th event must be skipped.
+        let mut store = EpgStore::new().with_max_events_per_service(3);
+
+        let desc = short_event_bytes(b"Test", b"");
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+
+        for (version, (event_id, hour)) in [(10, 10u32), (20, 11), (30, 12), (40, 13)]
+            .iter()
+            .enumerate()
+        {
+            let sr = start_raw(2026, 6, 10, *hour);
+            let eit = eit_pf_section(100, 1, 1, *event_id, version as u8, sr, [1, 0, 0], &desc);
+            store.feed(&eit).unwrap();
+        }
+
+        assert_eq!(store.event_count(), 3, "4th event must be skipped at cap 3");
+
+        // Version churn on existing event_id still works:
+        let sr_v2 = start_raw(2026, 6, 10, 15);
+        let eit_v2 = eit_pf_section(100, 1, 1, 10, 1, sr_v2, [1, 0, 0], &desc);
+        store.feed(&eit_v2).unwrap();
+        assert_eq!(
+            store.event_count(),
+            3,
+            "version churn on existing event_id must not increase count"
+        );
+
+        let evts = store.events(key).unwrap();
+        let ev10 = evts.iter().find(|e| e.event_id == 10).unwrap();
+        assert_eq!(
+            ev10.event_name.as_deref(),
+            Some("Test"),
+            "existing event updated"
+        );
     }
 
     // ------------------------------------------------------------------
