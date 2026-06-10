@@ -47,14 +47,22 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("audio_preselection: count byte missing"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "audio_preselection body",
+            });
         }
         let num_preselections = sel[0] >> 3;
         let mut pos = 1;
         let mut preselections = Vec::with_capacity(num_preselections as usize);
         for _ in 0..num_preselections {
             if pos + 2 > sel.len() {
-                return Err(invalid("audio_preselection: preselection overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: sel.len(),
+                    what: "audio_preselection body",
+                });
             }
             let byte_a = sel[pos];
             let byte_b = sel[pos + 1];
@@ -72,7 +80,11 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let language_code = if language_code_present {
                 if pos + ISO_639_LEN > sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + ISO_639_LEN,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let lc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
                 pos += ISO_639_LEN;
@@ -83,7 +95,11 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let message_id = if text_label_present {
                 if pos >= sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let id = sel[pos];
                 pos += 1;
@@ -94,12 +110,20 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let aux_component_tags = if multi_stream_info_present {
                 if pos >= sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let num_aux = sel[pos] >> 5;
                 pos += 1;
                 if pos + num_aux as usize > sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + num_aux as usize,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let tags = &sel[pos..pos + num_aux as usize];
                 pos += num_aux as usize;
@@ -110,12 +134,20 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
 
             let future_ext = if future_extension {
                 if pos >= sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let ext_len = (sel[pos] & 0x1F) as usize;
                 pos += 1;
                 if pos + ext_len > sel.len() {
-                    return Err(invalid("audio_preselection: preselection overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + ext_len,
+                        have: sel.len(),
+                        what: "audio_preselection body",
+                    });
                 }
                 let ext = &sel[pos..pos + ext_len];
                 pos += ext_len;

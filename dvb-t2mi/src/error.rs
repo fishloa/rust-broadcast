@@ -59,16 +59,12 @@ pub enum Error {
         remaining_bytes: usize,
     },
 
-    /// Input buffer was shorter than required for CRC validation.
-    #[error("buffer too short for CRC validation")]
-    Truncated,
-
-    /// CRC-32 value did not match expected checksum.
-    #[error("CRC-32 mismatch: expected {expected:#010x}, computed {computed:#010x}")]
-    InvalidCrc {
-        /// Expected CRC from trailer.
-        expected: u32,
-        /// Computed CRC over payload.
+    /// CRC-32 validation failed.
+    #[error("CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
+    CrcMismatch {
+        /// CRC we calculated over the payload bytes.
         computed: u32,
+        /// CRC carried at the end of the packet.
+        expected: u32,
     },
 }

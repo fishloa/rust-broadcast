@@ -78,14 +78,22 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
         let mut pos = 0;
         while pos < sel.len() {
             if pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN > sel.len() {
-                return Err(invalid("network_change_notify: cell header truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
+                    have: sel.len(),
+                    what: "network_change_notify body",
+                });
             }
             let cell_id = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
             let loop_length = sel[pos + CELL_HEADER_LEN] as usize;
             pos += CELL_HEADER_LEN + LOOP_LENGTH_LEN;
 
             if pos + loop_length > sel.len() {
-                return Err(invalid("network_change_notify: inner loop overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + loop_length,
+                    have: sel.len(),
+                    what: "network_change_notify body",
+                });
             }
 
             let inner_end = pos + loop_length;
@@ -94,7 +102,11 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 let remaining = inner_end - pos;
                 // At minimum we need CHANGE_BASE_LEN bytes for a basic entry.
                 if remaining < CHANGE_BASE_LEN {
-                    return Err(invalid("network_change_notify: change entry overruns loop"));
+                    return Err(Error::BufferTooShort {
+                        need: inner_end - remaining + CHANGE_BASE_LEN,
+                        have: sel.len(),
+                        what: "network_change_notify body",
+                    });
                 }
                 let network_change_id = sel[pos];
                 let network_change_version = sel[pos + 1];
@@ -115,7 +127,11 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
 
                 let invariant_ts = if invariant_ts_present == 1 {
                     if pos + INVARIANT_TS_LEN > inner_end {
-                        return Err(invalid("network_change_notify: change entry overruns loop"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + INVARIANT_TS_LEN,
+                            have: sel.len(),
+                            what: "network_change_notify body",
+                        });
                     }
                     let ts = InvariantTs {
                         tsid: u16::from_be_bytes([sel[pos], sel[pos + 1]]),

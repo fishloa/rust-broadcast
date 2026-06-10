@@ -14,11 +14,15 @@ pub const CRC_LEN: usize = 4;
 /// Validate a T2-MI packet's 4-byte CRC-32 trailer.
 ///
 /// Returns `Ok(())` if the last 4 bytes match the computed CRC-32 of the
-/// preceding payload. Returns `Error::Truncated` if `bytes.len() < CRC_LEN`.
-/// Returns `Error::InvalidCrc { expected, computed }` on mismatch.
+/// preceding payload. Returns `Error::BufferTooShort` if `bytes.len() < CRC_LEN`.
+/// Returns `Error::CrcMismatch { computed, expected }` on mismatch.
 pub fn validate_crc(bytes: &[u8]) -> Result<()> {
     if bytes.len() < CRC_LEN {
-        return Err(Error::Truncated);
+        return Err(Error::BufferTooShort {
+            need: CRC_LEN,
+            have: bytes.len(),
+            what: "T2-MI CRC",
+        });
     }
     let (payload, trailer) = bytes.split_at(bytes.len() - CRC_LEN);
     let expected = u32::from_be_bytes(trailer.try_into().unwrap());
@@ -26,7 +30,7 @@ pub fn validate_crc(bytes: &[u8]) -> Result<()> {
     if computed == expected {
         Ok(())
     } else {
-        Err(Error::InvalidCrc { expected, computed })
+        Err(Error::CrcMismatch { computed, expected })
     }
 }
 

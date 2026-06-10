@@ -37,7 +37,11 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < TTML_FIXED_LEN {
-            return Err(invalid("TTML_subtitling: header truncated"));
+            return Err(Error::BufferTooShort {
+                need: TTML_FIXED_LEN,
+                have: sel.len(),
+                what: "TTML_subtitling body",
+            });
         }
         let iso_639_language_code = LangCode([sel[0], sel[1], sel[2]]);
         let b3 = sel[ISO_639_LEN];
@@ -52,7 +56,11 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
 
         // dvb_ttml_profile loop
         if sel.len() < pos + dvb_ttml_profile_count {
-            return Err(invalid("TTML_subtitling: body truncated"));
+            return Err(Error::BufferTooShort {
+                need: pos + dvb_ttml_profile_count,
+                have: sel.len(),
+                what: "TTML_subtitling body",
+            });
         }
         let dvb_ttml_profiles = &sel[pos..pos + dvb_ttml_profile_count];
         pos += dvb_ttml_profile_count;
@@ -60,7 +68,11 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         // conditional qualifier
         let qualifier = if qualifier_present_flag != 0 {
             if sel.len() < pos + 4 {
-                return Err(invalid("TTML_subtitling: body truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 4,
+                    have: sel.len(),
+                    what: "TTML_subtitling body",
+                });
             }
             let q = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
             pos += 4;
@@ -72,12 +84,20 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         // conditional font-id loop
         let font_ids = if essential_font_usage_flag != 0 {
             if sel.len() <= pos {
-                return Err(invalid("TTML_subtitling: body truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "TTML_subtitling body",
+                });
             }
             let font_count = sel[pos] as usize;
             pos += 1;
             if sel.len() < pos + font_count {
-                return Err(invalid("TTML_subtitling: body truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + font_count,
+                    have: sel.len(),
+                    what: "TTML_subtitling body",
+                });
             }
             let ids: Vec<u8> = sel[pos..pos + font_count]
                 .iter()
@@ -91,12 +111,20 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
 
         // text run
         if sel.len() <= pos {
-            return Err(invalid("TTML_subtitling: body truncated"));
+            return Err(Error::BufferTooShort {
+                need: pos + 1,
+                have: sel.len(),
+                what: "TTML_subtitling body",
+            });
         }
         let text_length = sel[pos] as usize;
         pos += 1;
         if sel.len() < pos + text_length {
-            return Err(invalid("TTML_subtitling: body truncated"));
+            return Err(Error::BufferTooShort {
+                need: pos + text_length,
+                have: sel.len(),
+                what: "TTML_subtitling body",
+            });
         }
         let text = DvbText::new(&sel[pos..pos + text_length]);
         pos += text_length;
@@ -270,8 +298,8 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::InvalidDescriptor { .. })),
-            "expected InvalidDescriptor, got {result:?}"
+            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            "expected BufferTooShort, got {result:?}"
         );
     }
 
@@ -283,8 +311,8 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::InvalidDescriptor { .. })),
-            "expected InvalidDescriptor, got {result:?}"
+            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            "expected BufferTooShort, got {result:?}"
         );
     }
 
@@ -295,8 +323,8 @@ mod tests {
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
-            matches!(result, Err(crate::error::Error::InvalidDescriptor { .. })),
-            "expected InvalidDescriptor, got {result:?}"
+            matches!(result, Err(crate::error::Error::BufferTooShort { .. })),
+            "expected BufferTooShort, got {result:?}"
         );
     }
 }

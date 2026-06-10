@@ -96,9 +96,9 @@ impl Serialize for NvodReferenceDescriptor {
         let body_len = ENTRY_LEN * self.entries.len();
         // 8-bit descriptor_length field: error rather than silently truncate.
         if body_len > MAX_BODY_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: MAX_BODY_LEN,
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "NVOD_reference_descriptor body exceeds 255 bytes",
             });
         }
         buf[0] = TAG;
@@ -221,7 +221,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::SectionLengthOverflow { .. }
+            Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
 

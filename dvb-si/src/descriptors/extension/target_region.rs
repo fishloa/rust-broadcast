@@ -59,7 +59,11 @@ impl<'a> Parse<'a> for TargetRegion {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < ISO_639_LEN {
-            return Err(invalid("target_region: country_code truncated"));
+            return Err(Error::BufferTooShort {
+                need: ISO_639_LEN,
+                have: sel.len(),
+                what: "target_region body",
+            });
         }
         let country_code = LangCode([sel[0], sel[1], sel[2]]);
         let mut regions = Vec::new();
@@ -71,7 +75,11 @@ impl<'a> Parse<'a> for TargetRegion {
             let region_depth = flags & 0x03;
             let country_code = if country_code_flag == 1 {
                 if pos + ISO_639_LEN > sel.len() {
-                    return Err(invalid("target_region: region entry overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + ISO_639_LEN,
+                        have: sel.len(),
+                        what: "target_region body",
+                    });
                 }
                 let cc = LangCode([sel[pos], sel[pos + 1], sel[pos + 2]]);
                 pos += ISO_639_LEN;
@@ -83,7 +91,11 @@ impl<'a> Parse<'a> for TargetRegion {
                 0 => RegionCodes::None,
                 1 => {
                     if pos >= sel.len() {
-                        return Err(invalid("target_region: region entry overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "target_region body",
+                        });
                     }
                     let primary = sel[pos];
                     pos += 1;
@@ -93,7 +105,11 @@ impl<'a> Parse<'a> for TargetRegion {
                 }
                 2 => {
                     if pos + 1 >= sel.len() {
-                        return Err(invalid("target_region: region entry overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "target_region body",
+                        });
                     }
                     let primary = sel[pos];
                     let secondary = sel[pos + 1];
@@ -105,7 +121,11 @@ impl<'a> Parse<'a> for TargetRegion {
                 }
                 3 => {
                     if pos + 3 >= sel.len() {
-                        return Err(invalid("target_region: region entry overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "target_region body",
+                        });
                     }
                     let primary = sel[pos];
                     let secondary = sel[pos + 1];

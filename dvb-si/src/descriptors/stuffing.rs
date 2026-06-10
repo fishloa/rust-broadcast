@@ -74,9 +74,9 @@ impl Serialize for StuffingDescriptor<'_> {
         }
         // 8-bit descriptor_length field: error rather than silently truncate.
         if self.stuffing_bytes.len() > MAX_BODY_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.stuffing_bytes.len(),
-                available: MAX_BODY_LEN,
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "stuffing_descriptor body exceeds 255 bytes",
             });
         }
         buf[0] = TAG;
@@ -165,7 +165,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::SectionLengthOverflow { .. }
+            Error::InvalidDescriptor { tag: TAG, .. }
         ));
     }
 

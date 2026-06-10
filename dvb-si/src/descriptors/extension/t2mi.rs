@@ -28,7 +28,11 @@ impl<'a> Parse<'a> for T2miDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < T2MI_MIN_LEN {
-            return Err(invalid("T2MI: body truncated"));
+            return Err(Error::BufferTooShort {
+                need: T2MI_MIN_LEN,
+                have: sel.len(),
+                what: "T2MI body",
+            });
         }
         Ok(T2miDescriptor {
             // Table 158 bytes 0-2:
@@ -124,10 +128,7 @@ mod tests {
         let bytes = wrap(0x11, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 }

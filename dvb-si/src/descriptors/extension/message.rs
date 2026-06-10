@@ -23,7 +23,11 @@ impl<'a> Parse<'a> for Message<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < 1 + ISO_639_LEN {
-            return Err(invalid("message: header truncated"));
+            return Err(Error::BufferTooShort {
+                need: 1 + ISO_639_LEN,
+                have: sel.len(),
+                what: "message body",
+            });
         }
         Ok(Message {
             message_id: sel[0],

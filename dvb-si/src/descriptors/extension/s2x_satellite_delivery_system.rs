@@ -80,7 +80,11 @@ fn parse_channel_common(
     pos: &mut usize,
 ) -> Result<(u32, u16, bool, u8, bool, u8, u32)> {
     if sel.len() < *pos + BOND_BASE_LEN {
-        return Err(invalid("S2X: channel block truncated"));
+        return Err(Error::BufferTooShort {
+            need: *pos + BOND_BASE_LEN,
+            have: sel.len(),
+            what: "S2X body",
+        });
     }
     let frequency = u32::from_be_bytes([sel[*pos], sel[*pos + 1], sel[*pos + 2], sel[*pos + 3]]);
     let orbital_position = u16::from_be_bytes([sel[*pos + 4], sel[*pos + 5]]);
@@ -133,7 +137,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         // receiver_profiles byte + S2X mode/flags byte = 2 fixed bytes.
         if sel.len() < 2 {
-            return Err(invalid("S2X: flags truncated"));
+            return Err(Error::BufferTooShort {
+                need: 2,
+                have: sel.len(),
+                what: "S2X body",
+            });
         }
         let receiver_profiles = sel[0] >> 3;
         let b1 = sel[1];
@@ -145,7 +153,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let mut pos = 2;
         let scrambling_sequence_index = if scrambling_sequence_selector {
             if sel.len() < pos + S2X_SCRAMBLING_LEN {
-                return Err(invalid("S2X: scrambling_sequence_index truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + S2X_SCRAMBLING_LEN,
+                    have: sel.len(),
+                    what: "S2X body",
+                });
             }
             let idx = (u32::from(sel[pos] & 0x03) << 16)
                 | (u32::from(sel[pos + 1]) << 8)
@@ -169,7 +181,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         ) = parse_channel_common(sel, &mut pos)?;
         let input_stream_identifier = if multiple_input_stream_flag {
             if sel.len() < pos + 1 {
-                return Err(invalid("S2X: input_stream_identifier truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "S2X body",
+                });
             }
             let isi = sel[pos];
             pos += 1;
@@ -179,7 +195,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         };
         let timeslice_number = if s2x_mode == 2 {
             if sel.len() < pos + 1 {
-                return Err(invalid("S2X: timeslice_number truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "S2X body",
+                });
             }
             let ts = sel[pos];
             pos += 1;
@@ -190,7 +210,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let (channel_bonds, reserved_tail) = if s2x_mode == 3 {
             // --- channel bonding loop (Table 140) ---
             if sel.len() < pos + 1 {
-                return Err(invalid("S2X: channel-bond count byte truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "S2X body",
+                });
             }
             let bond_byte = sel[pos];
             pos += 1;
@@ -201,7 +225,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
                 let (freq, orb, we, pol, mis, ro, sr) = parse_channel_common(sel, &mut pos)?;
                 let isi = if mis {
                     if sel.len() < pos + 1 {
-                        return Err(invalid("S2X: channel bond overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "S2X body",
+                        });
                     }
                     let v = sel[pos];
                     pos += 1;

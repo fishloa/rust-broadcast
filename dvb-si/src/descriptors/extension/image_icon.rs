@@ -79,7 +79,11 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         // Need at least byte0 (descriptor_number / last_descriptor_number)
         // and byte1 (reserved + icon_id).
         if sel.len() < 2 {
-            return Err(invalid("image_icon: header truncated"));
+            return Err(Error::BufferTooShort {
+                need: 2,
+                have: sel.len(),
+                what: "image_icon body",
+            });
         }
         let descriptor_number = sel[0] >> 4;
         let last_descriptor_number = sel[0] & 0x0F;
@@ -88,7 +92,11 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         let body = if descriptor_number == 0x00 {
             // First segment: metadata + payload.
             if sel.len() < 3 {
-                return Err(invalid("image_icon: first-segment packed byte missing"));
+                return Err(Error::BufferTooShort {
+                    need: 3,
+                    have: sel.len(),
+                    what: "image_icon body",
+                });
             }
             let packed = sel[2];
             let icon_transport_mode = packed >> 6;
@@ -98,7 +106,11 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             let position = if position_flag == 1 {
                 let coordinate_system = (packed >> 2) & 0x07;
                 if sel.len() < pos + 3 {
-                    return Err(invalid("image_icon: origin bytes truncated"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 3,
+                        have: sel.len(),
+                        what: "image_icon body",
+                    });
                 }
                 let b0 = sel[pos];
                 let b1 = sel[pos + 1];
@@ -117,12 +129,20 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
 
             // icon_type_length + run
             if sel.len() < pos + 1 {
-                return Err(invalid("image_icon: icon_type_length truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "image_icon body",
+                });
             }
             let icon_type_length = sel[pos] as usize;
             pos += 1;
             if sel.len() < pos + icon_type_length {
-                return Err(invalid("image_icon: icon_type overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + icon_type_length,
+                    have: sel.len(),
+                    what: "image_icon body",
+                });
             }
             let icon_type = &sel[pos..pos + icon_type_length];
             pos += icon_type_length;
@@ -131,12 +151,20 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             let payload = match icon_transport_mode {
                 0 | 1 => {
                     if sel.len() < pos + 1 {
-                        return Err(invalid("image_icon: payload length truncated"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "image_icon body",
+                        });
                     }
                     let payload_len = sel[pos] as usize;
                     pos += 1;
                     if sel.len() < pos + payload_len {
-                        return Err(invalid("image_icon: payload overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + payload_len,
+                            have: sel.len(),
+                            what: "image_icon body",
+                        });
                     }
                     let p = &sel[pos..pos + payload_len];
                     pos += payload_len;
@@ -158,11 +186,19 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         } else {
             // Continuation segment.
             if sel.len() < 3 {
-                return Err(invalid("image_icon: continuation length truncated"));
+                return Err(Error::BufferTooShort {
+                    need: 3,
+                    have: sel.len(),
+                    what: "image_icon body",
+                });
             }
             let icon_data_length = sel[2] as usize;
             if sel.len() < 3 + icon_data_length {
-                return Err(invalid("image_icon: continuation data overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: 3 + icon_data_length,
+                    have: sel.len(),
+                    what: "image_icon body",
+                });
             }
             let icon_data = &sel[3..3 + icon_data_length];
             if 3 + icon_data_length != sel.len() {
@@ -395,10 +431,7 @@ mod tests {
         let bytes = wrap(0x00, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 
