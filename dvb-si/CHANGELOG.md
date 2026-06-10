@@ -13,6 +13,8 @@
   the on-air and next events; `feed_sdt` joins service names from the SDT;
   `retain_services` / `clear` bound long-running memory. Serialize-only serde
   export of the store.
+- **`EpgStore::services()`** — iterate cached service keys so callers can walk
+  the whole EPG without knowing service ids in advance (#51).
 
 ## 4.2.0 — 2026-06-09
 

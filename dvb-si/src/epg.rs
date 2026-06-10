@@ -321,6 +321,13 @@ impl EpgStore {
         self.cache.get(&key).and_then(|s| s.service_name.as_deref())
     }
 
+    /// Iterate the [`ServiceKey`]s of every service with cached EIT data, so
+    /// callers can walk the whole EPG (e.g. render a grid) without knowing the
+    /// service ids in advance. Order is unspecified.
+    pub fn services(&self) -> impl Iterator<Item = ServiceKey> + '_ {
+        self.cache.keys().copied()
+    }
+
     /// Return all events for a service, sorted by start time
     /// (events without a valid start time sort last, then by event_id).
     #[must_use]
