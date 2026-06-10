@@ -27,11 +27,14 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use dvb_si::descriptors::{DescriptorRegistry, DescriptorObject, AnyDescriptor};
+//! use dvb_si::descriptors::{DescriptorRegistry, AnyDescriptor};
 //! use dvb_si::traits::DescriptorDef;
 //! use dvb_common::Parse;
 //!
-//! #[derive(Debug, serde::Serialize)]
+//! // A registered type must be `serde::Serialize` only when the `serde`
+//! // feature is on (that is what `DescriptorObject` requires there).
+//! #[derive(Debug)]
+//! #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 //! struct MyPrivate { x: u8 }
 //!
 //! impl<'a> Parse<'a> for MyPrivate {
@@ -58,7 +61,7 @@
 //! let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
 //! if let AnyDescriptor::Other { tag, ref value } = items[0] {
 //!     assert_eq!(tag, 0xA7);
-//!     assert_eq!(value.as_any().downcast_ref::<MyPrivate>().unwrap().x, 0x42);
+//!     assert_eq!(value.downcast_ref::<MyPrivate>().unwrap().x, 0x42);
 //! }
 //! ```
 
@@ -116,6 +119,34 @@ where
 {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+// Downcast helpers ON THE TRAIT OBJECT (not the blanket).
+//
+// The blanket `impl<T> DescriptorObject for T` also covers `Box<dyn
+// DescriptorObject>` itself whenever the box satisfies the bounds — it does
+// under `--no-default-features`, where the bound is just `Debug + Any + Send +
+// Sync`. So `the_box.as_any()` resolves to the *box's* impl and reports the
+// box's `TypeId`, not the inner value's — a silent downcast failure. (Under
+// `serde` the extra `serde::Serialize` bound excludes the box, which is why the
+// footgun only bites without default features.) Calling through `dyn
+// DescriptorObject` (which `Box` derefs to) always hits the inner value, so
+// always downcast via these methods rather than `the_box.as_any()`.
+impl dyn DescriptorObject {
+    /// Downcast a registered descriptor to its concrete type `T`.
+    ///
+    /// Works for `Box<dyn DescriptorObject>` (it derefs to the trait object)
+    /// under every feature configuration.
+    #[must_use]
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.as_any().downcast_ref::<T>()
+    }
+
+    /// `true` if the registered descriptor's concrete type is `T`.
+    #[must_use]
+    pub fn is<T: Any>(&self) -> bool {
+        self.as_any().is::<T>()
     }
 }
 
@@ -480,7 +511,7 @@ mod tests {
         match &items[1] {
             AnyDescriptor::Other { tag, value } => {
                 assert_eq!(*tag, 0x83);
-                let c = value.as_any().downcast_ref::<PdsEacem>().unwrap();
+                let c = value.downcast_ref::<PdsEacem>().unwrap();
                 assert_eq!(c.v, 0xAA);
             }
             other => panic!("expected Other (PdsEacem), got {other:?}"),
@@ -494,7 +525,7 @@ mod tests {
         match &items2[1] {
             AnyDescriptor::Other { tag, value } => {
                 assert_eq!(*tag, 0x83);
-                let c = value.as_any().downcast_ref::<PdsNordig>().unwrap();
+                let c = value.downcast_ref::<PdsNordig>().unwrap();
                 assert_eq!(c.w, 0xBB);
             }
             other => panic!("expected Other (PdsNordig), got {other:?}"),
@@ -530,7 +561,7 @@ mod tests {
         match &items[0] {
             AnyDescriptor::Other { tag, value } => {
                 assert_eq!(*tag, 0x84);
-                let c = value.as_any().downcast_ref::<PdsAgnostic>().unwrap();
+                let c = value.downcast_ref::<PdsAgnostic>().unwrap();
                 assert_eq!(c.z, 0xDD);
             }
             other => panic!("expected Other, got {other:?}"),
@@ -578,8 +609,8 @@ mod tests {
             .unwrap();
         match &items[0] {
             AnyDescriptor::Other { value, .. } => {
-                assert!(value.as_any().downcast_ref::<Agnostic83>().is_some());
-                assert!(value.as_any().downcast_ref::<PdsEacem>().is_none());
+                assert!(value.downcast_ref::<Agnostic83>().is_some());
+                assert!(value.downcast_ref::<PdsEacem>().is_none());
             }
             other => panic!("expected Other, got {other:?}"),
         }
@@ -591,8 +622,8 @@ mod tests {
         let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
         match &items[1] {
             AnyDescriptor::Other { value, .. } => {
-                assert!(value.as_any().downcast_ref::<PdsEacem>().is_some());
-                assert!(value.as_any().downcast_ref::<Agnostic83>().is_none());
+                assert!(value.downcast_ref::<PdsEacem>().is_some());
+                assert!(value.downcast_ref::<Agnostic83>().is_none());
             }
             other => panic!("expected Other, got {other:?}"),
         }

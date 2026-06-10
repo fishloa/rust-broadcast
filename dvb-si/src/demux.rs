@@ -780,7 +780,7 @@ mod tests {
                 ref value,
             } => {
                 assert_eq!(table_id, PRIVATE_TID);
-                let pt = value.as_any().downcast_ref::<PrivateTable>().unwrap();
+                let pt = value.downcast_ref::<PrivateTable>().unwrap();
                 assert_eq!(pt.table_id, PRIVATE_TID);
             }
             other => panic!("expected Other, got {other:?}"),

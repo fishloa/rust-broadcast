@@ -15,11 +15,14 @@
 //! # Example
 //!
 //! ```rust,no_run
-//! use dvb_si::tables::{TableRegistry, TableObject, AnyTableSection};
+//! use dvb_si::tables::{TableRegistry, AnyTableSection};
 //! use dvb_si::traits::TableDef;
 //! use dvb_common::Parse;
 //!
-//! #[derive(Debug, serde::Serialize)]
+//! // A registered type must be `serde::Serialize` only when the `serde`
+//! // feature is on (that is what `TableObject` requires there).
+//! #[derive(Debug)]
+//! #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 //! struct MyPrivate { x: u8 }
 //!
 //! impl<'a> Parse<'a> for MyPrivate {
@@ -46,7 +49,7 @@
 //! match AnyTableSection::parse_with(&reg, &bytes).unwrap() {
 //!     AnyTableSection::Other { table_id, ref value } => {
 //!         assert_eq!(table_id, 0x90);
-//!         assert_eq!(value.as_any().downcast_ref::<MyPrivate>().unwrap().x, 0x42);
+//!         assert_eq!(value.downcast_ref::<MyPrivate>().unwrap().x, 0x42);
 //!     }
 //!     other => panic!("expected Other, got {other:?}"),
 //! }
@@ -104,6 +107,34 @@ where
 {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+// Downcast helpers ON THE TRAIT OBJECT (not the blanket).
+//
+// The blanket `impl<T> TableObject for T` also covers `Box<dyn TableObject>`
+// itself whenever the box satisfies the bounds — it does under
+// `--no-default-features`, where the bound is just `Debug + Any + Send + Sync`.
+// So `the_box.as_any()` resolves to the *box's* impl and reports the box's
+// `TypeId`, not the inner value's — a silent downcast failure. (Under `serde`
+// the extra `serde::Serialize` bound excludes the box, which is why the footgun
+// only bites without default features.) Calling through `dyn TableObject`
+// (which `Box` derefs to) always hits the inner value, so always downcast via
+// these methods rather than `the_box.as_any()`.
+impl dyn TableObject {
+    /// Downcast a registered table section to its concrete type `T`.
+    ///
+    /// Works for `Box<dyn TableObject>` (it derefs to the trait object) under
+    /// every feature configuration.
+    #[must_use]
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        self.as_any().downcast_ref::<T>()
+    }
+
+    /// `true` if the registered table section's concrete type is `T`.
+    #[must_use]
+    pub fn is<T: Any>(&self) -> bool {
+        self.as_any().is::<T>()
     }
 }
 
@@ -311,7 +342,7 @@ mod tests {
                 ref value,
             } => {
                 assert_eq!(table_id, CUSTOM_TABLE_ID);
-                let ct = value.as_any().downcast_ref::<CustomTable>().unwrap();
+                let ct = value.downcast_ref::<CustomTable>().unwrap();
                 assert_eq!(ct.table_id, CUSTOM_TABLE_ID);
                 assert_eq!(ct.payload, &[0xAA, 0xBB]);
             }
@@ -391,7 +422,7 @@ mod tests {
                 ref value,
             } => {
                 assert_eq!(table_id, 0x00);
-                let op = value.as_any().downcast_ref::<OverridePat>().unwrap();
+                let op = value.downcast_ref::<OverridePat>().unwrap();
                 assert_eq!(op.table_id, 0x00);
             }
             other => panic!("expected Other (override), got {other:?}"),

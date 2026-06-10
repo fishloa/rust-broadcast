@@ -102,9 +102,9 @@ macro_rules! declare_tables {
             Other {
                 /// The raw table_id byte.
                 table_id: u8,
-                /// The parsed, type-erased table-section value. Use
-                /// [`TableObject::as_any`][crate::tables::registry::TableObject::as_any]
-                /// followed by `downcast_ref` to recover the concrete type.
+                /// The parsed, type-erased table-section value. Call `downcast_ref`
+                /// on it (see [`TableObject`](crate::tables::registry::TableObject))
+                /// to recover the concrete type.
                 #[cfg_attr(
                     feature = "serde",
                     serde(serialize_with = "crate::tables::registry::serialize_erased")
