@@ -98,10 +98,6 @@ const LENGTH_HIGH_NIBBLE_MASK: u8 = 0x0F;
 /// Serialize flag byte: reserved(2) = 0b11, rest provided by caller.
 const FLAGS_RESERVED_BITS: u8 = 0xC0;
 
-/// Syntax indicator + reserved in the section_length byte: long-form
-/// (section_syntax_indicator=1, reserved_future_use=1, reserved=11).
-const SECTION_LEN_BYTE1_FLAGS: u8 = 0xB0;
-
 /// Reserved nibble for `common_descriptor_loop_length` and
 /// `platform_loop_length` high-nibble: 0xF0 (4 reserved bits set to 1).
 const RESERVED_NIBBLE: u8 = 0xF0;
@@ -282,7 +278,8 @@ impl Serialize for UntSection<'_> {
         // ── Header ───────────────────────────────────────────────────────────
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = SECTION_LEN_BYTE1_FLAGS | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
+        buf[1] =
+            super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
         buf[2] = (section_length & 0xFF) as u8;
 
         // ── Fixed body ───────────────────────────────────────────────────────
@@ -366,7 +363,7 @@ mod tests {
 
         // Header.
         v.push(TABLE_ID);
-        v.push(SECTION_LEN_BYTE1_FLAGS | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK));
+        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
 
         // Fixed body.

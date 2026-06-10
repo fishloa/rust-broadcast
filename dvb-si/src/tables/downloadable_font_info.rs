@@ -289,8 +289,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         }
         let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        // section_syntax_indicator=1, reserved_future_use=0, reserved=11, section_length hi nibble.
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
         let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
@@ -382,7 +381,7 @@ mod tests {
         let id_word = (font_id as u16) & 0x7F;
         let mut v = vec![
             TABLE_ID,
-            0xB0 | ((section_length >> 8) as u8 & 0x0F),
+            super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F),
             (section_length & 0xFF) as u8,
             (id_word >> 8) as u8,
             (id_word & 0xFF) as u8,

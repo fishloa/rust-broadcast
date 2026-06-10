@@ -140,8 +140,7 @@ impl Serialize for SatSection<'_> {
         }
         let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        // section_syntax_indicator=1, private_indicator=1, reserved=11, section_length hi nibble.
-        buf[1] = 0xF0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
         buf[4] = (self.table_count & 0xFF) as u8;
@@ -177,7 +176,7 @@ mod tests {
         let section_length = (HEADER_LEN - SECTION_LENGTH_PREFIX + body.len() + CRC_LEN) as u16;
         let mut v = vec![
             TABLE_ID,
-            0xF0 | ((section_length >> 8) as u8 & 0x0F),
+            super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F),
             (section_length & 0xFF) as u8,
             (satellite_table_id << 2) | ((table_count >> 8) as u8 & 0x03),
             (table_count & 0xFF) as u8,

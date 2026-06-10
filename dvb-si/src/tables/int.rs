@@ -249,8 +249,7 @@ impl Serialize for IntSection<'_> {
         // section_length = everything after the 3-byte outer header.
         let section_length = (len - OUTER_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        // section_syntax_indicator=1, reserved_future_use=1, reserved=11 → top nibble 0xF.
-        buf[1] = 0xF0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
         // INT fixed fields.

@@ -165,8 +165,7 @@ impl Serialize for RntSection<'_> {
         // Outer header.
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        // section_syntax_indicator=1, reserved=1, reserved=2, section_length top nibble.
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
         // Extension header.

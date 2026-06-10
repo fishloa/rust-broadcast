@@ -155,7 +155,7 @@ impl Serialize for CatSection<'_> {
         }
         let section_length = (len - MIN_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         // table_id_extension is reserved for the CAT — conventionally 0xFFFF.
         buf[3] = 0xFF;
@@ -193,7 +193,7 @@ mod tests {
             (EXTENSION_HEADER_LEN as u16) + descriptors.len() as u16 + (CRC_LEN as u16);
         let mut v = Vec::new();
         v.push(TABLE_ID);
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        v.push(super::super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
         // table_id_extension (reserved for CAT) — typically 0xFFFF in the wild.
         v.extend_from_slice(&[0xFF, 0xFF]);
