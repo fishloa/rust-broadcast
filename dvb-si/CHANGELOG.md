@@ -12,6 +12,10 @@
   typed `ProductionDisparityHint { max, min }` (12-bit two's-complement),
   `MultiRegionSei`, or raw `Other` bodies, per EN 300 468 §6.4.16.1 Tables
   160–162 (#53).
+- **VVC subpictures extension descriptor (`descriptor_tag_extension` 0x23)** now
+  typed as `VvcSubpicturesDescriptor` (`default_service_mode`, a `VvcSubpicture`
+  loop of `(component_tag, vvc_subpicture_id)`, `processing_mode`, optional
+  service-description text) per EN 300 468 §6.4.17 Table 162a (#53).
 
 ## 4.3.0 — 2026-06-10
 

@@ -47,6 +47,7 @@
 //!   channel typed; channel-bonding / reserved tail kept raw.
 //! - `0x19` audio_preselection (Table 110, §6.4.1) — preselection loop raw.
 //! - `0x20` TTML_subtitling (`en_303_560_ttml.md` Table 1, §5.2.1.1).
+//! - `0x23` vvc_subpictures (Table 162a, §6.4.17) — fully typed.
 //!
 //! Kept [`ExtensionBody::Raw`] (tag value preserved), with reason:
 //! - `0x00` image_icon — syntax vendored (Table 145) but niche (carousel icons); deferred.
@@ -57,7 +58,7 @@
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
 //! - `0x18` protection_message — spec not vendored (ETSI TS 102 809).
-//! - `0x22` service_prominence / `0x23` vvc_subpictures / `0x24` S2Xv2 — niche; deferred.
+//! - `0x22` service_prominence / `0x24` S2Xv2 — niche; deferred.
 //! - any other value (incl. `0x80`..=`0xFF` user-defined) — unknown; preserved.
 
 use crate::error::{Error, Result};
@@ -138,6 +139,8 @@ pub enum ExtensionTag {
     AudioPreselection = 0x19,
     /// TTML_subtitling_descriptor (ETSI EN 303 560).
     TtmlSubtitling = 0x20,
+    /// vvc_subpictures_descriptor (Table 162a, §6.4.17).
+    VvcSubpictures = 0x23,
 }
 
 /// Typed body of an extension descriptor, keyed on `descriptor_tag_extension`.
@@ -179,6 +182,8 @@ pub enum ExtensionBody<'a> {
     AudioPreselection(AudioPreselection<'a>),
     /// `0x20` — TTML_subtitling (EN 303 560 Table 1, §5.2.1.1).
     TtmlSubtitling(TtmlSubtitling<'a>),
+    /// `0x23` — vvc_subpictures (Table 162a, §6.4.17).
+    VvcSubpictures(VvcSubpicturesDescriptor<'a>),
     /// Any not-yet-typed / unknown / user-defined discriminant: selector bytes verbatim.
     Raw(&'a [u8]),
 }
@@ -575,6 +580,42 @@ pub struct TtmlSubtitling<'a> {
     pub tail: &'a [u8],
 }
 
+// ===========================================================================
+//  Section 0x23 — vvc_subpictures_descriptor (Table 162a, §6.4.17)
+// ---------------------------------------------------------------------------
+//  byte 0: default_service_mode(1) service_description_present(1)
+//          number_of_vvc_subpictures(6)
+//  then a loop of (component_tag, vvc_subpicture_id) entries,
+//  then one packed byte with processing_mode(3),
+//  then optional length-delimited service_description text.
+// ===========================================================================
+
+/// One VVC subpicture entry (Table 162a inner loop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct VvcSubpicture {
+    /// component_tag(8).
+    pub component_tag: u8,
+    /// vvc_subpicture_id(8).
+    pub vvc_subpicture_id: u8,
+}
+
+/// vvc_subpictures body (Table 162a) — fully typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+pub struct VvcSubpicturesDescriptor<'a> {
+    /// default_service_mode(1) — byte 0 bit 7.
+    pub default_service_mode: bool,
+    /// Subpicture entries in wire order.
+    pub subpictures: Vec<VvcSubpicture>,
+    /// processing_mode(3) — byte after the subpicture loop, bits `[2:0]`.
+    pub processing_mode: u8,
+    /// Length-delimited service_description text, present iff
+    /// `service_description_present` (byte 0 bit 6) is set.
+    pub service_description: Option<DvbText<'a>>,
+}
+
 /// Extension descriptor (EN 300 468 Table 54, §6.2.18.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -608,6 +649,7 @@ impl ExtensionDescriptor<'_> {
             0x17 => ExtensionTag::S2XSatelliteDeliverySystem,
             0x19 => ExtensionTag::AudioPreselection,
             0x20 => ExtensionTag::TtmlSubtitling,
+            0x23 => ExtensionTag::VvcSubpictures,
             _ => return None,
         })
     }
@@ -970,6 +1012,70 @@ fn parse_ttml(sel: &[u8]) -> Result<TtmlSubtitling<'_>> {
     })
 }
 
+fn parse_vvc_subpictures(sel: &[u8]) -> Result<VvcSubpicturesDescriptor<'_>> {
+    if sel.is_empty() {
+        return Err(invalid("vvc_subpictures: header byte missing"));
+    }
+    let byte0 = sel[0];
+    let default_service_mode = (byte0 & 0x80) != 0;
+    let service_description_present = (byte0 & 0x40) != 0;
+    let n = (byte0 & 0x3F) as usize;
+
+    // Table 162a: 1 fixed byte + n*2 subpicture bytes + 1 processing_mode byte.
+    let subpicture_bytes = n * 2;
+    let min_len = 1 + subpicture_bytes + 1;
+    if sel.len() < min_len {
+        return Err(invalid("vvc_subpictures: truncated"));
+    }
+
+    let mut pos = 1;
+    let mut subpictures = Vec::with_capacity(n);
+    for _ in 0..n {
+        let component_tag = sel[pos];
+        let vvc_subpicture_id = sel[pos + 1];
+        subpictures.push(VvcSubpicture {
+            component_tag,
+            vvc_subpicture_id,
+        });
+        pos += 2;
+    }
+
+    let processing_mode = sel[pos] & 0x07;
+    pos += 1;
+
+    let service_description = if service_description_present {
+        if sel.len() < pos + 1 {
+            return Err(invalid(
+                "vvc_subpictures: service_description_length truncated",
+            ));
+        }
+        let len = sel[pos] as usize;
+        pos += 1;
+        if sel.len() < pos + len {
+            return Err(invalid(
+                "vvc_subpictures: service_description overruns body",
+            ));
+        }
+        let text = DvbText::new(&sel[pos..pos + len]);
+        pos += len;
+        Some(text)
+    } else {
+        None
+    };
+
+    // Table 162a is exact; reject trailing bytes.
+    if pos != sel.len() {
+        return Err(invalid("vvc_subpictures: trailing data"));
+    }
+
+    Ok(VvcSubpicturesDescriptor {
+        default_service_mode,
+        subpictures,
+        processing_mode,
+        service_description,
+    })
+}
+
 /// Sign-extend a 12-bit two's-complement value to `i16` (bit 11 is the sign).
 fn sext12(v: u16) -> i16 {
     if v & 0x800 != 0 {
@@ -1044,6 +1150,7 @@ fn parse_body(tag_extension: u8, sel: &[u8]) -> Result<ExtensionBody<'_>> {
         0x17 => ExtensionBody::S2XSatelliteDeliverySystem(parse_s2x(sel)?),
         0x19 => ExtensionBody::AudioPreselection(parse_audio_preselection(sel)?),
         0x20 => ExtensionBody::TtmlSubtitling(parse_ttml(sel)?),
+        0x23 => ExtensionBody::VvcSubpictures(parse_vvc_subpictures(sel)?),
         _ => ExtensionBody::Raw(sel),
     })
 }
@@ -1155,6 +1262,13 @@ impl ExtensionBody<'_> {
             }
             ExtensionBody::AudioPreselection(b) => 1 + b.preselection_loop.len(),
             ExtensionBody::TtmlSubtitling(b) => TTML_FIXED_LEN + b.tail.len(),
+            ExtensionBody::VvcSubpictures(b) => {
+                1 + b.subpictures.len() * 2
+                    + 1 // processing_mode
+                    + b.service_description
+                        .as_ref()
+                        .map_or(0, |t| 1 + t.len())
+            }
             ExtensionBody::Raw(s) => s.len(),
         }
     }
@@ -1352,6 +1466,27 @@ impl ExtensionBody<'_> {
                     | (u8::from(b.qualifier_present_flag) << 6)
                     | (b.dvb_ttml_profile_count & 0x0F);
                 out[TTML_FIXED_LEN..TTML_FIXED_LEN + b.tail.len()].copy_from_slice(b.tail);
+            }
+            ExtensionBody::VvcSubpictures(b) => {
+                // byte 0: default_service_mode(1) | service_description_present(1) | number_of_vvc_subpictures(6)
+                let service_description_present = b.service_description.is_some();
+                out[0] = (u8::from(b.default_service_mode) << 7)
+                    | (u8::from(service_description_present) << 6)
+                    | (b.subpictures.len() as u8 & 0x3F);
+                let mut p = 1;
+                for sp in &b.subpictures {
+                    out[p] = sp.component_tag;
+                    out[p + 1] = sp.vvc_subpicture_id;
+                    p += 2;
+                }
+                out[p] = b.processing_mode & 0x07;
+                p += 1;
+                if let Some(text) = &b.service_description {
+                    out[p] = text.len() as u8;
+                    p += 1;
+                    out[p..p + text.len()].copy_from_slice(text.raw());
+                    // p += text.len(); // not needed after this arm
+                }
             }
             ExtensionBody::Raw(s) => out[..s.len()].copy_from_slice(s),
         }
@@ -2159,5 +2294,122 @@ mod tests {
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"message_id\":7"));
+    }
+
+    #[test]
+    fn parse_vvc_subpictures_with_description_round_trip() {
+        // Table 162a: default_service_mode=true, 2 subpictures,
+        // processing_mode=5, service_description = "Hi" (2 bytes).
+        // byte0: ds=1(0x80) | sdp=1(0x40) | n=2(0x02) = 0xC2
+        // subpicture 0: component_tag=0x10, vvc_subpicture_id=0x01
+        // subpicture 1: component_tag=0x11, vvc_subpicture_id=0x02
+        // processing_mode byte: 0x05
+        // service_description_length: 2, then b'H', b'i'
+        let sel = [0xC2, 0x10, 0x01, 0x11, 0x02, 0x05, 0x02, b'H', b'i'];
+        let bytes = wrap(0x23, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::VvcSubpictures));
+        match &d.body {
+            ExtensionBody::VvcSubpictures(b) => {
+                assert!(b.default_service_mode);
+                assert_eq!(b.subpictures.len(), 2);
+                assert_eq!(b.subpictures[0].component_tag, 0x10);
+                assert_eq!(b.subpictures[0].vvc_subpicture_id, 0x01);
+                assert_eq!(b.subpictures[1].component_tag, 0x11);
+                assert_eq!(b.subpictures[1].vvc_subpicture_id, 0x02);
+                assert_eq!(b.processing_mode, 5);
+                assert!(b.service_description.is_some());
+                let desc = b.service_description.as_ref().unwrap();
+                assert_eq!(desc.raw(), b"Hi");
+                assert_eq!(desc.decode(), "Hi");
+            }
+            other => panic!("expected VvcSubpictures, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_vvc_subpictures_no_description_round_trip() {
+        // default_service_mode=false, 1 subpicture, processing_mode=1,
+        // no service_description.
+        // byte0: ds=0 | sdp=0 | n=1 = 0x01
+        let sel = [0x01, 0x20, 0x03, 0x01];
+        let bytes = wrap(0x23, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VvcSubpictures(b) => {
+                assert!(!b.default_service_mode);
+                assert_eq!(b.subpictures.len(), 1);
+                assert_eq!(b.subpictures[0].component_tag, 0x20);
+                assert_eq!(b.subpictures[0].vvc_subpicture_id, 0x03);
+                assert_eq!(b.processing_mode, 1);
+                assert!(b.service_description.is_none());
+            }
+            other => panic!("expected VvcSubpictures, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_vvc_subpictures_rejects_truncated() {
+        // Only 2 selector bytes, need at least 1 + 0*2 + 1 = 2 bytes.
+        let sel = [0x00]; // n=0, but no processing_mode byte
+        let bytes = wrap(0x23, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_vvc_subpictures_rejects_overrun() {
+        // service_description_present but no length byte
+        let sel = [0xC0]; // ds=1, sdp=1, n=0 — missing processing_mode + desc
+        let bytes = wrap(0x23, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { tag: TAG, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_vvc_subpictures_serialize_round_trip_no_subpictures() {
+        // Zero subpictures, no description — minimal valid payload.
+        // byte0: ds=1(0x80) | sdp=0 | n=0 = 0x80
+        let sel = [0x80, 0x03];
+        let bytes = wrap(0x23, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::VvcSubpictures(b) => {
+                assert!(b.default_service_mode);
+                assert!(b.subpictures.is_empty());
+                assert_eq!(b.processing_mode, 3);
+                assert!(b.service_description.is_none());
+            }
+            other => panic!("expected VvcSubpictures, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    /// Serialization is deterministic for an all-owned typed body.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_serialize_vvc_subpictures() {
+        let d = ExtensionDescriptor {
+            tag_extension: 0x23,
+            body: ExtensionBody::VvcSubpictures(VvcSubpicturesDescriptor {
+                default_service_mode: true,
+                subpictures: vec![VvcSubpicture {
+                    component_tag: 0x10,
+                    vvc_subpicture_id: 0x01,
+                }],
+                processing_mode: 5,
+                service_description: Some(DvbText::new(b"Hi")),
+            }),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"tag_extension\":35"));
+        assert!(json.contains("\"VvcSubpictures\""));
+        assert!(json.contains("\"service_description\":\"Hi\""));
     }
 }
