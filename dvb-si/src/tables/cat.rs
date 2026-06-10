@@ -109,13 +109,12 @@ impl<'a> Parse<'a> for CatSection<'a> {
         }
 
         let section_length = (((bytes[1] & 0x0F) as u16) << 8) | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
 
         // Skip the 2-byte reserved + extension (bytes 3-4), read version+cni at 5,
         // section/last_section at 6,7. CAT's "table_id_extension" (bytes 3-4) is

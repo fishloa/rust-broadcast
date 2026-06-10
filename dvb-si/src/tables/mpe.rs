@@ -142,20 +142,8 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let section_syntax_indicator = (bytes[1] & 0x80) != 0;
         let private_indicator = (bytes[1] & 0x40) != 0;
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = HEADER_LEN + section_length;
-        if bytes.len() < total {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len() - HEADER_LEN,
-            });
-        }
-        // The declared section must at least span the extension + trailer.
-        if section_length < EXTENSION_LEN + CRC_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len() - HEADER_LEN,
-            });
-        }
+        let total =
+            super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (LSB), byte 4 = MAC_5,
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1 (MSB). Reassemble MSB-first.
@@ -600,5 +588,20 @@ mod tests {
         assert!(j.contains("\"payload_scrambling_control\":1"));
         assert!(j.contains("\"address_scrambling_control\":3"));
         assert!(j.contains("\"checksum\":[222,173,190,239]"));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            MpeDatagramSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
     }
 }

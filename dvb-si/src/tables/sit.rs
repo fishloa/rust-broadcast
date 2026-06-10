@@ -92,13 +92,12 @@ impl<'a> Parse<'a> for SitSection<'a> {
             });
         }
         let section_length = ((bytes[1] & 0x0F) as usize) << 8 | bytes[2] as usize;
-        let total = MIN_HEADER_LEN + section_length;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length,
+            MIN_SECTION_LEN,
+        )?;
 
         let table_id_extension = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;

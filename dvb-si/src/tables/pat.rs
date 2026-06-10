@@ -18,6 +18,7 @@ pub const PROGRAM_NUMBER_NIT: u16 = 0x0000;
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 const CRC_LEN: usize = 4;
+const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 const ENTRY_LEN: usize = 4;
 
 /// One entry in the PAT program loop.
@@ -68,13 +69,12 @@ impl<'a> Parse<'a> for PatSection {
         }
 
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len() - MIN_HEADER_LEN,
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
 
         let transport_stream_id = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
@@ -290,6 +290,21 @@ mod tests {
         pat.serialize_into(&mut buf).unwrap();
         let reparsed = PatSection::parse(&buf).unwrap();
         assert_eq!(pat, reparsed);
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xB0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            PatSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
     }
 
     #[test]
