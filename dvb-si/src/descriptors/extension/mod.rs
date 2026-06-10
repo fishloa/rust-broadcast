@@ -302,7 +302,7 @@ declare_extension_bodies! {'a;
     /// `0x06` — supplementary_audio (Table 153, §6.4.11).
     SupplementaryAudio = 0x06 => SupplementaryAudio<'a>,
     /// `0x07` — network_change_notify (Table 149, §6.4.9).
-    NetworkChangeNotify = 0x07 => NetworkChangeNotify<'a>,
+    NetworkChangeNotify = 0x07 => NetworkChangeNotify,
     /// `0x08` — message (Table 148, §6.4.9).
     Message = 0x08 => Message<'a>,
     /// `0x09` — target_region (Table 156, §6.4.12).
