@@ -1,8 +1,7 @@
 //! Message Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x08).
 use super::*;
 
-impl super::sealed::Sealed for Message<'_> {}
-impl ExtensionBodyDef for Message<'_> {
+impl<'a> ExtensionBodyDef<'a> for Message<'a> {
     const TAG_EXTENSION: u8 = 0x08;
     const NAME: &'static str = "MESSAGE";
 }

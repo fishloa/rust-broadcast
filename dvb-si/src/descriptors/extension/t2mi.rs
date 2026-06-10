@@ -4,8 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
-impl super::sealed::Sealed for T2miDescriptor<'_> {}
-impl ExtensionBodyDef for T2miDescriptor<'_> {
+impl<'a> ExtensionBodyDef<'a> for T2miDescriptor<'a> {
     const TAG_EXTENSION: u8 = 0x11;
     const NAME: &'static str = "T2MI";
 }

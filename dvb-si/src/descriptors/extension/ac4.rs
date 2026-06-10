@@ -1,8 +1,7 @@
 //! AC-4 Descriptor — ETSI EN 300 468 Annex D, §D.5 (tag_extension 0x15).
 use super::*;
 
-impl super::sealed::Sealed for Ac4<'_> {}
-impl ExtensionBodyDef for Ac4<'_> {
+impl<'a> ExtensionBodyDef<'a> for Ac4<'a> {
     const TAG_EXTENSION: u8 = 0x15;
     const NAME: &'static str = "AC4";
 }

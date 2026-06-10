@@ -1,8 +1,7 @@
 //! T2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.3 (tag_extension 0x04).
 use super::*;
 
-impl super::sealed::Sealed for T2DeliverySystem {}
-impl ExtensionBodyDef for T2DeliverySystem {
+impl<'a> ExtensionBodyDef<'a> for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;
     const NAME: &'static str = "T2_DELIVERY_SYSTEM";
 }

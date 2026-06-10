@@ -4,8 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
-impl super::sealed::Sealed for S2XSatelliteDeliverySystem<'_> {}
-impl ExtensionBodyDef for S2XSatelliteDeliverySystem<'_> {
+impl<'a> ExtensionBodyDef<'a> for S2XSatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x17;
     const NAME: &'static str = "S2X_SATELLITE_DELIVERY_SYSTEM";
 }

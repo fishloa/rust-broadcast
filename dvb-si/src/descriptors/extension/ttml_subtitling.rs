@@ -4,8 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
-impl super::sealed::Sealed for TtmlSubtitling<'_> {}
-impl ExtensionBodyDef for TtmlSubtitling<'_> {
+impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
     const TAG_EXTENSION: u8 = 0x20;
     const NAME: &'static str = "TTML_SUBTITLING";
 }

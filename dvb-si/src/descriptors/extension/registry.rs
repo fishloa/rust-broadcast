@@ -21,11 +21,8 @@
 use std::any::Any;
 use std::collections::HashMap;
 
-use super::{
-    ExtensionBodyDef, ExtensionDescriptor, HEADER_LEN, MIN_BODY_LEN, TAG, TAG_EXTENSION_LEN,
-};
-use crate::error::{Error, Result};
-use dvb_common::Parse;
+use super::{validate_and_split, ExtensionBodyDef, ExtensionDescriptor};
+use crate::error::Result;
 
 // ---------------------------------------------------------------------------
 // ExtensionObject trait
@@ -161,6 +158,13 @@ impl ExtensionRegistry {
         Self::default()
     }
 
+    /// Returns `true` if a custom parser is registered for the given
+    /// `descriptor_tag_extension`.
+    #[must_use]
+    pub fn has_custom(&self, tag_extension: u8) -> bool {
+        self.custom.contains_key(&tag_extension)
+    }
+
     /// Register an owned custom extension body type for its
     /// [`ExtensionBodyDef::TAG_EXTENSION`].
     ///
@@ -174,10 +178,7 @@ impl ExtensionRegistry {
     /// parser (last wins).
     pub fn register<T>(&mut self) -> &mut Self
     where
-        T: ExtensionBodyDef
-            + for<'a> dvb_common::Parse<'a, Error = crate::error::Error>
-            + ExtensionObject
-            + 'static,
+        T: for<'a> ExtensionBodyDef<'a> + ExtensionObject + 'static,
     {
         let tag_ext = T::TAG_EXTENSION;
         self.custom.insert(
@@ -189,56 +190,39 @@ impl ExtensionRegistry {
         self
     }
 
-    /// Parse a full extension_descriptor (tag `0x7F`) byte slice.
-    ///
-    /// Validates the tag, length, and minimum body size (same checks as
-    /// [`ExtensionDescriptor::parse`]).  If the `descriptor_tag_extension`
-    /// has a registered custom parser, returns [`RegisteredExtension::Custom`];
-    /// otherwise returns [`RegisteredExtension::Builtin`] with the standard
-    /// built-in dispatch.
-    pub fn parse<'a>(&self, bytes: &'a [u8]) -> Result<RegisteredExtension<'a>> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ExtensionDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for extension_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ExtensionDescriptor body",
-            });
-        }
-        if length < MIN_BODY_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "body must contain at least the descriptor_tag_extension byte",
-            });
-        }
-        let tag_extension = bytes[HEADER_LEN];
-        let sel = &bytes[HEADER_LEN + TAG_EXTENSION_LEN..end];
-
+    /// Parse the already-split (tag_extension, selector) pair into a
+    /// [`RegisteredExtension`], checking for a registered custom parser first
+    /// and falling back to the built-in dispatch.
+    pub fn parse_body<'a>(
+        &self,
+        tag_extension: u8,
+        selector: &'a [u8],
+    ) -> Result<RegisteredExtension<'a>> {
         if let Some(parse_fn) = self.custom.get(&tag_extension) {
-            let value = parse_fn(sel)?;
+            let value = parse_fn(selector)?;
             Ok(RegisteredExtension::Custom {
                 tag_extension,
                 value,
             })
         } else {
-            Ok(RegisteredExtension::Builtin(ExtensionDescriptor::parse(
-                bytes,
-            )?))
+            let body = super::parse_body(tag_extension, selector)?;
+            Ok(RegisteredExtension::Builtin(ExtensionDescriptor {
+                tag_extension,
+                body,
+            }))
         }
+    }
+
+    /// Parse a full extension_descriptor (tag `0x7F`) byte slice.
+    ///
+    /// Validates the tag, length, and minimum body size (same checks as
+    /// `ExtensionDescriptor::parse`).  If the `descriptor_tag_extension`
+    /// has a registered custom parser, returns [`RegisteredExtension::Custom`];
+    /// otherwise returns [`RegisteredExtension::Builtin`] with the standard
+    /// built-in dispatch.
+    pub fn parse<'a>(&self, bytes: &'a [u8]) -> Result<RegisteredExtension<'a>> {
+        let (tag_extension, sel) = validate_and_split(bytes)?;
+        self.parse_body(tag_extension, sel)
     }
 }
 
@@ -269,7 +253,8 @@ pub enum RegisteredExtension<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::descriptors::extension::ExtensionBodyDef;
+    use crate::descriptors::extension::{ExtensionBodyDef, TAG, TAG_EXTENSION_LEN};
+    use crate::error::Error;
 
     const TEST_TAG_EXTENSION: u8 = 0x40;
 
@@ -279,9 +264,7 @@ mod tests {
         payload: Vec<u8>,
     }
 
-    impl super::super::sealed::Sealed for MyExtBody {}
-
-    impl ExtensionBodyDef for MyExtBody {
+    impl<'a> ExtensionBodyDef<'a> for MyExtBody {
         const TAG_EXTENSION: u8 = TEST_TAG_EXTENSION;
         const NAME: &'static str = "MY_EXT_BODY";
     }

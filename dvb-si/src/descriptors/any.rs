@@ -286,6 +286,46 @@ pub fn parse_loop(bytes: &[u8]) -> DescriptorIter<'_> {
     }
 }
 
+/// Extract the next descriptor-loop entry (tag + full-entry slice) from the
+/// raw byte stream. Shared by [`DescriptorIter::next`] and
+/// [`RegistryIter::next`](crate::descriptors::registry::RegistryIter::next).
+///
+/// On success, advances `pos` past the entry and returns `(tag, full)`.
+/// On truncation, sets `fused = true` and returns `Some(Err(..))`.
+/// When the loop is exhausted, returns `None`.
+pub(crate) fn next_loop_entry<'a>(
+    bytes: &'a [u8],
+    pos: &mut usize,
+    fused: &mut bool,
+) -> Option<crate::Result<(u8, &'a [u8])>> {
+    if *fused || *pos >= bytes.len() {
+        return None;
+    }
+    let rem = &bytes[*pos..];
+    if rem.len() < 2 {
+        *fused = true;
+        return Some(Err(crate::Error::BufferTooShort {
+            need: 2,
+            have: rem.len(),
+            what: "descriptor header in loop",
+        }));
+    }
+    let tag = rem[0];
+    let len = rem[1] as usize;
+    let total = 2 + len;
+    if rem.len() < total {
+        *fused = true;
+        return Some(Err(crate::Error::BufferTooShort {
+            need: total,
+            have: rem.len(),
+            what: "descriptor body in loop",
+        }));
+    }
+    let full = &rem[..total];
+    *pos += total;
+    Some(Ok((tag, full)))
+}
+
 /// Iterator over a raw descriptor loop; see [`parse_loop`].
 #[derive(Debug, Clone)]
 pub struct DescriptorIter<'a> {
@@ -298,34 +338,11 @@ impl<'a> Iterator for DescriptorIter<'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.fused || self.pos >= self.bytes.len() {
-            return None;
-        }
-        let rem = &self.bytes[self.pos..];
-        if rem.len() < 2 {
-            self.fused = true;
-            return Some(Err(crate::Error::BufferTooShort {
-                need: 2,
-                have: rem.len(),
-                what: "descriptor header in loop",
-            }));
-        }
-        let tag = rem[0];
-        let len = rem[1] as usize;
-        let total = 2 + len;
-        if rem.len() < total {
-            self.fused = true;
-            return Some(Err(crate::Error::BufferTooShort {
-                need: total,
-                have: rem.len(),
-                what: "descriptor body in loop",
-            }));
-        }
-        let full = &rem[..total];
-        self.pos += total;
+        let (tag, full) = match next_loop_entry(self.bytes, &mut self.pos, &mut self.fused)? {
+            Ok(v) => v,
+            Err(e) => return Some(Err(e)),
+        };
         Some(match AnyDescriptor::dispatch(tag, full) {
-            // Ok(typed) or Err(typed parse error) — either way, the length
-            // field already advanced `pos`, so iteration continues.
             Some(res) => res,
             None => Ok(AnyDescriptor::Unknown {
                 tag,
@@ -400,6 +417,27 @@ impl<'a> DescriptorLoop<'a> {
         registry: &'r crate::descriptors::registry::DescriptorRegistry,
     ) -> crate::descriptors::registry::RegistryIter<'r, 'a> {
         registry.parse_loop(self.0)
+    }
+
+    /// Walk this loop through both a [`DescriptorRegistry`](crate::descriptors::registry::DescriptorRegistry) and an
+    /// [`ExtensionRegistry`](crate::descriptors::extension::registry::ExtensionRegistry),
+    /// so that custom-registered extension bodies (tag `0x7F` with a known
+    /// `descriptor_tag_extension`) are surfaced as
+    /// [`ExtIterItem::CustomExtension`](crate::descriptors::registry::ExtIterItem::CustomExtension) with the type-erased value available
+    /// for downcast. All other descriptors follow the normal
+    /// [`iter_with`](Self::iter_with) precedence.
+    ///
+    /// This is the only way to reach private extension bodies during a
+    /// descriptor-loop walk; [`iter_with`](Self::iter_with) alone produces
+    /// the built-in [`ExtensionBody::Raw`](crate::descriptors::extension::ExtensionBody::Raw)
+    /// for unrecognised `descriptor_tag_extension` values.
+    #[must_use]
+    pub fn iter_with_extensions<'r>(
+        &self,
+        desc_reg: &'r crate::descriptors::registry::DescriptorRegistry,
+        ext_reg: &'r crate::descriptors::extension::registry::ExtensionRegistry,
+    ) -> crate::descriptors::registry::ExtRegistryIter<'r, 'a> {
+        crate::descriptors::registry::ExtRegistryIter::new(desc_reg, ext_reg, self.0)
     }
 }
 

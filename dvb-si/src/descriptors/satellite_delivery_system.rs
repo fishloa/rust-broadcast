@@ -54,6 +54,7 @@ pub enum ModulationType {
 /// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum RollOff {
     /// 0.35 (DVB-S default).
     Alpha035,
@@ -61,8 +62,8 @@ pub enum RollOff {
     Alpha025,
     /// 0.20 (DVB-S2 narrow).
     Alpha020,
-    /// Reserved -- do not emit.
-    Reserved,
+    /// Reserved — carries the raw 2-bit value for forward compatibility.
+    Reserved(u8),
 }
 
 /// Satellite Delivery System Descriptor.
@@ -211,7 +212,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             0 => RollOff::Alpha035,
             1 => RollOff::Alpha025,
             2 => RollOff::Alpha020,
-            _ => RollOff::Reserved,
+            v => RollOff::Reserved(v),
         };
 
         let mod_sys_raw = (flags >> 2) & 0x01;
@@ -291,7 +292,7 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
                 RollOff::Alpha035 => 0x00,
                 RollOff::Alpha025 => 0x08,
                 RollOff::Alpha020 => 0x10,
-                RollOff::Reserved => 0x18,
+                RollOff::Reserved(v) => (v & 0x03) << 3,
             };
         }
         flags |= match self.modulation_system {
@@ -427,7 +428,7 @@ mod tests {
             (0x00, RollOff::Alpha035),
             (0x08, RollOff::Alpha025),
             (0x10, RollOff::Alpha020),
-            (0x18, RollOff::Reserved),
+            (0x18, RollOff::Reserved(3)),
         ];
 
         for (offset, expected_roll) in roll_pairs {
@@ -518,5 +519,28 @@ mod tests {
 
         let reparsed = SatelliteDeliverySystemDescriptor::parse(&buf).unwrap();
         assert_eq!(desc, reparsed);
+    }
+
+    /// Reserved roll-off value round-trips with its raw 2-bit value preserved.
+    #[test]
+    fn reserved_roll_off_round_trips() {
+        let desc = SatelliteDeliverySystemDescriptor {
+            frequency_bcd: 0x11725000,
+            orbital_position_bcd: 0x1920,
+            east: true,
+            polarization: Polarization::CircularRight,
+            roll_off: RollOff::Reserved(3),
+            modulation_system: ModulationSystem::DvbS2,
+            modulation_type: ModulationType::Psk8,
+            symbol_rate_bcd: 0x027500,
+            fec_inner: 5,
+        };
+
+        let mut buf = vec![0u8; desc.serialized_len()];
+        desc.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[8] & 0x18, 0x18); // roll_off bits = 0b11
+
+        let reparsed = SatelliteDeliverySystemDescriptor::parse(&buf).unwrap();
+        assert_eq!(reparsed.roll_off, RollOff::Reserved(3));
     }
 }

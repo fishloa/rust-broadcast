@@ -1,8 +1,7 @@
 //! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
 
-impl super::sealed::Sealed for C2BundleDeliverySystem {}
-impl ExtensionBodyDef for C2BundleDeliverySystem {
+impl<'a> ExtensionBodyDef<'a> for C2BundleDeliverySystem {
     const TAG_EXTENSION: u8 = 0x16;
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }
