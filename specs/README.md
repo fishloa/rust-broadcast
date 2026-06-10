@@ -33,6 +33,7 @@ provenance-documented hand transcriptions under `*/docs/` are committed.
 | `etsi_tr_101_211_v01.09.01_dvb_si_guidelines.pdf` | TR 101 211 v1.9.1 — SI implementation guidelines | `dvb-si` (SI repetition rates — packetizer/SiMux #56, conformance #57) |
 | `ansi_scte_35_2023r1_dpi_cueing.pdf` | ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message | planned `dvb-scte35` (#58); tables in `dvb-scte35/docs/scte_35.md` |
 | `dvb_a001r18_draft_ts_101_154_v02.07.01_av_coding.pdf` | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding in broadcast/broadband | `dvb-si` (component/AC-4/audio-preselection semantics, #53) |
+| `etsi_ts_103_190_2_v01.03.01_ac4.pdf` | TS 103 190-2 v1.3.1 — AC-4 immersive/personalized audio | `dvb-si` (AC-4 descriptor `ac4_toc` structure §6.2.1 — deferred typing, #102) |
 
 Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf
