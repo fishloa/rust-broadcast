@@ -113,6 +113,9 @@ impl dyn ExtensionObject {
 ///
 /// Delegates to [`erased_serde::serialize`] so the concrete type's
 /// `serde::Serialize` impl is invoked through the trait object.
+///
+/// The `&Box<T>` is required by serde's `serialize_with` codegen — the field
+/// type is `Box<dyn ExtensionObject>` so serde passes `&Box<dyn ExtensionObject>`.
 #[cfg(feature = "serde")]
 #[allow(clippy::borrowed_box)]
 pub(crate) fn serialize_erased<S: serde::Serializer>(
