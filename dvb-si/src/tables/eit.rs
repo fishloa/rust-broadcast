@@ -540,4 +540,97 @@ mod tests {
         assert_eq!(dt.minute(), 34);
         assert_eq!(dt.second(), 56);
     }
+
+    #[test]
+    fn parse_rejects_wrong_tag() {
+        let bytes = build_eit(0x00, 1, 0, 0x20, 0x30, &[]);
+        let err = EitSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::UnexpectedTableId { table_id: 0x00, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_truncated_header() {
+        let bytes = [0x4Eu8, 0xF0, 0x00];
+        let err = EitSection::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                need: 18,
+                have: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_event_descriptor_loop_overflow() {
+        let section_length: u16 =
+            (EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + EVENT_HEADER_LEN + CRC_LEN) as u16;
+        let mut v = Vec::new();
+        v.push(TABLE_ID_PF_ACTUAL);
+        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
+        v.push((section_length & 0xFF) as u8);
+        v.extend_from_slice(&1u16.to_be_bytes());
+        v.push(0xC1);
+        v.push(0);
+        v.push(0);
+        v.extend_from_slice(&0x0020u16.to_be_bytes());
+        v.extend_from_slice(&0x0030u16.to_be_bytes());
+        v.push(0);
+        v.push(TABLE_ID_PF_ACTUAL);
+        v.extend_from_slice(&1u16.to_be_bytes());
+        v.extend_from_slice(&[0u8; 5]);
+        v.extend_from_slice(&[0u8; 3]);
+        v.push(0x00);
+        v.push(0x0A);
+        v.extend_from_slice(&[0u8; 4]);
+        // descriptor_loop_length=10 but events_end is at the CRC start:
+        // the declared 10 bytes overflow past the CRC boundary.
+        let err = EitSection::parse(&v).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::SectionLengthOverflow { declared: 10, .. }
+        ));
+    }
+
+    #[test]
+    fn structured_fields_segment_and_last_table_id_preserved() {
+        let desc: [u8; 2] = [0x54, 0x00];
+        let bytes = build_eit(
+            TABLE_ID_SCHEDULE_ACTUAL_FIRST,
+            0x0100,
+            7,
+            0x0020,
+            0x0030,
+            &[(
+                42,
+                [0xDF, 0xA1, 0x12, 0x34, 0x56],
+                [0x00, 0x30, 0x00],
+                4,
+                false,
+                desc.to_vec(),
+            )],
+        );
+        let eit = EitSection::parse(&bytes).unwrap();
+        assert_eq!(eit.kind, EitKind::ScheduleActual);
+        assert_eq!(eit.table_id, TABLE_ID_SCHEDULE_ACTUAL_FIRST);
+        assert_eq!(eit.service_id, 0x0100);
+        assert_eq!(eit.version_number, 7);
+        assert!(eit.current_next_indicator);
+        assert_eq!(eit.section_number, 0);
+        assert_eq!(eit.last_section_number, 0);
+        assert_eq!(eit.transport_stream_id, 0x0020);
+        assert_eq!(eit.original_network_id, 0x0030);
+        assert_eq!(eit.segment_last_section_number, 0);
+        assert_eq!(eit.last_table_id, TABLE_ID_SCHEDULE_ACTUAL_FIRST);
+        assert_eq!(eit.events.len(), 1);
+        assert_eq!(eit.events[0].event_id, 42);
+        assert_eq!(eit.events[0].running_status, 4);
+        assert!(!eit.events[0].free_ca_mode);
+        // 12-bit descriptor loop length decoded correctly: 2 bytes of desc.
+        assert_eq!(eit.events[0].descriptors.raw(), &desc[..]);
+    }
 }
