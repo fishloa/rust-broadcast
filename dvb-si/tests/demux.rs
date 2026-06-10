@@ -151,3 +151,60 @@ fn scenario5_garbage_packet_no_panic() {
     assert_eq!(demux.feed(&[0u8; TS_PACKET_SIZE]).count(), 0);
     assert_eq!(demux.stats().malformed_packets, 1);
 }
+
+/// Build a TOT section (table_id 0x73) with a real CRC-32/MPEG-2,
+/// no descriptors, and a known UTC time. SSI=0 per EN 300 468 §5.2.6.
+fn tot_section() -> Vec<u8> {
+    let utc_time: [u8; 5] = [0xE4, 0x09, 0x12, 0x34, 0x56];
+    let section_length: u16 = 11;
+    let mut v = Vec::new();
+    v.push(0x73);
+    v.push(0x70 | ((section_length >> 8) as u8 & 0x0F));
+    v.push((section_length & 0xFF) as u8);
+    v.extend_from_slice(&utc_time);
+    v.push(0xF0);
+    v.push(0x00);
+    let crc = dvb_common::crc32_mpeg2::compute(&v);
+    v.extend_from_slice(&crc.to_be_bytes());
+    v
+}
+
+#[test]
+fn tot_crc_validated_emitted_and_corrupted_dropped() {
+    let mut demux = SiDemux::builder().build();
+
+    // Valid TOT with canonical CRC → emitted.
+    let valid = tot_section();
+    assert_eq!(
+        demux.feed(&ts_packet(0x0014, &valid)).count(),
+        1,
+        "valid TOT must emit"
+    );
+    assert_eq!(demux.stats().crc_failures, 0);
+
+    // Verify the emitted event is a TotSection with correct UTC time.
+    let valid_pkt = ts_packet(0x0014, &valid);
+    let events: Vec<_> = SiDemux::builder().build().feed(&valid_pkt).collect();
+    assert_eq!(events.len(), 1);
+    match events[0].table_section().unwrap() {
+        AnyTableSection::TotSection(tot) => {
+            assert_eq!(tot.utc_time_raw, [0xE4, 0x09, 0x12, 0x34, 0x56]);
+        }
+        other => panic!("expected TotSection, got {other:?}"),
+    }
+    assert_eq!(events[0].pid(), Pid::new(0x0014));
+
+    // Corrupt the CRC → dropped, crc_failures incremented.
+    let mut bad = valid;
+    let crc_pos = bad.len() - 4;
+    bad[crc_pos + 3] ^= 0xFF;
+    assert_eq!(
+        demux.feed(&ts_packet(0x0014, &bad)).count(),
+        0,
+        "corrupted TOT must not emit"
+    );
+    assert_eq!(demux.stats().crc_failures, 1);
+    // emitted still 1 (only the valid one counted).
+    assert_eq!(demux.stats().emitted, 1);
+    assert_eq!(demux.stats().sections_completed, 2);
+}
