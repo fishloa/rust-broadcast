@@ -5,6 +5,7 @@
 //! in the adaptation field private_data (Table 14: announcement_switching_data,
 //! AU_information, PVR_assist_information). We carry the raw flag byte.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -27,36 +28,20 @@ pub struct AdaptationFieldDataDescriptor {
 impl<'a> Parse<'a> for AdaptationFieldDataDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "AdaptationFieldDataDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for adaptation_field_data_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "AdaptationFieldDataDescriptor",
+            "unexpected tag for adaptation_field_data_descriptor",
+        )?;
+        if body.len() != BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "adaptation_field_data_descriptor length must be exactly 1",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "AdaptationFieldDataDescriptor body",
-            });
-        }
         Ok(Self {
-            adaptation_field_data_identifier: bytes[HEADER_LEN],
+            adaptation_field_data_identifier: body[0],
         })
     }
 }

@@ -14,6 +14,7 @@
 //! length fields are derived from slice length on serialize and ERROR on
 //! over-range rather than truncating (crate idiom).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -61,35 +62,18 @@ pub struct TelephoneDescriptor<'a> {
 impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "TelephoneDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for telephone_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < FIXED_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TelephoneDescriptor",
+            "unexpected tag for telephone_descriptor",
+        )?;
+        if body.len() < FIXED_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "telephone_descriptor length too short for fixed fields",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "TelephoneDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
         // reserved bits ignored on parse (EN 300 468 §5.1).
         let foreign_availability = body[0] & FOREIGN_AVAIL_MASK != 0;
         let connection_type = body[0] & CONNECTION_TYPE_MASK;

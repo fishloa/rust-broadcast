@@ -1,5 +1,6 @@
 //! Bouquet Name Descriptor — ETSI EN 300 468 §6.2.6 (tag 0x47).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use crate::traits::Descriptor;
@@ -24,35 +25,9 @@ pub struct BouquetNameDescriptor<'a> {
 impl<'a> Parse<'a> for BouquetNameDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "bouquet name descriptor header",
-            });
-        }
-
-        let tag = bytes[0];
-        if tag != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag,
-                reason: "expected tag 0x47",
-            });
-        }
-
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "bouquet name descriptor payload",
-            });
-        }
-
+        let body = descriptor_body(bytes, TAG, "BouquetNameDescriptor", "expected tag 0x47")?;
         Ok(BouquetNameDescriptor {
-            bouquet_name: DvbText::new(&bytes[HEADER_LEN..total]),
+            bouquet_name: DvbText::new(body),
         })
     }
 }

@@ -13,6 +13,7 @@
 //! Reserved bits are ignored on parse and emitted as 1s on serialize (matching
 //! the `reserved_future_use` convention used elsewhere in this crate).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -42,45 +43,24 @@ pub struct PartialTransportStreamDescriptor {
 impl<'a> Parse<'a> for PartialTransportStreamDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "PartialTransportStreamDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for partial_transport_stream_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "PartialTransportStreamDescriptor body",
-            });
-        }
-        if length != BODY_LEN as usize {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "PartialTransportStreamDescriptor",
+            "unexpected tag for partial_transport_stream_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "partial_transport_stream_descriptor length must equal 8",
             });
         }
-        let b = HEADER_LEN;
-        // reserved(2) + peak_rate(22): top 2 bits of byte 0 are reserved.
-        let peak_rate = (u32::from(bytes[b] & 0x3F) << 16)
-            | (u32::from(bytes[b + 1]) << 8)
-            | u32::from(bytes[b + 2]);
-        let minimum_overall_smoothing_rate = (u32::from(bytes[b + 3] & 0x3F) << 16)
-            | (u32::from(bytes[b + 4]) << 8)
-            | u32::from(bytes[b + 5]);
-        // reserved(2) + maximum_overall_smoothing_buffer(14).
+        let peak_rate =
+            (u32::from(body[0] & 0x3F) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
+        let minimum_overall_smoothing_rate =
+            (u32::from(body[3] & 0x3F) << 16) | (u32::from(body[4]) << 8) | u32::from(body[5]);
         let maximum_overall_smoothing_buffer =
-            (u16::from(bytes[b + 6] & 0x3F) << 8) | u16::from(bytes[b + 7]);
+            (u16::from(body[6] & 0x3F) << 8) | u16::from(body[7]);
         Ok(Self {
             peak_rate,
             minimum_overall_smoothing_rate,

@@ -2,6 +2,7 @@
 //!
 //! Carried inside EIT. Per-country minimum-age rating for the event.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -44,46 +45,24 @@ pub struct ParentalRatingDescriptor {
 impl<'a> Parse<'a> for ParentalRatingDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ParentalRatingDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for parental_rating_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ParentalRatingDescriptor body",
-            });
-        }
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ParentalRatingDescriptor",
+            "unexpected tag for parental_rating_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_body_length is not a multiple of 4",
             });
         }
-        let body_start = HEADER_LEN;
-        let num_entries = length / ENTRY_LEN;
+        let num_entries = body.len() / ENTRY_LEN;
         let mut entries = Vec::with_capacity(num_entries);
-        for i in 0..num_entries {
-            let entry_start = body_start + i * ENTRY_LEN;
+        for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(RatingEntry {
-                country_code: LangCode([
-                    bytes[entry_start],
-                    bytes[entry_start + 1],
-                    bytes[entry_start + 2],
-                ]),
-                rating: bytes[entry_start + 3],
+                country_code: LangCode([chunk[0], chunk[1], chunk[2]]),
+                rating: chunk[3],
             });
         }
         Ok(Self { entries })

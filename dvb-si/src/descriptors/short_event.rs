@@ -3,6 +3,7 @@
 //! Carried inside EIT. Gives the event's title and brief description in a
 //! single language.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -29,61 +30,39 @@ pub struct ShortEventDescriptor<'a> {
 impl<'a> Parse<'a> for ShortEventDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ShortEventDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for short_event_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ShortEventDescriptor body",
-            });
-        }
-        if length < LANG_LEN + 2 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ShortEventDescriptor",
+            "unexpected tag for short_event_descriptor",
+        )?;
+        if body.len() < LANG_LEN + 2 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "short_event_descriptor body shorter than minimum 5 bytes",
             });
         }
-        let body_start = HEADER_LEN;
-        let language_code = LangCode([
-            bytes[body_start],
-            bytes[body_start + 1],
-            bytes[body_start + 2],
-        ]);
-        let name_len_pos = body_start + LANG_LEN;
-        let name_len = bytes[name_len_pos] as usize;
-        let name_start = name_len_pos + 1;
+        let language_code = LangCode([body[0], body[1], body[2]]);
+        let name_len = body[LANG_LEN] as usize;
+        let name_start = LANG_LEN + 1;
         let name_end = name_start + name_len;
-        if name_end + 1 > end {
+        if name_end + 1 > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "event_name_length runs past descriptor end",
             });
         }
-        let event_name = DvbText::new(&bytes[name_start..name_end]);
-        let text_len = bytes[name_end] as usize;
+        let event_name = DvbText::new(&body[name_start..name_end]);
+        let text_len = body[name_end] as usize;
         let text_start = name_end + 1;
         let text_end = text_start + text_len;
-        if text_end > end {
+        if text_end > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = DvbText::new(&bytes[text_start..text_end]);
+        let text = DvbText::new(&body[text_start..text_end]);
         Ok(Self {
             language_code,
             event_name,

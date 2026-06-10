@@ -4,6 +4,7 @@
 //! `format_identifier`. Optionally followed by additional identification
 //! information.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -33,35 +34,18 @@ impl<'a> Parse<'a> for RegistrationDescriptor<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "RegistrationDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for registration_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < FORMAT_IDENTIFIER_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "RegistrationDescriptor",
+            "unexpected tag for registration_descriptor",
+        )?;
+        if body.len() < FORMAT_IDENTIFIER_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "registration_descriptor length too short for format_identifier",
             });
         }
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "RegistrationDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..total];
         let mut format_identifier = [0u8; FORMAT_IDENTIFIER_LEN];
         format_identifier.copy_from_slice(&body[..FORMAT_IDENTIFIER_LEN]);
         let additional_identification_info = &body[FORMAT_IDENTIFIER_LEN..];

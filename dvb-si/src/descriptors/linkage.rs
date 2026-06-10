@@ -13,6 +13,7 @@
 //! have no EN 300 468 conditional block; their bytes after the fixed fields
 //! are the `private_data_byte` tail.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -509,40 +510,23 @@ const LINKAGE_TYPES_WITH_OTHER: &[u8] = &[0x09, 0x0A, 0x0B, 0x0C, 0x20, 0x21];
 impl<'a> Parse<'a> for LinkageDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "LinkageDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for linkage_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "LinkageDescriptor body",
-            });
-        }
-        if length < FIXED_FIELDS_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "LinkageDescriptor",
+            "unexpected tag for linkage_descriptor",
+        )?;
+        if body.len() < FIXED_FIELDS_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "linkage_descriptor body shorter than minimum 7 bytes",
             });
         }
-        let bs = HEADER_LEN;
-        let transport_stream_id = u16::from_be_bytes([bytes[bs], bytes[bs + 1]]);
-        let original_network_id = u16::from_be_bytes([bytes[bs + 2], bytes[bs + 3]]);
-        let service_id = u16::from_be_bytes([bytes[bs + 4], bytes[bs + 5]]);
-        let linkage_type = bytes[bs + 6];
-        let tail = &bytes[bs + FIXED_FIELDS_LEN..end];
+        let transport_stream_id = u16::from_be_bytes([body[0], body[1]]);
+        let original_network_id = u16::from_be_bytes([body[2], body[3]]);
+        let service_id = u16::from_be_bytes([body[4], body[5]]);
+        let linkage_type = body[6];
+        let tail = &body[FIXED_FIELDS_LEN..];
         let tail_len = tail.len();
 
         let (linkage_data, private_data) = match linkage_type {

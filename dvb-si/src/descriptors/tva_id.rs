@@ -7,6 +7,7 @@
 //! defined in Table 115 (0=reserved, 1=not yet running, 2=starts shortly,
 //! 3=paused, 4=running, 5=cancelled, 6=completed, 7=reserved).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -40,36 +41,19 @@ pub struct TvaIdDescriptor {
 impl<'a> Parse<'a> for TvaIdDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "TvaIdDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for TVA_id_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "TvaIdDescriptor body",
-            });
-        }
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TvaIdDescriptor",
+            "unexpected tag for TVA_id_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "TVA_id_descriptor length must be a multiple of 3",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let tva_id = u16::from_be_bytes([chunk[0], chunk[1]]);
             // Reserved(5) ignored on parse.

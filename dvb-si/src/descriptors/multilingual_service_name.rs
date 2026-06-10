@@ -4,6 +4,7 @@
 //! an ISO 639-2 language code plus TWO length-prefixed strings: the service
 //! provider name and the service name.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -40,61 +41,43 @@ pub struct MultilingualServiceNameDescriptor<'a> {
 impl<'a> Parse<'a> for MultilingualServiceNameDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "MultilingualServiceNameDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for multilingual_service_name_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "MultilingualServiceNameDescriptor body",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "MultilingualServiceNameDescriptor",
+            "unexpected tag for multilingual_service_name_descriptor",
+        )?;
         let mut entries = Vec::new();
-        let mut pos = HEADER_LEN;
-        while pos < end {
-            // lang(3) + provider_name_length(1) must fit.
-            if pos + LANG_LEN + LEN_FIELD > end {
+        let mut pos = 0;
+        while pos < body.len() {
+            if pos + LANG_LEN + LEN_FIELD > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
+            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
             let provider_len_pos = pos + LANG_LEN;
-            let provider_len = bytes[provider_len_pos] as usize;
+            let provider_len = body[provider_len_pos] as usize;
             let provider_start = provider_len_pos + LEN_FIELD;
             let provider_end = provider_start + provider_len;
-            // Need provider name + service_name_length field to still fit.
-            if provider_end + LEN_FIELD > end {
+            if provider_end + LEN_FIELD > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "service_provider_name_length runs past descriptor end",
                 });
             }
-            let service_provider_name = DvbText::new(&bytes[provider_start..provider_end]);
-            let service_len = bytes[provider_end] as usize;
+            let service_provider_name = DvbText::new(&body[provider_start..provider_end]);
+            let service_len = body[provider_end] as usize;
             let service_start = provider_end + LEN_FIELD;
             let service_end = service_start + service_len;
-            if service_end > end {
+            if service_end > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "service_name_length runs past descriptor end",
                 });
             }
-            let service_name = DvbText::new(&bytes[service_start..service_end]);
+            let service_name = DvbText::new(&body[service_start..service_end]);
             entries.push(ServiceNameEntry {
                 language_code,
                 service_provider_name,

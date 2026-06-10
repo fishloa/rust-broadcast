@@ -5,6 +5,7 @@
 //! Each entry specifies a type and a location indicator that determines
 //! whether the CRID is carried inline or as a reference.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -59,34 +60,17 @@ pub struct ContentIdentifierDescriptor<'a> {
 impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ContentIdentifierDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for ContentIdentifierDescriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ContentIdentifierDescriptor body",
-            });
-        }
-        if length == 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ContentIdentifierDescriptor",
+            "unexpected tag for ContentIdentifierDescriptor",
+        )?;
+        if body.is_empty() {
             return Ok(Self {
                 entries: Vec::new(),
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         let mut entries = Vec::new();
         let mut pos = 0;
         while pos < body.len() {

@@ -4,6 +4,7 @@
 //! first payload byte (Table 95 / Table 96 coding), followed by an arbitrary
 //! number of `DVB_reserved` bytes carried raw.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -30,38 +31,22 @@ pub struct ShortSmoothingBufferDescriptor<'a> {
 impl<'a> Parse<'a> for ShortSmoothingBufferDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ShortSmoothingBufferDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for short_smoothing_buffer_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ShortSmoothingBufferDescriptor body",
-            });
-        }
-        if length < FIXED_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ShortSmoothingBufferDescriptor",
+            "unexpected tag for short_smoothing_buffer_descriptor",
+        )?;
+        if body.len() < FIXED_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "short_smoothing_buffer_descriptor body shorter than 1 byte",
             });
         }
-        let packed = bytes[HEADER_LEN];
-        let sb_size = packed >> 6; // 2-bit field
-        let sb_leak_rate = packed & 0x3F; // 6-bit field
-        let dvb_reserved = &bytes[HEADER_LEN + FIXED_LEN..end];
+        let packed = body[0];
+        let sb_size = packed >> 6;
+        let sb_leak_rate = packed & 0x3F;
+        let dvb_reserved = &body[FIXED_LEN..];
         Ok(Self {
             sb_size,
             sb_leak_rate,

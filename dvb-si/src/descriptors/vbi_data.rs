@@ -12,6 +12,7 @@
 //! as a borrowed `&[u8]` per house convention — its meaning is selected by
 //! `data_service_id`, so per-byte typing would be fragile (Table 106/107).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -51,29 +52,12 @@ pub struct VbiDataDescriptor<'a> {
 impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "VbiDataDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for VBI_data_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "VbiDataDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "VbiDataDescriptor",
+            "unexpected tag for VBI_data_descriptor",
+        )?;
         let mut entries = Vec::new();
         let mut pos = 0;
         while pos < body.len() {

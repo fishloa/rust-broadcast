@@ -3,6 +3,7 @@
 //! Carried inside the TOT (Time Offset Table) on PID 0x0014. Signals per-
 //! country offsets from UTC plus any upcoming DST transition.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -142,48 +143,29 @@ pub struct LocalTimeOffsetDescriptor {
 impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "LocalTimeOffsetDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for local_time_offset_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "LocalTimeOffsetDescriptor",
+            "unexpected tag for local_time_offset_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 13",
             });
         }
-        let body_start = HEADER_LEN;
-        let body_end = body_start + length;
-        if bytes.len() < body_end {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "LocalTimeOffsetDescriptor body",
-            });
-        }
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
-        let mut offset = body_start;
-        while offset < body_end {
-            let country_code = LangCode([bytes[offset], bytes[offset + 1], bytes[offset + 2]]);
-            let flags = bytes[offset + 3];
-            // The reserved bit is ignored on parse (EN 300 468 §5.1: decoders
-            // shall ignore reserved bits).
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
+        let mut offset = 0;
+        while offset < body.len() {
+            let country_code = LangCode([body[offset], body[offset + 1], body[offset + 2]]);
+            let flags = body[offset + 3];
             let country_region_id = (flags & REGION_ID_MASK) >> 2;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
-            let local_time_offset_bcd = u16::from_be_bytes([bytes[offset + 4], bytes[offset + 5]]);
+            let local_time_offset_bcd = u16::from_be_bytes([body[offset + 4], body[offset + 5]]);
             let mut time_of_change_raw = [0u8; 5];
-            time_of_change_raw.copy_from_slice(&bytes[offset + 6..offset + 11]);
-            let next_time_offset_bcd = u16::from_be_bytes([bytes[offset + 11], bytes[offset + 12]]);
+            time_of_change_raw.copy_from_slice(&body[offset + 6..offset + 11]);
+            let next_time_offset_bcd = u16::from_be_bytes([body[offset + 11], body[offset + 12]]);
             entries.push(LocalTimeOffsetEntry {
                 country_code,
                 country_region_id,

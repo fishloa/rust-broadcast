@@ -5,6 +5,7 @@
 //! (ASCII), per ts_102_809_apps.md "Table 39 — Service identifier descriptor"
 //! (PDF p. 62).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -25,30 +26,14 @@ pub struct ServiceIdentifierDescriptor<'a> {
 impl<'a> Parse<'a> for ServiceIdentifierDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ServiceIdentifierDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for service_identifier_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ServiceIdentifierDescriptor body",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ServiceIdentifierDescriptor",
+            "unexpected tag for service_identifier_descriptor",
+        )?;
         Ok(Self {
-            textual_service_identifier: &bytes[HEADER_LEN..end],
+            textual_service_identifier: body,
         })
     }
 }

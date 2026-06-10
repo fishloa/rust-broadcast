@@ -5,6 +5,8 @@ use crate::text::DvbText;
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
+use super::descriptor_body;
+
 /// Wire tag for the Network Name Descriptor.
 pub const TAG: u8 = 0x40;
 
@@ -24,35 +26,14 @@ pub struct NetworkNameDescriptor<'a> {
 impl<'a> Parse<'a> for NetworkNameDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "network name descriptor header",
-            });
-        }
-
-        let tag = bytes[0];
-        if tag != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag,
-                reason: "expected tag 0x40",
-            });
-        }
-
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "network name descriptor payload",
-            });
-        }
-
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "NetworkNameDescriptor",
+            "unexpected tag for network_name_descriptor",
+        )?;
         Ok(NetworkNameDescriptor {
-            network_name: DvbText::new(&bytes[HEADER_LEN..total]),
+            network_name: DvbText::new(body),
         })
     }
 }

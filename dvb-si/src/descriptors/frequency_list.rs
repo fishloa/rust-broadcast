@@ -4,6 +4,7 @@
 //! Enumerates alternative centre frequencies on which the TS can be found,
 //! for handover when coverage changes.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -111,49 +112,23 @@ impl FrequencyListDescriptor {
 impl<'a> Parse<'a> for FrequencyListDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "FrequencyListDescriptor header",
-            });
-        }
+        let body = descriptor_body(bytes, TAG, "FrequencyListDescriptor", "expected tag 0x62")?;
 
-        let tag = bytes[0];
-        if tag != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag,
-                reason: "expected tag 0x62",
-            });
-        }
-
-        let body_length = bytes[1] as usize;
-
-        if body_length < CODING_BYTE_LEN {
+        if body.len() < CODING_BYTE_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body too short (need at least coding_type byte)",
             });
         }
 
-        if (body_length - CODING_BYTE_LEN) % ENTRY_LEN != 0 {
+        if (body.len() - CODING_BYTE_LEN) % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body length minus coding byte must be multiple of 4",
             });
         }
 
-        let body_start = HEADER_LEN;
-        let total_needed = body_start + body_length;
-        if bytes.len() < total_needed {
-            return Err(Error::BufferTooShort {
-                need: total_needed,
-                have: bytes.len(),
-                what: "FrequencyListDescriptor body",
-            });
-        }
-
-        let coding_byte = bytes[body_start];
+        let coding_byte = body[0];
         // Top 6 bits are reserved_future_use — ignored on parse
         // (EN 300 468 §5.1: decoders shall ignore reserved bits).
         let coding_type_value = coding_byte & CODING_TYPE_MASK;
@@ -164,13 +139,13 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
             _ => CodingType::Terrestrial,
         };
 
-        let entry_count = (body_length - CODING_BYTE_LEN) / ENTRY_LEN;
+        let entry_count = (body.len() - CODING_BYTE_LEN) / ENTRY_LEN;
         let mut centre_frequencies_bcd = Vec::with_capacity(entry_count);
 
-        let mut offset = body_start + CODING_BYTE_LEN;
+        let mut offset = CODING_BYTE_LEN;
         for _ in 0..entry_count {
             let mut entry = [0u8; ENTRY_LEN];
-            entry.copy_from_slice(&bytes[offset..offset + ENTRY_LEN]);
+            entry.copy_from_slice(&body[offset..offset + ENTRY_LEN]);
             centre_frequencies_bcd.push(entry);
             offset += ENTRY_LEN;
         }

@@ -12,6 +12,7 @@
 //! xait_update_policy values (Table 97, p. 185): 0 = reload immediately on
 //! version change, 1 = ignore version changes until reset, 2..=7 reserved.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -43,35 +44,18 @@ pub struct XaitLocationDescriptor {
 impl<'a> Parse<'a> for XaitLocationDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "XaitLocationDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for xait_location_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "XaitLocationDescriptor body",
-            });
-        }
-        if length < BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "XaitLocationDescriptor",
+            "unexpected tag for xait_location_descriptor",
+        )?;
+        if body.len() < BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "xait_location_descriptor body shorter than 5 bytes",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         let xait_original_network_id = u16::from_be_bytes([body[0], body[1]]);
         let xait_service_id = u16::from_be_bytes([body[2], body[3]]);
         let xait_version_number = (body[4] >> 3) & VERSION_MAX;

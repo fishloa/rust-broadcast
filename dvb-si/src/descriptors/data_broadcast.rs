@@ -4,6 +4,7 @@
 //! data_broadcast_id, the component_tag tying it to a stream_identifier, a raw
 //! selector tail, plus a localised text description in one language.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -39,66 +40,50 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let min_body = ID_LEN + COMPONENT_TAG_LEN + SELECTOR_LEN_FIELD + LANG_LEN + TEXT_LEN_FIELD;
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "DataBroadcastDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for data_broadcast_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "DataBroadcastDescriptor body",
-            });
-        }
-        if length < min_body {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DataBroadcastDescriptor",
+            "unexpected tag for data_broadcast_descriptor",
+        )?;
+        if body.len() < min_body {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "data_broadcast_descriptor body shorter than minimum 8 bytes",
             });
         }
-        let mut pos = HEADER_LEN;
-        let data_broadcast_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+        let mut pos = 0;
+        let data_broadcast_id = u16::from_be_bytes([body[pos], body[pos + 1]]);
         pos += ID_LEN;
-        let component_tag = bytes[pos];
+        let component_tag = body[pos];
         pos += COMPONENT_TAG_LEN;
 
-        let selector_length = bytes[pos] as usize;
+        let selector_length = body[pos] as usize;
         pos += SELECTOR_LEN_FIELD;
         let selector_end = pos + selector_length;
         // Need selector + lang(3) + text_length(1) to still fit.
-        if selector_end + LANG_LEN + TEXT_LEN_FIELD > end {
+        if selector_end + LANG_LEN + TEXT_LEN_FIELD > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "selector_length runs past descriptor end",
             });
         }
-        let selector = &bytes[pos..selector_end];
+        let selector = &body[pos..selector_end];
         pos = selector_end;
 
-        let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
+        let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
         pos += LANG_LEN;
 
-        let text_length = bytes[pos] as usize;
+        let text_length = body[pos] as usize;
         pos += TEXT_LEN_FIELD;
         let text_end = pos + text_length;
-        if text_end > end {
+        if text_end > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = DvbText::new(&bytes[pos..text_end]);
+        let text = DvbText::new(&body[pos..text_end]);
 
         Ok(Self {
             data_broadcast_id,

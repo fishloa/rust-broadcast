@@ -7,6 +7,7 @@
 //! entry is 3 bytes: reserved_future_use(1) + application_type(15), then
 //! reserved_future_use(3) + AIT_version_number(5).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -42,36 +43,19 @@ pub struct ApplicationSignallingDescriptor {
 impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ApplicationSignallingDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for application_signalling_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ApplicationSignallingDescriptor body",
-            });
-        }
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ApplicationSignallingDescriptor",
+            "unexpected tag for application_signalling_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "application_signalling_descriptor length must be a multiple of 3",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             // reserved_future_use(1) ignored on parse.
             let application_type = u16::from_be_bytes([chunk[0], chunk[1]]) & APPLICATION_TYPE_MAX;

@@ -6,6 +6,7 @@
 //! by up to seven optional 1-byte fields and an optional free-form
 //! `additional_info_byte` trailer.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -59,35 +60,26 @@ impl<'a> Parse<'a> for EnhancedAc3Descriptor<'a> {
                 what: "EnhancedAc3Descriptor header+flags",
             });
         }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for EAC-3 descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "EnhancedAc3Descriptor body",
-            });
-        }
-        let flags = bytes[HEADER_LEN];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "EnhancedAc3Descriptor",
+            "unexpected tag for EAC-3 descriptor",
+        )?;
+        let flags = body[0];
         let mixinfoexists = (flags & FLAG_MIXINFO_EXISTS) != 0;
-        let mut pos = HEADER_LEN + 1;
+        let mut pos = 1;
         let mut read_one = |set: bool| -> Result<Option<u8>> {
             if !set {
                 return Ok(None);
             }
-            if pos >= end {
+            if pos >= body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "enhanced AC-3 descriptor flags claim more bytes than length permits",
                 });
             }
-            let b = bytes[pos];
+            let b = body[pos];
             pos += 1;
             Ok(Some(b))
         };
@@ -99,7 +91,7 @@ impl<'a> Parse<'a> for EnhancedAc3Descriptor<'a> {
         let substream1 = read_one(flags & FLAG_SUBSTREAM1 != 0)?;
         let substream2 = read_one(flags & FLAG_SUBSTREAM2 != 0)?;
         let substream3 = read_one(flags & FLAG_SUBSTREAM3 != 0)?;
-        let additional_info = &bytes[pos..end];
+        let additional_info = &body[pos..];
         Ok(Self {
             component_type,
             bsid,

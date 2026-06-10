@@ -5,6 +5,7 @@
 //! The PIL encodes a "day month hour minute" stamp used by VCRs to trigger
 //! recording independent of schedule slippage.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -80,38 +81,19 @@ impl PdcDescriptor {
 impl<'a> Parse<'a> for PdcDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "PdcDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for PDC_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "PdcDescriptor",
+            "unexpected tag for PDC_descriptor",
+        )?;
+        if body.len() != BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "PDC_descriptor length must be exactly 3",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "PdcDescriptor body",
-            });
-        }
-        // 24-bit big-endian field; top 4 bits reserved (ignored on parse).
-        let raw = (u32::from(bytes[HEADER_LEN]) << 16)
-            | (u32::from(bytes[HEADER_LEN + 1]) << 8)
-            | u32::from(bytes[HEADER_LEN + 2]);
+        let raw = (u32::from(body[0]) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
         Ok(Self {
             programme_identification_label: raw & PIL_MASK,
         })

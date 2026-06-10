@@ -4,6 +4,7 @@
 //! (registered in EN 300 468 Annex/TR 101 162) that scopes the interpretation
 //! of any subsequent private (user-defined) descriptors in the same loop.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -25,40 +26,19 @@ pub struct PrivateDataSpecifierDescriptor {
 impl<'a> Parse<'a> for PrivateDataSpecifierDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "PrivateDataSpecifierDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for private_data_specifier_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "PrivateDataSpecifierDescriptor body",
-            });
-        }
-        if length != BODY_LEN as usize {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "PrivateDataSpecifierDescriptor",
+            "unexpected tag for private_data_specifier_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "private_data_specifier_descriptor length must equal 4",
             });
         }
-        let private_data_specifier = u32::from_be_bytes([
-            bytes[HEADER_LEN],
-            bytes[HEADER_LEN + 1],
-            bytes[HEADER_LEN + 2],
-            bytes[HEADER_LEN + 3],
-        ]);
+        let private_data_specifier = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
         Ok(Self {
             private_data_specifier,
         })

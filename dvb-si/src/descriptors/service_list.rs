@@ -3,6 +3,7 @@
 //! Carried inside NIT/BAT transport_stream_loop second descriptor loop.
 //! Enumerates the service_id/service_type pairs available on the TS.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -33,40 +34,23 @@ pub struct ServiceListDescriptor {
 impl<'a> Parse<'a> for ServiceListDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ServiceListDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for service_list_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length % 3 != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ServiceListDescriptor",
+            "unexpected tag for service_list_descriptor",
+        )?;
+        if body.len() % 3 != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 3",
             });
         }
-        let body_start = HEADER_LEN;
-        let body_end = body_start + length;
-        if bytes.len() < body_end {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "ServiceListDescriptor body",
-            });
-        }
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
-        let mut offset = body_start;
-        while offset < body_end {
-            let service_id = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-            let service_type = bytes[offset + 2];
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
+        let mut offset = 0;
+        while offset < body.len() {
+            let service_id = u16::from_be_bytes([body[offset], body[offset + 1]]);
+            let service_type = body[offset + 2];
             entries.push(ServiceListEntry {
                 service_id,
                 service_type,

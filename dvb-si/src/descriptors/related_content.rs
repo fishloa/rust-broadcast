@@ -7,6 +7,7 @@
 //! and "descriptor_length ... shall be set to the number of bytes that follow
 //! it" (i.e. zero). At most one related_content descriptor per PMT sub_table.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -25,28 +26,12 @@ pub struct RelatedContentDescriptor;
 impl<'a> Parse<'a> for RelatedContentDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "RelatedContentDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for related_content_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "RelatedContentDescriptor body",
-            });
-        }
+        let _body = descriptor_body(
+            bytes,
+            TAG,
+            "RelatedContentDescriptor",
+            "unexpected tag for related_content_descriptor",
+        )?;
         // Body must be empty per Table 108. Trailing payload bytes are ignored
         // (forward-compatibility), consistent with permissive parsing elsewhere.
         Ok(Self)

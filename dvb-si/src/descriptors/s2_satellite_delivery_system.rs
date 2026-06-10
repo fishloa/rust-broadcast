@@ -23,6 +23,7 @@
 //!    timeslice_number(8)
 //! ```
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -80,22 +81,13 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
                 what: "S2SatelliteDeliverySystemDescriptor header",
             });
         }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for s2_satellite_delivery_system_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "S2SatelliteDeliverySystemDescriptor body",
-            });
-        }
-        if length < FLAGS_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "S2SatelliteDeliverySystemDescriptor",
+            "unexpected tag for s2_satellite_delivery_system_descriptor",
+        )?;
+        if body.len() < FLAGS_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "body must contain at least the flags byte",
@@ -103,26 +95,26 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
         }
 
         // Reserved bits are ignored on parse (EN 300 468 §5.1).
-        let flags = bytes[HEADER_LEN];
+        let flags = body[0];
         let scrambling_sequence_selector = (flags & FLAG_SCRAMBLING_SELECTOR) != 0;
         let multiple_input_stream_flag = (flags & FLAG_MULTIPLE_INPUT_STREAM) != 0;
         let not_timeslice_flag = (flags & FLAG_NOT_TIMESLICE) != 0;
         let ts_gs_mode = flags & TS_GS_MODE_MASK;
 
-        let mut pos = HEADER_LEN + FLAGS_LEN;
+        let mut pos = FLAGS_LEN;
 
         let scrambling_sequence_index = if scrambling_sequence_selector {
-            if pos + SCRAMBLING_FIELD_LEN > end {
+            if pos + SCRAMBLING_FIELD_LEN > body.len() {
                 return Err(Error::BufferTooShort {
-                    need: pos + SCRAMBLING_FIELD_LEN - HEADER_LEN,
-                    have: length,
+                    need: pos + SCRAMBLING_FIELD_LEN,
+                    have: body.len(),
                     what: "S2SatelliteDeliverySystemDescriptor scrambling_sequence_index",
                 });
             }
-            let b0 = bytes[pos];
+            let b0 = body[pos];
             let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << 16)
-                | (u32::from(bytes[pos + 1]) << 8)
-                | u32::from(bytes[pos + 2]);
+                | (u32::from(body[pos + 1]) << 8)
+                | u32::from(body[pos + 2]);
             pos += SCRAMBLING_FIELD_LEN;
             Some(index)
         } else {
@@ -130,14 +122,14 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
         };
 
         let input_stream_identifier = if multiple_input_stream_flag {
-            if pos + ISI_FIELD_LEN > end {
+            if pos + ISI_FIELD_LEN > body.len() {
                 return Err(Error::BufferTooShort {
-                    need: pos + ISI_FIELD_LEN - HEADER_LEN,
-                    have: length,
+                    need: pos + ISI_FIELD_LEN,
+                    have: body.len(),
                     what: "S2SatelliteDeliverySystemDescriptor input_stream_identifier",
                 });
             }
-            let isi = bytes[pos];
+            let isi = body[pos];
             pos += ISI_FIELD_LEN;
             Some(isi)
         } else {
@@ -146,14 +138,14 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         // timeslice_number is present when timeslicing IS used (not_timeslice_flag == 0).
         let timeslice_number = if !not_timeslice_flag {
-            if pos + TIMESLICE_FIELD_LEN > end {
+            if pos + TIMESLICE_FIELD_LEN > body.len() {
                 return Err(Error::BufferTooShort {
-                    need: pos + TIMESLICE_FIELD_LEN - HEADER_LEN,
-                    have: length,
+                    need: pos + TIMESLICE_FIELD_LEN,
+                    have: body.len(),
                     what: "S2SatelliteDeliverySystemDescriptor timeslice_number",
                 });
             }
-            Some(bytes[pos])
+            Some(body[pos])
         } else {
             None
         };

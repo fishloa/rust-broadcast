@@ -6,6 +6,7 @@
 //! DAB AD, ScF-CRC, MPEG-4 AD, RDS-via-UECP). We carry the raw flag byte; the
 //! bit meanings are defined by ETSI TS 101 154 and not interpreted here.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -28,36 +29,20 @@ pub struct AncillaryDataDescriptor {
 impl<'a> Parse<'a> for AncillaryDataDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "AncillaryDataDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for ancillary_data_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "AncillaryDataDescriptor",
+            "unexpected tag for ancillary_data_descriptor",
+        )?;
+        if body.len() != BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "ancillary_data_descriptor length must be exactly 1",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "AncillaryDataDescriptor body",
-            });
-        }
         Ok(Self {
-            ancillary_data_identifier: bytes[HEADER_LEN],
+            ancillary_data_identifier: body[0],
         })
     }
 }

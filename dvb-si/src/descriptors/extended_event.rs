@@ -4,6 +4,7 @@
 //! descriptor_number / last_descriptor_number fragments. Each fragment
 //! contributes text plus an optional list of (item_description, item) pairs.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -56,31 +57,22 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
                 what: "ExtendedEventDescriptor header",
             });
         }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for extended_event_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ExtendedEventDescriptor body",
-            });
-        }
-        let numbers_byte = bytes[2];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ExtendedEventDescriptor",
+            "unexpected tag for extended_event_descriptor",
+        )?;
+        let numbers_byte = body[0];
         let descriptor_number = numbers_byte >> 4;
         let last_descriptor_number = numbers_byte & 0x0F;
-        let language_code = LangCode([bytes[3], bytes[4], bytes[5]]);
+        let language_code = LangCode([body[1], body[2], body[3]]);
 
-        let items_len_pos = HEADER_LEN + NUMBERS_LEN + LANG_LEN;
-        let items_length = bytes[items_len_pos] as usize;
+        let items_len_pos = NUMBERS_LEN + LANG_LEN;
+        let items_length = body[items_len_pos] as usize;
         let items_start = items_len_pos + ITEMS_LEN_FIELD;
         let items_end = items_start + items_length;
-        if items_end + TEXT_LEN_FIELD > end {
+        if items_end + TEXT_LEN_FIELD > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "length_of_items runs past descriptor end",
@@ -93,7 +85,7 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
             if pos >= items_end {
                 break;
             }
-            let desc_len = bytes[pos] as usize;
+            let desc_len = body[pos] as usize;
             let desc_start = pos + 1;
             let desc_end = desc_start + desc_len;
             if desc_end + 1 > items_end {
@@ -102,7 +94,7 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
                     reason: "item_description_length runs past items loop",
                 });
             }
-            let value_len = bytes[desc_end] as usize;
+            let value_len = body[desc_end] as usize;
             let value_start = desc_end + 1;
             let value_end = value_start + value_len;
             if value_end > items_end {
@@ -112,22 +104,22 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
                 });
             }
             items.push(ExtendedEventItem {
-                description: DvbText::new(&bytes[desc_start..desc_end]),
-                value: DvbText::new(&bytes[value_start..value_end]),
+                description: DvbText::new(&body[desc_start..desc_end]),
+                value: DvbText::new(&body[value_start..value_end]),
             });
             pos = value_end;
         }
 
-        let text_len = bytes[items_end] as usize;
+        let text_len = body[items_end] as usize;
         let text_start = items_end + TEXT_LEN_FIELD;
         let text_end = text_start + text_len;
-        if text_end > end {
+        if text_end > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "text_length runs past descriptor end",
             });
         }
-        let text = DvbText::new(&bytes[text_start..text_end]);
+        let text = DvbText::new(&body[text_start..text_end]);
 
         Ok(Self {
             descriptor_number,
