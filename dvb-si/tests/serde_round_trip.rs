@@ -37,6 +37,7 @@ use dvb_si::tables::{
     rct::RctSection,
     rnt::RntSection,
     rst::{RstEntry, RstSection},
+    sat::SatBody,
     sat::SatSection,
     sdt::{SdtKind, SdtSection, SdtService},
     sit::SitSection,
@@ -402,7 +403,7 @@ fn sat_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        body: &[],
+        body: SatBody::Raw(vec![]),
     };
     let j = serde_json::to_string(&sat).expect("serialize SAT");
     assert_valid_json_with_keys(&j, &["satellite_table_id", "body"]);
@@ -420,10 +421,10 @@ fn unt_serializes_to_valid_json() {
         oui: 0x00_00_01,
         processing_order: 0,
         common_descriptors: DescriptorLoop::new(&[]),
-        platform_loop: &[],
+        platforms: vec![],
     };
     let j = serde_json::to_string(&unt).expect("serialize UNT");
-    assert_valid_json_with_keys(&j, &["action_type", "oui", "platform_loop"]);
+    assert_valid_json_with_keys(&j, &["action_type", "oui", "platforms"]);
 }
 
 #[test]
@@ -438,7 +439,7 @@ fn int_serializes_to_valid_json() {
         platform_id: 0x00_00_01,
         processing_order: 0,
         platform_descriptors: DescriptorLoop::new(&[]),
-        loops: &[],
+        loops: vec![],
     };
     let j = serde_json::to_string(&int).expect("serialize INT");
     assert_valid_json_with_keys(&j, &["action_type", "platform_id", "loops"]);
@@ -455,11 +456,11 @@ fn rct_serializes_to_valid_json() {
         last_section_number: 0,
         year_offset: 0x07D3,
         link_count: 0,
-        link_info_loop: &[],
+        links: vec![],
         descriptors: DescriptorLoop::new(&[]),
     };
     let j = serde_json::to_string(&rct).expect("serialize RCT");
-    assert_valid_json_with_keys(&j, &["service_id", "year_offset", "link_info_loop"]);
+    assert_valid_json_with_keys(&j, &["service_id", "year_offset", "links"]);
 }
 
 #[test]
@@ -474,7 +475,7 @@ fn cit_serializes_to_valid_json() {
         transport_stream_id: 0x1234,
         original_network_id: 0x0020,
         prepend_strings: &[],
-        crid_entries: &[],
+        crid_entries: vec![],
     };
     let j = serde_json::to_string(&cit).expect("serialize CIT");
     assert_valid_json_with_keys(&j, &["service_id", "prepend_strings", "crid_entries"]);
@@ -490,7 +491,7 @@ fn rnt_serializes_to_valid_json() {
         last_section_number: 0,
         context_id_type: 0,
         common_descriptors: DescriptorLoop::new(&[]),
-        resolution_providers: &[],
+        resolution_providers: vec![],
     };
     let j = serde_json::to_string(&rnt).expect("serialize RNT");
     assert_valid_json_with_keys(&j, &["context_id", "resolution_providers"]);

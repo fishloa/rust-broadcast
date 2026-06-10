@@ -6,21 +6,9 @@
 //! `data_broadcast_id_descriptor` (tag 0x66) with `data_broadcast_id = 0x000A`;
 //! the associated elementary PID is the one carrying UNT sections.
 //!
-//! Structure (long-form section):
-//! - 3-byte section header (table_id + section_length)
-//! - action_type (8 bit)
-//! - OUI_hash   (8 bit)
-//! - reserved(2) | version_number(5) | current_next_indicator(1)
-//! - section_number (8 bit)
-//! - last_section_number (8 bit)
-//! - OUI (24 bit, big-endian)
-//! - processing_order (8 bit)
-//! - common_descriptor_loop() — reserved(4) + length(12) + raw descriptors
-//! - platform_loop — zero or more platform entries, each containing a
-//!   `compatibilityDescriptor()` (ISO/IEC 13818-6 groupInfo form, NOT a
-//!   standard tag/length SI descriptor) followed by
-//!   `platform_loop_length(16)` then target and operational descriptor loops
-//! - CRC_32 (32 bit)
+//! The platform loop is unfolded into [`UntPlatform`] entries (Tables 11/15/17/18,
+//! §9.4.2.2–9.4.2.4). The `compatibilityDescriptor()` block is kept raw
+//! (ISO/IEC 13818-6 groupInfo form — NOT a standard SI tag/length descriptor).
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
@@ -31,153 +19,99 @@ use dvb_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x4B;
 
 /// Well-known PID for UNT: **none** — the UNT has no fixed PID.
-///
-/// The carrying PID is signalled via a `data_broadcast_id_descriptor`
-/// (`data_broadcast_id = 0x000A`) in the PMT ES_info loop. This constant is
-/// set to `0x0000` (the value `Table::PID` returns for tables with no fixed
-/// PID) so that callers can detect the special case.
 pub const PID: u16 = 0x0000;
 
-/// Minimum byte length of a valid UNT section (3-byte header + 9-byte
-/// fixed body + 2-byte common_descriptor_loop_length field + 4-byte CRC).
+const HEADER_LEN: usize = 3;
+const FIXED_BODY_LEN: usize = 9;
+const COMMON_DESC_LEN_FIELD: usize = 2;
+const CRC_LEN: usize = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
-/// 3-byte outer header: table_id(8) + section_syntax_indicator(1) +
-/// reserved_future_use(1) + reserved(2) + section_length(12).
-const HEADER_LEN: usize = 3;
-
-/// Fixed portion after the header and before the common_descriptor_loop:
-/// action_type(8) + OUI_hash(8) + flags_byte(8) + section_number(8) +
-/// last_section_number(8) + OUI(24) + processing_order(8) = 9 bytes.
-const FIXED_BODY_LEN: usize = 9;
-
-/// Width of the `reserved(4) | common_descriptor_loop_length(12)` length
-/// field, in bytes.
-const COMMON_DESC_LEN_FIELD: usize = 2;
-
-/// CRC_32 trailer, 4 bytes.
-const CRC_LEN: usize = 4;
-
-/// Byte offset of `action_type` inside the raw section buffer.
 const OFFSET_ACTION_TYPE: usize = HEADER_LEN;
-
-/// Byte offset of `OUI_hash` inside the raw section buffer.
 const OFFSET_OUI_HASH: usize = HEADER_LEN + 1;
-
-/// Byte offset of the flags byte (reserved(2) | version_number(5) |
-/// current_next_indicator(1)) inside the raw section buffer.
 const OFFSET_FLAGS: usize = HEADER_LEN + 2;
-
-/// Byte offset of `section_number`.
 const OFFSET_SECTION_NUMBER: usize = HEADER_LEN + 3;
-
-/// Byte offset of `last_section_number`.
 const OFFSET_LAST_SECTION_NUMBER: usize = HEADER_LEN + 4;
-
-/// Byte offset of the first byte of the 3-byte OUI.
 const OFFSET_OUI: usize = HEADER_LEN + 5;
-
-/// Byte offset of `processing_order`.
 const OFFSET_PROCESSING_ORDER: usize = HEADER_LEN + 8;
-
-/// Byte offset of the `reserved(4) | common_descriptor_loop_length(12)` field.
 const OFFSET_COMMON_DESC_LEN: usize = HEADER_LEN + FIXED_BODY_LEN;
 
-/// Mask to extract the 5-bit version_number from the flags byte.
 const VERSION_NUMBER_MASK: u8 = 0x3E;
-
-/// Bit shift for version_number inside the flags byte.
 const VERSION_NUMBER_SHIFT: u8 = 1;
-
-/// Mask for current_next_indicator in the flags byte.
 const CURRENT_NEXT_MASK: u8 = 0x01;
-
-/// Mask for the high-4 of a 12-bit length field in its first byte.
 const LENGTH_HIGH_NIBBLE_MASK: u8 = 0x0F;
-
-/// Serialize flag byte: reserved(2) = 0b11, rest provided by caller.
 const FLAGS_RESERVED_BITS: u8 = 0xC0;
-
-/// Reserved nibble for `common_descriptor_loop_length` and
-/// `platform_loop_length` high-nibble: 0xF0 (4 reserved bits set to 1).
 const RESERVED_NIBBLE: u8 = 0xF0;
 
-/// Update Notification Table (UNT).
+const COMPAT_DESC_LEN_FIELD: usize = 2;
+const PLATFORM_LOOP_LEN_FIELD: usize = 2;
+const DESC_LOOP_LEN_FIELD: usize = 2;
+
+/// A single platform entry in the UNT platform loop
+/// (Tables 11/15/17/18, §9.4.2.2–9.4.2.4).
 ///
-/// Typed fields cover the fixed header (action_type through processing_order).
-/// Variable-length regions are kept as raw `&[u8]` borrows to avoid pulling in
-/// the full ISO/IEC 13818-6 `compatibilityDescriptor` parser:
+/// Each entry consists of a `compatibilityDescriptor()` block (kept raw — it
+/// is an ISO/IEC 13818-6 groupInfo structure, not a standard SI descriptor),
+/// followed by a `platform_loop_length` field and target/operational
+/// descriptor-loop pairs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct UntPlatform<'a> {
+    /// Raw `compatibilityDescriptor()` block — includes the 2-byte
+    /// `compatibilityDescriptorLength` prefix. Kept raw because it uses the
+    /// ISO/IEC 13818-6 groupInfo framing, not the standard SI tag/length form.
+    pub compatibility_descriptor: &'a [u8],
+    /// Target descriptor loop (after the 12-bit length field).
+    pub target_descriptors: DescriptorLoop<'a>,
+    /// Operational descriptor loop (after the 12-bit length field).
+    pub operational_descriptors: DescriptorLoop<'a>,
+}
+
+fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
+    p.compatibility_descriptor.len()
+        + PLATFORM_LOOP_LEN_FIELD
+        + DESC_LOOP_LEN_FIELD
+        + p.target_descriptors.len()
+        + DESC_LOOP_LEN_FIELD
+        + p.operational_descriptors.len()
+}
+
+/// Update Notification Table (UNT), ETSI TS 102 006 v1.4.1 §9.4, Table 11.
 ///
-/// - `common_descriptors` — the body of the `common_descriptor_loop()`, i.e.
-///   the bytes AFTER the 12-bit length field (standard SI descriptor format).
-/// - `platform_loop` — the entire remaining payload between the
-///   `common_descriptor_loop` and the CRC.  This region contains zero or more
-///   platform entries, each starting with a `compatibilityDescriptor()` (an
-///   ISO/IEC 13818-6 groupInfo block — **not** a standard tag/length SI
-///   descriptor) followed by a 16-bit `platform_loop_length` and the
-///   corresponding target / operational descriptor loops. Callers that need to
-///   walk individual platform entries must parse this field manually.
+/// The platform loop has been unfolded into typed [`UntPlatform`] entries.
+/// The `compatibilityDescriptor()` within each entry is kept raw (ISO/IEC
+/// 13818-6 groupInfo form — not a standard SI tag/length descriptor).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct UntSection<'a> {
-    /// Action type (Table 12 of ETSI TS 102 006):
-    /// 0x01 = System Software Update, 0x80–0xFF = user defined.
+    /// Action type (Table 12): 0x01 = System Software Update, 0x80–0xFF user defined.
     pub action_type: u8,
-
-    /// OUI hash: `OUI[23:16] ^ OUI[15:8] ^ OUI[7:0]` (XOR of the three OUI
-    /// bytes, used as a quick equality check before comparing the full OUI).
+    /// OUI hash: XOR of the three OUI bytes.
     pub oui_hash: u8,
-
     /// 5-bit version_number of this sub-table.
     pub version_number: u8,
-
-    /// `current_next_indicator`: `true` means this section is currently
-    /// applicable; `false` means it applies starting from the next version.
+    /// `current_next_indicator`: `true` means currently applicable.
     pub current_next_indicator: bool,
-
     /// Index of this section within the sub-table.
     pub section_number: u8,
-
     /// Index of the last section in the sub-table.
     pub last_section_number: u8,
-
-    /// 24-bit IEEE Organizationally Unique Identifier.
-    ///
-    /// Stored in the low 24 bits of a `u32` (high byte is always zero).
-    /// The DVB-reserved generic OUI `0x00015A` means the receiver should
-    /// analyse the UNT payload to determine applicability.
+    /// 24-bit IEEE OUI (low 24 bits of u32).
     pub oui: u32,
-
-    /// Processing order (Table 13): 0x00 = first action, 0x01–0xFE =
-    /// subsequent (ascending), 0xFF = no ordering implied.
+    /// Processing order (Table 13).
     pub processing_order: u8,
-
     /// Body of `common_descriptor_loop()` — the bytes AFTER the 12-bit length
-    /// field.  Contains zero or more standard SI descriptors (tag + length +
-    /// payload), as defined in §9.4.2.1. Serializes as the typed descriptor
-    /// sequence; `.raw()` yields the wire bytes.
+    /// field.
     pub common_descriptors: DescriptorLoop<'a>,
-
-    /// Raw bytes of the entire platform loop region — everything after
-    /// `common_descriptor_loop()` up to (but not including) the CRC_32.
-    ///
-    /// Each platform entry starts with a `compatibilityDescriptor()` block
-    /// (ISO/IEC 13818-6 §11 groupInfo form — a 2-byte length prefix +
-    /// descriptor list, **not** a standard SI tag/length descriptor), followed
-    /// by a 16-bit `platform_loop_length` then zero or more platform entries
-    /// each containing target and operational descriptor loops.
-    ///
-    /// To walk platform entries, parse this field according to
-    /// ETSI TS 102 006 §9.4.2.2–9.4.2.4.
-    pub platform_loop: &'a [u8],
+    /// Platform entries — unfolded per §9.4.2.2–9.4.2.4.
+    pub platforms: Vec<UntPlatform<'a>>,
 }
 
 impl<'a> Parse<'a> for UntSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // ── 1. Minimum-length guard ──────────────────────────────────────────
         if bytes.len() < MIN_SECTION_LEN {
             return Err(Error::BufferTooShort {
                 need: MIN_SECTION_LEN,
@@ -185,8 +119,6 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 what: "UntSection",
             });
         }
-
-        // ── 2. table_id check ────────────────────────────────────────────────
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -195,7 +127,6 @@ impl<'a> Parse<'a> for UntSection<'a> {
             });
         }
 
-        // ── 3. section_length → total byte count ─────────────────────────────
         let section_length =
             (((bytes[1] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8) | bytes[2] as usize;
         let total = HEADER_LEN + section_length;
@@ -206,7 +137,6 @@ impl<'a> Parse<'a> for UntSection<'a> {
             });
         }
 
-        // ── 4. Fixed header fields ────────────────────────────────────────────
         let action_type = bytes[OFFSET_ACTION_TYPE];
         let oui_hash = bytes[OFFSET_OUI_HASH];
         let flags_byte = bytes[OFFSET_FLAGS];
@@ -214,14 +144,11 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let current_next_indicator = (flags_byte & CURRENT_NEXT_MASK) != 0;
         let section_number = bytes[OFFSET_SECTION_NUMBER];
         let last_section_number = bytes[OFFSET_LAST_SECTION_NUMBER];
-        // OUI is a 24-bit big-endian value packed into bytes [OFFSET_OUI..OFFSET_OUI+3].
         let oui = ((bytes[OFFSET_OUI] as u32) << 16)
             | ((bytes[OFFSET_OUI + 1] as u32) << 8)
             | (bytes[OFFSET_OUI + 2] as u32);
         let processing_order = bytes[OFFSET_PROCESSING_ORDER];
 
-        // ── 5. common_descriptor_loop ────────────────────────────────────────
-        // reserved(4) | common_descriptor_loop_length(12)
         let cdl = (((bytes[OFFSET_COMMON_DESC_LEN] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8)
             | bytes[OFFSET_COMMON_DESC_LEN + 1] as usize;
         let common_desc_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
@@ -234,10 +161,96 @@ impl<'a> Parse<'a> for UntSection<'a> {
         }
         let common_descriptors = DescriptorLoop::new(&bytes[common_desc_start..common_desc_end]);
 
-        // ── 6. platform_loop ─────────────────────────────────────────────────
-        let platform_loop_start = common_desc_end;
-        let platform_loop_end = total - CRC_LEN;
-        let platform_loop = &bytes[platform_loop_start..platform_loop_end];
+        let payload_end = total - CRC_LEN;
+        let mut pos = common_desc_end;
+        let mut platforms = Vec::new();
+        while pos < payload_end {
+            if pos + COMPAT_DESC_LEN_FIELD > payload_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + COMPAT_DESC_LEN_FIELD,
+                    have: payload_end,
+                    what: "UntSection compatibilityDescriptorLength",
+                });
+            }
+            let compat_desc_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let compat_total = COMPAT_DESC_LEN_FIELD + compat_desc_len;
+            if pos + compat_total > payload_end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: compat_desc_len,
+                    available: payload_end.saturating_sub(pos + COMPAT_DESC_LEN_FIELD),
+                });
+            }
+            let compatibility_descriptor = &bytes[pos..pos + compat_total];
+            pos += compat_total;
+
+            if pos + PLATFORM_LOOP_LEN_FIELD > payload_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + PLATFORM_LOOP_LEN_FIELD,
+                    have: payload_end,
+                    what: "UntSection platform_loop_length",
+                });
+            }
+            let platform_loop_length = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            pos += PLATFORM_LOOP_LEN_FIELD;
+            let platform_end = pos + platform_loop_length;
+            if platform_end > payload_end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: platform_loop_length,
+                    available: payload_end.saturating_sub(pos),
+                });
+            }
+
+            let mut target_descriptors = DescriptorLoop::new(&[]);
+            let mut operational_descriptors = DescriptorLoop::new(&[]);
+            if platform_loop_length > 0 {
+                let inner_end = platform_end;
+                if pos + DESC_LOOP_LEN_FIELD > inner_end {
+                    return Err(Error::BufferTooShort {
+                        need: pos + DESC_LOOP_LEN_FIELD,
+                        have: inner_end,
+                        what: "UntSection target_descriptor_loop length",
+                    });
+                }
+                let target_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                let target_start = pos + DESC_LOOP_LEN_FIELD;
+                let target_end = target_start + target_len;
+                if target_end > inner_end {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: target_len,
+                        available: inner_end.saturating_sub(target_start),
+                    });
+                }
+                target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
+                pos = target_end;
+
+                if pos + DESC_LOOP_LEN_FIELD > inner_end {
+                    return Err(Error::BufferTooShort {
+                        need: pos + DESC_LOOP_LEN_FIELD,
+                        have: inner_end,
+                        what: "UntSection operational_descriptor_loop length",
+                    });
+                }
+                let op_len = (((bytes[pos] & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
+                let op_start = pos + DESC_LOOP_LEN_FIELD;
+                let op_end = op_start + op_len;
+                if op_end > inner_end {
+                    return Err(Error::SectionLengthOverflow {
+                        declared: op_len,
+                        available: inner_end.saturating_sub(op_start),
+                    });
+                }
+                operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
+                pos = op_end;
+            } else {
+                pos = platform_end;
+            }
+
+            platforms.push(UntPlatform {
+                compatibility_descriptor,
+                target_descriptors,
+                operational_descriptors,
+            });
+        }
 
         Ok(UntSection {
             action_type,
@@ -249,7 +262,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
             oui,
             processing_order,
             common_descriptors,
-            platform_loop,
+            platforms,
         })
     }
 }
@@ -262,7 +275,11 @@ impl Serialize for UntSection<'_> {
             + FIXED_BODY_LEN
             + COMMON_DESC_LEN_FIELD
             + self.common_descriptors.len()
-            + self.platform_loop.len()
+            + self
+                .platforms
+                .iter()
+                .map(unt_platform_serialized_len)
+                .sum::<usize>()
             + CRC_LEN
     }
 
@@ -275,14 +292,12 @@ impl Serialize for UntSection<'_> {
             });
         }
 
-        // ── Header ───────────────────────────────────────────────────────────
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
         buf[1] =
             super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
         buf[2] = (section_length & 0xFF) as u8;
 
-        // ── Fixed body ───────────────────────────────────────────────────────
         buf[OFFSET_ACTION_TYPE] = self.action_type;
         buf[OFFSET_OUI_HASH] = self.oui_hash;
         buf[OFFSET_FLAGS] = FLAGS_RESERVED_BITS
@@ -290,32 +305,54 @@ impl Serialize for UntSection<'_> {
             | u8::from(self.current_next_indicator);
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
-        // OUI — 24 bits, big-endian.
         buf[OFFSET_OUI] = ((self.oui >> 16) & 0xFF) as u8;
         buf[OFFSET_OUI + 1] = ((self.oui >> 8) & 0xFF) as u8;
         buf[OFFSET_OUI + 2] = (self.oui & 0xFF) as u8;
         buf[OFFSET_PROCESSING_ORDER] = self.processing_order;
 
-        // ── common_descriptor_loop length field ──────────────────────────────
         let cdl = self.common_descriptors.len() as u16;
         buf[OFFSET_COMMON_DESC_LEN] =
             RESERVED_NIBBLE | ((cdl >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
         buf[OFFSET_COMMON_DESC_LEN + 1] = (cdl & 0xFF) as u8;
 
-        // ── common_descriptors body ──────────────────────────────────────────
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
         let common_end = common_start + self.common_descriptors.len();
         buf[common_start..common_end].copy_from_slice(self.common_descriptors.raw());
 
-        // ── platform_loop ────────────────────────────────────────────────────
-        let plat_end = common_end + self.platform_loop.len();
-        buf[common_end..plat_end].copy_from_slice(self.platform_loop);
+        let mut pos = common_end;
+        for platform in &self.platforms {
+            buf[pos..pos + platform.compatibility_descriptor.len()]
+                .copy_from_slice(platform.compatibility_descriptor);
+            pos += platform.compatibility_descriptor.len();
 
-        // ── CRC_32 — compute over everything up to (but not including) the CRC slot.
+            let inner_len: usize = DESC_LOOP_LEN_FIELD
+                + platform.target_descriptors.len()
+                + DESC_LOOP_LEN_FIELD
+                + platform.operational_descriptors.len();
+            buf[pos..pos + PLATFORM_LOOP_LEN_FIELD]
+                .copy_from_slice(&(inner_len as u16).to_be_bytes());
+            pos += PLATFORM_LOOP_LEN_FIELD;
+
+            let tl = platform.target_descriptors.len() as u16;
+            buf[pos] = RESERVED_NIBBLE | ((tl >> 8) as u8 & 0x0F);
+            buf[pos + 1] = (tl & 0xFF) as u8;
+            pos += DESC_LOOP_LEN_FIELD;
+            buf[pos..pos + platform.target_descriptors.len()]
+                .copy_from_slice(platform.target_descriptors.raw());
+            pos += platform.target_descriptors.len();
+
+            let ol = platform.operational_descriptors.len() as u16;
+            buf[pos] = RESERVED_NIBBLE | ((ol >> 8) as u8 & 0x0F);
+            buf[pos + 1] = (ol & 0xFF) as u8;
+            pos += DESC_LOOP_LEN_FIELD;
+            buf[pos..pos + platform.operational_descriptors.len()]
+                .copy_from_slice(platform.operational_descriptors.raw());
+            pos += platform.operational_descriptors.len();
+        }
+
         let crc_pos = len - CRC_LEN;
         let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
-
         Ok(len)
     }
 }
@@ -334,152 +371,127 @@ impl<'a> crate::traits::TableDef<'a> for UntSection<'a> {
 mod tests {
     use super::*;
 
-    /// Build a minimal but syntactically valid UNT section byte buffer.
-    ///
-    /// `common_descs`  — raw bytes to place inside the common_descriptor_loop body.
-    /// `platform_loop` — raw bytes for the entire platform_loop region.
-    #[allow(clippy::too_many_arguments)]
-    fn build_unt(
-        action_type: u8,
-        oui_hash: u8,
-        version_number: u8,
-        current_next_indicator: bool,
-        section_number: u8,
-        last_section_number: u8,
-        oui: u32,
-        processing_order: u8,
-        common_descs: &[u8],
-        platform_loop: &[u8],
-    ) -> Vec<u8> {
-        // section_length covers everything after the 3-byte outer header up to
-        // and including the CRC_32.
-        let section_length = FIXED_BODY_LEN
-            + COMMON_DESC_LEN_FIELD
-            + common_descs.len()
-            + platform_loop.len()
-            + CRC_LEN;
-
-        let mut v: Vec<u8> = Vec::with_capacity(HEADER_LEN + section_length);
-
-        // Header.
-        v.push(TABLE_ID);
-        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
-        v.push((section_length & 0xFF) as u8);
-
-        // Fixed body.
-        v.push(action_type);
-        v.push(oui_hash);
-        let flags = FLAGS_RESERVED_BITS
-            | ((version_number & 0x1F) << VERSION_NUMBER_SHIFT)
-            | u8::from(current_next_indicator);
-        v.push(flags);
-        v.push(section_number);
-        v.push(last_section_number);
-        v.push(((oui >> 16) & 0xFF) as u8);
-        v.push(((oui >> 8) & 0xFF) as u8);
-        v.push((oui & 0xFF) as u8);
-        v.push(processing_order);
-
-        // common_descriptor_loop length + body.
-        let cdl = common_descs.len() as u16;
-        v.push(RESERVED_NIBBLE | ((cdl >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK));
-        v.push((cdl & 0xFF) as u8);
-        v.extend_from_slice(common_descs);
-
-        // Platform loop.
-        v.extend_from_slice(platform_loop);
-
-        // CRC_32 placeholder.
-        v.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
-
-        v
-    }
-
-    /// Verify all typed fields are parsed correctly on a happy-path input.
     #[test]
     fn parse_happy_path() {
-        // OUI = 0x00015A (DVB generic), hash = 0x00 ^ 0x01 ^ 0x5A = 0x5B.
         let oui: u32 = 0x00_01_5A;
         let oui_hash: u8 = 0x01 ^ 0x5A;
-
-        // A minimal SSU-compatible descriptor: data_broadcast_id_descriptor
-        // tag 0x66, length 4, data_broadcast_id 0x000A, selector_len 0x00.
         let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
-
-        let bytes = build_unt(
-            0x01, // action_type: System Software Update
+        let cd: &[u8] = &[0x00, 0x00];
+        let unt = UntSection {
+            action_type: 0x01,
             oui_hash,
-            7,    // version_number (5-bit)
-            true, // current_next_indicator
-            0,    // section_number
-            0,    // last_section_number
+            version_number: 7,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
             oui,
-            0x00, // processing_order: first
-            common_descs,
-            &[], // empty platform loop
-        );
-
-        let unt = UntSection::parse(&bytes).expect("parse must succeed");
-
-        assert_eq!(unt.action_type, 0x01);
-        assert_eq!(unt.oui_hash, oui_hash);
-        assert_eq!(unt.version_number, 7);
-        assert!(unt.current_next_indicator);
-        assert_eq!(unt.section_number, 0);
-        assert_eq!(unt.last_section_number, 0);
-        assert_eq!(unt.oui, oui);
-        assert_eq!(unt.processing_order, 0x00);
-        assert_eq!(unt.common_descriptors.raw(), common_descs);
-        assert_eq!(unt.platform_loop, &[] as &[u8]);
+            processing_order: 0x00,
+            common_descriptors: DescriptorLoop::new(common_descs),
+            platforms: vec![UntPlatform {
+                compatibility_descriptor: cd,
+                target_descriptors: DescriptorLoop::new(&[]),
+                operational_descriptors: DescriptorLoop::new(&[]),
+            }],
+        };
+        let sl = unt.serialized_len();
+        let mut buf = vec![0u8; sl];
+        unt.serialize_into(&mut buf).unwrap();
+        let parsed = UntSection::parse(&buf).unwrap();
+        assert_eq!(parsed.action_type, 0x01);
+        assert_eq!(parsed.oui_hash, oui_hash);
+        assert_eq!(parsed.version_number, 7);
+        assert!(parsed.current_next_indicator);
+        assert_eq!(parsed.oui, oui);
+        assert_eq!(parsed.common_descriptors.raw(), common_descs);
+        assert_eq!(parsed.platforms.len(), 1);
+        assert_eq!(parsed.platforms[0].compatibility_descriptor, cd);
     }
 
-    /// current_next_indicator = false must parse correctly.
     #[test]
-    fn parse_current_next_false() {
-        let bytes = build_unt(0x01, 0x5B, 1, false, 1, 2, 0x00015A, 0x01, &[], &[]);
-        let unt = UntSection::parse(&bytes).unwrap();
-        assert!(!unt.current_next_indicator);
-        assert_eq!(unt.section_number, 1);
-        assert_eq!(unt.last_section_number, 2);
+    fn parse_empty_platforms() {
+        let unt = UntSection {
+            action_type: 0x01,
+            oui_hash: 0x5B,
+            version_number: 1,
+            current_next_indicator: false,
+            section_number: 1,
+            last_section_number: 2,
+            oui: 0x00015A,
+            processing_order: 0x01,
+            common_descriptors: DescriptorLoop::new(&[]),
+            platforms: Vec::new(),
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).unwrap();
+        let parsed = UntSection::parse(&buf).unwrap();
+        assert!(!parsed.current_next_indicator);
+        assert!(parsed.platforms.is_empty());
     }
 
-    /// Platform loop bytes are preserved verbatim.
     #[test]
-    fn parse_preserves_platform_loop() {
-        // Minimal compatibilityDescriptor: length=0x0004, descriptorCount=0x0000,
-        // then platform_loop_length=0x0000.
-        let plat: &[u8] = &[0x00, 0x04, 0x00, 0x00, 0x00, 0x00];
-        let bytes = build_unt(0x01, 0x5B, 3, true, 0, 0, 0x00015A, 0xFF, &[], plat);
-        let unt = UntSection::parse(&bytes).unwrap();
-        assert_eq!(unt.platform_loop, plat);
-        assert_eq!(unt.processing_order, 0xFF);
+    fn byte_exact_round_trip() {
+        let cd: &[u8] = &[0x00, 0x02, 0x00, 0x00];
+        let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
+        let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
+        let unt = UntSection {
+            action_type: 0x01,
+            oui_hash: 0x5B,
+            version_number: 15,
+            current_next_indicator: true,
+            section_number: 2,
+            last_section_number: 5,
+            oui: 0x00015A,
+            processing_order: 0x02,
+            common_descriptors: DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
+            platforms: vec![UntPlatform {
+                compatibility_descriptor: cd,
+                target_descriptors: DescriptorLoop::new(target_desc),
+                operational_descriptors: DescriptorLoop::new(op_desc),
+            }],
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).unwrap();
+        let mut buf2 = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
+        let re = UntSection::parse(&buf).unwrap();
+        assert_eq!(re.platforms.len(), 1);
+        assert_eq!(re.platforms[0].compatibility_descriptor, cd);
+        assert_eq!(re.platforms[0].target_descriptors.raw(), target_desc);
+        assert_eq!(re.platforms[0].operational_descriptors.raw(), op_desc);
     }
 
-    /// Wrong table_id must produce `Error::UnexpectedTableId`.
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let mut bytes = build_unt(0x01, 0x5B, 0, true, 0, 0, 0x00015A, 0x00, &[], &[]);
-        bytes[0] = 0x4A; // BAT table_id — not 0x4B
-        let err = UntSection::parse(&bytes).unwrap_err();
-        assert!(
-            matches!(err, Error::UnexpectedTableId { table_id: 0x4A, .. }),
-            "expected UnexpectedTableId(0x4A), got {err:?}"
-        );
+        let unt = UntSection {
+            action_type: 0x01,
+            oui_hash: 0x5B,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            oui: 0x00015A,
+            processing_order: 0x00,
+            common_descriptors: DescriptorLoop::new(&[]),
+            platforms: Vec::new(),
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).unwrap();
+        buf[0] = 0x4A;
+        assert!(matches!(
+            UntSection::parse(&buf).unwrap_err(),
+            Error::UnexpectedTableId { table_id: 0x4A, .. }
+        ));
     }
 
-    /// Buffer shorter than the minimum section size must produce
-    /// `Error::BufferTooShort`.
     #[test]
     fn parse_rejects_short_buffer() {
-        let err = UntSection::parse(&[TABLE_ID, 0x00]).unwrap_err();
-        assert!(
-            matches!(err, Error::BufferTooShort { .. }),
-            "expected BufferTooShort, got {err:?}"
-        );
+        assert!(matches!(
+            UntSection::parse(&[TABLE_ID, 0x00]).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
     }
 
-    /// `serialize_into` on a buffer that is one byte too small must return
-    /// `Error::OutputBufferTooSmall`.
     #[test]
     fn serialize_rejects_small_output_buffer() {
         let unt = UntSection {
@@ -492,42 +504,12 @@ mod tests {
             oui: 0x00015A,
             processing_order: 0x00,
             common_descriptors: DescriptorLoop::new(&[]),
-            platform_loop: &[],
+            platforms: Vec::new(),
         };
         let mut buf = vec![0u8; unt.serialized_len() - 1];
-        let err = unt.serialize_into(&mut buf).unwrap_err();
-        assert!(
-            matches!(err, Error::OutputBufferTooSmall { .. }),
-            "expected OutputBufferTooSmall, got {err:?}"
-        );
-    }
-
-    /// Serialize a `UntSection` → parse → assert structural equality (round-trip).
-    #[test]
-    fn serialize_round_trip() {
-        let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
-        // Minimal compatibilityDescriptor + empty platform_loop_length.
-        let plat: &[u8] = &[0x00, 0x04, 0x00, 0x00, 0x00, 0x00];
-
-        let original = UntSection {
-            action_type: 0x01,
-            oui_hash: 0x5B,
-            version_number: 15,
-            current_next_indicator: true,
-            section_number: 2,
-            last_section_number: 5,
-            oui: 0x00015A,
-            processing_order: 0x02,
-            common_descriptors: DescriptorLoop::new(common_descs),
-            platform_loop: plat,
-        };
-
-        let mut buf = vec![0u8; original.serialized_len()];
-        original
-            .serialize_into(&mut buf)
-            .expect("serialize must succeed");
-
-        let reparsed = UntSection::parse(&buf).expect("reparse must succeed");
-        assert_eq!(original, reparsed);
+        assert!(matches!(
+            unt.serialize_into(&mut buf).unwrap_err(),
+            Error::OutputBufferTooSmall { .. }
+        ));
     }
 }

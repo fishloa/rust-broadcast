@@ -2,13 +2,18 @@
 //!
 //! The CIT maps content reference identifiers (CRIDs) to events for a given
 //! service. Carried on PID 0x0012 (shared with the EIT) with table_id 0x77.
-//! Structure: fixed header + prepend-string block + raw CRID entry loop + CRC-32.
+//! Structure: fixed header + prepend-string block + typed CRID entry loop + CRC-32.
+//!
+//! The CRID entry loop is unfolded into [`CridEntry`] instances (Table 119,
+//! §12.2). The prepend-string block is a flat byte array of null-terminated
+//! fragments addressed by index; it is kept raw (`&[u8]`) since each entry is
+//! just a single byte — there is no per-entry sub-structure to unfold.
 
 use crate::error::{Error, Result};
 use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
-/// table_id for Content Identifier Table.
+/// `table_id` for Content Identifier Table.
 pub const TABLE_ID: u8 = 0x77;
 
 /// PID on which CIT sections are carried.
@@ -17,84 +22,73 @@ pub const TABLE_ID: u8 = 0x77;
 /// by table_id in addition to PID to isolate CIT sections.
 pub const PID: u16 = 0x0012;
 
-// ── length constants ──────────────────────────────────────────────────────────
-
-/// Bytes 0-2: table_id (1) + flags+section_length (2).
 const HEADER_LEN: usize = 3;
-
-/// Bytes 3-12: service_id(2) + flags+version+cni(1) + section_number(1)
-/// + last_section_number(1) + transport_stream_id(2) + original_network_id(2)
-/// + prepend_strings_length(1).
 const EXTENSION_LEN: usize = 10;
-
-/// Minimum total encoded length: header + extension + CRC.
+const CRC_LEN: usize = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
-/// Bytes occupied by the trailing CRC-32 field.
-const CRC_LEN: usize = 4;
+const CRID_REF_LEN: usize = 2;
+const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
-// ── struct ────────────────────────────────────────────────────────────────────
+/// A single CRID entry in the CIT loop (Table 119, §12.2).
+///
+/// Wire layout: `crid_ref(16) | prepend_string_index(8) | unique_string_length(8)
+/// | unique_string_byte[8]×unique_string_length`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct CridEntry<'a> {
+    /// `crid_ref` — 16-bit reference into the CRID resolution system.
+    pub crid_ref: u16,
+    /// `prepend_string_index` — index into the prepend-string block.
+    /// `0xFF` means no prepend string (the unique string is the full CRID).
+    pub prepend_string_index: u8,
+    /// `unique_string` — the unique portion of the CRID (borrowed from the
+    /// input buffer).
+    pub unique_string: &'a [u8],
+}
 
-/// Content Identifier Table (ETSI TS 102 323 v1.4.1 §12.2).
+/// Content Identifier Table (ETSI TS 102 323 v1.4.1 §12.2, Table 119).
 ///
-/// Variable-length fields are kept as raw byte slices borrowing from the source
-/// buffer. Callers that need to iterate CRID entries may walk `crid_entries`
-/// directly per the wire format:
-///
-/// ```text
-/// for each entry:
-///   crid_ref             (2 bytes, u16 big-endian)
-///   prepend_string_index (1 byte)
-///   unique_string_length (1 byte)
-///   unique_string_bytes  (unique_string_length bytes)
-/// ```
+/// The `crid_entries` loop is unfolded into typed [`CridEntry`] instances.
+/// The `prepend_strings` block is kept as a raw byte slice (flat array of
+/// null-terminated fragments with no per-entry sub-structure to type).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct CitSection<'a> {
     /// `private_indicator` bit from byte 1.
     pub private_indicator: bool,
-
     /// `service_id` — identifies the container this section belongs to
     /// (table_id_extension, bytes 3-4).
     pub service_id: u16,
-
     /// 5-bit `version_number`.
     pub version_number: u8,
-
     /// `current_next_indicator` bit.
     pub current_next_indicator: bool,
-
     /// Section counter within the sub-table.
     pub section_number: u8,
-
     /// Final section number in the sub-table.
     pub last_section_number: u8,
-
     /// `transport_stream_id` of the carrying TS.
     pub transport_stream_id: u16,
-
     /// `original_network_id` of the originating network.
     pub original_network_id: u16,
-
-    /// Raw prepend-string block. The wire `prepend_strings_length` byte is
-    /// derived from `prepend_strings.len()` on serialize (≤ 255). Entries are
-    /// null-terminated ASCII/DVB-text fragments; addressed by index from the
-    /// CRID loop.
+    /// Raw prepend-string block (null-terminated fragments addressed by index).
+    /// The wire `prepend_strings_length` byte is derived from
+    /// `prepend_strings.len()` on serialize (≤ 255).
     pub prepend_strings: &'a [u8],
-
-    /// Raw CRID entry loop (everything between the prepend-string block and the
-    /// CRC-32). Walk per the format documented on the struct.
-    pub crid_entries: &'a [u8],
+    /// CRID entry loop — unfolded per Table 119.
+    pub crid_entries: Vec<CridEntry<'a>>,
 }
 
-// ── Parse ─────────────────────────────────────────────────────────────────────
+fn crid_entry_serialized_len(e: &CridEntry) -> usize {
+    CRID_ENTRY_FIXED_LEN + e.unique_string.len()
+}
 
 impl<'a> Parse<'a> for CitSection<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // Minimum-length guard.
         if bytes.len() < MIN_SECTION_LEN {
             return Err(Error::BufferTooShort {
                 need: MIN_SECTION_LEN,
@@ -102,8 +96,6 @@ impl<'a> Parse<'a> for CitSection<'a> {
                 what: "CitSection",
             });
         }
-
-        // table_id check.
         if bytes[0] != TABLE_ID {
             return Err(Error::UnexpectedTableId {
                 table_id: bytes[0],
@@ -112,7 +104,6 @@ impl<'a> Parse<'a> for CitSection<'a> {
             });
         }
 
-        // section_length: lower 4 bits of byte 1 || byte 2 (12 bits total).
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
         let total = HEADER_LEN + section_length;
         if bytes.len() < total {
@@ -122,12 +113,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
             });
         }
 
-        // private_indicator: bit 6 of byte 1 (section_syntax_indicator is bit 7).
         let private_indicator = (bytes[1] & 0x40) != 0;
-
-        // Extension header (bytes 3..13).
         let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
-        // byte 5: reserved(2) | version_number(5) | current_next_indicator(1)
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
@@ -136,11 +123,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
         let original_network_id = u16::from_be_bytes([bytes[10], bytes[11]]);
         let prepend_strings_length = bytes[12];
 
-        // Prepend-string block.
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + prepend_strings_length as usize;
-
-        // Ensure prepend_strings block fits before the CRC.
         let payload_end = total - CRC_LEN;
         if ps_end > payload_end {
             return Err(Error::SectionLengthOverflow {
@@ -148,11 +132,37 @@ impl<'a> Parse<'a> for CitSection<'a> {
                 available: payload_end.saturating_sub(ps_start),
             });
         }
-
         let prepend_strings = &bytes[ps_start..ps_end];
 
-        // Raw CRID entry loop: everything between prepend_strings and the CRC.
-        let crid_entries = &bytes[ps_end..payload_end];
+        let mut pos = ps_end;
+        let mut crid_entries = Vec::new();
+        while pos < payload_end {
+            if pos + CRID_ENTRY_FIXED_LEN > payload_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + CRID_ENTRY_FIXED_LEN,
+                    have: payload_end,
+                    what: "CitSection crid_entry",
+                });
+            }
+            let crid_ref = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            let prepend_string_index = bytes[pos + 2];
+            let unique_string_length = bytes[pos + 3] as usize;
+            pos += CRID_ENTRY_FIXED_LEN;
+            if pos + unique_string_length > payload_end {
+                return Err(Error::BufferTooShort {
+                    need: pos + unique_string_length,
+                    have: payload_end,
+                    what: "CitSection unique_string",
+                });
+            }
+            let unique_string = &bytes[pos..pos + unique_string_length];
+            pos += unique_string_length;
+            crid_entries.push(CridEntry {
+                crid_ref,
+                prepend_string_index,
+                unique_string,
+            });
+        }
 
         Ok(CitSection {
             private_indicator,
@@ -169,13 +179,19 @@ impl<'a> Parse<'a> for CitSection<'a> {
     }
 }
 
-// ── Serialize ─────────────────────────────────────────────────────────────────
-
 impl Serialize for CitSection<'_> {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + EXTENSION_LEN + self.prepend_strings.len() + self.crid_entries.len() + CRC_LEN
+        HEADER_LEN
+            + EXTENSION_LEN
+            + self.prepend_strings.len()
+            + self
+                .crid_entries
+                .iter()
+                .map(crid_entry_serialized_len)
+                .sum::<usize>()
+            + CRC_LEN
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -186,8 +202,6 @@ impl Serialize for CitSection<'_> {
                 have: buf.len(),
             });
         }
-
-        // prepend_strings_length is an 8-bit wire field, derived from the slice.
         if self.prepend_strings.len() > u8::MAX as usize {
             return Err(Error::SectionLengthOverflow {
                 declared: self.prepend_strings.len(),
@@ -196,49 +210,40 @@ impl Serialize for CitSection<'_> {
         }
 
         let section_length = (len - HEADER_LEN) as u16;
-
-        // Byte 0: table_id.
         buf[0] = TABLE_ID;
-
-        // Byte 1: section_syntax_indicator(1) | private_indicator(1) | reserved(2) | section_length[11:8](4).
-        // section_syntax_indicator = 1 (long-form section per DVB convention).
         buf[1] = 0x80
             | (u8::from(self.private_indicator) << 6)
-            | 0x30 // reserved bits set
+            | 0x30
             | ((section_length >> 8) as u8 & 0x0F);
-
-        // Byte 2: section_length[7:0].
         buf[2] = (section_length & 0xFF) as u8;
 
-        // Extension header.
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = 0xC0 // reserved(2) = 11
-            | ((self.version_number & 0x1F) << 1)
-            | u8::from(self.current_next_indicator);
+        buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[10..12].copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[12] = self.prepend_strings.len() as u8;
 
-        // Prepend strings.
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + self.prepend_strings.len();
         buf[ps_start..ps_end].copy_from_slice(self.prepend_strings);
 
-        // CRID entries.
-        let crid_end = ps_end + self.crid_entries.len();
-        buf[ps_end..crid_end].copy_from_slice(self.crid_entries);
+        let mut pos = ps_end;
+        for entry in &self.crid_entries {
+            buf[pos..pos + 2].copy_from_slice(&entry.crid_ref.to_be_bytes());
+            buf[pos + 2] = entry.prepend_string_index;
+            buf[pos + 3] = entry.unique_string.len() as u8;
+            pos += CRID_ENTRY_FIXED_LEN;
+            buf[pos..pos + entry.unique_string.len()].copy_from_slice(entry.unique_string);
+            pos += entry.unique_string.len();
+        }
 
-        // CRC-32: compute over everything up to (but not including) the CRC slot.
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crid_end]);
-        buf[crid_end..len].copy_from_slice(&crc.to_be_bytes());
-
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..pos]);
+        buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
 }
-
-// ── Table impl ────────────────────────────────────────────────────────────────
 
 impl<'a> Table<'a> for CitSection<'a> {
     const TABLE_ID: u8 = TABLE_ID;
@@ -250,154 +255,86 @@ impl<'a> crate::traits::TableDef<'a> for CitSection<'a> {
     const NAME: &'static str = "CONTENT_IDENTIFIER";
 }
 
-// ── tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Build a syntactically valid CIT section from its constituent fields.
-    ///
-    /// `prepend_strings` and `crid_entries` are raw byte slices; CRC is zeroed
-    /// (matching the serializer convention).
-    #[allow(clippy::too_many_arguments)]
-    fn build_cit(
-        service_id: u16,
-        version: u8,
-        current_next: bool,
-        section_number: u8,
-        last_section_number: u8,
-        transport_stream_id: u16,
-        original_network_id: u16,
-        prepend_strings: &[u8],
-        crid_entries: &[u8],
-    ) -> Vec<u8> {
+    #[test]
+    fn parse_happy_path_no_crid_entries() {
+        let prepend = b"CRID://example.com\x00";
         let cit = CitSection {
             private_indicator: false,
-            service_id,
-            version_number: version,
-            current_next_indicator: current_next,
-            section_number,
-            last_section_number,
-            transport_stream_id,
-            original_network_id,
-            prepend_strings,
-            crid_entries,
+            service_id: 0x1234,
+            version_number: 3,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 0x0064,
+            original_network_id: 0x0002,
+            prepend_strings: prepend,
+            crid_entries: Vec::new(),
         };
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
-        buf
-    }
-
-    #[test]
-    fn parse_happy_path_no_crid_entries() {
-        // A CIT section with no prepend strings and no CRID entries is the
-        // minimal valid form; commonly seen on transponders that carry the CIT
-        // structure but have no current programme mapping.
-        let prepend = b"CRID://example.com\x00";
-        let bytes = build_cit(0x1234, 3, true, 0, 0, 0x0064, 0x0002, prepend, &[]);
-        let cit = CitSection::parse(&bytes).unwrap();
-
-        assert_eq!(cit.service_id, 0x1234);
-        assert_eq!(cit.version_number, 3);
-        assert!(cit.current_next_indicator);
-        assert_eq!(cit.section_number, 0);
-        assert_eq!(cit.last_section_number, 0);
-        assert_eq!(cit.transport_stream_id, 0x0064);
-        assert_eq!(cit.original_network_id, 0x0002);
-        assert_eq!(cit.prepend_strings, prepend);
-        assert_eq!(cit.crid_entries, &[] as &[u8]);
+        let parsed = CitSection::parse(&buf).unwrap();
+        assert_eq!(parsed.service_id, 0x1234);
+        assert_eq!(parsed.version_number, 3);
+        assert!(parsed.current_next_indicator);
+        assert_eq!(parsed.prepend_strings, prepend);
+        assert!(parsed.crid_entries.is_empty());
     }
 
     #[test]
     fn parse_happy_path_with_crid_entries() {
-        // Two synthetic CRID entries:
-        //   entry 0: crid_ref=0x0001, prepend_string_index=0x00, unique="ep1"
-        //   entry 1: crid_ref=0x0002, prepend_string_index=0xFF (full CRID in unique), unique="crid://bbc.co.uk/EV-1"
         let prepend = b"crid://bbc.co.uk/\x00";
-        let mut crid_entries: Vec<u8> = Vec::new();
-        // Entry 0
-        crid_entries.extend_from_slice(&0x0001u16.to_be_bytes()); // crid_ref
-        crid_entries.push(0x00); // prepend_string_index
-        let unique0 = b"ep1";
-        crid_entries.push(unique0.len() as u8); // unique_string_length
-        crid_entries.extend_from_slice(unique0);
-        // Entry 1
-        crid_entries.extend_from_slice(&0x0002u16.to_be_bytes());
-        crid_entries.push(0xFF); // no prepend
-        let unique1 = b"crid://bbc.co.uk/EV-1";
-        crid_entries.push(unique1.len() as u8);
-        crid_entries.extend_from_slice(unique1);
-
-        let bytes = build_cit(
-            0xABCD,
-            7,
-            true,
-            1,
-            3,
-            0x01F4,
-            0x0028,
-            prepend,
-            &crid_entries,
-        );
-        let cit = CitSection::parse(&bytes).unwrap();
-
-        assert_eq!(cit.service_id, 0xABCD);
-        assert_eq!(cit.version_number, 7);
-        assert_eq!(cit.section_number, 1);
-        assert_eq!(cit.last_section_number, 3);
-        assert_eq!(cit.transport_stream_id, 0x01F4);
-        assert_eq!(cit.original_network_id, 0x0028);
-        assert_eq!(cit.prepend_strings, prepend);
-        assert_eq!(cit.crid_entries, crid_entries.as_slice());
-    }
-
-    #[test]
-    fn parse_rejects_wrong_table_id() {
-        let mut bytes = build_cit(0x0001, 0, true, 0, 0, 0x0001, 0x0001, &[], &[]);
-        bytes[0] = 0x40; // Not 0x77.
-        assert!(matches!(
-            CitSection::parse(&bytes).unwrap_err(),
-            Error::UnexpectedTableId { table_id: 0x40, .. }
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_buffer_too_short() {
-        // Hand-craft a buffer that is shorter than MIN_SECTION_LEN.
-        let short = [TABLE_ID, 0x00];
-        assert!(matches!(
-            CitSection::parse(&short).unwrap_err(),
-            Error::BufferTooShort { .. }
-        ));
-    }
-
-    #[test]
-    fn parse_rejects_section_length_overflow() {
-        let mut bytes = build_cit(0x0001, 0, true, 0, 0, 0x0001, 0x0001, &[], &[]);
-        // Inflate the declared section_length to exceed actual buffer size.
-        let fake_sl: u16 = (bytes.len() as u16) + 100 - HEADER_LEN as u16;
-        bytes[1] = (bytes[1] & 0xF0) | ((fake_sl >> 8) as u8 & 0x0F);
-        bytes[2] = (fake_sl & 0xFF) as u8;
-        assert!(matches!(
-            CitSection::parse(&bytes).unwrap_err(),
-            Error::SectionLengthOverflow { .. }
-        ));
-    }
-
-    #[test]
-    fn serialize_round_trip() {
-        let prepend = b"crid://example.com/\x00";
-        let crid_entries = {
-            let mut v: Vec<u8> = Vec::new();
-            v.extend_from_slice(&0x0042u16.to_be_bytes());
-            v.push(0x00);
-            let unique = b"episode42";
-            v.push(unique.len() as u8);
-            v.extend_from_slice(unique);
-            v
+        let entries = vec![
+            CridEntry {
+                crid_ref: 0x0001,
+                prepend_string_index: 0x00,
+                unique_string: b"ep1",
+            },
+            CridEntry {
+                crid_ref: 0x0002,
+                prepend_string_index: 0xFF,
+                unique_string: b"crid://bbc.co.uk/EV-1",
+            },
+        ];
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 0xABCD,
+            version_number: 7,
+            current_next_indicator: true,
+            section_number: 1,
+            last_section_number: 3,
+            transport_stream_id: 0x01F4,
+            original_network_id: 0x0028,
+            prepend_strings: prepend,
+            crid_entries: entries,
         };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        cit.serialize_into(&mut buf).unwrap();
+        let parsed = CitSection::parse(&buf).unwrap();
+        assert_eq!(parsed.service_id, 0xABCD);
+        assert_eq!(parsed.crid_entries.len(), 2);
+        assert_eq!(parsed.crid_entries[0].crid_ref, 0x0001);
+        assert_eq!(parsed.crid_entries[0].prepend_string_index, 0x00);
+        assert_eq!(parsed.crid_entries[0].unique_string, b"ep1");
+        assert_eq!(parsed.crid_entries[1].crid_ref, 0x0002);
+        assert_eq!(parsed.crid_entries[1].prepend_string_index, 0xFF);
+        assert_eq!(
+            parsed.crid_entries[1].unique_string,
+            b"crid://bbc.co.uk/EV-1"
+        );
+    }
 
+    #[test]
+    fn byte_exact_round_trip() {
+        let prepend = b"crid://example.com/\x00";
+        let entries = vec![CridEntry {
+            crid_ref: 0x0042,
+            prepend_string_index: 0x00,
+            unique_string: b"episode42",
+        }];
         let original = CitSection {
             private_indicator: true,
             service_id: 0x4321,
@@ -408,26 +345,73 @@ mod tests {
             transport_stream_id: 0x03E8,
             original_network_id: 0x0050,
             prepend_strings: prepend,
-            crid_entries: &crid_entries,
+            crid_entries: entries,
         };
-
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
+        let mut buf2 = vec![0u8; original.serialized_len()];
+        original.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
         let parsed = CitSection::parse(&buf).unwrap();
+        assert_eq!(parsed.crid_entries.len(), 1);
+        assert_eq!(parsed.crid_entries[0].crid_ref, 0x0042);
+        assert_eq!(parsed.crid_entries[0].unique_string, b"episode42");
+    }
 
-        assert_eq!(parsed.private_indicator, original.private_indicator);
-        assert_eq!(parsed.service_id, original.service_id);
-        assert_eq!(parsed.version_number, original.version_number);
-        assert_eq!(
-            parsed.current_next_indicator,
-            original.current_next_indicator
-        );
-        assert_eq!(parsed.section_number, original.section_number);
-        assert_eq!(parsed.last_section_number, original.last_section_number);
-        assert_eq!(parsed.transport_stream_id, original.transport_stream_id);
-        assert_eq!(parsed.original_network_id, original.original_network_id);
-        assert_eq!(parsed.prepend_strings, original.prepend_strings);
-        assert_eq!(parsed.crid_entries, original.crid_entries);
+    #[test]
+    fn parse_rejects_wrong_table_id() {
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 0x0001,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 0x0001,
+            original_network_id: 0x0001,
+            prepend_strings: &[],
+            crid_entries: Vec::new(),
+        };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        cit.serialize_into(&mut buf).unwrap();
+        buf[0] = 0x40;
+        assert!(matches!(
+            CitSection::parse(&buf).unwrap_err(),
+            Error::UnexpectedTableId { table_id: 0x40, .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_buffer_too_short() {
+        assert!(matches!(
+            CitSection::parse(&[TABLE_ID, 0x00]).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_truncated_crid_entry() {
+        let prepend: &[u8] = &[];
+        let cit = CitSection {
+            private_indicator: false,
+            service_id: 0x0001,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: 0x0001,
+            original_network_id: 0x0001,
+            prepend_strings: prepend,
+            crid_entries: Vec::new(),
+        };
+        let mut buf = vec![0u8; cit.serialized_len()];
+        cit.serialize_into(&mut buf).unwrap();
+        let mut truncated = buf.clone();
+        truncated.truncate(buf.len() - 2);
+        let sl = (truncated.len() - HEADER_LEN) as u16;
+        truncated[1] = (truncated[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        truncated[2] = (sl & 0xFF) as u8;
+        assert!(CitSection::parse(&truncated).is_err());
     }
 
     #[test]
@@ -442,9 +426,9 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0001,
             prepend_strings: &[],
-            crid_entries: &[],
+            crid_entries: Vec::new(),
         };
-        let mut buf = vec![0u8; 2]; // Far too small.
+        let mut buf = vec![0u8; 2];
         assert!(matches!(
             cit.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
