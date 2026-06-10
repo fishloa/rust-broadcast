@@ -6,8 +6,8 @@
 //! body structures (position v2, cell fragment, time association, beamhopping
 //! time plan, position v3).
 //!
-//! The body is now fully typed as [`SatBody`] — an enum with one variant per
-//! defined layout plus a [`SatBody::Raw`] fallthrough for reserved
+//! The body is typed as [`SatBody`] — an enum with one variant per defined
+//! layout plus a [`SatBody::Raw`] fallthrough for reserved
 //! `satellite_table_id` values 5–63. All five layouts use bit-packed fields; a
 //! private bit-level reader/writer handles the extraction and emission.
 
@@ -23,6 +23,10 @@ pub const PID: u16 = 0x001B;
 const HEADER_LEN: usize = 9;
 const SECTION_LENGTH_PREFIX: usize = 3;
 const CRC_LEN: usize = 4;
+
+fn pad_to_byte(bits: usize) -> usize {
+    (8 - (bits % 8)) % 8
+}
 
 // ── Bit-level reader/writer ──────────────────────────────────────────────────
 
@@ -328,7 +332,7 @@ pub enum BeamhoppingMode {
         /// `sleep_duration_ext` (9 bits).
         sleep_duration_ext: u16,
     },
-    /// Reserved `time_plan_mode` (3–63): raw body bytes between the common
+    /// Reserved `time_plan_mode` (3): raw body bytes between the common
     /// header and the plan boundary, preserved for byte-exact round-trip.
     Reserved(Vec<u8>),
 }
@@ -534,13 +538,10 @@ fn sat_body_serialized_len(body: &SatBody) -> usize {
 }
 
 fn sat_body_write(body: &SatBody, w: &mut BitWriter, count_only: bool) {
-    if !count_only {
-        let len = sat_body_serialized_len(body);
-        let needed = len.div_ceil(8) * 8;
-        if w.buf.len() * 8 < w.bit_pos + needed {
-            return;
-        }
-    }
+    debug_assert!(
+        count_only || w.buf.len() * 8 >= w.bit_pos + sat_body_serialized_len(body) * 8,
+        "sat_body_write: buffer too small"
+    );
     match body {
         SatBody::PositionV2(b) => {
             for sat in &b.satellites {
@@ -655,8 +656,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter, count_only: bool) {
                     BeamhoppingMode::Mode1 { bit_map_size, .. } => {
                         let bm = *bit_map_size as usize;
                         let raw = 1 + 15 + 1 + 15 + bm;
-                        let pad = (8 - (raw % 8)) % 8;
-                        raw + pad
+                        raw + pad_to_byte(raw)
                     }
                     BeamhoppingMode::Mode2 { .. } => {
                         33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9
@@ -701,8 +701,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter, count_only: bool) {
                             w.write_u(1, on as u64);
                         }
                         let total = 1 + 15 + 1 + 15 + *bit_map_size as usize;
-                        let pad = (8 - (total % 8)) % 8;
-                        for _ in 0..pad {
+                        for _ in 0..pad_to_byte(total) {
                             w.write_zero(1);
                         }
                     }
@@ -1153,8 +1152,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             slot_transmission_on.push(r.read_u(1) != 0);
                         }
                         let total = 1 + 15 + 1 + 15 + bit_map_size as usize;
-                        let pad = (8 - (total % 8)) % 8;
-                        r.skip(pad as u8);
+                        r.skip(pad_to_byte(total) as u8);
                         BeamhoppingMode::Mode1 {
                             bit_map_size,
                             current_slot,
@@ -1201,7 +1199,6 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         } else {
                             Vec::new()
                         };
-                        r.bit_pos = plan_end_bits;
                         BeamhoppingMode::Reserved(raw)
                     }
                 };
@@ -1430,8 +1427,8 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
 /// Satellite Access Table section (EN 300 468 §5.2.11.1, Table 11a).
 ///
 /// The body is typed as [`SatBody`], selected by `satellite_table_id`.
-/// Since all body fields are owned numeric values, the section no longer
-/// borrows from the input buffer.
+/// All body fields are owned numeric values; the section does not borrow
+/// from the input buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SatSection {
@@ -1480,13 +1477,12 @@ impl<'a> Parse<'a> for SatSection {
             });
         }
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = SECTION_LENGTH_PREFIX + section_length;
-        if bytes.len() < total || total < HEADER_LEN + CRC_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(SECTION_LENGTH_PREFIX),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            SECTION_LENGTH_PREFIX,
+            section_length,
+            HEADER_LEN + CRC_LEN,
+        )?;
         let satellite_table_id = bytes[3] >> 2;
         let private_indicator = (bytes[1] & 0x40) != 0;
         let table_count = (((bytes[3] & 0x03) as u16) << 8) | bytes[4] as u16;
@@ -1524,8 +1520,9 @@ impl Serialize for SatSection {
         }
         let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB
+        buf[1] = 0x80
             | (u8::from(self.private_indicator) << 6)
+            | 0x30
             | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
@@ -1585,6 +1582,22 @@ mod tests {
         buf
     }
 
+    fn build_sat_private_indicator_false(stid: u8, body: &SatBody) -> Vec<u8> {
+        let sat = SatSection {
+            satellite_table_id: stid,
+            private_indicator: false,
+            table_count: 0,
+            version_number: 5,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: body.clone(),
+        };
+        let mut buf = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut buf).unwrap();
+        buf
+    }
+
     #[test]
     fn parse_raw_body() {
         let body_data = [0xAA, 0xBB, 0xCC, 0xDD];
@@ -1593,6 +1606,27 @@ mod tests {
         assert_eq!(sat.satellite_table_id, 7);
         assert_eq!(sat.kind(), None);
         assert_eq!(sat.body, SatBody::Raw(body_data.to_vec()));
+    }
+
+    #[test]
+    fn private_indicator_false_round_trip() {
+        let body = SatBody::TimeAssociation(TimeAssociationBody {
+            association_type: 0,
+            leap_info: None,
+            ncr_base: 0,
+            ncr_ext: 0,
+            association_timestamp_seconds: 0,
+            association_timestamp_nanoseconds: 0,
+        });
+        let bytes = build_sat_private_indicator_false(2, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert!(!sat.private_indicator);
+        let mut buf2 = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut buf2).unwrap();
+        assert_eq!(
+            bytes, buf2,
+            "byte-exact round-trip with private_indicator=false"
+        );
     }
 
     #[test]
@@ -2078,5 +2112,297 @@ mod tests {
         let mut buf2 = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf2).unwrap();
         assert_eq!(bytes, buf2, "byte-exact Reserved mode round-trip");
+    }
+
+    #[test]
+    fn cell_fragment_truncated_dsid_count() {
+        let body = SatBody::CellFragment(CellFragmentBody {
+            fragments: vec![CellFragment {
+                cell_fragment_id: 1,
+                first_occurrence: false,
+                last_occurrence: false,
+                center: None,
+                delivery_system_ids: vec![0x11111111],
+                new_delivery_systems: Vec::new(),
+                obsolescent_delivery_systems: Vec::new(),
+            }],
+        });
+        let bytes = build_sat(1, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        let mut buf2 = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut buf2).unwrap();
+        assert_eq!(bytes, buf2);
+
+        let corrupt_sat = SatSection {
+            satellite_table_id: 1,
+            private_indicator: true,
+            table_count: 0,
+            version_number: 5,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: SatBody::CellFragment(CellFragmentBody {
+                fragments: vec![CellFragment {
+                    cell_fragment_id: 1,
+                    first_occurrence: false,
+                    last_occurrence: false,
+                    center: None,
+                    delivery_system_ids: vec![0x11111111; 50],
+                    new_delivery_systems: Vec::new(),
+                    obsolescent_delivery_systems: Vec::new(),
+                }],
+            }),
+        };
+        let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
+        corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
+        let section_length = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
+        corrupt_buf[1] = 0x80 | 0x40 | 0x30 | ((section_length >> 8) as u8 & 0x0F);
+        corrupt_buf[2] = (section_length & 0xFF) as u8;
+        let crc_end = corrupt_buf.len();
+        let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+        corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
+        let original_len = corrupt_buf.len();
+        corrupt_buf.truncate(original_len - 100);
+        let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
+        corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+        corrupt_buf[2] = (sl & 0xFF) as u8;
+        let crc_end = corrupt_buf.len();
+        let crc2 = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+        corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc2.to_be_bytes());
+        assert!(SatSection::parse(&corrupt_buf).is_err());
+    }
+
+    #[test]
+    fn beamhopping_mode1_truncated_bit_map_size() {
+        let corrupt_sat = SatSection {
+            satellite_table_id: 3,
+            private_indicator: true,
+            table_count: 0,
+            version_number: 5,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+                plans: vec![BeamhoppingPlan {
+                    beamhopping_time_plan_id: 1,
+                    time_plan_mode: 1,
+                    time_of_application_base: 0,
+                    time_of_application_ext: 0,
+                    cycle_duration_base: 0,
+                    cycle_duration_ext: 0,
+                    mode: BeamhoppingMode::Mode1 {
+                        bit_map_size: 200,
+                        current_slot: 0,
+                        slot_transmission_on: vec![true; 200],
+                    },
+                }],
+            }),
+        };
+        let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
+        corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
+        let original_len = corrupt_buf.len();
+        let truncate_at = HEADER_LEN + 20;
+        if truncate_at + CRC_LEN < original_len {
+            corrupt_buf.truncate(truncate_at + CRC_LEN);
+            let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
+            corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+            corrupt_buf[2] = (sl & 0xFF) as u8;
+            let crc_end = corrupt_buf.len();
+            let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+            corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
+            assert!(SatSection::parse(&corrupt_buf).is_err());
+        }
+    }
+
+    #[test]
+    fn position_v3_truncated_ephemeris_data_count() {
+        let corrupt_sat = SatSection {
+            satellite_table_id: 4,
+            private_indicator: true,
+            table_count: 0,
+            version_number: 5,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            body: SatBody::PositionV3(PositionV3Body {
+                oem_version_major: 1,
+                oem_version_minor: 0,
+                creation_date_year: 25,
+                creation_date_day: 1,
+                creation_date_day_fraction: 0,
+                satellites: vec![PositionV3Satellite {
+                    satellite_id: 1,
+                    metadata_flag: false,
+                    usable_start_time_flag: false,
+                    usable_stop_time_flag: false,
+                    ephemeris_accel_flag: false,
+                    covariance_flag: false,
+                    metadata: None,
+                    ephemeris_data_count: 5,
+                    ephemeris_data: vec![
+                        EphemerisData {
+                            epoch_year: 25,
+                            epoch_day: 1,
+                            epoch_day_fraction: 0,
+                            ephemeris_x: 0,
+                            ephemeris_y: 0,
+                            ephemeris_z: 0,
+                            ephemeris_x_dot: 0,
+                            ephemeris_y_dot: 0,
+                            ephemeris_z_dot: 0,
+                            acceleration: None,
+                        };
+                        5
+                    ],
+                    covariance: None,
+                }],
+            }),
+        };
+        let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
+        corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
+        let original_len = corrupt_buf.len();
+        let truncate_at = HEADER_LEN + 30;
+        if truncate_at + CRC_LEN < original_len {
+            corrupt_buf.truncate(truncate_at + CRC_LEN);
+            let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
+            corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
+            corrupt_buf[2] = (sl & 0xFF) as u8;
+            let crc_end = corrupt_buf.len();
+            let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+            corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
+            assert!(SatSection::parse(&corrupt_buf).is_err());
+        }
+    }
+
+    #[test]
+    fn hand_byte_time_association() {
+        let body = SatBody::TimeAssociation(TimeAssociationBody {
+            association_type: 0,
+            leap_info: None,
+            ncr_base: 0x0000_AAAA_AAAA_u64,
+            ncr_ext: 0x1AA,
+            association_timestamp_seconds: 0,
+            association_timestamp_nanoseconds: 0,
+        });
+        let bytes = build_sat(2, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert_eq!(sat.satellite_table_id, 2);
+        match &sat.body {
+            SatBody::TimeAssociation(ta) => {
+                assert_eq!(ta.association_type, 0);
+                assert_eq!(ta.ncr_base, 0x0000_AAAA_AAAA);
+                assert_eq!(ta.ncr_ext, 0x1AA);
+            }
+            other => panic!("expected TimeAssociation, got {other:?}"),
+        }
+        assert_eq!((bytes[1] >> 6) & 1, 1);
+        assert_eq!((bytes[3] >> 2) & 0x3F, 2);
+    }
+
+    #[test]
+    fn hand_byte_position_v2_orbital() {
+        let body = SatBody::PositionV2(PositionV2Body {
+            satellites: vec![PositionV2Satellite {
+                satellite_id: 0x010203,
+                position: PositionSystem::Orbital {
+                    orbital_position: 0x1920,
+                    west_east_flag: true,
+                },
+            }],
+        });
+        let bytes = build_sat(0, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        match &sat.body {
+            SatBody::PositionV2(pv2) => {
+                assert_eq!(pv2.satellites[0].satellite_id, 0x010203);
+                match &pv2.satellites[0].position {
+                    PositionSystem::Orbital {
+                        orbital_position, ..
+                    } => {
+                        assert_eq!(*orbital_position, 0x1920);
+                    }
+                    other => panic!("expected Orbital, got {other:?}"),
+                }
+            }
+            other => panic!("expected PositionV2, got {other:?}"),
+        }
+        assert_eq!((bytes[3] >> 2) & 0x3F, 0);
+    }
+
+    #[test]
+    fn hand_byte_cell_fragment() {
+        let body = SatBody::CellFragment(CellFragmentBody {
+            fragments: vec![CellFragment {
+                cell_fragment_id: 0xAABBCCDD,
+                first_occurrence: false,
+                last_occurrence: true,
+                center: None,
+                delivery_system_ids: Vec::new(),
+                new_delivery_systems: Vec::new(),
+                obsolescent_delivery_systems: Vec::new(),
+            }],
+        });
+        let bytes = build_sat(1, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        match &sat.body {
+            SatBody::CellFragment(cf) => {
+                assert_eq!(cf.fragments[0].cell_fragment_id, 0xAABBCCDD);
+                assert!(cf.fragments[0].last_occurrence);
+            }
+            other => panic!("expected CellFragment, got {other:?}"),
+        }
+        assert_eq!((bytes[3] >> 2) & 0x3F, 1);
+    }
+
+    #[test]
+    fn hand_byte_beamhopping_mode0() {
+        let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+            plans: vec![BeamhoppingPlan {
+                beamhopping_time_plan_id: 0xDEADBEEF,
+                time_plan_mode: 0,
+                time_of_application_base: 0,
+                time_of_application_ext: 0,
+                cycle_duration_base: 0,
+                cycle_duration_ext: 0,
+                mode: BeamhoppingMode::Mode0 {
+                    dwell_duration_base: 0,
+                    dwell_duration_ext: 0,
+                    on_time_base: 0,
+                    on_time_ext: 0,
+                },
+            }],
+        });
+        let bytes = build_sat(3, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        match &sat.body {
+            SatBody::BeamhoppingTimePlan(bhp) => {
+                assert_eq!(bhp.plans[0].beamhopping_time_plan_id, 0xDEADBEEF);
+                assert_eq!(bhp.plans[0].time_plan_mode, 0);
+            }
+            other => panic!("expected BeamhoppingTimePlan, got {other:?}"),
+        }
+        assert_eq!((bytes[3] >> 2) & 0x3F, 3);
+    }
+
+    #[test]
+    fn hand_byte_position_v3() {
+        let body = SatBody::PositionV3(PositionV3Body {
+            oem_version_major: 1,
+            oem_version_minor: 2,
+            creation_date_year: 26,
+            creation_date_day: 42,
+            creation_date_day_fraction: 0,
+            satellites: Vec::new(),
+        });
+        let bytes = build_sat(4, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        match &sat.body {
+            SatBody::PositionV3(v3) => {
+                assert_eq!(v3.oem_version_major, 1);
+                assert_eq!(v3.oem_version_minor, 2);
+            }
+            other => panic!("expected PositionV3, got {other:?}"),
+        }
+        assert_eq!((bytes[3] >> 2) & 0x3F, 4);
     }
 }

@@ -143,13 +143,12 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             });
         }
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = SECTION_LENGTH_PREFIX + section_length;
-        if bytes.len() < total || total < HEADER_LEN + CRC_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(SECTION_LENGTH_PREFIX),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            SECTION_LENGTH_PREFIX,
+            section_length,
+            HEADER_LEN + CRC_LEN,
+        )?;
 
         let table_id_extension = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
@@ -702,5 +701,20 @@ mod tests {
         let reparsed = ProtectionMessageSection::parse(&bytes).unwrap();
         assert_eq!(serde_json::to_string(&reparsed).unwrap(), j);
         assert!(j.contains("\"signature_algorithm_identifier\":1"));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            ProtectionMessageSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
     }
 }

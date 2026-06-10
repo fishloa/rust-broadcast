@@ -97,13 +97,12 @@ impl<'a> Parse<'a> for AitSection<'a> {
         }
 
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
 
         let test_application_flag = (bytes[3] & 0x80) != 0;
         let application_type = (((bytes[3] & 0x7F) as u16) << 8) | (bytes[4] as u16);

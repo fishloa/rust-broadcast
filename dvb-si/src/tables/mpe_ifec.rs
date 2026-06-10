@@ -164,13 +164,7 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         }
 
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = HEADER_LEN + section_length;
-        if bytes.len() < total {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len() - HEADER_LEN,
-            });
-        }
+        let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
         let burst_number = bytes[3];
@@ -421,6 +415,21 @@ mod tests {
     fn table_trait_constants() {
         assert_eq!(<MpeIfecSection as Table>::TABLE_ID, 0x7A);
         assert_eq!(<MpeIfecSection as Table>::PID, 0x0000);
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            MpeIfecSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
     }
 
     #[cfg(feature = "serde")]

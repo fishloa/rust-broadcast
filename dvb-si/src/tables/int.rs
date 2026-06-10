@@ -112,13 +112,12 @@ impl<'a> Parse<'a> for IntSection<'a> {
         }
 
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = OUTER_HEADER_LEN + section_length;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(OUTER_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            OUTER_HEADER_LEN,
+            section_length,
+            MIN_SECTION_LEN,
+        )?;
 
         let action_type = bytes[OFF_ACTION_TYPE];
         let platform_id_hash = bytes[OFF_PLATFORM_ID_HASH];

@@ -81,13 +81,12 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         }
 
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
 
         let program_number = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;

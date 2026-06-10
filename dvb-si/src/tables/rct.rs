@@ -29,6 +29,9 @@ const CRC_LEN: usize = 4;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
+const SECTION_B1_SSI: u8 = 0x80;
+const SECTION_B1_RESERVED: u8 = 0x30;
+
 const LINK_TYPE_MASK: u8 = 0xF0;
 const LINK_TYPE_SHIFT: u8 = 4;
 const HOW_RELATED_HI_MASK: u8 = 0x03;
@@ -44,9 +47,12 @@ const LOCATOR_RELIABILITY_MASK: u8 = 0x20;
 const LOCATOR_INLINE_MASK: u8 = 0x10;
 const LOCATOR_START_DATE_HI_MASK: u8 = 0x07;
 const LOCATOR_START_DATE_HI_SHIFT: usize = 6;
+const LOCATOR_RESERVED_BITS: u8 = 0x08;
 
 const ITEM_RFU_MASK: u8 = 0xC0;
 const ITEM_COUNT_MASK: u8 = 0x3F;
+
+const LINK_INFO_HEADER_RFU: u8 = 0x0C;
 
 const ICON_FLAG_MASK: u8 = 0x80;
 const ICON_ID_MASK: u8 = 0x70;
@@ -378,7 +384,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> usize {
     let b0 = ((loc.identifier_type & 0x03) << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service) << 4)
-        | 0x08
+        | LOCATOR_RESERVED_BITS
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
 
@@ -564,7 +570,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
 fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> usize {
     buf[0] = ((li.link_type & 0x0F) << LINK_TYPE_SHIFT)
-        | 0x0C
+        | LINK_INFO_HEADER_RFU
         | ((li.how_related >> 4) & HOW_RELATED_HI_MASK);
     buf[1] =
         ((li.how_related & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
@@ -623,13 +629,12 @@ impl<'a> Parse<'a> for RctSection<'a> {
 
         let table_id_extension_flag = (bytes[1] & 0x40) != 0;
         let section_length = (((bytes[1] & 0x0F) as u16) << 8) | bytes[2] as u16;
-        let total = MIN_HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(MIN_HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            MIN_HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
 
         let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
@@ -733,7 +738,8 @@ impl Serialize for RctSection<'_> {
         } else {
             0x00
         };
-        buf[1] = 0x80 | tief_bit | 0x30 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] =
+            SECTION_B1_SSI | tief_bit | SECTION_B1_RESERVED | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
@@ -741,7 +747,13 @@ impl Serialize for RctSection<'_> {
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.year_offset.to_be_bytes());
-        buf[10] = self.link_count;
+        if self.links.len() > u8::MAX as usize {
+            return Err(Error::OutputBufferTooSmall {
+                need: self.links.len(),
+                have: u8::MAX as usize,
+            });
+        }
+        buf[10] = self.links.len() as u8;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
         for li in &self.links {

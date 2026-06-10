@@ -27,6 +27,9 @@ const EXTENSION_LEN: usize = 10;
 const CRC_LEN: usize = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
+const SECTION_B1_SSI: u8 = 0x80;
+const SECTION_B1_RESERVED: u8 = 0x30;
+
 const CRID_REF_LEN: usize = 2;
 const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
@@ -136,13 +139,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
         }
 
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
-        let total = HEADER_LEN + section_length;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(HEADER_LEN),
-            });
-        }
+        let total =
+            super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
         let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
@@ -242,9 +240,9 @@ impl Serialize for CitSection<'_> {
 
         let section_length = (len - HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = 0x80
+        buf[1] = SECTION_B1_SSI
             | (u8::from(self.private_indicator) << 6)
-            | 0x30
+            | SECTION_B1_RESERVED
             | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 

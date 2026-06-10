@@ -18,6 +18,31 @@ pub(crate) const SECTION_B1_FLAGS_PSI: u8 = 0xB0;
 /// bits set (SSI=1, rfu=1, reserved=11).
 pub(crate) const SECTION_B1_FLAGS_DVB: u8 = 0xF0;
 
+/// Validate a section_length field and compute the total encoded length.
+///
+/// Returns `total` (= `header_len + section_length`) on success, or
+/// `Err(SectionLengthOverflow)` when the declared `section_length` would
+/// make `total` smaller than `min_total` or larger than `bytes_len`.
+///
+/// Every table's `Parse` implementation should call this immediately after
+/// extracting `section_length` from bytes 1-2, passing the appropriate
+/// constants for that table type.
+pub(crate) fn check_section_length(
+    bytes_len: usize,
+    header_len: usize,
+    section_length: usize,
+    min_total: usize,
+) -> crate::Result<usize> {
+    let total = header_len + section_length;
+    if bytes_len < total || total < min_total {
+        return Err(crate::error::Error::SectionLengthOverflow {
+            declared: section_length,
+            available: bytes_len.saturating_sub(header_len),
+        });
+    }
+    Ok(total)
+}
+
 pub mod any;
 pub use any::AnyTableSection;
 

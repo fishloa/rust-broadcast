@@ -83,13 +83,12 @@ impl<'a> Parse<'a> for TotSection<'a> {
             });
         }
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(HEADER_LEN),
-            });
-        }
+        let total = super::check_section_length(
+            bytes.len(),
+            HEADER_LEN,
+            section_length as usize,
+            MIN_SECTION_LEN,
+        )?;
         let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
         let dl_pos = HEADER_LEN + UTC_TIME_LEN;
         let dl = (((bytes[dl_pos] & 0x0F) as usize) << 8) | bytes[dl_pos + 1] as usize;
