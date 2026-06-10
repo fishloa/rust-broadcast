@@ -187,7 +187,7 @@ impl Serialize for SdtSection<'_> {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -258,7 +258,7 @@ mod tests {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,
         });
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
         v.extend_from_slice(&tsid.to_be_bytes());
         v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);

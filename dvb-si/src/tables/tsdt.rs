@@ -107,7 +107,7 @@ impl Serialize for TsdtSection<'_> {
 
         let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -144,7 +144,7 @@ mod tests {
         let section_length: u16 = (EXTENSION_HEADER_LEN + descriptors.len() + CRC_LEN) as u16;
         let mut v = Vec::new();
         v.push(TABLE_ID);
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        v.push(super::super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
         v.extend_from_slice(&table_id_extension.to_be_bytes());
         v.push(0xC0 | ((version & 0x1F) << 1) | 0x01);

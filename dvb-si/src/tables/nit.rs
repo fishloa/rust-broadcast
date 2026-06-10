@@ -245,7 +245,7 @@ impl Serialize for NitSection<'_> {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
         // Extension header per ETSI EN 300 468 §5.2.1:
@@ -329,7 +329,7 @@ mod tests {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         });
-        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
         v.push((section_length & 0xFF) as u8);
         // Extension header (spec layout): bytes[3..5] = network_id
         v.extend_from_slice(&network_id.to_be_bytes());

@@ -462,8 +462,7 @@ impl Serialize for ProtectionMessageSection<'_> {
         }
         let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        // section_syntax_indicator=1, reserved_future_use=0, reserved=11, section_length hi nibble.
-        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
@@ -497,7 +496,7 @@ mod tests {
         let section_length = (HEADER_LEN - SECTION_LENGTH_PREFIX + body.len() + CRC_LEN) as u16;
         let mut v = vec![
             TABLE_ID,
-            0xB0 | ((section_length >> 8) as u8 & 0x0F),
+            super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F),
             (section_length & 0xFF) as u8,
             (extension >> 8) as u8,
             (extension & 0xFF) as u8,
