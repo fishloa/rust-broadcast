@@ -191,3 +191,101 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_s2x_primary_with_isi_and_timeslice() {
+        // receiver_profiles=0x05; s2x_mode=2, scram_sel=0, ts_gs=1; ISI + timeslice
+        let b0 = 0x05 << 3;
+        let b1 = (0x02 << 6) | 0x01; // mode 2 [7:6], no scrambling, ts_gs 1 [1:0]
+        let mut sel = vec![b0, b1];
+        sel.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // frequency
+        sel.extend_from_slice(&0x00C8u16.to_be_bytes()); // orbital_position
+        sel.push((1 << 7) | (0x02 << 5) | (1 << 4) | 0x03); // we=1 pol=2 mis=1 roll=3
+        let sr: u32 = 0x0AB_CDEF; // symbol_rate (28-bit)
+        sel.push((sr >> 24) as u8 & 0x0F);
+        sel.push((sr >> 16) as u8);
+        sel.push((sr >> 8) as u8);
+        sel.push(sr as u8);
+        sel.push(0x42); // input_stream_identifier (mis=1)
+        sel.push(0x09); // timeslice_number (mode==2)
+        let bytes = wrap(0x17, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::S2XSatelliteDeliverySystem(b) => {
+                assert_eq!(b.receiver_profiles, 0x05);
+                assert_eq!(b.s2x_mode, 2);
+                assert!(!b.scrambling_sequence_selector);
+                assert_eq!(b.ts_gs_s2x_mode, 1);
+                assert_eq!(b.frequency, 0x0102_0304);
+                assert_eq!(b.orbital_position, 0x00C8);
+                assert!(b.west_east_flag);
+                assert_eq!(b.polarization, 2);
+                assert!(b.multiple_input_stream_flag);
+                assert_eq!(b.roll_off, 3);
+                assert_eq!(b.symbol_rate, 0x0AB_CDEF);
+                assert_eq!(b.input_stream_identifier, Some(0x42));
+                assert_eq!(b.timeslice_number, Some(0x09));
+                assert!(b.tail.is_empty());
+            }
+            other => panic!("expected S2X, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_s2x_with_scrambling_index() {
+        let b0 = 0x01 << 3;
+        let b1 = (0x01 << 6) | 0x20; // mode 1 [7:6], scrambling selector set [5]
+        let mut sel = vec![b0, b1];
+        // scrambling index 0x2ABCD (18-bit)
+        sel.push(0x02);
+        sel.push(0xAB);
+        sel.push(0xCD);
+        sel.extend_from_slice(&0u32.to_be_bytes()); // frequency
+        sel.extend_from_slice(&0u16.to_be_bytes()); // orbital
+        sel.push(0x00); // packed (mis=0)
+        sel.extend_from_slice(&[0, 0, 0, 0]); // symbol_rate
+        let bytes = wrap(0x17, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::S2XSatelliteDeliverySystem(b) => {
+                assert!(b.scrambling_sequence_selector);
+                assert_eq!(b.scrambling_sequence_index, Some(0x2ABCD));
+                assert_eq!(b.input_stream_identifier, None);
+                assert_eq!(b.timeslice_number, None);
+            }
+            other => panic!("expected S2X, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_s2x_mode3_tail_preserved() {
+        // mode 3 (channel bonding) — the bond loop lands in `tail` (raw).
+        let b0 = 0x01 << 3;
+        let b1 = 0x03 << 6; // mode 3 [7:6], no scrambling, ts_gs 0
+        let mut sel = vec![b0, b1];
+        sel.extend_from_slice(&0u32.to_be_bytes());
+        sel.extend_from_slice(&0u16.to_be_bytes());
+        sel.push(0x00); // mis=0
+        sel.extend_from_slice(&[0, 0, 0, 0]); // symbol_rate
+        sel.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // raw channel-bond tail
+        let bytes = wrap(0x17, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::S2XSatelliteDeliverySystem(b) => {
+                assert_eq!(b.s2x_mode, 3);
+                assert_eq!(b.timeslice_number, None);
+                assert_eq!(b.tail, &[0xAA, 0xBB, 0xCC]);
+            }
+            other => panic!("expected S2X, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

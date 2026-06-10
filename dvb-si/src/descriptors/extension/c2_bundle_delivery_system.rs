@@ -92,3 +92,48 @@ impl Serialize for C2BundleDeliverySystem {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_c2_bundle_two_entries() {
+        let entry = |off: u8| {
+            let packed = (0x01u8 << 6) | 0x01; // freq_type=1, ofdm=0, guard=1
+                                               // 8 bytes per Table 139: ... + primary_channel(1)+reserved_zero(7)
+            [off, off + 1, 0x00, 0x00, 0x10, 0x00, packed, 0x80]
+        };
+        let mut sel = Vec::new();
+        sel.extend_from_slice(&entry(0x01));
+        sel.extend_from_slice(&entry(0x05));
+        let bytes = wrap(0x16, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2BundleDeliverySystem(b) => {
+                assert_eq!(b.entries.len(), 2);
+                assert_eq!(b.entries[0].plp_id, 0x01);
+                assert!(b.entries[0].primary_channel);
+                assert_eq!(b.entries[1].plp_id, 0x05);
+                assert_eq!(b.entries[1].guard_interval, 0x01);
+            }
+            other => panic!("expected C2BundleDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_c2_bundle_rejects_partial_entry() {
+        let sel = [0x01, 0x02, 0x03]; // 3 bytes, not a multiple of 8
+        let bytes = wrap(0x16, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+}

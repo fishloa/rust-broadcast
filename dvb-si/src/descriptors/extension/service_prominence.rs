@@ -164,3 +164,154 @@ impl Serialize for ServiceProminence<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_service_prominence_one_entry_service_only() {
+        // One SOGI entry: service_flag=1, target_region_flag=0,
+        // sogi_priority=0x123, service_id=0x4567, private_data [0xAB]
+        let sel = [0x04, 0x21, 0x23, 0x45, 0x67, 0xAB];
+        let bytes = wrap(0x22, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::ServiceProminence));
+        match &d.body {
+            ExtensionBody::ServiceProminence(b) => {
+                assert_eq!(b.sogi_list.len(), 1);
+                let e = &b.sogi_list[0];
+                assert!(!e.sogi_flag);
+                assert!(!e.target_region_flag);
+                assert!(e.service_flag);
+                assert_eq!(e.sogi_priority, 0x0123);
+                assert_eq!(e.service_id, Some(0x4567));
+                assert!(e.target_region_loop.is_none());
+                assert_eq!(b.private_data, &[0xAB]);
+            }
+            other => panic!("expected ServiceProminence, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_service_prominence_one_entry_target_region() {
+        // One SOGI entry: service_flag=0, target_region_flag=1,
+        // sogi_priority=0x001, target_region_loop = [0xAA, 0xBB].
+        let sel = [0x05, 0x40, 0x01, 0x02, 0xAA, 0xBB];
+        let bytes = wrap(0x22, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ServiceProminence(b) => {
+                assert_eq!(b.sogi_list.len(), 1);
+                let e = &b.sogi_list[0];
+                assert!(!e.sogi_flag);
+                assert!(e.target_region_flag);
+                assert!(!e.service_flag);
+                assert_eq!(e.sogi_priority, 0x0001);
+                assert!(e.service_id.is_none());
+                assert_eq!(e.target_region_loop, Some([0xAAu8, 0xBB].as_slice()));
+                assert!(b.private_data.is_empty());
+            }
+            other => panic!("expected ServiceProminence, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_service_prominence_two_entries_plus_private() {
+        // Two SOGI entries + private_data tail.
+        // Entry 0: service_flag=1, sogi_priority=0xABC, service_id=0x1111.
+        // Entry 1: target_region_flag=1, sogi_priority=0x345, region=[0xCC].
+        let sel = [0x08, 0x2A, 0xBC, 0x11, 0x11, 0x43, 0x45, 0x01, 0xCC, 0xDD];
+        let bytes = wrap(0x22, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ServiceProminence(b) => {
+                assert_eq!(b.sogi_list.len(), 2);
+                let e0 = &b.sogi_list[0];
+                assert!(e0.service_flag);
+                assert_eq!(e0.sogi_priority, 0x0ABC);
+                assert_eq!(e0.service_id, Some(0x1111));
+                assert!(e0.target_region_loop.is_none());
+                let e1 = &b.sogi_list[1];
+                assert!(!e1.sogi_flag);
+                assert!(e1.target_region_flag);
+                assert!(!e1.service_flag);
+                assert_eq!(e1.sogi_priority, 0x0345);
+                assert_eq!(e1.target_region_loop, Some([0xCCu8].as_slice()));
+                assert_eq!(b.private_data, &[0xDD]);
+            }
+            other => panic!("expected ServiceProminence, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_service_prominence_empty_list_private_only() {
+        // SOGI_list_length=0, private=[0x01, 0x02]
+        let sel = [0x00, 0x01, 0x02];
+        let bytes = wrap(0x22, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ServiceProminence(b) => {
+                assert!(b.sogi_list.is_empty());
+                assert_eq!(b.private_data, &[0x01, 0x02]);
+            }
+            other => panic!("expected ServiceProminence, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_service_prominence_rejects_overrun() {
+        // SOGI_list_length=5 but only 3 bytes follow
+        let sel = [0x05, 0xAA, 0xBB, 0xCC];
+        let bytes = wrap(0x22, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_service_prominence_rejects_entry_overrun() {
+        // SOGI_list_length=3, service_flag=1 but no service_id bytes follow
+        let sel = [0x03, 0x20, 0x00, 0x00];
+        let bytes = wrap(0x22, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_serialize_service_prominence() {
+        let d = ExtensionDescriptor {
+            tag_extension: 0x22,
+            body: ExtensionBody::ServiceProminence(ServiceProminence {
+                sogi_list: vec![SogiEntry {
+                    sogi_flag: false,
+                    target_region_flag: false,
+                    service_flag: true,
+                    sogi_priority: 0x123,
+                    service_id: Some(0x4567),
+                    target_region_loop: None,
+                }],
+                private_data: &[0xAB],
+            }),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"tag_extension\":34"));
+        assert!(json.contains("\"ServiceProminence\""));
+    }
+}

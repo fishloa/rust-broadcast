@@ -54,3 +54,26 @@ impl Serialize for AudioPreselection<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_audio_preselection_keeps_loop_raw() {
+        // num_preselections=3 then raw loop
+        let sel = [0x03 << 3, 0xAA, 0xBB, 0xCC];
+        let bytes = wrap(0x19, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::AudioPreselection(b) => {
+                assert_eq!(b.num_preselections, 3);
+                assert_eq!(b.preselection_loop, &[0xAA, 0xBB, 0xCC]);
+            }
+            other => panic!("expected AudioPreselection, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

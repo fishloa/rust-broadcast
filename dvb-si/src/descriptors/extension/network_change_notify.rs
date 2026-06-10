@@ -44,3 +44,24 @@ impl Serialize for NetworkChangeNotify<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+
+    #[test]
+    fn parse_network_change_notify_loop_raw() {
+        let sel = [0x00, 0x01, 0x05, 0xAA, 0xBB];
+        let bytes = wrap(0x07, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::NetworkChangeNotify(b) => {
+                assert_eq!(b.cell_loop, &sel);
+            }
+            other => panic!("expected NetworkChangeNotify, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

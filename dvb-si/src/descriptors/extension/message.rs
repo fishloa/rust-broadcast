@@ -54,3 +54,27 @@ impl Serialize for Message<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use crate::text::LangCode;
+
+    #[test]
+    fn parse_message() {
+        let sel = [0x07, b'e', b'n', b'g', b'H', b'i'];
+        let bytes = wrap(0x08, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::Message(b) => {
+                assert_eq!(b.message_id, 0x07);
+                assert_eq!(b.iso_639_language_code, LangCode(*b"eng"));
+                assert_eq!(b.text.raw(), b"Hi");
+            }
+            other => panic!("expected Message, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

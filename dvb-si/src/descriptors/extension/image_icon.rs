@@ -263,3 +263,170 @@ impl Serialize for ImageIcon<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_image_icon_first_position_mode0() {
+        // descriptor_number=0, last=3, icon_id=5
+        // position_flag=1, coordinate_system=1, h_origin=100, v_origin=200
+        // icon_type=[0xDE, 0xAD], mode=0 icon_data=[0x01, 0x02, 0x03]
+        // byte0: (0<<4)|3 = 0x03
+        // byte1: icon_id=5, reserved=0 = 0x05
+        // packed: (0<<6)|(1<<5)|(1<<2) = 0x24
+        // origin: h=100=0x0064, v=200=0x00C8 → b0=0x06, b1=0x40, b2=0xC8
+        let sel = [
+            0x03, 0x05, 0x24, 0x06, 0x40, 0xC8, 0x02, 0xDE, 0xAD, 0x03, 0x01, 0x02, 0x03,
+        ];
+        let bytes = wrap(0x00, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::ImageIcon));
+        match &d.body {
+            ExtensionBody::ImageIcon(b) => {
+                assert_eq!(b.descriptor_number, 0);
+                assert_eq!(b.last_descriptor_number, 3);
+                assert_eq!(b.icon_id, 5);
+                match &b.body {
+                    ImageIconBody::First(f) => {
+                        assert_eq!(f.icon_transport_mode, 0);
+                        assert!(f.position.is_some());
+                        let pos = f.position.as_ref().unwrap();
+                        assert_eq!(pos.coordinate_system, 1);
+                        assert_eq!(pos.icon_horizontal_origin, 100);
+                        assert_eq!(pos.icon_vertical_origin, 200);
+                        assert_eq!(f.icon_type, &[0xDE, 0xAD]);
+                        assert_eq!(f.payload, &[0x01, 0x02, 0x03]);
+                    }
+                    other => panic!("expected First, got {other:?}"),
+                }
+            }
+            other => panic!("expected ImageIcon, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_image_icon_first_no_position_mode1() {
+        // descriptor_number=0, last=1, icon_id=7
+        // position_flag=0, mode=1 (URL), icon_type=[0xAB], url=b"http"
+        // byte0: (0<<4)|1 = 0x01; byte1: 0x07
+        // packed: (1<<6)|(0<<5) = 0x40
+        let sel = [0x01, 0x07, 0x40, 0x01, 0xAB, 0x04, b'h', b't', b't', b'p'];
+        let bytes = wrap(0x00, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ImageIcon(b) => match &b.body {
+                ImageIconBody::First(f) => {
+                    assert_eq!(f.icon_transport_mode, 1);
+                    assert!(f.position.is_none());
+                    assert_eq!(f.icon_type, &[0xAB]);
+                    assert_eq!(f.payload, b"http");
+                }
+                other => panic!("expected First, got {other:?}"),
+            },
+            other => panic!("expected ImageIcon, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_image_icon_first_mode2_empty_payload() {
+        // descriptor_number=0, last=0, icon_id=0, mode=2 (reserved),
+        // position_flag=0, icon_type=0 bytes, empty payload
+        // byte0: 0x00; byte1: 0x00; packed: (2<<6) = 0x80
+        let sel = [0x00, 0x00, 0x80, 0x00];
+        let bytes = wrap(0x00, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ImageIcon(b) => match &b.body {
+                ImageIconBody::First(f) => {
+                    assert_eq!(f.icon_transport_mode, 2);
+                    assert!(f.position.is_none());
+                    assert!(f.icon_type.is_empty());
+                    assert!(f.payload.is_empty());
+                }
+                other => panic!("expected First, got {other:?}"),
+            },
+            other => panic!("expected ImageIcon, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_image_icon_continuation() {
+        // descriptor_number=2, last=3, icon_id=1
+        // icon_data=[0xAA, 0xBB, 0xCC, 0xDD]
+        // byte0: (2<<4)|3 = 0x23; byte1: 0x01; length=4
+        let sel = [0x23, 0x01, 0x04, 0xAA, 0xBB, 0xCC, 0xDD];
+        let bytes = wrap(0x00, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::ImageIcon));
+        match &d.body {
+            ExtensionBody::ImageIcon(b) => {
+                assert_eq!(b.descriptor_number, 2);
+                assert_eq!(b.last_descriptor_number, 3);
+                assert_eq!(b.icon_id, 1);
+                match &b.body {
+                    ImageIconBody::Continuation { icon_data } => {
+                        assert_eq!(icon_data, &[0xAA, 0xBB, 0xCC, 0xDD]);
+                    }
+                    other => panic!("expected Continuation, got {other:?}"),
+                }
+            }
+            other => panic!("expected ImageIcon, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_image_icon_rejects_trailing_bytes() {
+        // First segment with an extra trailing byte.
+        // mode=2, one extra byte 0xFF after the complete parse.
+        let sel = [0x00, 0x00, 0x80, 0x00, 0xFF];
+        let bytes = wrap(0x00, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_image_icon_rejects_truncated_continuation() {
+        // Continuation with length=5 but only 3 data bytes.
+        let sel = [0x23, 0x01, 0x05, 0xAA, 0xBB, 0xCC];
+        let bytes = wrap(0x00, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_serialize_image_icon() {
+        let d = ExtensionDescriptor {
+            tag_extension: 0x00,
+            body: ExtensionBody::ImageIcon(ImageIcon {
+                descriptor_number: 2,
+                last_descriptor_number: 3,
+                icon_id: 1,
+                body: ImageIconBody::Continuation {
+                    icon_data: &[0xAA, 0xBB],
+                },
+            }),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"tag_extension\":0"));
+        assert!(json.contains("\"ImageIcon\""));
+    }
+}

@@ -53,3 +53,26 @@ impl Serialize for TargetRegion<'_> {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
+    use crate::text::LangCode;
+
+    #[test]
+    fn parse_target_region_loop_raw() {
+        let sel = [b'g', b'b', b'r', 0x01, 0x02, 0x03];
+        let bytes = wrap(0x09, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::TargetRegion(b) => {
+                assert_eq!(b.country_code, LangCode(*b"gbr"));
+                assert_eq!(b.region_loop, &[0x01, 0x02, 0x03]);
+            }
+            other => panic!("expected TargetRegion, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

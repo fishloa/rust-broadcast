@@ -53,3 +53,27 @@ impl Serialize for ServiceRelocated {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_service_relocated() {
+        let sel = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+        let bytes = wrap(0x0B, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::ServiceRelocated));
+        match &d.body {
+            ExtensionBody::ServiceRelocated(b) => {
+                assert_eq!(b.old_original_network_id, 0x1234);
+                assert_eq!(b.old_transport_stream_id, 0x5678);
+                assert_eq!(b.old_service_id, 0x9ABC);
+            }
+            other => panic!("expected ServiceRelocated, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+}

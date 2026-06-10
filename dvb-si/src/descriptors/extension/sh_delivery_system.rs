@@ -312,3 +312,279 @@ impl Serialize for ShDeliverySystem {
         Ok(len)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::extension::test_support::*;
+    use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    #[test]
+    fn parse_sh_tdm_no_interleaver() {
+        // diversity_mode=0x0D (1101), one TDM entry, no interleaver.
+        // TDM: polarization=2, roll_off=1, modulation_mode=3,
+        //      code_rate=10 (1010), symbol_rate=21 (10101).
+        // flags: mod_type=0, inter_pres=0, inter_type=0 -> 0x00
+        // mb0 = (2<<6)|(1<<4)|(3<<2)|((10>>2)&3) = 0x80|0x10|0x0C|0x02 = 0x9E
+        // mb1 = ((10&3)<<6)|(21<<1) = (2<<6)|42 = 0x80|0x2A = 0xAA
+        let sel = [0xD0, 0x00, 0x9E, 0xAA];
+        let bytes = wrap(0x05, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.kind(), Some(ExtensionTag::ShDeliverySystem));
+        match &d.body {
+            ExtensionBody::ShDeliverySystem(b) => {
+                assert_eq!(b.diversity_mode, 0x0D);
+                assert_eq!(b.modulations.len(), 1);
+                let m = &b.modulations[0];
+                assert!(m.interleaver.is_none());
+                match &m.modulation {
+                    ShModulationMode::Tdm {
+                        polarization,
+                        roll_off,
+                        modulation_mode,
+                        code_rate,
+                        symbol_rate,
+                    } => {
+                        assert_eq!(*polarization, 2);
+                        assert_eq!(*roll_off, 1);
+                        assert_eq!(*modulation_mode, 3);
+                        assert_eq!(*code_rate, 10);
+                        assert_eq!(*symbol_rate, 21);
+                    }
+                    other => panic!("expected Tdm, got {other:?}"),
+                }
+            }
+            other => panic!("expected ShDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_sh_ofdm_interleaver_type1() {
+        // diversity_mode=0x05, one OFDM entry, interleaver Type1.
+        // OFDM: bw=1, pri=true, cah=2, cr=11(0x0B), gi=3, tm=2, cf=true
+        // Interleaver Type1: cm=21(0x15)
+        // flags: mod_type=1, inter_pres=1, inter_type=1 -> 0xE0
+        // mb0 = (1<<5)|(1<<4)|(2<<1)|((11>>3)&1) = 0x20|0x10|0x04|0x01 = 0x35
+        // mb1 = ((11&7)<<5)|(3<<3)|(2<<1)|1 = 0x60|0x18|0x04|0x01 = 0x7D
+        // Type1 byte: (21<<2) = 0x54
+        let sel = [0x50, 0xE0, 0x35, 0x7D, 0x54];
+        let bytes = wrap(0x05, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ShDeliverySystem(b) => {
+                assert_eq!(b.diversity_mode, 0x05);
+                assert_eq!(b.modulations.len(), 1);
+                let m = &b.modulations[0];
+                match &m.modulation {
+                    ShModulationMode::Ofdm {
+                        bandwidth,
+                        priority,
+                        constellation_and_hierarchy,
+                        code_rate,
+                        guard_interval,
+                        transmission_mode,
+                        common_frequency,
+                    } => {
+                        assert_eq!(*bandwidth, 1);
+                        assert!(*priority);
+                        assert_eq!(*constellation_and_hierarchy, 2);
+                        assert_eq!(*code_rate, 11);
+                        assert_eq!(*guard_interval, 3);
+                        assert_eq!(*transmission_mode, 2);
+                        assert!(*common_frequency);
+                    }
+                    other => panic!("expected Ofdm, got {other:?}"),
+                }
+                match &m.interleaver {
+                    Some(ShInterleaver::Type1 { common_multiplier }) => {
+                        assert_eq!(*common_multiplier, 21);
+                    }
+                    other => panic!("expected Type1 interleaver, got {other:?}"),
+                }
+            }
+            other => panic!("expected ShDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_sh_tdm_interleaver_type0() {
+        // diversity_mode=0x08, one TDM entry, interleaver Type0.
+        // TDM: pol=0, ro=3, mm=1, cr=5, sr=10
+        // Type0: cm=10, lt=20, ns=30, sd=100, nli=40
+        // flags: mod_type=0, inter_pres=1, inter_type=0 -> 0x40
+        // mb0 = (0<<6)|(3<<4)|(1<<2)|((5>>2)&3) = 0x30|0x04|0x01 = 0x35
+        // mb1 = ((5&3)<<6)|(10<<1) = (1<<6)|20 = 0x40|0x14 = 0x54
+        // Type0 byte0: (10<<2)|(20>>4) = 40|1 = 0x29
+        // Type0 byte1: ((20&15)<<4)|(30>>2) = (4<<4)|7 = 0x47
+        // Type0 byte2: ((30&3)<<6)|(100>>2) = (2<<6)|25 = 0x99
+        // Type0 byte3: ((100&3)<<6)|40 = 0x28
+        let sel = [0x80, 0x40, 0x35, 0x54, 0x29, 0x47, 0x99, 0x28];
+        let bytes = wrap(0x05, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ShDeliverySystem(b) => {
+                assert_eq!(b.diversity_mode, 0x08);
+                assert_eq!(b.modulations.len(), 1);
+                let m = &b.modulations[0];
+                match &m.modulation {
+                    ShModulationMode::Tdm {
+                        polarization,
+                        roll_off,
+                        modulation_mode,
+                        code_rate,
+                        symbol_rate,
+                    } => {
+                        assert_eq!(*polarization, 0);
+                        assert_eq!(*roll_off, 3);
+                        assert_eq!(*modulation_mode, 1);
+                        assert_eq!(*code_rate, 5);
+                        assert_eq!(*symbol_rate, 10);
+                    }
+                    other => panic!("expected Tdm, got {other:?}"),
+                }
+                match &m.interleaver {
+                    Some(ShInterleaver::Type0 {
+                        common_multiplier,
+                        nof_late_taps,
+                        nof_slices,
+                        slice_distance,
+                        non_late_increments,
+                    }) => {
+                        assert_eq!(*common_multiplier, 10);
+                        assert_eq!(*nof_late_taps, 20);
+                        assert_eq!(*nof_slices, 30);
+                        assert_eq!(*slice_distance, 100);
+                        assert_eq!(*non_late_increments, 40);
+                    }
+                    other => panic!("expected Type0 interleaver, got {other:?}"),
+                }
+            }
+            other => panic!("expected ShDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_sh_two_entries_mixed() {
+        // diversity_mode=0x0D
+        // Entry 1: TDM (same as test 1), no interleaver.
+        // Entry 2: OFDM bw=4 pri=false cah=5 cr=9 gi=1 tm=1 cf=false,
+        //          Type0 interleaver cm=15 lt=25 ns=35 sd=50 nli=55
+        // Entry1: flags=0x00, mb0=0x9E, mb1=0xAA
+        // Entry2 flags: 0xC0 (mod=1, pres=1, type=0)
+        // OFDM mb0: (4<<5)|(0<<4)|(5<<1)|((9>>3)&1) = 0x80|0x0A|0x01 = 0x8B
+        // OFDM mb1: ((9&7)<<5)|(1<<3)|(1<<1)|0 = 0x20|0x08|0x02 = 0x2A
+        // Type0 byte0: (15<<2)|(25>>4) = 60|1 = 0x3D
+        // Type0 byte1: ((25&15)<<4)|(35>>2) = (9<<4)|8 = 0x98
+        // Type0 byte2: ((35&3)<<6)|(50>>2) = (3<<6)|12 = 0xCC
+        // Type0 byte3: ((50&3)<<6)|55 = (2<<6)|55 = 0xB7
+        let sel = [
+            0xD0, 0x00, 0x9E, 0xAA, 0xC0, 0x8B, 0x2A, 0x3D, 0x98, 0xCC, 0xB7,
+        ];
+        let bytes = wrap(0x05, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ShDeliverySystem(b) => {
+                assert_eq!(b.diversity_mode, 0x0D);
+                assert_eq!(b.modulations.len(), 2);
+                // Entry 1
+                let m0 = &b.modulations[0];
+                assert!(matches!(m0.modulation, ShModulationMode::Tdm { .. }));
+                assert!(m0.interleaver.is_none());
+                // Entry 2
+                let m1 = &b.modulations[1];
+                assert!(matches!(m1.modulation, ShModulationMode::Ofdm { .. }));
+                match &m1.modulation {
+                    ShModulationMode::Ofdm {
+                        bandwidth,
+                        priority,
+                        constellation_and_hierarchy,
+                        code_rate,
+                        ..
+                    } => {
+                        assert_eq!(*bandwidth, 4);
+                        assert!(!priority);
+                        assert_eq!(*constellation_and_hierarchy, 5);
+                        assert_eq!(*code_rate, 9);
+                    }
+                    _ => unreachable!(),
+                }
+                assert!(matches!(m1.interleaver, Some(ShInterleaver::Type0 { .. })));
+            }
+            other => panic!("expected ShDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_sh_rejects_partial_entry() {
+        // Complete entry followed by a lone flags byte with no modulation block
+        let sel = [0xD0, 0x00, 0x9E, 0xAA, 0x00];
+        let bytes = wrap(0x05, &sel);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_sh_single_diversity_byte() {
+        // Only diversity_mode byte, no modulations.
+        let sel = [0xD0];
+        let bytes = wrap(0x05, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ShDeliverySystem(b) => {
+                assert_eq!(b.diversity_mode, 0x0D);
+                assert!(b.modulations.is_empty());
+            }
+            other => panic!("expected ShDeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_sh_rejects_empty_selector() {
+        let bytes = wrap(0x05, &[]);
+        assert!(matches!(
+            ExtensionDescriptor::parse(&bytes).unwrap_err(),
+            crate::error::Error::InvalidDescriptor {
+                tag: super::TAG,
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_serialize_sh_delivery_system() {
+        let d = ExtensionDescriptor {
+            tag_extension: 0x05,
+            body: ExtensionBody::ShDeliverySystem(ShDeliverySystem {
+                diversity_mode: 0x0D,
+                modulations: vec![ShModulation {
+                    modulation: ShModulationMode::Ofdm {
+                        bandwidth: 1,
+                        priority: true,
+                        constellation_and_hierarchy: 2,
+                        code_rate: 11,
+                        guard_interval: 3,
+                        transmission_mode: 2,
+                        common_frequency: true,
+                    },
+                    interleaver: Some(ShInterleaver::Type1 {
+                        common_multiplier: 21,
+                    }),
+                }],
+            }),
+        };
+        let json = serde_json::to_string(&d).unwrap();
+        assert!(json.contains("\"tag_extension\":5"));
+        assert!(json.contains("\"ShDeliverySystem\""));
+    }
+}
