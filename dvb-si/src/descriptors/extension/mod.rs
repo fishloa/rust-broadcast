@@ -35,8 +35,8 @@
 //! - `0x06` supplementary_audio (Table 153, §6.4.11).
 //! - `0x07` network_change_notify (Table 149, §6.4.9) — cell loop raw.
 //! - `0x08` message (Table 148, §6.4.9).
-//! - `0x09` target_region (Table 156, §6.4.12) — region loop raw.
-//! - `0x0A` target_region_name (Table 157, §6.4.13) — region loop raw.
+//! - `0x09` target_region (Table 156, §6.4.12) — region loop unfolded.
+//! - `0x0A` target_region_name (Table 157, §6.4.13) — region loop unfolded.
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
 //! - `0x0D` C2_delivery_system (Table 115, §6.4.6.1).
 //! - `0x11` T2MI (Table 158, §6.4.14).
@@ -306,7 +306,7 @@ declare_extension_bodies! {'a;
     /// `0x08` — message (Table 148, §6.4.9).
     Message = 0x08 => Message<'a>,
     /// `0x09` — target_region (Table 156, §6.4.12).
-    TargetRegion = 0x09 => TargetRegion<'a>,
+    TargetRegion = 0x09 => TargetRegion,
     /// `0x0A` — target_region_name (Table 157, §6.4.13).
     TargetRegionName = 0x0A => TargetRegionName<'a>,
     /// `0x0B` — service_relocated (Table 152, §6.4.10).
