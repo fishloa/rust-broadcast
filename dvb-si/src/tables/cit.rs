@@ -106,10 +106,10 @@ impl<'a> Parse<'a> for CitSection<'a> {
 
         let section_length = (((bytes[1] & 0x0F) as usize) << 8) | bytes[2] as usize;
         let total = HEADER_LEN + section_length;
-        if bytes.len() < total {
+        if bytes.len() < total || total < MIN_SECTION_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length,
-                available: bytes.len() - HEADER_LEN,
+                available: bytes.len().saturating_sub(HEADER_LEN),
             });
         }
 
@@ -433,5 +433,33 @@ mod tests {
             cit.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            CitSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_handwritten_cit_no_entries() {
+        let mut bytes: Vec<u8> = vec![
+            0x77, 0xF0, 0x0E, 0x12, 0x34, 0xC7, 0x00, 0x00, 0x00, 0x64, 0x00, 0x02, 0x00,
+        ];
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        let cit = CitSection::parse(&bytes).unwrap();
+        assert_eq!(cit.service_id, 0x1234);
+        assert_eq!(cit.transport_stream_id, 0x0064);
+        assert!(cit.crid_entries.is_empty());
     }
 }

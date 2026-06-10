@@ -119,10 +119,10 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
         let total = HEADER_LEN + section_length as usize;
-        if bytes.len() < total {
+        if bytes.len() < total || total < MIN_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length as usize,
-                available: bytes.len() - HEADER_LEN,
+                available: bytes.len().saturating_sub(HEADER_LEN),
             });
         }
 
@@ -530,5 +530,34 @@ mod tests {
             rnt.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
         ));
+    }
+
+    #[test]
+    fn parse_rejects_zero_section_length() {
+        let mut buf = vec![0u8; 64];
+        buf[0] = TABLE_ID;
+        buf[1] = 0xF0;
+        buf[2] = 0x00;
+        for b in &mut buf[3..] {
+            *b = 0xFF;
+        }
+        assert!(matches!(
+            RntSection::parse(&buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_handwritten_rnt_no_providers() {
+        let mut bytes: Vec<u8> = vec![
+            0x79, 0xF0, 0x0C, 0x00, 0x42, 0xC7, 0x00, 0x00, 0x01, 0xF0, 0x00,
+        ];
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        let rnt = RntSection::parse(&bytes).unwrap();
+        assert_eq!(rnt.context_id, 0x0042);
+        assert_eq!(rnt.version_number, 3);
+        assert!(rnt.current_next_indicator);
+        assert!(rnt.resolution_providers.is_empty());
     }
 }

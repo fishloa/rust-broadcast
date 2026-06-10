@@ -53,11 +53,11 @@ pub struct EnhancedAc3Descriptor<'a> {
 impl<'a> Parse<'a> for EnhancedAc3Descriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN + 1 {
+        if bytes.len() < HEADER_LEN {
             return Err(Error::BufferTooShort {
-                need: HEADER_LEN + 1,
+                need: HEADER_LEN,
                 have: bytes.len(),
-                what: "EnhancedAc3Descriptor header+flags",
+                what: "EnhancedAc3Descriptor header",
             });
         }
         let body = descriptor_body(
@@ -66,6 +66,12 @@ impl<'a> Parse<'a> for EnhancedAc3Descriptor<'a> {
             "EnhancedAc3Descriptor",
             "unexpected tag for EAC-3 descriptor",
         )?;
+        if body.is_empty() {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "descriptor body is empty (length=0)",
+            });
+        }
         let flags = body[0];
         let mixinfoexists = (flags & FLAG_MIXINFO_EXISTS) != 0;
         let mut pos = 1;
@@ -306,5 +312,14 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(EnhancedAc3Descriptor::parse(&buf).unwrap(), d);
         assert_eq!(buf, [TAG, 1, 0x00]);
+    }
+
+    #[test]
+    fn parse_rejects_empty_body() {
+        let bytes = [TAG, 0];
+        assert!(matches!(
+            EnhancedAc3Descriptor::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
     }
 }

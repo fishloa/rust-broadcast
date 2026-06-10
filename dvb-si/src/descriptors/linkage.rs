@@ -42,19 +42,19 @@ const EXT_SID_FLAG_MASK: u8 = 0x01;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MobileHandOverInfo {
-    /// hand-over_type — 4 bits `[7:4]`.  See Table 62.
+    /// hand_over_type — 4 bits `[7:4]`.  See Table 62.
     pub hand_over_type: u8,
     /// origin_type — 1 bit `[0]`.  `false` = NIT, `true` = SDT (Table 63).
     pub origin_type: bool,
-    /// network_id — 16 bits.
-    pub network_id: u16,
+    /// network_id — 16 bits, present only when hand_over_type in {1, 2, 3}.
+    pub network_id: Option<u16>,
     /// initial_service_id — present only when `origin_type == false` (NIT).
     pub initial_service_id: Option<u16>,
 }
 
 impl MobileHandOverInfo {
     fn serialized_len(&self) -> usize {
-        1 + 2 + usize::from(self.initial_service_id.is_some()) * 2
+        1 + self.network_id.map_or(0, |_| 2) + self.initial_service_id.map_or(0, |_| 2)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -68,9 +68,13 @@ impl MobileHandOverInfo {
         let flags_byte =
             (self.hand_over_type << 4) | RESERVED_HANDOVER_MASK | u8::from(self.origin_type);
         buf[0] = flags_byte;
-        buf[1..3].copy_from_slice(&self.network_id.to_be_bytes());
+        let mut pos = 1;
+        if let Some(nid) = self.network_id {
+            buf[pos..pos + 2].copy_from_slice(&nid.to_be_bytes());
+            pos += 2;
+        }
         if let Some(sid) = self.initial_service_id {
-            buf[3..5].copy_from_slice(&sid.to_be_bytes());
+            buf[pos..pos + 2].copy_from_slice(&sid.to_be_bytes());
         }
         Ok(len)
     }
@@ -346,24 +350,37 @@ impl LinkageData<'_> {
 }
 
 fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo> {
-    if end < 3 {
+    if end < 1 {
         return Err(Error::InvalidDescriptor {
             tag: TAG,
-            reason: "mobile hand-over info needs at least 3 bytes",
+            reason: "mobile hand-over info needs at least flags byte",
         });
     }
     let flags_byte = bytes[0];
     let hand_over_type = (flags_byte & HANDOVER_TYPE_MASK) >> 4;
     let origin_type = (flags_byte & ORIGIN_TYPE_MASK) != 0;
-    let network_id = u16::from_be_bytes([bytes[1], bytes[2]]);
-    let initial_service_id = if !origin_type {
-        if end < 5 {
+    let mut pos = 1;
+    let network_id = if matches!(hand_over_type, 0x01..=0x03) {
+        if pos + 2 > end {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason: "mobile hand-over info with origin_type=NIT needs 5 bytes",
+                reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
             });
         }
-        Some(u16::from_be_bytes([bytes[3], bytes[4]]))
+        let nid = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+        pos += 2;
+        Some(nid)
+    } else {
+        None
+    };
+    let initial_service_id = if !origin_type {
+        if pos + 2 > end {
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
+            });
+        }
+        Some(u16::from_be_bytes([bytes[pos], bytes[pos + 1]]))
     } else {
         None
     };
@@ -663,7 +680,7 @@ mod tests {
             LinkageData::MobileHandOver(m) => {
                 assert_eq!(m.hand_over_type, 1);
                 assert!(!m.origin_type);
-                assert_eq!(m.network_id, 0x0010);
+                assert_eq!(m.network_id, Some(0x0010));
                 assert_eq!(m.initial_service_id, Some(0x0020));
             }
             other => panic!("expected MobileHandOver, got {other:?}"),
@@ -688,7 +705,7 @@ mod tests {
             LinkageData::MobileHandOver(m) => {
                 assert_eq!(m.hand_over_type, 2);
                 assert!(m.origin_type);
-                assert_eq!(m.network_id, 0x0010);
+                assert_eq!(m.network_id, Some(0x0010));
                 assert_eq!(m.initial_service_id, None);
             }
             other => panic!("expected MobileHandOver, got {other:?}"),
@@ -902,7 +919,7 @@ mod tests {
             linkage_data: LinkageData::MobileHandOver(MobileHandOverInfo {
                 hand_over_type: 3,
                 origin_type: false,
-                network_id: 0x0044,
+                network_id: Some(0x0044),
                 initial_service_id: Some(0x0055),
             }),
             private_data: &[0xFF],
@@ -1008,7 +1025,7 @@ mod tests {
             linkage_data: LinkageData::MobileHandOver(MobileHandOverInfo {
                 hand_over_type: 0,
                 origin_type: true,
-                network_id: 0x0000,
+                network_id: None,
                 initial_service_id: None,
             }),
             private_data: &[],
@@ -1016,5 +1033,53 @@ mod tests {
         let mut buf2 = vec![0u8; d2.serialized_len()];
         d2.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf2[9] & RESERVED_HANDOVER_MASK, RESERVED_HANDOVER_MASK);
+    }
+
+    #[test]
+    fn parse_mobile_handover_type4_no_network_id() {
+        let bytes = [
+            TAG, 0x0A, // length 10 = 7 fixed + flags(1) + initial_sid(2)
+            0x00, 0x01, // ts_id
+            0x00, 0x02, // onid
+            0x00, 0x03, // sid
+            0x08, // linkage_type = mobile hand-over
+            0x4E, // hand_over_type=4, rfu=111, origin_type=0 (NIT)
+            0x00, 0x20, // initial_service_id
+        ];
+        let d = LinkageDescriptor::parse(&bytes).unwrap();
+        match &d.linkage_data {
+            LinkageData::MobileHandOver(m) => {
+                assert_eq!(m.hand_over_type, 4);
+                assert!(!m.origin_type);
+                assert_eq!(m.network_id, None);
+                assert_eq!(m.initial_service_id, Some(0x0020));
+            }
+            other => panic!("expected MobileHandOver, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_mobile_handover_type1_network_id_present() {
+        let bytes = [
+            TAG, 0x0C, // length 12 = 7 fixed + 3 handover + 2 priv
+            0x00, 0x01, // ts_id
+            0x00, 0x02, // onid
+            0x00, 0x03, // sid
+            0x08, // linkage_type = mobile hand-over
+            0x1F, // hand_over_type=1, rfu=111, origin_type=1 (SDT)
+            0x00, 0x10, // network_id
+            0xCA, 0xFE, // private_data
+        ];
+        let d = LinkageDescriptor::parse(&bytes).unwrap();
+        match &d.linkage_data {
+            LinkageData::MobileHandOver(m) => {
+                assert_eq!(m.hand_over_type, 1);
+                assert!(m.origin_type);
+                assert_eq!(m.network_id, Some(0x0010));
+                assert_eq!(m.initial_service_id, None);
+            }
+            other => panic!("expected MobileHandOver, got {other:?}"),
+        }
+        assert_eq!(d.private_data, &[0xCA, 0xFE]);
     }
 }
