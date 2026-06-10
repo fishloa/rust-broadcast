@@ -3,6 +3,10 @@
 //! Absolute or relative emission time.
 //! Emission time = seconds_since_2000 + subseconds * Tsub (where Tsub depends on bandwidth).
 //! Null timestamp: all bits of seconds_since_2000, subseconds, utco = 1.
+//!
+//! Civil UTC conversion (applying the `utco` leap-second offset) is intentionally not
+//! provided yet; `utco` is exposed as a field. `emission_offset` is in the timestamp's
+//! own time base relative to 2000-01-01T00:00:00.
 
 use num_enum::TryFromPrimitive;
 
@@ -42,6 +46,56 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
     }
 }
 
+/// Subsecond denominator D for 1.7 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 131.
+const SUBSEC_DENOM_1_7MHZ: u64 = 131;
+
+/// Subsecond denominator D for 5 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 40.
+const SUBSEC_DENOM_5MHZ: u64 = 40;
+
+/// Subsecond denominator D for 6 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 48.
+const SUBSEC_DENOM_6MHZ: u64 = 48;
+
+/// Subsecond denominator D for 7 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 56.
+const SUBSEC_DENOM_7MHZ: u64 = 56;
+
+/// Subsecond denominator D for 8 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 64.
+const SUBSEC_DENOM_8MHZ: u64 = 64;
+
+/// Subsecond denominator D for 10 MHz bandwidth.
+/// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 80.
+const SUBSEC_DENOM_10MHZ: u64 = 80;
+
+impl Bandwidth {
+    /// Return the number of subsecond ticks per second for this bandwidth.
+    ///
+    /// Equals D × 1_000_000, where D is the denominator from
+    /// ETSI TS 102 773 §5.2.7 Table 4 (Tsub = 1/D µs).
+    pub fn subseconds_per_second(self) -> u64 {
+        match self {
+            Bandwidth::Mhz1_7 => SUBSEC_DENOM_1_7MHZ * 1_000_000,
+            Bandwidth::Mhz5 => SUBSEC_DENOM_5MHZ * 1_000_000,
+            Bandwidth::Mhz6 => SUBSEC_DENOM_6MHZ * 1_000_000,
+            Bandwidth::Mhz7 => SUBSEC_DENOM_7MHZ * 1_000_000,
+            Bandwidth::Mhz8 => SUBSEC_DENOM_8MHZ * 1_000_000,
+            Bandwidth::Mhz10 => SUBSEC_DENOM_10MHZ * 1_000_000,
+        }
+    }
+}
+
+/// Maximum value for the 40-bit `seconds_since_2000` field.
+const SECONDS_SINCE_2000_MAX: u64 = 0xFF_FFFF_FFFF;
+
+/// Maximum value for the 27-bit `subseconds` field.
+const SUBSECONDS_MAX: u32 = 0x7FF_FFFF;
+
+/// Maximum value for the 13-bit `utco` field.
+const UTCO_MAX: u16 = 0x1FFF;
+
 /// DVB-T2 timestamp payload (type 0x20) per ETSI TS 102 773 §5.2.7.
 ///
 /// Layout (88 bits = 11 bytes):
@@ -50,6 +104,10 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
 /// - bytes 1-5: seconds_since_2000 (40 bits)
 /// - subseconds (27 bits): bytes 6-8 + byte 9 `[7:5]`
 /// - utco (13 bits): byte 9 `[4:0]` + byte 10 — UTC offset in seconds
+///
+/// Civil UTC conversion (applying the `utco` leap-second offset) is intentionally not
+/// provided yet; `utco` is exposed as a field. `emission_offset` is in the timestamp's
+/// own time base relative to 2000-01-01T00:00:00.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct T2TimestampPayload {
@@ -170,6 +228,70 @@ impl Serialize for T2TimestampPayload {
     }
 }
 
+impl T2TimestampPayload {
+    /// Returns `true` if this is a Null timestamp (all bits of
+    /// `seconds_since_2000`, `subseconds`, and `utco` are 1).
+    pub fn is_null(&self) -> bool {
+        self.seconds_since_2000 == SECONDS_SINCE_2000_MAX
+            && self.subseconds == SUBSECONDS_MAX
+            && self.utco == UTCO_MAX
+    }
+
+    /// Returns `true` if this is a relative timestamp
+    /// (`seconds_since_2000` is 0 and is not null).
+    pub fn is_relative(&self) -> bool {
+        self.seconds_since_2000 == 0 && !self.is_null()
+    }
+
+    /// Time elapsed since 2000-01-01T00:00:00 in the timestamp's own time base.
+    ///
+    /// Returns `None` for a Null timestamp.
+    ///
+    /// Civil UTC conversion (applying the `utco` leap-second offset) is
+    /// intentionally not provided yet; `utco` is exposed as a field.
+    pub fn emission_offset(&self) -> Option<core::time::Duration> {
+        if self.is_null() {
+            return None;
+        }
+        let sps = self.bw.subseconds_per_second();
+        let total_nanos: u128 = self.subseconds as u128 * 1_000_000_000u128 / sps as u128;
+        let secs = self.seconds_since_2000 + (total_nanos / 1_000_000_000) as u64;
+        let sub_nanos = (total_nanos % 1_000_000_000) as u32;
+        Some(core::time::Duration::new(secs, sub_nanos))
+    }
+
+    /// Set `seconds_since_2000` and `subseconds` from a [`core::time::Duration`]
+    /// using the current `bw`. Leaves `bw` and `utco` unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReservedBitsViolation`](crate::error::Error::ReservedBitsViolation)
+    /// if the duration exceeds the 40-bit seconds or 27-bit subseconds range.
+    pub fn set_emission_offset(
+        &mut self,
+        offset: core::time::Duration,
+    ) -> Result<(), crate::error::Error> {
+        let secs = offset.as_secs();
+        if secs > SECONDS_SINCE_2000_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "seconds_since_2000",
+                reason: "exceeds 40 bits",
+            });
+        }
+        let sps = self.bw.subseconds_per_second();
+        let subseconds = (offset.subsec_nanos() as u128 * sps as u128 / 1_000_000_000u128) as u32;
+        if subseconds > SUBSECONDS_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "subseconds",
+                reason: "exceeds 27 bits",
+            });
+        }
+        self.seconds_since_2000 = secs;
+        self.subseconds = subseconds;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +381,108 @@ mod tests {
         assert_eq!(parsed.seconds_since_2000, 0xFFFFFFFFFF); // 40 bits all 1
         assert_eq!(parsed.subseconds, 0x7FFFFFF); // 27 bits all 1
         assert_eq!(parsed.utco, 0x1FFF); // 13 bits all 1
+    }
+
+    #[test]
+    fn subseconds_per_second_per_table4() {
+        assert_eq!(
+            Bandwidth::Mhz1_7.subseconds_per_second(),
+            131_000_000,
+            "1.7 MHz: D=131"
+        );
+        assert_eq!(
+            Bandwidth::Mhz5.subseconds_per_second(),
+            40_000_000,
+            "5 MHz: D=40"
+        );
+        assert_eq!(
+            Bandwidth::Mhz6.subseconds_per_second(),
+            48_000_000,
+            "6 MHz: D=48"
+        );
+        assert_eq!(
+            Bandwidth::Mhz7.subseconds_per_second(),
+            56_000_000,
+            "7 MHz: D=56"
+        );
+        assert_eq!(
+            Bandwidth::Mhz8.subseconds_per_second(),
+            64_000_000,
+            "8 MHz: D=64"
+        );
+        assert_eq!(
+            Bandwidth::Mhz10.subseconds_per_second(),
+            80_000_000,
+            "10 MHz: D=80"
+        );
+    }
+
+    #[test]
+    fn emission_offset_known_values() {
+        // 8 MHz: D=64, sps=64_000_000.
+        // subseconds=32_000_000 = half of sps => 0.5 s subsecond component.
+        // total_nanos = 32_000_000 * 1_000_000_000 / 64_000_000 = 500_000_000.
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 100,
+            subseconds: 32_000_000,
+            utco: 0,
+        };
+        assert_eq!(
+            p.emission_offset(),
+            Some(core::time::Duration::new(100, 500_000_000))
+        );
+
+        // 6 MHz: D=48, sps=48_000_000.
+        // subseconds=12_000_000 = 1/4 of sps => 0.25 s subsecond component.
+        // total_nanos = 12_000_000 * 1_000_000_000 / 48_000_000 = 250_000_000.
+        let p2 = T2TimestampPayload {
+            bw: Bandwidth::Mhz6,
+            seconds_since_2000: 200,
+            subseconds: 12_000_000,
+            utco: 0,
+        };
+        assert_eq!(
+            p2.emission_offset(),
+            Some(core::time::Duration::new(200, 250_000_000))
+        );
+    }
+
+    #[test]
+    fn set_emission_offset_round_trips() {
+        let mut p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        let dur = core::time::Duration::new(12345, 500_000_000);
+        p.set_emission_offset(dur).unwrap();
+        assert_eq!(p.emission_offset(), Some(dur));
+    }
+
+    #[test]
+    fn null_timestamp_offset_is_none() {
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: SECONDS_SINCE_2000_MAX,
+            subseconds: SUBSECONDS_MAX,
+            utco: UTCO_MAX,
+        };
+        assert!(p.is_null());
+        assert_eq!(p.emission_offset(), None);
+    }
+
+    #[test]
+    fn relative_timestamp_flag() {
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 1000,
+            utco: 0,
+        };
+        assert!(p.is_relative());
+        assert!(!p.is_null());
+        assert!(p.emission_offset().is_some());
     }
 }

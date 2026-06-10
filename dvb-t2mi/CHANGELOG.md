@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- **Decoded T2-MI timestamp accessors** (#47): `Bandwidth::subseconds_per_second`
+  (the T_sub unit per ETSI TS 102 773 §5.2.7 Table 4),
+  `T2TimestampPayload::{is_null, is_relative, emission_offset, set_emission_offset}`.
+  `emission_offset` returns the time since the 2000 epoch as a `core::time::Duration`
+  (no chrono dependency). Civil-UTC conversion (applying the `utco` leap-second
+  offset) is intentionally deferred pending verification against a real capture.
+
 ## [4.2.0] — 2026-06-09
 
 Version-lockstep release with the workspace (dvb-si DSM-CC `ModuleReassembler`
