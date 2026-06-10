@@ -35,7 +35,11 @@ impl<'a> Parse<'a> for Ac4<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("AC-4: flags byte missing"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "AC-4 body",
+            });
         }
         let flags = sel[0];
         let ac4_config_flag = (flags & 0x80) != 0;
@@ -43,7 +47,11 @@ impl<'a> Parse<'a> for Ac4<'a> {
         let mut pos = 1;
         let (ac4_dialog_enhancement_enabled, ac4_channel_mode) = if ac4_config_flag {
             if sel.len() < pos + 1 {
-                return Err(invalid("AC-4: config byte truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "AC-4 body",
+                });
             }
             let c = sel[pos];
             pos += 1;
@@ -53,12 +61,20 @@ impl<'a> Parse<'a> for Ac4<'a> {
         };
         let toc = if ac4_toc_flag {
             if sel.len() < pos + 1 {
-                return Err(invalid("AC-4: toc length truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "AC-4 body",
+                });
             }
             let toc_len = sel[pos] as usize;
             pos += 1;
             if sel.len() < pos + toc_len {
-                return Err(invalid("AC-4: toc overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + toc_len,
+                    have: sel.len(),
+                    what: "AC-4 body",
+                });
             }
             let t = &sel[pos..pos + toc_len];
             pos += toc_len;

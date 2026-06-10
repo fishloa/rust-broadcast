@@ -40,7 +40,11 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < 2 * ISO_639_LEN {
-            return Err(invalid("target_region_name: header truncated"));
+            return Err(Error::BufferTooShort {
+                need: 2 * ISO_639_LEN,
+                have: sel.len(),
+                what: "target_region_name body",
+            });
         }
         let country_code = LangCode([sel[0], sel[1], sel[2]]);
         let iso_639_language_code = LangCode([sel[3], sel[4], sel[5]]);
@@ -52,18 +56,30 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             let region_depth = byte >> 6;
             let name_length = (byte & 0x3F) as usize;
             if pos + name_length > sel.len() {
-                return Err(invalid("target_region_name: region entry overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + name_length,
+                    have: sel.len(),
+                    what: "target_region_name body",
+                });
             }
             let region_name = DvbText::new(&sel[pos..pos + name_length]);
             pos += name_length;
             if pos >= sel.len() {
-                return Err(invalid("target_region_name: region entry overruns body"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "target_region_name body",
+                });
             }
             let primary_region_code = sel[pos];
             pos += 1;
             let secondary_region_code = if region_depth >= 2 {
                 if pos >= sel.len() {
-                    return Err(invalid("target_region_name: region entry overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "target_region_name body",
+                    });
                 }
                 let val = sel[pos];
                 pos += 1;
@@ -73,7 +89,11 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             };
             let tertiary_region_code = if region_depth == 3 {
                 if pos + 1 >= sel.len() {
-                    return Err(invalid("target_region_name: region entry overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 2,
+                        have: sel.len(),
+                        what: "target_region_name body",
+                    });
                 }
                 let val = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
                 pos += 2;

@@ -308,9 +308,9 @@ impl Serialize for MosaicDescriptor {
         let body_len = len - HEADER_LEN;
         // 8-bit descriptor_length field: error rather than silently truncate.
         if body_len > MAX_BODY_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: MAX_BODY_LEN,
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "mosaic_descriptor body exceeds 255 bytes",
             });
         }
         buf[0] = TAG;

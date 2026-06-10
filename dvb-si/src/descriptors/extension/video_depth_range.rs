@@ -68,13 +68,21 @@ impl<'a> Parse<'a> for VideoDepthRangeDescriptor<'a> {
             }
             // Need at least range_type + range_length (Table 160).
             if sel.len() - pos < VD_RANGE_HDR_LEN {
-                return Err(invalid("video_depth_range: truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + VD_RANGE_HDR_LEN,
+                    have: sel.len(),
+                    what: "video_depth_range body",
+                });
             }
             let range_type = sel[pos];
             let range_length = sel[pos + 1] as usize;
             pos += VD_RANGE_HDR_LEN;
             if sel.len() < pos + range_length {
-                return Err(invalid("video_depth_range: range body overruns selector"));
+                return Err(Error::BufferTooShort {
+                    need: pos + range_length,
+                    have: sel.len(),
+                    what: "video_depth_range body",
+                });
             }
             let body = match range_type {
                 // Table 161: production_disparity_hint_info() — Table 162.
@@ -279,10 +287,7 @@ mod tests {
         let bytes = wrap(0x10, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 
@@ -293,10 +298,7 @@ mod tests {
         let bytes = wrap(0x10, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 }

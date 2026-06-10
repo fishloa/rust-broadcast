@@ -104,9 +104,9 @@ impl Serialize for CountryAvailabilityDescriptor {
         let body_len = FLAG_LEN + COUNTRY_CODE_LEN * self.country_codes.len();
         // 8-bit descriptor_length field: error rather than silently truncate.
         if body_len > MAX_BODY_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: MAX_BODY_LEN,
+            return Err(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "country_availability_descriptor body exceeds 255 bytes",
             });
         }
         buf[0] = TAG;

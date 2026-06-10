@@ -37,7 +37,11 @@ impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("vvc_subpictures: header byte missing"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "vvc_subpictures body",
+            });
         }
         let byte0 = sel[0];
         let default_service_mode = (byte0 & 0x80) != 0;
@@ -48,7 +52,11 @@ impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
         let subpicture_bytes = n * 2;
         let min_len = 1 + subpicture_bytes + 1;
         if sel.len() < min_len {
-            return Err(invalid("vvc_subpictures: truncated"));
+            return Err(Error::BufferTooShort {
+                need: min_len,
+                have: sel.len(),
+                what: "vvc_subpictures body",
+            });
         }
 
         let mut pos = 1;
@@ -68,16 +76,20 @@ impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
 
         let service_description = if service_description_present {
             if sel.len() < pos + 1 {
-                return Err(invalid(
-                    "vvc_subpictures: service_description_length truncated",
-                ));
+                return Err(Error::BufferTooShort {
+                    need: pos + 1,
+                    have: sel.len(),
+                    what: "vvc_subpictures body",
+                });
             }
             let len = sel[pos] as usize;
             pos += 1;
             if sel.len() < pos + len {
-                return Err(invalid(
-                    "vvc_subpictures: service_description overruns body",
-                ));
+                return Err(Error::BufferTooShort {
+                    need: pos + len,
+                    have: sel.len(),
+                    what: "vvc_subpictures body",
+                });
             }
             let text = DvbText::new(&sel[pos..pos + len]);
             pos += len;
@@ -208,10 +220,7 @@ mod tests {
         let bytes = wrap(0x23, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 
@@ -222,10 +231,7 @@ mod tests {
         let bytes = wrap(0x23, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 

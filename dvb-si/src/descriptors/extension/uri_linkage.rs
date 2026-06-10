@@ -25,19 +25,31 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < 2 {
-            return Err(invalid("URI_linkage: header truncated"));
+            return Err(Error::BufferTooShort {
+                need: 2,
+                have: sel.len(),
+                what: "URI_linkage body",
+            });
         }
         let uri_linkage_type = sel[0];
         let uri_length = sel[1] as usize;
         let mut pos = 2;
         if sel.len() < pos + uri_length {
-            return Err(invalid("URI_linkage: uri overruns body"));
+            return Err(Error::BufferTooShort {
+                need: pos + uri_length,
+                have: sel.len(),
+                what: "URI_linkage body",
+            });
         }
         let uri = &sel[pos..pos + uri_length];
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type == 0x00 || uri_linkage_type == 0x01 {
             if sel.len() < pos + 2 {
-                return Err(invalid("URI_linkage: min_polling_interval truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: sel.len(),
+                    what: "URI_linkage body",
+                });
             }
             let v = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
             pos += 2;
@@ -138,10 +150,7 @@ mod tests {
         let bytes = wrap(0x13, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 }

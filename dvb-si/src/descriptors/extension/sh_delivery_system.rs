@@ -95,7 +95,11 @@ impl<'a> Parse<'a> for ShDeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("SH_delivery_system: diversity_mode byte missing"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "SH_delivery_system body",
+            });
         }
         let diversity_mode = sel[0] >> 4;
         let mut pos = 1;
@@ -103,9 +107,11 @@ impl<'a> Parse<'a> for ShDeliverySystem {
         while pos < sel.len() {
             // Need flags byte + 2 modulation bytes
             if sel.len() - pos < 3 {
-                return Err(invalid(
-                    "SH_delivery_system: modulation entry overruns body",
-                ));
+                return Err(Error::BufferTooShort {
+                    need: pos + 3,
+                    have: sel.len(),
+                    what: "SH_delivery_system body",
+                });
             }
             let flags = sel[pos];
             let modulation_type = (flags >> 7) & 0x01;
@@ -153,9 +159,11 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                 if interleaver_type == 0 {
                     // 4-byte Type0 interleaver block
                     if sel.len() - pos < 4 {
-                        return Err(invalid(
-                            "SH_delivery_system: interleaver block overruns body",
-                        ));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "SH_delivery_system body",
+                        });
                     }
                     let b0 = sel[pos];
                     let b1 = sel[pos + 1];
@@ -177,9 +185,11 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                 } else {
                     // 1-byte Type1 interleaver block
                     if sel.len() - pos < 1 {
-                        return Err(invalid(
-                            "SH_delivery_system: interleaver block overruns body",
-                        ));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "SH_delivery_system body",
+                        });
                     }
                     let common_multiplier = sel[pos] >> 2;
                     pos += 1;
@@ -519,10 +529,7 @@ mod tests {
         let bytes = wrap(0x05, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 
@@ -547,10 +554,7 @@ mod tests {
         let bytes = wrap(0x05, &[]);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 

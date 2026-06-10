@@ -43,18 +43,30 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("service_prominence: sogi_list_length truncated"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "service_prominence body",
+            });
         }
         let sogi_list_length = sel[0] as usize;
         if sel.len() < 1 + sogi_list_length {
-            return Err(invalid("service_prominence: sogi_list overruns body"));
+            return Err(Error::BufferTooShort {
+                need: 1 + sogi_list_length,
+                have: sel.len(),
+                what: "service_prominence body",
+            });
         }
         let sogi_slice = &sel[1..1 + sogi_list_length];
         let mut sogi_list = Vec::new();
         let mut k = 0;
         while k < sogi_slice.len() {
             if sogi_slice.len() - k < 2 {
-                return Err(invalid("service_prominence: SOGI entry overruns list"));
+                return Err(Error::BufferTooShort {
+                    need: 1 + k + 2,
+                    have: sel.len(),
+                    what: "service_prominence body",
+                });
             }
             let byte0 = sogi_slice[k];
             let byte1 = sogi_slice[k + 1];
@@ -65,7 +77,11 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             k += 2;
             let service_id = if service_flag {
                 if sogi_slice.len() - k < 2 {
-                    return Err(invalid("service_prominence: SOGI entry overruns list"));
+                    return Err(Error::BufferTooShort {
+                        need: 1 + k + 2,
+                        have: sel.len(),
+                        what: "service_prominence body",
+                    });
                 }
                 let id = u16::from_be_bytes([sogi_slice[k], sogi_slice[k + 1]]);
                 k += 2;
@@ -75,12 +91,20 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             };
             let target_region_loop = if target_region_flag {
                 if sogi_slice.len() - k < 1 {
-                    return Err(invalid("service_prominence: SOGI entry overruns list"));
+                    return Err(Error::BufferTooShort {
+                        need: 1 + k + 1,
+                        have: sel.len(),
+                        what: "service_prominence body",
+                    });
                 }
                 let region_len = sogi_slice[k] as usize;
                 k += 1;
                 if sogi_slice.len() - k < region_len {
-                    return Err(invalid("service_prominence: SOGI entry overruns list"));
+                    return Err(Error::BufferTooShort {
+                        need: 1 + k + region_len,
+                        have: sel.len(),
+                        what: "service_prominence body",
+                    });
                 }
                 let region = &sogi_slice[k..k + region_len];
                 k += region_len;
@@ -266,10 +290,7 @@ mod tests {
         let bytes = wrap(0x22, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 
@@ -280,10 +301,7 @@ mod tests {
         let bytes = wrap(0x22, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
-            crate::error::Error::InvalidDescriptor {
-                tag: super::TAG,
-                ..
-            }
+            crate::error::Error::BufferTooShort { .. }
         ));
     }
 

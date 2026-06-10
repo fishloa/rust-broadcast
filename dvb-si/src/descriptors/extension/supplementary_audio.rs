@@ -27,7 +27,11 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
-            return Err(invalid("supplementary_audio: flags byte missing"));
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: sel.len(),
+                what: "supplementary_audio body",
+            });
         }
         let flags = sel[0];
         let mix_type = (flags & 0x80) != 0;
@@ -36,7 +40,11 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
         let mut pos = 1;
         let iso_639_language_code = if language_code_present {
             if sel.len() < pos + ISO_639_LEN {
-                return Err(invalid("supplementary_audio: language code truncated"));
+                return Err(Error::BufferTooShort {
+                    need: pos + ISO_639_LEN,
+                    have: sel.len(),
+                    what: "supplementary_audio body",
+                });
             }
             let lc = &sel[pos..pos + ISO_639_LEN];
             pos += ISO_639_LEN;

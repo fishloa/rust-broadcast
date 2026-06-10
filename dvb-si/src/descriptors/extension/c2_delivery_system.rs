@@ -28,7 +28,11 @@ impl<'a> Parse<'a> for C2DeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < C2_LEN {
-            return Err(invalid("C2_delivery_system: truncated"));
+            return Err(Error::BufferTooShort {
+                need: C2_LEN,
+                have: sel.len(),
+                what: "C2_delivery_system body",
+            });
         }
         let packed = sel[6];
         Ok(C2DeliverySystem {

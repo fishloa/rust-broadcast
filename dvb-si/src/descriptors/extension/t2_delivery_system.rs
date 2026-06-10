@@ -58,7 +58,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < T2_FIXED_PREFIX_LEN {
-            return Err(invalid("T2_delivery_system: prefix truncated"));
+            return Err(Error::BufferTooShort {
+                need: T2_FIXED_PREFIX_LEN,
+                have: sel.len(),
+                what: "T2_delivery_system body",
+            });
         }
         let plp_id = sel[0];
         let t2_system_id = u16::from_be_bytes([sel[1], sel[2]]);
@@ -72,7 +76,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             tfs_flag,
         ) = if sel.len() > T2_FIXED_PREFIX_LEN {
             if sel.len() < T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN {
-                return Err(invalid("T2_delivery_system: flags block truncated"));
+                return Err(Error::BufferTooShort {
+                    need: T2_FIXED_PREFIX_LEN + T2_FLAGS_BLOCK_LEN,
+                    have: sel.len(),
+                    what: "T2_delivery_system body",
+                });
             }
             let b0 = sel[pos];
             let b1 = sel[pos + 1];
@@ -93,13 +101,21 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             let mut cells = Vec::new();
             while pos < sel.len() {
                 if pos + 2 > sel.len() {
-                    return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 2,
+                        have: sel.len(),
+                        what: "T2_delivery_system body",
+                    });
                 }
                 let cell_id = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
                 pos += 2;
                 let centre_frequencies = if tfs {
                     if pos >= sel.len() {
-                        return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 1,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        });
                     }
                     let freq_loop_len = sel[pos] as usize;
                     pos += 1;
@@ -109,7 +125,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         ));
                     }
                     if pos + freq_loop_len > sel.len() {
-                        return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + freq_loop_len,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        });
                     }
                     let end = pos + freq_loop_len;
                     let mut freqs = Vec::with_capacity(freq_loop_len / 4);
@@ -125,7 +145,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     freqs
                 } else {
                     if pos + 4 > sel.len() {
-                        return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                        return Err(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        });
                     }
                     let freq =
                         u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
@@ -133,7 +157,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     vec![freq]
                 };
                 if pos >= sel.len() {
-                    return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + 1,
+                        have: sel.len(),
+                        what: "T2_delivery_system body",
+                    });
                 }
                 let subcell_loop_len = sel[pos] as usize;
                 pos += 1;
@@ -143,7 +171,11 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     ));
                 }
                 if pos + subcell_loop_len > sel.len() {
-                    return Err(invalid("T2_delivery_system: cell loop overruns body"));
+                    return Err(Error::BufferTooShort {
+                        need: pos + subcell_loop_len,
+                        have: sel.len(),
+                        what: "T2_delivery_system body",
+                    });
                 }
                 let end = pos + subcell_loop_len;
                 let mut subcells = Vec::with_capacity(subcell_loop_len / 5);

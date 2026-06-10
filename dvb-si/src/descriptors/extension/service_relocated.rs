@@ -22,7 +22,11 @@ impl<'a> Parse<'a> for ServiceRelocated {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < SERVICE_RELOCATED_LEN {
-            return Err(invalid("service_relocated: truncated"));
+            return Err(Error::BufferTooShort {
+                need: SERVICE_RELOCATED_LEN,
+                have: sel.len(),
+                what: "service_relocated body",
+            });
         }
         Ok(ServiceRelocated {
             old_original_network_id: u16::from_be_bytes([sel[0], sel[1]]),
