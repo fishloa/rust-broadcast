@@ -11,6 +11,11 @@
 ## Unreleased
 
 ### Added
+- **Typed adaptation field + PCR** — `TsPacket::adaptation_field()` decodes the
+  discontinuity / random-access / ES-priority flags, PCR/OPCR (`Pcr`, with
+  `as_27mhz()`), and splice countdown per ISO/IEC 13818-1:2007 §2.4.3.4 (the
+  field was previously skipped). `TsPacket` gains an `adaptation` byte-slice
+  field; section-parsing behaviour is unchanged (#48).
 - **`resync` module** — `TsResync`, a byte-stream resynchroniser that recovers
   188-byte TS packet alignment from arbitrary input (junk prefixes, mid-stream
   loss) and detects/strips 204-byte Reed-Solomon packets, with resync/dropped

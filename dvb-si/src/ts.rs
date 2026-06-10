@@ -62,6 +62,10 @@ pub struct TsPacket<'a> {
     /// Slice into the packet's payload, or `None` when `has_payload == false`
     /// or the adaptation field consumed the whole packet body.
     pub payload: Option<&'a [u8]>,
+    /// The adaptation-field bytes (after the length byte), or `None` when the
+    /// packet has no adaptation field or it is zero-length. Decode with
+    /// [`adaptation_field`](Self::adaptation_field).
+    pub adaptation: Option<&'a [u8]>,
     /// The raw 188 bytes of the packet — kept for cheap forwarding.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub raw: &'a [u8; TS_PACKET_SIZE],
@@ -159,10 +163,17 @@ impl<'a> TsPacket<'a> {
 
         let mut cursor = 4usize;
         let mut payload = None;
+        let mut adaptation = None;
 
-        // Skip adaptation field if present (not parsed in detail — not needed for sections).
+        // Capture the adaptation field if present, then skip it (the section
+        // path does not need it; decode lazily via `adaptation_field`).
         if header.has_adaptation && cursor < TS_PACKET_SIZE {
             let af_len = raw[cursor] as usize;
+            let af_start = cursor + 1;
+            if af_len > 0 && af_start < TS_PACKET_SIZE {
+                let af_end = (af_start + af_len).min(TS_PACKET_SIZE);
+                adaptation = Some(&raw[af_start..af_end]);
+            }
             cursor += 1 + af_len;
         }
 
@@ -173,7 +184,131 @@ impl<'a> TsPacket<'a> {
         Ok(TsPacket {
             header,
             payload,
+            adaptation,
             raw,
+        })
+    }
+
+    /// Decode the adaptation field, if present.
+    ///
+    /// Returns `None` when the packet carries no adaptation field, and
+    /// `Some(Err(..))` when a present field is truncated. Layout per
+    /// ISO/IEC 13818-1:2007 §2.4.3.4 (`docs/iso_13818_1_systems.md`).
+    pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField>> {
+        self.adaptation.map(AdaptationField::parse)
+    }
+}
+
+// Adaptation-field flag bits, byte 0 (ISO/IEC 13818-1:2007 §2.4.3.4).
+const AF_DISCONTINUITY: u8 = 0x80;
+const AF_RANDOM_ACCESS: u8 = 0x40;
+const AF_ES_PRIORITY: u8 = 0x20;
+const AF_PCR_FLAG: u8 = 0x10;
+const AF_OPCR_FLAG: u8 = 0x08;
+const AF_SPLICING_FLAG: u8 = 0x04;
+/// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
+const PCR_FIELD_LEN: usize = 6;
+
+/// Program Clock Reference (ISO/IEC 13818-1:2007 §2.4.3.5): a 33-bit base on a
+/// 90 kHz clock plus a 9-bit extension on a 27 MHz clock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Pcr {
+    /// 33-bit base (90 kHz units).
+    pub base: u64,
+    /// 9-bit extension (27 MHz units).
+    pub extension: u16,
+}
+
+impl Pcr {
+    /// Full PCR value on the 27 MHz clock: `base * 300 + extension`.
+    #[must_use]
+    pub fn as_27mhz(self) -> u64 {
+        self.base * 300 + self.extension as u64
+    }
+
+    /// Decode the 6-byte PCR/OPCR field starting at `at` within `af`.
+    fn parse(af: &[u8], at: usize) -> Result<Self> {
+        let b: &[u8; PCR_FIELD_LEN] = af
+            .get(at..at + PCR_FIELD_LEN)
+            .and_then(|s| s.try_into().ok())
+            .ok_or(Error::BufferTooShort {
+                need: at + PCR_FIELD_LEN,
+                have: af.len(),
+                what: "adaptation_field PCR",
+            })?;
+        let base = ((b[0] as u64) << 25)
+            | ((b[1] as u64) << 17)
+            | ((b[2] as u64) << 9)
+            | ((b[3] as u64) << 1)
+            | ((b[4] as u64) >> 7);
+        let extension = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
+        Ok(Self { base, extension })
+    }
+}
+
+/// Decoded adaptation field — flags plus PCR/OPCR and splice point per
+/// ISO/IEC 13818-1:2007 §2.4.3.4. Transport-private data and the
+/// adaptation-field extension are not surfaced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct AdaptationField {
+    /// A timing/continuity discontinuity starts at this packet.
+    pub discontinuity_indicator: bool,
+    /// This packet is a random-access point.
+    pub random_access_indicator: bool,
+    /// Elementary-stream priority hint.
+    pub elementary_stream_priority_indicator: bool,
+    /// Program Clock Reference, present iff the PCR flag is set.
+    pub pcr: Option<Pcr>,
+    /// Original PCR, present iff the OPCR flag is set.
+    pub opcr: Option<Pcr>,
+    /// Splice countdown (packets until the splice point), iff the flag is set.
+    pub splice_countdown: Option<i8>,
+}
+
+impl AdaptationField {
+    /// Parse the adaptation-field bytes (those following the length byte).
+    fn parse(af: &[u8]) -> Result<Self> {
+        let flags = *af.first().ok_or(Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "adaptation_field flags",
+        })?;
+        let mut cursor = 1usize;
+
+        let pcr = if flags & AF_PCR_FLAG != 0 {
+            let p = Pcr::parse(af, cursor)?;
+            cursor += PCR_FIELD_LEN;
+            Some(p)
+        } else {
+            None
+        };
+        let opcr = if flags & AF_OPCR_FLAG != 0 {
+            let p = Pcr::parse(af, cursor)?;
+            cursor += PCR_FIELD_LEN;
+            Some(p)
+        } else {
+            None
+        };
+        let splice_countdown = if flags & AF_SPLICING_FLAG != 0 {
+            let b = *af.get(cursor).ok_or(Error::BufferTooShort {
+                need: cursor + 1,
+                have: af.len(),
+                what: "adaptation_field splice_countdown",
+            })?;
+            Some(b as i8)
+        } else {
+            None
+        };
+
+        Ok(AdaptationField {
+            discontinuity_indicator: flags & AF_DISCONTINUITY != 0,
+            random_access_indicator: flags & AF_RANDOM_ACCESS != 0,
+            elementary_stream_priority_indicator: flags & AF_ES_PRIORITY != 0,
+            pcr,
+            opcr,
+            splice_countdown,
         })
     }
 }
@@ -676,5 +811,105 @@ mod tests {
         let out = reasm.pop_section().expect("4098-byte section should pop");
         assert_eq!(out.len(), 4098);
         assert_eq!(out.as_ref(), &section[..]);
+    }
+
+    // ── adaptation field / PCR (ISO/IEC 13818-1 §2.4.3.4–2.4.3.5) ──
+
+    #[test]
+    fn pcr_as_27mhz_known_value() {
+        assert_eq!(
+            Pcr {
+                base: 10_000,
+                extension: 0
+            }
+            .as_27mhz(),
+            3_000_000
+        );
+        // base*300 + extension: 1*300 + 100 = 400.
+        assert_eq!(
+            Pcr {
+                base: 1,
+                extension: 100
+            }
+            .as_27mhz(),
+            400
+        );
+    }
+
+    #[test]
+    fn pcr_decode_from_bytes() {
+        // 6-byte PCR encoding base=10000, extension=0 (reserved bits set).
+        let af = [0x10u8, 0x00, 0x00, 0x13, 0x88, 0x7E, 0x00];
+        let pcr = Pcr::parse(&af, 1).expect("6 bytes present");
+        assert_eq!(
+            pcr,
+            Pcr {
+                base: 10_000,
+                extension: 0
+            }
+        );
+        assert_eq!(pcr.as_27mhz(), 3_000_000);
+    }
+
+    #[test]
+    fn adaptation_field_flags_and_pcr() {
+        let mut raw = [0xAAu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x01; // pid 0x0100
+        raw[2] = 0x00;
+        raw[3] = ADAPTATION_FLAG | PAYLOAD_FLAG;
+        raw[4] = 7; // adaptation_field_length: 1 flags + 6 PCR
+        raw[5] = AF_DISCONTINUITY | AF_PCR_FLAG;
+        raw[6..12].copy_from_slice(&[0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]);
+        // raw[12..] stays 0xAA = payload.
+
+        let pkt = TsPacket::parse(&raw).expect("valid packet");
+        let af = pkt
+            .adaptation_field()
+            .expect("has adaptation field")
+            .expect("adaptation field parses");
+        assert!(af.discontinuity_indicator);
+        assert!(!af.random_access_indicator);
+        assert_eq!(
+            af.pcr,
+            Some(Pcr {
+                base: 10_000,
+                extension: 0
+            })
+        );
+        assert_eq!(af.pcr.unwrap().as_27mhz(), 3_000_000);
+        assert!(af.opcr.is_none());
+        assert!(af.splice_countdown.is_none());
+        // Payload begins right after the adaptation field (cursor 4+1+7=12).
+        let payload = pkt.payload.expect("payload present");
+        assert_eq!(payload.len(), TS_PACKET_SIZE - 12);
+        assert_eq!(payload[0], 0xAA);
+    }
+
+    #[test]
+    fn no_adaptation_returns_none() {
+        let mut raw = [0x00u8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x01;
+        raw[3] = PAYLOAD_FLAG; // payload only
+        let pkt = TsPacket::parse(&raw).expect("valid");
+        assert!(pkt.adaptation_field().is_none());
+        assert!(pkt.adaptation.is_none());
+    }
+
+    #[test]
+    fn adaptation_field_splice_countdown_negative() {
+        let mut raw = [0xAAu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x01;
+        raw[2] = 0x00;
+        raw[3] = ADAPTATION_FLAG | PAYLOAD_FLAG;
+        raw[4] = 2; // 1 flags + 1 splice_countdown
+        raw[5] = AF_SPLICING_FLAG;
+        raw[6] = 0xFB; // -5 as i8
+        let pkt = TsPacket::parse(&raw).expect("valid");
+        let af = pkt.adaptation_field().unwrap().unwrap();
+        assert_eq!(af.splice_countdown, Some(-5));
+        assert!(af.pcr.is_none());
     }
 }
