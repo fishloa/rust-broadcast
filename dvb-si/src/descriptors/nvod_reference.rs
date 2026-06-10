@@ -4,6 +4,7 @@
 //! Body is a loop of (transport_stream_id, original_network_id, service_id)
 //! triples, each identifying one of the time-shifted NVOD services.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -38,36 +39,19 @@ pub struct NvodReferenceDescriptor {
 impl<'a> Parse<'a> for NvodReferenceDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "NvodReferenceDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for NVOD_reference_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "NvodReferenceDescriptor",
+            "unexpected tag for NVOD_reference_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 6",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "NvodReferenceDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(NvodReferenceEntry {
                 transport_stream_id: u16::from_be_bytes([chunk[0], chunk[1]]),

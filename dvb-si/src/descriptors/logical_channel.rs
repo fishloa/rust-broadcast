@@ -4,6 +4,7 @@
 //! Assigns an LCN (Logical Channel Number) to each service, plus a
 //! `visible_service` flag for hiding services from the channel list.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -39,49 +40,25 @@ pub struct LogicalChannelDescriptor {
 impl<'a> Parse<'a> for LogicalChannelDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "LogicalChannelDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for logical_channel_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "LogicalChannelDescriptor",
+            "unexpected tag for logical_channel_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 4",
             });
         }
-        let body_start = HEADER_LEN;
-        let body_end = body_start + length;
-        if bytes.len() < body_end {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "LogicalChannelDescriptor body",
-            });
-        }
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
-        let mut offset = body_start;
-        while offset < body_end {
-            let service_id = u16::from_be_bytes([bytes[offset], bytes[offset + 1]]);
-            let flags = bytes[offset + 2];
-            // ETSI EN 300 468 §5.1: "Decoders shall ignore reserved bits."
-            // The earlier strict check (`flags & RESERVED_BITS_MASK ==
-            // RESERVED_BITS_MASK`) rejected real-world broadcasts where the
-            // reserved bits were cleared — observed on TNTSat / ORF Digital
-            // on 5°W and 19.2°E — and silently swallowed every LCN. Tolerate
-            // either reserved-bits value; only the documented
-            // visible_service and lcn fields drive behaviour.
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
+        let mut offset = 0;
+        while offset < body.len() {
+            let service_id = u16::from_be_bytes([body[offset], body[offset + 1]]);
+            let flags = body[offset + 2];
             let visible_service = flags & VISIBLE_MASK != 0;
-            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(bytes[offset + 3]);
+            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(body[offset + 3]);
             entries.push(LogicalChannelEntry {
                 service_id,
                 visible_service,

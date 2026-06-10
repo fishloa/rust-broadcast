@@ -10,6 +10,7 @@
 //!   byte2: max_average_rate(4) + time_slice_fec_id(4)
 //! followed by `id_selector_byte` for the remainder of the descriptor.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -52,35 +53,18 @@ pub struct TimeSliceFecIdentifierDescriptor<'a> {
 impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "TimeSliceFecIdentifierDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for time_slice_fec_identifier_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "TimeSliceFecIdentifierDescriptor body",
-            });
-        }
-        if length < FIXED_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TimeSliceFecIdentifierDescriptor",
+            "unexpected tag for time_slice_fec_identifier_descriptor",
+        )?;
+        if body.len() < FIXED_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "time_slice_fec_identifier_descriptor body shorter than 3 bytes",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         let b0 = body[0];
         let time_slicing = (b0 & 0x80) != 0;
         let mpe_fec = (b0 >> 5) & MPE_FEC_MAX;

@@ -4,6 +4,7 @@
 //! new location; gives the new (original_network_id, transport_stream_id,
 //! service_id) triple. Fixed 6-byte payload.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -29,39 +30,22 @@ pub struct ServiceMoveDescriptor {
 impl<'a> Parse<'a> for ServiceMoveDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ServiceMoveDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for service_move_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "ServiceMoveDescriptor body",
-            });
-        }
-        if length != BODY_LEN as usize {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ServiceMoveDescriptor",
+            "unexpected tag for service_move_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_move_descriptor length must equal 6",
             });
         }
-        let b = HEADER_LEN;
         Ok(Self {
-            new_original_network_id: u16::from_be_bytes([bytes[b], bytes[b + 1]]),
-            new_transport_stream_id: u16::from_be_bytes([bytes[b + 2], bytes[b + 3]]),
-            new_service_id: u16::from_be_bytes([bytes[b + 4], bytes[b + 5]]),
+            new_original_network_id: u16::from_be_bytes([body[0], body[1]]),
+            new_transport_stream_id: u16::from_be_bytes([body[2], body[3]]),
+            new_service_id: u16::from_be_bytes([body[4], body[5]]),
         })
     }
 }

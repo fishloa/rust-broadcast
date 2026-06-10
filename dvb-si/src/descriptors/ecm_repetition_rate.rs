@@ -5,6 +5,7 @@
 //! descriptor" (PDF p. 56) the body is: CA_system_ID(16) +
 //! ECM_repetition_rate(16) + trailing private_data_byte run.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -30,35 +31,18 @@ pub struct EcmRepetitionRateDescriptor<'a> {
 impl<'a> Parse<'a> for EcmRepetitionRateDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "EcmRepetitionRateDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for ECM_repetition_rate_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "EcmRepetitionRateDescriptor body",
-            });
-        }
-        if length < FIXED_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "EcmRepetitionRateDescriptor",
+            "unexpected tag for ECM_repetition_rate_descriptor",
+        )?;
+        if body.len() < FIXED_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "ECM_repetition_rate_descriptor body shorter than 4 bytes",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         let ca_system_id = u16::from_be_bytes([body[0], body[1]]);
         let ecm_repetition_rate = u16::from_be_bytes([body[2], body[3]]);
         let private_data = &body[FIXED_LEN..];

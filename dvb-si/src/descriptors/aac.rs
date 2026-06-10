@@ -12,6 +12,7 @@
 //! The optional block (everything after profile_and_level) is modelled as an
 //! `Option<AacExtension>`: `None` means descriptor_length == 1.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -60,30 +61,20 @@ impl<'a> Parse<'a> for AacDescriptor<'a> {
                 what: "AacDescriptor header+profile",
             });
         }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for AAC_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "AacDescriptor body",
-            });
-        }
-        if length < 1 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "AacDescriptor",
+            "unexpected tag for AAC_descriptor",
+        )?;
+        if body.is_empty() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "AAC_descriptor body shorter than 1 byte",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         let profile_and_level = body[0];
-        let extension = if length > 1 {
+        let extension = if body.len() > 1 {
             let flags = body[1];
             let aac_type_flag = (flags & FLAG_AAC_TYPE) != 0;
             let saoc_de_flag = (flags & FLAG_SAOC_DE) != 0;

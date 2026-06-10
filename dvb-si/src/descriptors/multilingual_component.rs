@@ -4,6 +4,7 @@
 //! byte ties the descriptor to a component, followed by a loop of (ISO 639-2
 //! language code, text) pairs, each text length-prefixed by an 8-bit field.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -41,49 +42,33 @@ pub struct MultilingualComponentDescriptor<'a> {
 impl<'a> Parse<'a> for MultilingualComponentDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "MultilingualComponentDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for multilingual_component_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "MultilingualComponentDescriptor body",
-            });
-        }
-        if length < COMPONENT_TAG_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "MultilingualComponentDescriptor",
+            "unexpected tag for multilingual_component_descriptor",
+        )?;
+        if body.len() < COMPONENT_TAG_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "multilingual_component_descriptor body missing component_tag",
             });
         }
-        let component_tag = bytes[HEADER_LEN];
+        let component_tag = body[0];
         let mut entries = Vec::new();
-        let mut pos = HEADER_LEN + COMPONENT_TAG_LEN;
-        while pos < end {
-            if pos + LANG_LEN + TEXT_LEN_FIELD > end {
+        let mut pos = COMPONENT_TAG_LEN;
+        while pos < body.len() {
+            if pos + LANG_LEN + TEXT_LEN_FIELD > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
-            let text_len = bytes[pos + LANG_LEN] as usize;
+            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
+            let text_len = body[pos + LANG_LEN] as usize;
             let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
             let text_end = text_start + text_len;
-            if text_end > end {
+            if text_end > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "text_length runs past descriptor end",
@@ -91,7 +76,7 @@ impl<'a> Parse<'a> for MultilingualComponentDescriptor<'a> {
             }
             entries.push(ComponentTextEntry {
                 language_code,
-                text: DvbText::new(&bytes[text_start..text_end]),
+                text: DvbText::new(&body[text_start..text_end]),
             });
             pos = text_end;
         }

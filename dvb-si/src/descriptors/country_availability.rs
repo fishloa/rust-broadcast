@@ -6,6 +6,7 @@
 //! intended for reception in the listed countries; when clear, in all
 //! countries EXCEPT those listed.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -38,44 +39,27 @@ pub struct CountryAvailabilityDescriptor {
 impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "CountryAvailabilityDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for country_availability_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < MIN_BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "CountryAvailabilityDescriptor",
+            "unexpected tag for country_availability_descriptor",
+        )?;
+        if body.len() < MIN_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "country_availability_descriptor missing flag byte",
             });
         }
-        if (length - FLAG_LEN) % COUNTRY_CODE_LEN != 0 {
+        if (body.len() - FLAG_LEN) % COUNTRY_CODE_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "country_code loop length must be a multiple of 3",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "CountryAvailabilityDescriptor body",
-            });
-        }
-        let flags = bytes[HEADER_LEN];
-        // reserved_future_use bits ignored on parse (EN 300 468 §5.1).
+        let flags = body[0];
         let country_availability_flag = flags & AVAILABILITY_FLAG_MASK != 0;
-        let loop_body = &bytes[HEADER_LEN + FLAG_LEN..end];
+        let loop_body = &body[FLAG_LEN..];
         let mut country_codes = Vec::with_capacity(loop_body.len() / COUNTRY_CODE_LEN);
         for chunk in loop_body.chunks_exact(COUNTRY_CODE_LEN) {
             country_codes.push(LangCode([chunk[0], chunk[1], chunk[2]]));

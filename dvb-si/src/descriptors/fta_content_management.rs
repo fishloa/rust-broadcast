@@ -6,6 +6,7 @@
 //! `do_not_apply_revocation` (1).
 //! `control_remote_access_over_internet` coding is Table 58.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -43,35 +44,19 @@ pub struct FtaContentManagementDescriptor {
 impl<'a> Parse<'a> for FtaContentManagementDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "FtaContentManagementDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for FTA_content_management_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "FtaContentManagementDescriptor",
+            "unexpected tag for FTA_content_management_descriptor",
+        )?;
+        if body.len() != BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "FTA_content_management_descriptor length must be exactly 1",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "FtaContentManagementDescriptor body",
-            });
-        }
-        let flags = bytes[HEADER_LEN];
+        let flags = body[0];
         // reserved_future_use (3 bits) ignored on parse (§5.1).
         Ok(Self {
             user_defined: flags & USER_DEFINED_MASK != 0,

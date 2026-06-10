@@ -26,6 +26,7 @@
 //! are kept as the raw 16-bit wire value (spec: 16-bit two's-complement
 //! fractions of 90°/180°; we preserve the bits verbatim, no scaling).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -103,29 +104,12 @@ fn write_extents(buf: &mut [u8], lat: u16, long: u16) {
 impl<'a> Parse<'a> for CellListDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "CellListDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for cell_list_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "CellListDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "CellListDescriptor",
+            "unexpected tag for cell_list_descriptor",
+        )?;
         let mut entries = Vec::new();
         let mut pos = 0;
         while pos < body.len() {

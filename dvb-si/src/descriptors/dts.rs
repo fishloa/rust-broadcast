@@ -14,6 +14,7 @@
 //! Table G.3 (PDF p. 185), surround_mode Table G.4 (PDF p. 186),
 //! extended_surround_flag Table G.5 (PDF p. 186).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -57,35 +58,18 @@ pub struct DtsDescriptor<'a> {
 impl<'a> Parse<'a> for DtsDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "DtsDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for DTS_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "DtsDescriptor body",
-            });
-        }
-        if length < FIXED_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DtsDescriptor",
+            "unexpected tag for DTS_descriptor",
+        )?;
+        if body.len() < FIXED_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "DTS_descriptor body shorter than 5 bytes",
             });
         }
-        let body = &bytes[HEADER_LEN..end];
         // Pack the 5 fixed bytes into a 40-bit big-endian value.
         let packed: u64 = (u64::from(body[0]) << 32)
             | (u64::from(body[1]) << 24)

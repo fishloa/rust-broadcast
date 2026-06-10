@@ -3,6 +3,7 @@
 //! Identifies a conditional access system and the PID carrying ECM/EMM data
 //! for that system. Optional private data may follow the standard fields.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -48,35 +49,18 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "CaDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for CA_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < MIN_BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "CaDescriptor",
+            "unexpected tag for CA_descriptor",
+        )?;
+        if body.len() < MIN_BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "CA_descriptor length too short for mandatory fields",
             });
         }
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "CaDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..total];
         let ca_system_id = u16::from_be_bytes([body[0], body[1]]);
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
         let ca_pid = ((u16::from(body[2]) & 0x1F) << 8) | u16::from(body[3]);

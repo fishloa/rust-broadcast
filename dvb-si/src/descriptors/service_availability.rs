@@ -6,6 +6,7 @@
 //! service is (un)available. `availability_flag`=1 → service available in the
 //! listed cells; =0 → unavailable in the listed cells.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -35,48 +36,32 @@ pub struct ServiceAvailabilityDescriptor {
 impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ServiceAvailabilityDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for service_availability_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < FLAGS_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ServiceAvailabilityDescriptor",
+            "unexpected tag for service_availability_descriptor",
+        )?;
+        if body.len() < FLAGS_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_availability_descriptor body too short (need flags byte)",
             });
         }
-        if (length - FLAGS_LEN) % CELL_ID_LEN != 0 {
+        if (body.len() - FLAGS_LEN) % CELL_ID_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_availability cell_id loop must be a multiple of 2 bytes",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ServiceAvailabilityDescriptor body",
-            });
-        }
-        let flags = bytes[HEADER_LEN];
+        let flags = body[0];
         // reserved_future_use (7 bits) ignored on parse (§5.1).
         let availability_flag = flags & AVAILABILITY_FLAG_MASK != 0;
-        let count = (length - FLAGS_LEN) / CELL_ID_LEN;
+        let count = (body.len() - FLAGS_LEN) / CELL_ID_LEN;
         let mut cell_ids = Vec::with_capacity(count);
-        let mut pos = HEADER_LEN + FLAGS_LEN;
+        let mut pos = FLAGS_LEN;
         for _ in 0..count {
-            cell_ids.push(u16::from_be_bytes([bytes[pos], bytes[pos + 1]]));
+            cell_ids.push(u16::from_be_bytes([body[pos], body[pos + 1]]));
             pos += CELL_ID_LEN;
         }
         Ok(Self {

@@ -84,6 +84,38 @@ pub use data_stream_alignment::DataStreamAlignmentDescriptor;
 pub use private_data_indicator::PrivateDataIndicatorDescriptor;
 pub use registration::RegistrationDescriptor;
 
+pub(crate) fn descriptor_body<'a>(
+    bytes: &'a [u8],
+    tag: u8,
+    what: &'static str,
+    reason: &'static str,
+) -> crate::Result<&'a [u8]> {
+    const HEADER_LEN: usize = 2;
+    if bytes.len() < HEADER_LEN {
+        return Err(crate::Error::BufferTooShort {
+            need: HEADER_LEN,
+            have: bytes.len(),
+            what,
+        });
+    }
+    if bytes[0] != tag {
+        return Err(crate::Error::InvalidDescriptor {
+            tag: bytes[0],
+            reason,
+        });
+    }
+    let length = bytes[1] as usize;
+    let end = HEADER_LEN + length;
+    if bytes.len() < end {
+        return Err(crate::Error::BufferTooShort {
+            need: end,
+            have: bytes.len(),
+            what,
+        });
+    }
+    Ok(&bytes[HEADER_LEN..end])
+}
+
 pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
 pub use registry::{DescriptorObject, DescriptorRegistry};
 

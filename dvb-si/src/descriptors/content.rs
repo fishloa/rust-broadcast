@@ -3,6 +3,7 @@
 //! Carried inside EIT. Classifies the event's genre via a two-nibble
 //! content type plus an 8-bit broadcaster-specific user byte.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -35,42 +36,21 @@ pub struct ContentDescriptor {
 impl<'a> Parse<'a> for ContentDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ContentDescriptor header",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ContentDescriptor",
+            "unexpected tag for ContentDescriptor",
+        )?;
 
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for ContentDescriptor",
-            });
-        }
-
-        let length = bytes[1] as usize;
-        let body_start = HEADER_LEN;
-        let body_end = body_start + length;
-
-        if bytes.len() < body_end {
-            return Err(Error::BufferTooShort {
-                need: body_end,
-                have: bytes.len(),
-                what: "ContentDescriptor body",
-            });
-        }
-
-        if length % 2 != 0 {
+        if body.len() % 2 != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must be a multiple of 2",
             });
         }
 
-        let body = &bytes[body_start..body_end];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
 
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(ContentEntry {

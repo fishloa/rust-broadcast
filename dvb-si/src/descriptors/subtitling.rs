@@ -4,6 +4,7 @@
 //! one entry per 3-char language code + subtitling_type + composition/
 //! ancillary page triple (8 bytes).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -40,35 +41,19 @@ pub struct SubtitlingDescriptor {
 impl<'a> Parse<'a> for SubtitlingDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "SubtitlingDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for subtitling_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if bytes.len() < HEADER_LEN + length {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + length,
-                have: bytes.len(),
-                what: "SubtitlingDescriptor body",
-            });
-        }
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "SubtitlingDescriptor",
+            "unexpected tag for subtitling_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "subtitling_descriptor length must be a multiple of 8",
             });
         }
-        let body = &bytes[HEADER_LEN..HEADER_LEN + length];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(SubtitlingEntry {
                 language_code: LangCode([chunk[0], chunk[1], chunk[2]]),

@@ -5,6 +5,7 @@
 //! the textual DSNG identifier carried as ASCII characters. We preserve the
 //! raw bytes verbatim.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -26,31 +27,13 @@ pub struct DsngDescriptor<'a> {
 impl<'a> Parse<'a> for DsngDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "DsngDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for DSNG_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "DsngDescriptor body",
-            });
-        }
-        Ok(Self {
-            bytes: &bytes[HEADER_LEN..end],
-        })
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DsngDescriptor",
+            "unexpected tag for DSNG_descriptor",
+        )?;
+        Ok(Self { bytes: body })
     }
 }
 

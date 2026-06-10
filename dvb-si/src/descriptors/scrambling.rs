@@ -4,6 +4,7 @@
 //! Table 87 coding, PDF pp. 98-99): 0x01 = DVB-CSA1, 0x02 = DVB-CSA2,
 //! 0x03 = DVB-CSA3, 0x10 = DVB-CISSA v1, etc.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -25,36 +26,20 @@ pub struct ScramblingDescriptor {
 impl<'a> Parse<'a> for ScramblingDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ScramblingDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for scrambling_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "ScramblingDescriptor body",
-            });
-        }
-        if length != BODY_LEN as usize {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ScramblingDescriptor",
+            "unexpected tag for scrambling_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "scrambling_descriptor length must equal 1",
             });
         }
         Ok(Self {
-            scrambling_mode: bytes[HEADER_LEN],
+            scrambling_mode: body[0],
         })
     }
 }

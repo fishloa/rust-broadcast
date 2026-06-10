@@ -4,6 +4,7 @@
 //! `stuffing_byte`s of any value. Used to pad descriptor loops; carries no
 //! semantic information. The bytes are kept verbatim as a borrowed slice.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -30,30 +31,14 @@ pub struct StuffingDescriptor<'a> {
 impl<'a> Parse<'a> for StuffingDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "StuffingDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for stuffing_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "StuffingDescriptor body",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "StuffingDescriptor",
+            "unexpected tag for stuffing_descriptor",
+        )?;
         Ok(Self {
-            stuffing_bytes: &bytes[HEADER_LEN..end],
+            stuffing_bytes: body,
         })
     }
 }

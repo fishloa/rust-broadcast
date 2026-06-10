@@ -3,6 +3,7 @@
 //! Table 78 (PDF p. 94). Carried in the NIT. A loop of (ISO 639-2 language
 //! code, network name) pairs, each name length-prefixed by an 8-bit field.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -37,42 +38,26 @@ pub struct MultilingualNetworkNameDescriptor<'a> {
 impl<'a> Parse<'a> for MultilingualNetworkNameDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "MultilingualNetworkNameDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for multilingual_network_name_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "MultilingualNetworkNameDescriptor body",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "MultilingualNetworkNameDescriptor",
+            "unexpected tag for multilingual_network_name_descriptor",
+        )?;
         let mut entries = Vec::new();
-        let mut pos = HEADER_LEN;
-        while pos < end {
-            if pos + LANG_LEN + NAME_LEN_FIELD > end {
+        let mut pos = 0;
+        while pos < body.len() {
+            if pos + LANG_LEN + NAME_LEN_FIELD > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "entry header runs past descriptor end",
                 });
             }
-            let language_code = LangCode([bytes[pos], bytes[pos + 1], bytes[pos + 2]]);
-            let name_len = bytes[pos + LANG_LEN] as usize;
+            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
+            let name_len = body[pos + LANG_LEN] as usize;
             let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
             let name_end = name_start + name_len;
-            if name_end > end {
+            if name_end > body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "name_length runs past descriptor end",
@@ -80,7 +65,7 @@ impl<'a> Parse<'a> for MultilingualNetworkNameDescriptor<'a> {
             }
             entries.push(NetworkNameEntry {
                 language_code,
-                network_name: DvbText::new(&bytes[name_start..name_end]),
+                network_name: DvbText::new(&body[name_start..name_end]),
             });
             pos = name_end;
         }

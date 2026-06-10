@@ -3,6 +3,7 @@
 //! Carried inside NIT, BAT, SDT, EIT to provide the default TV-Anytime
 //! authority prefix used when resolving relative CRIDs.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -23,30 +24,14 @@ pub struct DefaultAuthorityDescriptor<'a> {
 impl<'a> Parse<'a> for DefaultAuthorityDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "DefaultAuthorityDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for default authority descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "DefaultAuthorityDescriptor body",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DefaultAuthorityDescriptor",
+            "unexpected tag for default authority descriptor",
+        )?;
         Ok(Self {
-            default_authority: &bytes[HEADER_LEN..end],
+            default_authority: body,
         })
     }
 }

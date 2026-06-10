@@ -18,6 +18,7 @@
 //! elementary_cell_id list is exposed as `Vec<u8>` of 6-bit ids and the
 //! linkage payload as the typed `CellLinkage` enum.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -143,35 +144,18 @@ fn read_u16(b: &[u8], at: usize) -> u16 {
 impl<'a> Parse<'a> for MosaicDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "MosaicDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for mosaic_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length < GRID_HEADER_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "MosaicDescriptor",
+            "unexpected tag for mosaic_descriptor",
+        )?;
+        if body.len() < GRID_HEADER_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "mosaic_descriptor missing grid header byte",
             });
         }
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "MosaicDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
         // grid header: reserved bit (bit 3) ignored on parse (§5.1).
         let mosaic_entry_point = body[0] & ENTRY_POINT_MASK != 0;
         let num_horizontal_cells = (body[0] >> 4) & 0x07;

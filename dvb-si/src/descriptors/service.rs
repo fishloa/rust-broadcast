@@ -3,6 +3,7 @@
 //! Carried inside SDT. Provides the provider and service name plus a
 //! service_type byte classifying the service (TV SD, TV HD, radio, data, …).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use crate::traits::Descriptor;
@@ -28,53 +29,37 @@ pub struct ServiceDescriptor<'a> {
 impl<'a> Parse<'a> for ServiceDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ServiceDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for service_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ServiceDescriptor body",
-            });
-        }
-        if length < 3 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ServiceDescriptor",
+            "unexpected tag for service_descriptor",
+        )?;
+        if body.len() < 3 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_descriptor body too short for service_type + two length fields",
             });
         }
-        let service_type = bytes[HEADER_LEN];
-        let provider_len = bytes[HEADER_LEN + 1] as usize;
-        let provider_end = HEADER_LEN + 2 + provider_len;
-        if provider_end + 1 > end {
+        let service_type = body[0];
+        let provider_len = body[1] as usize;
+        let provider_end = 2 + provider_len;
+        if provider_end + 1 > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_provider_name_length runs past descriptor end",
             });
         }
-        let provider_name = DvbText::new(&bytes[HEADER_LEN + 2..provider_end]);
-        let service_len = bytes[provider_end] as usize;
+        let provider_name = DvbText::new(&body[2..provider_end]);
+        let service_len = body[provider_end] as usize;
         let service_end = provider_end + 1 + service_len;
-        if service_end > end {
+        if service_end > body.len() {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "service_name_length runs past descriptor end",
             });
         }
-        let service_name = DvbText::new(&bytes[provider_end + 1..service_end]);
+        let service_name = DvbText::new(&body[provider_end + 1..service_end]);
         Ok(Self {
             service_type,
             provider_name,

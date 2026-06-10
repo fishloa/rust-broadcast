@@ -4,6 +4,7 @@
 //! is a flag byte followed by four optional 1-byte fields and an optional
 //! free-form additional_info trailer.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -44,34 +45,25 @@ impl<'a> Parse<'a> for Ac3Descriptor<'a> {
                 what: "Ac3Descriptor header+flags",
             });
         }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for AC-3 descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "Ac3Descriptor body",
-            });
-        }
-        let flags = bytes[HEADER_LEN];
-        let mut pos = HEADER_LEN + 1;
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "Ac3Descriptor",
+            "unexpected tag for AC-3 descriptor",
+        )?;
+        let flags = body[0];
+        let mut pos = 1;
         let mut read_one = |set: bool| -> Result<Option<u8>> {
             if !set {
                 return Ok(None);
             }
-            if pos >= end {
+            if pos >= body.len() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "AC-3 descriptor flags claim more bytes than length permits",
                 });
             }
-            let b = bytes[pos];
+            let b = body[pos];
             pos += 1;
             Ok(Some(b))
         };
@@ -80,7 +72,7 @@ impl<'a> Parse<'a> for Ac3Descriptor<'a> {
         let bsid = read_one(flags & FLAG_BSID != 0)?;
         let mainid = read_one(flags & FLAG_MAINID != 0)?;
         let asvc = read_one(flags & FLAG_ASVC != 0)?;
-        let additional_info = &bytes[pos..end];
+        let additional_info = &body[pos..];
         Ok(Self {
             component_type,
             bsid,

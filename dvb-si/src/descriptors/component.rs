@@ -4,6 +4,7 @@
 //! with a language code and free-text label. Carried inside EIT event
 //! descriptor loops.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use crate::traits::Descriptor;
@@ -39,44 +40,24 @@ pub struct ComponentDescriptor<'a> {
 impl<'a> Parse<'a> for ComponentDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "ComponentDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for component_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "ComponentDescriptor body",
-            });
-        }
-        if length < PRE_TEXT_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "ComponentDescriptor",
+            "unexpected tag for component_descriptor",
+        )?;
+        if body.len() < PRE_TEXT_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "component_descriptor body shorter than minimum 6 bytes",
             });
         }
-        let stream_content_ext = bytes[HEADER_LEN] >> 4;
-        let stream_content = bytes[HEADER_LEN] & STREAM_CONTENT_MASK;
-        let component_type = bytes[HEADER_LEN + 1];
-        let component_tag = bytes[HEADER_LEN + 2];
-        let language_code = LangCode([
-            bytes[HEADER_LEN + 3],
-            bytes[HEADER_LEN + 4],
-            bytes[HEADER_LEN + 5],
-        ]);
-        let text = DvbText::new(&bytes[HEADER_LEN + PRE_TEXT_LEN..end]);
+        let stream_content_ext = body[0] >> 4;
+        let stream_content = body[0] & STREAM_CONTENT_MASK;
+        let component_type = body[1];
+        let component_tag = body[2];
+        let language_code = LangCode([body[3], body[4], body[5]]);
+        let text = DvbText::new(&body[PRE_TEXT_LEN..]);
         Ok(Self {
             stream_content_ext,
             stream_content,

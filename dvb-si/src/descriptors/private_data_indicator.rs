@@ -3,6 +3,7 @@
 //! Carries a 4-byte private data specifier that identifies the organization
 //! or entity that defined the private data carried in the associated stream.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -28,36 +29,20 @@ impl<'a> Parse<'a> for PrivateDataIndicatorDescriptor {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "PrivateDataIndicatorDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for private_data_indicator_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "PrivateDataIndicatorDescriptor body",
-            });
-        }
-        if length != BODY_LEN as usize {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "PrivateDataIndicatorDescriptor",
+            "unexpected tag for private_data_indicator_descriptor",
+        )?;
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "private_data_indicator_descriptor length must equal 4",
             });
         }
         let mut private_data_specifier = [0u8; 4];
-        private_data_specifier.copy_from_slice(&bytes[HEADER_LEN..HEADER_LEN + 4]);
+        private_data_specifier.copy_from_slice(&body[..4]);
         Ok(Self {
             private_data_specifier,
         })

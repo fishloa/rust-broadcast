@@ -4,6 +4,7 @@
 //! data component, plus a raw `id_selector_byte` tail whose interpretation
 //! depends on the `data_broadcast_id` (see ETSI TS 101 162).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -28,36 +29,20 @@ pub struct DataBroadcastIdDescriptor<'a> {
 impl<'a> Parse<'a> for DataBroadcastIdDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "DataBroadcastIdDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for data_broadcast_id_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "DataBroadcastIdDescriptor body",
-            });
-        }
-        if length < ID_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "DataBroadcastIdDescriptor",
+            "unexpected tag for data_broadcast_id_descriptor",
+        )?;
+        if body.len() < ID_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "data_broadcast_id_descriptor body shorter than 2 bytes",
             });
         }
-        let data_broadcast_id = u16::from_be_bytes([bytes[HEADER_LEN], bytes[HEADER_LEN + 1]]);
-        let id_selector = &bytes[HEADER_LEN + ID_LEN..end];
+        let data_broadcast_id = u16::from_be_bytes([body[0], body[1]]);
+        let id_selector = &body[ID_LEN..];
         Ok(Self {
             data_broadcast_id,
             id_selector,

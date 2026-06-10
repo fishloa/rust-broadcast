@@ -3,6 +3,7 @@
 //! Carried inside the NIT's `transport_stream_loop`'s second descriptor loop.
 //! Conveys carrier tuning parameters for a DVB-S / DVB-S2 transponder.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -172,41 +173,19 @@ impl SatelliteDeliverySystemDescriptor {
 impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "satellite delivery system descriptor header",
-            });
-        }
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "SatelliteDeliverySystemDescriptor",
+            "expected tag 0x43",
+        )?;
 
-        let tag = bytes[0];
-        if tag != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag,
-                reason: "expected tag 0x43",
-            });
-        }
-
-        let length = bytes[1] as usize;
-        let total = HEADER_LEN + length;
-
-        if bytes.len() < total {
-            return Err(Error::BufferTooShort {
-                need: total,
-                have: bytes.len(),
-                what: "satellite delivery system descriptor body",
-            });
-        }
-
-        if length != BODY_LEN as usize {
+        if body.len() != BODY_LEN as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "descriptor_length must equal 11",
             });
         }
-
-        let body = &bytes[HEADER_LEN..total];
 
         // Frequency: 4 bytes BCD (GHz.MMMM)
         let frequency_bcd = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);

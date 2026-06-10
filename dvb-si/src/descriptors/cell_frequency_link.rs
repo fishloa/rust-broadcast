@@ -18,6 +18,7 @@
 //! Both loops are typed. `frequency`/`transposer_frequency` are raw u32 units
 //! (4 bytes, 10 Hz units per §6.2.7); we preserve the numeric value verbatim.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -64,29 +65,12 @@ pub struct CellFrequencyLinkDescriptor {
 impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "CellFrequencyLinkDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for cell_frequency_link_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        let end = HEADER_LEN + length;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "CellFrequencyLinkDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..end];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "CellFrequencyLinkDescriptor",
+            "unexpected tag for cell_frequency_link_descriptor",
+        )?;
         let mut entries = Vec::new();
         let mut pos = 0;
         while pos < body.len() {

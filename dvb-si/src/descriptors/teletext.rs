@@ -3,6 +3,7 @@
 //! Carried inside PMT's ES_info loop. Enumerates teletext components: one
 //! entry per 3-char language code + type/magazine/page triple (5 bytes).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -39,35 +40,19 @@ pub struct TeletextDescriptor {
 impl<'a> Parse<'a> for TeletextDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "TeletextDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for teletext_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if bytes.len() < HEADER_LEN + length {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + length,
-                have: bytes.len(),
-                what: "TeletextDescriptor body",
-            });
-        }
-        if length % ENTRY_LEN != 0 {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TeletextDescriptor",
+            "unexpected tag for teletext_descriptor",
+        )?;
+        if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "teletext_descriptor length must be a multiple of 5",
             });
         }
-        let body = &bytes[HEADER_LEN..HEADER_LEN + length];
-        let mut entries = Vec::with_capacity(length / ENTRY_LEN);
+        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
             let type_and_mag = chunk[LANG_LEN];

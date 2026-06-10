@@ -1,5 +1,6 @@
 //! ISO 639 Language Descriptor — MPEG-2 ISO/IEC 13818-1 §2.6.19 (tag 0x0A).
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use crate::traits::Descriptor;
@@ -32,28 +33,12 @@ pub struct Iso639LanguageDescriptor {
 impl<'a> Parse<'a> for Iso639LanguageDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "Iso639LanguageDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for iso_639_language_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if bytes.len() < HEADER_LEN + length {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + length,
-                have: bytes.len(),
-                what: "Iso639LanguageDescriptor body",
-            });
-        }
-        let body = &bytes[HEADER_LEN..HEADER_LEN + length];
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "Iso639LanguageDescriptor",
+            "unexpected tag for iso_639_language_descriptor",
+        )?;
         if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,

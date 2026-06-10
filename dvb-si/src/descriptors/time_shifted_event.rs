@@ -4,6 +4,7 @@
 //! event; points at the reference service + event it shifts. Body is a 16-bit
 //! `reference_service_id` followed by a 16-bit `reference_event_id`.
 
+use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
@@ -26,37 +27,21 @@ pub struct TimeShiftedEventDescriptor {
 impl<'a> Parse<'a> for TimeShiftedEventDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < HEADER_LEN {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN,
-                have: bytes.len(),
-                what: "TimeShiftedEventDescriptor header",
-            });
-        }
-        if bytes[0] != TAG {
-            return Err(Error::InvalidDescriptor {
-                tag: bytes[0],
-                reason: "unexpected tag for time_shifted_event_descriptor",
-            });
-        }
-        let length = bytes[1] as usize;
-        if length != BODY_LEN {
+        let body = descriptor_body(
+            bytes,
+            TAG,
+            "TimeShiftedEventDescriptor",
+            "unexpected tag for time_shifted_event_descriptor",
+        )?;
+        if body.len() != BODY_LEN {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "time_shifted_event_descriptor length must be 4",
             });
         }
-        let end = HEADER_LEN + BODY_LEN;
-        if bytes.len() < end {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: bytes.len(),
-                what: "TimeShiftedEventDescriptor body",
-            });
-        }
         Ok(Self {
-            reference_service_id: u16::from_be_bytes([bytes[2], bytes[3]]),
-            reference_event_id: u16::from_be_bytes([bytes[4], bytes[5]]),
+            reference_service_id: u16::from_be_bytes([body[0], body[1]]),
+            reference_event_id: u16::from_be_bytes([body[2], body[3]]),
         })
     }
 }
