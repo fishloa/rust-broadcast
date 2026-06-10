@@ -146,6 +146,8 @@ pub mod carousel;
 pub mod collect;
 pub mod descriptor_tag;
 pub mod descriptors;
+#[cfg(feature = "chrono")]
+pub mod epg;
 pub mod error;
 pub mod pid;
 pub mod section;

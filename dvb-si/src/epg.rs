@@ -1,0 +1,1030 @@
+//! EPG convenience layer.
+//!
+//! This module provides a high-level store for EIT (Event Information Table) data,
+//! making it easy to query the "now and next" events for a service and export
+//! a full EPG schedule.
+//!
+//! It wraps [`crate::collect::EitCollector`] to handle the multi-section
+//! reassembly of EIT tables and maintains a deduplicated, time-ordered event list
+//! for each service keyed by `(original_network_id, transport_stream_id, service_id)`.
+//!
+//! # Quickstart
+//!
+//! ```rust
+//! use dvb_si::epg::{EpgStore, ServiceKey};
+//! use dvb_si::collect::SectionSetCollector;
+//! use chrono::{TimeZone, Utc};
+//!
+//! let mut store = EpgStore::new();
+//!
+//! // Feed EIT sections (from a TS demux, file, etc.)
+//! // store.feed(&eit_section_bytes)?;
+//!
+//! let key = ServiceKey {
+//!     original_network_id: 1,
+//!     transport_stream_id: 1,
+//!     service_id: 100,
+//! };
+//!
+//! // Query now/next (requires EIT present/following data to be fed first)
+//! let now = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
+//! if let Some((now_evt, next_evt)) = store.now_and_next(key, now) {
+//!     if let Some(evt) = now_evt {
+//!         println!("Now:  {} (until {})",
+//!             evt.event_name.as_deref().unwrap_or("?"),
+//!             evt.start_time.map(|t| t + evt.duration.unwrap_or_default())
+//!                 .map(|e| e.to_string()).unwrap_or_default());
+//!     }
+//!     if let Some(evt) = next_evt {
+//!         println!("Next: {} at {}",
+//!             evt.event_name.as_deref().unwrap_or("?"),
+//!             evt.start_time.map(|t| t.to_string()).unwrap_or_default());
+//!     }
+//! }
+//! // Print tonight's schedule (events from 20:00 to midnight)
+//! let tonight = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
+//! let midnight = Utc.with_ymd_and_hms(2026, 6, 11, 0, 0, 0).unwrap();
+//! if let Some(events) = store.schedule(key, tonight, midnight) {
+//!     for evt in &events {
+//!         println!("{:>5}  {}",
+//!             evt.start_time.map(|t| t.format("%H:%M").to_string()).unwrap_or_default(),
+//!             evt.event_name.as_deref().unwrap_or("?"));
+//!     }
+//! }
+//! ```
+//!
+//! # Pruning policy
+//!
+//! The store accumulates events indefinitely. To bound growth under schedule
+//! churn, use [`EpgStore::retain_services`] to remove services that are no longer
+//! of interest and [`EpgStore::clear`] to reset all state at a carousel boundary.
+//! The underlying [`crate::collect::EitCollector`] handles version-driven
+//! section-set replacement automatically — when the version_number on a
+//! sub-table changes, the old partial set is discarded and a new one begins.
+//! Callers scanning a full carousel cycle can `clear()` and start fresh, or
+//! `retain_services` to keep only the active service list.
+
+use crate::collect::CollectResult;
+use std::collections::HashMap;
+
+/// Logical key identifying a service across the DVB network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct ServiceKey {
+    /// original_network_id from the EIT/SDT.
+    pub original_network_id: u16,
+    /// transport_stream_id from the EIT/SDT.
+    pub transport_stream_id: u16,
+    /// service_id.
+    pub service_id: u16,
+}
+
+/// A decoded view of an EPG event.
+///
+/// Extracted from [`crate::collect::CompleteEitEvent`] with commonly needed
+/// descriptor fields pre-decoded and extended text concatenated per
+/// EN 300 468 §6.2.15.
+///
+/// # Limitations
+///
+/// Only the first descriptor of each kind (short_event, content,
+/// parental_rating, content_identifier) is decoded per event; EIT events
+/// may carry multiple language variants and only the first is taken.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct EpgEvent {
+    /// 16-bit event_id.
+    pub event_id: u16,
+    /// Decoded start time (MJD + BCD UTC), if valid.
+    pub start_time: Option<chrono::DateTime<chrono::Utc>>,
+    /// Decoded BCD duration, if valid.
+    pub duration: Option<core::time::Duration>,
+    /// 3-bit running status.
+    pub running_status: u8,
+    /// free_CA_mode.
+    pub free_ca_mode: bool,
+    /// Decoded short event name (from
+    /// [`ShortEventDescriptor`](crate::descriptors::short_event::ShortEventDescriptor)),
+    /// if present and decodeable.
+    pub event_name: Option<String>,
+    /// Decoded short event text, if present and decodeable.
+    pub event_text: Option<String>,
+    /// Concatenated extended event text from all
+    /// [`ExtendedEventDescriptor`](crate::descriptors::extended_event::ExtendedEventDescriptor)
+    /// fragments, per EN 300 468 §6.2.15. Fragments are sorted by
+    /// `descriptor_number` and concatenated directly (no separator).
+    pub extended_text: Option<String>,
+    /// Accumulated extended event items (description, value) from all
+    /// [`ExtendedEventDescriptor`](crate::descriptors::extended_event::ExtendedEventDescriptor)
+    /// fragments, sorted by `descriptor_number`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub extended_items: Vec<(String, String)>,
+    /// Content genre entries (nibble_1, nibble_2, user_byte) from
+    /// [`ContentDescriptor`](crate::descriptors::content::ContentDescriptor).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub content_nibbles: Vec<(u8, u8, u8)>,
+    /// Parental rating entries (country_code, rating) from
+    /// [`ParentalRatingDescriptor`](crate::descriptors::parental_rating::ParentalRatingDescriptor).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub ratings: Vec<(String, u8)>,
+    /// CRID entries (crid_type, inline_crid) from
+    /// [`ContentIdentifierDescriptor`](crate::descriptors::content_identifier::ContentIdentifierDescriptor).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub crids: Vec<(u8, String)>,
+}
+
+/// Serialisable service data exposed by [`EpgStore`] serde export.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+struct ServiceData {
+    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    service_name: Option<String>,
+    events: Vec<EpgEvent>,
+}
+
+/// A store for EIT data, providing high-level access to program events.
+///
+/// Wraps a [`crate::collect::EitCollector`] and maintains a deduplicated,
+/// event list per service. Optionally accepts SDT data to attach service names.
+///
+/// Serde export serializes the cache as a map of `ServiceKey` → service data.
+///
+/// # Limitations
+///
+/// Events are deduplicated by (start_time, event_id) and never evicted
+/// once stored: events removed from a re-versioned schedule, or events
+/// already in the past, remain in the store. Call [`clear()`](Self::clear)
+/// or [`retain_services()`](Self::retain_services) to bound long-running
+/// memory.
+///
+/// # Example
+///
+/// ```no_run
+/// use dvb_si::epg::{EpgStore, ServiceKey};
+/// use chrono::Utc;
+///
+/// let mut store = EpgStore::new();
+/// // store.feed(&eit_section_bytes).unwrap();
+///
+/// let key = ServiceKey {
+///     original_network_id: 1,
+///     transport_stream_id: 1,
+///     service_id: 100,
+/// };
+///
+/// if let Some((now_evt, _next_evt)) = store.now_and_next(key, Utc::now()) {
+///     if let Some(e) = now_evt {
+///         println!("Now playing: {:?}", e.event_name);
+///     }
+/// }
+/// ```
+#[derive(Debug, Default)]
+pub struct EpgStore {
+    collector: crate::collect::EitCollector,
+    cache: HashMap<ServiceKey, ServiceEpg>,
+}
+
+#[derive(Debug, Default)]
+struct ServiceEpg {
+    service_name: Option<String>,
+    /// Deduplicated by event_id. Latest version wins (later inserts overwrite).
+    events: HashMap<u16, EpgEvent>,
+}
+
+impl EpgStore {
+    /// Create a new, empty EPG store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one EIT section into the store.
+    ///
+    /// If a table becomes complete, its events are merged into the cache
+    /// (deduplicated by `event_id`, later insertions overwrite).
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`crate::collect::CollectError`] if the section is malformed.
+    pub fn feed(&mut self, bytes: &[u8]) -> CollectResult<()> {
+        self.feed_with_pid(None, bytes)
+    }
+
+    /// Feed one EIT section with PID context into the store.
+    pub fn feed_with_pid(&mut self, pid: Option<u16>, bytes: &[u8]) -> CollectResult<()> {
+        if let Some(completed) = self.collector.push_section_with_pid(pid, bytes)? {
+            let tables = completed.tables()?;
+            for table in &tables {
+                let key = ServiceKey {
+                    original_network_id: table.original_network_id,
+                    transport_stream_id: table.transport_stream_id,
+                    service_id: table.service_id,
+                };
+                let svc = self.cache.entry(key).or_default();
+                for event in &table.events {
+                    svc.events.insert(event.event_id, event_to_epg(event));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Feed completed SDT data to attach service names.
+    ///
+    /// Accepts a parsed [`crate::collect::CompleteSdt`] from a
+    /// [`crate::collect::SectionSetCollector`].
+    pub fn feed_sdt(&mut self, sdt: &crate::collect::CompleteSdt<'_>) {
+        for svc in &sdt.services {
+            let key = ServiceKey {
+                original_network_id: sdt.original_network_id,
+                transport_stream_id: sdt.transport_stream_id,
+                service_id: svc.service_id,
+            };
+            let entry = self.cache.entry(key).or_default();
+            entry.service_name = extract_service_name(svc.descriptors.descriptors());
+        }
+    }
+
+    /// Get the "now" and "next" events for a service.
+    ///
+    /// Searches the event list for the given service and returns the event
+    /// currently on-air ("now") and the next upcoming event ("next") based
+    /// on reference time `at`.
+    ///
+    /// "now" is the event where `at` falls within `[start, start + duration)`.
+    /// "next" is the earliest event where `start > at`.
+    ///
+    /// An event ending exactly at `at` is NOT considered "now" (exclusive end).
+    ///
+    /// Returns `None` if no events are available for this service.
+    pub fn now_and_next(
+        &self,
+        key: ServiceKey,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Option<(Option<&EpgEvent>, Option<&EpgEvent>)> {
+        let svc = self.cache.get(&key)?;
+        if svc.events.is_empty() {
+            return Some((None, None));
+        }
+
+        let now = svc.events.values().find(|e| {
+            if let (Some(start), Some(dur)) = (e.start_time, e.duration) {
+                let end = start + dur;
+                return at >= start && at < end;
+            }
+            false
+        });
+
+        let next = svc.events.values().find(|e| {
+            if let Some(start) = e.start_time {
+                return start > at;
+            }
+            false
+        });
+
+        Some((now, next))
+    }
+
+    /// Query events with start times in the half-open range `[from, to)`.
+    ///
+    /// Returns events sorted by start time (valid times first, then by
+    /// event_id). Events without a decodable start time are excluded.
+    #[must_use]
+    pub fn schedule(
+        &self,
+        key: ServiceKey,
+        from: chrono::DateTime<chrono::Utc>,
+        to: chrono::DateTime<chrono::Utc>,
+    ) -> Option<Vec<&EpgEvent>> {
+        let svc = self.cache.get(&key)?;
+        let mut events: Vec<&EpgEvent> = svc
+            .events
+            .values()
+            .filter(|e| {
+                if let Some(start) = e.start_time {
+                    start >= from && start < to
+                } else {
+                    false
+                }
+            })
+            .collect();
+        events.sort_by_key(|a| a.start_time.unwrap());
+        Some(events)
+    }
+
+    /// Return the service name for a given key, if SDT data was fed.
+    #[must_use]
+    pub fn service_name(&self, key: ServiceKey) -> Option<&str> {
+        self.cache.get(&key).and_then(|s| s.service_name.as_deref())
+    }
+
+    /// Return all events for a service, sorted by start time
+    /// (events without a valid start time sort last, then by event_id).
+    #[must_use]
+    pub fn events(&self, key: ServiceKey) -> Option<Vec<&EpgEvent>> {
+        let svc = self.cache.get(&key)?;
+        let mut events: Vec<&EpgEvent> = svc.events.values().collect();
+        events.sort_by(|a, b| match (a.start_time, b.start_time) {
+            (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.event_id.cmp(&b.event_id),
+        });
+        Some(events)
+    }
+
+    /// Return the number of services with cached EIT data.
+    #[must_use]
+    pub fn service_count(&self) -> usize {
+        self.cache.len()
+    }
+
+    /// Return the total number of events across all services.
+    #[must_use]
+    pub fn event_count(&self) -> usize {
+        self.cache.values().map(|s| s.events.len()).sum()
+    }
+
+    /// Retain only services matching the given predicate.
+    ///
+    /// Both the event cache and the underlying collector partial state
+    /// for rejected keys are removed.
+    pub fn retain_services<F>(&mut self, mut keep: F)
+    where
+        F: FnMut(&ServiceKey) -> bool,
+    {
+        self.cache.retain(|key, _| keep(key));
+        self.collector.retain_logical(|lk| {
+            keep(&ServiceKey {
+                original_network_id: lk.original_network_id,
+                transport_stream_id: lk.transport_stream_id,
+                service_id: lk.service_id,
+            })
+        });
+    }
+
+    /// Clear all cached EIT data and reset the internal collector.
+    pub fn clear(&mut self) {
+        self.collector.clear();
+        self.cache.clear();
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for EpgStore {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(Some(self.cache.len()))?;
+        for (key, svc) in &self.cache {
+            let data = ServiceData {
+                service_name: svc.service_name.clone(),
+                events: {
+                    let mut evts: Vec<EpgEvent> = svc.events.values().cloned().collect();
+                    evts.sort_by(|a, b| match (a.start_time, b.start_time) {
+                        (Some(at), Some(bt)) => {
+                            at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id))
+                        }
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (None, None) => a.event_id.cmp(&b.event_id),
+                    });
+                    evts
+                },
+            };
+            let key_str = format!(
+                "{}-{}-{}",
+                key.original_network_id, key.transport_stream_id, key.service_id
+            );
+            m.serialize_entry(&key_str, &data)?;
+        }
+        m.end()
+    }
+}
+
+fn event_to_epg(e: &crate::collect::CompleteEitEvent<'_>) -> EpgEvent {
+    let (event_name, event_text) = extract_short_event(e.descriptors.descriptors());
+    let (extended_text, extended_items) = extract_extended(e.descriptors.descriptors());
+    let content_nibbles = extract_content(e.descriptors.descriptors());
+    let ratings = extract_ratings(e.descriptors.descriptors());
+    let crids = extract_crids(e.descriptors.descriptors());
+
+    EpgEvent {
+        event_id: e.event_id,
+        start_time: e.start_time(),
+        duration: e.duration(),
+        running_status: e.running_status,
+        free_ca_mode: e.free_ca_mode,
+        event_name,
+        event_text,
+        extended_text,
+        extended_items,
+        content_nibbles,
+        ratings,
+        crids,
+    }
+}
+
+fn extract_short_event(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> (Option<String>, Option<String>) {
+    for desc in descriptors {
+        if let Ok(crate::descriptors::AnyDescriptor::ShortEvent(se)) = desc {
+            return (
+                Some(se.event_name.decode().into_owned()),
+                Some(se.text.decode().into_owned()),
+            );
+        }
+    }
+    (None, None)
+}
+
+struct ExtendedFragment {
+    descriptor_number: u8,
+    text: String,
+    items: Vec<(String, String)>,
+}
+
+fn extract_extended(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> (Option<String>, Vec<(String, String)>) {
+    use crate::descriptors::AnyDescriptor;
+
+    let mut fragments: Vec<ExtendedFragment> = descriptors
+        .iter()
+        .filter_map(|d| {
+            if let Ok(AnyDescriptor::ExtendedEvent(ee)) = d {
+                let text = ee.text.decode().into_owned();
+                let items: Vec<(String, String)> = ee
+                    .items
+                    .iter()
+                    .map(|i| {
+                        (
+                            i.description.decode().into_owned(),
+                            i.value.decode().into_owned(),
+                        )
+                    })
+                    .collect();
+                if !text.is_empty() || !items.is_empty() {
+                    Some(ExtendedFragment {
+                        descriptor_number: ee.descriptor_number,
+                        text,
+                        items,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if fragments.is_empty() {
+        return (None, Vec::new());
+    }
+
+    // Sort by descriptor_number per EN 300 468 §6.2.15.
+    fragments.sort_by_key(|f| f.descriptor_number);
+
+    let extended_text: String = fragments.iter().map(|f| f.text.as_str()).collect();
+
+    let extended_items: Vec<(String, String)> =
+        fragments.into_iter().flat_map(|f| f.items).collect();
+
+    let text = if extended_text.is_empty() {
+        None
+    } else {
+        Some(extended_text)
+    };
+
+    (text, extended_items)
+}
+
+fn extract_content(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> Vec<(u8, u8, u8)> {
+    for desc in descriptors {
+        if let Ok(crate::descriptors::AnyDescriptor::Content(ct)) = desc {
+            return ct
+                .entries
+                .iter()
+                .map(|e| (e.nibble_1, e.nibble_2, e.user_byte))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn extract_ratings(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> Vec<(String, u8)> {
+    for desc in descriptors {
+        if let Ok(crate::descriptors::AnyDescriptor::ParentalRating(pr)) = desc {
+            return pr
+                .entries
+                .iter()
+                .map(|e| (e.country_code.as_str().into_owned(), e.rating))
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn extract_crids(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> Vec<(u8, String)> {
+    use crate::descriptors::content_identifier::CridLocation;
+    for desc in descriptors {
+        if let Ok(crate::descriptors::AnyDescriptor::ContentIdentifier(ci)) = desc {
+            return ci
+                .entries
+                .iter()
+                .filter_map(|e| match e.location {
+                    CridLocation::Inline(bytes) => {
+                        let s = String::from_utf8_lossy(bytes).into_owned();
+                        Some((e.crid_type, s))
+                    }
+                    _ => None,
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn extract_service_name(
+    descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
+) -> Option<String> {
+    for desc in descriptors {
+        if let Ok(crate::descriptors::AnyDescriptor::Service(svc)) = desc {
+            return Some(svc.service_name.decode().into_owned());
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
+    /// Build the bytes of a minimal short_event_descriptor.
+    fn short_event_bytes(name: &[u8], text: &[u8]) -> Vec<u8> {
+        let lang = b"eng";
+        let mut v = Vec::new();
+        v.push(0x4Du8); // tag
+        v.push((3 + 1 + name.len() + 1 + text.len()) as u8); // length
+        v.extend_from_slice(lang);
+        v.push(name.len() as u8);
+        v.extend_from_slice(name);
+        v.push(text.len() as u8);
+        v.extend_from_slice(text);
+        v
+    }
+
+    /// Build the bytes of a minimal EIT present/following section
+    /// with one event. Returns bytes formated as a complete TS section
+    /// (including CRC-32).
+    #[allow(clippy::too_many_arguments)]
+    fn eit_pf_section(
+        service_id: u16,
+        ts_id: u16,
+        on_id: u16,
+        event_id: u16,
+        version: u8,
+        start_raw: [u8; 5],
+        dur_raw: [u8; 3],
+        descriptors: &[u8],
+    ) -> Vec<u8> {
+        let table_id = 0x4Eu8;
+
+        // Header: 3 + ext_header(5) + post_ext(6) = 14
+        // Event: 12 + descriptors.len()
+        // CRC: 4
+        let ev_len = 12 + descriptors.len();
+        let section_length = 5 + 6 + ev_len + 4;
+        let total = 3 + section_length;
+
+        let mut buf = vec![0u8; total];
+        buf[0] = table_id;
+        buf[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        buf[2] = (section_length & 0xFF) as u8;
+        buf[3..5].copy_from_slice(&service_id.to_be_bytes());
+        // reserved(2)=0b11, version, current_next=1
+        buf[5] = 0xC0 | ((version & 0x1F) << 1) | 0x01;
+        buf[6] = 0; // section_number
+        buf[7] = 0; // last_section_number
+        buf[8..10].copy_from_slice(&ts_id.to_be_bytes());
+        buf[10..12].copy_from_slice(&on_id.to_be_bytes());
+        buf[12] = 0; // segment_last_section_number
+        buf[13] = 0x5F; // last_table_id
+
+        // Event
+        let ev_off = 14;
+        buf[ev_off..ev_off + 2].copy_from_slice(&event_id.to_be_bytes());
+        buf[ev_off + 2..ev_off + 7].copy_from_slice(&start_raw);
+        buf[ev_off + 7..ev_off + 10].copy_from_slice(&dur_raw);
+        let dll = descriptors.len() as u16;
+        buf[ev_off + 10] = ((dll >> 8) as u8) & 0x0F;
+        buf[ev_off + 11] = (dll & 0xFF) as u8;
+        buf[ev_off + 12..ev_off + 12 + descriptors.len()].copy_from_slice(descriptors);
+
+        // CRC-32
+        let crc_pos = total - 4;
+        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        buf[crc_pos..].copy_from_slice(&crc.to_be_bytes());
+        buf
+    }
+
+    // ------------------------------------------------------------------
+    // Basic tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn new_store_is_empty() {
+        let store = EpgStore::new();
+        assert_eq!(store.service_count(), 0);
+        assert_eq!(store.event_count(), 0);
+    }
+
+    #[test]
+    fn feed_empty_is_error() {
+        let mut store = EpgStore::new();
+        assert!(store.feed(&[]).is_err());
+    }
+
+    #[test]
+    fn now_and_next_no_data_returns_none() {
+        let store = EpgStore::new();
+        let now = Utc::now();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        assert!(store.now_and_next(key, now).is_none());
+    }
+
+    #[test]
+    fn service_key_ordering() {
+        let a = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 2,
+            service_id: 100,
+        };
+        let b = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 2,
+            service_id: 200,
+        };
+        assert!(a < b);
+    }
+
+    #[test]
+    fn events_sorts_valid_before_invalid() {
+        let valid = EpgEvent {
+            event_id: 1,
+            start_time: Some(Utc::now()),
+            duration: Some(core::time::Duration::from_secs(3600)),
+            running_status: 0,
+            free_ca_mode: false,
+            event_name: None,
+            event_text: None,
+            extended_text: None,
+            extended_items: Vec::new(),
+            content_nibbles: Vec::new(),
+            ratings: Vec::new(),
+            crids: Vec::new(),
+        };
+        let invalid = EpgEvent {
+            event_id: 2,
+            start_time: None,
+            duration: None,
+            running_status: 0,
+            free_ca_mode: false,
+            event_name: None,
+            event_text: None,
+            extended_text: None,
+            extended_items: Vec::new(),
+            content_nibbles: Vec::new(),
+            ratings: Vec::new(),
+            crids: Vec::new(),
+        };
+
+        let mut events = [&invalid, &valid];
+        events.sort_by(|a, b| match (a.start_time, b.start_time) {
+            (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.event_id.cmp(&b.event_id),
+        });
+        assert_eq!(events[0].event_id, 1);
+        assert_eq!(events[1].event_id, 2);
+    }
+
+    // ------------------------------------------------------------------
+    // §6.2.15 extended event text chaining
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn extended_text_chaining_per_spec_6_2_15() {
+        use crate::descriptors::extended_event::ExtendedEventDescriptor;
+        use crate::descriptors::AnyDescriptor;
+        use crate::text::{DvbText, LangCode};
+
+        // Fragment 1: descriptor_number=2, last_descriptor_number=3
+        // "The quick " + item ("Director", "Alice")
+        let frag1 = ExtendedEventDescriptor {
+            descriptor_number: 2,
+            last_descriptor_number: 3,
+            language_code: LangCode(*b"eng"),
+            items: vec![crate::descriptors::extended_event::ExtendedEventItem {
+                description: DvbText::new(b"Director"),
+                value: DvbText::new(b"Alice"),
+            }],
+            text: DvbText::new(b"The quick "),
+        };
+
+        // Fragment 2: descriptor_number=0, last_descriptor_number=3
+        // "brown fox" + item ("Year", "2026")
+        let frag2 = ExtendedEventDescriptor {
+            descriptor_number: 0,
+            last_descriptor_number: 3,
+            language_code: LangCode(*b"eng"),
+            items: vec![crate::descriptors::extended_event::ExtendedEventItem {
+                description: DvbText::new(b"Year"),
+                value: DvbText::new(b"2026"),
+            }],
+            text: DvbText::new(b"brown fox"),
+        };
+
+        // Fragment 3: descriptor_number=3, last_descriptor_number=3
+        // "jumps." + no items
+        let frag3 = ExtendedEventDescriptor {
+            descriptor_number: 3,
+            last_descriptor_number: 3,
+            language_code: LangCode(*b"eng"),
+            items: vec![],
+            text: DvbText::new(b"jumps."),
+        };
+
+        // Fragment 4: descriptor_number=1, last_descriptor_number=3
+        // empty text + item ("Genre", "Thriller") — dropped by the chaining
+        // helper (text is empty but items present → included)
+        let frag4 = ExtendedEventDescriptor {
+            descriptor_number: 1,
+            last_descriptor_number: 3,
+            language_code: LangCode(*b"eng"),
+            items: vec![crate::descriptors::extended_event::ExtendedEventItem {
+                description: DvbText::new(b"Genre"),
+                value: DvbText::new(b"Thriller"),
+            }],
+            text: DvbText::new(b""),
+        };
+
+        // Feed fragments out of order via AnyDescriptor.
+        let descriptors: Vec<crate::Result<AnyDescriptor<'_>>> = vec![
+            Ok(AnyDescriptor::ExtendedEvent(frag1)), // dn=2
+            Ok(AnyDescriptor::ExtendedEvent(frag4)), // dn=1
+            Ok(AnyDescriptor::ExtendedEvent(frag3)), // dn=3
+            Ok(AnyDescriptor::ExtendedEvent(frag2)), // dn=0
+        ];
+
+        let (text, items) = extract_extended(&descriptors);
+
+        // Text concatenated in descriptor_number order: 0,1,2,3
+        assert_eq!(text.as_deref(), Some("brown foxThe quick jumps."));
+
+        // Items accumulated in descriptor_number order: dn=0 ("Year"/"2026"),
+        // dn=1 ("Genre"/"Thriller"), dn=2 ("Director"/"Alice"), dn=3 (none)
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0], ("Year".to_string(), "2026".to_string()));
+        assert_eq!(items[1], ("Genre".to_string(), "Thriller".to_string()));
+        assert_eq!(items[2], ("Director".to_string(), "Alice".to_string()));
+    }
+
+    // ------------------------------------------------------------------
+    // now_and_next boundary correctness
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn now_and_next_event_boundary() {
+        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
+        let t1100 = Utc.with_ymd_and_hms(2026, 6, 10, 11, 0, 0).unwrap();
+        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
+
+        // Event 1: 10:00-11:00
+        // Event 2: 12:00-13:00
+        let sec = core::time::Duration::from_secs(3600);
+        let ev1 = EpgEvent {
+            event_id: 1,
+            start_time: Some(t1000),
+            duration: Some(sec),
+            running_status: 0,
+            free_ca_mode: false,
+            event_name: Some("Event 1".into()),
+            event_text: None,
+            extended_text: None,
+            extended_items: vec![],
+            content_nibbles: vec![],
+            ratings: vec![],
+            crids: vec![],
+        };
+        let ev2 = EpgEvent {
+            event_id: 2,
+            start_time: Some(t1200),
+            duration: Some(sec),
+            running_status: 0,
+            free_ca_mode: false,
+            event_name: Some("Event 2".into()),
+            event_text: None,
+            extended_text: None,
+            extended_items: vec![],
+            content_nibbles: vec![],
+            ratings: vec![],
+            crids: vec![],
+        };
+
+        // Set up store manually (bypass feed).
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        svc.events.insert(1, ev1);
+        svc.events.insert(2, ev2);
+
+        // At 10:30 — now=Event 1, next=Event 2
+        let at = Utc.with_ymd_and_hms(2026, 6, 10, 10, 30, 0).unwrap();
+        let (now, next) = store.now_and_next(key, at).unwrap();
+        assert_eq!(now.unwrap().event_id, 1);
+        assert_eq!(next.unwrap().event_id, 2);
+
+        // At 11:00 exactly — event 1 just ended (exclusive end),
+        // now=None, next=Event 2
+        let (now, next) = store.now_and_next(key, t1100).unwrap();
+        assert!(now.is_none(), "event ending at query time must NOT be now");
+        assert_eq!(next.unwrap().event_id, 2);
+
+        // At 12:00 exactly — now=Event 2 (start == at, inclusive start),
+        // next=None
+        let (now, next) = store.now_and_next(key, t1200).unwrap();
+        assert_eq!(now.unwrap().event_id, 2);
+        assert!(next.is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // Version churn: bounded growth
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn version_churn_bounded_growth() {
+        // Feed an event, then feed the same event_id with updated data.
+        // Store size must stay at 1 event.
+        let s = |hh: u32| {
+            let t = Utc.with_ymd_and_hms(2026, 6, 10, hh, 0, 0).unwrap();
+            let days = 61785u16; // MJD for 2026-06-10
+            let mjd_bytes = days.to_be_bytes();
+            let bcd_time = [(hh / 10 * 16 + hh % 10) as u8, 0, 0];
+            (
+                [
+                    mjd_bytes[0],
+                    mjd_bytes[1],
+                    bcd_time[0],
+                    bcd_time[1],
+                    bcd_time[2],
+                ],
+                t,
+            )
+        };
+
+        let (start1, _) = s(10);
+        let (start2, _) = s(14);
+
+        let desc1 = short_event_bytes(b"News at 10", b"");
+        let desc2 = short_event_bytes(b"News at 14", b"");
+
+        let eit1 = eit_pf_section(100, 1, 1, 1, 0, start1, [1, 0, 0], &desc1);
+        let eit2 = eit_pf_section(100, 1, 1, 1, 1, start2, [1, 0, 0], &desc2);
+
+        let mut store = EpgStore::new();
+        store.feed(&eit1).unwrap();
+        assert_eq!(store.event_count(), 1);
+        store.feed(&eit2).unwrap();
+        // Same event_id should overwrite, not duplicate
+        assert_eq!(store.event_count(), 1);
+
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let evts = store.events(key).unwrap();
+        assert_eq!(evts.len(), 1);
+        assert_eq!(evts[0].event_name.as_deref(), Some("News at 14"));
+    }
+
+    // ------------------------------------------------------------------
+    // schedule range query
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn schedule_range_query() {
+        let t0900 = Utc.with_ymd_and_hms(2026, 6, 10, 9, 0, 0).unwrap();
+        let t1000 = Utc.with_ymd_and_hms(2026, 6, 10, 10, 0, 0).unwrap();
+        let t1100 = Utc.with_ymd_and_hms(2026, 6, 10, 11, 0, 0).unwrap();
+        let t1200 = Utc.with_ymd_and_hms(2026, 6, 10, 12, 0, 0).unwrap();
+
+        let sec = core::time::Duration::from_secs(1800);
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        for (id, t) in [(1, t0900), (2, t1000), (3, t1100)] {
+            svc.events.insert(
+                id,
+                EpgEvent {
+                    event_id: id,
+                    start_time: Some(t),
+                    duration: Some(sec),
+                    running_status: 0,
+                    free_ca_mode: false,
+                    event_name: Some(format!("Event {id}")),
+                    event_text: None,
+                    extended_text: None,
+                    extended_items: vec![],
+                    content_nibbles: vec![],
+                    ratings: vec![],
+                    crids: vec![],
+                },
+            );
+        }
+
+        // [10:00, 12:00) → events 2 and 3
+        let events = store.schedule(key, t1000, t1200).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_id, 2);
+        assert_eq!(events[1].event_id, 3);
+
+        // [12:00, 13:00) → empty
+        let events = store.schedule(key, t1200, t1100).unwrap();
+        assert!(events.is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // serde round-trip
+    // ------------------------------------------------------------------
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_serializes_store_as_json() {
+        let t = Utc.with_ymd_and_hms(2026, 6, 10, 20, 0, 0).unwrap();
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        svc.service_name = Some("BBC One".into());
+        svc.events.insert(
+            1,
+            EpgEvent {
+                event_id: 1,
+                start_time: Some(t),
+                duration: Some(core::time::Duration::from_secs(3600)),
+                running_status: 4,
+                free_ca_mode: false,
+                event_name: Some("The News".into()),
+                event_text: Some("Today's headlines".into()),
+                extended_text: None,
+                extended_items: vec![],
+                content_nibbles: vec![(1, 1, 0)],
+                ratings: vec![],
+                crids: vec![],
+            },
+        );
+
+        let json = serde_json::to_string(&store).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let svc_data = &v["1-1-100"];
+        assert_eq!(svc_data["serviceName"], "BBC One");
+        assert_eq!(svc_data["events"][0]["eventName"], "The News");
+        assert_eq!(
+            svc_data["events"][0]["contentNibbles"][0],
+            serde_json::json!([1, 1, 0])
+        );
+    }
+}

@@ -53,6 +53,24 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
    - doc build with `RUSTDOCFLAGS="-D warnings"`
 5. **Releases are tag-driven and CI-only.** Bump all four crate versions together, merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
 
+## Workflow: the delegated-engineering loop
+
+Token-heavy authoring is delegated to DeepSeek (via the `delegate` skill → headless `opencode`); Claude stays the orchestrator, auditor, and release engineer. **Claude never marks a story done on the delegate's say-so** — only on its own fresh gate evidence.
+
+**Claude owns (does NOT delegate):** story ordering (by dependency then value-for-effort), version semantics (patch = fixes only, minor = additive API, major = breaking; lockstep across all four crates), release bundling (batch related additive stories into one minor; ship breaking/urgent work standalone), and the correctness of every CHANGELOG, `docs/release-notes/vX.Y.Z.md`, README coverage table, module spec-citation, and example/doctest.
+
+**Per-story loop:**
+
+1. **Scope** — read the issue's acceptance criteria and the cited `docs/` transcription. Resolve any design ambiguity *before* delegating (the delegate sees only the brief, none of this context).
+2. **Baseline** — branch `story/<n>-<slug>` off `main`; commit any in-flight working state first, so the delegate's `git diff` is cleanly attributable.
+3. **Delegate** — write a self-contained brief (exact files, decided behaviour/signatures, the project conventions that apply, the exact gate commands, and "fix until all pass before finishing"; boundaries: touch only <scope>, do not commit). Run in the background.
+4. **Audit** — judge by `git diff` + running the **full gate suite yourself** (see Commands), never by the delegate's stdout (often empty on success) or its claims. Then check line-by-line against every AC and the hard invariants (symmetric serialize + round-trip test, no magic numbers outside `#[cfg(test)]`, spec citation in the module doc, `--no-default-features` builds, feature-gating). If a delegated test doesn't *bite*, reject or rewrite it — Claude owns verification.
+5. **Drive fixes** — feed concrete findings back via `opencode run --continue` (same session keeps context). After 2 failed fix cycles on the same point, take over and finish it directly.
+6. **Repeat 4–5** until every gate is green *and* every AC is met, on Claude's own run.
+7. **Ship** — update CHANGELOG/release-note/README/examples; branch→PR (`Closes #n`)→CI green→merge; then the lockstep version bump + `v<version>` tag (per the tag-driven release rule above). Verify all four crates went live.
+
+**Continuous improvement:** treat this loop as living. When a brief pattern, gate ordering, or audit check repeatedly saves (or costs) time, refine this section and say so in the turn. Recurring delegate failure modes belong in the brief template, not rediscovered each story.
+
 ## Architecture
 
 ### The Parse/Serialize contract (dvb-common/src/traits.rs)
