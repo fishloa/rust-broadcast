@@ -147,6 +147,17 @@ impl T2miEvent {
         Header::parse(&self.bytes)
     }
 
+    /// Parse the 6-byte T2-MI header and extract the payload slice and
+    /// `packet_type` byte — shared logic for [`payload`](Self::payload) and
+    /// [`payload_with`](Self::payload_with).
+    fn payload_parts(&self) -> crate::Result<(u8, &[u8])> {
+        use dvb_common::Parse;
+        let hdr = Header::parse(&self.bytes)?;
+        let payload_bytes = hdr.payload_bytes(&self.bytes)?;
+        let packet_type = self.bytes[0];
+        Ok((packet_type, payload_bytes))
+    }
+
     /// Parse the payload by dispatching on `packet_type`.
     ///
     /// Parses the 6-byte header to obtain `payload_len_bytes`, slices
@@ -159,10 +170,7 @@ impl T2miEvent {
     /// Returns [`crate::Error`] from parsing the [`Header`] or from the typed
     /// payload parser.
     pub fn payload(&self) -> crate::Result<AnyPayload<'_>> {
-        use dvb_common::Parse;
-        let hdr = Header::parse(&self.bytes)?;
-        let payload_bytes = hdr.payload_bytes(&self.bytes)?;
-        let packet_type = self.bytes[0];
+        let (packet_type, payload_bytes) = self.payload_parts()?;
         Ok(match AnyPayload::dispatch(packet_type, payload_bytes) {
             Some(result) => result?,
             None => AnyPayload::Unknown {
@@ -171,12 +179,45 @@ impl T2miEvent {
             },
         })
     }
+
+    /// Parse the payload by dispatching on `packet_type`, preferring the
+    /// registry's custom parsers over the built-in dispatch.
+    ///
+    /// Like [`payload`](Self::payload), but calls
+    /// [`AnyPayload::dispatch_with`] so that runtime-registered custom
+    /// packet types are resolved to [`AnyPayload::Other`].  Unrecognised
+    /// packet types produce [`AnyPayload::Unknown`] with the raw payload
+    /// bytes, exactly as [`payload`](Self::payload) does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error`] from parsing the [`Header`] or from the typed
+    /// payload parser (built-in or custom).
+    pub fn payload_with(
+        &self,
+        registry: &crate::payload::PayloadRegistry,
+    ) -> crate::Result<AnyPayload<'_>> {
+        let (packet_type, payload_bytes) = self.payload_parts()?;
+        Ok(
+            match AnyPayload::dispatch_with(registry, packet_type, payload_bytes) {
+                Some(result) => result?,
+                None => AnyPayload::Unknown {
+                    packet_type,
+                    body: payload_bytes,
+                },
+            },
+        )
+    }
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 /// Accumulated pump statistics (monotonically growing across all `feed` calls).
+///
+/// New counter fields may be added in a future release; construction is via
+/// [`Default`] only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Stats {
     /// TS packets fed via [`T2miPump::feed_ts`].
     pub ts_packets: u64,
@@ -569,5 +610,69 @@ mod tests {
         assert_eq!(stats.ts_packets, 2);
         // The reassembler resets on PUSI so we get 2 complete packets.
         assert_eq!(stats.t2mi_packets, 2);
+    }
+
+    // ── payload_with registry seam ───────────────────────────────────────────
+
+    #[test]
+    fn payload_with_dispatches_custom_registered_type() {
+        use crate::payload::registry::PayloadRegistry;
+        use crate::traits::PayloadDef;
+        use dvb_common::Parse;
+
+        #[derive(Debug)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        struct TestPrivatePayload {
+            val: u8,
+        }
+
+        impl<'a> Parse<'a> for TestPrivatePayload {
+            type Error = crate::Error;
+            fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
+                if bytes.is_empty() {
+                    return Err(crate::Error::BufferTooShort {
+                        need: 1,
+                        have: 0,
+                        what: "TestPrivatePayload",
+                    });
+                }
+                Ok(Self { val: bytes[0] })
+            }
+        }
+
+        impl<'a> PayloadDef<'a> for TestPrivatePayload {
+            const PACKET_TYPE: u8 = 0x00;
+            const NAME: &'static str = "TEST_PRIVATE";
+        }
+
+        let mut reg = PayloadRegistry::new();
+        reg.register::<TestPrivatePayload>();
+
+        let private_payload = [0x42u8, 0x02, 0x00];
+        let t2mi = make_t2mi_packet(0x00, &private_payload);
+        let pkt = ts_packet(0x0006, &t2mi, true, 0);
+
+        let mut pump = T2miPump::new(0x0006);
+        let events: Vec<_> = pump.feed_ts(&pkt).collect();
+        assert_eq!(events.len(), 1, "expected one event");
+
+        let result = events[0].payload_with(&reg).expect("payload_with parse");
+        match result {
+            AnyPayload::Other {
+                packet_type,
+                ref value,
+            } => {
+                assert_eq!(packet_type, 0x00);
+                let downcast = value.downcast_ref::<TestPrivatePayload>().unwrap();
+                assert_eq!(downcast.val, 0x42);
+            }
+            other => panic!("expected Other, got {other:?}"),
+        }
+
+        let built_in = events[0].payload().expect("payload parse");
+        assert!(
+            matches!(built_in, AnyPayload::Bbframe(_)),
+            "expected Bbframe via built-in dispatch, got {built_in:?}"
+        );
     }
 }

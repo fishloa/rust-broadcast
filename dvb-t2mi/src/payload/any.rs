@@ -64,9 +64,8 @@ macro_rules! declare_payloads {
             Other {
                 /// The raw `packet_type` byte.
                 packet_type: u8,
-                /// The parsed, type-erased payload value. Use
-                /// [`PayloadObject::as_any`][crate::payload::registry::PayloadObject::as_any]
-                /// followed by `downcast_ref` to recover the concrete type.
+                /// The parsed, type-erased payload value. Call `downcast_ref` on
+                /// it (see [`PayloadObject`][crate::payload::registry::PayloadObject]) to recover the concrete type.
                 #[cfg_attr(
                     feature = "serde",
                     serde(serialize_with = "crate::payload::registry::serialize_erased")
