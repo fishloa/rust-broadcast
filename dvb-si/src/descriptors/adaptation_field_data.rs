@@ -15,18 +15,22 @@ pub const HEADER_LEN: usize = 2;
 /// Fixed body length: one identifier flag byte.
 pub const BODY_LEN: usize = 1;
 
+/// Table 14 bit positions (0-based from LSB): `b₁` = bit 0, `b₂` = bit 1, …
 const ANNOUNCEMENT_SWITCHING_DATA: u8 = 1 << 0;
-const AU_INFORMATION: u8 = 1 << 2;
-const PVR_ASSIST_INFORMATION: u8 = 1 << 3;
+const AU_INFORMATION: u8 = 1 << 1;
+const PVR_ASSIST_INFORMATION: u8 = 1 << 2;
 
 /// Decoded adaptation field data flags — ETSI EN 300 468 Table 14.
+///
+/// Bit numbering per the spec: `b₁` (LSB, transmitted last per §5.1.6)
+/// through `b₈` (MSB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdaptationFieldDataFlags {
-    /// Announcement switching data.
+    /// Announcement switching data (`b₁` = bit 0).
     pub announcement_switching_data: bool,
-    /// AU information.
+    /// AU information (`b₂` = bit 1).
     pub au_information: bool,
-    /// PVR assist information.
+    /// PVR assist information (`b₃` = bit 2).
     pub pvr_assist_information: bool,
 }
 
@@ -111,8 +115,9 @@ mod tests {
 
     #[test]
     fn flags_decode_all_set() {
+        // bits 0,1,2 set → 0b0000_0111 = 0x07
         let d = AdaptationFieldDataDescriptor {
-            adaptation_field_data_identifier: 0x0D,
+            adaptation_field_data_identifier: 0x07,
         };
         let f = d.flags();
         assert!(f.announcement_switching_data);
@@ -129,6 +134,30 @@ mod tests {
         assert!(!f.announcement_switching_data);
         assert!(!f.au_information);
         assert!(!f.pvr_assist_information);
+    }
+
+    #[test]
+    fn flags_decode_au_only() {
+        // bit 1 only → 0b0000_0010 = 0x02
+        let d = AdaptationFieldDataDescriptor {
+            adaptation_field_data_identifier: 0x02,
+        };
+        let f = d.flags();
+        assert!(!f.announcement_switching_data);
+        assert!(f.au_information);
+        assert!(!f.pvr_assist_information);
+    }
+
+    #[test]
+    fn flags_decode_pvr_only() {
+        // bit 2 only → 0b0000_0100 = 0x04
+        let d = AdaptationFieldDataDescriptor {
+            adaptation_field_data_identifier: 0x04,
+        };
+        let f = d.flags();
+        assert!(!f.announcement_switching_data);
+        assert!(!f.au_information);
+        assert!(f.pvr_assist_information);
     }
 
     #[test]

@@ -1,8 +1,7 @@
 //! Data Stream Alignment Descriptor — ISO/IEC 13818-1 §2.6.14 (tag 0x06).
 //!
-//! Indicates the alignment of video and audio data within the PES packets.
-
-use num_enum::TryFromPrimitive;
+//! Indicates the alignment of data within PES packets.
+//! Alignment type values per ISO/IEC 13818-1 Table 2-53.
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -13,20 +12,50 @@ pub const TAG: u8 = 0x06;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 1;
 
-/// Alignment type values per ISO/IEC 13818-1 Table 2-39.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+/// Alignment type values per ISO/IEC 13818-1 Table 2-53.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[repr(u8)]
 #[non_exhaustive]
 pub enum AlignmentType {
-    /// Video access units start at the beginning of a PES packet.
-    VideoAccessUnit = 0x01,
-    /// Audio access units start at the beginning of a PES packet.
-    AudioAccessUnit = 0x02,
-    /// Video and audio access units start at the beginning of a PES packet.
-    VideoAndAudioAccessUnit = 0x03,
-    /// Reserved for future use.
-    Reserved = 0x04,
+    /// Slice or video access unit aligned at PES packet start.
+    SliceOrVideoAccessUnit = 0x01,
+    /// Video access unit aligned at PES packet start.
+    VideoAccessUnit = 0x02,
+    /// GOP or SEQ aligned at PES packet start.
+    GopOrSeq = 0x03,
+    /// SEQ aligned at PES packet start.
+    Seq = 0x04,
+}
+
+impl AlignmentType {
+    /// Construct from a raw byte value.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0x01 => Some(Self::SliceOrVideoAccessUnit),
+            0x02 => Some(Self::VideoAccessUnit),
+            0x03 => Some(Self::GopOrSeq),
+            0x04 => Some(Self::Seq),
+            _ => None,
+        }
+    }
+
+    /// Return the raw byte value.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+
+    /// Returns a human-readable name, or `"reserved"` for unrecognised values.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SliceOrVideoAccessUnit => "Slice or video access unit",
+            Self::VideoAccessUnit => "Video access unit",
+            Self::GopOrSeq => "GOP or SEQ",
+            Self::Seq => "SEQ",
+        }
+    }
 }
 
 /// Data Stream Alignment Descriptor.
@@ -35,6 +64,14 @@ pub enum AlignmentType {
 pub struct DataStreamAlignmentDescriptor {
     /// Alignment type (see [`AlignmentType`]).
     pub alignment_type: u8,
+}
+
+impl DataStreamAlignmentDescriptor {
+    /// Returns the decoded alignment type, or `None` for reserved values.
+    #[must_use]
+    pub fn alignment(&self) -> Option<AlignmentType> {
+        AlignmentType::from_u8(self.alignment_type)
+    }
 }
 
 impl<'a> Parse<'a> for DataStreamAlignmentDescriptor {
@@ -90,50 +127,74 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_video_access_unit() {
+    fn parse_slice_or_video_access_unit() {
         let bytes = [TAG, 1, 0x01];
         let d = DataStreamAlignmentDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.alignment_type, 0x01);
+        assert_eq!(d.alignment(), Some(AlignmentType::SliceOrVideoAccessUnit));
     }
 
     #[test]
-    fn parse_video_and_audio() {
+    fn parse_video_access_unit() {
+        let bytes = [TAG, 1, 0x02];
+        let d = DataStreamAlignmentDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.alignment_type, 0x02);
+        assert_eq!(d.alignment(), Some(AlignmentType::VideoAccessUnit));
+    }
+
+    #[test]
+    fn parse_gop_or_seq() {
         let bytes = [TAG, 1, 0x03];
         let d = DataStreamAlignmentDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.alignment_type, 0x03);
+        assert_eq!(d.alignment(), Some(AlignmentType::GopOrSeq));
+    }
+
+    #[test]
+    fn parse_seq() {
+        let bytes = [TAG, 1, 0x04];
+        let d = DataStreamAlignmentDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.alignment_type, 0x04);
+        assert_eq!(d.alignment(), Some(AlignmentType::Seq));
     }
 
     #[test]
     fn alignment_type_conversion() {
         assert_eq!(
-            AlignmentType::try_from(0x01).unwrap(),
+            AlignmentType::from_u8(0x01).unwrap(),
+            AlignmentType::SliceOrVideoAccessUnit
+        );
+        assert_eq!(
+            AlignmentType::from_u8(0x02).unwrap(),
             AlignmentType::VideoAccessUnit
         );
         assert_eq!(
-            AlignmentType::try_from(0x02).unwrap(),
-            AlignmentType::AudioAccessUnit
+            AlignmentType::from_u8(0x03).unwrap(),
+            AlignmentType::GopOrSeq
         );
-        assert_eq!(
-            AlignmentType::try_from(0x03).unwrap(),
-            AlignmentType::VideoAndAudioAccessUnit
-        );
-        assert_eq!(
-            AlignmentType::try_from(0x04).unwrap(),
-            AlignmentType::Reserved
-        );
-        assert!(AlignmentType::try_from(0xFF).is_err());
+        assert_eq!(AlignmentType::from_u8(0x04).unwrap(), AlignmentType::Seq);
+        assert_eq!(AlignmentType::from_u8(0x00), None);
+        assert_eq!(AlignmentType::from_u8(0x05), None);
+        assert_eq!(AlignmentType::from_u8(0xFF), None);
     }
 
     #[test]
-    fn exhaustive_byte_sweep() {
-        let mut matched = 0u16;
-        for byte in 0u8..=0xFF {
-            if let Ok(v) = AlignmentType::try_from(byte) {
-                assert_eq!(v as u8, byte, "round-trip failed for {byte:#04x}");
-                matched += 1;
-            }
+    fn alignment_type_round_trip() {
+        for v in [0x01, 0x02, 0x03, 0x04] {
+            let at = AlignmentType::from_u8(v).unwrap();
+            assert_eq!(at.to_u8(), v, "round-trip failed for {v:#04x}");
         }
-        assert_eq!(matched, 4, "expected 4 matched variants");
+    }
+
+    #[test]
+    fn alignment_type_name() {
+        assert_eq!(
+            AlignmentType::SliceOrVideoAccessUnit.name(),
+            "Slice or video access unit"
+        );
+        assert_eq!(AlignmentType::VideoAccessUnit.name(), "Video access unit");
+        assert_eq!(AlignmentType::GopOrSeq.name(), "GOP or SEQ");
+        assert_eq!(AlignmentType::Seq.name(), "SEQ");
     }
 
     #[test]

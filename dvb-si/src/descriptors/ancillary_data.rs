@@ -15,30 +15,34 @@ pub const HEADER_LEN: usize = 2;
 /// Fixed body length: one identifier flag byte.
 pub const BODY_LEN: usize = 1;
 
+/// Table 16 bit positions (0-based from LSB): `b₁` = bit 0, `b₂` = bit 1, …
 const DVD_VIDEO_AD: u8 = 1 << 0;
-const EXTENDED_AD: u8 = 1 << 2;
-const ANNOUNCEMENT_SWITCHING: u8 = 1 << 3;
-const DAB_AD: u8 = 1 << 4;
-const SCF_CRC: u8 = 1 << 5;
-const MPEG4_AD: u8 = 1 << 6;
-const RDS_UECP: u8 = 1 << 7;
+const EXTENDED_AD: u8 = 1 << 1;
+const ANNOUNCEMENT_SWITCHING: u8 = 1 << 2;
+const DAB_AD: u8 = 1 << 3;
+const SCF_CRC: u8 = 1 << 4;
+const MPEG4_AD: u8 = 1 << 5;
+const RDS_UECP: u8 = 1 << 6;
 
 /// Decoded ancillary data flags — ETSI EN 300 468 Table 16.
+///
+/// Bit numbering per the spec: `b₁` (LSB, transmitted last per §5.1.6)
+/// through `b₈` (MSB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AncillaryDataFlags {
-    /// DVD Video Ancillary Data.
+    /// DVD Video Ancillary Data (`b₁` = bit 0).
     pub dvd_video_ad: bool,
-    /// Extended Ancillary Data.
+    /// Extended Ancillary Data (`b₂` = bit 1).
     pub extended_ad: bool,
-    /// Announcement Switching Data.
+    /// Announcement Switching Data (`b₃` = bit 2).
     pub announcement_switching: bool,
-    /// DAB Ancillary Data.
+    /// DAB Ancillary Data (`b₄` = bit 3).
     pub dab_ad: bool,
-    /// Scale Factor Error Check (ScF-CRC).
+    /// Scale Factor Error Check (ScF-CRC) (`b₅` = bit 4).
     pub scf_crc: bool,
-    /// MPEG-4 ancillary data.
+    /// MPEG-4 ancillary data (`b₆` = bit 5).
     pub mpeg4_ad: bool,
-    /// RDS via UECP.
+    /// RDS via UECP (`b₇` = bit 6).
     pub rds_uecp: bool,
 }
 
@@ -127,9 +131,9 @@ mod tests {
 
     #[test]
     fn flags_decode_all_set() {
-        // 0x7D = 0b0111_1101 — all named flags set except rds_uecp
+        // bits 0–6 set → 0b0111_1111 = 0x7F
         let d = AncillaryDataDescriptor {
-            ancillary_data_identifier: 0x7D,
+            ancillary_data_identifier: 0x7F,
         };
         let f = d.flags();
         assert!(f.dvd_video_ad);
@@ -138,7 +142,7 @@ mod tests {
         assert!(f.dab_ad);
         assert!(f.scf_crc);
         assert!(f.mpeg4_ad);
-        assert!(!f.rds_uecp);
+        assert!(f.rds_uecp);
     }
 
     #[test]
@@ -154,6 +158,38 @@ mod tests {
         assert!(!f.scf_crc);
         assert!(!f.mpeg4_ad);
         assert!(!f.rds_uecp);
+    }
+
+    #[test]
+    fn flags_decode_extended_ad_only() {
+        // bit 1 only → 0b0000_0010 = 0x02
+        let d = AncillaryDataDescriptor {
+            ancillary_data_identifier: 0x02,
+        };
+        let f = d.flags();
+        assert!(!f.dvd_video_ad);
+        assert!(f.extended_ad);
+        assert!(!f.announcement_switching);
+        assert!(!f.dab_ad);
+        assert!(!f.scf_crc);
+        assert!(!f.mpeg4_ad);
+        assert!(!f.rds_uecp);
+    }
+
+    #[test]
+    fn flags_decode_rds_uecp_only() {
+        // bit 6 only → 0b0100_0000 = 0x40
+        let d = AncillaryDataDescriptor {
+            ancillary_data_identifier: 0x40,
+        };
+        let f = d.flags();
+        assert!(!f.dvd_video_ad);
+        assert!(!f.extended_ad);
+        assert!(!f.announcement_switching);
+        assert!(!f.dab_ad);
+        assert!(!f.scf_crc);
+        assert!(!f.mpeg4_ad);
+        assert!(f.rds_uecp);
     }
 
     #[test]

@@ -584,7 +584,7 @@ mod tests {
         let trunc = DescriptorLoop::new(&[0x40, 0x01, 0xAA, 0x6A, 0x05]);
         let tags: Vec<u8> = trunc.raw_tags().map(|(t, _)| t).collect();
         assert_eq!(tags, vec![0x40]); // the truncated 0x6A entry is dropped by raw_tags
-        // ...but contains_tag still sees the truncated tag.
+                                      // ...but contains_tag still sees the truncated tag.
         assert!(trunc.contains_tag(0x6A));
     }
 
