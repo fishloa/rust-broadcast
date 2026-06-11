@@ -381,6 +381,9 @@ impl std::iter::FusedIterator for DescriptorIter<'_> {}
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DescriptorLoop<'a>(&'a [u8]);
 
+/// Bytes of a descriptor header: `descriptor_tag` (1) + `descriptor_length` (1).
+const DESC_HEADER_LEN: usize = 2;
+
 impl<'a> DescriptorLoop<'a> {
     /// Wrap a raw descriptor-loop slice (the `descriptor()` bytes only — no
     /// enclosing length field).
@@ -402,6 +405,56 @@ impl<'a> DescriptorLoop<'a> {
     #[must_use]
     pub fn iter(&self) -> DescriptorIter<'a> {
         parse_loop(self.0)
+    }
+
+    /// Walk the loop's `(tag, body)` pairs by the TLV structure only — never
+    /// typed-parses a body. Each entry is `descriptor_tag` (1 byte) +
+    /// `descriptor_length` (1 byte) + that many body bytes; a truncated final
+    /// entry (declared length running past the buffer) simply ends iteration.
+    ///
+    /// Use this for body-agnostic structural scans (e.g. "is tag X present?")
+    /// where a malformed or empty body should not hide the tag — unlike
+    /// [`iter`](Self::iter), which yields `Err`/`Unknown` for bodies that fail
+    /// to typed-parse.
+    pub fn raw_tags(&self) -> impl Iterator<Item = (u8, &'a [u8])> {
+        let b = self.0;
+        let mut pos = 0usize;
+        core::iter::from_fn(move || {
+            if pos + DESC_HEADER_LEN > b.len() {
+                return None;
+            }
+            let tag = b[pos];
+            let len = b[pos + 1] as usize;
+            let end = pos + DESC_HEADER_LEN + len;
+            if end > b.len() {
+                return None; // truncated final entry
+            }
+            let body = &b[pos + DESC_HEADER_LEN..end];
+            pos = end;
+            Some((tag, body))
+        })
+    }
+
+    /// True if the loop contains a descriptor with `tag`, regardless of whether
+    /// its body parses (or even fits). Pure structural walk: checks the
+    /// `descriptor_tag` byte at each entry header, so an empty (`[tag, 0x00]`)
+    /// or truncated (`[tag, 0x01]`) descriptor still counts as present.
+    #[must_use]
+    pub fn contains_tag(&self, tag: u8) -> bool {
+        let b = self.0;
+        let mut pos = 0usize;
+        while pos < b.len() {
+            if b[pos] == tag {
+                return true;
+            }
+            // Need the length byte to advance to the next header; without it
+            // the tag byte just checked was the last thing in the loop.
+            if pos + 1 >= b.len() {
+                break;
+            }
+            pos += DESC_HEADER_LEN + b[pos + 1] as usize;
+        }
+        false
     }
 
     /// Walk this loop through a [`DescriptorRegistry`](crate::descriptors::registry::DescriptorRegistry)
@@ -504,6 +557,36 @@ impl serde::Serialize for DescriptorLoop<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contains_tag_detects_present_tag_regardless_of_body() {
+        // Well-formed AC-3 (0x6A) with a flags byte.
+        assert!(DescriptorLoop::new(&[0x6A, 0x01, 0x80]).contains_tag(0x6A));
+        // Empty body — malformed for AC-3, but the tag is present.
+        assert!(DescriptorLoop::new(&[0x6A, 0x00]).contains_tag(0x6A));
+        // Truncated — declares 1 body byte that isn't there; tag still present.
+        assert!(DescriptorLoop::new(&[0x6A, 0x01]).contains_tag(0x6A));
+        // Present after an earlier well-formed entry.
+        assert!(DescriptorLoop::new(&[0x09, 0x02, 0x00, 0x00, 0x7A, 0x00]).contains_tag(0x7A));
+        // Absent.
+        assert!(!DescriptorLoop::new(&[0x09, 0x02, 0x00, 0x00]).contains_tag(0x6A));
+        assert!(!DescriptorLoop::new(&[]).contains_tag(0x6A));
+    }
+
+    #[test]
+    fn raw_tags_walks_tlv_without_typed_parsing() {
+        // Two complete entries: tag 0x6A (empty body) + tag 0x40 (2-byte body).
+        let loop_ = DescriptorLoop::new(&[0x6A, 0x00, 0x40, 0x02, 0xAA, 0xBB]);
+        let pairs: Vec<_> = loop_.raw_tags().collect();
+        assert_eq!(pairs, vec![(0x6A, &[][..]), (0x40, &[0xAA, 0xBB][..])]);
+        // First entry [0x40,len=1,0xAA] complete, then a truncated [0x6A, len=5]
+        // entry whose declared body runs past the buffer.
+        let trunc = DescriptorLoop::new(&[0x40, 0x01, 0xAA, 0x6A, 0x05]);
+        let tags: Vec<u8> = trunc.raw_tags().map(|(t, _)| t).collect();
+        assert_eq!(tags, vec![0x40]); // the truncated 0x6A entry is dropped by raw_tags
+        // ...but contains_tag still sees the truncated tag.
+        assert!(trunc.contains_tag(0x6A));
+    }
 
     #[test]
     fn unknown_tag_yields_unknown_with_body_sans_header() {

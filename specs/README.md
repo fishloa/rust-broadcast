@@ -53,3 +53,7 @@ Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_tr/101200_101299/101211/01.09.01_60/tr_101211v010901p.pdf
 - https://dutchguild.nl/event/13/attachments/82/203/SCTE_35_2023r1.pdf (public mirror; canonical source is the SCTE standards library request form)
 - https://dvb.org/wp-content/uploads/2021/02/A001r18_Use-of-Video-and-Audio-Coding-in-Broadcast-and-Broadband-Applications_Draft_TS_101-154-v271_Nov-2021.pdf
+
+## Consulted locally (gitignored, not redistributed)
+
+- **Rec. ITU-T H.222.0 (06/2021)** = ISO/IEC 13818-1 (MPEG-2 Systems), free-of-charge ITU-T text. Downloaded from <https://www.itu.int/rec/T-REC-H.222.0>; kept as `specs/iso_iec_13818-1_2021_systems_itu_h222.0.pdf` (gitignored). Source of the `dvb-si/docs/iso_13818_1_systems.md` Table 2-34 (stream_type) transcription.
