@@ -192,14 +192,7 @@ fn local_time_offset_decoded_accessors() {
     use dvb_si::descriptors::local_time_offset::LocalTimeOffsetEntry;
     use dvb_si::text::LangCode;
 
-    let mut e = LocalTimeOffsetEntry {
-        country_code: LangCode(*b"GBR"),
-        country_region_id: 0,
-        local_time_offset_negative: false,
-        local_time_offset_bcd: 0,
-        time_of_change_raw: [0; 5],
-        next_time_offset_bcd: 0,
-    };
+    let mut e = LocalTimeOffsetEntry::new(LangCode(*b"GBR"), 0, false, 0, [0; 5], 0);
 
     e.set_offsets(Duration::hours(1), Duration::hours(2))
         .unwrap();

@@ -29,10 +29,59 @@ pub struct LocalTimeOffsetEntry {
     pub local_time_offset_negative: bool,
     /// 16-bit BCD HHMM local time offset.
     pub local_time_offset_bcd: u16,
-    /// 40-bit MJD+UTC raw bytes of the DST/offset transition moment.
-    pub time_of_change_raw: [u8; 5],
+    /// 40-bit MJD+BCD UTC raw bytes of the DST/offset transition moment.
+    /// Private: use [`Self::time_of_change_parts`] for decoded access, or
+    /// [`Self::time_of_change`] (chrono feature) for a `DateTime`.
+    time_of_change_raw: [u8; 5],
     /// 16-bit BCD HHMM next offset (applied after `time_of_change`).
     pub next_time_offset_bcd: u16,
+}
+
+impl LocalTimeOffsetEntry {
+    /// Create a new entry with all fields specified.
+    #[must_use]
+    pub fn new(
+        country_code: LangCode,
+        country_region_id: u8,
+        local_time_offset_negative: bool,
+        local_time_offset_bcd: u16,
+        time_of_change_raw: [u8; 5],
+        next_time_offset_bcd: u16,
+    ) -> Self {
+        Self {
+            country_code,
+            country_region_id,
+            local_time_offset_negative,
+            local_time_offset_bcd,
+            time_of_change_raw,
+            next_time_offset_bcd,
+        }
+    }
+
+    /// Decode `time_of_change_raw` into its MJD + BCD HHMMSS components
+    /// without requiring the `chrono` feature.
+    ///
+    /// Returns `(mjd, hours, minutes, seconds)`. Each BCD field is `None` if
+    /// its nibbles are non-decimal.
+    #[must_use]
+    pub fn time_of_change_parts(&self) -> (u16, Option<u8>, Option<u8>, Option<u8>) {
+        let mjd = u16::from_be_bytes([self.time_of_change_raw[0], self.time_of_change_raw[1]]);
+        let h = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[2]);
+        let m = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[3]);
+        let s = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[4]);
+        (mjd, h, m, s)
+    }
+
+    /// The raw 5-byte MJD+BCD time-of-change field (for serialization).
+    #[must_use]
+    pub fn time_of_change_raw(&self) -> [u8; 5] {
+        self.time_of_change_raw
+    }
+
+    /// Set the `time_of_change_raw` field directly.
+    pub fn set_time_of_change_raw(&mut self, raw: [u8; 5]) {
+        self.time_of_change_raw = raw;
+    }
 }
 
 /// Decode a BCD `HHMM` offset to a signed [`chrono::Duration`] (negative when
@@ -236,10 +285,40 @@ mod tests {
         assert!(!d.entries[0].local_time_offset_negative);
         assert_eq!(d.entries[0].local_time_offset_bcd, 0x0100);
         assert_eq!(
-            d.entries[0].time_of_change_raw,
+            d.entries[0].time_of_change_raw(),
             [0xAB, 0xCD, 0xEF, 0x12, 0x34]
         );
         assert_eq!(d.entries[0].next_time_offset_bcd, 0x0200);
+    }
+
+    #[test]
+    fn time_of_change_parts_decoded() {
+        let bytes = [
+            TAG, 13, 0x46, 0x52, 0x41, 0x02, 0x01, 0x00, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x02, 0x00,
+        ];
+        let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
+        let (mjd, h, m, s) = d.entries[0].time_of_change_parts();
+        assert_eq!(mjd, 0xABCD);
+        assert_eq!(h, None);
+        assert_eq!(m, Some(12));
+        assert_eq!(s, Some(34));
+    }
+
+    #[test]
+    fn time_of_change_parts_valid_bcd() {
+        let entry = LocalTimeOffsetEntry {
+            country_code: LangCode([0x47, 0x42, 0x52]),
+            country_region_id: 0,
+            local_time_offset_negative: false,
+            local_time_offset_bcd: 0x0000,
+            time_of_change_raw: [0xC0, 0x3E, 0x12, 0x30, 0x00],
+            next_time_offset_bcd: 0x0100,
+        };
+        let (mjd, h, m, s) = entry.time_of_change_parts();
+        assert_eq!(mjd, 0xC03E);
+        assert_eq!(h, Some(12));
+        assert_eq!(m, Some(30));
+        assert_eq!(s, Some(0));
     }
 
     #[test]
@@ -293,7 +372,6 @@ mod tests {
 
     #[test]
     fn parse_ignores_reserved_bit_not_set() {
-        // Reserved bit clear must be ignored, not rejected (EN 300 468 §5.1).
         let bytes = [
             TAG, 13, 0x46, 0x52, 0x41, 0x00, 0x01, 0x00, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x02, 0x00,
         ];
@@ -304,20 +382,33 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = LocalTimeOffsetDescriptor {
-            entries: vec![LocalTimeOffsetEntry {
-                country_code: LangCode([0x46, 0x52, 0x41]),
-                country_region_id: 0,
-                local_time_offset_negative: false,
-                local_time_offset_bcd: 0x0100,
-                time_of_change_raw: [0xAB, 0xCD, 0xEF, 0x12, 0x34],
-                next_time_offset_bcd: 0x0200,
-            }],
+        let e = LocalTimeOffsetEntry {
+            country_code: LangCode([0x46, 0x52, 0x41]),
+            country_region_id: 0,
+            local_time_offset_negative: false,
+            local_time_offset_bcd: 0x0100,
+            time_of_change_raw: [0xAB, 0xCD, 0xEF, 0x12, 0x34],
+            next_time_offset_bcd: 0x0200,
         };
+        let d = LocalTimeOffsetDescriptor { entries: vec![e] };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let re = LocalTimeOffsetDescriptor::parse(&buf).unwrap();
         assert_eq!(d, re);
+    }
+
+    #[test]
+    fn set_time_of_change_raw_updates_field() {
+        let mut e = LocalTimeOffsetEntry {
+            country_code: LangCode([0x46, 0x52, 0x41]),
+            country_region_id: 0,
+            local_time_offset_negative: false,
+            local_time_offset_bcd: 0x0100,
+            time_of_change_raw: [0; 5],
+            next_time_offset_bcd: 0x0200,
+        };
+        e.set_time_of_change_raw([0xAB, 0xCD, 0xEF, 0x12, 0x34]);
+        assert_eq!(e.time_of_change_raw(), [0xAB, 0xCD, 0xEF, 0x12, 0x34]);
     }
 
     #[test]

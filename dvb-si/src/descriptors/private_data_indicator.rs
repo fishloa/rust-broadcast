@@ -15,14 +15,14 @@ const BODY_LEN: u8 = 4;
 
 /// Private Data Indicator Descriptor.
 ///
-/// The `private_data_specifier` is a 4-byte value assigned by a standards body
+/// The `private_data_specifier` is a 32-bit value assigned by a standards body
 /// or industry consortium to identify the organization that defined the private
 /// data format used in the associated elementary stream.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PrivateDataIndicatorDescriptor {
-    /// 4-byte private data specifier identifier.
-    pub private_data_specifier: [u8; 4],
+    /// 32-bit registered private_data_specifier (ETSI Table 85, PDF p. 98).
+    pub private_data_specifier: u32,
 }
 
 impl<'a> Parse<'a> for PrivateDataIndicatorDescriptor {
@@ -41,8 +41,7 @@ impl<'a> Parse<'a> for PrivateDataIndicatorDescriptor {
                 reason: "private_data_indicator_descriptor length must equal 4",
             });
         }
-        let mut private_data_specifier = [0u8; 4];
-        private_data_specifier.copy_from_slice(&body[..4]);
+        let private_data_specifier = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
         Ok(Self {
             private_data_specifier,
         })
@@ -66,7 +65,7 @@ impl Serialize for PrivateDataIndicatorDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN..HEADER_LEN + 4].copy_from_slice(&self.private_data_specifier);
+        buf[HEADER_LEN..HEADER_LEN + 4].copy_from_slice(&self.private_data_specifier.to_be_bytes());
         Ok(len)
     }
 }
@@ -83,7 +82,7 @@ mod tests {
     fn parse_private_data_specifier() {
         let bytes = [TAG, 4, 0x00, 0x00, 0x00, 0x01];
         let d = PrivateDataIndicatorDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.private_data_specifier, [0x00, 0x00, 0x00, 0x01]);
+        assert_eq!(d.private_data_specifier, 0x0000_0001);
     }
 
     #[test]
@@ -94,7 +93,6 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_length() {
-        // Length says 3 but valid is 4 — buffer is large enough to read header+3
         let bytes = [TAG, 3, 0, 0, 0, 0];
         let err = PrivateDataIndicatorDescriptor::parse(&bytes).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { .. }));
@@ -109,7 +107,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let d = PrivateDataIndicatorDescriptor {
-            private_data_specifier: [0xAA, 0xBB, 0xCC, 0xDD],
+            private_data_specifier: 0xAABB_CCDD,
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -120,7 +118,7 @@ mod tests {
     #[test]
     fn descriptor_length_matches_payload() {
         let d = PrivateDataIndicatorDescriptor {
-            private_data_specifier: [0x00, 0x00, 0x00, 0x01],
+            private_data_specifier: 0x0000_0001,
         };
         assert_eq!(d.serialized_len() - 2, 4);
     }

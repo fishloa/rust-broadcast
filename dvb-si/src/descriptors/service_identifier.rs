@@ -7,6 +7,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for service_identifier_descriptor.
@@ -18,8 +19,8 @@ const HEADER_LEN: usize = 2;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceIdentifierDescriptor<'a> {
-    /// Raw textual_service_identifier bytes (ASCII).
-    pub textual_service_identifier: &'a [u8],
+    /// Textual service identifier (ASCII per TS 102 809 Table 39).
+    pub textual_service_identifier: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for ServiceIdentifierDescriptor<'a> {
@@ -32,7 +33,7 @@ impl<'a> Parse<'a> for ServiceIdentifierDescriptor<'a> {
             "unexpected tag for service_identifier_descriptor",
         )?;
         Ok(Self {
-            textual_service_identifier: body,
+            textual_service_identifier: DvbText::new(body),
         })
     }
 }
@@ -40,11 +41,11 @@ impl<'a> Parse<'a> for ServiceIdentifierDescriptor<'a> {
 impl Serialize for ServiceIdentifierDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + self.textual_service_identifier.len()
+        HEADER_LEN + self.textual_service_identifier.raw().len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.textual_service_identifier.len() > u8::MAX as usize {
+        if self.textual_service_identifier.raw().len() > u8::MAX as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "textual_service_identifier exceeds 255 bytes",
@@ -58,8 +59,8 @@ impl Serialize for ServiceIdentifierDescriptor<'_> {
             });
         }
         buf[0] = TAG;
-        buf[1] = self.textual_service_identifier.len() as u8;
-        buf[HEADER_LEN..len].copy_from_slice(self.textual_service_identifier);
+        buf[1] = self.textual_service_identifier.raw().len() as u8;
+        buf[HEADER_LEN..len].copy_from_slice(self.textual_service_identifier.raw());
         Ok(len)
     }
 }
@@ -73,10 +74,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_extracts_identifier_bytes() {
+    fn parse_extracts_identifier_text() {
         let bytes = [TAG, 6, b'B', b'B', b'C', b'O', b'N', b'E'];
         let d = ServiceIdentifierDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.textual_service_identifier, b"BBCONE");
+        assert_eq!(d.textual_service_identifier.raw(), b"BBCONE");
+        assert_eq!(d.textual_service_identifier.decode(), "BBCONE");
     }
 
     #[test]
@@ -108,13 +110,13 @@ mod tests {
     fn empty_identifier_is_valid() {
         let bytes = [TAG, 0];
         let d = ServiceIdentifierDescriptor::parse(&bytes).unwrap();
-        assert!(d.textual_service_identifier.is_empty());
+        assert!(d.textual_service_identifier.raw().is_empty());
     }
 
     #[test]
     fn serialize_round_trip() {
         let d = ServiceIdentifierDescriptor {
-            textual_service_identifier: b"CH4-HD",
+            textual_service_identifier: DvbText::new(b"CH4-HD"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -124,7 +126,7 @@ mod tests {
     #[test]
     fn serialize_rejects_too_small_buffer() {
         let d = ServiceIdentifierDescriptor {
-            textual_service_identifier: b"test",
+            textual_service_identifier: DvbText::new(b"test"),
         };
         let mut buf = vec![0u8; 1];
         assert!(matches!(
@@ -136,16 +138,10 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serializes_to_stable_json() {
-        // Borrowed `&[u8]` cannot deserialize from a JSON number array (serde
-        // has no JSON byte type), so we assert the Serialize impl is wired and
-        // emits stable, re-parseable JSON rather than attempting a borrow
-        // round-trip through JSON.
         let d = ServiceIdentifierDescriptor {
-            textual_service_identifier: b"ITV1",
+            textual_service_identifier: DvbText::new(b"ITV1"),
         };
         let j = serde_json::to_string(&d).unwrap();
-        // Valid, re-parseable JSON (key order is map-defined, so we do not
-        // assert byte-for-byte string stability).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
         assert!(j.contains("textual_service_identifier"));
     }

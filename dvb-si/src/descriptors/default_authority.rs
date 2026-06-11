@@ -5,6 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for default_authority_descriptor.
@@ -16,8 +17,8 @@ const HEADER_LEN: usize = 2;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DefaultAuthorityDescriptor<'a> {
-    /// Raw ASCII default authority bytes (e.g. b"bbc.co.uk").
-    pub default_authority: &'a [u8],
+    /// Default authority text (e.g. "bbc.co.uk").
+    pub default_authority: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for DefaultAuthorityDescriptor<'a> {
@@ -30,7 +31,7 @@ impl<'a> Parse<'a> for DefaultAuthorityDescriptor<'a> {
             "unexpected tag for default authority descriptor",
         )?;
         Ok(Self {
-            default_authority: body,
+            default_authority: DvbText::new(body),
         })
     }
 }
@@ -38,7 +39,7 @@ impl<'a> Parse<'a> for DefaultAuthorityDescriptor<'a> {
 impl Serialize for DefaultAuthorityDescriptor<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        HEADER_LEN + self.default_authority.len()
+        HEADER_LEN + self.default_authority.raw().len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -50,8 +51,8 @@ impl Serialize for DefaultAuthorityDescriptor<'_> {
             });
         }
         buf[0] = TAG;
-        buf[1] = self.default_authority.len() as u8;
-        buf[HEADER_LEN..len].copy_from_slice(self.default_authority);
+        buf[1] = self.default_authority.raw().len() as u8;
+        buf[HEADER_LEN..len].copy_from_slice(self.default_authority.raw());
         Ok(len)
     }
 }
@@ -65,10 +66,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_extracts_authority_bytes() {
+    fn parse_extracts_authority_text() {
         let bytes = [TAG, 9, b'b', b'b', b'c', b'.', b'c', b'o', b'.', b'u', b'k'];
         let d = DefaultAuthorityDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.default_authority, b"bbc.co.uk");
+        assert_eq!(d.default_authority.raw(), b"bbc.co.uk");
+        assert_eq!(d.default_authority.decode(), "bbc.co.uk");
     }
 
     #[test]
@@ -100,13 +102,13 @@ mod tests {
     fn empty_authority_is_valid() {
         let bytes = [TAG, 0];
         let d = DefaultAuthorityDescriptor::parse(&bytes).unwrap();
-        assert!(d.default_authority.is_empty());
+        assert!(d.default_authority.raw().is_empty());
     }
 
     #[test]
     fn serialize_round_trip() {
         let d = DefaultAuthorityDescriptor {
-            default_authority: b"example.com",
+            default_authority: DvbText::new(b"example.com"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -116,7 +118,7 @@ mod tests {
     #[test]
     fn serialize_rejects_too_small_buffer() {
         let d = DefaultAuthorityDescriptor {
-            default_authority: b"test",
+            default_authority: DvbText::new(b"test"),
         };
         let mut buf = vec![0u8; 1];
         assert!(matches!(
