@@ -178,6 +178,8 @@ pub mod owned;
 #[cfg(feature = "ts")]
 pub mod demux;
 #[cfg(feature = "ts")]
+pub mod mux;
+#[cfg(feature = "ts")]
 pub mod ts;
 
 pub use descriptor_tag::DescriptorTag;
