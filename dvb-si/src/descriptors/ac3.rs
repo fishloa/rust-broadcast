@@ -427,10 +427,8 @@ mod tests {
 
     #[test]
     fn decode_component_type_vi_surround() {
-        // 0x4A = 0b01001010: bit7=0, bit6=1, bits[5:3]=001 (VI? No: 010=VI),
-        // Actually: bits[5:3] = 0b010 = 2 = VI, bits[2:0] = 0b010 = 2 = stereo.
-        // Let me construct: enhanced=0, full=1, service=010(VI), channels=011(surround)
-        // = 0b01_010_011 = 0x53
+        // 0x53 = 0b01_010_011: enhanced=0, full_service=1, service=010 (VI),
+        // channels=011 (stereo + Dolby surround).
         let ct = Ac3ComponentType::from_byte(0x53);
         assert!(!ct.enhanced_ac3);
         assert!(ct.full_service);

@@ -114,8 +114,14 @@ impl FrequencyListDescriptor {
             CodingType::Terrestrial => {
                 let mut out = Vec::with_capacity(frequencies_hz.len());
                 for &hz in frequencies_hz {
-                    let raw = (hz / 10) as u32;
-                    out.push(raw.to_be_bytes());
+                    let units = hz / 10;
+                    if units > u64::from(u32::MAX) {
+                        return Err(Error::ValueOutOfRange {
+                            field: "frequency_list centre_frequency",
+                            reason: "terrestrial frequency exceeds the 32-bit (×10 Hz) wire field",
+                        });
+                    }
+                    out.push((units as u32).to_be_bytes());
                 }
                 self.centre_frequencies_bcd = out;
                 Ok(())

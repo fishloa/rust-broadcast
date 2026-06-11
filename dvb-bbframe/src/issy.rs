@@ -93,7 +93,10 @@ pub enum SignallingKind {
     },
     /// Reserved signalling type (bits `[5:4]` = `0b10` or `0b11`).
     ///
-    /// The raw 20-bit remainder is preserved for lossless round-trip.
+    /// Holds the low 20 bits of the signalling payload; the 2-bit kind
+    /// selector is not retained. This is a decode-only view — the wire bytes
+    /// live in `Bbheader::issy_in_header` and are serialized verbatim, so the
+    /// dropped selector does not affect round-trip fidelity.
     Reserved(u32),
 }
 
@@ -222,27 +225,13 @@ mod tests {
 
     #[test]
     fn signalling_bufs_decode() {
-        // '11' prefix, bits[21:20]=0b00 (BUFS)
-        // bits[19:18]=0b10 (Mbits), bits[17:8]=0x1FF (BUFS=511), bits[7:0]=reserved
-        // First byte: 0b11_00_10_11 = 0xCB
-        // Second byte: 0xFF (BUFS low 8 bits)
-        // Third byte: 0x00 (reserved)
-        // payload = 0x0B_FF_00? No, let me recalculate.
-        // payload bits [21:0] = 00_10_11111111_00000000
-        // = 0b00_10_1111_1111_0000_0000 = 0x02FF00
-        // byte0 & 0x3F = (0xCB & 0x3F) = 0x0B, payload = (0x0B << 16) | (0xFF << 8) | 0x00 = 0xBFF00
-        // Wait, let me be more careful.
-        // bytes = [0xCB, 0xFF, 0x00]
-        // payload = ((0xCB & 0x3F) << 16) | (0xFF << 8) | 0x00
-        // = (0x0B << 16) | 0xFF00 | 0
-        // = 0x0B_FF_00
-        // kind = (0x0BFF00 >> 20) & 0x03 = 0x00 => BUFS
-        // units = (0x0BFF00 >> 18) & 0x03 = (0x0BFF00 >> 18) = 0x02F >> ... let me compute in hex
-        // 0x0BFF00 in binary: 0000_1011_1111_1111_0000_0000
-        // bits[21:20] = 00 => BUFS
-        // bits[19:18] = 10 => Mbits
-        // bits[17:8] = 1111111111 = 0x3FF => BUFS = 1023
-        // bits[7:0] = 00000000 => reserved
+        // bytes [0xCB, 0xFF, 0x00]: byte0 has the '11' ISSY prefix in bits[7:6];
+        // the 22-bit payload = ((0xCB & 0x3F) << 16) | (0xFF << 8) | 0x00 = 0x0B_FF_00
+        // = 0000_1011_1111_1111_0000_0000, so:
+        //   bits[21:20] = 00 => BUFS form
+        //   bits[19:18] = 10 => unit (Mbit)
+        //   bits[17:8]  = 11_1111_1111 = 0x3FF => BUFS = 1023
+        //   bits[7:0]   = reserved
         let result = decode_issy_long([0xCB, 0xFF, 0x00]).unwrap();
         match result {
             Issy::Signalling(SignallingKind::Bufs { bufs, units }) => {
