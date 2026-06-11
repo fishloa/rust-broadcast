@@ -54,6 +54,164 @@ pub struct DtsDescriptor<'a> {
     pub additional_info: &'a [u8],
 }
 
+impl DtsDescriptor<'_> {
+    /// Decodes `sample_rate_code` to the sample rate in Hz, per
+    /// ETSI EN 300 468 Annex G Table G.2.  Returns `None` for code 0
+    /// (invalid) and for unknown codes.
+    #[must_use]
+    pub fn sample_rate_hz(&self) -> Option<u32> {
+        match self.sample_rate_code {
+            0x01 => Some(8_000),
+            0x02 => Some(16_000),
+            0x03 => Some(32_000),
+            0x04 => Some(64_000),
+            0x05 => Some(128_000),
+            0x06 => Some(11_025),
+            0x07 => Some(22_050),
+            0x08 => Some(44_100),
+            0x09 => Some(88_020),
+            0x0A => Some(176_400),
+            0x0B => Some(12_000),
+            0x0C => Some(24_000),
+            0x0D => Some(48_000),
+            0x0E => Some(96_000),
+            0x0F => Some(192_000),
+            _ => None,
+        }
+    }
+
+    /// Returns a human-readable sample rate label, or `None` for
+    /// invalid/unknown codes.
+    #[must_use]
+    pub fn sample_rate_name(&self) -> Option<&'static str> {
+        match self.sample_rate_code {
+            0x00 => Some("invalid"),
+            0x01 => Some("8 kHz"),
+            0x02 => Some("16 kHz"),
+            0x03 => Some("32 kHz"),
+            0x04 => Some("64 kHz"),
+            0x05 => Some("128 kHz"),
+            0x06 => Some("11.025 kHz"),
+            0x07 => Some("22.05 kHz"),
+            0x08 => Some("44.1 kHz"),
+            0x09 => Some("88.02 kHz"),
+            0x0A => Some("176.4 kHz"),
+            0x0B => Some("12 kHz"),
+            0x0C => Some("24 kHz"),
+            0x0D => Some("48 kHz"),
+            0x0E => Some("96 kHz"),
+            0x0F => Some("192 kHz"),
+            _ => None,
+        }
+    }
+
+    /// Decodes `bit_rate_code` to the bit rate in kbit/s, per
+    /// ETSI EN 300 468 Annex G Table G.3.  The low bit of the code is
+    /// reserved and ignored.  Returns `None` for unknown codes.
+    #[must_use]
+    pub fn bit_rate_kbits(&self) -> Option<u32> {
+        match self.bit_rate_code & 0x3E {
+            0x0A => Some(128),
+            0x0C => Some(192),
+            0x0E => Some(224),
+            0x10 => Some(256),
+            0x12 => Some(320),
+            0x14 => Some(384),
+            0x16 => Some(448),
+            0x18 => Some(512),
+            0x1A => Some(576),
+            0x1C => Some(640),
+            0x1E => Some(768),
+            0x20 => Some(960),
+            0x22 => Some(1_024),
+            0x24 => Some(1_152),
+            0x26 => Some(1_280),
+            0x28 => Some(1_344),
+            0x2A => Some(1_408),
+            0x2C => Some(1_411),
+            0x2E => Some(1_472),
+            0x30 => Some(1_536),
+            0x32 => Some(1_920),
+            0x34 => Some(2_048),
+            0x36 => Some(3_072),
+            0x38 => Some(3_840),
+            0x3A => None, // "open"
+            0x3C => None, // "variable"
+            0x3E => None, // "lossless"
+            _ => None,
+        }
+    }
+
+    /// Returns a human-readable bit rate label, or `None` for unknown codes.
+    #[must_use]
+    pub fn bit_rate_name(&self) -> Option<&'static str> {
+        match self.bit_rate_code & 0x3E {
+            0x0A => Some("128 kbit/s"),
+            0x0C => Some("192 kbit/s"),
+            0x0E => Some("224 kbit/s"),
+            0x10 => Some("256 kbit/s"),
+            0x12 => Some("320 kbit/s"),
+            0x14 => Some("384 kbit/s"),
+            0x16 => Some("448 kbit/s"),
+            0x18 => Some("512 kbit/s"),
+            0x1A => Some("576 kbit/s"),
+            0x1C => Some("640 kbit/s"),
+            0x1E => Some("768 kbit/s"),
+            0x20 => Some("960 kbit/s"),
+            0x22 => Some("1024 kbit/s"),
+            0x24 => Some("1152 kbit/s"),
+            0x26 => Some("1280 kbit/s"),
+            0x28 => Some("1344 kbit/s"),
+            0x2A => Some("1408 kbit/s"),
+            0x2C => Some("1411.2 kbit/s"),
+            0x2E => Some("1472 kbit/s"),
+            0x30 => Some("1536 kbit/s"),
+            0x32 => Some("1920 kbit/s"),
+            0x34 => Some("2048 kbit/s"),
+            0x36 => Some("3072 kbit/s"),
+            0x38 => Some("3840 kbit/s"),
+            0x3A => Some("open"),
+            0x3C => Some("variable"),
+            0x3E => Some("lossless"),
+            _ => None,
+        }
+    }
+
+    /// Returns a human-readable surround mode label, per
+    /// ETSI EN 300 468 Annex G Table G.4.  Returns `None` for user-defined
+    /// or unknown codes.
+    #[must_use]
+    pub fn surround_mode_name(&self) -> Option<&'static str> {
+        match self.surround_mode {
+            0x00 => Some("1 / mono"),
+            0x02 => Some("2 / L+R (stereo)"),
+            0x03 => Some("2 / (L+R)+(L-R) (sum-difference)"),
+            0x04 => Some("2 / LT+RT (left and right total)"),
+            0x05 => Some("3 / C+L+R"),
+            0x06 => Some("3 / L+R+S"),
+            0x07 => Some("4 / C+L+R+S"),
+            0x08 => Some("4 / L+R+SL+SR"),
+            0x09 => Some("5 / C+L+R+SL+SR"),
+            0x0A..=0x0F => None, // user defined
+            0x10..=0x3F => None, // user defined
+            _ => None,
+        }
+    }
+
+    /// Returns a human-readable extended surround flag label, per
+    /// ETSI EN 300 468 Annex G Table G.5.
+    #[must_use]
+    pub fn extended_surround_name(&self) -> &'static str {
+        match self.extended_surround_flag {
+            0x00 => "no extended surround",
+            0x01 => "matrixed extended surround",
+            0x02 => "discrete extended surround",
+            0x03 => "undefined",
+            _ => "unknown",
+        }
+    }
+}
+
 impl<'a> Parse<'a> for DtsDescriptor<'a> {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -217,6 +375,115 @@ mod tests {
         let d = DtsDescriptor::parse(&buf).unwrap();
         assert_eq!(d.additional_info, &[0xAA, 0xBB, 0xCC]);
         assert_eq!(d, d_in);
+    }
+
+    #[test]
+    fn decode_sample_rate() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0x0D,
+            bit_rate_code: 0,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.sample_rate_hz(), Some(48_000));
+        assert_eq!(d.sample_rate_name(), Some("48 kHz"));
+    }
+
+    #[test]
+    fn decode_sample_rate_invalid() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0x00,
+            bit_rate_code: 0,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.sample_rate_hz(), None);
+        assert_eq!(d.sample_rate_name(), Some("invalid"));
+    }
+
+    #[test]
+    fn decode_bit_rate() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0,
+            bit_rate_code: 0x14,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.bit_rate_kbits(), Some(384));
+        assert_eq!(d.bit_rate_name(), Some("384 kbit/s"));
+    }
+
+    #[test]
+    fn decode_bit_rate_lossless() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0,
+            bit_rate_code: 0x3F,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.bit_rate_kbits(), None);
+        assert_eq!(d.bit_rate_name(), Some("lossless"));
+    }
+
+    #[test]
+    fn decode_surround_mode() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0,
+            bit_rate_code: 0,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0x09,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.surround_mode_name(), Some("5 / C+L+R+SL+SR"));
+    }
+
+    #[test]
+    fn decode_surround_mode_user_defined() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0,
+            bit_rate_code: 0,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0x20,
+            lfe_flag: false,
+            extended_surround_flag: 0,
+            additional_info: &[],
+        };
+        assert_eq!(d.surround_mode_name(), None);
+    }
+
+    #[test]
+    fn decode_extended_surround() {
+        let d = DtsDescriptor {
+            sample_rate_code: 0,
+            bit_rate_code: 0,
+            nblks: 0,
+            fsize: 0,
+            surround_mode: 0,
+            lfe_flag: false,
+            extended_surround_flag: 0x02,
+            additional_info: &[],
+        };
+        assert_eq!(d.extended_surround_name(), "discrete extended surround");
     }
 
     #[test]

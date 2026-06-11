@@ -695,7 +695,7 @@ fn extract_crids(
                     CridLocation::Inline(bytes) => {
                         let s = String::from_utf8_lossy(bytes).into_owned();
                         Some(Crid {
-                            crid_type: e.crid_type,
+                            crid_type: e.crid_type.to_u8(),
                             crid: s,
                         })
                     }

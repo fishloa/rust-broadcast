@@ -2,9 +2,7 @@
 //!
 //! Carried inside the PMT ES_info loop. Fixed 1-byte body: a bit-flag field
 //! `ancillary_data_identifier` whose bits select which ancillary-data formats
-//! are present (Table 16: DVD video AD, extended AD, announcement switching,
-//! DAB AD, ScF-CRC, MPEG-4 AD, RDS-via-UECP). We carry the raw flag byte; the
-//! bit meanings are defined by ETSI TS 101 154 and not interpreted here.
+//! are present (Table 16).
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -17,12 +15,57 @@ pub const HEADER_LEN: usize = 2;
 /// Fixed body length: one identifier flag byte.
 pub const BODY_LEN: usize = 1;
 
+const DVD_VIDEO_AD: u8 = 1 << 0;
+const EXTENDED_AD: u8 = 1 << 2;
+const ANNOUNCEMENT_SWITCHING: u8 = 1 << 3;
+const DAB_AD: u8 = 1 << 4;
+const SCF_CRC: u8 = 1 << 5;
+const MPEG4_AD: u8 = 1 << 6;
+const RDS_UECP: u8 = 1 << 7;
+
+/// Decoded ancillary data flags — ETSI EN 300 468 Table 16.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AncillaryDataFlags {
+    /// DVD Video Ancillary Data.
+    pub dvd_video_ad: bool,
+    /// Extended Ancillary Data.
+    pub extended_ad: bool,
+    /// Announcement Switching Data.
+    pub announcement_switching: bool,
+    /// DAB Ancillary Data.
+    pub dab_ad: bool,
+    /// Scale Factor Error Check (ScF-CRC).
+    pub scf_crc: bool,
+    /// MPEG-4 ancillary data.
+    pub mpeg4_ad: bool,
+    /// RDS via UECP.
+    pub rds_uecp: bool,
+}
+
 /// Ancillary Data Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AncillaryDataDescriptor {
     /// 8-bit ancillary_data_identifier flag field (Table 16).
     pub ancillary_data_identifier: u8,
+}
+
+impl AncillaryDataDescriptor {
+    /// Decodes the `ancillary_data_identifier` flag byte into named booleans
+    /// per ETSI EN 300 468 Table 16.
+    #[must_use]
+    pub fn flags(&self) -> AncillaryDataFlags {
+        let b = self.ancillary_data_identifier;
+        AncillaryDataFlags {
+            dvd_video_ad: (b & DVD_VIDEO_AD) != 0,
+            extended_ad: (b & EXTENDED_AD) != 0,
+            announcement_switching: (b & ANNOUNCEMENT_SWITCHING) != 0,
+            dab_ad: (b & DAB_AD) != 0,
+            scf_crc: (b & SCF_CRC) != 0,
+            mpeg4_ad: (b & MPEG4_AD) != 0,
+            rds_uecp: (b & RDS_UECP) != 0,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for AncillaryDataDescriptor {
@@ -80,6 +123,37 @@ mod tests {
         let bytes = [TAG, 1, 0x55];
         let d = AncillaryDataDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.ancillary_data_identifier, 0x55);
+    }
+
+    #[test]
+    fn flags_decode_all_set() {
+        // 0x7D = 0b0111_1101 — all named flags set except rds_uecp
+        let d = AncillaryDataDescriptor {
+            ancillary_data_identifier: 0x7D,
+        };
+        let f = d.flags();
+        assert!(f.dvd_video_ad);
+        assert!(f.extended_ad);
+        assert!(f.announcement_switching);
+        assert!(f.dab_ad);
+        assert!(f.scf_crc);
+        assert!(f.mpeg4_ad);
+        assert!(!f.rds_uecp);
+    }
+
+    #[test]
+    fn flags_decode_none_set() {
+        let d = AncillaryDataDescriptor {
+            ancillary_data_identifier: 0x00,
+        };
+        let f = d.flags();
+        assert!(!f.dvd_video_ad);
+        assert!(!f.extended_ad);
+        assert!(!f.announcement_switching);
+        assert!(!f.dab_ad);
+        assert!(!f.scf_crc);
+        assert!(!f.mpeg4_ad);
+        assert!(!f.rds_uecp);
     }
 
     #[test]

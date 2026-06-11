@@ -37,12 +37,300 @@ const EXT_TARGET_ID_TYPE_MASK: u8 = 0x0C;
 const EXT_ONID_FLAG_MASK: u8 = 0x02;
 const EXT_SID_FLAG_MASK: u8 = 0x01;
 
+/// Linkage type — ETSI EN 300 468 Table 60.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum LinkageType {
+    /// 0x01 — information service.
+    InformationService,
+    /// 0x02 — EPG service.
+    EpgService,
+    /// 0x03 — CA replacement service.
+    CaReplacementService,
+    /// 0x04 — TS containing complete network/bouquet SI.
+    TsContainingCompleteSi,
+    /// 0x05 — service replacement service.
+    ServiceReplacementService,
+    /// 0x06 — data broadcast service.
+    DataBroadcastService,
+    /// 0x07 — RCS map.
+    RcsMap,
+    /// 0x08 — mobile hand-over.
+    MobileHandOver,
+    /// 0x09 — SSU service.
+    SsuService,
+    /// 0x0A — TS containing SSU BAT or NIT.
+    TsContainingSsuBatOrNit,
+    /// 0x0B — IP/MAC notification service.
+    IpMacNotificationService,
+    /// 0x0C — TS containing INT BAT or NIT.
+    TsContainingIntBatOrNit,
+    /// 0x0D — event linkage.
+    EventLinkage,
+    /// 0x0E..=0x1F — extended event linkage.
+    ExtendedEventLinkage(u8),
+    /// 0x20 — downloadable font info linkage.
+    DownloadableFontInfoLinkage,
+    /// 0x21 — Native IP bootstrap MPE stream.
+    NativeIpBootstrapMpeStream,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl LinkageType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x01 => Self::InformationService,
+            0x02 => Self::EpgService,
+            0x03 => Self::CaReplacementService,
+            0x04 => Self::TsContainingCompleteSi,
+            0x05 => Self::ServiceReplacementService,
+            0x06 => Self::DataBroadcastService,
+            0x07 => Self::RcsMap,
+            0x08 => Self::MobileHandOver,
+            0x09 => Self::SsuService,
+            0x0A => Self::TsContainingSsuBatOrNit,
+            0x0B => Self::IpMacNotificationService,
+            0x0C => Self::TsContainingIntBatOrNit,
+            0x0D => Self::EventLinkage,
+            0x0E..=0x1F => Self::ExtendedEventLinkage(v),
+            0x20 => Self::DownloadableFontInfoLinkage,
+            0x21 => Self::NativeIpBootstrapMpeStream,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::InformationService => 0x01,
+            Self::EpgService => 0x02,
+            Self::CaReplacementService => 0x03,
+            Self::TsContainingCompleteSi => 0x04,
+            Self::ServiceReplacementService => 0x05,
+            Self::DataBroadcastService => 0x06,
+            Self::RcsMap => 0x07,
+            Self::MobileHandOver => 0x08,
+            Self::SsuService => 0x09,
+            Self::TsContainingSsuBatOrNit => 0x0A,
+            Self::IpMacNotificationService => 0x0B,
+            Self::TsContainingIntBatOrNit => 0x0C,
+            Self::EventLinkage => 0x0D,
+            Self::ExtendedEventLinkage(v) => v,
+            Self::DownloadableFontInfoLinkage => 0x20,
+            Self::NativeIpBootstrapMpeStream => 0x21,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InformationService => "information service",
+            Self::EpgService => "EPG service",
+            Self::CaReplacementService => "CA replacement service",
+            Self::TsContainingCompleteSi => "TS containing complete network/bouquet SI",
+            Self::ServiceReplacementService => "service replacement service",
+            Self::DataBroadcastService => "data broadcast service",
+            Self::RcsMap => "RCS map",
+            Self::MobileHandOver => "mobile hand-over",
+            Self::SsuService => "SSU service",
+            Self::TsContainingSsuBatOrNit => "TS containing SSU BAT or NIT",
+            Self::IpMacNotificationService => "IP/MAC notification service",
+            Self::TsContainingIntBatOrNit => "TS containing INT BAT or NIT",
+            Self::EventLinkage => "event linkage",
+            Self::ExtendedEventLinkage(_) => "extended event linkage",
+            Self::DownloadableFontInfoLinkage => "downloadable font info linkage",
+            Self::NativeIpBootstrapMpeStream => "Native IP bootstrap MPE stream",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Hand-over type — ETSI EN 300 468 Table 62.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum HandOverType {
+    /// 0x1 — DVB hand-over to an identical service in a neighbouring country.
+    DvbIdenticalNeighbouringCountry,
+    /// 0x2 — DVB hand-over to a local variation of the same service.
+    DvbLocalVariation,
+    /// 0x3 — DVB hand-over to an associated service.
+    DvbAssociatedService,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl HandOverType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x1 => Self::DvbIdenticalNeighbouringCountry,
+            0x2 => Self::DvbLocalVariation,
+            0x3 => Self::DvbAssociatedService,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::DvbIdenticalNeighbouringCountry => 0x1,
+            Self::DvbLocalVariation => 0x2,
+            Self::DvbAssociatedService => 0x3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DvbIdenticalNeighbouringCountry => {
+                "DVB hand-over to an identical service in a neighbouring country"
+            }
+            Self::DvbLocalVariation => "DVB hand-over to a local variation of the same service",
+            Self::DvbAssociatedService => "DVB hand-over to an associated service",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Link type — ETSI EN 300 468 Table 66.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum LinkType {
+    /// 0 — SD (linkage_type 0x0E) or UHD (linkage_type 0x0F).
+    SdOrUhd,
+    /// 1 — HD (linkage_type 0x0E) or service frame compatible
+    /// plano-stereoscopic (linkage_type 0x0F).
+    HdOrServiceFrameCompatible,
+    /// 2 — frame compatible plano-stereoscopic H.264/AVC (linkage_type 0x0E).
+    FrameCompatiblePlanoStereoscopic,
+    /// 3 — service compatible plano-stereoscopic MVC (linkage_type 0x0E).
+    ServiceCompatiblePlanoStereoscopicMvc,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl LinkType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::SdOrUhd,
+            1 => Self::HdOrServiceFrameCompatible,
+            2 => Self::FrameCompatiblePlanoStereoscopic,
+            3 => Self::ServiceCompatiblePlanoStereoscopicMvc,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::SdOrUhd => 0,
+            Self::HdOrServiceFrameCompatible => 1,
+            Self::FrameCompatiblePlanoStereoscopic => 2,
+            Self::ServiceCompatiblePlanoStereoscopicMvc => 3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SdOrUhd => "SD (0x0E) / UHD (0x0F)",
+            Self::HdOrServiceFrameCompatible => {
+                "HD (0x0E) / service frame compatible plano-stereoscopic (0x0F)"
+            }
+            Self::FrameCompatiblePlanoStereoscopic => {
+                "frame compatible plano-stereoscopic H.264/AVC"
+            }
+            Self::ServiceCompatiblePlanoStereoscopicMvc => {
+                "service compatible plano-stereoscopic MVC"
+            }
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Target id type — ETSI EN 300 468 Table 67.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum TargetIdType {
+    /// 0 — use transport_stream_id.
+    UseTransportStreamId,
+    /// 1 — use target_transport_stream_id.
+    UseTargetTransportStreamId,
+    /// 2 — match any transport_stream_id (wildcard).
+    MatchAnyTransportStreamId,
+    /// 3 — use user_defined_id.
+    UseUserDefinedId,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl TargetIdType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::UseTransportStreamId,
+            1 => Self::UseTargetTransportStreamId,
+            2 => Self::MatchAnyTransportStreamId,
+            3 => Self::UseUserDefinedId,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::UseTransportStreamId => 0,
+            Self::UseTargetTransportStreamId => 1,
+            Self::MatchAnyTransportStreamId => 2,
+            Self::UseUserDefinedId => 3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UseTransportStreamId => "use transport_stream_id",
+            Self::UseTargetTransportStreamId => "use target_transport_stream_id",
+            Self::MatchAnyTransportStreamId => "match any transport_stream_id (wildcard)",
+            Self::UseUserDefinedId => "use user_defined_id",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Mobile hand-over info — EN 300 468 Table 61 (`linkage_type == 0x08`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MobileHandOverInfo {
     /// hand_over_type — 4 bits `[7:4]`.  See Table 62.
-    pub hand_over_type: u8,
+    pub hand_over_type: HandOverType,
     /// origin_type — 1 bit `[0]`.  `false` = NIT, `true` = SDT (Table 63).
     pub origin_type: bool,
     /// network_id — 16 bits, present only when hand_over_type in {1, 2, 3}.
@@ -64,8 +352,9 @@ impl MobileHandOverInfo {
                 have: buf.len(),
             });
         }
-        let flags_byte =
-            (self.hand_over_type << 4) | RESERVED_HANDOVER_MASK | u8::from(self.origin_type);
+        let flags_byte = (self.hand_over_type.to_u8() << 4)
+            | RESERVED_HANDOVER_MASK
+            | u8::from(self.origin_type);
         buf[0] = flags_byte;
         let mut pos = 1;
         if let Some(nid) = self.network_id {
@@ -130,7 +419,7 @@ pub enum TargetId {
     /// `target_id_type != 3` — DVB addressing with optional sub-fields.
     Dvb {
         /// `target_id_type` value (0, 1, or 2).  See Table 67.
-        target_id_type: u8,
+        target_id_type: TargetIdType,
         /// target_transport_stream_id — present when `target_id_type == 1`.
         target_transport_stream_id: Option<u16>,
         /// target_original_network_id — present when `original_network_id_flag == 1`.
@@ -204,9 +493,9 @@ pub struct ExtendedEventLinkageEntry {
     /// event_simulcast — 1 bit `[6]`.
     pub event_simulcast: bool,
     /// link_type — 2 bits `[5:4]`.  See Table 66.
-    pub link_type: u8,
+    pub link_type: LinkType,
     /// target_id_type — 2 bits `[3:2]`.  See Table 67.
-    pub target_id_type: u8,
+    pub target_id_type: TargetIdType,
     /// original_network_id_flag — 1 bit `[1]`.
     pub original_network_id_flag: bool,
     /// service_id_flag — 1 bit `[0]`.
@@ -236,8 +525,8 @@ impl ExtendedEventLinkageEntry {
         if self.event_simulcast {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
-        byte2 |= (self.link_type & 0x03) << 4;
-        byte2 |= (self.target_id_type & 0x03) << 2;
+        byte2 |= (self.link_type.to_u8() & 0x03) << 4;
+        byte2 |= (self.target_id_type.to_u8() & 0x03) << 2;
         if self.original_network_id_flag {
             byte2 |= EXT_ONID_FLAG_MASK;
         }
@@ -356,10 +645,10 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
         });
     }
     let flags_byte = bytes[0];
-    let hand_over_type = (flags_byte & HANDOVER_TYPE_MASK) >> 4;
+    let hand_over_type = HandOverType::from_u8((flags_byte & HANDOVER_TYPE_MASK) >> 4);
     let origin_type = (flags_byte & ORIGIN_TYPE_MASK) != 0;
     let mut pos = 1;
-    let network_id = if matches!(hand_over_type, 0x01..=0x03) {
+    let network_id = if matches!(hand_over_type.to_u8(), 0x01..=0x03) {
         if pos + 2 > end {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
@@ -449,20 +738,21 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
         pos += 1;
         let target_listed = (fb & EXT_TARGET_LISTED_MASK) != 0;
         let event_simulcast = (fb & EXT_EVENT_SIMULCAST_MASK) != 0;
-        let link_type = (fb & EXT_LINK_TYPE_MASK) >> 4;
-        let target_id_type = (fb & EXT_TARGET_ID_TYPE_MASK) >> 2;
+        let link_type = LinkType::from_u8((fb & EXT_LINK_TYPE_MASK) >> 4);
+        let target_id_type = TargetIdType::from_u8((fb & EXT_TARGET_ID_TYPE_MASK) >> 2);
         let original_network_id_flag = (fb & EXT_ONID_FLAG_MASK) != 0;
         let service_id_flag = (fb & EXT_SID_FLAG_MASK) != 0;
 
-        let target_id = if target_id_type == 3 {
+        let target_id = if target_id_type == TargetIdType::UseUserDefinedId {
             let user_defined_id = read_u16(&mut pos)?;
             TargetId::UserDefined { user_defined_id }
         } else {
-            let target_transport_stream_id = if target_id_type == 1 {
-                Some(read_u16(&mut pos)?)
-            } else {
-                None
-            };
+            let target_transport_stream_id =
+                if target_id_type == TargetIdType::UseTargetTransportStreamId {
+                    Some(read_u16(&mut pos)?)
+                } else {
+                    None
+                };
             let target_original_network_id = if original_network_id_flag {
                 Some(read_u16(&mut pos)?)
             } else {
@@ -506,14 +796,8 @@ pub struct LinkageDescriptor<'a> {
     /// service_id of the linked-to service (0 if linkage is at the network or
     /// bouquet level).
     pub service_id: u16,
-    /// linkage_type byte (Table 60): 0x01 information, 0x02 EPG,
-    /// 0x03 CA_replacement, 0x04 TS_containing_complete_SI, 0x05
-    /// service_replacement, 0x06 data_broadcast, 0x07 RCS_map,
-    /// 0x08 mobile_hand-over, 0x09 SSU, 0x0A SSU BAT/NIT,
-    /// 0x0B IP/MAC notification, 0x0C INT BAT/NIT, 0x0D event_linkage,
-    /// 0x0E..=0x1F extended_event_linkage, 0x20 downloadable font,
-    /// 0x21 Native IP bootstrap, 0x80..=0xFE user defined.
-    pub linkage_type: u8,
+    /// linkage_type (Table 60).
+    pub linkage_type: LinkageType,
     /// Linkage-type-conditional inner structure.
     pub linkage_data: LinkageData<'a>,
     /// Trailing `private_data_byte` run — bytes after the conditional block
@@ -541,11 +825,12 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
         let transport_stream_id = u16::from_be_bytes([body[0], body[1]]);
         let original_network_id = u16::from_be_bytes([body[2], body[3]]);
         let service_id = u16::from_be_bytes([body[4], body[5]]);
-        let linkage_type = body[6];
+        let linkage_type_raw = body[6];
+        let linkage_type = LinkageType::from_u8(linkage_type_raw);
         let tail = &body[FIXED_FIELDS_LEN..];
         let tail_len = tail.len();
 
-        let (linkage_data, private_data) = match linkage_type {
+        let (linkage_data, private_data) = match linkage_type_raw {
             0x08 => {
                 let info = parse_mobile_handover(tail, tail_len)?;
                 let consumed = info.serialized_len();
@@ -597,7 +882,7 @@ impl Serialize for LinkageDescriptor<'_> {
         buf[bs..bs + 2].copy_from_slice(&self.transport_stream_id.to_be_bytes());
         buf[bs + 2..bs + 4].copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[bs + 4..bs + 6].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[bs + 6] = self.linkage_type;
+        buf[bs + 6] = self.linkage_type.to_u8();
         let ld_start = bs + FIXED_FIELDS_LEN;
         let ld_written = self.linkage_data.serialize_into(&mut buf[ld_start..])?;
         let pd_start = ld_start + ld_written;
@@ -631,7 +916,7 @@ mod tests {
     fn parse_extracts_linkage_type() {
         let bytes = [TAG, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x06];
         let d = LinkageDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.linkage_type, 0x06);
+        assert_eq!(d.linkage_type, LinkageType::DataBroadcastService);
     }
 
     #[test]
@@ -665,10 +950,13 @@ mod tests {
             0xDE, 0xAD, // private_data
         ];
         let d = LinkageDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.linkage_type, 0x08);
+        assert_eq!(d.linkage_type, LinkageType::MobileHandOver);
         match &d.linkage_data {
             LinkageData::MobileHandOver(m) => {
-                assert_eq!(m.hand_over_type, 1);
+                assert_eq!(
+                    m.hand_over_type,
+                    HandOverType::DvbIdenticalNeighbouringCountry
+                );
                 assert!(!m.origin_type);
                 assert_eq!(m.network_id, Some(0x0010));
                 assert_eq!(m.initial_service_id, Some(0x0020));
@@ -693,7 +981,7 @@ mod tests {
         let d = LinkageDescriptor::parse(&bytes).unwrap();
         match &d.linkage_data {
             LinkageData::MobileHandOver(m) => {
-                assert_eq!(m.hand_over_type, 2);
+                assert_eq!(m.hand_over_type, HandOverType::DvbLocalVariation);
                 assert!(m.origin_type);
                 assert_eq!(m.network_id, Some(0x0010));
                 assert_eq!(m.initial_service_id, None);
@@ -749,8 +1037,8 @@ mod tests {
                 assert_eq!(e.target_event_id, 0x1234);
                 assert!(e.target_listed);
                 assert!(e.event_simulcast);
-                assert_eq!(e.link_type, 0);
-                assert_eq!(e.target_id_type, 3);
+                assert_eq!(e.link_type, LinkType::SdOrUhd);
+                assert_eq!(e.target_id_type, TargetIdType::UseUserDefinedId);
                 assert_eq!(
                     e.target_id,
                     TargetId::UserDefined {
@@ -782,13 +1070,13 @@ mod tests {
             LinkageData::ExtendedEventLinkage(x) => {
                 assert_eq!(x.entries.len(), 1);
                 let e = &x.entries[0];
-                assert_eq!(e.target_id_type, 1);
+                assert_eq!(e.target_id_type, TargetIdType::UseTargetTransportStreamId);
                 assert!(e.original_network_id_flag);
                 assert!(!e.service_id_flag);
                 assert_eq!(
                     e.target_id,
                     TargetId::Dvb {
-                        target_id_type: 1,
+                        target_id_type: TargetIdType::UseTargetTransportStreamId,
                         target_transport_stream_id: Some(0x0011),
                         target_original_network_id: Some(0x0022),
                         target_service_id: None,
@@ -873,7 +1161,7 @@ mod tests {
             transport_stream_id: 0x1234,
             original_network_id: 0x5678,
             service_id: 0xABCD,
-            linkage_type: 0x02,
+            linkage_type: LinkageType::EpgService,
             linkage_data: LinkageData::None,
             private_data: &[],
         };
@@ -889,7 +1177,7 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x05,
+            linkage_type: LinkageType::ServiceReplacementService,
             linkage_data: LinkageData::None,
             private_data: &[0xDE, 0xAD, 0xBE, 0xEF],
         };
@@ -905,9 +1193,9 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x08,
+            linkage_type: LinkageType::MobileHandOver,
             linkage_data: LinkageData::MobileHandOver(MobileHandOverInfo {
-                hand_over_type: 3,
+                hand_over_type: HandOverType::DvbAssociatedService,
                 origin_type: false,
                 network_id: Some(0x0044),
                 initial_service_id: Some(0x0055),
@@ -926,7 +1214,7 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x0D,
+            linkage_type: LinkageType::EventLinkage,
             linkage_data: LinkageData::EventLinkage(EventLinkageInfo {
                 target_event_id: 0x1234,
                 target_listed: true,
@@ -946,18 +1234,18 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x0E,
+            linkage_type: LinkageType::ExtendedEventLinkage(0x0E),
             linkage_data: LinkageData::ExtendedEventLinkage(ExtendedEventLinkageInfo {
                 entries: vec![ExtendedEventLinkageEntry {
                     target_event_id: 0xAAAA,
                     target_listed: true,
                     event_simulcast: true,
-                    link_type: 1,
-                    target_id_type: 1,
+                    link_type: LinkType::HdOrServiceFrameCompatible,
+                    target_id_type: TargetIdType::UseTargetTransportStreamId,
                     original_network_id_flag: true,
                     service_id_flag: true,
                     target_id: TargetId::Dvb {
-                        target_id_type: 1,
+                        target_id_type: TargetIdType::UseTargetTransportStreamId,
                         target_transport_stream_id: Some(0x1111),
                         target_original_network_id: Some(0x2222),
                         target_service_id: Some(0x3333),
@@ -979,7 +1267,7 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x0B,
+            linkage_type: LinkageType::IpMacNotificationService,
             linkage_data: LinkageData::Other(&raw),
             private_data: &[],
         };
@@ -995,7 +1283,7 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x0D,
+            linkage_type: LinkageType::EventLinkage,
             linkage_data: LinkageData::EventLinkage(EventLinkageInfo {
                 target_event_id: 0x0000,
                 target_listed: false,
@@ -1011,9 +1299,9 @@ mod tests {
             transport_stream_id: 0x0001,
             original_network_id: 0x0002,
             service_id: 0x0003,
-            linkage_type: 0x08,
+            linkage_type: LinkageType::MobileHandOver,
             linkage_data: LinkageData::MobileHandOver(MobileHandOverInfo {
-                hand_over_type: 0,
+                hand_over_type: HandOverType::Reserved(0),
                 origin_type: true,
                 network_id: None,
                 initial_service_id: None,
@@ -1039,7 +1327,7 @@ mod tests {
         let d = LinkageDescriptor::parse(&bytes).unwrap();
         match &d.linkage_data {
             LinkageData::MobileHandOver(m) => {
-                assert_eq!(m.hand_over_type, 4);
+                assert_eq!(m.hand_over_type, HandOverType::Reserved(4));
                 assert!(!m.origin_type);
                 assert_eq!(m.network_id, None);
                 assert_eq!(m.initial_service_id, Some(0x0020));
@@ -1063,7 +1351,10 @@ mod tests {
         let d = LinkageDescriptor::parse(&bytes).unwrap();
         match &d.linkage_data {
             LinkageData::MobileHandOver(m) => {
-                assert_eq!(m.hand_over_type, 1);
+                assert_eq!(
+                    m.hand_over_type,
+                    HandOverType::DvbIdenticalNeighbouringCountry
+                );
                 assert!(m.origin_type);
                 assert_eq!(m.network_id, Some(0x0010));
                 assert_eq!(m.initial_service_id, None);
@@ -1071,5 +1362,37 @@ mod tests {
             other => panic!("expected MobileHandOver, got {other:?}"),
         }
         assert_eq!(d.private_data, &[0xCA, 0xFE]);
+    }
+
+    #[test]
+    fn linkage_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let lt = LinkageType::from_u8(b);
+            assert_eq!(lt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn hand_over_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let ht = HandOverType::from_u8(b);
+            assert_eq!(ht.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn link_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let lt = LinkType::from_u8(b);
+            assert_eq!(lt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn target_id_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let tt = TargetIdType::from_u8(b);
+            assert_eq!(tt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
     }
 }

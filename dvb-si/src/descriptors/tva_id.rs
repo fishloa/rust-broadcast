@@ -4,8 +4,7 @@
 //! a receiver uses to drive its recording strategy. Per the TVA PDF
 //! (etsi_ts_102_323_v01.04.01, p. 101, Table 114) each loop entry is 3 bytes:
 //! TVA_id(16) + Reserved(5) + running_status(3). running_status values are
-//! defined in Table 115 (0=reserved, 1=not yet running, 2=starts shortly,
-//! 3=paused, 4=running, 5=cancelled, 6=completed, 7=reserved).
+//! defined in Table 115.
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -19,6 +18,80 @@ const ENTRY_LEN: usize = 3;
 /// Largest representable 3-bit running_status.
 const RUNNING_STATUS_MAX: u8 = 0x07;
 
+/// TVA running status — ETSI TS 102 323 Table 115.
+///
+/// NOTE: This is the TVA-specific running_status table, NOT the
+/// EN 300 468 Table 6 running_status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum TvaRunningStatus {
+    /// 0 — reserved.
+    Reserved,
+    /// 1 — not yet running.
+    NotYetRunning,
+    /// 2 — starts shortly.
+    StartsShortly,
+    /// 3 — paused.
+    Paused,
+    /// 4 — running.
+    Running,
+    /// 5 — cancelled.
+    Cancelled,
+    /// 6 — completed.
+    Completed,
+    /// Unallocated wire value, preserved verbatim for round-trip.
+    Unallocated(u8),
+}
+
+impl TvaRunningStatus {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Reserved,
+            1 => Self::NotYetRunning,
+            2 => Self::StartsShortly,
+            3 => Self::Paused,
+            4 => Self::Running,
+            5 => Self::Cancelled,
+            6 => Self::Completed,
+            v => Self::Unallocated(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0,
+            Self::NotYetRunning => 1,
+            Self::StartsShortly => 2,
+            Self::Paused => 3,
+            Self::Running => 4,
+            Self::Cancelled => 5,
+            Self::Completed => 6,
+            Self::Unallocated(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::NotYetRunning => "not yet running",
+            Self::StartsShortly => "starts shortly",
+            Self::Paused => "paused",
+            Self::Running => "running",
+            Self::Cancelled => "cancelled",
+            Self::Completed => "completed",
+            Self::Unallocated(_) => "unallocated",
+        }
+    }
+}
+
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -26,7 +99,7 @@ pub struct TvaIdEntry {
     /// 16-bit TVA_id referencing the item of content.
     pub tva_id: u16,
     /// 3-bit running_status (Table 115).
-    pub running_status: u8,
+    pub running_status: TvaRunningStatus,
 }
 
 /// TVA_id Descriptor.
@@ -55,8 +128,7 @@ impl<'a> Parse<'a> for TvaIdDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let tva_id = u16::from_be_bytes([chunk[0], chunk[1]]);
-            // Reserved(5) ignored on parse.
-            let running_status = chunk[2] & RUNNING_STATUS_MAX;
+            let running_status = TvaRunningStatus::from_u8(chunk[2] & RUNNING_STATUS_MAX);
             entries.push(TvaIdEntry {
                 tva_id,
                 running_status,
@@ -74,7 +146,7 @@ impl Serialize for TvaIdDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         for e in &self.entries {
-            if e.running_status > RUNNING_STATUS_MAX {
+            if e.running_status.to_u8() > RUNNING_STATUS_MAX {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "running_status exceeds 3 bits",
@@ -100,7 +172,7 @@ impl Serialize for TvaIdDescriptor {
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.tva_id.to_be_bytes());
             // Reserved(5) emitted as 1s.
-            buf[pos + 2] = 0xF8 | (e.running_status & RUNNING_STATUS_MAX);
+            buf[pos + 2] = 0xF8 | (e.running_status.to_u8() & RUNNING_STATUS_MAX);
             pos += ENTRY_LEN;
         }
         Ok(len)
@@ -122,7 +194,7 @@ mod tests {
         let d = TvaIdDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].tva_id, 0x1234);
-        assert_eq!(d.entries[0].running_status, 4);
+        assert_eq!(d.entries[0].running_status, TvaRunningStatus::Running);
     }
 
     #[test]
@@ -131,16 +203,19 @@ mod tests {
         let d = TvaIdDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
         assert_eq!(d.entries[0].tva_id, 0x0001);
-        assert_eq!(d.entries[0].running_status, 1);
+        assert_eq!(d.entries[0].running_status, TvaRunningStatus::NotYetRunning);
         assert_eq!(d.entries[1].tva_id, 0xABCD);
-        assert_eq!(d.entries[1].running_status, 6);
+        assert_eq!(d.entries[1].running_status, TvaRunningStatus::Completed);
     }
 
     #[test]
     fn parse_ignores_reserved_bits() {
         let bytes = [TAG, 3, 0x00, 0x00, 0xFF];
         let d = TvaIdDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.entries[0].running_status, 0x07);
+        assert_eq!(
+            d.entries[0].running_status,
+            TvaRunningStatus::Unallocated(0x07)
+        );
     }
 
     #[test]
@@ -173,11 +248,11 @@ mod tests {
             entries: vec![
                 TvaIdEntry {
                     tva_id: 0x1000,
-                    running_status: 2,
+                    running_status: TvaRunningStatus::StartsShortly,
                 },
                 TvaIdEntry {
                     tva_id: 0xFFFF,
-                    running_status: 0,
+                    running_status: TvaRunningStatus::Reserved,
                 },
             ],
         };
@@ -191,7 +266,7 @@ mod tests {
         let d = TvaIdDescriptor {
             entries: vec![TvaIdEntry {
                 tva_id: 0,
-                running_status: 0x08,
+                running_status: TvaRunningStatus::Unallocated(0x08),
             }],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -207,11 +282,27 @@ mod tests {
         let d = TvaIdDescriptor {
             entries: vec![TvaIdEntry {
                 tva_id: 0x4242,
-                running_status: 4,
+                running_status: TvaRunningStatus::Running,
             }],
         };
         let j = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    }
+
+    #[test]
+    fn tva_running_status_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let rs = TvaRunningStatus::from_u8(b);
+            assert_eq!(rs.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn tva_running_status_name_for_known() {
+        assert_eq!(TvaRunningStatus::NotYetRunning.name(), "not yet running");
+        assert_eq!(TvaRunningStatus::Running.name(), "running");
+        assert_eq!(TvaRunningStatus::Completed.name(), "completed");
+        assert_eq!(TvaRunningStatus::Unallocated(0x07).name(), "unallocated");
     }
 }

@@ -14,14 +14,77 @@ const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 5;
 const LANG_LEN: usize = 3;
 
+/// Teletext type — ETSI EN 300 468 Table 102.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum TeletextType {
+    /// 0x01 — initial teletext page.
+    InitialPage,
+    /// 0x02 — teletext subtitle page.
+    SubtitlePage,
+    /// 0x03 — additional information page.
+    AdditionalInformationPage,
+    /// 0x04 — programme schedule page.
+    ProgrammeSchedulePage,
+    /// 0x05 — teletext subtitle page for hearing impaired people.
+    HearingImpairedSubtitlePage,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl TeletextType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x01 => Self::InitialPage,
+            0x02 => Self::SubtitlePage,
+            0x03 => Self::AdditionalInformationPage,
+            0x04 => Self::ProgrammeSchedulePage,
+            0x05 => Self::HearingImpairedSubtitlePage,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::InitialPage => 0x01,
+            Self::SubtitlePage => 0x02,
+            Self::AdditionalInformationPage => 0x03,
+            Self::ProgrammeSchedulePage => 0x04,
+            Self::HearingImpairedSubtitlePage => 0x05,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InitialPage => "initial teletext page",
+            Self::SubtitlePage => "teletext subtitle page",
+            Self::AdditionalInformationPage => "additional information page",
+            Self::ProgrammeSchedulePage => "programme schedule page",
+            Self::HearingImpairedSubtitlePage => {
+                "teletext subtitle page for hearing impaired people"
+            }
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// One teletext component.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TeletextEntry {
     /// ISO 639-2 language code of this teletext service.
     pub language_code: LangCode,
-    /// 5-bit teletext_type (ETSI Table 102): 1 = initial page, 2 = subtitle, etc.
-    pub teletext_type: u8,
+    /// 5-bit teletext_type (ETSI Table 102).
+    pub teletext_type: TeletextType,
     /// 3-bit teletext_magazine_number.
     pub magazine_number: u8,
     /// 8-bit BCD teletext_page_number.
@@ -55,7 +118,7 @@ impl<'a> Parse<'a> for TeletextDescriptor {
         for chunk in body.chunks_exact(ENTRY_LEN) {
             let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
             let type_and_mag = chunk[LANG_LEN];
-            let teletext_type = (type_and_mag >> 3) & 0x1F;
+            let teletext_type = TeletextType::from_u8((type_and_mag >> 3) & 0x1F);
             let magazine_number = type_and_mag & 0x07;
             let page_number = chunk[LANG_LEN + 1];
             entries.push(TeletextEntry {
@@ -88,7 +151,8 @@ impl Serialize for TeletextDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = ((e.teletext_type & 0x1F) << 3) | (e.magazine_number & 0x07);
+            buf[pos + LANG_LEN] =
+                ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
             buf[pos + LANG_LEN + 1] = e.page_number;
             pos += ENTRY_LEN;
         }
@@ -111,7 +175,7 @@ mod tests {
         let d = TeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
-        assert_eq!(d.entries[0].teletext_type, 1);
+        assert_eq!(d.entries[0].teletext_type, TeletextType::InitialPage);
         assert_eq!(d.entries[0].magazine_number, 2);
         assert_eq!(d.entries[0].page_number, 0x10);
     }
@@ -134,7 +198,7 @@ mod tests {
         ];
         let d = TeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[1].teletext_type, 2);
+        assert_eq!(d.entries[1].teletext_type, TeletextType::SubtitlePage);
     }
 
     #[test]
@@ -159,7 +223,7 @@ mod tests {
         let d = TeletextDescriptor {
             entries: vec![TeletextEntry {
                 language_code: LangCode(*b"fra"),
-                teletext_type: 2,
+                teletext_type: TeletextType::SubtitlePage,
                 magazine_number: 8 & 0x07,
                 page_number: 0x88,
             }],
@@ -174,5 +238,23 @@ mod tests {
         let bytes = [TAG, 0];
         let d = TeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 0);
+    }
+
+    #[test]
+    fn teletext_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let tt = TeletextType::from_u8(b);
+            assert_eq!(tt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn teletext_type_name_for_known() {
+        assert_eq!(TeletextType::InitialPage.name(), "initial teletext page");
+        assert_eq!(
+            TeletextType::HearingImpairedSubtitlePage.name(),
+            "teletext subtitle page for hearing impaired people"
+        );
+        assert_eq!(TeletextType::Reserved(0x06).name(), "reserved");
     }
 }

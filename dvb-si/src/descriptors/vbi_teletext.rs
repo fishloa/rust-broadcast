@@ -6,6 +6,7 @@
 //! (8 bits). Signals teletext also carried in the analogue VBI lines.
 
 use super::descriptor_body;
+use super::teletext::TeletextType;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use dvb_common::{Parse, Serialize};
@@ -25,7 +26,7 @@ pub struct VbiTeletextEntry {
     /// ISO 639-2 language code of this teletext service.
     pub language_code: LangCode,
     /// 5-bit teletext_type (EN 300 468 Table 102).
-    pub teletext_type: u8,
+    pub teletext_type: TeletextType,
     /// 3-bit teletext_magazine_number.
     pub magazine_number: u8,
     /// 8-bit BCD teletext_page_number.
@@ -61,7 +62,7 @@ impl<'a> Parse<'a> for VbiTeletextDescriptor {
             let type_and_mag = chunk[LANG_LEN];
             entries.push(VbiTeletextEntry {
                 language_code,
-                teletext_type: (type_and_mag >> 3) & 0x1F,
+                teletext_type: TeletextType::from_u8((type_and_mag >> 3) & 0x1F),
                 magazine_number: type_and_mag & 0x07,
                 page_number: chunk[LANG_LEN + 1],
             });
@@ -77,13 +78,6 @@ impl Serialize for VbiTeletextDescriptor {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
         let body_len = ENTRY_LEN * self.entries.len();
         // 8-bit descriptor_length field: error rather than silently truncate.
         if body_len > MAX_BODY_LEN {
@@ -92,12 +86,20 @@ impl Serialize for VbiTeletextDescriptor {
                 reason: "VBI_teletext_descriptor body exceeds 255 bytes",
             });
         }
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
         buf[0] = TAG;
         buf[1] = body_len as u8;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = ((e.teletext_type & 0x1F) << 3) | (e.magazine_number & 0x07);
+            buf[pos + LANG_LEN] =
+                ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
             buf[pos + LANG_LEN + 1] = e.page_number;
             pos += ENTRY_LEN;
         }
@@ -119,7 +121,7 @@ mod tests {
         let d = VbiTeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
-        assert_eq!(d.entries[0].teletext_type, 1);
+        assert_eq!(d.entries[0].teletext_type, TeletextType::InitialPage);
         assert_eq!(d.entries[0].magazine_number, 2);
         assert_eq!(d.entries[0].page_number, 0x10);
     }
@@ -142,7 +144,7 @@ mod tests {
         ];
         let d = VbiTeletextDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[1].teletext_type, 2);
+        assert_eq!(d.entries[1].teletext_type, TeletextType::SubtitlePage);
         assert_eq!(d.entries[1].language_code, LangCode(*b"fra"));
     }
 
@@ -183,7 +185,7 @@ mod tests {
         let d = VbiTeletextDescriptor {
             entries: vec![VbiTeletextEntry {
                 language_code: LangCode(*b"fra"),
-                teletext_type: 2,
+                teletext_type: TeletextType::SubtitlePage,
                 magazine_number: 8 & 0x07,
                 page_number: 0x88,
             }],
@@ -200,7 +202,7 @@ mod tests {
             entries: vec![
                 VbiTeletextEntry {
                     language_code: LangCode(*b"eng"),
-                    teletext_type: 1,
+                    teletext_type: TeletextType::Reserved(1),
                     magazine_number: 1,
                     page_number: 0,
                 };
@@ -220,7 +222,7 @@ mod tests {
         let d = VbiTeletextDescriptor {
             entries: vec![VbiTeletextEntry {
                 language_code: LangCode(*b"eng"),
-                teletext_type: 2,
+                teletext_type: TeletextType::SubtitlePage,
                 magazine_number: 1,
                 page_number: 0x10,
             }],

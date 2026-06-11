@@ -47,6 +47,146 @@ pub const ANNOUNCEMENT_TYPE_MAX: u8 = 0x0F;
 /// Max value of the 3-bit reference_type field.
 pub const REFERENCE_TYPE_MAX: u8 = 0x07;
 
+/// Announcement type — ETSI EN 300 468 Table 19.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum AnnouncementType {
+    /// 0x00 — Emergency alarm.
+    EmergencyAlarm,
+    /// 0x01 — Road Traffic flash.
+    RoadTrafficFlash,
+    /// 0x02 — Public Transport flash.
+    PublicTransportFlash,
+    /// 0x03 — Warning message.
+    WarningMessage,
+    /// 0x04 — News flash.
+    NewsFlash,
+    /// 0x05 — Weather flash.
+    WeatherFlash,
+    /// 0x06 — Event announcement.
+    EventAnnouncement,
+    /// 0x07 — Personal call.
+    PersonalCall,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl AnnouncementType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::EmergencyAlarm,
+            0x01 => Self::RoadTrafficFlash,
+            0x02 => Self::PublicTransportFlash,
+            0x03 => Self::WarningMessage,
+            0x04 => Self::NewsFlash,
+            0x05 => Self::WeatherFlash,
+            0x06 => Self::EventAnnouncement,
+            0x07 => Self::PersonalCall,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::EmergencyAlarm => 0x00,
+            Self::RoadTrafficFlash => 0x01,
+            Self::PublicTransportFlash => 0x02,
+            Self::WarningMessage => 0x03,
+            Self::NewsFlash => 0x04,
+            Self::WeatherFlash => 0x05,
+            Self::EventAnnouncement => 0x06,
+            Self::PersonalCall => 0x07,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::EmergencyAlarm => "Emergency alarm",
+            Self::RoadTrafficFlash => "Road Traffic flash",
+            Self::PublicTransportFlash => "Public Transport flash",
+            Self::WarningMessage => "Warning message",
+            Self::NewsFlash => "News flash",
+            Self::WeatherFlash => "Weather flash",
+            Self::EventAnnouncement => "Event announcement",
+            Self::PersonalCall => "Personal call",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Reference type — ETSI EN 300 468 Table 20.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ReferenceType {
+    /// 0x00 — broadcast in the usual audio stream of the service.
+    UsualAudioStream,
+    /// 0x01 — broadcast in a separate audio stream that is part of the service.
+    SeparateAudioStream,
+    /// 0x02 — broadcast by a different service within the same DVB transport
+    /// stream.
+    DifferentServiceSameTs,
+    /// 0x03 — broadcast by a different service within a different DVB transport
+    /// stream.
+    DifferentServiceDifferentTs,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl ReferenceType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::UsualAudioStream,
+            0x01 => Self::SeparateAudioStream,
+            0x02 => Self::DifferentServiceSameTs,
+            0x03 => Self::DifferentServiceDifferentTs,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::UsualAudioStream => 0x00,
+            Self::SeparateAudioStream => 0x01,
+            Self::DifferentServiceSameTs => 0x02,
+            Self::DifferentServiceDifferentTs => 0x03,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UsualAudioStream => "broadcast in the usual audio stream of the service",
+            Self::SeparateAudioStream => {
+                "broadcast in a separate audio stream that is part of the service"
+            }
+            Self::DifferentServiceSameTs => {
+                "broadcast by a different service within the same DVB transport stream"
+            }
+            Self::DifferentServiceDifferentTs => {
+                "broadcast by a different service within a different DVB transport stream"
+            }
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Conditional reference block, present for reference_type 1, 2, 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -66,9 +206,9 @@ pub struct AnnouncementReference {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AnnouncementEntry {
     /// 4-bit announcement_type (Table 19).
-    pub announcement_type: u8,
+    pub announcement_type: AnnouncementType,
     /// 3-bit reference_type (Table 20).
-    pub reference_type: u8,
+    pub reference_type: ReferenceType,
     /// Reference block, present iff reference_type ∈ {1,2,3}.
     pub reference: Option<AnnouncementReference>,
 }
@@ -110,9 +250,11 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
             let flags = body[pos];
             pos += TYPE_BYTE_LEN;
             // reserved_future_use bit ignored on parse (§5.1).
-            let announcement_type = (flags & ANNOUNCEMENT_TYPE_MASK) >> ANNOUNCEMENT_TYPE_SHIFT;
-            let reference_type = flags & REFERENCE_TYPE_MASK;
-            let reference = if reference_present(reference_type) {
+            let announcement_type = AnnouncementType::from_u8(
+                (flags & ANNOUNCEMENT_TYPE_MASK) >> ANNOUNCEMENT_TYPE_SHIFT,
+            );
+            let reference_type = ReferenceType::from_u8(flags & REFERENCE_TYPE_MASK);
+            let reference = if reference_present(reference_type.to_u8()) {
                 if pos + REFERENCE_LEN > body.len() {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
@@ -151,7 +293,7 @@ impl AnnouncementSupportDescriptor {
                 .iter()
                 .map(|e| {
                     TYPE_BYTE_LEN
-                        + if reference_present(e.reference_type) {
+                        + if reference_present(e.reference_type.to_u8()) {
                             REFERENCE_LEN
                         } else {
                             0
@@ -169,20 +311,20 @@ impl Serialize for AnnouncementSupportDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         for e in &self.entries {
-            if e.announcement_type > ANNOUNCEMENT_TYPE_MAX {
+            if e.announcement_type.to_u8() > ANNOUNCEMENT_TYPE_MAX {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "announcement_type exceeds 4 bits",
                 });
             }
-            if e.reference_type > REFERENCE_TYPE_MAX {
+            if e.reference_type.to_u8() > REFERENCE_TYPE_MAX {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "reference_type exceeds 3 bits",
                 });
             }
             // A reference must be present exactly when reference_type ∈ {1,2,3}.
-            if reference_present(e.reference_type) != e.reference.is_some() {
+            if reference_present(e.reference_type.to_u8()) != e.reference.is_some() {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "reference presence does not match reference_type",
@@ -210,9 +352,10 @@ impl Serialize for AnnouncementSupportDescriptor {
         let mut pos = HEADER_LEN + INDICATOR_LEN;
         for e in &self.entries {
             // reserved_future_use bit emitted as 1 (§5.1).
-            let flags = ((e.announcement_type << ANNOUNCEMENT_TYPE_SHIFT) & ANNOUNCEMENT_TYPE_MASK)
+            let flags = ((e.announcement_type.to_u8() << ANNOUNCEMENT_TYPE_SHIFT)
+                & ANNOUNCEMENT_TYPE_MASK)
                 | RESERVED_BIT_MASK
-                | (e.reference_type & REFERENCE_TYPE_MASK);
+                | (e.reference_type.to_u8() & REFERENCE_TYPE_MASK);
             buf[pos] = flags;
             pos += TYPE_BYTE_LEN;
             if let Some(r) = &e.reference {
@@ -243,8 +386,11 @@ mod tests {
         let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.announcement_support_indicator, 0x0040);
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].announcement_type, 0x06);
-        assert_eq!(d.entries[0].reference_type, 0x00);
+        assert_eq!(
+            d.entries[0].announcement_type,
+            AnnouncementType::EventAnnouncement
+        );
+        assert_eq!(d.entries[0].reference_type, ReferenceType::UsualAudioStream);
         assert!(d.entries[0].reference.is_none());
     }
 
@@ -259,8 +405,14 @@ mod tests {
         ];
         let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].announcement_type, 0x01);
-        assert_eq!(d.entries[0].reference_type, 0x02);
+        assert_eq!(
+            d.entries[0].announcement_type,
+            AnnouncementType::RoadTrafficFlash
+        );
+        assert_eq!(
+            d.entries[0].reference_type,
+            ReferenceType::DifferentServiceSameTs
+        );
         let r = d.entries[0].reference.unwrap();
         assert_eq!(r.original_network_id, 0xAABB);
         assert_eq!(r.transport_stream_id, 0xCCDD);
@@ -280,7 +432,10 @@ mod tests {
         let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
         assert!(d.entries[0].reference.is_none());
-        assert_eq!(d.entries[1].reference_type, 0x03);
+        assert_eq!(
+            d.entries[1].reference_type,
+            ReferenceType::DifferentServiceDifferentTs
+        );
         assert!(d.entries[1].reference.is_some());
     }
 
@@ -289,8 +444,11 @@ mod tests {
         // reserved bit clear (0x60 vs 0x68): still parses.
         let bytes = [TAG, 3, 0x00, 0x00, 0x60];
         let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.entries[0].announcement_type, 0x06);
-        assert_eq!(d.entries[0].reference_type, 0x00);
+        assert_eq!(
+            d.entries[0].announcement_type,
+            AnnouncementType::EventAnnouncement
+        );
+        assert_eq!(d.entries[0].reference_type, ReferenceType::UsualAudioStream);
     }
 
     #[test]
@@ -334,13 +492,13 @@ mod tests {
             announcement_support_indicator: 0xBEEF,
             entries: vec![
                 AnnouncementEntry {
-                    announcement_type: 0x04,
-                    reference_type: 0x00,
+                    announcement_type: AnnouncementType::NewsFlash,
+                    reference_type: ReferenceType::UsualAudioStream,
                     reference: None,
                 },
                 AnnouncementEntry {
-                    announcement_type: 0x01,
-                    reference_type: 0x02,
+                    announcement_type: AnnouncementType::RoadTrafficFlash,
+                    reference_type: ReferenceType::DifferentServiceSameTs,
                     reference: Some(AnnouncementReference {
                         original_network_id: 0xAABB,
                         transport_stream_id: 0xCCDD,
@@ -373,8 +531,8 @@ mod tests {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0,
             entries: vec![AnnouncementEntry {
-                announcement_type: 0x10, // 5 bits
-                reference_type: 0,
+                announcement_type: AnnouncementType::Reserved(0x10), // 5 bits
+                reference_type: ReferenceType::UsualAudioStream,
                 reference: None,
             }],
         };
@@ -391,8 +549,8 @@ mod tests {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0,
             entries: vec![AnnouncementEntry {
-                announcement_type: 0,
-                reference_type: 0x02,
+                announcement_type: AnnouncementType::Reserved(0),
+                reference_type: ReferenceType::DifferentServiceSameTs,
                 reference: None,
             }],
         };
@@ -409,8 +567,8 @@ mod tests {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0xBEEF,
             entries: vec![AnnouncementEntry {
-                announcement_type: 0x01,
-                reference_type: 0x02,
+                announcement_type: AnnouncementType::RoadTrafficFlash,
+                reference_type: ReferenceType::DifferentServiceSameTs,
                 reference: Some(AnnouncementReference {
                     original_network_id: 0xAABB,
                     transport_stream_id: 0xCCDD,
@@ -422,5 +580,21 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn announcement_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let at = AnnouncementType::from_u8(b);
+            assert_eq!(at.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn reference_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let rt = ReferenceType::from_u8(b);
+            assert_eq!(rt.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
     }
 }
