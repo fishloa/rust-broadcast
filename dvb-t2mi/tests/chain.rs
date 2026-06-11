@@ -16,7 +16,8 @@
 //!    `T2miPump::new(0x0006)`.
 //! 6. The resulting `AnyPayload::Bbframe` is unwrapped; its `bb.bbframe` field
 //!    holds the raw BBHEADER + data field.
-//! 7. `Bbheader::parse` + `up_iter` extracts the inner TS packets.
+//! 7. `BbframePump::feed` (per-PLP BBFrame→inner-TS pump) extracts the inner
+//!    TS packets.
 //! 8. Each inner TS packet is fed to `SiDemux`.
 //! 9. We assert `AnyTableSection::PatSection` arrives with the expected program entries.
 //!
@@ -28,8 +29,6 @@
 
 #![cfg(feature = "ts")]
 
-use dvb_bbframe::header::{Bbheader, Matype, Mode, TsGs, BBHEADER_LEN};
-use dvb_bbframe::packet::NM_UP_SIZE;
 use dvb_common::crc32_mpeg2;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
@@ -101,6 +100,7 @@ fn inner_ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
 /// `NmTsIter::next` restores byte 0 to 0x47 (it simply overwrites it).
 fn build_nm_bbframe(inner_ts: &[u8; TS_PACKET_SIZE]) -> Vec<u8> {
     use dvb_bbframe::crc::crc8;
+    use dvb_bbframe::header::{Bbheader, Matype, Mode, TsGs, BBHEADER_LEN};
 
     let upl_bits: u16 = 1504; // 188 * 8
     let dfl_bits: u16 = 1504; // one full UP
@@ -276,18 +276,9 @@ fn chain_t2mi_bbframe_si_pat() {
     assert_eq!(bb.plp_id, 5, "plp_id");
     assert!(bb.intl_frame_start, "intl_frame_start");
 
-    // ── Step C: Parse BBHEADER from bb.bbframe ────────────────────────────────
-    let bbheader = Bbheader::parse(bb.bbframe).expect("Bbheader::parse on inner BBFrame bytes");
-    assert_eq!(bbheader.mode, Mode::Normal, "mode");
-    assert_eq!(bbheader.dfl, 1504, "DFL bits");
-    assert_eq!(bbheader.syncd, 0, "SYNCD bits");
-
-    // ── Step D: up_iter → inner TS packets ───────────────────────────────────
-    let dfl_bytes = (bbheader.dfl / 8) as usize;
-    let data_field_start = BBHEADER_LEN;
-    let data_field = &bb.bbframe[data_field_start..data_field_start + dfl_bytes];
-    let inner_pkts: Vec<[u8; NM_UP_SIZE]> =
-        dvb_bbframe::packet::up_iter(data_field, &bbheader).collect();
+    // ── Step C+D: BbframePump → inner TS packets ─────────────────────────────
+    let mut bbpump = dvb_bbframe::pump::BbframePump::new();
+    let inner_pkts = bbpump.feed(bb.plp_id, bb.bbframe);
     assert_eq!(inner_pkts.len(), 1, "expected one inner TS packet");
     assert_eq!(inner_pkts[0][0], TS_SYNC, "inner TS sync byte restored");
 
