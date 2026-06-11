@@ -156,6 +156,24 @@ impl Serialize for TtmlSubtitling<'_> {
             + self.reserved_tail.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // dvb_ttml_profile_count is a 4-bit field; font_ids count is 8-bit.
+        // Reject over-long inputs rather than silently wrapping the count.
+        if self.dvb_ttml_profiles.len() > 0x0F {
+            return Err(Error::ValueOutOfRange {
+                field: "dvb_ttml_profiles",
+                reason: "more than 15 profiles (dvb_ttml_profile_count is 4 bits)",
+            });
+        }
+        if self
+            .font_ids
+            .as_ref()
+            .is_some_and(|ids| ids.len() > u8::MAX as usize)
+        {
+            return Err(Error::ValueOutOfRange {
+                field: "font_ids",
+                reason: "more than 255 font_ids (font_id_count is 8 bits)",
+            });
+        }
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
@@ -201,7 +219,7 @@ impl Serialize for TtmlSubtitling<'_> {
         buf[pos..pos + raw.len()].copy_from_slice(raw);
         pos += raw.len();
 
-        // opaque trailed reserved bytes
+        // opaque trailing reserved bytes
         buf[pos..pos + self.reserved_tail.len()].copy_from_slice(self.reserved_tail);
 
         Ok(len)

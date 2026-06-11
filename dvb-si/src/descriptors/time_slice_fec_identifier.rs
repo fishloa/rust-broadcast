@@ -47,6 +47,8 @@ pub struct TimeSliceFecIdentifierDescriptor<'a> {
     /// 4-bit time_slice_fec_id.
     pub time_slice_fec_id: u8,
     /// Trailing id_selector bytes.
+    /// Kept raw deliberately; interpretation is registry-dependent per
+    /// EN 301 192 / TS 102 772.
     pub id_selector: &'a [u8],
 }
 

@@ -239,6 +239,12 @@ impl Serialize for CitSection<'_> {
         }
 
         let section_length = (len - HEADER_LEN) as u16;
+        if section_length > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: 0x0FFF,
+            });
+        }
         buf[0] = TABLE_ID;
         buf[1] = SECTION_B1_SSI
             | (u8::from(self.private_indicator) << 6)

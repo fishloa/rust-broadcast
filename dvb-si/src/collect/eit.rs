@@ -267,6 +267,7 @@ impl CompletedEit {
 }
 
 /// Logical EIT table key used by [`EitCollector`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EitLogicalKey {
     /// Optional PID context supplied by the caller.

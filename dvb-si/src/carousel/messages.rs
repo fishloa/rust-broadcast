@@ -30,8 +30,6 @@ pub const MESSAGE_ID_DSI: u16 = 0x1006;
 const MESSAGE_HEADER_LEN: usize = 12;
 /// serverId is a fixed 20-byte field in the DSI (DVB: all 0xFF).
 const SERVER_ID_LEN: usize = 20;
-/// 16-bit compatibilityDescriptorLength field.
-const COMPAT_LEN_FIELD: usize = 2;
 /// 16-bit privateDataLength field.
 const PRIVATE_LEN_FIELD: usize = 2;
 /// Fixed DII body bytes before the compatibilityDescriptor: downloadId(4) +
@@ -235,6 +233,33 @@ fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize
     Ok((&bytes[start..start + len], start + len))
 }
 
+/// Parse a compatibilityDescriptor() block at `offset` inside `payload` that
+/// ends at `end`. Returns the parsed descriptor and the position just past it.
+fn parse_compat_block<'a>(
+    payload: &'a [u8],
+    offset: usize,
+    end: usize,
+) -> Result<(CompatibilityDescriptor<'a>, usize)> {
+    use crate::compatibility::COMPAT_DESC_LEN_FIELD;
+    if offset + COMPAT_DESC_LEN_FIELD > end {
+        return Err(Error::BufferTooShort {
+            need: offset + COMPAT_DESC_LEN_FIELD,
+            have: end,
+            what: "compatibilityDescriptor in DSM-CC message",
+        });
+    }
+    let compat_desc_len = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
+    let compat_end = offset + COMPAT_DESC_LEN_FIELD + compat_desc_len;
+    if compat_end > end {
+        return Err(Error::SectionLengthOverflow {
+            declared: compat_desc_len,
+            available: end - offset - COMPAT_DESC_LEN_FIELD,
+        });
+    }
+    let cd = CompatibilityDescriptor::parse(&payload[offset..compat_end])?;
+    Ok((cd, compat_end))
+}
+
 impl<'a> Parse<'a> for UnMessage<'a> {
     type Error = crate::error::Error;
 
@@ -244,28 +269,17 @@ impl<'a> Parse<'a> for UnMessage<'a> {
         let end = payload.len();
         match message_id {
             MESSAGE_ID_DSI => {
-                if end < SERVER_ID_LEN + COMPAT_LEN_FIELD + PRIVATE_LEN_FIELD {
+                if end < SERVER_ID_LEN {
                     return Err(Error::BufferTooShort {
-                        need: SERVER_ID_LEN + COMPAT_LEN_FIELD + PRIVATE_LEN_FIELD,
+                        need: SERVER_ID_LEN,
                         have: end,
                         what: "Dsi body",
                     });
                 }
                 let mut server_id = [0u8; SERVER_ID_LEN];
                 server_id.copy_from_slice(&payload[..SERVER_ID_LEN]);
-                let compat_desc_len =
-                    u16::from_be_bytes([payload[SERVER_ID_LEN], payload[SERVER_ID_LEN + 1]])
-                        as usize;
-                let compat_end = SERVER_ID_LEN + COMPAT_LEN_FIELD + compat_desc_len;
-                if compat_end > end {
-                    return Err(Error::SectionLengthOverflow {
-                        declared: compat_desc_len,
-                        available: end - SERVER_ID_LEN - COMPAT_LEN_FIELD,
-                    });
-                }
-                let compatibility_descriptor =
-                    CompatibilityDescriptor::parse(&payload[SERVER_ID_LEN..compat_end])?;
-                let pos = compat_end;
+                let (compatibility_descriptor, pos) =
+                    parse_compat_block(payload, SERVER_ID_LEN, end)?;
                 let (private_data, _pos) = length_prefixed(payload, pos, end)?;
                 Ok(UnMessage::Dsi(Dsi {
                     transaction_id,
@@ -276,9 +290,9 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 }))
             }
             MESSAGE_ID_DII => {
-                if end < DII_FIXED_LEN + COMPAT_LEN_FIELD {
+                if end < DII_FIXED_LEN {
                     return Err(Error::BufferTooShort {
-                        need: DII_FIXED_LEN + COMPAT_LEN_FIELD,
+                        need: DII_FIXED_LEN,
                         have: end,
                         what: "Dii body",
                     });
@@ -292,20 +306,8 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
                 let t_c_download_scenario =
                     u32::from_be_bytes([payload[12], payload[13], payload[14], payload[15]]);
-                let (compatibility_descriptor, mut pos) = {
-                    let compat_desc_len =
-                        u16::from_be_bytes([payload[DII_FIXED_LEN], payload[DII_FIXED_LEN + 1]])
-                            as usize;
-                    let compat_end = DII_FIXED_LEN + COMPAT_LEN_FIELD + compat_desc_len;
-                    if compat_end > end {
-                        return Err(Error::SectionLengthOverflow {
-                            declared: compat_desc_len,
-                            available: end - DII_FIXED_LEN - COMPAT_LEN_FIELD,
-                        });
-                    }
-                    let cd = CompatibilityDescriptor::parse(&payload[DII_FIXED_LEN..compat_end])?;
-                    (cd, compat_end)
-                };
+                let (compatibility_descriptor, mut pos) =
+                    parse_compat_block(payload, DII_FIXED_LEN, end)?;
                 if pos + 2 > end {
                     return Err(Error::BufferTooShort {
                         need: pos + 2,
@@ -616,6 +618,72 @@ mod tests {
         let mut buf = vec![0u8; msg.serialized_len()];
         msg.serialize_into(&mut buf).unwrap();
         assert_eq!(UnMessage::parse(&buf).unwrap(), msg);
+    }
+
+    /// A non-empty `compatibilityDescriptor()` carrying one entry with a
+    /// sub-descriptor — exercises the full compat block in a DSI, not just the
+    /// empty `0x00 0x00` form the other tests use.
+    fn nonempty_compat() -> CompatibilityDescriptor<'static> {
+        CompatibilityDescriptor {
+            descriptors: vec![crate::compatibility::CompatibilityDescriptorEntry {
+                descriptor_type: 0x01,
+                specifier_type: 0x01,
+                specifier_data: [0x00, 0x15, 0x0A],
+                model: 0x1234,
+                version: 0x0001,
+                sub_descriptors: vec![crate::compatibility::SubDescriptor {
+                    sub_descriptor_type: 0x05,
+                    data: &[0xAA, 0xBB],
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn dsi_with_compat_round_trip() {
+        let msg = UnMessage::Dsi(Dsi {
+            transaction_id: 0x8000_0000,
+            adaptation: &[],
+            server_id: [0xFF; 20],
+            compatibility_descriptor: nonempty_compat(),
+            private_data: &[0x0A, 0x0B],
+        });
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+        let re = UnMessage::parse(&buf).unwrap();
+        assert_eq!(re, msg);
+        let mut buf2 = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
+    }
+
+    #[test]
+    fn dii_with_compat_round_trip() {
+        let msg = UnMessage::Dii(Dii {
+            transaction_id: 0x8002_0002,
+            adaptation: &[],
+            download_id: 0x0000_00AB,
+            block_size: 4066,
+            window_size: 0,
+            ack_period: 0,
+            t_c_download_window: 0,
+            t_c_download_scenario: 0,
+            compatibility_descriptor: nonempty_compat(),
+            modules: vec![DiiModule {
+                module_id: 1,
+                module_size: 8000,
+                module_version: 3,
+                module_info: &[0xDE, 0xAD],
+            }],
+            private_data: &[],
+        });
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+        let re = UnMessage::parse(&buf).unwrap();
+        assert_eq!(re, msg);
+        let mut buf2 = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 
     #[test]

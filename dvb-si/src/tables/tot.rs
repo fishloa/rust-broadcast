@@ -121,6 +121,12 @@ impl Serialize for TotSection<'_> {
             });
         }
         let section_length = (len - HEADER_LEN) as u16;
+        if section_length > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: 0x0FFF,
+            });
+        }
         buf[0] = TABLE_ID;
         // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).

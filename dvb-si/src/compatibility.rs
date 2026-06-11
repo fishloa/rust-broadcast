@@ -35,7 +35,7 @@
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
-const COMPAT_DESC_LEN_FIELD: usize = 2;
+pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
 const DESC_COUNT_FIELD: usize = 2;
 const DESC_HEADER_LEN: usize = 2;
 const DESC_FIXED_LEN: usize = 9;
@@ -135,7 +135,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         let descriptor_count = u16::from_be_bytes([body[0], body[1]]) as usize;
         let mut pos = DESC_COUNT_FIELD;
         let max_entries = (body.len() - DESC_COUNT_FIELD) / (DESC_HEADER_LEN + DESC_FIXED_LEN);
-        let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries.max(1)));
+        let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries));
         for _ in 0..descriptor_count {
             if pos + DESC_HEADER_LEN > body.len() {
                 return Err(Error::BufferTooShort {
@@ -178,7 +178,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             let sub_desc_end = entry_end;
             let sub_desc_region_len = sub_desc_end.saturating_sub(sub_desc_start);
             let mut sub_descriptors = Vec::with_capacity(
-                sub_descriptor_count.min(sub_desc_region_len / SUB_DESC_HEADER_LEN.max(1)),
+                sub_descriptor_count.min(sub_desc_region_len / SUB_DESC_HEADER_LEN),
             );
             let mut sub_pos = sub_desc_start;
             for _ in 0..sub_descriptor_count {
@@ -212,6 +212,14 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                 model,
                 version,
                 sub_descriptors,
+            });
+        }
+        // Reject slack inside compatibilityDescriptorLength — leftover bytes
+        // would be silently dropped and lost on re-serialize.
+        if pos != body.len() {
+            return Err(Error::InvalidDescriptor {
+                tag: 0,
+                reason: "trailing bytes after compatibility descriptor entries",
             });
         }
         Ok(CompatibilityDescriptor { descriptors })
@@ -248,17 +256,24 @@ impl Serialize for CompatibilityDescriptor<'_> {
             return Ok(COMPAT_DESC_LEN_FIELD);
         }
         let body_len = len - COMPAT_DESC_LEN_FIELD;
+        if body_len > u16::MAX as usize {
+            return Err(Error::SectionLengthOverflow {
+                declared: body_len,
+                available: u16::MAX as usize,
+            });
+        }
+        if self.descriptors.len() > u16::MAX as usize {
+            return Err(Error::SectionLengthOverflow {
+                declared: self.descriptors.len(),
+                available: u16::MAX as usize,
+            });
+        }
         buf[..COMPAT_DESC_LEN_FIELD].copy_from_slice(&(body_len as u16).to_be_bytes());
         buf[COMPAT_DESC_LEN_FIELD..COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD]
             .copy_from_slice(&(self.descriptors.len() as u16).to_be_bytes());
         let mut pos = COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD;
         for entry in &self.descriptors {
-            let entry_body_len = DESC_FIXED_LEN
-                + entry
-                    .sub_descriptors
-                    .iter()
-                    .map(|sd| SUB_DESC_HEADER_LEN + sd.data.len())
-                    .sum::<usize>();
+            let entry_body_len = entry_serialized_len(entry) - DESC_HEADER_LEN;
             if entry_body_len > u8::MAX as usize {
                 return Err(Error::SectionLengthOverflow {
                     declared: entry_body_len,
@@ -324,6 +339,63 @@ mod tests {
         let mut buf = vec![0u8; cd.serialized_len()];
         cd.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, &[0x00, 0x00]);
+    }
+
+    /// Hand-built wire bytes (not serializer-derived) pinning every field
+    /// position against TS 102 006 Table 15 — catches a mirrored read/write
+    /// layout bug that serializer-built round-trips cannot.
+    #[test]
+    fn hand_built_byte_anchor() {
+        // len=0x11(17), count=1; entry: type=0x01 len=0x0D(13),
+        // specifierType=0x01, OUI 00:15:0A, model 0x1234, version 0x0001,
+        // subCount=1, sub: type=0x05 len=0x02 data AA BB.
+        let bytes: &[u8] = &[
+            0x00, 0x11, 0x00, 0x01, 0x01, 0x0D, 0x01, 0x00, 0x15, 0x0A, 0x12, 0x34, 0x00, 0x01,
+            0x01, 0x05, 0x02, 0xAA, 0xBB,
+        ];
+        let cd = CompatibilityDescriptor::parse(bytes).unwrap();
+        assert_eq!(cd.descriptors.len(), 1);
+        let e = &cd.descriptors[0];
+        assert_eq!(e.descriptor_type, 0x01);
+        assert_eq!(e.specifier_type, 0x01);
+        assert_eq!(e.specifier_data, [0x00, 0x15, 0x0A]);
+        assert_eq!(e.model, 0x1234);
+        assert_eq!(e.version, 0x0001);
+        assert_eq!(e.sub_descriptors.len(), 1);
+        assert_eq!(e.sub_descriptors[0].sub_descriptor_type, 0x05);
+        assert_eq!(e.sub_descriptors[0].data, &[0xAA, 0xBB]);
+        // Byte-identical re-serialize against the hand-built wire.
+        let mut buf = vec![0u8; cd.serialized_len()];
+        cd.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
+
+    #[test]
+    fn rejects_trailing_bytes() {
+        // len=0x03: count=0 (2 bytes) + 1 slack byte inside the declared length.
+        let bytes: &[u8] = &[0x00, 0x03, 0x00, 0x00, 0xFF];
+        assert!(matches!(
+            CompatibilityDescriptor::parse(bytes).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_truncated_entry_header() {
+        // count=1 but only 1 byte of the 2-byte entry header present.
+        let bytes: &[u8] = &[0x00, 0x03, 0x00, 0x01, 0x01];
+        assert!(CompatibilityDescriptor::parse(bytes).is_err());
+    }
+
+    #[test]
+    fn rejects_truncated_sub_descriptor() {
+        // descriptorLength=9 (fixed fields only) but subCount=1 → no room for
+        // the sub-descriptor header inside the entry.
+        let bytes: &[u8] = &[
+            0x00, 0x0D, 0x00, 0x01, 0x01, 0x09, 0x01, 0x00, 0x15, 0x0A, 0x12, 0x34, 0x00, 0x01,
+            0x01,
+        ];
+        assert!(CompatibilityDescriptor::parse(bytes).is_err());
     }
 
     #[test]

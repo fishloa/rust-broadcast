@@ -529,7 +529,7 @@ fn sat_body_serialized_len(body: &SatBody) -> usize {
     match body {
         SatBody::Raw(v) => v.len(),
         _ => {
-            let mut tmp = vec![0u8; 0];
+            let mut tmp: Vec<u8> = Vec::new();
             let mut writer = BitWriter::new(&mut tmp);
             sat_body_write(body, &mut writer, true);
             writer.bits_written().div_ceil(8)
@@ -1520,9 +1520,9 @@ impl Serialize for SatSection {
         }
         let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
         buf[0] = TABLE_ID;
-        buf[1] = 0x80
+        buf[1] = super::SECTION_B1_SSI
             | (u8::from(self.private_indicator) << 6)
-            | 0x30
+            | super::SECTION_B1_RESERVED_HI
             | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
@@ -2202,7 +2202,11 @@ mod tests {
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();
         let truncate_at = HEADER_LEN + 20;
-        if truncate_at + CRC_LEN < original_len {
+        assert!(
+            truncate_at + CRC_LEN < original_len,
+            "fixture must be large enough to truncate meaningfully"
+        );
+        {
             corrupt_buf.truncate(truncate_at + CRC_LEN);
             let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
@@ -2262,7 +2266,11 @@ mod tests {
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();
         let truncate_at = HEADER_LEN + 30;
-        if truncate_at + CRC_LEN < original_len {
+        assert!(
+            truncate_at + CRC_LEN < original_len,
+            "fixture must be large enough to truncate meaningfully"
+        );
+        {
             corrupt_buf.truncate(truncate_at + CRC_LEN);
             let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);

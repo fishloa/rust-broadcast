@@ -230,6 +230,7 @@ impl PayloadRegistry {
     }
 
     /// Look up a custom parser for `packet_type` — `None` if not registered.
+    #[must_use]
     pub(crate) fn lookup(&self, packet_type: u8) -> Option<&CustomParse> {
         self.custom.get(&packet_type)
     }

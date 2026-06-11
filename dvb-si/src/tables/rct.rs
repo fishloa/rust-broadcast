@@ -217,7 +217,7 @@ fn link_info_serialized_len(li: &LinkInfo) -> usize {
 
 /// Related Content Table (ETSI TS 102 323 v1.4.1 §10.4.2, Table 109).
 ///
-/// The link_info loop has been unfolded into typed [`LinkInfo`] entries.
+/// The link_info loop is unfolded into typed [`LinkInfo`] entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]

@@ -474,6 +474,9 @@ impl<'a> ParsedDescriptorLoop<'a> {
     }
 
     /// Raw descriptor-loop bytes.
+    ///
+    /// Use `raw().iter_with_extensions(&desc_reg, &ext_reg)` to recover custom
+    /// extension bodies from a `Complete*` view.
     #[must_use]
     pub const fn raw(&self) -> DescriptorLoop<'a> {
         self.raw

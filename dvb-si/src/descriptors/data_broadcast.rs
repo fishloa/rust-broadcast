@@ -29,6 +29,7 @@ pub struct DataBroadcastDescriptor<'a> {
     /// component_tag linking this entry to a stream_identifier_descriptor.
     pub component_tag: u8,
     /// Raw selector_byte tail — interpretation depends on data_broadcast_id.
+    /// Kept raw deliberately; decode via id-specific parsers per TS 101 162.
     pub selector: &'a [u8],
     /// ISO 639-2 language code of the text description.
     pub language_code: LangCode,
