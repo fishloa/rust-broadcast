@@ -58,7 +58,7 @@ the payload parsing is `carousel/`.
 | Field | Bits | Value / notes |
 |---|---|---|
 | serverId | 20×8 | DVB: all 20 bytes 0xFF (TR 101 202 §4.7.5.2; confirmed in the live capture) |
-| compatibilityDescriptor() | var | 16-bit length + body, kept raw (TS 102 006 Table 15) |
+| compatibilityDescriptor() | var | 16-bit length + body, typed as `compatibility::CompatibilityDescriptor` (TS 102 006 Table 15) |
 | privateDataLength | 16 | |
 | privateData | 8×N | kept raw — SSU: GroupInfoIndication (TS 102 006 Table 6); object carousel: ServiceGatewayInfo (TR 101 202 Table 4.15) |
 
@@ -72,7 +72,7 @@ the payload parsing is `carousel/`.
 | ackPeriod | 8 | DVB: 0 |
 | tCDownloadWindow | 32 | DVB: 0 |
 | tCDownloadScenario | 32 | |
-| compatibilityDescriptor() | var | 16-bit length + body, kept raw |
+| compatibilityDescriptor() | var | 16-bit length + body, typed as `compatibility::CompatibilityDescriptor` |
 | numberOfModules | 16 | |
 | per module: moduleId | 16 | |
 | per module: moduleSize | 32 | total module bytes |

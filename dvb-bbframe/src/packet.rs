@@ -201,19 +201,19 @@ impl CarryOverExtractor {
         out: &mut Vec<[u8; NM_UP_SIZE]>,
     ) {
         out.clear();
-        assert!(
-            !npd,
-            "CarryOverExtractor does not yet implement NPD/DNP reinsertion"
-        );
+        // NPD/DNP reinsertion is not yet implemented; rather than panic on
+        // wire-derived input, produce no output (out is already cleared).
+        if npd {
+            return;
+        }
         let hdr = match Bbheader::parse(bbheader_bytes) {
             Ok(h) => h,
             Err(_) => return,
         };
-        assert_eq!(
-            hdr.mode,
-            Mode::HighEfficiency,
-            "feed_hem called on non-HEM header"
-        );
+        // Mismatched mode (caller fed a non-HEM header): no output, no panic.
+        if hdr.mode != Mode::HighEfficiency {
+            return;
+        }
 
         let stride = HEM_UP_SIZE;
         let syncd_bytes = (hdr.syncd / 8) as usize;
@@ -281,7 +281,10 @@ impl CarryOverExtractor {
             Ok(h) => h,
             Err(_) => return,
         };
-        assert_eq!(hdr.mode, Mode::Normal, "feed_nm called on non-NM header");
+        // Mismatched mode (caller fed a non-NM header): no output, no panic.
+        if hdr.mode != Mode::Normal {
+            return;
+        }
 
         let stride = NM_UP_SIZE;
         let syncd_bytes = (hdr.syncd / 8) as usize;

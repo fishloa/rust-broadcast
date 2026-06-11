@@ -2202,7 +2202,11 @@ mod tests {
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();
         let truncate_at = HEADER_LEN + 20;
-        if truncate_at + CRC_LEN < original_len {
+        assert!(
+            truncate_at + CRC_LEN < original_len,
+            "fixture must be large enough to truncate meaningfully"
+        );
+        {
             corrupt_buf.truncate(truncate_at + CRC_LEN);
             let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
@@ -2262,7 +2266,11 @@ mod tests {
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();
         let truncate_at = HEADER_LEN + 30;
-        if truncate_at + CRC_LEN < original_len {
+        assert!(
+            truncate_at + CRC_LEN < original_len,
+            "fixture must be large enough to truncate meaningfully"
+        );
+        {
             corrupt_buf.truncate(truncate_at + CRC_LEN);
             let sl = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);

@@ -131,7 +131,7 @@ impl<'a> Parse<'a> for NitSection<'a> {
         if network_desc_end > total - CRC_LEN {
             return Err(Error::SectionLengthOverflow {
                 declared: network_descriptors_length,
-                available: (total - CRC_LEN) - network_desc_start,
+                available: (total - CRC_LEN).saturating_sub(network_desc_start),
             });
         }
 

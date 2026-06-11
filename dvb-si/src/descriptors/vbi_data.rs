@@ -25,7 +25,6 @@ const MAX_SERVICE_LEN: usize = u8::MAX as usize;
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub enum VbiService<'a> {

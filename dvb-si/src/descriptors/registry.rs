@@ -325,7 +325,7 @@ pub struct RegistryIter<'r, 'a> {
 
 /// Shared precedence ladder for both [`RegistryIter`] and [`ExtRegistryIter`].
 ///
-/// Returns the [`AnyDescriptor`] that results from applying the 4-step
+/// Returns the [`AnyDescriptor`] that results from applying the five-step
 /// precedence: PDS-scoped custom → PDS-agnostic custom → logical-channel
 /// opt-in → built-in dispatch → Unknown.
 pub(crate) fn dispatch_entry<'a>(
