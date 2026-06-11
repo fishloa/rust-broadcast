@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-06-11
+
+Lockstep major across the workspace (the `dvb-si` 5.0 "type everything +
+harden" release). One small breaking change to this crate.
+
+### Changed
+- **`crc32_mpeg2::TABLE` is now `pub(crate)`** (was `pub`). The 256-entry
+  lookup table is an internal implementation detail; only `compute()` and
+  `POLY` remain public. (Breaking only if you referenced the table directly.)
+
 ## [4.3.0] — 2026-06-10
 
 Version-lockstep release with the workspace (dvb-si epg / resync /

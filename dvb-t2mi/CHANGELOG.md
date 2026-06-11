@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-06-11
+
+Lockstep major. The individual-addressing payload is now fully typed, private
+packet types are runtime-registrable, and the error model is unified with the
+workspace.
+
+### Added
+- **`PayloadRegistry`** (#122, #129) — register owned types for `packet_type`
+  values not in `PacketType` (or override built-ins) and dispatch through them
+  via `AnyPayload::dispatch_with(packet_type, bytes, &reg)` or
+  `T2miEvent::payload_with(&reg)`; the result is `AnyPayload::Other { packet_type,
+  value }`, downcastable to your concrete type. `PayloadDef` is un-sealed for
+  external implementation.
+- **Typed individual-addressing payload** (#124): the `individual_addressing`
+  packet's transmitter/function loop is fully parsed into typed entries
+  (`FunctionBody` etc.) instead of a raw byte slice.
+
+### Changed
+- **Unified cross-crate error model** (#112): `Error` is now structured
+  `thiserror` variants consistent with the rest of the workspace. (Breaking:
+  error type / variants changed.)
+- **`AnyPayload` is `#[non_exhaustive]`** with `Other`/`Unknown` fall-through
+  arms; growth-prone enums across the crate gained `#[non_exhaustive]`.
+  (Breaking for exhaustive matches.)
+- **`FunctionBody` serde keys are PascalCase** (dropped `rename_all =
+  "camelCase"`) — camelCase is reserved for the top-level dispatch enums.
+  (Breaking for serde consumers of that enum.)
+
+### Fixed
+- `crc.rs` tests no longer depend on `dvb_common::crc32_mpeg2::TABLE` (now
+  `pub(crate)`); they assert against known CRC vectors.
+- `#[must_use]` on `PacketReassembler::new`; `FefSubPartPayload` gained the
+  `yoke::Yokeable` derive (feature `yoke`).
+
 ## [4.3.0] — 2026-06-10
 
 ### Added

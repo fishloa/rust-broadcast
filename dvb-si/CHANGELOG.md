@@ -2,23 +2,97 @@
 
 ## Unreleased
 
+## 5.0.0 — 2026-06-11
+
+The "type everything and harden" major. Every raw structured loop that was
+previously exposed as `&[u8]` is now fully typed; the section parsers are
+hardened against attacker-controlled length fields; private table_ids,
+descriptors, extension bodies and T2-MI payloads are runtime-registrable; and
+the public surface is cleaned up for long-term API stability. This release
+bundles ~50 changes and four adversarial audit rounds since 4.3.0 — see
+[`docs/release-notes/v5.0.0.md`](../docs/release-notes/v5.0.0.md) for the
+narrative and a migration guide.
+
 ### Added
-- **`ExtensionBodyDef` trait** — each typed extension body declares its
-  `TAG_EXTENSION` + `NAME` as associated consts, with a drift test pinning the
-  `kind()` dispatch and those consts to one canonical list (ADR-0001 stage 1).
-- **T2-MI extension descriptor (`descriptor_tag_extension` 0x11)** now typed as
-  `T2miDescriptor` (`t2mi_stream_id`, `num_t2mi_streams_minus_one`,
-  `pcr_iscr_common_clock_flag`, reserved tail) per EN 300 468 §6.4.14 Table 158;
-  previously fell through to `ExtensionBody::Raw` (#53).
-- **video_depth_range extension descriptor (`descriptor_tag_extension` 0x10)**
-  now typed as `VideoDepthRangeDescriptor` — a loop of `DepthRange` entries with
-  typed `ProductionDisparityHint { max, min }` (12-bit two's-complement),
-  `MultiRegionSei`, or raw `Other` bodies, per EN 300 468 §6.4.16.1 Tables
-  160–162 (#53).
-- **VVC subpictures extension descriptor (`descriptor_tag_extension` 0x23)** now
-  typed as `VvcSubpicturesDescriptor` (`default_service_mode`, a `VvcSubpicture`
-  loop of `(component_tag, vvc_subpicture_id)`, `processing_mode`, optional
-  service-description text) per EN 300 468 §6.4.17 Table 162a (#53).
+- **Runtime extensibility — four registries + un-sealed `*Def` traits.** A
+  third-party crate can plug its own wire types into the existing dispatch with
+  zero changes here (see [`docs/extending.md`](../docs/extending.md)):
+  - `DescriptorRegistry` (PDS-scoped via `register_for_pds`) walked through
+    `DescriptorLoop::iter_with` / `iter_with_extensions`; private extended
+    descriptors surface as `ExtIterItem::CustomExtension` (#120).
+  - `TableRegistry` for private `table_id`s, via `AnyTableSection::parse_with`
+    and `SectionEvent::table_section_with` (#121).
+  - `ExtensionRegistry` for private `descriptor_tag_extension` bodies (#120).
+  - The `TableDef` / `DescriptorDef` / `ExtensionBodyDef` traits are un-sealed;
+    registered values are recovered via the inherent `downcast_ref` on the
+    `dyn *Object` (correct under both serde and `--no-default-features`) (#123).
+- **Six extension descriptors (`descriptor_tag` 0x7F) now typed** instead of
+  `ExtensionBody::Raw`: T2-MI (`T2mi`, 0x11), video depth range
+  (`VideoDepthRange`, 0x10), VVC subpictures (`VvcSubpictures`, 0x23), image
+  icon (`ImageIcon`, 0x00), service prominence (`ServiceProminence`, 0x22), and
+  SH delivery system (`ShDeliverySystem`, 0x05) (#82–84, #90–92). The
+  `ExtensionBodyDef` trait + macro-driven, drift-tested dispatch underpins them
+  (ADR-0001; #86, #88, #110).
+- **`compatibility_descriptor()` typed** (`CompatibilityDescriptor`) wherever it
+  appears — DSI / DII carousel messages and UNT platform entries — per ISO/IEC
+  13818-6 / TS 102 006 Table 15 (#133).
+- **`collect/` module** (split from `collect.rs`) with the multi-section table
+  collectors and the `epg` EPG extractor (#113).
+- **Documentation:** ADR-0001/0002 (dispatch design), a reserved-bit policy at
+  each crate root, and `docs/extending.md` ("Adding a parser crate") (#85, #89,
+  #104, #134).
+
+### Changed (breaking)
+- **Unified cross-crate error model** (#112): structured `thiserror` variants
+  consistent across all crates (`BufferTooShort`, `SectionLengthOverflow`,
+  `InvalidDescriptor`, …). Error type / variants changed.
+- **Raw structured loops are now typed** (replacing public `&[u8]` slices) in:
+  `target_region` / `target_region_name`, `network_change_notify`,
+  `T2_delivery_system`, `audio_preselection`, `S2X_satellite_delivery_system`,
+  `TTML_subtitling` (#96–101); six SI tables (#111); `enhanced_AC-3` (0x7A) and
+  `linkage` (0x4A) conditional blocks (#114); `rnt` provider/authority names
+  → `DvbText` (#133).
+- **`#[non_exhaustive]` sweep** across growth-prone enums, the `collect`
+  outputs, and the dispatch enums; matching them now needs a wildcard arm
+  (#109, #127, #130).
+- **serde key conventions tightened:** `rename_all = "camelCase"` is reserved
+  for the top-level dispatch / registry enums only; body enums and structs
+  serialize PascalCase variants / snake_case fields. `epg` structs, `IconLocation`,
+  `VbiService` changed accordingly (#127, #130, #131, #135).
+- **Extension body types renamed** to drop the misleading `Descriptor` suffix:
+  `T2mi`, `VideoDepthRange`, `VvcSubpictures` (#135).
+- **`ts.rs` adopts the `Parse`/`Serialize` contract** (#117).
+
+### Removed (breaking)
+- The dead legacy `dvb_si::traits::Descriptor` and `dvb_si::traits::Table`
+  traits (and `descriptor_length()`, `Table::PID`, `Table::TABLE_ID`) — use
+  `DescriptorDef::TAG` / `TableDef::TABLE_ID_RANGES` or the module-level consts
+  (#135).
+- Redundant wire-derived public fields now computed on serialize:
+  `RctSection::link_count`, the SAT `ephemeris_data_count` / `metadata_flag`,
+  and `SogiEntry::{target_region_flag, service_flag}` (#135).
+- `Error::InvalidBcd` (dead) and the unused `DescriptorRegistry.ext` field
+  (#127, #131).
+
+### Fixed
+- **Section-length underflow DoS** floored across the long-form tables via the
+  shared `crate::tables::check_section_length` helper — a `section_length`
+  smaller than header+CRC no longer underflows into an out-of-bounds slice /
+  panic (#119, #125, #132).
+- **`extended_event` parse panic** on a short declared length (direct `Parse`
+  call); **SAT `section_length` overflow** now guarded in `usize` before the
+  `u16` cast (also `eit`, `rct`) (#135 + follow-up).
+- Reserved-bit emission corrected (DVB long-form bits → 1; extension-body
+  RFU bits; T2/SH delivery flags) with a byte-identity conformance test against
+  real captures (#93, #98, #108); `vbi_data` 0x03 / reserved-bit bugs (#131).
+- `EpgStore` / `EitCollector` growth bounded and `now_and_next` ordering
+  corrected (#107); `SectionSetCollector` capacity capped (#130).
+- Robust registry downcast under `--no-default-features` (the serde-bound
+  blanket-impl footgun) (#123); AC-4 toc documented as opaque codec carriage
+  (#103).
+
+### Performance
+- `TsResync::feed` is now O(n) via a read cursor (#105).
 
 ## 4.3.0 — 2026-06-10
 
