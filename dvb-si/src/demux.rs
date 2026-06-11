@@ -340,6 +340,7 @@ impl SiDemuxBuilder {
             },
             stats: Stats::default(),
             scratch: Vec::new(),
+            completed_scratch: Vec::new(),
         }
     }
 }
@@ -357,6 +358,7 @@ pub struct SiDemux {
     cfg: Config,
     stats: Stats,
     scratch: Vec<SectionEvent>,
+    completed_scratch: Vec<Bytes>,
 }
 
 impl SiDemux {
@@ -390,7 +392,7 @@ impl SiDemux {
                 // PIDs into the map, so it cannot run while the borrow is live).
                 // A non-watched PID costs exactly one lookup and stops here;
                 // `completed` does not allocate until a section actually pops.
-                let mut completed: Vec<Bytes> = Vec::new();
+                let mut completed = std::mem::take(&mut self.completed_scratch);
                 if let Some(reasm) = self.pids.get_mut(&pid) {
                     reasm.feed(payload, ts.header.pusi);
                     while let Some(section) = reasm.pop_section() {
@@ -398,9 +400,10 @@ impl SiDemux {
                     }
                 }
                 self.stats.sections_completed += completed.len() as u64;
-                for section in completed {
+                for section in completed.drain(..) {
                     self.consider(pid, section);
                 }
+                self.completed_scratch = completed;
             }
         }
 
@@ -481,16 +484,24 @@ impl SiDemux {
         };
 
         // Update the gate (FIFO-evict at capacity for newly-seen keys).
-        if !self.gate.contains_key(&key) {
-            if self.gate.len() >= self.cfg.gate_capacity {
-                if let Some(old) = self.gate_order.pop_front() {
-                    self.gate.remove(&old);
-                    self.stats.gate_evictions += 1;
-                }
+        let is_new = !self.gate.contains_key(&key);
+        if is_new && self.gate.len() >= self.cfg.gate_capacity {
+            if let Some(old) = self.gate_order.pop_front() {
+                self.gate.remove(&old);
+                self.stats.gate_evictions += 1;
             }
+        }
+        if is_new {
             self.gate_order.push_back(key);
         }
-        self.gate.insert(key, entry);
+        match self.gate.entry(key) {
+            std::collections::hash_map::Entry::Occupied(mut oe) => {
+                *oe.get_mut() = entry;
+            }
+            std::collections::hash_map::Entry::Vacant(ve) => {
+                ve.insert(entry);
+            }
+        }
 
         if changed || self.cfg.emit_repeats {
             let event = SectionEvent {

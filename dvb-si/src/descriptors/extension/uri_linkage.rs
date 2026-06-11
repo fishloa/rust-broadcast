@@ -5,13 +5,79 @@ impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {
     const TAG_EXTENSION: u8 = 0x13;
     const NAME: &'static str = "URI_LINKAGE";
 }
+
+/// URI linkage type — coded according to ETSI TS 101 162 registry, non-exhaustive.
+///
+/// Names are best-effort from the TS 101 162 registry; new values may be
+/// registered at any time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum UriLinkageType {
+    /// Online SDT (Service Discovery & Selection).
+    OnlineSdt,
+    /// DVB-IPTV SD&S.
+    DvbIptvSds,
+    /// Material resolution server.
+    MaterialResolutionServer,
+    /// DVB-I service list.
+    DvbIServiceList,
+    /// Other / unregistered value.
+    Other(u8),
+}
+
+impl UriLinkageType {
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => UriLinkageType::OnlineSdt,
+            0x01 => UriLinkageType::DvbIptvSds,
+            0x02 => UriLinkageType::MaterialResolutionServer,
+            0x03 => UriLinkageType::DvbIServiceList,
+            other => UriLinkageType::Other(other),
+        }
+    }
+
+    /// Inverse of `from_u8`; `Self::Other` emits its stored value.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            UriLinkageType::OnlineSdt => 0x00,
+            UriLinkageType::DvbIptvSds => 0x01,
+            UriLinkageType::MaterialResolutionServer => 0x02,
+            UriLinkageType::DvbIServiceList => 0x03,
+            UriLinkageType::Other(v) => v,
+        }
+    }
+
+    /// Best-effort human-readable name from the TS 101 162 registry.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            UriLinkageType::OnlineSdt => "online SDT (Service Discovery & Selection)",
+            UriLinkageType::DvbIptvSds => "DVB-IPTV SD&S",
+            UriLinkageType::MaterialResolutionServer => "material resolution server",
+            UriLinkageType::DvbIServiceList => "DVB-I service list",
+            UriLinkageType::Other(_) => "other (TS 101 162 registry)",
+        }
+    }
+
+    /// `true` when this type carries a `min_polling_interval` field per
+    /// EN 300 468 Table 159 (types `0x00` and `0x01`).
+    #[must_use]
+    pub fn has_polling_interval(self) -> bool {
+        matches!(self, UriLinkageType::OnlineSdt | UriLinkageType::DvbIptvSds)
+    }
+}
+
 /// URI_linkage body (Table 159).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct UriLinkage<'a> {
-    /// uri_linkage_type(8).
-    pub uri_linkage_type: u8,
+    /// uri_linkage_type(8) — TS 101 162 registry.
+    pub uri_linkage_type: UriLinkageType,
     /// Length-delimited `uri_char` text.
     pub uri: crate::text::DvbText<'a>,
     /// min_polling_interval(16), present iff `uri_linkage_type` is 0x00 or 0x01.
@@ -30,7 +96,7 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
                 what: "URI_linkage body",
             });
         }
-        let uri_linkage_type = sel[0];
+        let uri_linkage_type = UriLinkageType::from_u8(sel[0]);
         let uri_length = sel[1] as usize;
         let mut pos = 2;
         if sel.len() < pos + uri_length {
@@ -42,7 +108,7 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
         }
         let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
-        let min_polling_interval = if uri_linkage_type == 0x00 || uri_linkage_type == 0x01 {
+        let min_polling_interval = if uri_linkage_type.has_polling_interval() {
             if sel.len() < pos + 2 {
                 return Err(Error::BufferTooShort {
                     need: pos + 2,
@@ -84,7 +150,7 @@ impl Serialize for UriLinkage<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = self.uri_linkage_type;
+        buf[0] = self.uri_linkage_type.to_u8();
         buf[1] = self.uri.len() as u8;
         let mut p = 2;
         buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
@@ -115,7 +181,7 @@ mod tests {
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::UriLinkage(b) => {
-                assert_eq!(b.uri_linkage_type, 0x00);
+                assert_eq!(b.uri_linkage_type, UriLinkageType::OnlineSdt);
                 assert_eq!(b.uri.raw(), uri);
                 assert_eq!(b.uri.decode(), "http://x");
                 assert_eq!(b.min_polling_interval, Some(0x1234));
@@ -153,5 +219,39 @@ mod tests {
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
             crate::error::Error::BufferTooShort { .. }
         ));
+    }
+
+    #[test]
+    fn uri_linkage_type_roundtrip() {
+        for b in 0u8..=0xFF {
+            assert_eq!(UriLinkageType::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn uri_linkage_type_name() {
+        assert_eq!(
+            UriLinkageType::OnlineSdt.name(),
+            "online SDT (Service Discovery & Selection)"
+        );
+        assert_eq!(UriLinkageType::DvbIptvSds.name(), "DVB-IPTV SD&S");
+        assert_eq!(
+            UriLinkageType::MaterialResolutionServer.name(),
+            "material resolution server"
+        );
+        assert_eq!(UriLinkageType::DvbIServiceList.name(), "DVB-I service list");
+        assert_eq!(
+            UriLinkageType::Other(0xFF).name(),
+            "other (TS 101 162 registry)"
+        );
+    }
+
+    #[test]
+    fn uri_linkage_type_has_polling_interval() {
+        assert!(UriLinkageType::OnlineSdt.has_polling_interval());
+        assert!(UriLinkageType::DvbIptvSds.has_polling_interval());
+        assert!(!UriLinkageType::MaterialResolutionServer.has_polling_interval());
+        assert!(!UriLinkageType::DvbIServiceList.has_polling_interval());
+        assert!(!UriLinkageType::Other(0x42).has_polling_interval());
     }
 }

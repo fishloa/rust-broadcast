@@ -543,7 +543,7 @@ fn decode_iso_8859(n: u8, bytes: &[u8]) -> String {
         13 => ISO_8859_13,
         14 => ISO_8859_14,
         15 => ISO_8859_15,
-        _ => return bytes.iter().map(|&b| b as char).collect(),
+        _ => return bytes.iter().map(|_| '\u{FFFD}').collect(),
     };
     let (cow, _, _) = encoding.decode(bytes);
     cow.into_owned()
@@ -689,6 +689,17 @@ mod tests {
         let s = decode_dvb_string(&[0x16, 0xAA, 0xBB, 0xCC]);
         assert_eq!(s.chars().count(), 3);
         assert!(s.chars().all(|c| c == '\u{FFFD}'));
+    }
+
+    /// An unsupported ISO 8859 part number (via 0x10 extended selector) yields
+    /// U+FFFD per byte rather than Latin-1 passthrough.
+    #[test]
+    fn unsupported_iso_8859_part_yields_replacement() {
+        // 0x10 selector with third byte 0x01 → ISO 8859-1 (not in our modeled
+        // set 2–15). The body bytes should decode as U+FFFD, not Latin-1.
+        let s = decode_dvb_string(&[0x10, 0x00, 0x01, 0x41, 0x42]);
+        assert_eq!(s.chars().count(), 2);
+        assert!(s.chars().all(|c| c == '\u{FFFD}'), "got: {s:?}");
     }
 
     /// Pins the GR-area single-byte mappings to ETSI EN 300 468 V1.19.1
