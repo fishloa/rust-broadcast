@@ -7,7 +7,7 @@ use std::fmt;
 
 use dvb_common::{Parse, Serialize};
 
-use super::fef_null::S1Field;
+use super::fef_null::{S1Field, S2Field1};
 
 /// FEF part: composite payload (type 0x32) per ETSI TS 102 773 §5.2.11.
 ///
@@ -29,6 +29,20 @@ pub struct FefCompositePayload {
     pub s2_field: u8,
     /// Total number of sub-parts P.
     pub num_subparts: u16,
+}
+
+impl FefCompositePayload {
+    /// Decode S2 field 1 (3 bits, upper nibble minus rfu) per EN 302 755 §7.2.3.
+    #[must_use]
+    pub fn s2_field1(&self) -> S2Field1 {
+        S2Field1::from_u8(self.s2_field >> 1)
+    }
+
+    /// S2 field 2: mixed flag (1 bit, bit 0) per EN 302 755 §7.2.3.
+    #[must_use]
+    pub fn is_mixed(&self) -> bool {
+        (self.s2_field & 0x01) != 0
+    }
 }
 
 const FEF_COMPOSITE_LEN: usize = 8;
@@ -191,5 +205,28 @@ mod tests {
         payload.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[1] & 0x80, 0); // rfu1
         assert_eq!(&buf[2..6], &[0u8; 4]); // rfu2
+    }
+
+    #[test]
+    fn s2_field1_and_mixed_decode() {
+        // s2_field = 0b0001 -> S2 field 1 = 000 (Fft1k), mixed = 1
+        let p = FefCompositePayload {
+            fef_idx: 0,
+            s1_field: S1Field::V0,
+            s2_field: 0x01,
+            num_subparts: 0,
+        };
+        assert_eq!(p.s2_field1(), S2Field1::Fft1k);
+        assert!(p.is_mixed());
+
+        // s2_field = 0b1100 -> S2 field 1 = 110 (Reserved1), mixed = 0
+        let p = FefCompositePayload {
+            fef_idx: 0,
+            s1_field: S1Field::V0,
+            s2_field: 0x0C,
+            num_subparts: 0,
+        };
+        assert_eq!(p.s2_field1(), S2Field1::Reserved1);
+        assert!(!p.is_mixed());
     }
 }

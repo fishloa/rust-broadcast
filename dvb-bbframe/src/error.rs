@@ -43,6 +43,13 @@ pub enum Error {
         have: usize,
     },
 
+    /// ISSY form/prefix bit does not match the decoder called.
+    #[error("invalid ISSY form: {reason} (EN 302 755 Annex C)")]
+    InvalidIssyForm {
+        /// Why the form was rejected.
+        reason: &'static str,
+    },
+
     /// DFL field is outside the valid range. The enforced ceiling `DFL_MAX_BITS`
     /// (64800) is the DVB-S2 normal-FECFRAME data-field bound (EN 302 307-1
     /// §5.1.4); DVB-T2 is tighter still (0..=53760, EN 302 755 Table 2).

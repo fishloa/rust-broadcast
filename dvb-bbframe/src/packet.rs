@@ -53,7 +53,7 @@ impl<'a> NmTsIter<'a> {
 
     /// Return the unconsumed tail of the data field.
     pub fn remaining(self) -> &'a [u8] {
-        &self.data[self.pos..]
+        self.data.get(self.pos..).unwrap_or(&[])
     }
 }
 
@@ -102,7 +102,7 @@ impl<'a> HemTsIter<'a> {
 
     /// Return the unconsumed tail of the data field.
     pub fn remaining(self) -> &'a [u8] {
-        &self.data[self.pos..]
+        self.data.get(self.pos..).unwrap_or(&[])
     }
 }
 
@@ -129,18 +129,45 @@ impl Iterator for HemTsIter<'_> {
     }
 }
 
+/// Concrete user-packet iterator returned by [`up_iter`].
+///
+/// Selects NM or HEM iteration at runtime without heap allocation or
+/// dynamic dispatch — the mode is baked into the variant.
+#[derive(Clone, Copy)]
+pub enum UpIter<'a> {
+    /// Normal Mode iteration.
+    Normal(NmTsIter<'a>),
+    /// High Efficiency Mode iteration.
+    HighEfficiency(HemTsIter<'a>),
+}
+
+impl Iterator for UpIter<'_> {
+    type Item = [u8; NM_UP_SIZE];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Normal(it) => it.next(),
+            Self::HighEfficiency(it) => it.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Normal(it) => it.size_hint(),
+            Self::HighEfficiency(it) => it.size_hint(),
+        }
+    }
+}
+
 /// Build an appropriate user-packet iterator for the given BBHEADER.
 ///
 /// Returns either an NM or HEM iterator depending on the detected mode.
 /// The caller must handle SYNCD alignment before calling this — typically
 /// by skipping `syncd / 8` bytes at the start of the data field.
-pub fn up_iter<'a>(
-    data: &'a [u8],
-    bbheader: &Bbheader,
-) -> Box<dyn Iterator<Item = [u8; NM_UP_SIZE]> + 'a> {
+pub fn up_iter<'a>(data: &'a [u8], bbheader: &Bbheader) -> UpIter<'a> {
     match bbheader.mode {
-        Mode::Normal => Box::new(NmTsIter::new(data)),
-        Mode::HighEfficiency => Box::new(HemTsIter::new(data, bbheader.matype.npd)),
+        Mode::Normal => UpIter::Normal(NmTsIter::new(data)),
+        Mode::HighEfficiency => UpIter::HighEfficiency(HemTsIter::new(data, bbheader.matype.npd)),
     }
 }
 
@@ -268,7 +295,7 @@ impl CarryOverExtractor {
     }
 
     /// Buffer-reusing variant of [`feed_nm`](Self::feed_nm). Clears `out`, then
-    /// appends the TS packets that completed during this frame. Reuse the same
+    /// appends the TS packets that completed during that frame. Reuse the same
     /// `Vec` across frames to avoid a per-frame heap allocation.
     pub fn feed_nm_into(
         &mut self,
@@ -619,5 +646,29 @@ mod tests {
             a2, b2,
             "frame 2 (carry-over) output matches; buffer was cleared"
         );
+    }
+
+    #[test]
+    fn remaining_safe_when_pos_equals_len() {
+        let data = vec![0xAA; NM_UP_SIZE];
+        let mut iter = NmTsIter::new(&data);
+        let _p = iter.next().unwrap();
+        // pos == data.len() — must not panic
+        let remaining = iter.remaining();
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn remaining_safe_when_pos_exceeds_len() {
+        // Construct an iterator and manually set pos beyond data length.
+        // This cannot happen through normal iteration, but the safe
+        // get().unwrap_or(&[]) handles it gracefully.
+        let data = vec![0xAA; 10];
+        let iter = NmTsIter {
+            data: &data,
+            pos: 20,
+        };
+        let remaining = iter.remaining();
+        assert!(remaining.is_empty());
     }
 }
