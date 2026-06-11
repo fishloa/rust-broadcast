@@ -40,26 +40,40 @@ jobs:
             fi
           done
 
-      # Dependency order: dvb-common first, then the three dependents.
-      # The index can lag a few seconds after a publish; `cargo publish`
-      # blocks until the published crate is available since Cargo 1.66, so
-      # no manual sleep is needed.
-      - name: Publish dvb-common
-        run: cargo publish -p dvb-common --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish dvb-si
-        run: cargo publish -p dvb-si --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish dvb-t2mi
-        run: cargo publish -p dvb-t2mi --locked
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish dvb-bbframe
-        run: cargo publish -p dvb-bbframe --locked
+      # Dependency order (topological): dvb-common has no workspace deps and
+      # must go first. dvb-si and dvb-bbframe each depend only on dvb-common.
+      # dvb-t2mi depends on dvb-common AND (optionally, ts-gated) dvb-bbframe,
+      # so it must publish LAST — after dvb-bbframe is on the index. Hence:
+      #   common → bbframe → si → t2mi.
+      # The index can lag a few seconds after a publish; `cargo publish` blocks
+      # until the published crate is available since Cargo 1.66, so no manual
+      # sleep is needed.
+      #
+      # Each step is idempotent: `publish_crate` treats an "already uploaded"
+      # / "crate version already exists" error as success, so re-running the
+      # workflow after a partial publish skips the crates that already shipped
+      # and only publishes the missing ones.
+      - name: Publish crates
+        run: |
+          publish_crate() {
+            local crate="$1"
+            local out
+            if out=$(cargo publish -p "$crate" --locked 2>&1); then
+              echo "$out"
+              echo "::notice::published $crate"
+              return 0
+            fi
+            echo "$out"
+            if echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+              echo "::notice::$crate already on crates.io at this version — skipping"
+              return 0
+            fi
+            echo "::error::failed to publish $crate"
+            return 1
+          }
+          publish_crate dvb-common
+          publish_crate dvb-bbframe
+          publish_crate dvb-si
+          publish_crate dvb-t2mi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
