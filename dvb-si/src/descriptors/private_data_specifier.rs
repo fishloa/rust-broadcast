@@ -15,25 +15,15 @@ const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 4;
 
 /// Best-effort, non-exhaustive mapping from a 32-bit `private_data_specifier`
-/// to a human-readable organization name.  Registered values are from
-/// ETSI TR 101 162 and common industry assignments.
+/// to a human-readable organization name.  Verified entries from the
+/// DVB Services registry.
 #[must_use]
 pub fn private_data_specifier_name(v: u32) -> Option<&'static str> {
     match v {
-        0x0000_0028 => Some("EACEM / DIGITALEUROPE"),
+        0x0000_0028 => Some("EACEM / EICTA"),
         0x0000_0029 => Some("NorDig"),
-        0x0000_0002 => Some("British Sky Broadcasting (BskyB)"),
-        0x0000_233A => Some("Free TV Australia"),
-        0x0000_001A => Some("SES Astra"),
-        0x0000_001B => Some("Eutelsat"),
-        0x0000_001C => Some("Hughes Network Systems"),
-        0x0000_002A => Some("Canal+ Technologies"),
-        0x0000_002B => Some("NDS"),
-        0x0000_002C => Some("Irdeto"),
-        0x0000_002D => Some("Nagravision"),
-        0x0000_0030 => Some("ATSC"),
-        0x0000_0031 => Some("SCTE"),
-        0x0000_0032 => Some("ARIB"),
+        0x0000_233A => Some("UK DTT (Independent Television Commission / DTG)"),
+        0x0000_0002 => Some("BSkyB"),
         _ => None,
     }
 }
@@ -170,16 +160,24 @@ mod tests {
     }
 
     #[test]
-    fn specifier_name_well_known() {
+    fn specifier_name_verified() {
         assert_eq!(
             private_data_specifier_name(0x0000_0028),
-            Some("EACEM / DIGITALEUROPE")
+            Some("EACEM / EICTA")
         );
         assert_eq!(private_data_specifier_name(0x0000_0029), Some("NorDig"));
         assert_eq!(
-            private_data_specifier_name(0x0000_0002),
-            Some("British Sky Broadcasting (BskyB)")
+            private_data_specifier_name(0x0000_233A),
+            Some("UK DTT (Independent Television Commission / DTG)")
         );
+        assert_eq!(private_data_specifier_name(0x0000_0002), Some("BSkyB"));
+    }
+
+    #[test]
+    fn specifier_name_removed_entries_return_none() {
+        assert_eq!(private_data_specifier_name(0x0000_001A), None);
+        assert_eq!(private_data_specifier_name(0x0000_002A), None);
+        assert_eq!(private_data_specifier_name(0x0000_0030), None);
     }
 
     #[test]

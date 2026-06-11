@@ -4,6 +4,7 @@
 //! `CA_system_id`s whose conditional-access systems are available for the
 //! associated service/bouquet/event. Body is simply `N` × 16-bit CAIDs.
 
+pub use super::ca::ca_system_name;
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};

@@ -104,29 +104,22 @@ impl ControlCode {
 /// Application type — ETSI TS 102 809 §5.2.4.2 Tables 2-3 (application_type).
 ///
 /// 15-bit field identifying the application environment.
+/// Verified entries from the DVB Services registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum ApplicationType {
-    /// 0x0000 — reserved.
-    Reserved,
-    /// 0x0001 — DVB-J (Java).
+    /// 0x0001 — DVB-J.
     DvbJ,
     /// 0x0002 — DVB-HTML.
     DvbHtml,
-    /// 0x0003 — DVB-MHP 1.0.
-    DvbMhp1_0,
-    /// 0x0004 — DVB-MHP 1.1.
-    DvbMhp1_1,
-    /// 0x0005 — DVB-MHP 1.2.
-    DvbMhp1_2,
-    /// 0x0010 — HbbTV (DVB-HTML application).
+    /// 0x0010 — HbbTV.
     HbbTv,
-    /// 0x0011 — CI Plus.
-    CiPlus,
-    /// 0x7FFF — reserved to DVB.
-    DvbReserved(u16),
-    /// 0x8000..0xFFFF — user defined.
+    /// 0x0011 — OIPF DAE.
+    OipfDae,
+    /// Other values below `0x8000` — reserved for DVB use.
+    Reserved(u16),
+    /// `0x8000`..`0xFFFF` — user defined.
     UserDefined(u16),
 }
 
@@ -135,32 +128,24 @@ impl ApplicationType {
     /// Decode from the wire value.  Every value maps (lossless).
     pub fn from_u16(v: u16) -> Self {
         match v {
-            0x0000 => Self::Reserved,
             0x0001 => Self::DvbJ,
             0x0002 => Self::DvbHtml,
-            0x0003 => Self::DvbMhp1_0,
-            0x0004 => Self::DvbMhp1_1,
-            0x0005 => Self::DvbMhp1_2,
             0x0010 => Self::HbbTv,
-            0x0011 => Self::CiPlus,
-            v if v < 0x8000 => Self::DvbReserved(v),
+            0x0011 => Self::OipfDae,
+            v if v < 0x8000 => Self::Reserved(v),
             _ => Self::UserDefined(v),
         }
     }
 
     #[must_use]
-    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    /// Encode to the wire value.  Inverse of `from_u16`.
     pub fn to_u16(self) -> u16 {
         match self {
-            Self::Reserved => 0x0000,
             Self::DvbJ => 0x0001,
             Self::DvbHtml => 0x0002,
-            Self::DvbMhp1_0 => 0x0003,
-            Self::DvbMhp1_1 => 0x0004,
-            Self::DvbMhp1_2 => 0x0005,
             Self::HbbTv => 0x0010,
-            Self::CiPlus => 0x0011,
-            Self::DvbReserved(v) | Self::UserDefined(v) => v,
+            Self::OipfDae => 0x0011,
+            Self::Reserved(v) | Self::UserDefined(v) => v,
         }
     }
 
@@ -168,15 +153,11 @@ impl ApplicationType {
     /// Human-readable spec display name.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Reserved => "Reserved",
             Self::DvbJ => "DVB-J",
             Self::DvbHtml => "DVB-HTML",
-            Self::DvbMhp1_0 => "DVB-MHP 1.0",
-            Self::DvbMhp1_1 => "DVB-MHP 1.1",
-            Self::DvbMhp1_2 => "DVB-MHP 1.2",
             Self::HbbTv => "HbbTV",
-            Self::CiPlus => "CI Plus",
-            Self::DvbReserved(_) => "DVB Reserved",
+            Self::OipfDae => "OIPF DAE",
+            Self::Reserved(_) => "Reserved",
             Self::UserDefined(_) => "User Defined",
         }
     }

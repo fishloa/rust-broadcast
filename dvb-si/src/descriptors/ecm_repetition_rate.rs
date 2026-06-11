@@ -5,6 +5,7 @@
 //! descriptor" (PDF p. 56) the body is: CA_system_ID(16) +
 //! ECM_repetition_rate(16) + trailing private_data_byte run.
 
+pub use super::ca::ca_system_name;
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
