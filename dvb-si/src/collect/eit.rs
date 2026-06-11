@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::descriptors::DescriptorRegistry;
 use crate::section::Section;
 use crate::tables::eit;
+use crate::tables::RunningStatus;
 use dvb_common::Parse;
 
 use super::{
@@ -495,8 +496,8 @@ pub struct CompleteEitEvent<'a> {
     pub start_time_raw: [u8; 5],
     /// 24-bit duration.
     pub duration_raw: [u8; 3],
-    /// 3-bit running status.
-    pub running_status: u8,
+    /// 3-bit running status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// free_CA_mode.
     pub free_ca_mode: bool,
     /// Typed descriptor loop for this event.

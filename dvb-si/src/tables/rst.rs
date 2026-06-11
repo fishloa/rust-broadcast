@@ -9,6 +9,7 @@
 //! event_id(16) reserved_future_use(5) running_status(3)
 //! ```
 
+use super::RunningStatus;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
@@ -38,7 +39,7 @@ pub struct RstEntry {
     /// Event identifier.
     pub event_id: u16,
     /// 3-bit running_status code (EN 300 468 Table 6).
-    pub running_status: u8,
+    pub running_status: RunningStatus,
 }
 
 /// Running Status Table (§5.2.8, Table 10).
@@ -89,7 +90,7 @@ impl<'a> Parse<'a> for RstSection {
                 original_network_id: u16::from_be_bytes([bytes[off + 2], bytes[off + 3]]),
                 service_id: u16::from_be_bytes([bytes[off + 4], bytes[off + 5]]),
                 event_id: u16::from_be_bytes([bytes[off + 6], bytes[off + 7]]),
-                running_status: bytes[off + 8] & 0x07,
+                running_status: RunningStatus::from_u8(bytes[off + 8] & 0x07),
             });
             off += ENTRY_LEN;
         }
@@ -125,7 +126,7 @@ impl Serialize for RstSection {
             buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
             buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] = 0xF8 | (e.running_status & 0x07);
+            buf[off + 8] = 0xF8 | (e.running_status.to_u8() & 0x07);
             off += ENTRY_LEN;
         }
         Ok(len)
@@ -152,12 +153,12 @@ mod tests {
             v.extend_from_slice(&e.original_network_id.to_be_bytes());
             v.extend_from_slice(&e.service_id.to_be_bytes());
             v.extend_from_slice(&e.event_id.to_be_bytes());
-            v.push(0xF8 | (e.running_status & 0x07));
+            v.push(0xF8 | (e.running_status.to_u8() & 0x07));
         }
         v
     }
 
-    fn entry(tsid: u16, onid: u16, sid: u16, evid: u16, rs: u8) -> RstEntry {
+    fn entry(tsid: u16, onid: u16, sid: u16, evid: u16, rs: RunningStatus) -> RstEntry {
         RstEntry {
             transport_stream_id: tsid,
             original_network_id: onid,
@@ -175,19 +176,19 @@ mod tests {
 
     #[test]
     fn parse_single_entry() {
-        let e = entry(0x1234, 0x0001, 0xABCD, 0x4000, 4);
+        let e = entry(0x1234, 0x0001, 0xABCD, 0x4000, RunningStatus::Running);
         let rst = RstSection::parse(&build_rst(&[e])).unwrap();
         assert_eq!(rst.entries.len(), 1);
         assert_eq!(rst.entries[0], e);
-        assert_eq!(rst.entries[0].running_status, 4); // running
+        assert_eq!(rst.entries[0].running_status, RunningStatus::Running); // running
     }
 
     #[test]
     fn parse_multiple_entries() {
         let es = [
-            entry(0x0001, 0x1000, 0x0010, 0x0100, 1),
-            entry(0x0002, 0x2000, 0x0020, 0x0200, 4),
-            entry(0x0003, 0x3000, 0x0030, 0x0300, 5),
+            entry(0x0001, 0x1000, 0x0010, 0x0100, RunningStatus::NotRunning),
+            entry(0x0002, 0x2000, 0x0020, 0x0200, RunningStatus::Running),
+            entry(0x0003, 0x3000, 0x0030, 0x0300, RunningStatus::ServiceOffAir),
         ];
         let rst = RstSection::parse(&build_rst(&es)).unwrap();
         assert_eq!(rst.entries, es);
@@ -224,8 +225,8 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let es = [
-            entry(0xCAFE, 0xBEEF, 0x1234, 0x5678, 4),
-            entry(0x0001, 0x0002, 0x0003, 0x0004, 5),
+            entry(0xCAFE, 0xBEEF, 0x1234, 0x5678, RunningStatus::Running),
+            entry(0x0001, 0x0002, 0x0003, 0x0004, RunningStatus::ServiceOffAir),
         ];
         let rst = RstSection::parse(&build_rst(&es)).unwrap();
         let mut buf = vec![0u8; rst.serialized_len()];
@@ -252,7 +253,8 @@ mod tests {
     #[test]
     fn serde_json_serializes_fields() {
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
-        let rst = RstSection::parse(&build_rst(&[entry(1, 2, 3, 4, 4)])).unwrap();
+        let rst =
+            RstSection::parse(&build_rst(&[entry(1, 2, 3, 4, RunningStatus::Running)])).unwrap();
         let j = serde_json::to_string(&rst).unwrap();
         let v: serde_json::Value = serde_json::from_str(&j).unwrap();
         assert_eq!(v["entries"][0]["service_id"], 3);

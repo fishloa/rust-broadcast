@@ -9,6 +9,7 @@ use dvb_common::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::owned::Owned;
 use dvb_si::tables::sdt::{SdtKind, SdtSection, SdtService};
+use dvb_si::tables::RunningStatus;
 
 /// Build a minimal two-service SDT section through the serializer.
 fn sdt_section() -> Vec<u8> {
@@ -25,7 +26,7 @@ fn sdt_section() -> Vec<u8> {
                 service_id: 0x0A,
                 eit_schedule_flag: true,
                 eit_present_following_flag: true,
-                running_status: 4,
+                running_status: RunningStatus::Running,
                 free_ca_mode: false,
                 descriptors: DescriptorLoop::new(&[]),
             },
@@ -33,7 +34,7 @@ fn sdt_section() -> Vec<u8> {
                 service_id: 0x0B,
                 eit_schedule_flag: false,
                 eit_present_following_flag: false,
-                running_status: 1,
+                running_status: RunningStatus::NotRunning,
                 free_ca_mode: true,
                 descriptors: DescriptorLoop::new(&[]),
             },
