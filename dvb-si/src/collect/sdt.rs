@@ -1,5 +1,6 @@
 use crate::descriptors::DescriptorRegistry;
 use crate::tables::sdt;
+use crate::tables::RunningStatus;
 
 use super::{CompleteSectionSet, ParsedDescriptorLoop};
 
@@ -13,8 +14,8 @@ pub struct CompleteSdtService<'a> {
     pub eit_schedule_flag: bool,
     /// EIT present/following flag.
     pub eit_present_following_flag: bool,
-    /// 3-bit running status.
-    pub running_status: u8,
+    /// 3-bit running status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// free_CA_mode.
     pub free_ca_mode: bool,
     /// Typed descriptor loop for this service.

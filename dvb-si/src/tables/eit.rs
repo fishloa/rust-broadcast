@@ -9,6 +9,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use crate::tables::RunningStatus;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
@@ -78,8 +79,8 @@ pub struct EitEvent<'a> {
     pub start_time_raw: [u8; 5],
     /// 24-bit BCD duration HHMMSS.
     pub duration_raw: [u8; 3],
-    /// 3-bit running_status.
-    pub running_status: u8,
+    /// 3-bit running_status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// free_CA_mode flag.
     pub free_ca_mode: bool,
     /// Descriptor loop for this event. Serializes as the typed descriptor
@@ -176,7 +177,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
             ];
             let duration_raw = [bytes[pos + 7], bytes[pos + 8], bytes[pos + 9]];
             let status_and_len_hi = bytes[pos + 10];
-            let running_status = (status_and_len_hi >> 5) & 0x07;
+            let running_status = RunningStatus::from_u8((status_and_len_hi >> 5) & 0x07);
             let free_ca_mode = (status_and_len_hi & 0x10) != 0;
             let descriptors_loop_length =
                 (((status_and_len_hi & 0x0F) as usize) << 8) | bytes[pos + 11] as usize;
@@ -269,7 +270,7 @@ impl Serialize for EitSection<'_> {
             buf[pos + 2..pos + 7].copy_from_slice(&ev.start_time_raw);
             buf[pos + 7..pos + 10].copy_from_slice(&ev.duration_raw);
             let dll = ev.descriptors.len() as u16;
-            buf[pos + 10] = ((ev.running_status & 0x07) << 5)
+            buf[pos + 10] = (ev.running_status.to_u8() << 5)
                 | (u8::from(ev.free_ca_mode) << 4)
                 | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 11] = (dll & 0xFF) as u8;
@@ -461,7 +462,7 @@ mod tests {
         );
         assert_eq!(
             EitSection::parse(&bytes).unwrap().events[0].running_status,
-            2
+            RunningStatus::StartsInAFewSeconds
         );
     }
 
@@ -498,7 +499,7 @@ mod tests {
                     event_id: 1,
                     start_time_raw: [0xDF, 0xA1, 0x12, 0x34, 0x56],
                     duration_raw: [0x00, 0x30, 0x00],
-                    running_status: 4,
+                    running_status: RunningStatus::Running,
                     free_ca_mode: false,
                     descriptors: DescriptorLoop::new(&desc1),
                 },
@@ -506,7 +507,7 @@ mod tests {
                     event_id: 2,
                     start_time_raw: [0xDF, 0xA1, 0x13, 0x00, 0x00],
                     duration_raw: [0x01, 0x00, 0x00],
-                    running_status: 1,
+                    running_status: RunningStatus::NotRunning,
                     free_ca_mode: true,
                     descriptors: DescriptorLoop::new(&[]),
                 },
@@ -534,7 +535,7 @@ mod tests {
             event_id: 1,
             start_time_raw: [(mjd >> 8) as u8, (mjd & 0xFF) as u8, 0x12, 0x34, 0x56],
             duration_raw: [0, 0, 0],
-            running_status: 0,
+            running_status: RunningStatus::Undefined,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(&[]),
         };
@@ -636,7 +637,7 @@ mod tests {
         assert_eq!(eit.last_table_id, TABLE_ID_SCHEDULE_ACTUAL_FIRST);
         assert_eq!(eit.events.len(), 1);
         assert_eq!(eit.events[0].event_id, 42);
-        assert_eq!(eit.events[0].running_status, 4);
+        assert_eq!(eit.events[0].running_status, RunningStatus::Running);
         assert!(!eit.events[0].free_ca_mode);
         // 12-bit descriptor loop length decoded correctly: 2 bytes of desc.
         assert_eq!(eit.events[0].descriptors.raw(), &desc[..]);

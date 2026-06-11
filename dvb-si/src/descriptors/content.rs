@@ -12,6 +12,215 @@ pub const TAG: u8 = 0x54;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 2;
 
+/// Content genre level-1 broad category — EN 300 468 Table 29.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ContentGenre {
+    /// 0x0 — undefined content.
+    UndefinedContent,
+    /// 0x1 — Movie/Drama.
+    MovieDrama,
+    /// 0x2 — News/Current Affairs.
+    NewsCurrentAffairs,
+    /// 0x3 — Show/Game Show.
+    ShowGameShow,
+    /// 0x4 — Sports.
+    Sports,
+    /// 0x5 — Children/Youth programmes.
+    ChildrenYouth,
+    /// 0x6 — Music/Ballet/Dance.
+    MusicBalletDance,
+    /// 0x7 — Arts/Culture (without music).
+    ArtsCulture,
+    /// 0x8 — Social/Political issues/Economics.
+    SocialPoliticalEconomics,
+    /// 0x9 — Education/Science/Factual topics.
+    EducationScienceFactual,
+    /// 0xA — Leisure hobbies.
+    LeisureHobbies,
+    /// 0xB — Special characteristics.
+    SpecialCharacteristics,
+    /// 0xC — Adult.
+    Adult,
+    /// 0xD..=0xE — reserved for future use, preserved verbatim.
+    Reserved(u8),
+    /// 0xF — user defined, preserved verbatim.
+    UserDefined(u8),
+}
+
+impl ContentGenre {
+    /// Convert a level-1 nibble to a [`ContentGenre`].
+    #[must_use]
+    pub fn from_nibble_1(n1: u8) -> Self {
+        match n1 {
+            0x0 => Self::UndefinedContent,
+            0x1 => Self::MovieDrama,
+            0x2 => Self::NewsCurrentAffairs,
+            0x3 => Self::ShowGameShow,
+            0x4 => Self::Sports,
+            0x5 => Self::ChildrenYouth,
+            0x6 => Self::MusicBalletDance,
+            0x7 => Self::ArtsCulture,
+            0x8 => Self::SocialPoliticalEconomics,
+            0x9 => Self::EducationScienceFactual,
+            0xA => Self::LeisureHobbies,
+            0xB => Self::SpecialCharacteristics,
+            0xC => Self::Adult,
+            0xD | 0xE => Self::Reserved(n1),
+            0xF => Self::UserDefined(n1),
+            _ => Self::Reserved(n1),
+        }
+    }
+}
+
+/// Return the most specific content genre name from EN 300 468 Table 29.
+///
+/// Maps `(nibble_1, nibble_2)` to the corresponding description string.
+/// Returns `"unknown"` for unallocated combinations.
+#[must_use]
+pub fn content_genre_name(nibble_1: u8, nibble_2: u8) -> &'static str {
+    match (nibble_1, nibble_2) {
+        (0x0, 0x0..=0xF) => "undefined content",
+
+        // Movie/Drama
+        (0x1, 0x0) => "movie/drama (general)",
+        (0x1, 0x1) => "detective/thriller",
+        (0x1, 0x2) => "adventure/western/war",
+        (0x1, 0x3) => "science fiction/fantasy/horror",
+        (0x1, 0x4) => "comedy",
+        (0x1, 0x5) => "soap/melodrama/folkloric",
+        (0x1, 0x6) => "romance",
+        (0x1, 0x7) => "serious/classical/religious/historical movie/drama",
+        (0x1, 0x8) => "adult movie/drama",
+        (0x1, 0x9..=0xE) => "reserved",
+        (0x1, 0xF) => "user defined",
+
+        // News/Current Affairs
+        (0x2, 0x0) => "news/current affairs (general)",
+        (0x2, 0x1) => "news/weather report",
+        (0x2, 0x2) => "news magazine",
+        (0x2, 0x3) => "documentary",
+        (0x2, 0x4) => "discussion/interview/debate",
+        (0x2, 0x5..=0xE) => "reserved",
+        (0x2, 0xF) => "user defined",
+
+        // Show/Game Show
+        (0x3, 0x0) => "show/game show (general)",
+        (0x3, 0x1) => "game show/quiz/contest",
+        (0x3, 0x2) => "variety show",
+        (0x3, 0x3) => "talk show",
+        (0x3, 0x4..=0xE) => "reserved",
+        (0x3, 0xF) => "user defined",
+
+        // Sports
+        (0x4, 0x0) => "sports (general)",
+        (0x4, 0x1) => "special events (Olympic Games, World Cup, etc.)",
+        (0x4, 0x2) => "sports magazines",
+        (0x4, 0x3) => "football/soccer",
+        (0x4, 0x4) => "tennis/squash",
+        (0x4, 0x5) => "team sports (excluding football)",
+        (0x4, 0x6) => "athletics",
+        (0x4, 0x7) => "motor sport",
+        (0x4, 0x8) => "water sport",
+        (0x4, 0x9) => "winter sports",
+        (0x4, 0xA) => "equestrian",
+        (0x4, 0xB) => "martial sports",
+        (0x4, 0xC..=0xE) => "reserved",
+        (0x4, 0xF) => "user defined",
+
+        // Children/Youth
+        (0x5, 0x0) => "children's/youth programmes (general)",
+        (0x5, 0x1) => "pre-school children's programmes",
+        (0x5, 0x2) => "entertainment programmes for 6 to 14",
+        (0x5, 0x3) => "entertainment programmes for 10 to 16",
+        (0x5, 0x4) => "informational/educational/school programmes",
+        (0x5, 0x5) => "cartoons/puppets",
+        (0x5, 0x6..=0xE) => "reserved",
+        (0x5, 0xF) => "user defined",
+
+        // Music/Ballet/Dance
+        (0x6, 0x0) => "music/ballet/dance (general)",
+        (0x6, 0x1) => "rock/pop",
+        (0x6, 0x2) => "serious music/classical music",
+        (0x6, 0x3) => "folk/traditional music",
+        (0x6, 0x4) => "jazz",
+        (0x6, 0x5) => "musical/opera",
+        (0x6, 0x6) => "ballet",
+        (0x6, 0x7..=0xE) => "reserved",
+        (0x6, 0xF) => "user defined",
+
+        // Arts/Culture
+        (0x7, 0x0) => "arts/culture (without music, general)",
+        (0x7, 0x1) => "performing arts",
+        (0x7, 0x2) => "fine arts",
+        (0x7, 0x3) => "religion",
+        (0x7, 0x4) => "popular culture/traditional arts",
+        (0x7, 0x5) => "literature",
+        (0x7, 0x6) => "film/cinema",
+        (0x7, 0x7) => "experimental film/video",
+        (0x7, 0x8) => "broadcasting/press",
+        (0x7, 0x9) => "new media",
+        (0x7, 0xA) => "arts/culture magazines",
+        (0x7, 0xB) => "fashion",
+        (0x7, 0xC..=0xE) => "reserved",
+        (0x7, 0xF) => "user defined",
+
+        // Social/Political/Economics
+        (0x8, 0x0) => "social/political issues/economics (general)",
+        (0x8, 0x1) => "magazines/reports/documentary",
+        (0x8, 0x2) => "economics/social advisory",
+        (0x8, 0x3) => "remarkable people",
+        (0x8, 0x4..=0xE) => "reserved",
+        (0x8, 0xF) => "user defined",
+
+        // Education/Science/Factual
+        (0x9, 0x0) => "education/science/factual topics (general)",
+        (0x9, 0x1) => "nature/animals/environment",
+        (0x9, 0x2) => "technology/natural sciences",
+        (0x9, 0x3) => "medicine/physiology/psychology",
+        (0x9, 0x4) => "foreign countries/expeditions",
+        (0x9, 0x5) => "social/spiritual sciences",
+        (0x9, 0x6) => "further education",
+        (0x9, 0x7) => "languages",
+        (0x9, 0x8..=0xE) => "reserved",
+        (0x9, 0xF) => "user defined",
+
+        // Leisure hobbies
+        (0xA, 0x0) => "leisure hobbies (general)",
+        (0xA, 0x1) => "tourism/travel",
+        (0xA, 0x2) => "handicraft",
+        (0xA, 0x3) => "motoring",
+        (0xA, 0x4) => "fitness and health",
+        (0xA, 0x5) => "cooking",
+        (0xA, 0x6) => "advertisement/shopping",
+        (0xA, 0x7) => "gardening",
+        (0xA, 0x8..=0xE) => "reserved",
+        (0xA, 0xF) => "user defined",
+
+        // Special characteristics
+        (0xB, 0x0) => "original language",
+        (0xB, 0x1) => "black and white",
+        (0xB, 0x2) => "unpublished",
+        (0xB, 0x3) => "live broadcast",
+        (0xB, 0x4) => "plano-stereoscopic",
+        (0xB, 0x5) => "local or regional",
+        (0xB, 0x6..=0xE) => "reserved",
+        (0xB, 0xF) => "user defined",
+
+        // Adult
+        (0xC, 0x0) => "adult (general)",
+        (0xC, 0x1..=0xE) => "reserved",
+        (0xC, 0xF) => "user defined",
+
+        // Reserved and user-defined
+        (0xD..=0xE, 0x0..=0xF) => "reserved",
+        (0xF, 0x0..=0xF) => "user defined",
+
+        _ => "unknown",
+    }
+}
+
 /// One content classification entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -22,6 +231,20 @@ pub struct ContentEntry {
     pub nibble_2: u8,
     /// Broadcaster-specific user byte.
     pub user_byte: u8,
+}
+
+impl ContentEntry {
+    /// Level-1 broad category per EN 300 468 Table 29.
+    #[must_use]
+    pub fn genre(&self) -> ContentGenre {
+        ContentGenre::from_nibble_1(self.nibble_1)
+    }
+
+    /// Most specific genre name per EN 300 468 Table 29.
+    #[must_use]
+    pub fn genre_name(&self) -> &'static str {
+        content_genre_name(self.nibble_1, self.nibble_2)
+    }
 }
 
 /// Content Descriptor.

@@ -5,13 +5,14 @@
 use core::time::Duration;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::eit::EitEvent;
+use dvb_si::tables::RunningStatus;
 
 fn eit_event() -> EitEvent<'static> {
     EitEvent {
         event_id: 1,
         start_time_raw: [0; 5],
         duration_raw: [0; 3],
-        running_status: 0,
+        running_status: RunningStatus::Undefined,
         free_ca_mode: false,
         descriptors: DescriptorLoop::new(&[]),
     }

@@ -17,6 +17,7 @@ use dvb_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
+use dvb_si::tables::RunningStatus;
 use dvb_si::tables::{
     ait::{AitApplication, AitSection, ApplicationIdentifier},
     bat::{BatSection, BatTransportStream},
@@ -155,7 +156,7 @@ fn sdt_serializes_to_valid_json() {
             service_id: 1,
             eit_schedule_flag: false,
             eit_present_following_flag: true,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(&[]),
         }],
@@ -186,7 +187,7 @@ fn sdt_service_descriptor_loop_serializes_decoded_name() {
             service_id: 1,
             eit_schedule_flag: false,
             eit_present_following_flag: true,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(raw_loop),
         }],
@@ -220,7 +221,7 @@ fn eit_serializes_to_valid_json() {
             event_id: 0x0001,
             start_time_raw: [0xDA, 0x06, 0x12, 0x34, 0x56],
             duration_raw: [0x00, 0x00, 0x10],
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(&[]),
         }],
@@ -348,7 +349,7 @@ fn rst_serializes_to_valid_json() {
             original_network_id: 0x0020,
             service_id: 0x0001,
             event_id: 0x0001,
-            running_status: 4,
+            running_status: RunningStatus::Running,
         }],
     };
     let j = serde_json::to_string(&rst).expect("serialize RST");
@@ -376,7 +377,7 @@ fn sit_serializes_to_valid_json() {
         transmission_info_descriptors: DescriptorLoop::new(&[]),
         services: vec![SitService {
             service_id: 0x0001,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             // service_descriptor (tag 0x48): type 0x01, "BBC"/"ONE".
             descriptors: DescriptorLoop::new(&[
                 0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
@@ -387,7 +388,7 @@ fn sit_serializes_to_valid_json() {
     assert!(v.is_object(), "expected JSON object, got {v}");
     assert!(v["transmission_info_descriptors"].is_array());
     assert_eq!(v["services"][0]["service_id"], 1);
-    assert_eq!(v["services"][0]["running_status"], 4);
+    assert_eq!(v["services"][0]["running_status"], "Running");
     // Typed descriptors render inside the service.
     assert_eq!(
         v["services"][0]["descriptors"][0]["service"]["service_name"],

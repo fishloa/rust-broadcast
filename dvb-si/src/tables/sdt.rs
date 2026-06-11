@@ -5,6 +5,7 @@
 //! split into two variants by table_id: `0x42` for the actual TS the
 //! receiver is tuned to, `0x46` for services on other TSes.
 
+use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
@@ -46,8 +47,8 @@ pub struct SdtService<'a> {
     pub eit_schedule_flag: bool,
     /// EIT P/F flag — present-and-following events are in the EIT present/following.
     pub eit_present_following_flag: bool,
-    /// 3-bit running_status (0=undefined .. 4=running).
-    pub running_status: u8,
+    /// 3-bit running_status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// free_CA_mode: `true` = at least one elementary stream is scrambled.
     pub free_ca_mode: bool,
     /// Descriptor loop for this service (service_descriptor etc.). Serializes
@@ -126,7 +127,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             let eit_schedule_flag = (flags & 0x02) != 0;
             let eit_present_following_flag = (flags & 0x01) != 0;
             let status_and_len_hi = bytes[pos + 3];
-            let running_status = (status_and_len_hi >> 5) & 0x07;
+            let running_status = RunningStatus::from_u8((status_and_len_hi >> 5) & 0x07);
             let free_ca_mode = (status_and_len_hi & 0x10) != 0;
             let descriptors_loop_length =
                 (((status_and_len_hi & 0x0F) as usize) << 8) | bytes[pos + 4] as usize;
@@ -203,7 +204,7 @@ impl Serialize for SdtSection<'_> {
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + 2] = flags;
             let dll = svc.descriptors.len() as u16;
-            buf[pos + 3] = ((svc.running_status & 0x07) << 5)
+            buf[pos + 3] = (svc.running_status.to_u8() << 5)
                 | (u8::from(svc.free_ca_mode) << 4)
                 | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 4] = (dll & 0xFF) as u8;
@@ -307,7 +308,7 @@ mod tests {
         assert_eq!(sdt.services[0].service_id, 100);
         assert!(sdt.services[0].eit_schedule_flag);
         assert!(sdt.services[0].eit_present_following_flag);
-        assert_eq!(sdt.services[0].running_status, 4);
+        assert_eq!(sdt.services[0].running_status, RunningStatus::Running);
         assert!(!sdt.services[0].free_ca_mode);
         assert_eq!(
             sdt.services[0].descriptors.raw(),
@@ -338,7 +339,10 @@ mod tests {
             &[(1, false, false, 2, false, vec![])],
         );
         let sdt = SdtSection::parse(&bytes).unwrap();
-        assert_eq!(sdt.services[0].running_status, 2);
+        assert_eq!(
+            sdt.services[0].running_status,
+            RunningStatus::StartsInAFewSeconds
+        );
     }
 
     #[test]
@@ -374,7 +378,7 @@ mod tests {
                     service_id: 100,
                     eit_schedule_flag: true,
                     eit_present_following_flag: false,
-                    running_status: 4,
+                    running_status: RunningStatus::Running,
                     free_ca_mode: false,
                     descriptors: DescriptorLoop::new(&desc1),
                 },
@@ -382,7 +386,7 @@ mod tests {
                     service_id: 101,
                     eit_schedule_flag: false,
                     eit_present_following_flag: true,
-                    running_status: 2,
+                    running_status: RunningStatus::StartsInAFewSeconds,
                     free_ca_mode: true,
                     descriptors: DescriptorLoop::new(&[]),
                 },
