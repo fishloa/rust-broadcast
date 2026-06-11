@@ -17,19 +17,16 @@ const ID_LEN: usize = 2;
 /// Returns the well-known name for a `data_broadcast_id`, or `None` if the
 /// ID is not recognised.
 ///
-/// Best-effort, non-exhaustive.  Well-known IDs per ETSI TR 101 162.
+/// Verified entries from the DVB Services registry.
 #[must_use]
 pub fn data_broadcast_id_name(id: u16) -> Option<&'static str> {
     match id {
-        0x0005 => Some("Multiprotocol Encapsulation"),
+        0x0005 => Some("Multiprotocol Encapsulation (MPE)"),
         0x0006 => Some("Data Carousel"),
         0x0007 => Some("Object Carousel"),
-        0x000A..=0x000B => Some("System Software Update (SSU)"),
+        0x000A => Some("System Software Update (SSU)"),
+        0x000B => Some("IP/MAC Notification (INT)"),
         0x00F0 => Some("MHP Object Carousel"),
-        0x00F1 => Some("MHP Multiprotocol Encapsulation"),
-        0x00F2 => Some("MHP Application Signalling"),
-        0x00F3 => Some("MHP Stream Events"),
-        0x00F4 => Some("MHP Stream Descriptors"),
         0x0123 => Some("HbbTV"),
         _ => None,
     }
@@ -126,15 +123,31 @@ mod tests {
     }
 
     #[test]
-    fn data_broadcast_id_name_known() {
+    fn data_broadcast_id_name_verified() {
         assert_eq!(
             data_broadcast_id_name(0x0005),
-            Some("Multiprotocol Encapsulation")
+            Some("Multiprotocol Encapsulation (MPE)")
         );
         assert_eq!(data_broadcast_id_name(0x0006), Some("Data Carousel"));
         assert_eq!(data_broadcast_id_name(0x0007), Some("Object Carousel"));
-        assert_eq!(data_broadcast_id_name(0x0123), Some("HbbTV"));
+        assert_eq!(
+            data_broadcast_id_name(0x000A),
+            Some("System Software Update (SSU)")
+        );
+        assert_eq!(
+            data_broadcast_id_name(0x000B),
+            Some("IP/MAC Notification (INT)")
+        );
         assert_eq!(data_broadcast_id_name(0x00F0), Some("MHP Object Carousel"));
+        assert_eq!(data_broadcast_id_name(0x0123), Some("HbbTV"));
+    }
+
+    #[test]
+    fn data_broadcast_id_name_removed_entries_return_none() {
+        assert_eq!(data_broadcast_id_name(0x00F1), None);
+        assert_eq!(data_broadcast_id_name(0x00F2), None);
+        assert_eq!(data_broadcast_id_name(0x00F3), None);
+        assert_eq!(data_broadcast_id_name(0x00F4), None);
     }
 
     #[test]

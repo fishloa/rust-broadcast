@@ -4,6 +4,7 @@
 //! or entity that defined the private data carried in the associated stream.
 
 use super::descriptor_body;
+pub use super::private_data_specifier::private_data_specifier_name;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 

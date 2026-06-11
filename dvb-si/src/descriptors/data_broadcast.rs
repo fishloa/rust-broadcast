@@ -21,22 +21,11 @@ const TEXT_LEN_FIELD: usize = 1;
 /// Returns the well-known name for a `data_broadcast_id`, or `None` if the
 /// ID is not recognised.
 ///
-/// Best-effort, non-exhaustive.  Well-known IDs per ETSI TR 101 162.
+/// Delegates to [`super::data_broadcast_id::data_broadcast_id_name`] as the
+/// single source of truth.
 #[must_use]
 pub fn data_broadcast_id_name(id: u16) -> Option<&'static str> {
-    match id {
-        0x0005 => Some("Multiprotocol Encapsulation"),
-        0x0006 => Some("Data Carousel"),
-        0x0007 => Some("Object Carousel"),
-        0x000A..=0x000B => Some("System Software Update (SSU)"),
-        0x00F0 => Some("MHP Object Carousel"),
-        0x00F1 => Some("MHP Multiprotocol Encapsulation"),
-        0x00F2 => Some("MHP Application Signalling"),
-        0x00F3 => Some("MHP Stream Events"),
-        0x00F4 => Some("MHP Stream Descriptors"),
-        0x0123 => Some("HbbTV"),
-        _ => None,
-    }
+    super::data_broadcast_id::data_broadcast_id_name(id)
 }
 
 /// Data Broadcast Descriptor (tag 0x64).
@@ -217,13 +206,18 @@ mod tests {
     }
 
     #[test]
-    fn data_broadcast_id_name_known() {
+    fn data_broadcast_id_name_verified() {
         assert_eq!(data_broadcast_id_name(0x0006), Some("Data Carousel"));
         assert_eq!(data_broadcast_id_name(0x0123), Some("HbbTV"));
         assert_eq!(
-            data_broadcast_id_name(0x00F2),
-            Some("MHP Application Signalling")
+            data_broadcast_id_name(0x000B),
+            Some("IP/MAC Notification (INT)")
         );
+    }
+
+    #[test]
+    fn data_broadcast_id_name_removed_entries_return_none() {
+        assert_eq!(data_broadcast_id_name(0x00F2), None);
     }
 
     #[test]

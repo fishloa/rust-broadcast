@@ -24,16 +24,18 @@ const AIT_VERSION_MAX: u8 = 0x1F;
 /// Returns the well-known name for an `application_type`, or `None` if the
 /// type is not recognised.
 ///
-/// Best-effort, non-exhaustive.  Well-known types per ETSI TS 102 809.
+/// Delegates to [`crate::tables::ait::ApplicationType`] as the single source
+/// of truth for application-type naming.  Verified entries from the
+/// DVB Services registry.
 #[must_use]
 pub fn application_type_name(val: u16) -> Option<&'static str> {
-    match val {
-        0x0001 => Some("DVB-J application"),
-        0x0010 => Some("DVB-HTML application"),
-        0x0011 => Some("HbbTV application"),
-        0x0012 => Some("HbbTV application (v2)"),
-        0x0013 => Some("HbbTV application (v3)"),
-        0x0020 => Some("CI Plus application"),
+    match crate::tables::ait::ApplicationType::from_u16(val) {
+        crate::tables::ait::ApplicationType::DvbJ
+        | crate::tables::ait::ApplicationType::DvbHtml
+        | crate::tables::ait::ApplicationType::HbbTv
+        | crate::tables::ait::ApplicationType::OipfDae => {
+            Some(crate::tables::ait::ApplicationType::from_u16(val).name())
+        }
         _ => None,
     }
 }
@@ -174,10 +176,21 @@ mod tests {
     }
 
     #[test]
-    fn application_type_name_known() {
-        assert_eq!(application_type_name(0x0001), Some("DVB-J application"));
-        assert_eq!(application_type_name(0x0010), Some("DVB-HTML application"));
-        assert_eq!(application_type_name(0x0011), Some("HbbTV application"));
+    fn application_type_name_verified() {
+        assert_eq!(application_type_name(0x0001), Some("DVB-J"));
+        assert_eq!(application_type_name(0x0002), Some("DVB-HTML"));
+        assert_eq!(application_type_name(0x0010), Some("HbbTV"));
+        assert_eq!(application_type_name(0x0011), Some("OIPF DAE"));
+    }
+
+    #[test]
+    fn application_type_name_removed_entries_return_none() {
+        assert_eq!(application_type_name(0x0003), None);
+        assert_eq!(application_type_name(0x0004), None);
+        assert_eq!(application_type_name(0x0005), None);
+        assert_eq!(application_type_name(0x0012), None);
+        assert_eq!(application_type_name(0x0013), None);
+        assert_eq!(application_type_name(0x0020), None);
     }
 
     #[test]
