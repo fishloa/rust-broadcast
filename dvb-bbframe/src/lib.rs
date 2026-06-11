@@ -9,6 +9,22 @@
 //! - [`crc::crc8`] — CRC-8 encoder (EN 302 307-1 §5.1.4 / EN 302 755 Annex F).
 //! - [`issy`] — ISSY field parser (EN 302 755 Annex C).
 //!
+//! # Quick start
+//! ```
+//! use dvb_bbframe::header::{Bbheader, Matype, Mode, TsGs, BBHEADER_LEN};
+//!
+//! let hdr = Bbheader {
+//!     matype: Matype { ts_gs: TsGs::Ts, sis: true, ccm: true, issyi: false, npd: false, ext: 0, isi: 0 },
+//!     upl: 1504, sync: 0x47, dfl: 1504, syncd: 0, mode: Mode::Normal, issy_in_header: None,
+//! };
+//! let bytes = hdr.serialize();              // 10-byte BBHEADER
+//! assert_eq!(bytes.len(), BBHEADER_LEN);
+//! assert_eq!(Bbheader::parse(&bytes).unwrap(), hdr); // byte-identical round-trip
+//! ```
+//! For recovering the inner TS carried in a T2-MI stream, see
+//! `dvb_t2mi::inner_ts::InnerTsRecovery`, which drives this header + the
+//! [`packet`] extractor for you.
+//!
 //! # RFU policy
 //!
 //! BBFrame `reserved_future_use` bits are **emitted as 1** and

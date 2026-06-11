@@ -107,6 +107,33 @@ The pump composes with the rest of the workspace into the full signal chain —
 dvb_si::demux::SiDemux`; a worked, fully-asserted version is in
 [`tests/chain.rs`](tests/chain.rs).
 
+### Inner-TS recovery in one call
+
+[`inner_ts::InnerTsRecovery`](src/inner_ts.rs) folds that chain (pump → BBFrame →
+`Bbheader` → `CarryOverExtractor`, NM/HEM + carry-over) into a single
+feed-and-collect driver — feed outer TS packets on the T2-MI PID, get the inner
+TS packets out:
+
+```rust
+# #[cfg(feature = "ts")] {
+use dvb_t2mi::inner_ts::InnerTsRecovery;
+
+let mut rec = InnerTsRecovery::new(0x1000); // the T2-MI PID
+for outer in ts_packets() {                 // 188-byte outer TS packets
+    for inner in rec.feed(&outer) {          // recovered inner TS packets
+        // feed `inner` (a &[u8; 188]) to dvb_si::demux::SiDemux, etc.
+        assert_eq!(inner[0], 0x47);
+    }
+}
+# fn ts_packets() -> Vec<[u8; 188]> { vec![] }
+# }
+```
+
+**Feature:** `InnerTsRecovery` (and the pump) live behind the **`ts`** feature,
+which is **on by default** and pulls in `dvb-bbframe`. A plain
+`dvb-t2mi = "6"` dependency already includes it; you only need
+`features = ["ts"]` if you build with `default-features = false`.
+
 ## Quick Start
 
 ### Parse a T2-MI packet header

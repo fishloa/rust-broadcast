@@ -27,6 +27,15 @@ const STREAM_HEADER_LEN: usize = 5;
 ///
 /// Identifies the elementary-stream type carried in the associated PID.
 /// Values 0x80–0xFF are user private.
+///
+/// # Examples
+/// ```
+/// use dvb_si::tables::pmt::StreamType;
+///
+/// assert_eq!(StreamType::from_u8(0x02).name(), "MPEG-2 Video");
+/// assert_eq!(StreamType::from_u8(0x1B).to_u8(), 0x1B); // H.264, lossless round-trip
+/// ```
+/// A parsed `PmtStream.stream_type` is already a `StreamType` — match on it directly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

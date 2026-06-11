@@ -241,6 +241,14 @@ impl ContentEntry {
     }
 
     /// Most specific genre name per EN 300 468 Table 29.
+    ///
+    /// # Examples
+    /// ```
+    /// use dvb_si::descriptors::content::ContentEntry;
+    ///
+    /// let e = ContentEntry { nibble_1: 0x1, nibble_2: 0x4, user_byte: 0 };
+    /// assert_eq!(e.genre_name(), "comedy");
+    /// ```
     #[must_use]
     pub fn genre_name(&self) -> &'static str {
         content_genre_name(self.nibble_1, self.nibble_2)

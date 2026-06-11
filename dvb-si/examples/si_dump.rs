@@ -81,6 +81,29 @@ fn main() -> ExitCode {
                             ),
                             None => println!("pid={} {name}", event.pid()),
                         }
+                        // Decoded summary — the 6.0 typed-enum accessors turn raw
+                        // wire codes into spec names with no lookup table.
+                        match &table {
+                            AnyTableSection::PmtSection(pmt) => {
+                                for st in &pmt.streams {
+                                    println!(
+                                        "    es pid=0x{:04X} stream_type={}",
+                                        st.elementary_pid,
+                                        st.stream_type.name()
+                                    );
+                                }
+                            }
+                            AnyTableSection::SdtSection(sdt) => {
+                                for s in &sdt.services {
+                                    println!(
+                                        "    service 0x{:04X} running_status={}",
+                                        s.service_id,
+                                        s.running_status.name()
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 Err(e) => eprintln!("pid={} parse error: {e}", event.pid()),

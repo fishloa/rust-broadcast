@@ -46,6 +46,12 @@ values preserved in a catch-all variant for byte-identical serialization.
 - Best-effort, non-exhaustive registry name lookups: `ca_system_name()` and
   `private_data_specifier_name()` (TR 101 162); `data_broadcast_id_name()`.
 
+### Documentation
+- Runnable doctests on the new decode accessors (`RunningStatus`, `StreamType`,
+  `ServiceType`, `ContentEntry::genre_name`) and a `dvb-common` crate-root
+  quickstart. The `si_dump` example now prints decoded `stream_type` /
+  `running_status` names on real captures.
+
 ### Note
 The symmetric `Parse`/`Serialize` contract is unchanged — **every table already
 serializes** (build a `PatSection`/`PmtSection`/`CaDescriptor` and call
