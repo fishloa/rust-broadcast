@@ -8,7 +8,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for FTA_content_management_descriptor.
@@ -107,14 +106,6 @@ impl Serialize for FtaContentManagementDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for FtaContentManagementDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for FtaContentManagementDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "FTA_CONTENT_MANAGEMENT";

@@ -2,7 +2,6 @@
 
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 use super::descriptor_body;
@@ -60,15 +59,6 @@ impl Serialize for NetworkNameDescriptor<'_> {
         Ok(need)
     }
 }
-
-impl<'a> Descriptor<'a> for NetworkNameDescriptor<'a> {
-    const TAG: u8 = 0x40;
-
-    fn descriptor_length(&self) -> u8 {
-        self.network_name.raw().len() as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for NetworkNameDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "NETWORK_NAME";
@@ -162,14 +152,14 @@ mod tests {
         assert!(desc.network_name.raw().is_empty());
     }
 
-    /// `descriptor_length()` must equal `network_name.len()` cast to u8.
+    /// `serialized_len() - 2` must equal `network_name.len()` cast to u8.
     #[test]
     fn descriptor_length_getter_matches_payload() {
         let raw: Vec<u8> = vec![TAG, 0x07, b'F', b'R', b'A', b'N', b'C', b'E', b'2'];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
         assert_eq!(
-            desc.descriptor_length(),
-            desc.network_name.raw().len() as u8
+            desc.serialized_len() - 2,
+            desc.network_name.raw().len() as usize
         );
     }
 }

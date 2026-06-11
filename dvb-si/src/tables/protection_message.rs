@@ -23,7 +23,6 @@
 //! 1s on serialize, except spec-mandated zero fields which are emitted 0.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
@@ -476,12 +475,6 @@ impl Serialize for ProtectionMessageSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for ProtectionMessageSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for ProtectionMessageSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "PROTECTION_MESSAGE";
@@ -682,8 +675,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<ProtectionMessageSection as Table>::TABLE_ID, 0x7B);
-        assert_eq!(<ProtectionMessageSection as Table>::PID, 0x0000);
+        assert_eq!(TABLE_ID, 0x7B);
+        assert_eq!(PID, 0x0000);
     }
 
     #[test]

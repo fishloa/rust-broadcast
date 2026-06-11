@@ -10,7 +10,6 @@
 //! different rule; those are not distinguished here.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// First table_id in the DSM-CC section range (inclusive).
@@ -132,12 +131,6 @@ impl Serialize for DsmccSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for DsmccSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID_FIRST;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for DsmccSection<'a> {
     /// Full DSM-CC range including `0x3E` (MPE datagram_section). The typed
     /// [`crate::tables::mpe::MpeDatagramSection`] view of `0x3E` is reachable

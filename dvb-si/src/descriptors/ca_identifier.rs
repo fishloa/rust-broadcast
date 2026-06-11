@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for CA_identifier_descriptor.
@@ -79,14 +78,6 @@ impl Serialize for CaIdentifierDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for CaIdentifierDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (ENTRY_LEN * self.ca_system_ids.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for CaIdentifierDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CA_IDENTIFIER";

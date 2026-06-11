@@ -7,7 +7,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id value for NIT actual (current TS).
@@ -290,12 +289,6 @@ impl Serialize for NitSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for NitSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID_ACTUAL;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for NitSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID_ACTUAL, TABLE_ID_OTHER)];
     const NAME: &'static str = "NETWORK_INFORMATION";

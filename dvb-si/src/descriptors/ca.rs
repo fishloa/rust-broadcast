@@ -5,7 +5,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for CA_descriptor.
@@ -105,15 +104,6 @@ impl Serialize for CaDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for CaDescriptor<'a> {
-    const TAG: u8 = TAG;
-
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for CaDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CA";
@@ -214,6 +204,6 @@ mod tests {
             ca_pid: 0x0101,
             private_data: &[0xAA],
         };
-        assert_eq!(d.descriptor_length(), 5);
+        assert_eq!(d.serialized_len() - 2, 5);
     }
 }

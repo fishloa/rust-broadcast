@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for scrambling_descriptor.
@@ -64,14 +63,6 @@ impl Serialize for ScramblingDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ScramblingDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ScramblingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SCRAMBLING";
@@ -139,7 +130,7 @@ mod tests {
         let d = ScramblingDescriptor {
             scrambling_mode: 0x01,
         };
-        assert_eq!(d.descriptor_length(), 1);
+        assert_eq!(d.serialized_len() - 2, 1);
     }
 
     #[cfg(feature = "serde")]

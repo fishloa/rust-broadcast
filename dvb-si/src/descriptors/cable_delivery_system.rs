@@ -5,7 +5,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for cable_delivery_system_descriptor.
@@ -294,15 +293,6 @@ impl Serialize for CableDeliverySystemDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for CableDeliverySystemDescriptor {
-    const TAG: u8 = TAG;
-
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for CableDeliverySystemDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CABLE_DELIVERY_SYSTEM";

@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for private_data_specifier_descriptor.
@@ -65,14 +64,6 @@ impl Serialize for PrivateDataSpecifierDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for PrivateDataSpecifierDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for PrivateDataSpecifierDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PRIVATE_DATA_SPECIFIER";
@@ -140,7 +131,7 @@ mod tests {
         let d = PrivateDataSpecifierDescriptor {
             private_data_specifier: 0,
         };
-        assert_eq!(d.descriptor_length(), 4);
+        assert_eq!(d.serialized_len() - 2, 4);
     }
 
     #[cfg(feature = "serde")]

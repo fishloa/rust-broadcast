@@ -6,7 +6,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// PMT table_id (ISO/IEC 13818-1 Table 2-30).
@@ -205,12 +204,6 @@ impl Serialize for PmtSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for PmtSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for PmtSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "PROGRAM_MAP";

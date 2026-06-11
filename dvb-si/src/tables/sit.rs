@@ -12,7 +12,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Selection Information Table.
@@ -232,12 +231,6 @@ impl Serialize for SitSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for SitSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for SitSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "SELECTION_INFORMATION";
@@ -423,8 +416,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<SitSection<'_> as Table>::TABLE_ID, 0x7F);
-        assert_eq!(<SitSection<'_> as Table>::PID, 0x001F);
+        assert_eq!(TABLE_ID, 0x7F);
+        assert_eq!(PID, 0x001F);
     }
 
     #[test]

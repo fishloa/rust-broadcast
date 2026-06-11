@@ -5,7 +5,6 @@
 //! byte: `transition_flag(1) | reserved_future_use(7)`. No CRC.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Discontinuity Information Table.
@@ -82,12 +81,6 @@ impl Serialize for DitSection {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for DitSection {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for DitSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "DISCONTINUITY_INFORMATION";
@@ -197,7 +190,7 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(DitSection::TABLE_ID, 0x7E);
-        assert_eq!(DitSection::PID, 0x001E);
+        assert_eq!(TABLE_ID, 0x7E);
+        assert_eq!(PID, 0x001E);
     }
 }

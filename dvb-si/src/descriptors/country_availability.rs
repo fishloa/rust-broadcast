@@ -9,7 +9,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for country_availability_descriptor.
@@ -110,14 +109,6 @@ impl Serialize for CountryAvailabilityDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for CountryAvailabilityDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (FLAG_LEN + COUNTRY_CODE_LEN * self.country_codes.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for CountryAvailabilityDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "COUNTRY_AVAILABILITY";

@@ -5,7 +5,6 @@
 //! program_number 0x0000 is special — its PID is the NIT PID.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// PAT table_id (ISO/IEC 13818-1 Table 2-30).
@@ -151,12 +150,6 @@ impl Serialize for PatSection {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for PatSection {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for PatSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "PROGRAM_ASSOCIATION";

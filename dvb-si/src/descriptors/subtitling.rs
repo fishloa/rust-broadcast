@@ -7,7 +7,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for subtitling_descriptor.
@@ -93,14 +92,6 @@ impl Serialize for SubtitlingDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for SubtitlingDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.entries.len() * ENTRY_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for SubtitlingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SUBTITLING";

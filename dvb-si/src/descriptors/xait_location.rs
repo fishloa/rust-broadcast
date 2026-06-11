@@ -14,7 +14,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for xait_location_descriptor.
@@ -104,14 +103,6 @@ impl Serialize for XaitLocationDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for XaitLocationDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for XaitLocationDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "XAIT_LOCATION";

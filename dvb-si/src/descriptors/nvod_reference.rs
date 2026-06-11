@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for NVOD_reference_descriptor.
@@ -97,14 +96,6 @@ impl Serialize for NvodReferenceDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for NvodReferenceDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (ENTRY_LEN * self.entries.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for NvodReferenceDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "NVOD_REFERENCE";

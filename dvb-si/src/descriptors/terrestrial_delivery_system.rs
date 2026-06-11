@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for terrestrial\_delivery\_system\_descriptor.
@@ -426,15 +425,6 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for TerrestrialDeliverySystemDescriptor {
-    const TAG: u8 = TAG;
-
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for TerrestrialDeliverySystemDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TERRESTRIAL_DELIVERY_SYSTEM";

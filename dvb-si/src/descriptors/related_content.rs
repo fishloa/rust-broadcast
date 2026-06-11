@@ -9,7 +9,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for related_content_descriptor.
@@ -57,14 +56,6 @@ impl Serialize for RelatedContentDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for RelatedContentDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        0
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for RelatedContentDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "RELATED_CONTENT";

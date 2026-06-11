@@ -7,7 +7,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for ECM_repetition_rate_descriptor.
@@ -82,14 +81,6 @@ impl Serialize for EcmRepetitionRateDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for EcmRepetitionRateDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (FIXED_LEN + self.private_data.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for EcmRepetitionRateDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ECM_REPETITION_RATE";

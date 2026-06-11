@@ -7,7 +7,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
@@ -220,12 +219,6 @@ impl Serialize for SdtSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for SdtSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID_ACTUAL;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for SdtSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[
         (TABLE_ID_ACTUAL, TABLE_ID_ACTUAL),

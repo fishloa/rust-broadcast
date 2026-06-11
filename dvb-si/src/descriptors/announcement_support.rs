@@ -25,7 +25,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for announcement_support_descriptor.
@@ -227,14 +226,6 @@ impl Serialize for AnnouncementSupportDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for AnnouncementSupportDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        self.body_len() as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for AnnouncementSupportDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ANNOUNCEMENT_SUPPORT";

@@ -14,7 +14,6 @@
 use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// `table_id` for the Update Notification Table.
@@ -365,12 +364,6 @@ impl Serialize for UntSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for UntSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for UntSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "UPDATE_NOTIFICATION";

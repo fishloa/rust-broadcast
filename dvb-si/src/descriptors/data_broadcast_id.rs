@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for data_broadcast_id_descriptor.
@@ -80,14 +79,6 @@ impl Serialize for DataBroadcastIdDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for DataBroadcastIdDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (ID_LEN + self.id_selector.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for DataBroadcastIdDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "DATA_BROADCAST_ID";

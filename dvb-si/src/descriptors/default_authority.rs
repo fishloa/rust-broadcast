@@ -5,7 +5,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for default_authority_descriptor.
@@ -51,19 +50,11 @@ impl Serialize for DefaultAuthorityDescriptor<'_> {
             });
         }
         buf[0] = TAG;
-        buf[1] = self.descriptor_length();
+        buf[1] = self.default_authority.len() as u8;
         buf[HEADER_LEN..len].copy_from_slice(self.default_authority);
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for DefaultAuthorityDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        self.default_authority.len() as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for DefaultAuthorityDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "DEFAULT_AUTHORITY";

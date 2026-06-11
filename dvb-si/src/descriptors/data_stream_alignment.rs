@@ -6,7 +6,6 @@ use num_enum::TryFromPrimitive;
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for data_stream_alignment_descriptor.
@@ -81,15 +80,6 @@ impl Serialize for DataStreamAlignmentDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for DataStreamAlignmentDescriptor {
-    const TAG: u8 = TAG;
-
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for DataStreamAlignmentDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "DATA_STREAM_ALIGNMENT";
@@ -180,6 +170,6 @@ mod tests {
         let d = DataStreamAlignmentDescriptor {
             alignment_type: 0x02,
         };
-        assert_eq!(d.descriptor_length(), 1);
+        assert_eq!(d.serialized_len() - 2, 1);
     }
 }

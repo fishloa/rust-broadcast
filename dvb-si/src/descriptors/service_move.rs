@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for service_move_descriptor.
@@ -73,14 +72,6 @@ impl Serialize for ServiceMoveDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ServiceMoveDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ServiceMoveDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_MOVE";
@@ -156,7 +147,7 @@ mod tests {
             new_transport_stream_id: 0,
             new_service_id: 0,
         };
-        assert_eq!(d.descriptor_length(), 6);
+        assert_eq!(d.serialized_len() - 2, 6);
     }
 
     #[cfg(feature = "serde")]

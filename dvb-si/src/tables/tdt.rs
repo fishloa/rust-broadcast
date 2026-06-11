@@ -4,7 +4,6 @@
 //! 5 bytes of UTC time (16-bit MJD + 24-bit BCD HHMMSS). No CRC.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for Time and Date Table.
@@ -99,12 +98,6 @@ impl Serialize for TdtSection {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for TdtSection {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for TdtSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "TIME_AND_DATE";

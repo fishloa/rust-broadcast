@@ -8,7 +8,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for Enhanced AC-3 (E-AC-3, Dolby Digital Plus).
@@ -176,14 +175,6 @@ impl Serialize for EnhancedAc3Descriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for EnhancedAc3Descriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for EnhancedAc3Descriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ENHANCED_AC3";

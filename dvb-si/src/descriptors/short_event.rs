@@ -6,7 +6,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for short_event_descriptor.
@@ -98,14 +97,6 @@ impl Serialize for ShortEventDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ShortEventDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ShortEventDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SHORT_EVENT";
@@ -183,6 +174,6 @@ mod tests {
             text: DvbText::new(b"DE"),
         };
         // 3 lang + 1 name_len + 3 name + 1 text_len + 2 text = 10
-        assert_eq!(d.descriptor_length(), 10);
+        assert_eq!(d.serialized_len() - 2, 10);
     }
 }

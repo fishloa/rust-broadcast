@@ -3,7 +3,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Wire tag for the Bouquet Name Descriptor.
@@ -54,15 +53,6 @@ impl Serialize for BouquetNameDescriptor<'_> {
         Ok(need)
     }
 }
-
-impl<'a> Descriptor<'a> for BouquetNameDescriptor<'a> {
-    const TAG: u8 = 0x47;
-
-    fn descriptor_length(&self) -> u8 {
-        self.bouquet_name.raw().len() as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for BouquetNameDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "BOUQUET_NAME";

@@ -11,7 +11,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for Time Offset Table.
@@ -144,12 +143,6 @@ impl Serialize for TotSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for TotSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for TotSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "TIME_OFFSET";

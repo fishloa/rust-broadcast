@@ -10,7 +10,6 @@
 //! ```
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Running Status Table.
@@ -132,12 +131,6 @@ impl Serialize for RstSection {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for RstSection {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for RstSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "RUNNING_STATUS";
@@ -251,8 +244,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<RstSection as Table>::TABLE_ID, 0x71);
-        assert_eq!(<RstSection as Table>::PID, 0x0013);
+        assert_eq!(TABLE_ID, 0x71);
+        assert_eq!(PID, 0x0013);
     }
 
     #[cfg(feature = "serde")]

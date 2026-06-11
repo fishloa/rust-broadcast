@@ -8,7 +8,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for VBI_teletext_descriptor.
@@ -105,14 +104,6 @@ impl Serialize for VbiTeletextDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for VbiTeletextDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (ENTRY_LEN * self.entries.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for VbiTeletextDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "VBI_TELETEXT";

@@ -65,7 +65,6 @@
 
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 mod ac4;
@@ -463,14 +462,6 @@ impl Serialize for ExtensionDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ExtensionDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ExtensionDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "EXTENSION";
@@ -558,7 +549,7 @@ mod tests {
             }),
         };
         // tag_ext(1) + message_id(1) + iso(3) + text(5) = 10
-        assert_eq!(d.descriptor_length(), 10);
+        assert_eq!(d.serialized_len() - 2, 10);
     }
 
     /// Serialization is deterministic for an all-owned typed body (no borrowed

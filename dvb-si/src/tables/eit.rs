@@ -9,7 +9,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
@@ -271,12 +270,6 @@ impl Serialize for EitSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for EitSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID_PF_ACTUAL;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for EitSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] =
         &[(TABLE_ID_PF_ACTUAL, TABLE_ID_SCHEDULE_OTHER_LAST)];

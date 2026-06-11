@@ -12,7 +12,6 @@
 //! private bit-level reader/writer handles the extraction and emission.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.
@@ -1551,12 +1550,6 @@ impl Serialize for SatSection {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for SatSection {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for SatSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "SATELLITE_ACCESS";

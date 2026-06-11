@@ -38,7 +38,6 @@
 //! follows the [`crate::tables::dsmcc`] precedent.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the MPE-IFEC section.
@@ -259,12 +258,6 @@ impl Serialize for MpeIfecSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for MpeIfecSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for MpeIfecSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "MPE_IFEC";
@@ -419,8 +412,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<MpeIfecSection as Table>::TABLE_ID, 0x7A);
-        assert_eq!(<MpeIfecSection as Table>::PID, 0x0000);
+        assert_eq!(TABLE_ID, 0x7A);
+        assert_eq!(PID, 0x0000);
     }
 
     #[test]

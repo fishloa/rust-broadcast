@@ -5,7 +5,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for Transport Stream Description Table.
@@ -125,12 +124,6 @@ impl Serialize for TsdtSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for TsdtSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for TsdtSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "TRANSPORT_STREAM_DESCRIPTION";
@@ -216,8 +209,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<TsdtSection<'_> as Table>::TABLE_ID, 0x03);
-        assert_eq!(<TsdtSection<'_> as Table>::PID, 0x0002);
+        assert_eq!(TABLE_ID, 0x03);
+        assert_eq!(PID, 0x0002);
     }
 
     #[cfg(feature = "serde")]

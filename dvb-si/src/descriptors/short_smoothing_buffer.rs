@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for short_smoothing_buffer_descriptor.
@@ -84,14 +83,6 @@ impl Serialize for ShortSmoothingBufferDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ShortSmoothingBufferDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (FIXED_LEN + self.dvb_reserved.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ShortSmoothingBufferDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SHORT_SMOOTHING_BUFFER";
@@ -189,7 +180,7 @@ mod tests {
             sb_leak_rate: 0,
             dvb_reserved: &[0xFF, 0xFF],
         };
-        assert_eq!(d.descriptor_length(), 3);
+        assert_eq!(d.serialized_len() - 2, 3);
     }
 
     #[cfg(feature = "serde")]

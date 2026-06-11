@@ -6,7 +6,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
@@ -95,14 +94,6 @@ impl Serialize for ServiceDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ServiceDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ServiceDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE";
@@ -179,6 +170,6 @@ mod tests {
             service_name: DvbText::new(b"BBB"),
         };
         // 1 (type) + 1 (p_len) + 2 (p) + 1 (s_len) + 3 (s) = 8
-        assert_eq!(d.descriptor_length(), 8);
+        assert_eq!(d.serialized_len() - 2, 8);
     }
 }

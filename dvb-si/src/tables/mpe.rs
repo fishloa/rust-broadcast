@@ -30,7 +30,6 @@
 //! CRC_32 on serialize and `checksum` is ignored.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for an MPE `datagram_section` — the DSM-CC private-data value
@@ -275,12 +274,6 @@ impl Serialize for MpeDatagramSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for MpeDatagramSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for MpeDatagramSection<'a> {
     /// `0x3E` is included in `DsmccSection`'s range `[(0x3A, 0x3F)]` and is
     /// NOT auto-dispatched to this type by the default dispatcher. Use
@@ -555,8 +548,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<MpeDatagramSection as Table>::TABLE_ID, 0x3E);
-        assert_eq!(<MpeDatagramSection as Table>::PID, 0x0000);
+        assert_eq!(TABLE_ID, 0x3E);
+        assert_eq!(PID, 0x0000);
     }
 
     #[cfg(feature = "serde")]

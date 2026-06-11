@@ -8,7 +8,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for service_availability_descriptor.
@@ -108,14 +107,6 @@ impl Serialize for ServiceAvailabilityDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ServiceAvailabilityDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (FLAGS_LEN + self.cell_ids.len() * CELL_ID_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ServiceAvailabilityDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_AVAILABILITY";

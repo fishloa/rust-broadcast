@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for registration_descriptor.
@@ -80,15 +79,6 @@ impl Serialize for RegistrationDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for RegistrationDescriptor<'a> {
-    const TAG: u8 = TAG;
-
-    fn descriptor_length(&self) -> u8 {
-        (self.serialized_len() - HEADER_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for RegistrationDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "REGISTRATION";
@@ -169,6 +159,6 @@ mod tests {
             format_identifier: *b"AC-3",
             additional_identification_info: &[0x01],
         };
-        assert_eq!(d.descriptor_length(), 5);
+        assert_eq!(d.serialized_len() - 2, 5);
     }
 }

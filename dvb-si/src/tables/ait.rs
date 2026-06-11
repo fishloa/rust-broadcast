@@ -5,7 +5,6 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
@@ -252,12 +251,6 @@ impl Serialize for AitSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for AitSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for AitSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "APPLICATION_INFORMATION";

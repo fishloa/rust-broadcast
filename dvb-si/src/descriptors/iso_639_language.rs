@@ -3,7 +3,6 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for iso_639_language_descriptor.
@@ -81,14 +80,6 @@ impl Serialize for Iso639LanguageDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for Iso639LanguageDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (self.entries.len() * ENTRY_LEN) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for Iso639LanguageDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ISO_639_LANGUAGE";
@@ -163,6 +154,6 @@ mod tests {
                 audio_type: 0,
             }],
         };
-        assert_eq!(d.descriptor_length(), 4);
+        assert_eq!(d.serialized_len() - 2, 4);
     }
 }

@@ -12,7 +12,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for time_slice_fec_identifier_descriptor.
@@ -146,14 +145,6 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for TimeSliceFecIdentifierDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        (FIXED_LEN + self.id_selector.len()) as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for TimeSliceFecIdentifierDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TIME_SLICE_FEC_IDENTIFIER";

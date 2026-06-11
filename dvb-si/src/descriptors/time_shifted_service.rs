@@ -6,7 +6,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for time_shifted_service_descriptor.
@@ -63,14 +62,6 @@ impl Serialize for TimeShiftedServiceDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for TimeShiftedServiceDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for TimeShiftedServiceDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TIME_SHIFTED_SERVICE";

@@ -7,7 +7,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for service_identifier_descriptor.
@@ -59,19 +58,11 @@ impl Serialize for ServiceIdentifierDescriptor<'_> {
             });
         }
         buf[0] = TAG;
-        buf[1] = self.descriptor_length();
+        buf[1] = self.textual_service_identifier.len() as u8;
         buf[HEADER_LEN..len].copy_from_slice(self.textual_service_identifier);
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for ServiceIdentifierDescriptor<'a> {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        self.textual_service_identifier.len() as u8
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for ServiceIdentifierDescriptor<'a> {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_IDENTIFIER";

@@ -15,7 +15,6 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use crate::traits::Descriptor;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for partial_transport_stream_descriptor.
@@ -110,14 +109,6 @@ impl Serialize for PartialTransportStreamDescriptor {
         Ok(len)
     }
 }
-
-impl<'a> Descriptor<'a> for PartialTransportStreamDescriptor {
-    const TAG: u8 = TAG;
-    fn descriptor_length(&self) -> u8 {
-        BODY_LEN
-    }
-}
-
 impl<'a> crate::traits::DescriptorDef<'a> for PartialTransportStreamDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PARTIAL_TRANSPORT_STREAM";
@@ -235,7 +226,7 @@ mod tests {
             minimum_overall_smoothing_rate: 0,
             maximum_overall_smoothing_buffer: 0,
         };
-        assert_eq!(d.descriptor_length(), 8);
+        assert_eq!(d.serialized_len() - 2, 8);
     }
 
     #[cfg(feature = "serde")]

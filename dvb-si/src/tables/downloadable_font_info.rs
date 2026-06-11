@@ -39,7 +39,6 @@
 //! zero fields (`font_id_extension`, `reserved_zero_future_use`) are emitted 0.
 
 use crate::error::{Error, Result};
-use crate::traits::Table;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
@@ -358,12 +357,6 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         Ok(len)
     }
 }
-
-impl<'a> Table<'a> for DownloadableFontInfoSection<'a> {
-    const TABLE_ID: u8 = TABLE_ID;
-    const PID: u16 = PID;
-}
-
 impl<'a> crate::traits::TableDef<'a> for DownloadableFontInfoSection<'a> {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "DOWNLOADABLE_FONT_INFO";
@@ -527,8 +520,8 @@ mod tests {
 
     #[test]
     fn table_trait_constants() {
-        assert_eq!(<DownloadableFontInfoSection as Table>::TABLE_ID, 0x7C);
-        assert_eq!(<DownloadableFontInfoSection as Table>::PID, 0x0000);
+        assert_eq!(TABLE_ID, 0x7C);
+        assert_eq!(PID, 0x0000);
     }
 
     #[test]
