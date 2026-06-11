@@ -55,6 +55,115 @@ const ICON_ID_MASK: u8 = 0x70;
 const ICON_ID_SHIFT: u8 = 4;
 const ICON_DESC_LEN_HI_MASK: u8 = 0x0F;
 
+/// Link type — ETSI TS 102 323 §10.4.3 Table 111.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum LinkType {
+    /// 0x0 — URI string only.
+    UriString,
+    /// 0x1 — Binary locator only.
+    BinaryLocator,
+    /// 0x2 — Both binary locator and URI.
+    Both,
+    /// 0x3 — Through means of a descriptor.
+    Descriptor,
+    /// 0x4..=0xF — DVB reserved.
+    DvbReserved(u8),
+}
+
+impl LinkType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x0F {
+            0x0 => Self::UriString,
+            0x1 => Self::BinaryLocator,
+            0x2 => Self::Both,
+            0x3 => Self::Descriptor,
+            v => Self::DvbReserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::UriString => 0x0,
+            Self::BinaryLocator => 0x1,
+            Self::Both => 0x2,
+            Self::Descriptor => 0x3,
+            Self::DvbReserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UriString => "URI String",
+            Self::BinaryLocator => "Binary Locator",
+            Self::Both => "Both",
+            Self::Descriptor => "Descriptor",
+            Self::DvbReserved(_) => "DVB Reserved",
+        }
+    }
+}
+
+/// How-related classification scheme ID — ETSI TS 102 323 §10.4.3 Table 112.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum HowRelated {
+    /// 0x00 — HowRelatedCS:2004.
+    Cs2004,
+    /// 0x01 — HowRelatedCS:2005.
+    Cs2005,
+    /// 0x02 — HowRelatedCS:2007.
+    Cs2007,
+    /// 0x03..=0x2F — DVB reserved.
+    DvbReserved(u8),
+    /// 0x30..=0x3F — User private.
+    UserPrivate(u8),
+}
+
+impl HowRelated {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Cs2004,
+            0x01 => Self::Cs2005,
+            0x02 => Self::Cs2007,
+            v if v < 0x30 => Self::DvbReserved(v),
+            _ => Self::UserPrivate(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Cs2004 => 0x00,
+            Self::Cs2005 => 0x01,
+            Self::Cs2007 => 0x02,
+            Self::DvbReserved(v) | Self::UserPrivate(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Cs2004 => "HowRelatedCS:2004",
+            Self::Cs2005 => "HowRelatedCS:2005",
+            Self::Cs2007 => "HowRelatedCS:2007",
+            Self::DvbReserved(_) => "DVB Reserved",
+            Self::UserPrivate(_) => "User Private",
+        }
+    }
+}
+
 /// A promotional text item within a link_info entry (Table 110, §10.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -174,9 +283,9 @@ fn locator_serialized_len(loc: &DvbBinaryLocator) -> usize {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LinkInfo<'a> {
     /// `link_type` (4 bits, Table 111).
-    pub link_type: u8,
+    pub link_type: LinkType,
     /// `how_related_classification_scheme_id` (6 bits).
-    pub how_related: u8,
+    pub how_related: HowRelated,
     /// `term_id` (12 bits).
     pub term_id: u16,
     /// `group_id` (4 bits).
@@ -440,8 +549,9 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
             what: "RctSection link_info header",
         });
     }
-    let link_type = (data[0] & LINK_TYPE_MASK) >> LINK_TYPE_SHIFT;
-    let how_related = (data[0] & HOW_RELATED_HI_MASK) << 4 | (data[1] >> 4) & 0x0F;
+    let link_type = LinkType::from_u8((data[0] & LINK_TYPE_MASK) >> LINK_TYPE_SHIFT);
+    let how_related_raw = (data[0] & HOW_RELATED_HI_MASK) << 4 | (data[1] >> 4) & 0x0F;
+    let how_related = HowRelated::from_u8(how_related_raw);
     let term_id = ((data[1] as u16 & TERM_ID_HI_MASK as u16) << TERM_ID_HI_SHIFT) | data[2] as u16;
     let group_id = (data[3] & GROUP_ID_MASK) >> GROUP_ID_SHIFT;
     let precedence = data[3] & PRECEDENCE_MASK;
@@ -449,7 +559,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     let mut pos = 4;
     let end = link_info_length;
 
-    let media_uri = if link_type == 0x00 || link_type == 0x02 {
+    let media_uri = if link_type == LinkType::UriString || link_type == LinkType::Both {
         if pos >= end {
             return Err(Error::BufferTooShort {
                 need: pos + 1,
@@ -473,7 +583,8 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
         None
     };
 
-    let dvb_binary_locator = if link_type == 0x01 || link_type == 0x02 {
+    let dvb_binary_locator = if link_type == LinkType::BinaryLocator || link_type == LinkType::Both
+    {
         if pos >= end {
             return Err(Error::BufferTooShort {
                 need: pos + 1,
@@ -563,11 +674,11 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 }
 
 fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> usize {
-    buf[0] = ((li.link_type & 0x0F) << LINK_TYPE_SHIFT)
-        | LINK_INFO_HEADER_RFU
-        | ((li.how_related >> 4) & HOW_RELATED_HI_MASK);
-    buf[1] =
-        ((li.how_related & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
+    let lt = li.link_type.to_u8();
+    let hr = li.how_related.to_u8();
+    buf[0] =
+        ((lt & 0x0F) << LINK_TYPE_SHIFT) | LINK_INFO_HEADER_RFU | ((hr >> 4) & HOW_RELATED_HI_MASK);
+    buf[1] = ((hr & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
     buf[2] = li.term_id as u8;
     buf[3] = ((li.group_id & 0x0F) << GROUP_ID_SHIFT) | (li.precedence & PRECEDENCE_MASK);
 
@@ -812,8 +923,8 @@ mod tests {
     #[test]
     fn parse_one_link_uri_only() {
         let li = LinkInfo {
-            link_type: 0x00,
-            how_related: 0x01,
+            link_type: LinkType::UriString,
+            how_related: HowRelated::Cs2005,
             term_id: 0x123,
             group_id: 0x5,
             precedence: 0x9,
@@ -839,8 +950,8 @@ mod tests {
         rct.serialize_into(&mut buf).unwrap();
         let p = RctSection::parse(&buf).unwrap();
         assert_eq!(p.links.len(), 1);
-        assert_eq!(p.links[0].link_type, 0x00);
-        assert_eq!(p.links[0].how_related, 0x01);
+        assert_eq!(p.links[0].link_type, LinkType::UriString);
+        assert_eq!(p.links[0].how_related, HowRelated::Cs2005);
         assert_eq!(p.links[0].term_id, 0x123);
         assert_eq!(p.links[0].group_id, 0x5);
         assert_eq!(p.links[0].precedence, 0x9);
@@ -865,8 +976,8 @@ mod tests {
             windows: None,
         };
         let li = LinkInfo {
-            link_type: 0x01,
-            how_related: 0x02,
+            link_type: LinkType::BinaryLocator,
+            how_related: HowRelated::Cs2007,
             term_id: 0x456,
             group_id: 0x1,
             precedence: 0x2,
@@ -898,7 +1009,7 @@ mod tests {
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         let p = RctSection::parse(&buf).unwrap();
         assert_eq!(p.links.len(), 1);
-        assert_eq!(p.links[0].link_type, 0x01);
+        assert_eq!(p.links[0].link_type, LinkType::BinaryLocator);
         let l = p.links[0].dvb_binary_locator.as_ref().unwrap();
         assert_eq!(l.identifier_type, 0x01);
         assert!(l.inline_service);
@@ -912,8 +1023,8 @@ mod tests {
     #[test]
     fn byte_exact_round_trip_simple() {
         let li = LinkInfo {
-            link_type: 0x00,
-            how_related: 0x00,
+            link_type: LinkType::UriString,
+            how_related: HowRelated::Cs2004,
             term_id: 0,
             group_id: 0,
             precedence: 0,
@@ -1019,5 +1130,21 @@ mod tests {
         assert_eq!(rct.service_id, 0x0064);
         assert_eq!(rct.year_offset, 0x07D3);
         assert!(rct.links.is_empty());
+    }
+
+    #[test]
+    fn link_type_full_range_round_trip() {
+        for v in 0u8..=0x0F {
+            let lt = LinkType::from_u8(v);
+            assert_eq!(lt.to_u8(), v, "LinkType round-trip failed for {v:#04x}");
+        }
+    }
+
+    #[test]
+    fn how_related_full_range_round_trip() {
+        for v in 0u8..=0x3F {
+            let hr = HowRelated::from_u8(v);
+            assert_eq!(hr.to_u8(), v, "HowRelated round-trip failed for {v:#04x}");
+        }
     }
 }

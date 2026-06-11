@@ -103,6 +103,73 @@ impl Matype {
     const MASK_EXT: u8 = 0x03;
 }
 
+/// Roll-off factor encoded in MATYPE-1 EXT bits `[1:0]` (DVB-S2/S2X context).
+///
+/// EN 302 307 / EN 302 755 — roll-off is signalled in the MATYPE-1 extension
+/// bits when the TS/GS field indicates TS or GFPS.  In DVB-T2 the EXT field is
+/// reserved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum RollOff {
+    /// 0b00 — α0.35 (0.35).
+    Alpha035,
+    /// 0b01 — α0.25 (0.25).
+    Alpha025,
+    /// 0b10 — α0.20 (0.20).
+    Alpha020,
+    /// 0b11 — reserved / S2X low roll-off.
+    Reserved,
+}
+
+impl RollOff {
+    /// Decode from 2-bit EXT field.
+    /// Decode from 2-bit EXT field.
+    #[must_use]
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0x03 {
+            0 => Self::Alpha035,
+            1 => Self::Alpha025,
+            2 => Self::Alpha020,
+            _ => Self::Reserved,
+        }
+    }
+
+    /// Encode to 2-bit value.
+    /// Encode to 2-bit value.
+    #[must_use]
+    pub fn to_bits(self) -> u8 {
+        match self {
+            Self::Alpha035 => 0,
+            Self::Alpha025 => 1,
+            Self::Alpha020 => 2,
+            Self::Reserved => 3,
+        }
+    }
+
+    /// Human-readable roll-off label.
+    /// Human-readable spec display name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Alpha035 => "α0.35",
+            Self::Alpha025 => "α0.25",
+            Self::Alpha020 => "α0.20",
+            Self::Reserved => "reserved/S2X-low",
+        }
+    }
+}
+
+impl Matype {
+    /// Decode the roll-off factor from the EXT bits `[1:0]`.
+    ///
+    /// Meaningful in DVB-S2/S2X context; reserved in DVB-T2.
+    #[must_use]
+    pub fn roll_off(&self) -> RollOff {
+        RollOff::from_bits(self.ext & 0x03)
+    }
+}
+
 impl TryFrom<[u8; 2]> for Matype {
     type Error = Error;
 
@@ -459,7 +526,7 @@ mod tests {
 
     #[test]
     fn parse_matype_extracts_roll_off_2_bits_as_ext_for_s2_context() {
-        // EXT = 0b11 in NM means roll-off α=0.35 for DVB-S2
+        // EXT = 0b11 in NM means reserved/S2X-low roll-off (0b00 is α0.35)
         let mut hdr = [0u8; BBHEADER_LEN];
         hdr[0] = 0xF3; // TS/SIS/CCM, no ISSYI, no NPD, EXT=0b11
         hdr[1] = 0x00;

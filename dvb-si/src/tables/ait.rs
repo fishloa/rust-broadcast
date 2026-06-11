@@ -21,6 +21,167 @@ const APP_HEADER_LEN: usize = 9;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES + APP_LOOP_LEN_BYTES + CRC_LEN;
 
+/// Application control code — ETSI TS 102 809 §5.2.4.1 Table 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ControlCode {
+    /// 0x00 — reserved for future use.
+    Reserved,
+    /// 0x01 — AUTOSTART: started on service selection unless already running.
+    Autostart,
+    /// 0x02 — PRESENT: allowed to run but not auto-started.
+    Present,
+    /// 0x03 — DESTROY: stopped gracefully, no restart.
+    Destroy,
+    /// 0x04 — KILL: stopped immediately, no restart.
+    Kill,
+    /// 0x05 — PREFETCH: files cached, app not started.
+    Prefetch,
+    /// 0x06 — REMOTE: application not hosted by the current service.
+    Remote,
+    /// 0x07 — DISABLED: application shall not be available to the user.
+    Disabled,
+    /// 0x08 — PLAYBACK_AUTOSTART: autostart for playback services.
+    PlaybackAutostart,
+    /// Catch-all for reserved / unallocated wire values.
+    Unallocated(u8),
+}
+
+impl ControlCode {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Reserved,
+            0x01 => Self::Autostart,
+            0x02 => Self::Present,
+            0x03 => Self::Destroy,
+            0x04 => Self::Kill,
+            0x05 => Self::Prefetch,
+            0x06 => Self::Remote,
+            0x07 => Self::Disabled,
+            0x08 => Self::PlaybackAutostart,
+            _ => Self::Unallocated(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0x00,
+            Self::Autostart => 0x01,
+            Self::Present => 0x02,
+            Self::Destroy => 0x03,
+            Self::Kill => 0x04,
+            Self::Prefetch => 0x05,
+            Self::Remote => 0x06,
+            Self::Disabled => 0x07,
+            Self::PlaybackAutostart => 0x08,
+            Self::Unallocated(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::Autostart => "AUTOSTART",
+            Self::Present => "PRESENT",
+            Self::Destroy => "DESTROY",
+            Self::Kill => "KILL",
+            Self::Prefetch => "PREFETCH",
+            Self::Remote => "REMOTE",
+            Self::Disabled => "DISABLED",
+            Self::PlaybackAutostart => "PLAYBACK_AUTOSTART",
+            Self::Unallocated(_) => "Unallocated",
+        }
+    }
+}
+
+/// Application type — ETSI TS 102 809 §5.2.4.2 Tables 2-3 (application_type).
+///
+/// 15-bit field identifying the application environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ApplicationType {
+    /// 0x0000 — reserved.
+    Reserved,
+    /// 0x0001 — DVB-J (Java).
+    DvbJ,
+    /// 0x0002 — DVB-HTML.
+    DvbHtml,
+    /// 0x0003 — DVB-MHP 1.0.
+    DvbMhp1_0,
+    /// 0x0004 — DVB-MHP 1.1.
+    DvbMhp1_1,
+    /// 0x0005 — DVB-MHP 1.2.
+    DvbMhp1_2,
+    /// 0x0010 — HbbTV (DVB-HTML application).
+    HbbTv,
+    /// 0x0011 — CI Plus.
+    CiPlus,
+    /// 0x7FFF — reserved to DVB.
+    DvbReserved(u16),
+    /// 0x8000..0xFFFF — user defined.
+    UserDefined(u16),
+}
+
+impl ApplicationType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u16(v: u16) -> Self {
+        match v {
+            0x0000 => Self::Reserved,
+            0x0001 => Self::DvbJ,
+            0x0002 => Self::DvbHtml,
+            0x0003 => Self::DvbMhp1_0,
+            0x0004 => Self::DvbMhp1_1,
+            0x0005 => Self::DvbMhp1_2,
+            0x0010 => Self::HbbTv,
+            0x0011 => Self::CiPlus,
+            v if v < 0x8000 => Self::DvbReserved(v),
+            _ => Self::UserDefined(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u16(self) -> u16 {
+        match self {
+            Self::Reserved => 0x0000,
+            Self::DvbJ => 0x0001,
+            Self::DvbHtml => 0x0002,
+            Self::DvbMhp1_0 => 0x0003,
+            Self::DvbMhp1_1 => 0x0004,
+            Self::DvbMhp1_2 => 0x0005,
+            Self::HbbTv => 0x0010,
+            Self::CiPlus => 0x0011,
+            Self::DvbReserved(v) | Self::UserDefined(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::DvbJ => "DVB-J",
+            Self::DvbHtml => "DVB-HTML",
+            Self::DvbMhp1_0 => "DVB-MHP 1.0",
+            Self::DvbMhp1_1 => "DVB-MHP 1.1",
+            Self::DvbMhp1_2 => "DVB-MHP 1.2",
+            Self::HbbTv => "HbbTV",
+            Self::CiPlus => "CI Plus",
+            Self::DvbReserved(_) => "DVB Reserved",
+            Self::UserDefined(_) => "User Defined",
+        }
+    }
+}
+
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -39,7 +200,7 @@ pub struct AitApplication<'a> {
     /// Application identifier.
     pub identifier: ApplicationIdentifier,
     /// Application control code (1 = autostart, etc.).
-    pub control_code: u8,
+    pub control_code: ControlCode,
     /// Raw descriptor bytes for this application.
     /// Per-application descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
@@ -52,7 +213,7 @@ pub struct AitApplication<'a> {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct AitSection<'a> {
     /// 15-bit application_type (e.g. 0x0010 for HbbTV).
-    pub application_type: u16,
+    pub application_type: ApplicationType,
     /// Test application flag (bit 15 of the extension field).
     pub test_application_flag: bool,
     /// 5-bit version_number.
@@ -104,7 +265,8 @@ impl<'a> Parse<'a> for AitSection<'a> {
         )?;
 
         let test_application_flag = (bytes[3] & 0x80) != 0;
-        let application_type = (((bytes[3] & 0x7F) as u16) << 8) | (bytes[4] as u16);
+        let application_type_raw = (((bytes[3] & 0x7F) as u16) << 8) | (bytes[4] as u16);
+        let application_type = ApplicationType::from_u16(application_type_raw);
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
@@ -141,7 +303,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 | ((bytes[pos + 2] as u32) << 8)
                 | (bytes[pos + 3] as u32);
             let application_id = u16::from_be_bytes([bytes[pos + 4], bytes[pos + 5]]);
-            let control_code = bytes[pos + 6];
+            let control_code = ControlCode::from_u8(bytes[pos + 6]);
             let app_desc_length =
                 (((bytes[pos + 7] & 0x0F) as usize) << 8) | bytes[pos + 8] as usize;
             let app_desc_start = pos + APP_HEADER_LEN;
@@ -203,12 +365,12 @@ impl Serialize for AitSection<'_> {
         }
 
         let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
+        let app_type_raw = self.application_type.to_u16();
         buf[0] = TABLE_ID;
         buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
-        buf[3] = (u8::from(self.test_application_flag) << 7)
-            | ((self.application_type >> 8) as u8 & 0x7F);
-        buf[4] = (self.application_type & 0xFF) as u8;
+        buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8 & 0x7F);
+        buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
@@ -235,7 +397,7 @@ impl Serialize for AitSection<'_> {
         for app in &self.applications {
             buf[pos..pos + 4].copy_from_slice(&app.identifier.organisation_id.to_be_bytes());
             buf[pos + 4..pos + 6].copy_from_slice(&app.identifier.application_id.to_be_bytes());
-            buf[pos + 6] = app.control_code;
+            buf[pos + 6] = app.control_code.to_u8();
             let adl = app.descriptors.len() as u16;
             buf[pos + 7] = 0xF0 | ((adl >> 8) as u8 & 0x0F);
             buf[pos + 8] = (adl & 0xFF) as u8;
@@ -328,7 +490,7 @@ mod tests {
     fn parse_empty_ait_no_applications() {
         let bytes = build_ait(0x0010, false, 5, &[], &[]);
         let ait = AitSection::parse(&bytes).expect("parse");
-        assert_eq!(ait.application_type, 0x0010);
+        assert_eq!(ait.application_type, ApplicationType::HbbTv);
         assert!(!ait.test_application_flag);
         assert_eq!(ait.version_number, 5);
         assert!(ait.current_next_indicator);
@@ -367,7 +529,7 @@ mod tests {
         assert_eq!(ait.applications.len(), 1);
         assert_eq!(ait.applications[0].identifier.organisation_id, 0x12345678);
         assert_eq!(ait.applications[0].identifier.application_id, 0xABCD);
-        assert_eq!(ait.applications[0].control_code, 0x01);
+        assert_eq!(ait.applications[0].control_code, ControlCode::Autostart);
         assert_eq!(ait.applications[0].descriptors.raw(), &desc[..]);
     }
 
@@ -394,7 +556,7 @@ mod tests {
     #[test]
     fn serialize_round_trip_empty() {
         let ait = AitSection {
-            application_type: 0x0010,
+            application_type: ApplicationType::HbbTv,
             test_application_flag: false,
             version_number: 3,
             current_next_indicator: true,
@@ -413,7 +575,7 @@ mod tests {
     fn serialize_round_trip_with_applications() {
         let desc1: [u8; 2] = [0xAA, 0xBB];
         let ait = AitSection {
-            application_type: 0x0010,
+            application_type: ApplicationType::HbbTv,
             test_application_flag: true,
             version_number: 7,
             current_next_indicator: true,
@@ -426,7 +588,7 @@ mod tests {
                         organisation_id: 0x12345678,
                         application_id: 0xABCD,
                     },
-                    control_code: 0x01,
+                    control_code: ControlCode::Autostart,
                     descriptors: DescriptorLoop::new(&desc1),
                 },
                 AitApplication {
@@ -434,7 +596,7 @@ mod tests {
                         organisation_id: 0x87654321,
                         application_id: 0x00EF,
                     },
-                    control_code: 0x02,
+                    control_code: ControlCode::Present,
                     descriptors: DescriptorLoop::new(&[]),
                 },
             ],
@@ -458,5 +620,37 @@ mod tests {
             AitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    #[test]
+    fn control_code_full_range_round_trip() {
+        for byte in 0u8..=0xFF {
+            let cc = ControlCode::from_u8(byte);
+            assert_eq!(
+                cc.to_u8(),
+                byte,
+                "ControlCode round-trip failed for {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn control_code_named_values() {
+        assert_eq!(ControlCode::Autostart.to_u8(), 0x01);
+        assert_eq!(ControlCode::Kill.to_u8(), 0x04);
+        assert_eq!(ControlCode::Prefetch.to_u8(), 0x05);
+        assert_eq!(ControlCode::PlaybackAutostart.to_u8(), 0x08);
+    }
+
+    #[test]
+    fn application_type_full_range_round_trip() {
+        for at in 0u16..=0xFFFF {
+            let app = ApplicationType::from_u16(at);
+            assert_eq!(
+                app.to_u16(),
+                at,
+                "ApplicationType round-trip failed for {at:#06x}"
+            );
+        }
     }
 }

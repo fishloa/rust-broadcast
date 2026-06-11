@@ -145,7 +145,7 @@ pub mod doc {
             pcr_pid: 0x0100,
             program_info: crate::descriptors::DescriptorLoop::new(&[]),
             streams: vec![PmtStream {
-                stream_type: 0x1B, // H.264 video
+                stream_type: crate::tables::pmt::StreamType::H264, // H.264 video
                 elementary_pid: 0x0101,
                 es_info: crate::descriptors::DescriptorLoop::new(&[]),
             }],

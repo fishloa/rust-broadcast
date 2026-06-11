@@ -39,6 +39,56 @@ pub const AUTH_EXTENSION_LAST: u16 = 0x00FF;
 /// `table_id_extension` (`trust_message_id`) of the certificate collection message (§9.3.4 Table 41).
 pub const CERTIFICATE_COLLECTION_EXTENSION: u16 = 0x0100;
 
+/// Reference type coding — ETSI TS 102 809 §9.4.3 Table 45.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ReferenceType {
+    /// 0x0 — reserved for future use.
+    Reserved,
+    /// 0x1 — same ES (table_id of the payload section).
+    SameEs,
+    /// 0x2 — component tag ES (component_tag of the payload section).
+    ComponentTagEs,
+    /// 0x3..=0xF — reserved.
+    Unallocated(u8),
+}
+
+impl ReferenceType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x0F {
+            0x0 => Self::Reserved,
+            0x1 => Self::SameEs,
+            0x2 => Self::ComponentTagEs,
+            v => Self::Unallocated(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0x0,
+            Self::SameEs => 0x1,
+            Self::ComponentTagEs => 0x2,
+            Self::Unallocated(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::SameEs => "Same ES",
+            Self::ComponentTagEs => "Component Tag ES",
+            Self::Unallocated(_) => "Unallocated",
+        }
+    }
+}
+
 /// table_id(1) + section_length hi/lo(2) + extension(2) + version/cni(1)
 /// + section_number(1) + last_section_number(1) = 8-byte common header.
 const HEADER_LEN: usize = 8;
@@ -62,7 +112,7 @@ const AUTH_FIXED_PREFIX: usize = 5;
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct SectionHashEntry<'a> {
     /// 4-bit `reference_type` (§9.4.3 Table 45): 1 = same ES, 2 = component_tag ES.
-    pub reference_type: u8,
+    pub reference_type: ReferenceType,
     /// `reference_byte` field — its semantics depend on `reference_type`.
     pub reference: &'a [u8],
     /// The (possibly truncated) section hash, `section_hash_length` bytes.
@@ -203,7 +253,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     while pos < loop_end {
         // reference_type(4) | reference_length(4)
         let lead = body[pos];
-        let reference_type = lead >> 4;
+        let reference_type = ReferenceType::from_u8(lead >> 4);
         let reference_length = (lead & 0x0F) as usize;
         let ref_start = pos + 1;
         let ref_end = ref_start + reference_length;
@@ -340,8 +390,6 @@ impl ProtectionMessageBody<'_> {
     }
 
     /// Write the body into `buf`, returning the number of bytes written.
-    /// Over-range length/count fields error rather than silently truncating
-    /// (the crate's strict serialize idiom — cf. `mpe.rs` scrambling guards).
     fn write_into(&self, buf: &mut [u8]) -> Result<usize> {
         match self {
             ProtectionMessageBody::AuthenticationMessage {
@@ -383,14 +431,13 @@ impl ProtectionMessageBody<'_> {
                 buf[4] = (loop_bytes & 0xFF) as u8;
                 let mut pos = AUTH_FIXED_PREFIX;
                 for h in hashes {
-                    // reference_length is a 4-bit field.
                     if h.reference.len() > 0x0F {
                         return Err(Error::SectionLengthOverflow {
                             declared: h.reference.len(),
                             available: 0x0F,
                         });
                     }
-                    buf[pos] = (h.reference_type << 4) | (h.reference.len() as u8 & 0x0F);
+                    buf[pos] = (h.reference_type.to_u8() << 4) | (h.reference.len() as u8 & 0x0F);
                     pos += 1;
                     buf[pos..pos + h.reference.len()].copy_from_slice(h.reference);
                     pos += h.reference.len();
@@ -411,7 +458,6 @@ impl ProtectionMessageBody<'_> {
                 Ok(pos)
             }
             ProtectionMessageBody::CertificateCollection { certificates } => {
-                // certificate_count is a 4-bit field.
                 if certificates.len() > 0x0F {
                     return Err(Error::SectionLengthOverflow {
                         declared: certificates.len(),
@@ -422,7 +468,6 @@ impl ProtectionMessageBody<'_> {
                 buf[0] = 0xF0 | (certificates.len() as u8 & 0x0F);
                 let mut pos = 1;
                 for c in certificates {
-                    // certificate_length is a 12-bit field.
                     if c.len() > 0x0FFF {
                         return Err(Error::SectionLengthOverflow {
                             declared: c.len(),
@@ -565,7 +610,7 @@ mod tests {
                 assert_eq!(section_hash_length, 4);
                 assert_eq!(signature_algorithm_identifier, 0x01);
                 assert_eq!(hashes.len(), 1);
-                assert_eq!(hashes[0].reference_type, 1);
+                assert_eq!(hashes[0].reference_type, ReferenceType::SameEs);
                 assert_eq!(hashes[0].reference, &[0x01]);
                 assert_eq!(hashes[0].hash, &[0xAA, 0xBB, 0xCC, 0xDD]);
                 assert_eq!(extension_bytes, &[0xDE, 0xAD]);
@@ -622,9 +667,8 @@ mod tests {
 
     #[test]
     fn auth_loop_overflow_rejected() {
-        // Declare a section_hashes_loop_length that overruns the body.
-        let mut body = vec![0x00, 0x04, 0x01, 0xF0, 0xFF]; // loop_len = 0xFF, body far shorter
-        body.extend_from_slice(&[0x00]); // 1 stray byte
+        let mut body = vec![0x00, 0x04, 0x01, 0xF0, 0xFF];
+        body.extend_from_slice(&[0x00]);
         let bytes = build_section(0x0000, 0, &body);
         assert!(matches!(
             ProtectionMessageSection::parse(&bytes).unwrap_err(),
@@ -634,8 +678,7 @@ mod tests {
 
     #[test]
     fn cert_length_overflow_rejected() {
-        // certificate_count = 1 but certificate_length overruns the body.
-        let body = vec![0xF0 | 0x01, 0x00, 0x10, 0x01]; // length 0x010 = 16, only 1 byte present
+        let body = vec![0xF0 | 0x01, 0x00, 0x10, 0x01];
         let bytes = build_section(CERTIFICATE_COLLECTION_EXTENSION, 0, &body);
         assert!(matches!(
             ProtectionMessageSection::parse(&bytes).unwrap_err(),
@@ -685,12 +728,6 @@ mod tests {
         let bytes = build_section(0x0042, 5, &auth_body());
         let sec = ProtectionMessageSection::parse(&bytes).unwrap();
         let j = serde_json::to_string(&sec).unwrap();
-        // The borrowed `&[u8]` fields (reference/hash/extension/signature)
-        // cannot be JSON-deserialized zero-copy (serde_json renders them as
-        // number sequences, not borrowed byte arrays) — the crate-wide
-        // constraint that affects every borrowed-slice table (cf. mpe.rs).
-        // Exercise the derive through the WIRE form: a re-parse must serialize
-        // to byte-identical JSON, pinning the Serialize impl.
         let reparsed = ProtectionMessageSection::parse(&bytes).unwrap();
         assert_eq!(serde_json::to_string(&reparsed).unwrap(), j);
         assert!(j.contains("\"signature_algorithm_identifier\":1"));
@@ -709,5 +746,17 @@ mod tests {
             ProtectionMessageSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    #[test]
+    fn reference_type_full_range_round_trip() {
+        for v in 0u8..=0x0F {
+            let rt = ReferenceType::from_u8(v);
+            assert_eq!(
+                rt.to_u8(),
+                v,
+                "ReferenceType round-trip failed for {v:#04x}"
+            );
+        }
     }
 }

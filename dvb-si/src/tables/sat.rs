@@ -253,6 +253,51 @@ pub struct CellFragmentBody {
 
 // ── Time Association (Table 11e) ────────────────────────────────────────────
 
+/// Association type coding — ETSI EN 300 468 §5.2.11.4 Table 11f.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum AssociationType {
+    /// 0 — UTC without leap second signalling.
+    UtcWithoutLeap,
+    /// 1 — UTC with leap second signalling.
+    UtcWithLeap,
+    /// 2..=15 — reserved.
+    Reserved(u8),
+}
+
+impl AssociationType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x0F {
+            0 => Self::UtcWithoutLeap,
+            1 => Self::UtcWithLeap,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::UtcWithoutLeap => 0,
+            Self::UtcWithLeap => 1,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UtcWithoutLeap => "UTC without leap second",
+            Self::UtcWithLeap => "UTC with leap second",
+            Self::Reserved(_) => "Reserved",
+        }
+    }
+}
+
 /// Leap-second signalling info (present when `association_type == 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -272,7 +317,7 @@ pub struct LeapInfo {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TimeAssociationBody {
     /// `association_type` (4 bits, Table 11f).
-    pub association_type: u8,
+    pub association_type: AssociationType,
     /// Leap info (present iff `association_type == 1`).
     pub leap_info: Option<LeapInfo>,
     /// `ncr_base` (33 bits).
@@ -397,13 +442,73 @@ pub struct PositionV3Metadata {
     /// `interpolation_flag` — 1 bit.
     pub interpolation_flag: bool,
     /// `interpolation_type` (3 bits, Table 11i).
-    pub interpolation_type: u8,
+    pub interpolation_type: InterpolationType,
     /// `interpolation_degree` (3 bits).
     pub interpolation_degree: u8,
     /// Usable start time (optional).
     pub usable_start_time: Option<UsableTime>,
     /// Usable stop time (optional).
     pub usable_stop_time: Option<UsableTime>,
+}
+
+/// Interpolation type coding — ETSI EN 300 468 §5.2.11.6 Table 11i.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum InterpolationType {
+    /// 0 — Reserved.
+    Reserved0,
+    /// 1 — Linear.
+    Linear,
+    /// 2 — Lagrange.
+    Lagrange,
+    /// 3 — Reserved.
+    Reserved3,
+    /// 4 — Hermite.
+    Hermite,
+    /// 5..=7 — Reserved.
+    ReservedOther(u8),
+}
+
+impl InterpolationType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x07 {
+            0 => Self::Reserved0,
+            1 => Self::Linear,
+            2 => Self::Lagrange,
+            3 => Self::Reserved3,
+            4 => Self::Hermite,
+            v => Self::ReservedOther(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved0 => 0,
+            Self::Linear => 1,
+            Self::Lagrange => 2,
+            Self::Reserved3 => 3,
+            Self::Hermite => 4,
+            Self::ReservedOther(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved0 => "Reserved",
+            Self::Linear => "Linear",
+            Self::Lagrange => "Lagrange",
+            Self::Reserved3 => "Reserved",
+            Self::Hermite => "Hermite",
+            Self::ReservedOther(_) => "Reserved",
+        }
+    }
 }
 
 /// Ephemeris acceleration (optional, 3 × 32-bit spfmsbf).
@@ -624,8 +729,8 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter, count_only: bool) {
             }
         }
         SatBody::TimeAssociation(b) => {
-            w.write_u(4, b.association_type as u64);
-            if b.association_type == 1 {
+            w.write_u(4, b.association_type.to_u8() as u64);
+            if b.association_type.to_u8() == 1 {
                 if let Some(ref li) = b.leap_info {
                     w.write_u(1, li.leap59 as u64);
                     w.write_u(1, li.leap61 as u64);
@@ -758,7 +863,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter, count_only: bool) {
                     w.write_u(32, md.total_stop_time_day_fraction as u64);
                     w.write_zero(1);
                     w.write_u(1, md.interpolation_flag as u64);
-                    w.write_u(3, md.interpolation_type as u64);
+                    w.write_u(3, md.interpolation_type.to_u8() as u64);
                     w.write_u(3, md.interpolation_degree as u64);
                     if sat.usable_start_time_flag {
                         if let Some(ref ut) = md.usable_start_time {
@@ -1031,8 +1136,8 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     what: "SatSection TimeAssociation body",
                 });
             }
-            let association_type = r.read_u(4) as u8;
-            let leap_info = if association_type == 1 {
+            let association_type = AssociationType::from_u8(r.read_u(4) as u8);
+            let leap_info = if association_type.to_u8() == 1 {
                 Some(LeapInfo {
                     leap59: r.read_u(1) != 0,
                     leap61: r.read_u(1) != 0,
@@ -1230,7 +1335,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     let total_stop_time_day_fraction = r.read_u(32) as u32;
                     r.skip(1);
                     let interpolation_flag = r.read_u(1) != 0;
-                    let interpolation_type = r.read_u(3) as u8;
+                    let interpolation_type = InterpolationType::from_u8(r.read_u(3) as u8);
                     let interpolation_degree = r.read_u(3) as u8;
                     let usable_start_time = if usable_start_time_flag {
                         const USABLE_TIME_BITS: usize = 8 + 7 + 9 + 32;
@@ -1589,7 +1694,7 @@ mod tests {
     #[test]
     fn private_indicator_false_round_trip() {
         let body = SatBody::TimeAssociation(TimeAssociationBody {
-            association_type: 0,
+            association_type: AssociationType::UtcWithoutLeap,
             leap_info: None,
             ncr_base: 0,
             ncr_ext: 0,
@@ -1627,7 +1732,7 @@ mod tests {
     #[test]
     fn time_association_round_trip() {
         let body = SatBody::TimeAssociation(TimeAssociationBody {
-            association_type: 1,
+            association_type: AssociationType::UtcWithLeap,
             leap_info: Some(LeapInfo {
                 leap59: true,
                 leap61: false,
@@ -1643,7 +1748,7 @@ mod tests {
         let sat = SatSection::parse(&bytes).unwrap();
         match &sat.body {
             SatBody::TimeAssociation(ta) => {
-                assert_eq!(ta.association_type, 1);
+                assert_eq!(ta.association_type, AssociationType::UtcWithLeap);
                 let li = ta.leap_info.as_ref().unwrap();
                 assert!(li.leap59);
                 assert!(!li.leap61);
@@ -1876,7 +1981,7 @@ mod tests {
                     total_stop_time_day: 100,
                     total_stop_time_day_fraction: 0,
                     interpolation_flag: true,
-                    interpolation_type: 1,
+                    interpolation_type: InterpolationType::Linear,
                     interpolation_degree: 2,
                     usable_start_time: Some(UsableTime {
                         year: 26,
@@ -1897,7 +2002,7 @@ mod tests {
                 assert_eq!(v3.satellites[0].satellite_id, 0xABCDEF);
                 let md = v3.satellites[0].metadata.as_ref().unwrap();
                 assert!(md.interpolation_flag);
-                assert_eq!(md.interpolation_type, 1);
+                assert_eq!(md.interpolation_type, InterpolationType::Linear);
                 assert_eq!(md.interpolation_degree, 2);
                 assert!(md.usable_start_time.is_some());
             }
@@ -2259,7 +2364,7 @@ mod tests {
     #[test]
     fn hand_byte_time_association() {
         let body = SatBody::TimeAssociation(TimeAssociationBody {
-            association_type: 0,
+            association_type: AssociationType::UtcWithoutLeap,
             leap_info: None,
             ncr_base: 0x0000_AAAA_AAAA_u64,
             ncr_ext: 0x1AA,
@@ -2271,7 +2376,7 @@ mod tests {
         assert_eq!(sat.satellite_table_id, 2);
         match &sat.body {
             SatBody::TimeAssociation(ta) => {
-                assert_eq!(ta.association_type, 0);
+                assert_eq!(ta.association_type, AssociationType::UtcWithoutLeap);
                 assert_eq!(ta.ncr_base, 0x0000_AAAA_AAAA);
                 assert_eq!(ta.ncr_ext, 0x1AA);
             }
@@ -2419,7 +2524,7 @@ mod tests {
         assert_eq!(sat.satellite_table_id, 2);
         match &sat.body {
             SatBody::TimeAssociation(ta) => {
-                assert_eq!(ta.association_type, 0);
+                assert_eq!(ta.association_type, AssociationType::UtcWithoutLeap);
                 assert_eq!(ta.ncr_base, 1);
                 assert_eq!(ta.ncr_ext, 0);
                 assert_eq!(ta.association_timestamp_seconds, 0);

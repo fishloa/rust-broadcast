@@ -41,6 +41,137 @@ const DESC_HEADER_LEN: usize = 2;
 const DESC_FIXED_LEN: usize = 9;
 const SUB_DESC_HEADER_LEN: usize = 2;
 
+/// Compatibility descriptor type — TS 102 006 Table 16 / ISO/IEC 13818-6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum DescriptorType {
+    /// 0x00 — pad descriptor.
+    Pad,
+    /// 0x01 — system hardware descriptor.
+    SystemHardware,
+    /// 0x02 — system software descriptor.
+    SystemSoftware,
+    /// 0x03..=0x3F — ISO/IEC 13818-6 reserved.
+    IsoReserved(u8),
+    /// 0x40..=0x7F — reserved for future use.
+    DvbReserved(u8),
+    /// 0x80..=0xFF — user defined.
+    UserDefined(u8),
+}
+
+impl DescriptorType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Pad,
+            0x01 => Self::SystemHardware,
+            0x02 => Self::SystemSoftware,
+            v if v < 0x40 => Self::IsoReserved(v),
+            v if v < 0x80 => Self::DvbReserved(v),
+            v => Self::UserDefined(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Pad => 0x00,
+            Self::SystemHardware => 0x01,
+            Self::SystemSoftware => 0x02,
+            Self::IsoReserved(v) | Self::DvbReserved(v) | Self::UserDefined(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Pad => "Pad",
+            Self::SystemHardware => "System Hardware",
+            Self::SystemSoftware => "System Software",
+            Self::IsoReserved(_) => "ISO Reserved",
+            Self::DvbReserved(_) => "DVB Reserved",
+            Self::UserDefined(_) => "User Defined",
+        }
+    }
+}
+
+/// Compatibility specifier type — TS 102 006 Table 15 / ISO/IEC 13818-6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum SpecifierType {
+    /// 0x01 — IEEE OUI.
+    IeeeOui,
+    /// Catch-all for other / reserved values.
+    Unallocated(u8),
+}
+
+impl SpecifierType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x01 => Self::IeeeOui,
+            v => Self::Unallocated(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::IeeeOui => 0x01,
+            Self::Unallocated(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::IeeeOui => "IEEE OUI",
+            Self::Unallocated(_) => "Unallocated",
+        }
+    }
+}
+
+/// Compatibility sub-descriptor type — ISO/IEC 13818-6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum SubDescriptorType {
+    /// Catch-all carrying the raw byte value for round-trip fidelity.
+    Unallocated(u8),
+}
+
+impl SubDescriptorType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        Self::Unallocated(v)
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Unallocated(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Unallocated(_) => "Unallocated",
+        }
+    }
+}
+
 /// Compatibility Descriptor — ETSI TS 102 006 §9.4.2.2 Table 15 / ISO/IEC
 /// 13818-6 `compatibilityDescriptor()`.
 ///
@@ -66,9 +197,9 @@ pub struct CompatibilityDescriptor<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompatibilityDescriptorEntry<'a> {
     /// `descriptorType` — TS 102 006 Table 16 / ISO/IEC 13818-6.
-    pub descriptor_type: u8,
+    pub descriptor_type: DescriptorType,
     /// `specifierType` — `0x01` = IEEE OUI (Table 15 remark).
-    pub specifier_type: u8,
+    pub specifier_type: SpecifierType,
     /// `specifierData` — 3-byte IEEE OUI when `specifierType == 0x01`.
     pub specifier_data: [u8; 3],
     /// `model` — zero if transmitted in a manufacturer private location.
@@ -84,7 +215,7 @@ pub struct CompatibilityDescriptorEntry<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SubDescriptor<'a> {
     /// `subDescriptorType`.
-    pub sub_descriptor_type: u8,
+    pub sub_descriptor_type: SubDescriptorType,
     /// `subDescriptorData`.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub data: &'a [u8],
@@ -144,7 +275,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                     what: "CompatibilityDescriptor entry header",
                 });
             }
-            let descriptor_type = body[pos];
+            let descriptor_type = DescriptorType::from_u8(body[pos]);
             let descriptor_length = body[pos + 1] as usize;
             let entry_end = pos + DESC_HEADER_LEN + descriptor_length;
             if entry_end > body.len() {
@@ -155,11 +286,11 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             }
             if descriptor_length < DESC_FIXED_LEN {
                 return Err(Error::InvalidDescriptor {
-                    tag: descriptor_type,
+                    tag: descriptor_type.to_u8(),
                     reason: "descriptorLength shorter than fixed fields",
                 });
             }
-            let specifier_type = body[pos + DESC_HEADER_LEN];
+            let specifier_type = SpecifierType::from_u8(body[pos + DESC_HEADER_LEN]);
             let specifier_data = [
                 body[pos + DESC_HEADER_LEN + 1],
                 body[pos + DESC_HEADER_LEN + 2],
@@ -189,7 +320,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                         what: "CompatibilityDescriptor subDescriptor header",
                     });
                 }
-                let sub_descriptor_type = body[sub_pos];
+                let sub_descriptor_type = SubDescriptorType::from_u8(body[sub_pos]);
                 let sub_descriptor_length = body[sub_pos + 1] as usize;
                 sub_pos += SUB_DESC_HEADER_LEN;
                 if sub_pos + sub_descriptor_length > sub_desc_end {
@@ -280,9 +411,9 @@ impl Serialize for CompatibilityDescriptor<'_> {
                     available: u8::MAX as usize,
                 });
             }
-            buf[pos] = entry.descriptor_type;
+            buf[pos] = entry.descriptor_type.to_u8();
             buf[pos + 1] = entry_body_len as u8;
-            buf[pos + DESC_HEADER_LEN] = entry.specifier_type;
+            buf[pos + DESC_HEADER_LEN] = entry.specifier_type.to_u8();
             buf[pos + DESC_HEADER_LEN + 1..pos + DESC_HEADER_LEN + 4]
                 .copy_from_slice(&entry.specifier_data);
             buf[pos + DESC_HEADER_LEN + 4..pos + DESC_HEADER_LEN + 6]
@@ -298,7 +429,7 @@ impl Serialize for CompatibilityDescriptor<'_> {
             buf[pos + DESC_HEADER_LEN + 8] = entry.sub_descriptors.len() as u8;
             pos += DESC_HEADER_LEN + DESC_FIXED_LEN;
             for sd in &entry.sub_descriptors {
-                buf[pos] = sd.sub_descriptor_type;
+                buf[pos] = sd.sub_descriptor_type.to_u8();
                 if sd.data.len() > u8::MAX as usize {
                     return Err(Error::SectionLengthOverflow {
                         declared: sd.data.len(),
@@ -356,13 +487,16 @@ mod tests {
         let cd = CompatibilityDescriptor::parse(bytes).unwrap();
         assert_eq!(cd.descriptors.len(), 1);
         let e = &cd.descriptors[0];
-        assert_eq!(e.descriptor_type, 0x01);
-        assert_eq!(e.specifier_type, 0x01);
+        assert_eq!(e.descriptor_type, DescriptorType::SystemHardware);
+        assert_eq!(e.specifier_type, SpecifierType::IeeeOui);
         assert_eq!(e.specifier_data, [0x00, 0x15, 0x0A]);
         assert_eq!(e.model, 0x1234);
         assert_eq!(e.version, 0x0001);
         assert_eq!(e.sub_descriptors.len(), 1);
-        assert_eq!(e.sub_descriptors[0].sub_descriptor_type, 0x05);
+        assert_eq!(
+            e.sub_descriptors[0].sub_descriptor_type,
+            SubDescriptorType::Unallocated(0x05)
+        );
         assert_eq!(e.sub_descriptors[0].data, &[0xAA, 0xBB]);
         // Byte-identical re-serialize against the hand-built wire.
         let mut buf = vec![0u8; cd.serialized_len()];
@@ -402,18 +536,18 @@ mod tests {
     fn one_descriptor_with_sub_round_trip() {
         let cd = CompatibilityDescriptor {
             descriptors: vec![CompatibilityDescriptorEntry {
-                descriptor_type: 0x01,
-                specifier_type: 0x01,
+                descriptor_type: DescriptorType::SystemHardware,
+                specifier_type: SpecifierType::IeeeOui,
                 specifier_data: [0x00, 0x15, 0x0A],
                 model: 0x1234,
                 version: 0x0001,
                 sub_descriptors: vec![
                     SubDescriptor {
-                        sub_descriptor_type: 0x01,
+                        sub_descriptor_type: SubDescriptorType::Unallocated(0x01),
                         data: &[0xAA, 0xBB],
                     },
                     SubDescriptor {
-                        sub_descriptor_type: 0x02,
+                        sub_descriptor_type: SubDescriptorType::Unallocated(0x02),
                         data: &[0xCC],
                     },
                 ],
@@ -424,15 +558,21 @@ mod tests {
         let re = CompatibilityDescriptor::parse(&buf).unwrap();
         assert_eq!(re.descriptors.len(), 1);
         let e = &re.descriptors[0];
-        assert_eq!(e.descriptor_type, 0x01);
-        assert_eq!(e.specifier_type, 0x01);
+        assert_eq!(e.descriptor_type, DescriptorType::SystemHardware);
+        assert_eq!(e.specifier_type, SpecifierType::IeeeOui);
         assert_eq!(e.specifier_data, [0x00, 0x15, 0x0A]);
         assert_eq!(e.model, 0x1234);
         assert_eq!(e.version, 0x0001);
         assert_eq!(e.sub_descriptors.len(), 2);
-        assert_eq!(e.sub_descriptors[0].sub_descriptor_type, 0x01);
+        assert_eq!(
+            e.sub_descriptors[0].sub_descriptor_type,
+            SubDescriptorType::Unallocated(0x01)
+        );
         assert_eq!(e.sub_descriptors[0].data, &[0xAA, 0xBB]);
-        assert_eq!(e.sub_descriptors[1].sub_descriptor_type, 0x02);
+        assert_eq!(
+            e.sub_descriptors[1].sub_descriptor_type,
+            SubDescriptorType::Unallocated(0x02)
+        );
         assert_eq!(e.sub_descriptors[1].data, &[0xCC]);
         let mut buf2 = vec![0u8; cd.serialized_len()];
         cd.serialize_into(&mut buf2).unwrap();
@@ -445,21 +585,21 @@ mod tests {
         let cd = CompatibilityDescriptor {
             descriptors: vec![
                 CompatibilityDescriptorEntry {
-                    descriptor_type: 0x01,
-                    specifier_type: 0x01,
+                    descriptor_type: DescriptorType::SystemHardware,
+                    specifier_type: SpecifierType::IeeeOui,
                     specifier_data: [0x00, 0x00, 0x00],
                     model: 0x0000,
                     version: 0x0000,
                     sub_descriptors: vec![],
                 },
                 CompatibilityDescriptorEntry {
-                    descriptor_type: 0x02,
-                    specifier_type: 0x01,
+                    descriptor_type: DescriptorType::SystemSoftware,
+                    specifier_type: SpecifierType::IeeeOui,
                     specifier_data: [0x00, 0x15, 0x5A],
                     model: 0x0100,
                     version: 0x0002,
                     sub_descriptors: vec![SubDescriptor {
-                        sub_descriptor_type: 0x80,
+                        sub_descriptor_type: SubDescriptorType::Unallocated(0x80),
                         data: &[0xDE, 0xAD, 0xBE, 0xEF],
                     }],
                 },
