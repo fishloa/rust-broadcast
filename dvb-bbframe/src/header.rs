@@ -8,6 +8,7 @@ use num_enum::TryFromPrimitive;
 
 use crate::crc::crc8;
 use crate::error::Error;
+use crate::issy::{decode_issy_long, decode_issy_short, Issy};
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;
@@ -382,6 +383,23 @@ impl Bbheader {
         buf.copy_from_slice(&v);
         buf
     }
+
+    /// Decode the ISSY field from the header bytes (HEM only).
+    ///
+    /// In HEM the 3-byte ISSY occupies the UPL/SYNC positions. This method
+    /// tries [`decode_issy_long`] first (the common case for 3-byte ISSY);
+    /// if that fails because the form bit indicates a short-form ISSY,
+    /// falls back to [`decode_issy_short`] on the first 2 bytes.
+    ///
+    /// Returns `None` in Normal Mode (no ISSY in header) or if decoding
+    /// produces an unexpected error.
+    #[must_use]
+    pub fn issy(&self) -> Option<Issy> {
+        let bytes = self.issy_in_header?;
+        decode_issy_long(bytes)
+            .ok()
+            .or_else(|| decode_issy_short([bytes[0], bytes[1]]).ok())
+    }
 }
 
 #[cfg(test)]
@@ -694,6 +712,61 @@ mod tests {
         let issy = result.issy_in_header.unwrap();
         // ISSY in HEM: bytes[2..4] = ISSY_2MSB, byte[6] = ISSY_1LSB
         assert_eq!(issy, [0xa4, 0x28, 0xe2]);
+    }
+
+    #[test]
+    fn issy_accessor_decodes_hem_iscr_long() {
+        // Real HEM fixture: ISSY bytes [0xa4, 0x28, 0xe2]
+        // byte0=0xa4, bit7=1 (long form), bit6=0 (ISCR long)
+        // payload = (0xa4 & 0x3F)<<16 | 0x28<<8 | 0xe2 = 0x2428e2
+        let hdr: [u8; BBHEADER_LEN] = [0xf8, 0x00, 0xa4, 0x28, 0xbc, 0xc8, 0xe2, 0x03, 0x50, 0x1f];
+        let result = Bbheader::parse(&hdr).unwrap();
+        let issy = result.issy().expect("ISSY decode from HEM header");
+        assert_eq!(issy, Issy::IscrLong(0x0024_28E2));
+    }
+
+    #[test]
+    fn issy_accessor_returns_none_for_nm() {
+        let mut hdr = [0u8; BBHEADER_LEN];
+        hdr[0] = 0xF0;
+        hdr[1] = 0x00;
+        hdr[2] = 0x07;
+        hdr[3] = 0xD0;
+        hdr[4] = 0xBC;
+        hdr[5] = 0x00;
+        hdr[6] = 0x47;
+        hdr[7] = 0x00;
+        hdr[8] = 0x00;
+        hdr[9] = crc8(&hdr[..9]);
+        let result = Bbheader::parse(&hdr).unwrap();
+        assert_eq!(result.mode, Mode::Normal);
+        assert!(result.issy().is_none());
+    }
+
+    #[test]
+    fn issy_accessor_falls_back_to_short_form() {
+        // HEM with ISSY bytes [0x7A, 0xBC, 0x00]: bit7=0 → short form.
+        // decode_issy_long fails, falls back to decode_issy_short([0x7A, 0xBC])
+        // → IscrShort(0x7ABC)
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: true,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: 50000,
+            syncd: 100,
+            mode: Mode::HighEfficiency,
+            issy_in_header: Some([0x7A, 0xBC, 0x00]),
+        };
+        let issy = hdr.issy().expect("short-form ISSY fallback");
+        assert_eq!(issy, Issy::IscrShort(0x7ABC));
     }
 
     #[test]
