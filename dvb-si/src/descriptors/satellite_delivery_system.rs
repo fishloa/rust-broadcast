@@ -1,4 +1,4 @@
-//! Satellite Delivery System Descriptor -- ETSI EN 300 468 \u00a76.2.13.2 (tag 0x43).
+//! Satellite Delivery System Descriptor — ETSI EN 300 468 §6.2.13.2 (tag 0x43).
 //!
 //! Carried inside the NIT's `transport_stream_loop`'s second descriptor loop.
 //! Conveys carrier tuning parameters for a DVB-S / DVB-S2 transponder.
@@ -12,7 +12,7 @@ pub const TAG: u8 = 0x43;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
 
-/// Polarization (\u00a76.2.13.2 Table 38).
+/// Polarization (§6.2.13.2 Table 38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum Polarization {
@@ -36,7 +36,7 @@ pub enum ModulationSystem {
     DvbS2,
 }
 
-/// Modulation type (\u00a76.2.13.2 Table 41).
+/// Modulation type (§6.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ModulationType {
@@ -69,9 +69,9 @@ pub enum RollOff {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SatelliteDeliverySystemDescriptor {
-    /// 32-bit BCD frequency in GHz (e.g. 11_725_000 kHz \u2192 0x11725000 = 11.72500 GHz).
+    /// 32-bit BCD frequency in GHz (e.g. 11_725_000 kHz → 0x11725000 = 11.72500 GHz).
     pub frequency_bcd: u32,
-    /// 16-bit BCD orbital position tenths of a degree (e.g. 0x1920 = 192.0\u00b0).
+    /// 16-bit BCD orbital position tenths of a degree (e.g. 0x1920 = 192.0°).
     pub orbital_position_bcd: u16,
     /// False = west, true = east.
     pub east: bool,
@@ -329,8 +329,8 @@ mod tests {
     /// parse extracts frequency and orbital position correctly.
     #[test]
     fn parse_extracts_frequency_and_orbital_position() {
-        // frequency: 11.7250 GHz \u2192 BCD 0x11 0x72 0x50 0x00
-        // orbital: 192.0\u00b0 \u2192 BCD 0x19 0x20
+        // frequency: 11.7250 GHz → BCD 0x11 0x72 0x50 0x00
+        // orbital: 192.0° → BCD 0x19 0x20
         let raw: Vec<u8> = vec![
             TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, // frequency
             0x19, 0x20, // orbital position
@@ -435,7 +435,7 @@ mod tests {
     /// the last 4 bytes.
     #[test]
     fn parse_extracts_symbol_rate_and_fec() {
-        // symbol_rate: 27.500 Msym/s \u2192 BCD 0x027500, FEC: 5/6 \u2192 0x5
+        // symbol_rate: 27.500 Msym/s → BCD 0x027500, FEC: 5/6 → 0x5
         let raw: Vec<u8> = vec![
             TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
             0x05, // symbol_rate_bcd = 0x027500, fec_inner = 5
@@ -487,7 +487,7 @@ mod tests {
         );
     }
 
-    /// Parse \u2192 serialize \u2192 re-parse should yield an equal struct and
+    /// Parse → serialize → re-parse should yield an equal struct and
     /// identical bytes.
     #[test]
     fn serialize_round_trip() {

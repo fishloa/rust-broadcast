@@ -70,10 +70,9 @@ impl<'a> Parse<'a> for StSection {
         let payload_len = section_length as usize;
 
         if bytes.len() < HEADER_LEN + payload_len {
-            return Err(Error::BufferTooShort {
-                need: HEADER_LEN + payload_len,
-                have: bytes.len(),
-                what: "StSection payload",
+            return Err(Error::SectionLengthOverflow {
+                declared: payload_len,
+                available: bytes.len().saturating_sub(HEADER_LEN),
             });
         }
 
@@ -230,10 +229,7 @@ mod tests {
         let bytes = [0x72, 0x70, 10, 0x00, 0x00];
         assert!(matches!(
             StSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort {
-                what: "StSection payload",
-                ..
-            }
+            Error::SectionLengthOverflow { .. }
         ));
     }
 

@@ -26,9 +26,6 @@ const EXTENSION_LEN: usize = 10;
 const CRC_LEN: usize = 4;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
-const SECTION_B1_SSI: u8 = 0x80;
-const SECTION_B1_RESERVED: u8 = 0x30;
-
 const CRID_REF_LEN: usize = 2;
 const CRID_ENTRY_FIXED_LEN: usize = CRID_REF_LEN + 1 + 1;
 
@@ -245,9 +242,9 @@ impl Serialize for CitSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = SECTION_B1_SSI
+        buf[1] = super::SECTION_B1_SSI
             | (u8::from(self.private_indicator) << 6)
-            | SECTION_B1_RESERVED
+            | super::SECTION_B1_RESERVED_HI
             | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
@@ -377,10 +374,10 @@ mod tests {
         };
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
-        let mut buf2 = vec![0u8; original.serialized_len()];
-        original.serialize_into(&mut buf2).unwrap();
-        assert_eq!(buf, buf2, "byte-exact re-serialize");
         let parsed = CitSection::parse(&buf).unwrap();
+        let mut buf2 = vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
         assert_eq!(parsed.crid_entries.len(), 1);
         assert_eq!(parsed.crid_entries[0].crid_ref, 0x0042);
         assert_eq!(parsed.crid_entries[0].unique_string, b"episode42");

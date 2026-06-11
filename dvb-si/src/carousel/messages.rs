@@ -652,8 +652,8 @@ mod tests {
         msg.serialize_into(&mut buf).unwrap();
         let re = UnMessage::parse(&buf).unwrap();
         assert_eq!(re, msg);
-        let mut buf2 = vec![0u8; msg.serialized_len()];
-        msg.serialize_into(&mut buf2).unwrap();
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 
@@ -681,8 +681,8 @@ mod tests {
         msg.serialize_into(&mut buf).unwrap();
         let re = UnMessage::parse(&buf).unwrap();
         assert_eq!(re, msg);
-        let mut buf2 = vec![0u8; msg.serialized_len()];
-        msg.serialize_into(&mut buf2).unwrap();
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 

@@ -457,7 +457,6 @@ fn rct_serializes_to_valid_json() {
         section_number: 0,
         last_section_number: 0,
         year_offset: 0x07D3,
-        link_count: 0,
         links: vec![],
         descriptors: DescriptorLoop::new(&[]),
     };
