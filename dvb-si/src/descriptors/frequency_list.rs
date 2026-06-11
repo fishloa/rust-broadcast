@@ -21,17 +21,17 @@ pub const CODING_TYPE_MASK: u8 = 0x03;
 /// Reserved bits (top 6 of the coding byte). Ignored on parse, set to 1 on serialize.
 pub const RESERVED_BITS_MASK: u8 = 0xFC;
 
-/// Coding type selects the interpretation of each 4-byte BCD frequency.
+/// Coding type selects the interpretation of each 4-byte frequency entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum CodingType {
     /// Not defined (coding_type = 0b00).
     Undefined,
-    /// Satellite — 8 BCD digits in 1/100 MHz (GHz.MMMM).
+    /// Satellite — 8 BCD digits, 10 kHz resolution (§6.2.13.2).
     Satellite,
-    /// Cable — 8 BCD digits in 100 Hz units.
+    /// Cable — 8 BCD digits, 100 Hz resolution (§6.2.13.3).
     Cable,
-    /// Terrestrial — 8 BCD digits in 100 Hz units.
+    /// Terrestrial — binary uimsbf 32-bit, 10 Hz resolution (§6.2.13.4).
     Terrestrial,
 }
 
@@ -41,60 +41,90 @@ pub enum CodingType {
 pub struct FrequencyListDescriptor {
     /// Interpretation of every `centre_frequencies_bcd` entry.
     pub coding_type: CodingType,
-    /// Raw 4-byte BCD centre_frequency entries in wire order.
+    /// Raw 4-byte centre_frequency entries in wire order. Interpretation
+    /// depends on `coding_type`: BCD for Satellite/Cable, binary for Terrestrial.
     pub centre_frequencies_bcd: Vec<[u8; 4]>,
 }
 
 impl FrequencyListDescriptor {
-    /// Hz per BCD-decoded unit for the current `coding_type`, or `None` for
-    /// `Undefined`. Satellite entries decode like
-    /// [`SatelliteDeliverySystemDescriptor`](super::satellite_delivery_system::SatelliteDeliverySystemDescriptor)
-    /// (1 kHz units); cable/terrestrial entries are 100 Hz units.
-    fn hz_per_unit(&self) -> Option<u64> {
+    /// Hz per BCD-decoded unit for Satellite or Cable, or `None` for
+    /// Undefined / Terrestrial (Terrestrial uses binary encoding, not BCD).
+    fn hz_per_unit_bcd(&self) -> Option<u64> {
         match self.coding_type {
-            CodingType::Satellite => Some(1_000),
-            CodingType::Cable | CodingType::Terrestrial => Some(100),
-            CodingType::Undefined => None,
+            CodingType::Satellite => Some(10_000),
+            CodingType::Cable => Some(100),
+            CodingType::Terrestrial | CodingType::Undefined => None,
         }
     }
 
     /// Decode every `centre_frequencies_bcd` entry to Hz, interpreted per
-    /// `coding_type`. Each element is `None` if its BCD is invalid or
-    /// `coding_type` is `Undefined`.
+    /// `coding_type`. Each element is `None` if `coding_type` is `Undefined`
+    /// or a BCD nibble is invalid (Satellite/Cable).
     #[must_use]
     pub fn centre_frequencies_hz(&self) -> Vec<Option<u64>> {
-        let scale = self.hz_per_unit();
-        self.centre_frequencies_bcd
-            .iter()
-            .map(|b| {
-                let value = dvb_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
-                Some(value * scale?)
-            })
-            .collect()
+        match self.coding_type {
+            CodingType::Satellite | CodingType::Cable => {
+                let scale = self.hz_per_unit_bcd().unwrap();
+                self.centre_frequencies_bcd
+                    .iter()
+                    .map(|b| {
+                        let value =
+                            dvb_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
+                        Some(value * scale)
+                    })
+                    .collect()
+            }
+            CodingType::Terrestrial => self
+                .centre_frequencies_bcd
+                .iter()
+                .map(|b| Some(u64::from(u32::from_be_bytes(*b)) * 10))
+                .collect(),
+            CodingType::Undefined => self.centre_frequencies_bcd.iter().map(|_| None).collect(),
+        }
     }
 
-    /// Replace the entries by encoding each Hz value to a 4-byte BCD entry per
-    /// `coding_type` (values truncate to the field's resolution).
+    /// Replace the entries by encoding each Hz value per `coding_type`
+    /// (values truncate to the field's resolution).
     ///
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if `coding_type`
-    /// is `Undefined` or a value exceeds the 8-digit BCD entry.
+    /// is `Undefined`, a BCD value exceeds 8 digits (Satellite/Cable), or
+    /// a binary value exceeds 32 bits (Terrestrial).
     pub fn set_centre_frequencies_hz(&mut self, frequencies_hz: &[u64]) -> crate::Result<()> {
-        let scale = self.hz_per_unit().ok_or(crate::Error::ValueOutOfRange {
-            field: "FrequencyListDescriptor::centre_frequency",
-            reason: "coding_type is Undefined; cannot encode frequencies",
-        })?;
-        let mut out = Vec::with_capacity(frequencies_hz.len());
-        for &hz in frequencies_hz {
-            let bcd = super::encode_bcd_field(
-                hz / scale,
-                8,
-                "FrequencyListDescriptor::centre_frequency",
-            )?;
-            out.push((bcd as u32).to_be_bytes());
+        match self.coding_type {
+            CodingType::Satellite | CodingType::Cable => {
+                let scale = self
+                    .hz_per_unit_bcd()
+                    .ok_or(crate::Error::ValueOutOfRange {
+                        field: "FrequencyListDescriptor::centre_frequency",
+                        reason: "coding_type is Undefined; cannot encode frequencies",
+                    })?;
+                let mut out = Vec::with_capacity(frequencies_hz.len());
+                for &hz in frequencies_hz {
+                    let bcd = super::encode_bcd_field(
+                        hz / scale,
+                        8,
+                        "FrequencyListDescriptor::centre_frequency",
+                    )?;
+                    out.push((bcd as u32).to_be_bytes());
+                }
+                self.centre_frequencies_bcd = out;
+                Ok(())
+            }
+            CodingType::Terrestrial => {
+                let mut out = Vec::with_capacity(frequencies_hz.len());
+                for &hz in frequencies_hz {
+                    let raw = (hz / 10) as u32;
+                    out.push(raw.to_be_bytes());
+                }
+                self.centre_frequencies_bcd = out;
+                Ok(())
+            }
+            CodingType::Undefined => Err(crate::Error::ValueOutOfRange {
+                field: "FrequencyListDescriptor::centre_frequency",
+                reason: "coding_type is Undefined; cannot encode frequencies",
+            }),
         }
-        self.centre_frequencies_bcd = out;
-        Ok(())
     }
 }
 
@@ -231,13 +261,13 @@ mod tests {
         let raw: Vec<u8> = vec![
             TAG, 0x09, // body length = 9 (1 coding byte + 2 entries × 4)
             0xFD, // satellite
-            0x02, 0x75, 0x00, 0x00, // 27.50000 GHz
-            0x03, 0x00, 0x00, 0x00, // 30.00000 GHz
+            0x00, 0x30, 0x12, 0x34, // BCD 00301234 → 3_012_340 kHz = 30_123_400_000 Hz
+            0x00, 0x30, 0x00, 0x00, // BCD 00300000 → 3_000_000 kHz = 30_000_000_000 Hz
         ];
         let desc = FrequencyListDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.centre_frequencies_bcd.len(), 2);
-        assert_eq!(desc.centre_frequencies_bcd[0], [0x02, 0x75, 0x00, 0x00]);
-        assert_eq!(desc.centre_frequencies_bcd[1], [0x03, 0x00, 0x00, 0x00]);
+        assert_eq!(desc.centre_frequencies_bcd[0], [0x00, 0x30, 0x12, 0x34]);
+        assert_eq!(desc.centre_frequencies_bcd[1], [0x00, 0x30, 0x00, 0x00]);
     }
 
     /// Wrong tag byte should return InvalidDescriptor.
@@ -301,8 +331,8 @@ mod tests {
         let desc = FrequencyListDescriptor {
             coding_type: CodingType::Cable,
             centre_frequencies_bcd: vec![
-                [0x02, 0x75, 0x00, 0x00],
-                [0x03, 0x00, 0x00, 0x00],
+                [0x03, 0x46, 0x00, 0x00],
+                [0x04, 0x74, 0x00, 0x10],
                 [0x01, 0x15, 0x50, 0x00],
                 [0x04, 0x90, 0x25, 0x00],
             ],
@@ -312,5 +342,65 @@ mod tests {
         let reparsed = FrequencyListDescriptor::parse(&buf).unwrap();
         assert_eq!(desc.coding_type, reparsed.coding_type);
         assert_eq!(desc.centre_frequencies_bcd, reparsed.centre_frequencies_bcd);
+    }
+
+    #[test]
+    fn satellite_frequency_hz_decodes_correctly() {
+        let desc = FrequencyListDescriptor {
+            coding_type: CodingType::Satellite,
+            centre_frequencies_bcd: vec![[0x01, 0x17, 0x25, 0x00]], // 11.72500 GHz
+        };
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
+    }
+
+    #[test]
+    fn cable_frequency_hz_decodes_correctly() {
+        let desc = FrequencyListDescriptor {
+            coding_type: CodingType::Cable,
+            centre_frequencies_bcd: vec![[0x03, 0x46, 0x00, 0x00]], // 346.0000 MHz
+        };
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(346_000_000)]);
+    }
+
+    #[test]
+    fn terrestrial_frequency_hz_decodes_binary() {
+        let desc = FrequencyListDescriptor {
+            coding_type: CodingType::Terrestrial,
+            // binary 0x04A858F0 = 78_141_680 × 10 Hz = 781_416_800 Hz
+            centre_frequencies_bcd: vec![[0x04, 0xA8, 0x58, 0xF0]],
+        };
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(781_416_800)]);
+    }
+
+    #[test]
+    fn set_satellite_frequencies_hz_round_trips() {
+        let mut desc = FrequencyListDescriptor {
+            coding_type: CodingType::Satellite,
+            centre_frequencies_bcd: vec![],
+        };
+        desc.set_centre_frequencies_hz(&[11_725_000_000]).unwrap();
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
+        assert_eq!(desc.centre_frequencies_bcd[0], [0x01, 0x17, 0x25, 0x00]);
+    }
+
+    #[test]
+    fn set_terrestrial_frequencies_hz_round_trips() {
+        let mut desc = FrequencyListDescriptor {
+            coding_type: CodingType::Terrestrial,
+            centre_frequencies_bcd: vec![],
+        };
+        desc.set_centre_frequencies_hz(&[781_416_800]).unwrap();
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(781_416_800)]);
+        assert_eq!(desc.centre_frequencies_bcd[0], [0x04, 0xA8, 0x58, 0xF0]);
+    }
+
+    #[test]
+    fn set_cable_frequencies_hz_round_trips() {
+        let mut desc = FrequencyListDescriptor {
+            coding_type: CodingType::Cable,
+            centre_frequencies_bcd: vec![],
+        };
+        desc.set_centre_frequencies_hz(&[346_000_000]).unwrap();
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(346_000_000)]);
     }
 }

@@ -23,10 +23,12 @@ const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
 const STREAM_HEADER_LEN: usize = 5;
 
-/// Stream type coding — ISO/IEC 13818-1 Table 2-34.
+/// Stream type coding — Rec. ITU-T H.222.0 (06/2021) Table 2-34.
 ///
 /// Identifies the elementary-stream type carried in the associated PID.
-/// Values 0x80–0xFF are user private.
+/// Values `0x80`–`0xFF` are user private; only well-established entries
+/// cited to their own specs are named — the rest fall through to
+/// [`UserPrivate`](Self::UserPrivate).
 ///
 /// # Examples
 /// ```
@@ -44,21 +46,21 @@ pub enum StreamType {
     Reserved,
     /// 0x01 — ISO/IEC 11172-2 Video (MPEG-1 video).
     Mpeg1Video,
-    /// 0x02 — ISO/IEC 13818-2 Video (MPEG-2 video).
+    /// 0x02 — Rec. ITU-T H.262 | ISO/IEC 13818-2 Video (MPEG-2 video).
     Mpeg2Video,
     /// 0x03 — ISO/IEC 11172-3 Audio (MPEG-1 audio).
     Mpeg1Audio,
     /// 0x04 — ISO/IEC 13818-3 Audio (MPEG-2 audio).
     Mpeg2Audio,
-    /// 0x05 — ISO/IEC 13818-2 private_sections.
+    /// 0x05 — Rec. ITU-T H.222.0 | ISO/IEC 13818-1 private_sections.
     PrivateSections,
-    /// 0x06 — ISO/IEC 13818-1 PES packets containing private data.
+    /// 0x06 — Rec. ITU-T H.222.0 | ISO/IEC 13818-1 PES packets containing private data.
     PesPrivateData,
     /// 0x07 — ISO/IEC 13522 MHEG.
     Mheg,
-    /// 0x08 — ISO/IEC 13818-1 Annex A DSM-CC.
+    /// 0x08 — Rec. ITU-T H.222.0 | ISO/IEC 13818-1 Annex A DSM-CC.
     DsmCc,
-    /// 0x09 — ITU-T Rec. H.222.1.
+    /// 0x09 — Rec. ITU-T H.222.1.
     H222_1,
     /// 0x0A — ISO/IEC 13818-6 type A.
     Iso13818_6TypeA,
@@ -68,17 +70,17 @@ pub enum StreamType {
     Iso13818_6TypeC,
     /// 0x0D — ISO/IEC 13818-6 type D.
     Iso13818_6TypeD,
-    /// 0x0E — ITU-T Rec. H.222.1 auxiliary.
-    H222_1Aux,
+    /// 0x0E — Rec. ITU-T H.222.0 | ISO/IEC 13818-1 auxiliary.
+    Auxiliary,
     /// 0x0F — ISO/IEC 13818-7 Audio with ADTS transport syntax (AAC).
     AacAdts,
     /// 0x10 — ISO/IEC 14496-2 Visual (MPEG-4 video).
     Mpeg4Video,
     /// 0x11 — ISO/IEC 14496-3 Audio with LATM transport syntax (AAC LATM).
     AacLatm,
-    /// 0x12 — ISO/IEC 14496-1 SL-packetized stream or FlexMux in PES.
+    /// 0x12 — ISO/IEC 14496-1 SL-packetized / FlexMux stream in PES.
     SlFlexMuxPes,
-    /// 0x13 — ISO/IEC 14496-1 SL-packetized stream or FlexMux in ISO/IEC 13818-6 sections.
+    /// 0x13 — ISO/IEC 14496-1 SL-packetized / FlexMux stream in sections.
     SlFlexMuxSections,
     /// 0x14 — ISO/IEC 13818-6 Synchronized Download Protocol.
     SyncDownload,
@@ -92,79 +94,78 @@ pub enum StreamType {
     MetadataObjectCarousel,
     /// 0x19 — Metadata carried in ISO/IEC 13818-6 Synchronized Download Protocol.
     MetadataSyncDownload,
-    /// 0x1A — IPMP stream (ISO/IEC 13818-11 MPEG-2 IPMP).
+    /// 0x1A — IPMP stream (ISO/IEC 13818-11, MPEG-2 IPMP).
     Ipmp,
-    /// 0x1B — ITU-T Rec. H.264 | ISO/IEC 14496-10 Video (AVC/H.264).
+    /// 0x1B — AVC video stream (Rec. ITU-T H.264 | ISO/IEC 14496-10).
     H264,
-    /// 0x1C — ISO/IEC 14496-3 Audio without additional transport syntax.
+    /// 0x1C — ISO/IEC 14496-3 Audio without additional transport syntax (DST, ALS, SLS).
     Iso14496_3Audio,
     /// 0x1D — ISO/IEC 14496-17 Text.
     Iso14496_17Text,
-    /// 0x1E — ISO/IEC 23002-3 Auxiliary Video.
+    /// 0x1E — Auxiliary video stream (ISO/IEC 23002-3).
     AuxiliaryVideo,
-    /// 0x1F — ISO/IEC 14496-10 SVC sub-bitstream.
+    /// 0x1F — SVC video sub-bitstream of an AVC video stream (H.264 Annex G).
     Svc,
-    /// 0x20 — ISO/IEC 14496-10 MVC sub-bitstream.
+    /// 0x20 — MVC video sub-bitstream of an AVC video stream (H.264 Annex H).
     Mvc,
-    /// 0x21 — ITU-T Rec. T.800 | ISO/IEC 15444 JPEG 2000 Video.
+    /// 0x21 — JPEG 2000 video (Rec. ITU-T T.800 | ISO/IEC 15444-1).
     Jpeg2000,
-    /// 0x22 — ISO/IEC 14496-2 Additional view.
-    AdditionalViewRec14496_2,
-    /// 0x23 — ISO/IEC 14496-10 MVC base view sub-bitstream.
-    MvcBaseView,
-    /// 0x24 — ITU-T Rec. H.265 | ISO/IEC 23008-2 Video (HEVC/H.265).
+    /// 0x22 — Additional view H.262 | ISO/IEC 13818-2 video for service-compatible stereoscopic 3D.
+    AdditionalViewH262,
+    /// 0x23 — Additional view H.264 | ISO/IEC 14496-10 video for service-compatible stereoscopic 3D.
+    AdditionalViewH264,
+    /// 0x24 — Rec. ITU-T H.265 | ISO/IEC 23008-2 video (HEVC) or HEVC temporal sub-bitstream.
     Hevc,
-    /// 0x25 — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream.
-    HevcTemporal,
-    /// 0x26 — ISO/IEC 23008-2 HEVC Temporal Video subset of HEVC Annex A.
-    HevcTemporalAnnexA,
-    /// 0x27 — ITU-T Rec. H.265 Annex I video sub-bitstream.
-    HevcAnnexI,
-    /// 0x28 — ITU-T Rec. H.265 Annex I video.
-    HevcAnnexIMain,
-    /// 0x29 — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex I video.
-    HevcAnnexITemporal,
-    /// 0x2A — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex A enhanced range extension.
-    HevcTemporalEnhanced,
-    /// 0x2B — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex I enhanced range extension.
-    HevcAnnexITemporalEnhanced,
-    /// 0x30 — ISO/IEC 23090-3 Video (VVC/H.266).
+    /// 0x25 — HEVC temporal video subset (H.265 Annex A profiles).
+    HevcTemporalSubset,
+    /// 0x26 — MVCD video sub-bitstream of an AVC video stream (H.264 Annex I).
+    Mvcd,
+    /// 0x27 — Timeline and External Media Information (TEMI, H.222.0 Annex U).
+    Temi,
+    /// 0x28 — HEVC enhancement sub-partition incl. TemporalId 0 (H.265 Annex G).
+    HevcAnnexG,
+    /// 0x29 — HEVC temporal enhancement sub-partition (H.265 Annex G).
+    HevcAnnexGTemporal,
+    /// 0x2A — HEVC enhancement sub-partition incl. TemporalId 0 (H.265 Annex H).
+    HevcAnnexH,
+    /// 0x2B — HEVC temporal enhancement sub-partition (H.265 Annex H).
+    HevcAnnexHTemporal,
+    /// 0x2C — Green access units carried in MPEG-2 sections.
+    GreenAccessUnits,
+    /// 0x2D — ISO/IEC 23008-3 Audio with MHAS transport syntax — main stream.
+    MhasAudioMain,
+    /// 0x2E — ISO/IEC 23008-3 Audio with MHAS transport syntax — auxiliary stream.
+    MhasAudioAux,
+    /// 0x2F — Quality access units carried in sections.
+    QualityAccessUnits,
+    /// 0x30 — Media Orchestration Access Units carried in sections.
+    MediaOrchestration,
+    /// 0x31 — MCTS substream of an H.265 | ISO/IEC 23008-2 video stream.
+    MctsHevc,
+    /// 0x32 — JPEG XS video stream (ISO/IEC 21122-2 profiles).
+    JpegXs,
+    /// 0x33 — VVC video stream (Rec. ITU-T H.266 | ISO/IEC 23090-3) or VVC temporal sub-bitstream.
     Vvc,
-    /// 0x33 — ISO/IEC 23090-3 Video (VVC/H.266).
-    VvcAlt,
-    /// 0x80 — User private (range 0x80..=0xFF).
-    Private(u8),
-    /// 0x81 — ATSC AC-3 audio.
+    /// 0x34 — VVC temporal video subset (H.266 Annex A profiles).
+    VvcTemporalSubset,
+    /// 0x35 — EVC video stream or EVC temporal sub-bitstream (ISO/IEC 23094-1).
+    Evc,
+    /// 0x81 — ATSC AC-3 audio (A/52).
     Ac3,
-    /// 0x84 — ATSC Dolby Digital Plus (E-AC-3).
-    EnhancedAc3,
-    /// 0x85 — ATSC DTS-HD audio.
-    DtsHd,
-    /// 0x86 — ATSC DTS audio.
-    Dts,
-    /// 0x87 — ATSC E-AC-3 / Dolby Digital Plus audio.
-    EAc3Alt,
-    /// 0x8A — DTS audio.
-    DtsAlt,
-    /// 0x8B — DTS-HD audio.
-    DtsHdAlt,
-    /// 0x8C — Dolby MAT (Metadata-enhanced Audio Transmission).
-    DolbyMat,
-    /// 0x90 — SCTE subtitling.
-    ScteSubtitling,
-    /// 0x91 — ARIB subtitling.
-    AribSubtitling,
-    /// 0x92 — TTML subtitling.
-    TtmlSubtitling,
-    /// 0xEA — User private (VC-1).
-    PrivateVc1,
-    /// Catch-all for unallocated / reserved values not named above.
-    Unallocated(u8),
+    /// 0x86 — SCTE-35 splice_info_section (ANSI/SCTE 35).
+    Scte35,
+    /// 0x87 — ATSC E-AC-3 / Dolby Digital Plus audio (A/52B).
+    EAc3,
+    /// 0x7F — IPMP stream (H.222.0 Table 2-34).
+    IpmpHigh,
+    /// Rec. ITU-T H.222.0 reserved range `0x36`..=`0x7E`.
+    ReservedRange(u8),
+    /// User private range `0x80`..=`0xFF` (except named entries).
+    UserPrivate(u8),
 }
 
 impl StreamType {
-    /// Decode from the wire byte.  Every byte maps to a variant (lossless).
-    /// Decode from the wire byte.  Every byte maps to a variant (lossless).
+    /// Decode from the wire byte. Every byte maps to a variant (lossless).
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
@@ -182,7 +183,7 @@ impl StreamType {
             0x0B => Self::Iso13818_6TypeB,
             0x0C => Self::Iso13818_6TypeC,
             0x0D => Self::Iso13818_6TypeD,
-            0x0E => Self::H222_1Aux,
+            0x0E => Self::Auxiliary,
             0x0F => Self::AacAdts,
             0x10 => Self::Mpeg4Video,
             0x11 => Self::AacLatm,
@@ -202,38 +203,36 @@ impl StreamType {
             0x1F => Self::Svc,
             0x20 => Self::Mvc,
             0x21 => Self::Jpeg2000,
-            0x22 => Self::AdditionalViewRec14496_2,
-            0x23 => Self::MvcBaseView,
+            0x22 => Self::AdditionalViewH262,
+            0x23 => Self::AdditionalViewH264,
             0x24 => Self::Hevc,
-            0x25 => Self::HevcTemporal,
-            0x26 => Self::HevcTemporalAnnexA,
-            0x27 => Self::HevcAnnexI,
-            0x28 => Self::HevcAnnexIMain,
-            0x29 => Self::HevcAnnexITemporal,
-            0x2A => Self::HevcTemporalEnhanced,
-            0x2B => Self::HevcAnnexITemporalEnhanced,
-            0x30 => Self::Vvc,
-            0x33 => Self::VvcAlt,
-            0x80 => Self::Private(0x80),
+            0x25 => Self::HevcTemporalSubset,
+            0x26 => Self::Mvcd,
+            0x27 => Self::Temi,
+            0x28 => Self::HevcAnnexG,
+            0x29 => Self::HevcAnnexGTemporal,
+            0x2A => Self::HevcAnnexH,
+            0x2B => Self::HevcAnnexHTemporal,
+            0x2C => Self::GreenAccessUnits,
+            0x2D => Self::MhasAudioMain,
+            0x2E => Self::MhasAudioAux,
+            0x2F => Self::QualityAccessUnits,
+            0x30 => Self::MediaOrchestration,
+            0x31 => Self::MctsHevc,
+            0x32 => Self::JpegXs,
+            0x33 => Self::Vvc,
+            0x34 => Self::VvcTemporalSubset,
+            0x35 => Self::Evc,
+            0x36..=0x7E => Self::ReservedRange(v),
+            0x7F => Self::IpmpHigh,
             0x81 => Self::Ac3,
-            0x84 => Self::EnhancedAc3,
-            0x85 => Self::DtsHd,
-            0x86 => Self::Dts,
-            0x87 => Self::EAc3Alt,
-            0x8A => Self::DtsAlt,
-            0x8B => Self::DtsHdAlt,
-            0x8C => Self::DolbyMat,
-            0x90 => Self::ScteSubtitling,
-            0x91 => Self::AribSubtitling,
-            0x92 => Self::TtmlSubtitling,
-            0xEA => Self::PrivateVc1,
-            v if v >= 0x80 => Self::Private(v),
-            _ => Self::Unallocated(v),
+            0x86 => Self::Scte35,
+            0x87 => Self::EAc3,
+            _ => Self::UserPrivate(v),
         }
     }
 
-    /// Encode to the wire byte.  Inverse of `from_u8`.
-    /// Encode to the wire byte.  Inverse of `from_u8`.
+    /// Encode to the wire byte. Inverse of `from_u8`.
     #[must_use]
     pub fn to_u8(self) -> u8 {
         match self {
@@ -251,7 +250,7 @@ impl StreamType {
             Self::Iso13818_6TypeB => 0x0B,
             Self::Iso13818_6TypeC => 0x0C,
             Self::Iso13818_6TypeD => 0x0D,
-            Self::H222_1Aux => 0x0E,
+            Self::Auxiliary => 0x0E,
             Self::AacAdts => 0x0F,
             Self::Mpeg4Video => 0x10,
             Self::AacLatm => 0x11,
@@ -271,35 +270,34 @@ impl StreamType {
             Self::Svc => 0x1F,
             Self::Mvc => 0x20,
             Self::Jpeg2000 => 0x21,
-            Self::AdditionalViewRec14496_2 => 0x22,
-            Self::MvcBaseView => 0x23,
+            Self::AdditionalViewH262 => 0x22,
+            Self::AdditionalViewH264 => 0x23,
             Self::Hevc => 0x24,
-            Self::HevcTemporal => 0x25,
-            Self::HevcTemporalAnnexA => 0x26,
-            Self::HevcAnnexI => 0x27,
-            Self::HevcAnnexIMain => 0x28,
-            Self::HevcAnnexITemporal => 0x29,
-            Self::HevcTemporalEnhanced => 0x2A,
-            Self::HevcAnnexITemporalEnhanced => 0x2B,
-            Self::Vvc => 0x30,
-            Self::VvcAlt => 0x33,
+            Self::HevcTemporalSubset => 0x25,
+            Self::Mvcd => 0x26,
+            Self::Temi => 0x27,
+            Self::HevcAnnexG => 0x28,
+            Self::HevcAnnexGTemporal => 0x29,
+            Self::HevcAnnexH => 0x2A,
+            Self::HevcAnnexHTemporal => 0x2B,
+            Self::GreenAccessUnits => 0x2C,
+            Self::MhasAudioMain => 0x2D,
+            Self::MhasAudioAux => 0x2E,
+            Self::QualityAccessUnits => 0x2F,
+            Self::MediaOrchestration => 0x30,
+            Self::MctsHevc => 0x31,
+            Self::JpegXs => 0x32,
+            Self::Vvc => 0x33,
+            Self::VvcTemporalSubset => 0x34,
+            Self::Evc => 0x35,
+            Self::IpmpHigh => 0x7F,
             Self::Ac3 => 0x81,
-            Self::EnhancedAc3 => 0x84,
-            Self::DtsHd => 0x85,
-            Self::Dts => 0x86,
-            Self::EAc3Alt => 0x87,
-            Self::DtsAlt => 0x8A,
-            Self::DtsHdAlt => 0x8B,
-            Self::DolbyMat => 0x8C,
-            Self::ScteSubtitling => 0x90,
-            Self::AribSubtitling => 0x91,
-            Self::TtmlSubtitling => 0x92,
-            Self::PrivateVc1 => 0xEA,
-            Self::Private(v) | Self::Unallocated(v) => v,
+            Self::Scte35 => 0x86,
+            Self::EAc3 => 0x87,
+            Self::ReservedRange(v) | Self::UserPrivate(v) => v,
         }
     }
 
-    /// Human-readable spec display name.
     /// Human-readable spec display name.
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -318,7 +316,7 @@ impl StreamType {
             Self::Iso13818_6TypeB => "ISO/IEC 13818-6 Type B",
             Self::Iso13818_6TypeC => "ISO/IEC 13818-6 Type C",
             Self::Iso13818_6TypeD => "ISO/IEC 13818-6 Type D",
-            Self::H222_1Aux => "H.222.1 Auxiliary",
+            Self::Auxiliary => "Auxiliary",
             Self::AacAdts => "AAC ADTS",
             Self::Mpeg4Video => "MPEG-4 Video",
             Self::AacLatm => "AAC LATM",
@@ -338,32 +336,32 @@ impl StreamType {
             Self::Svc => "SVC",
             Self::Mvc => "MVC",
             Self::Jpeg2000 => "JPEG 2000",
-            Self::AdditionalViewRec14496_2 => "Additional View Rec. 14496-2",
-            Self::MvcBaseView => "MVC Base View",
+            Self::AdditionalViewH262 => "Additional View H.262 (3D)",
+            Self::AdditionalViewH264 => "Additional View H.264 (3D)",
             Self::Hevc => "HEVC/H.265",
-            Self::HevcTemporal => "HEVC Temporal",
-            Self::HevcTemporalAnnexA => "HEVC Temporal Annex A",
-            Self::HevcAnnexI => "HEVC Annex I",
-            Self::HevcAnnexIMain => "HEVC Annex I Main",
-            Self::HevcAnnexITemporal => "HEVC Annex I Temporal",
-            Self::HevcTemporalEnhanced => "HEVC Temporal Enhanced",
-            Self::HevcAnnexITemporalEnhanced => "HEVC Annex I Temporal Enhanced",
+            Self::HevcTemporalSubset => "HEVC Temporal Subset",
+            Self::Mvcd => "MVCD (H.264 Annex I)",
+            Self::Temi => "TEMI",
+            Self::HevcAnnexG => "HEVC Annex G",
+            Self::HevcAnnexGTemporal => "HEVC Annex G Temporal",
+            Self::HevcAnnexH => "HEVC Annex H",
+            Self::HevcAnnexHTemporal => "HEVC Annex H Temporal",
+            Self::GreenAccessUnits => "Green Access Units",
+            Self::MhasAudioMain => "MHAS Audio Main",
+            Self::MhasAudioAux => "MHAS Audio Aux",
+            Self::QualityAccessUnits => "Quality Access Units",
+            Self::MediaOrchestration => "Media Orchestration",
+            Self::MctsHevc => "MCTS HEVC",
+            Self::JpegXs => "JPEG XS",
             Self::Vvc => "VVC/H.266",
-            Self::VvcAlt => "VVC/H.266 (alt)",
+            Self::VvcTemporalSubset => "VVC Temporal Subset",
+            Self::Evc => "EVC",
+            Self::IpmpHigh => "IPMP (0x7F)",
             Self::Ac3 => "AC-3",
-            Self::EnhancedAc3 => "Enhanced AC-3",
-            Self::DtsHd => "DTS-HD",
-            Self::Dts => "DTS",
-            Self::EAc3Alt => "E-AC-3",
-            Self::DtsAlt => "DTS (alt)",
-            Self::DtsHdAlt => "DTS-HD (alt)",
-            Self::DolbyMat => "Dolby MAT",
-            Self::ScteSubtitling => "SCTE Subtitling",
-            Self::AribSubtitling => "ARIB Subtitling",
-            Self::TtmlSubtitling => "TTML Subtitling",
-            Self::PrivateVc1 => "VC-1 (Private)",
-            Self::Private(_) => "User Private",
-            Self::Unallocated(_) => "Unallocated",
+            Self::Scte35 => "SCTE-35",
+            Self::EAc3 => "E-AC-3",
+            Self::ReservedRange(_) => "Reserved",
+            Self::UserPrivate(_) => "User Private",
         }
     }
 }
@@ -747,10 +745,15 @@ mod tests {
         assert_eq!(StreamType::Mpeg2Video.to_u8(), 0x02);
         assert_eq!(StreamType::H264.to_u8(), 0x1B);
         assert_eq!(StreamType::Hevc.to_u8(), 0x24);
-        assert_eq!(StreamType::VvcAlt.to_u8(), 0x33);
+        assert_eq!(StreamType::Vvc.to_u8(), 0x33);
+        assert_eq!(StreamType::MediaOrchestration.to_u8(), 0x30);
+        assert_eq!(StreamType::Mvcd.to_u8(), 0x26);
+        assert_eq!(StreamType::Temi.to_u8(), 0x27);
         assert_eq!(StreamType::Ac3.to_u8(), 0x81);
-        assert_eq!(StreamType::EAc3Alt.to_u8(), 0x87);
+        assert_eq!(StreamType::Scte35.to_u8(), 0x86);
+        assert_eq!(StreamType::EAc3.to_u8(), 0x87);
         assert_eq!(StreamType::AacAdts.to_u8(), 0x0F);
+        assert_eq!(StreamType::IpmpHigh.to_u8(), 0x7F);
     }
 
     #[test]
@@ -759,7 +762,11 @@ mod tests {
         assert_eq!(StreamType::H264.name(), "H.264/AVC");
         assert_eq!(StreamType::Hevc.name(), "HEVC/H.265");
         assert_eq!(StreamType::Vvc.name(), "VVC/H.266");
+        assert_eq!(StreamType::MediaOrchestration.name(), "Media Orchestration");
+        assert_eq!(StreamType::Mvcd.name(), "MVCD (H.264 Annex I)");
+        assert_eq!(StreamType::Temi.name(), "TEMI");
         assert_eq!(StreamType::DsmCc.name(), "DSM-CC");
         assert_eq!(StreamType::Ac3.name(), "AC-3");
+        assert_eq!(StreamType::Scte35.name(), "SCTE-35");
     }
 }

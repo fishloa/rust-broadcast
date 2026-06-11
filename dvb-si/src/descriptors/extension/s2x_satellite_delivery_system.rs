@@ -138,7 +138,7 @@ const RP_VL_SNR: u8 = 0x10;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct S2XChannelBond {
-    /// frequency(32) — 32-bit BCD (1 kHz resolution).
+    /// frequency(32) — 32-bit BCD (10 kHz resolution, §6.2.13.2).
     pub frequency: u32,
     /// orbital_position(16) — 16-bit BCD (tenths of degree).
     pub orbital_position: u16,
@@ -157,10 +157,11 @@ pub struct S2XChannelBond {
 }
 
 impl S2XChannelBond {
-    /// Decode the 32-bit BCD `frequency` to Hz (1 kHz field resolution).
+    /// Decode the 32-bit BCD `frequency` to Hz (10 kHz field resolution,
+    /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|khz| khz * 1_000)
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
@@ -192,7 +193,7 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     pub ts_gs_s2x_mode: TsGsS2XMode,
     /// scrambling_sequence_index(18), present iff `scrambling_sequence_selector`.
     pub scrambling_sequence_index: Option<u32>,
-    /// frequency(32) — primary channel, 32-bit BCD (1 kHz resolution).
+    /// frequency(32) — primary channel, 32-bit BCD (10 kHz resolution, §6.2.13.2).
     pub frequency: u32,
     /// orbital_position(16).
     pub orbital_position: u16,
@@ -217,10 +218,11 @@ pub struct S2XSatelliteDeliverySystem<'a> {
 }
 
 impl S2XSatelliteDeliverySystem<'_> {
-    /// Decode the 32-bit BCD `frequency` to Hz (1 kHz field resolution).
+    /// Decode the 32-bit BCD `frequency` to Hz (10 kHz field resolution,
+    /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|khz| khz * 1_000)
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).

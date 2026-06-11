@@ -120,7 +120,7 @@ impl RollOff {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SatelliteDeliverySystemDescriptor {
-    /// 32-bit BCD frequency in GHz (e.g. 11_725_000 kHz → 0x11725000 = 11.72500 GHz).
+    /// 32-bit BCD frequency in GHz (e.g. `0x01172500` = 11.72500 GHz = 11_725_000_000 Hz).
     pub frequency_bcd: u32,
     /// 16-bit BCD orbital position tenths of a degree (e.g. 0x1920 = 192.0°).
     pub orbital_position_bcd: u16,
@@ -143,24 +143,24 @@ pub struct SatelliteDeliverySystemDescriptor {
 }
 
 impl SatelliteDeliverySystemDescriptor {
-    /// Decode the 32-bit BCD `frequency` to Hz (1 kHz field resolution,
+    /// Decode the 32-bit BCD `frequency` to Hz (10 kHz field resolution,
     /// EN 300 468 §6.2.13.2). `None` if the BCD nibbles are out of range.
     ///
-    /// e.g. `0x1172_5000` → `11_725_000_000` Hz (11.725 GHz).
+    /// e.g. `0x0117_2500` → `11_725_000_000` Hz (11.72500 GHz).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|khz| khz * 1_000)
+        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 10_000)
     }
 
     /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
-    /// 1 kHz resolution (sub-kHz precision is truncated).
+    /// 10 kHz resolution (sub-10 kHz precision is truncated).
     ///
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the value
     /// exceeds the 8-digit BCD field.
     pub fn set_frequency_hz(&mut self, hz: u64) -> crate::Result<()> {
         self.frequency_bcd = super::encode_bcd_field(
-            hz / 1_000,
+            hz / 10_000,
             8,
             "SatelliteDeliverySystemDescriptor::frequency",
         )? as u32;
@@ -380,16 +380,16 @@ mod tests {
     /// parse extracts frequency and orbital position correctly.
     #[test]
     fn parse_extracts_frequency_and_orbital_position() {
-        // frequency: 11.7250 GHz → BCD 0x11 0x72 0x50 0x00
+        // frequency: 11.72500 GHz → BCD 0x01 0x17 0x25 0x00 (§6.2.13.2)
         // orbital: 192.0° → BCD 0x19 0x20
         let raw: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, // frequency
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, // frequency
             0x19, 0x20, // orbital position
             0x00, // flags (all defaults: west, linear-h, alpha-035, DVB-S, auto)
             0x02, 0x75, 0x00, 0x00, // symbol rate 27.500 Msym/s, FEC 0
         ];
         let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
-        assert_eq!(desc.frequency_bcd, 0x11725000);
+        assert_eq!(desc.frequency_bcd, 0x01172500);
         assert_eq!(desc.orbital_position_bcd, 0x1920);
     }
 
@@ -398,7 +398,7 @@ mod tests {
     fn parse_extracts_west_east_flag() {
         // East: bit 7 = 1
         let raw_east: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20,
             0x80, // east flag set, everything else zero
             0x02, 0x75, 0x00, 0x00,
         ];
@@ -407,7 +407,7 @@ mod tests {
 
         // West: bit 7 = 0
         let raw_west: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, // east flag clear
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x00, // east flag clear
             0x02, 0x75, 0x00, 0x00,
         ];
         let desc_west = SatelliteDeliverySystemDescriptor::parse(&raw_west).unwrap();
@@ -426,7 +426,7 @@ mod tests {
 
         for (offset, expected_pol) in pol_pairs {
             let raw: Vec<u8> = vec![
-                TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+                TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20,
                 offset, // polarization bits
                 0x02, 0x75, 0x00, 0x00,
             ];
@@ -444,7 +444,7 @@ mod tests {
     fn parse_extracts_modulation_system_and_type() {
         // DVB-S (bit 2 = 0), QPSK (bits 1-0 = 01)
         let raw: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x01, // DVB-S, QPSK
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x01, // DVB-S, QPSK
             0x02, 0x75, 0x00, 0x00,
         ];
         let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
@@ -453,7 +453,7 @@ mod tests {
 
         // DVB-S2 (bit 2 = 1), 8PSK (bits 1-0 = 10)
         let raw2: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20,
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20,
             0x06, // DVB-S2 (0x04) + 8PSK (0x02)
             0x02, 0x75, 0x00, 0x00,
         ];
@@ -474,7 +474,7 @@ mod tests {
 
         for (offset, expected_roll) in roll_pairs {
             let raw: Vec<u8> = vec![
-                TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, offset, // roll-off bits
+                TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, offset, // roll-off bits
                 0x02, 0x75, 0x00, 0x00,
             ];
             let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
@@ -488,7 +488,7 @@ mod tests {
     fn parse_extracts_symbol_rate_and_fec() {
         // symbol_rate: 27.500 Msym/s → BCD 0x027500, FEC: 5/6 → 0x4
         let raw: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
             0x04, // symbol_rate_bcd = 0x027500, fec_inner = 4 (Rate5_6)
         ];
         let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
@@ -497,7 +497,7 @@ mod tests {
 
         // FEC = 0x0F (NoConvCoding)
         let raw2: Vec<u8> = vec![
-            TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
             0x0F, // FEC = 0x0F
         ];
         let desc2 = SatelliteDeliverySystemDescriptor::parse(&raw2).unwrap();
@@ -509,7 +509,7 @@ mod tests {
     fn parse_rejects_wrong_tag() {
         let raw: Vec<u8> = vec![
             0x44, // wrong tag (cable delivery system)
-            BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00, 0x00,
+            BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00, 0x00,
         ];
         let err = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap_err();
         assert!(
@@ -543,7 +543,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let desc = SatelliteDeliverySystemDescriptor {
-            frequency_bcd: 0x11725000,
+            frequency_bcd: 0x01172500,
             orbital_position_bcd: 0x1920,
             east: true,
             polarization: Polarization::CircularRight,
@@ -566,7 +566,7 @@ mod tests {
     #[test]
     fn reserved_roll_off_round_trips() {
         let desc = SatelliteDeliverySystemDescriptor {
-            frequency_bcd: 0x11725000,
+            frequency_bcd: 0x01172500,
             orbital_position_bcd: 0x1920,
             east: true,
             polarization: Polarization::CircularRight,
@@ -583,5 +583,23 @@ mod tests {
 
         let reparsed = SatelliteDeliverySystemDescriptor::parse(&buf).unwrap();
         assert_eq!(reparsed.roll_off, RollOff::Reserved(3));
+    }
+
+    #[test]
+    fn frequency_hz_round_trip() {
+        let mut desc = SatelliteDeliverySystemDescriptor {
+            frequency_bcd: 0,
+            orbital_position_bcd: 0x1920,
+            east: true,
+            polarization: Polarization::LinearHorizontal,
+            roll_off: RollOff::Alpha035,
+            modulation_system: ModulationSystem::DvbS,
+            modulation_type: ModulationType::Auto,
+            symbol_rate_bcd: 0x027500,
+            fec_inner: FecInner::Rate5_6,
+        };
+        desc.set_frequency_hz(11_725_000_000).unwrap();
+        assert_eq!(desc.frequency_hz(), Some(11_725_000_000));
+        assert_eq!(desc.frequency_bcd, 0x01172500);
     }
 }
