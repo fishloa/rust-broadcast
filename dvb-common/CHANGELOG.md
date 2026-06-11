@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-06-11
+
+Lockstep major with the workspace (the dvb-si/dvb-t2mi "decode completeness"
+release — typed enums for every spec-enumerated wire code). No changes to this
+crate.
+
 ## [5.0.0] — 2026-06-11
 
 Lockstep major across the workspace (the `dvb-si` 5.0 "type everything +

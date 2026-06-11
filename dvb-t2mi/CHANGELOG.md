@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-06-11
+
+Lockstep major. Adds the one-call inner-TS recovery driver and decodes the P1
+signalling that was exposed as raw bits.
+
+### Added
+- **`InnerTsRecovery`** (feature `ts`) — feed outer TS packets from the T2-MI
+  PID, get the inner MPEG-TS packets out. Folds `T2miPump` + `Bbheader` +
+  `CarryOverExtractor` (NM/HEM mode handling + SYNCD carry-over) into one
+  `feed(&[u8]) -> &[[u8; 188]]` driver, so callers stop re-wiring the chain.
+  NM and HEM-without-NPD frames are recovered; HEM+NPD is skipped.
+- `S1Field::name()` (EN 302 755 Table 18: `T2_SISO`, `T2_MISO`, `Non-T2`, …) and
+  an `S2Field1` decode of the P1 S2 field (FFT size + guard-interval set, plus
+  the `mixed` flag) on the FEF payloads.
+
+### Changed
+- **`dvb-bbframe` is now an optional dependency** enabled by the `ts` feature
+  (was a dev-dependency), required by `InnerTsRecovery`. `default = ["ts"]` is
+  unchanged, so the default build is unaffected.
+
 ## [5.0.0] — 2026-06-11
 
 Lockstep major. The individual-addressing payload is now fully typed, private
