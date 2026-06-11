@@ -8,6 +8,18 @@
 ///
 /// Codes 6-7 are reserved for future use and round-tripped transparently via
 /// [`Reserved`](RunningStatus::Reserved).
+///
+/// # Examples
+/// ```
+/// use dvb_si::tables::RunningStatus;
+///
+/// let s = RunningStatus::from_u8(4);
+/// assert_eq!(s.name(), "running");
+/// assert_eq!(s.to_u8(), 4); // lossless back to the wire value
+///
+/// // Unallocated codes are preserved verbatim for byte-identical round-trip.
+/// assert_eq!(RunningStatus::from_u8(6).to_u8(), 6);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

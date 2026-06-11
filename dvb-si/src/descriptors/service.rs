@@ -13,6 +13,14 @@ pub const TAG: u8 = 0x48;
 const HEADER_LEN: usize = 2;
 
 /// Service type — ETSI EN 300 468 Table 89.
+///
+/// # Examples
+/// ```
+/// use dvb_si::descriptors::service::ServiceType;
+///
+/// assert_eq!(ServiceType::from_u8(0x01).name(), "digital television service");
+/// assert_eq!(ServiceType::from_u8(0x19).to_u8(), 0x19); // advanced-codec HD, lossless
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
