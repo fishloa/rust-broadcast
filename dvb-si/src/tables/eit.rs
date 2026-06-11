@@ -199,6 +199,14 @@ impl<'a> Parse<'a> for EitSection<'a> {
             pos = desc_end;
         }
 
+        if pos != events_end {
+            return Err(Error::BufferTooShort {
+                need: events_end - pos,
+                have: 0,
+                what: "EitSection trailing event bytes",
+            });
+        }
+
         Ok(EitSection {
             kind,
             table_id,
@@ -639,6 +647,39 @@ mod tests {
         assert!(matches!(
             EitSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_slack_bytes() {
+        let section_length: u16 =
+            (EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + EVENT_HEADER_LEN + 1 + CRC_LEN) as u16;
+        let mut v = Vec::new();
+        v.push(TABLE_ID_PF_ACTUAL);
+        v.push(super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F));
+        v.push((section_length & 0xFF) as u8);
+        v.extend_from_slice(&1u16.to_be_bytes());
+        v.push(0xC1);
+        v.push(0);
+        v.push(0);
+        v.extend_from_slice(&0x0020u16.to_be_bytes());
+        v.extend_from_slice(&0x0030u16.to_be_bytes());
+        v.push(0);
+        v.push(TABLE_ID_PF_ACTUAL);
+        v.extend_from_slice(&1u16.to_be_bytes());
+        v.extend_from_slice(&[0u8; 5]);
+        v.extend_from_slice(&[0u8; 3]);
+        v.push(0x00);
+        v.push(0x00);
+        v.push(0xFF);
+        v.extend_from_slice(&[0u8; 4]);
+        let err = EitSection::parse(&v).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::BufferTooShort {
+                what: "EitSection trailing event bytes",
+                ..
+            }
         ));
     }
 }

@@ -462,8 +462,9 @@ mod tests {
         };
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
-        let mut buf2 = vec![0u8; unt.serialized_len()];
-        unt.serialize_into(&mut buf2).unwrap();
+        let re = UntSection::parse(&buf).unwrap();
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         let re = UntSection::parse(&buf).unwrap();
         assert_eq!(re.platforms.len(), 1);

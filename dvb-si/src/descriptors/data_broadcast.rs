@@ -301,10 +301,6 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serialize_is_stable() {
-        // Borrowed `&[u8]` fields cannot be deserialized from a JSON array by
-        // serde_json (it cannot borrow out of an owned String), so — matching
-        // the borrowed-bytes descriptors in this crate (linkage, short_event)
-        // — we exercise the serialize path and assert it is deterministic.
         let d = DataBroadcastDescriptor {
             data_broadcast_id: 0x000B,
             component_tag: 0x09,
@@ -313,6 +309,9 @@ mod tests {
             text: DvbText::new(b"Text"),
         };
         let json = serde_json::to_string(&d).unwrap();
-        assert_eq!(json, serde_json::to_string(&d.clone()).unwrap());
+        assert!(json.contains("\"data_broadcast_id\""));
+        assert!(json.contains("\"component_tag\""));
+        assert!(json.contains("\"eng\""));
+        assert!(json.contains("\"Text\""));
     }
 }

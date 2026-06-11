@@ -286,9 +286,6 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serialize_is_stable() {
-        // Borrowed `&[u8]` cannot be deserialized from a JSON array by
-        // serde_json; matching the borrowed-bytes descriptors in this crate we
-        // exercise the serialize path and assert it is deterministic.
         let d = MultilingualServiceNameDescriptor {
             entries: vec![ServiceNameEntry {
                 language_code: LangCode(*b"eng"),
@@ -297,6 +294,9 @@ mod tests {
             }],
         };
         let json = serde_json::to_string(&d).unwrap();
-        assert_eq!(json, serde_json::to_string(&d.clone()).unwrap());
+        assert!(json.contains("\"language_code\""));
+        assert!(json.contains("\"eng\""));
+        assert!(json.contains("\"One\""));
+        assert!(json.contains("\"BBC\""));
     }
 }

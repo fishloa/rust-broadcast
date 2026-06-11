@@ -225,7 +225,7 @@ impl CarryOverExtractor {
             let need = stride + 1 - self.pos; // +1 for the sync byte we'll prepend
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
-                self.buf[0] = 0x47;
+                self.buf[0] = TS_SYNC_BYTE;
                 out.push(self.buf);
                 self.pos = 0;
             } else {
@@ -237,8 +237,8 @@ impl CarryOverExtractor {
         // Extract complete UPs at stride.
         let mut i = syncd_bytes;
         while i + stride <= data.len() {
-            // HEM: 187 bytes of UP, prepend 0x47.
-            self.buf[0] = 0x47;
+            // HEM: 187 bytes of UP, prepend sync byte.
+            self.buf[0] = TS_SYNC_BYTE;
             self.buf[1..1 + stride].copy_from_slice(&data[i..i + stride]);
             out.push(self.buf);
             i += stride;
@@ -296,7 +296,7 @@ impl CarryOverExtractor {
             let need = stride - self.pos;
             if syncd_bytes == need && data.len() >= need {
                 self.buf[self.pos..self.pos + need].copy_from_slice(&data[..need]);
-                self.buf[0] = 0x47; // replace CRC-8 with sync byte
+                self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
                 out.push(self.buf);
                 self.pos = 0;
             } else {
@@ -308,7 +308,7 @@ impl CarryOverExtractor {
         let mut i = syncd_bytes;
         while i + stride <= data.len() {
             self.buf.copy_from_slice(&data[i..i + stride]);
-            self.buf[0] = 0x47; // replace CRC-8 with sync byte
+            self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
             out.push(self.buf);
             i += stride;
         }

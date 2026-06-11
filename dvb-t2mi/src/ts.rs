@@ -21,6 +21,7 @@ const HEADER_LEN: usize = 6;
 
 impl PacketReassembler {
     /// Create a new empty reassembler.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
