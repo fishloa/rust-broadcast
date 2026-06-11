@@ -283,7 +283,9 @@ impl Serialize for Section<'_> {
             buf[payload_start..payload_end].copy_from_slice(self.payload);
 
             // Append CRC — use the declared value to preserve round-trip identity.
-            let crc = self.crc32.expect("long-form section must carry a CRC");
+            let crc = self
+                .crc32
+                .unwrap_or_else(|| crc::compute(&buf[..payload_end]));
             let crc_start = payload_end;
             buf[crc_start..crc_start + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
         } else {

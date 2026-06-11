@@ -149,6 +149,12 @@ impl Serialize for ContainerSection<'_> {
         }
 
         let section_length = (len - HEADER_LEN) as u16;
+        if section_length > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: 0x0FFF,
+            });
+        }
 
         // Byte 0: table_id.
         buf[0] = TABLE_ID;

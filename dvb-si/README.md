@@ -194,7 +194,9 @@ deliberately kept raw.
 The first payload byte (`descriptor_tag_extension`) selects a sub-descriptor
 (EN 300 468 §6.4). A body is typed only when its syntax table is vendored
 under `docs/`; everything else is preserved byte-exact as `Raw` and
-round-trips losslessly.
+round-trips losslessly. Private `descriptor_tag_extension` values are
+surfaced via `DescriptorLoop::iter_with_extensions(&desc_reg, &ext_reg)` as
+`ExtIterItem::CustomExtension`.
 
 | tag_ext | Extension | Status |
 |---|---|---|

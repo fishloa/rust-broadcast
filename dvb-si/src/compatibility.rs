@@ -35,7 +35,7 @@
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
-const COMPAT_DESC_LEN_FIELD: usize = 2;
+pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
 const DESC_COUNT_FIELD: usize = 2;
 const DESC_HEADER_LEN: usize = 2;
 const DESC_FIXED_LEN: usize = 9;
@@ -135,7 +135,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         let descriptor_count = u16::from_be_bytes([body[0], body[1]]) as usize;
         let mut pos = DESC_COUNT_FIELD;
         let max_entries = (body.len() - DESC_COUNT_FIELD) / (DESC_HEADER_LEN + DESC_FIXED_LEN);
-        let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries.max(1)));
+        let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries));
         for _ in 0..descriptor_count {
             if pos + DESC_HEADER_LEN > body.len() {
                 return Err(Error::BufferTooShort {
@@ -178,7 +178,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             let sub_desc_end = entry_end;
             let sub_desc_region_len = sub_desc_end.saturating_sub(sub_desc_start);
             let mut sub_descriptors = Vec::with_capacity(
-                sub_descriptor_count.min(sub_desc_region_len / SUB_DESC_HEADER_LEN.max(1)),
+                sub_descriptor_count.min(sub_desc_region_len / SUB_DESC_HEADER_LEN),
             );
             let mut sub_pos = sub_desc_start;
             for _ in 0..sub_descriptor_count {
@@ -273,12 +273,7 @@ impl Serialize for CompatibilityDescriptor<'_> {
             .copy_from_slice(&(self.descriptors.len() as u16).to_be_bytes());
         let mut pos = COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD;
         for entry in &self.descriptors {
-            let entry_body_len = DESC_FIXED_LEN
-                + entry
-                    .sub_descriptors
-                    .iter()
-                    .map(|sd| SUB_DESC_HEADER_LEN + sd.data.len())
-                    .sum::<usize>();
+            let entry_body_len = entry_serialized_len(entry) - DESC_HEADER_LEN;
             if entry_body_len > u8::MAX as usize {
                 return Err(Error::SectionLengthOverflow {
                     declared: entry_body_len,

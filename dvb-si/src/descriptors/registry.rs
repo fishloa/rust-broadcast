@@ -356,6 +356,17 @@ pub(crate) fn dispatch_entry<'a>(
     })
 }
 
+fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
+    if tag == crate::descriptors::private_data_specifier::TAG {
+        use dvb_common::Parse;
+        if let Ok(pds) =
+            crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(full)
+        {
+            *current = Some(pds.private_data_specifier);
+        }
+    }
+}
+
 impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
@@ -369,16 +380,7 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        if tag == crate::descriptors::private_data_specifier::TAG {
-            use dvb_common::Parse;
-            if let Ok(pds) =
-                crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(
-                    full,
-                )
-            {
-                self.current_pds = Some(pds.private_data_specifier);
-            }
-        }
+        update_pds(&mut self.current_pds, tag, full);
 
         Some(dispatch_entry(self.registry, self.current_pds, tag, full))
     }
@@ -466,36 +468,25 @@ impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        if tag == crate::descriptors::private_data_specifier::TAG {
-            use dvb_common::Parse;
-            if let Ok(pds) =
-                crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(
-                    full,
-                )
-            {
-                self.current_pds = Some(pds.private_data_specifier);
-            }
-        }
+        update_pds(&mut self.current_pds, tag, full);
 
         let len = full.len() - 2;
         if tag == crate::descriptors::extension::TAG && len >= 1 {
             let tag_extension = full[2];
             if self.ext_reg.has_custom(tag_extension) {
-                return Some(
-                    match self.ext_reg.parse_body(tag_extension, &full[3..2 + len]) {
-                        Ok(super::extension::registry::RegisteredExtension::Custom {
-                            tag_extension,
-                            value,
-                        }) => Ok(ExtIterItem::CustomExtension {
-                            tag_extension,
-                            value,
-                        }),
-                        Ok(super::extension::registry::RegisteredExtension::Builtin(d)) => {
-                            Ok(ExtIterItem::Descriptor(AnyDescriptor::Extension(d)))
-                        }
-                        Err(e) => Err(e),
-                    },
-                );
+                return Some(match self.ext_reg.parse_body(tag_extension, &full[3..]) {
+                    Ok(super::extension::registry::RegisteredExtension::Custom {
+                        tag_extension,
+                        value,
+                    }) => Ok(ExtIterItem::CustomExtension {
+                        tag_extension,
+                        value,
+                    }),
+                    Ok(super::extension::registry::RegisteredExtension::Builtin(d)) => {
+                        Ok(ExtIterItem::Descriptor(AnyDescriptor::Extension(d)))
+                    }
+                    Err(e) => Err(e),
+                });
             }
         }
 

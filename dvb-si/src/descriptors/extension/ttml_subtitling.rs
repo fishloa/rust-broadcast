@@ -164,7 +164,11 @@ impl Serialize for TtmlSubtitling<'_> {
                 reason: "more than 15 profiles (dvb_ttml_profile_count is 4 bits)",
             });
         }
-        if self.font_ids.as_ref().is_some_and(|ids| ids.len() > u8::MAX as usize) {
+        if self
+            .font_ids
+            .as_ref()
+            .is_some_and(|ids| ids.len() > u8::MAX as usize)
+        {
             return Err(Error::ValueOutOfRange {
                 field: "font_ids",
                 reason: "more than 255 font_ids (font_id_count is 8 bits)",

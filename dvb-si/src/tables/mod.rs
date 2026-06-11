@@ -18,6 +18,12 @@ pub(crate) const SECTION_B1_FLAGS_PSI: u8 = 0xB0;
 /// bits set (SSI=1, rfu=1, reserved=11).
 pub(crate) const SECTION_B1_FLAGS_DVB: u8 = 0xF0;
 
+/// `section_syntax_indicator` bit in long-form section byte 1.
+pub(crate) const SECTION_B1_SSI: u8 = 0x80;
+
+/// Reserved bits `[5:4]` in long-form section byte 1, set to `11`.
+pub(crate) const SECTION_B1_RESERVED_HI: u8 = 0x30;
+
 /// Validate a section_length field and compute the total encoded length.
 ///
 /// Returns `total` (= `header_len + section_length`) on success, or

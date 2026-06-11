@@ -23,6 +23,7 @@ pub struct DataBroadcastIdDescriptor<'a> {
     /// 16-bit data_broadcast_id (ETSI TS 101 162 registration).
     pub data_broadcast_id: u16,
     /// Raw id_selector_byte tail — interpretation depends on data_broadcast_id.
+    /// Kept raw deliberately; decode via id-specific parsers per TS 101 162.
     pub id_selector: &'a [u8],
 }
 

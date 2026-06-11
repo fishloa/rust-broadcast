@@ -62,7 +62,7 @@ fn int_loop_entry_serialized_len(e: &IntLoopEntry) -> usize {
 
 /// IP/MAC Notification Table (INT), ETSI EN 301 192 v1.7.1 §8.4, Table 13.
 ///
-/// The `loops` field has been unfolded into typed [`IntLoopEntry`] instances
+/// The `loops` field is unfolded into typed [`IntLoopEntry`] instances
 /// (target + operational descriptor-loop pairs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

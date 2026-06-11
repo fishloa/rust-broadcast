@@ -45,7 +45,6 @@ const LENGTH_HIGH_NIBBLE_MASK: u8 = 0x0F;
 const FLAGS_RESERVED_BITS: u8 = 0xC0;
 const RESERVED_NIBBLE: u8 = 0xF0;
 
-const COMPAT_DESC_LEN_FIELD: usize = 2;
 const PLATFORM_LOOP_LEN_FIELD: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
 
@@ -77,7 +76,7 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
 
 /// Update Notification Table (UNT), ETSI TS 102 006 v1.4.1 §9.4, Table 11.
 ///
-/// The platform loop has been unfolded into typed [`UntPlatform`] entries.
+/// The platform loop is unfolded into typed [`UntPlatform`] entries.
 /// The `compatibilityDescriptor()` within each entry is typed as
 /// [`CompatibilityDescriptor`] (ISO/IEC 13818-6 groupInfo form — not a
 /// standard SI tag/length descriptor).
@@ -129,13 +128,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
 
         let section_length =
             (((bytes[1] & LENGTH_HIGH_NIBBLE_MASK) as usize) << 8) | bytes[2] as usize;
-        let total = HEADER_LEN + section_length;
-        if bytes.len() < total || total < MIN_SECTION_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: bytes.len().saturating_sub(HEADER_LEN),
-            });
-        }
+        let total =
+            super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let action_type = bytes[OFFSET_ACTION_TYPE];
         let oui_hash = bytes[OFFSET_OUI_HASH];
@@ -165,19 +159,20 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let mut pos = common_desc_end;
         let mut platforms = Vec::new();
         while pos < payload_end {
-            if pos + COMPAT_DESC_LEN_FIELD > payload_end {
+            if pos + crate::compatibility::COMPAT_DESC_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort {
-                    need: pos + COMPAT_DESC_LEN_FIELD,
+                    need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
                     have: payload_end,
                     what: "UntSection compatibilityDescriptorLength",
                 });
             }
             let compat_desc_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
-            let compat_total = COMPAT_DESC_LEN_FIELD + compat_desc_len;
+            let compat_total = crate::compatibility::COMPAT_DESC_LEN_FIELD + compat_desc_len;
             if pos + compat_total > payload_end {
                 return Err(Error::SectionLengthOverflow {
                     declared: compat_desc_len,
-                    available: payload_end.saturating_sub(pos + COMPAT_DESC_LEN_FIELD),
+                    available: payload_end
+                        .saturating_sub(pos + crate::compatibility::COMPAT_DESC_LEN_FIELD),
                 });
             }
             let compatibility_descriptor =
@@ -297,6 +292,12 @@ impl Serialize for UntSection<'_> {
         }
 
         let section_length = (len - HEADER_LEN) as u16;
+        if section_length > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: 0x0FFF,
+            });
+        }
         buf[0] = TABLE_ID;
         buf[1] =
             super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
@@ -525,6 +526,55 @@ mod tests {
         assert_eq!(pairs[1].0.raw(), t1);
         assert_eq!(pairs[1].1.raw(), o1);
         // serialize is deterministic.
+        let mut buf2 = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
+    }
+
+    #[test]
+    fn round_trip_platform_with_nonempty_compat() {
+        // A platform carrying a non-empty compatibilityDescriptor() (one entry
+        // with a sub-descriptor) — the other UNT tests only exercise the empty
+        // form, so this pins the full compat block through UntSection framing.
+        use crate::compatibility::{CompatibilityDescriptorEntry, SubDescriptor};
+        let unt = UntSection {
+            action_type: 0x01,
+            oui_hash: 0x5B,
+            version_number: 3,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            oui: 0x00015A,
+            processing_order: 0x00,
+            common_descriptors: DescriptorLoop::new(&[]),
+            platforms: vec![UntPlatform {
+                compatibility_descriptor: CompatibilityDescriptor {
+                    descriptors: vec![CompatibilityDescriptorEntry {
+                        descriptor_type: 0x01,
+                        specifier_type: 0x01,
+                        specifier_data: [0x00, 0x15, 0x0A],
+                        model: 0x1234,
+                        version: 0x0001,
+                        sub_descriptors: vec![SubDescriptor {
+                            sub_descriptor_type: 0x05,
+                            data: &[0xAA, 0xBB],
+                        }],
+                    }],
+                },
+                target_operational_pairs: vec![(
+                    DescriptorLoop::new(&[]),
+                    DescriptorLoop::new(&[]),
+                )],
+            }],
+        };
+        let mut buf = vec![0u8; unt.serialized_len()];
+        unt.serialize_into(&mut buf).unwrap();
+        let re = UntSection::parse(&buf).unwrap();
+        assert_eq!(re, unt);
+        let entry = &re.platforms[0].compatibility_descriptor.descriptors[0];
+        assert_eq!(entry.descriptor_type, 0x01);
+        assert_eq!(entry.model, 0x1234);
+        assert_eq!(entry.sub_descriptors[0].data, &[0xAA, 0xBB]);
         let mut buf2 = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");

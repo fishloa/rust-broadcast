@@ -74,7 +74,7 @@ fn resolution_provider_serialized_len(rp: &ResolutionProvider) -> usize {
 /// Resolution provider Notification Table (ETSI TS 102 323 v1.4.1 §5.2.2,
 /// Table 1).
 ///
-/// The resolution-provider loop has been unfolded into typed
+/// The resolution-provider loop is unfolded into typed
 /// [`ResolutionProvider`] entries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -119,13 +119,8 @@ impl<'a> Parse<'a> for RntSection<'a> {
         }
 
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
-        let total = HEADER_LEN + section_length as usize;
-        if bytes.len() < total || total < MIN_LEN {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
-                available: bytes.len().saturating_sub(HEADER_LEN),
-            });
-        }
+        let total =
+            super::check_section_length(bytes.len(), HEADER_LEN, section_length as usize, MIN_LEN)?;
 
         let context_id = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
@@ -305,6 +300,12 @@ impl Serialize for RntSection<'_> {
         }
 
         let section_length = (len - HEADER_LEN) as u16;
+        if section_length > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length as usize,
+                available: 0x0FFF,
+            });
+        }
         buf[0] = TABLE_ID;
         buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
@@ -332,6 +333,12 @@ impl Serialize for RntSection<'_> {
             buf[pos + 1] = (rp_info_length & 0xFF) as u8;
             pos += RP_INFO_LEN_FIELD;
 
+            if rp.name.len() > u8::MAX as usize {
+                return Err(Error::ValueOutOfRange {
+                    field: "resolution_provider_name_length",
+                    reason: "exceeds 255 bytes",
+                });
+            }
             buf[pos] = rp.name.len() as u8;
             pos += RP_NAME_LEN_FIELD;
             buf[pos..pos + rp.name.len()].copy_from_slice(rp.name.raw());
@@ -345,6 +352,12 @@ impl Serialize for RntSection<'_> {
             pos += rp.descriptors.len();
 
             for ca in &rp.crid_authorities {
+                if ca.name.len() > u8::MAX as usize {
+                    return Err(Error::ValueOutOfRange {
+                        field: "crid_authority_name_length",
+                        reason: "exceeds 255 bytes",
+                    });
+                }
                 buf[pos] = ca.name.len() as u8;
                 pos += CA_NAME_LEN_FIELD;
                 buf[pos..pos + ca.name.len()].copy_from_slice(ca.name.raw());
