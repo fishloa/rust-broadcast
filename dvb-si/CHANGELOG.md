@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+The SI **output half** — the crate can now emit a transport stream, not just
+parse one (#56).
+
+### Added
+- **`mux::SectionPacketizer`** (#56, feature `ts`) — packs serialized PSI/SI
+  sections into 188-byte TS packets: PUSI + `pointer_field` placement, section
+  concatenation, per-PID continuity counters, 0xFF tail stuffing. The byte-exact
+  inverse of `SectionReassembler` (ISO/IEC 13818-1 §2.4.4). Buffer-reuse
+  `packetize_into` + allocating `packetize`.
+- **`mux::SiMux`** (#56, feature `ts`) — section-repetition scheduler on a
+  caller-supplied clock (no clock dependency). Per-PID entries of
+  `(sections, interval)`; `poll(now)` emits packets for every entry whose
+  interval has elapsed, with continuous per-PID continuity. Spec-cited default
+  intervals (`*_MAX_INTERVAL`): NIT/BAT/SDT/EIT/TDT/TOT from TR 101 211
+  §4.4.1/§4.4.2, PAT/PMT 100 ms from TS 101 154 §4.1.7, and the 25 ms
+  inter-section floor (`MIN_SECTION_INTERVAL`, EN 300 468 §5.1.4.1).
+
+### Fixed
+- **`ts::SectionReassembler`** no longer drops a valid near-maximal section
+  (~4048–4096 B) whose final continuation packet is padded with `0xFF` stuffing
+  (#148). A new section cannot start in a continuation packet, so trailing
+  stuffing past the section's declared length is now ignored instead of counted
+  toward the `MAX_SECTION_SIZE` guard.
+
 ## 6.0.0 — 2026-06-11
 
 The "decode completeness" major. 5.0 *typed* every wire field but still handed
