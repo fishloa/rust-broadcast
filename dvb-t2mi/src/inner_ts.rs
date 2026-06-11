@@ -88,8 +88,12 @@ impl InnerTsRecovery {
                         .feed_nm_into(&header_bytes, data_field, &mut self.up_buf);
                 }
                 Mode::HighEfficiency if !hdr.matype.npd => {
-                    self.extractor
-                        .feed_hem_into(&header_bytes, data_field, false, &mut self.up_buf);
+                    self.extractor.feed_hem_into(
+                        &header_bytes,
+                        data_field,
+                        false,
+                        &mut self.up_buf,
+                    );
                 }
                 // HEM with NPD, or any future mode: skip (not recoverable here).
                 _ => continue,
