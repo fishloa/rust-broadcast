@@ -243,7 +243,14 @@ impl Serialize for EitSection<'_> {
                 have: buf.len(),
             });
         }
-        let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
+        let section_length_usize = len - MIN_HEADER_LEN;
+        if section_length_usize > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length_usize,
+                available: 0x0FFF,
+            });
+        }
+        let section_length: u16 = section_length_usize as u16;
         buf[0] = self.table_id;
         buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;

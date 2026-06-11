@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-06-11
+
+Lockstep major across the workspace. `dvb-bbframe` adopts the shared
+`Parse`/`Serialize` contract and the unified error model, and hardens the
+user-packet extractor against wire-derived input.
+
+### Added
+- **`Bbheader` implements the workspace `dvb_common::Parse` / `Serialize`
+  contract** (#106) — symmetric, byte-identical round-trip — alongside the
+  existing inherent `parse` / `serialize` convenience methods.
+
+### Changed
+- **Unified cross-crate error model** (#112): `Error` is now structured
+  `thiserror` variants consistent with the rest of the workspace. (Breaking:
+  error type / variants changed.)
+- **`Issy` is now `#[non_exhaustive]`** (#106) — matching it requires a
+  wildcard arm. (Breaking for exhaustive matches.)
+
+### Fixed
+- `CarryOverExtractor::feed_hem_into` / `feed_nm_into` no longer panic on
+  wire-derived input (a `no_payload_data` HEM packet, or a header whose mode
+  doesn't match the called path); they emit no packets for that frame instead
+  of asserting.
+- Magic `0x47` sync-byte literals replaced with the named `TS_SYNC_BYTE`.
+
 ## [4.3.0] — 2026-06-10
 
 ### Added

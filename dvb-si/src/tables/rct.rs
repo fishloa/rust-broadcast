@@ -724,7 +724,14 @@ impl Serialize for RctSection<'_> {
             });
         }
 
-        let section_length = (len - MIN_HEADER_LEN) as u16;
+        let section_length_usize = len - MIN_HEADER_LEN;
+        if section_length_usize > 0x0FFF {
+            return Err(Error::SectionLengthOverflow {
+                declared: section_length_usize,
+                available: 0x0FFF,
+            });
+        }
+        let section_length = section_length_usize as u16;
         buf[0] = TABLE_ID;
         let tief_bit: u8 = if self.table_id_extension_flag {
             0x40

@@ -1485,13 +1485,14 @@ impl Serialize for SatSection {
                 have: buf.len(),
             });
         }
-        let section_length = (len - SECTION_LENGTH_PREFIX) as u16;
-        if section_length > 0x0FFF {
+        let section_length_usize = len - SECTION_LENGTH_PREFIX;
+        if section_length_usize > 0x0FFF {
             return Err(Error::SectionLengthOverflow {
-                declared: section_length as usize,
+                declared: section_length_usize,
                 available: 0x0FFF,
             });
         }
+        let section_length = section_length_usize as u16;
         if let SatBody::PositionV3(ref v3) = self.body {
             for sat in &v3.satellites {
                 if sat.ephemeris_data.len() > u16::MAX as usize {
