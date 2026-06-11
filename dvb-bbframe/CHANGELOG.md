@@ -12,6 +12,18 @@ accessors here.
   (`RollOff`: α 0.35 / 0.25 / 0.20, reserved) in the DVB-S2 context.
 - `Issy::Signalling` BUFS/TTO sub-coding accessor (EN 302 755 Annex C) — decodes
   the previously-raw 22-bit signalling payload.
+- `Bbheader::issy()` — typed accessor decoding the raw `issy_in_header` bytes.
+- `CarryOverExtractor::stats()` → `CarryOverStats`: diagnostic counters
+  (`npd_unsupported`, `header_parse_failures`, `mode_mismatches`,
+  `partial_discards`) making the extractor's resilient skips observable.
+  `npd_unsupported` flags valid HEM frames dropped because NPD/DNP reinsertion is
+  unsupported. The `feed_*` API stays infallible.
+
+### Changed
+- `decode_issy_short` / `decode_issy_long` return `Result` (was `Option`) — a
+  form/prefix mismatch is now a diagnosable error; ISSY bit-masks are named consts.
+- `up_iter()` returns a concrete iterator (was `Box<dyn Iterator>` — drops the
+  heap alloc); `remaining()` is panic-free on an out-of-range cursor.
 
 ## [5.0.0] — 2026-06-11
 

@@ -15,7 +15,7 @@ signalling that was exposed as raw bits.
   NM and HEM-without-NPD frames are recovered; HEM+NPD is skipped.
 - `S1Field::name()` (EN 302 755 Table 18: `T2_SISO`, `T2_MISO`, `Non-T2`, …) and
   an `S2Field1` decode of the P1 S2 field (FFT size + guard-interval set, plus
-  the `mixed` flag) on the FEF payloads.
+  the `mixed` flag), now consistent across the FEF null/IQ/composite payloads.
 
 ### Changed
 - **`dvb-bbframe` is now an optional dependency** enabled by the `ts` feature

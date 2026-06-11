@@ -46,6 +46,30 @@ values preserved in a catch-all variant for byte-identical serialization.
 - Best-effort, non-exhaustive registry name lookups: `ca_system_name()` and
   `private_data_specifier_name()` (TR 101 162); `data_broadcast_id_name()`.
 
+### Hardening & raw→typed (internal audit pass)
+- **Malformed input is rejected, not silently dropped:** the SAT bit reader/writer
+  error on over-run (was silent-zero/skip); `PatSection` errors on a partial
+  trailing entry; `CatSection::ca_descriptors()` errors on a descriptor overrun.
+  Conformant input and all fixtures are unaffected.
+- **More raw bytes → typed (raw `pub` fields removed):** `private_data_indicator`
+  → `u32`; `default_authority` / `service_identifier` / `telephone` / CIT strings
+  → `DvbText`; EIT `start_time()`/`duration()` and TDT/TOT/`local_time_offset`
+  decoded accessors (non-`chrono`, so available in every feature config); MPE
+  `MacAddress` / `Checksum` newtypes (`Display`).
+- `ac4_channel_mode` → enum (EN 300 468 Table D.12); `uri_linkage_type` → enum
+  (TS 101 162) with `has_polling_interval()`.
+- **DSM-CC SSI=0** sections now carry the verbatim 4-byte checksum instead of
+  being force-validated as CRC-32 (ISO/IEC 13818-6); SSI=1 byte-identity preserved.
+- Text decoder: an unsupported ISO 8859 part now yields `U+FFFD` rather than
+  plausible Latin-1 garbage (ISO 8859-1 itself still decodes correctly).
+- `SECTION_B1_FLAGS_SHORT` const replaces the hardcoded `0x70` in the short-form
+  tables; `SiDemux` uses `entry()` + a reused scratch buffer (no per-feed alloc).
+
+### Added — body-agnostic descriptor scan (#139)
+- `DescriptorLoop::contains_tag(tag)` and `raw_tags()` — walk the TLV structure
+  for tag-presence without typed-parsing each body (an empty/truncated body no
+  longer hides the tag, e.g. AC-3 `0x6A` / E-AC-3 `0x7A` detection).
+
 ### Documentation
 - Runnable doctests on the new decode accessors (`RunningStatus`, `StreamType`,
   `ServiceType`, `ContentEntry::genre_name`) and a `dvb-common` crate-root
