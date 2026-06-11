@@ -41,6 +41,14 @@ pub struct CellFrequencyLinkSubcell {
     pub transposer_frequency: u32,
 }
 
+impl CellFrequencyLinkSubcell {
+    /// Decode transposer_frequency to Hz (10 Hz field resolution).
+    #[must_use]
+    pub fn transposer_frequency_hz(&self) -> u64 {
+        u64::from(self.transposer_frequency) * 10
+    }
+}
+
 /// One cell-frequency association with its sub-cell list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -51,6 +59,14 @@ pub struct CellFrequencyLinkEntry {
     pub frequency: u32,
     /// Transposer sub-cells for this cell.
     pub subcells: Vec<CellFrequencyLinkSubcell>,
+}
+
+impl CellFrequencyLinkEntry {
+    /// Decode frequency to Hz (10 Hz field resolution).
+    #[must_use]
+    pub fn frequency_hz(&self) -> u64 {
+        u64::from(self.frequency) * 10
+    }
 }
 
 /// Cell Frequency Link Descriptor.
@@ -185,6 +201,25 @@ impl<'a> crate::traits::DescriptorDef<'a> for CellFrequencyLinkDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frequency_hz_computes_correctly() {
+        let entry = CellFrequencyLinkEntry {
+            cell_id: 0,
+            frequency: 100_000,
+            subcells: vec![],
+        };
+        assert_eq!(entry.frequency_hz(), 1_000_000);
+    }
+
+    #[test]
+    fn transposer_frequency_hz_computes_correctly() {
+        let sc = CellFrequencyLinkSubcell {
+            cell_id_extension: 0,
+            transposer_frequency: 500_000,
+        };
+        assert_eq!(sc.transposer_frequency_hz(), 5_000_000);
+    }
 
     #[test]
     fn parse_entry_with_subcells() {

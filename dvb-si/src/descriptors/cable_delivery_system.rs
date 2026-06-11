@@ -15,7 +15,7 @@ const BODY_LEN: u8 = 11;
 /// Reserved future use bits (top 12 bits of bytes 6+7 in the descriptor body).
 const RESERVED_FU_MASK: u16 = 0xFFF0;
 
-/// FEC outer coding scheme.
+/// FEC outer coding scheme — ETSI EN 300 468 Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -30,7 +30,7 @@ pub enum FecOuter {
     Reserved(u8),
 }
 
-/// Modulation scheme.
+/// Modulation scheme — ETSI EN 300 468 Table 35.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -51,7 +51,7 @@ pub enum Modulation {
     Reserved(u8),
 }
 
-/// FEC inner convolutional code rate.
+/// FEC inner convolutional code rate — ETSI EN 300 468 Table 36.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -80,6 +80,65 @@ pub enum FecInner {
     NoConvCoding,
     /// Reserved / future use.
     Reserved(u8),
+}
+
+impl FecInner {
+    /// Every 4-bit value maps to a variant (lossless).
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => FecInner::NotDefined,
+            0x01 => FecInner::Rate1_2,
+            0x02 => FecInner::Rate2_3,
+            0x03 => FecInner::Rate3_4,
+            0x04 => FecInner::Rate5_6,
+            0x05 => FecInner::Rate7_8,
+            0x06 => FecInner::Rate8_9,
+            0x07 => FecInner::Rate3_5,
+            0x08 => FecInner::Rate4_5,
+            0x09 => FecInner::Rate9_10,
+            0x0F => FecInner::NoConvCoding,
+            other => FecInner::Reserved(other),
+        }
+    }
+
+    /// Inverse of `from_u8`; `FecInner::Reserved(v)` emits `v`.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            FecInner::NotDefined => 0x00,
+            FecInner::Rate1_2 => 0x01,
+            FecInner::Rate2_3 => 0x02,
+            FecInner::Rate3_4 => 0x03,
+            FecInner::Rate5_6 => 0x04,
+            FecInner::Rate7_8 => 0x05,
+            FecInner::Rate8_9 => 0x06,
+            FecInner::Rate3_5 => 0x07,
+            FecInner::Rate4_5 => 0x08,
+            FecInner::Rate9_10 => 0x09,
+            FecInner::NoConvCoding => 0x0F,
+            FecInner::Reserved(v) => v,
+        }
+    }
+
+    /// Human-readable name per Table 36.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            FecInner::NotDefined => "not defined",
+            FecInner::Rate1_2 => "1/2",
+            FecInner::Rate2_3 => "2/3",
+            FecInner::Rate3_4 => "3/4",
+            FecInner::Rate5_6 => "5/6",
+            FecInner::Rate7_8 => "7/8",
+            FecInner::Rate8_9 => "8/9",
+            FecInner::Rate3_5 => "3/5",
+            FecInner::Rate4_5 => "4/5",
+            FecInner::Rate9_10 => "9/10",
+            FecInner::NoConvCoding => "no convolutional coding",
+            FecInner::Reserved(_) => "reserved",
+        }
+    }
 }
 
 /// Cable Delivery System Descriptor.
@@ -163,20 +222,7 @@ fn parse_modulation(raw: u8) -> Modulation {
 }
 
 fn parse_fec_inner(raw: u8) -> FecInner {
-    match raw {
-        0x00 => FecInner::NotDefined,
-        0x01 => FecInner::Rate1_2,
-        0x02 => FecInner::Rate2_3,
-        0x03 => FecInner::Rate3_4,
-        0x04 => FecInner::Rate5_6,
-        0x05 => FecInner::Rate7_8,
-        0x06 => FecInner::Rate8_9,
-        0x07 => FecInner::Rate3_5,
-        0x08 => FecInner::Rate4_5,
-        0x09 => FecInner::Rate9_10,
-        0x0F => FecInner::NoConvCoding,
-        other => FecInner::Reserved(other),
-    }
+    FecInner::from_u8(raw)
 }
 
 fn serialize_fec_outer(fec: FecOuter) -> u8 {
@@ -201,20 +247,7 @@ fn serialize_modulation(m: Modulation) -> u8 {
 }
 
 fn serialize_fec_inner(fec: FecInner) -> u8 {
-    match fec {
-        FecInner::NotDefined => 0x00,
-        FecInner::Rate1_2 => 0x01,
-        FecInner::Rate2_3 => 0x02,
-        FecInner::Rate3_4 => 0x03,
-        FecInner::Rate5_6 => 0x04,
-        FecInner::Rate7_8 => 0x05,
-        FecInner::Rate8_9 => 0x06,
-        FecInner::Rate3_5 => 0x07,
-        FecInner::Rate4_5 => 0x08,
-        FecInner::Rate9_10 => 0x09,
-        FecInner::NoConvCoding => 0x0F,
-        FecInner::Reserved(v) => v,
-    }
+    fec.to_u8()
 }
 
 impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
@@ -301,6 +334,17 @@ impl<'a> crate::traits::DescriptorDef<'a> for CableDeliverySystemDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fec_inner_from_u8_to_u8_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(
+                FecInner::from_u8(b).to_u8(),
+                b,
+                "round-trip fail for {b:#04x}"
+            );
+        }
+    }
 
     #[test]
     fn parse_extracts_frequency_bcd() {

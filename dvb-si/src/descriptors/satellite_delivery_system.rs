@@ -3,6 +3,7 @@
 //! Carried inside the NIT's `transport_stream_loop`'s second descriptor loop.
 //! Conveys carrier tuning parameters for a DVB-S / DVB-S2 transponder.
 
+use super::cable_delivery_system::FecInner;
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
@@ -24,6 +25,30 @@ pub enum Polarization {
     CircularLeft,
     /// Circular right.
     CircularRight,
+}
+
+impl Polarization {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x03 {
+            0 => Polarization::LinearHorizontal,
+            1 => Polarization::LinearVertical,
+            2 => Polarization::CircularLeft,
+            _ => Polarization::CircularRight,
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Polarization::LinearHorizontal => 0,
+            Polarization::LinearVertical => 1,
+            Polarization::CircularLeft => 2,
+            Polarization::CircularRight => 3,
+        }
+    }
 }
 
 /// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
@@ -50,7 +75,8 @@ pub enum ModulationType {
     Qam16,
 }
 
-/// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only).
+/// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only; also used by S2X
+/// with extended values per Table 144).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -61,8 +87,33 @@ pub enum RollOff {
     Alpha025,
     /// 0.20 (DVB-S2 narrow).
     Alpha020,
-    /// Reserved — carries the raw 2-bit value for forward compatibility.
+    /// Reserved — carries the raw value for forward compatibility (2-bit for
+    /// DVB-S/S2, 3-bit for S2X).
     Reserved(u8),
+}
+
+impl RollOff {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => RollOff::Alpha035,
+            1 => RollOff::Alpha025,
+            2 => RollOff::Alpha020,
+            other => RollOff::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            RollOff::Alpha035 => 0,
+            RollOff::Alpha025 => 1,
+            RollOff::Alpha020 => 2,
+            RollOff::Reserved(v) => v,
+        }
+    }
 }
 
 /// Satellite Delivery System Descriptor.
@@ -87,8 +138,8 @@ pub struct SatelliteDeliverySystemDescriptor {
     pub modulation_type: ModulationType,
     /// 28-bit BCD symbol rate in Msym/s (e.g. 0x0275_000 = 27.500 Msym/s).
     pub symbol_rate_bcd: u32,
-    /// 4-bit FEC inner code.
-    pub fec_inner: u8,
+    /// 4-bit FEC inner code — ETSI EN 300 468 Table 36.
+    pub fec_inner: FecInner,
 }
 
 impl SatelliteDeliverySystemDescriptor {
@@ -231,7 +282,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
         // Symbol rate: 28-bit BCD packed into 4 bytes (3.5 bytes + 4-bit FEC)
         let symbol_rate_and_fec = u32::from_be_bytes([body[7], body[8], body[9], body[10]]);
         let symbol_rate_bcd = symbol_rate_and_fec >> 4;
-        let fec_inner = (symbol_rate_and_fec & 0x0F) as u8;
+        let fec_inner = FecInner::from_u8((symbol_rate_and_fec & 0x0F) as u8);
 
         Ok(SatelliteDeliverySystemDescriptor {
             frequency_bcd,
@@ -308,8 +359,8 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
 
         // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC.
         // Mask to 28 bits so an over-range value can't spill past the field.
-        let sym_freq =
-            ((self.symbol_rate_bcd & 0x0FFF_FFFF) << 4) | (u32::from(self.fec_inner) & 0x0F);
+        let sym_freq = ((self.symbol_rate_bcd & 0x0FFF_FFFF) << 4)
+            | (u32::from(self.fec_inner.to_u8()) & 0x0F);
         let sym_bytes = sym_freq.to_be_bytes();
         buf[9..13].copy_from_slice(&sym_bytes);
 
@@ -435,22 +486,22 @@ mod tests {
     /// the last 4 bytes.
     #[test]
     fn parse_extracts_symbol_rate_and_fec() {
-        // symbol_rate: 27.500 Msym/s → BCD 0x027500, FEC: 5/6 → 0x5
+        // symbol_rate: 27.500 Msym/s → BCD 0x027500, FEC: 5/6 → 0x4
         let raw: Vec<u8> = vec![
             TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
-            0x05, // symbol_rate_bcd = 0x027500, fec_inner = 5
+            0x04, // symbol_rate_bcd = 0x027500, fec_inner = 4 (Rate5_6)
         ];
         let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
         assert_eq!(desc.symbol_rate_bcd, 0x0275000);
-        assert_eq!(desc.fec_inner, 5);
+        assert_eq!(desc.fec_inner, FecInner::Rate5_6);
 
-        // FEC full range test: 0x0 to 0xF
+        // FEC = 0x0F (NoConvCoding)
         let raw2: Vec<u8> = vec![
             TAG, BODY_LEN, 0x11, 0x72, 0x50, 0x00, 0x19, 0x20, 0x00, 0x02, 0x75, 0x00,
             0x0F, // FEC = 0x0F
         ];
         let desc2 = SatelliteDeliverySystemDescriptor::parse(&raw2).unwrap();
-        assert_eq!(desc2.fec_inner, 0x0F);
+        assert_eq!(desc2.fec_inner, FecInner::NoConvCoding);
     }
 
     /// Wrong tag byte should return InvalidDescriptor.
@@ -500,7 +551,7 @@ mod tests {
             modulation_system: ModulationSystem::DvbS2,
             modulation_type: ModulationType::Psk8,
             symbol_rate_bcd: 0x027500,
-            fec_inner: 5,
+            fec_inner: FecInner::Rate5_6,
         };
 
         let mut buf = vec![0u8; desc.serialized_len()];
@@ -523,7 +574,7 @@ mod tests {
             modulation_system: ModulationSystem::DvbS2,
             modulation_type: ModulationType::Psk8,
             symbol_rate_bcd: 0x027500,
-            fec_inner: 5,
+            fec_inner: FecInner::Rate5_6,
         };
 
         let mut buf = vec![0u8; desc.serialized_len()];

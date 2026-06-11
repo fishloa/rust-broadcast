@@ -6,6 +6,259 @@ impl<'a> ExtensionBodyDef<'a> for T2DeliverySystem {
     const NAME: &'static str = "T2_DELIVERY_SYSTEM";
 }
 
+// ---------------------------------------------------------------------------
+//  T2-specific enums (Tables 134-137)
+// ---------------------------------------------------------------------------
+
+/// SISO/MISO mode — ETSI EN 300 468 Table 134.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum T2SisoMiso {
+    /// Single Input, Single Output (SISO).
+    Siso,
+    /// Multiple Input, Single Output (MISO).
+    Miso,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl T2SisoMiso {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => T2SisoMiso::Siso,
+            1 => T2SisoMiso::Miso,
+            other => T2SisoMiso::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            T2SisoMiso::Siso => 0,
+            T2SisoMiso::Miso => 1,
+            T2SisoMiso::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            T2SisoMiso::Siso => "SISO",
+            T2SisoMiso::Miso => "MISO",
+            T2SisoMiso::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Bandwidth — ETSI EN 300 468 Table 135.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum T2Bandwidth {
+    /// 8 MHz.
+    Mhz8,
+    /// 7 MHz.
+    Mhz7,
+    /// 6 MHz.
+    Mhz6,
+    /// 5 MHz.
+    Mhz5,
+    /// 10 MHz.
+    Mhz10,
+    /// 1.712 MHz.
+    Mhz1_712,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl T2Bandwidth {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => T2Bandwidth::Mhz8,
+            1 => T2Bandwidth::Mhz7,
+            2 => T2Bandwidth::Mhz6,
+            3 => T2Bandwidth::Mhz5,
+            4 => T2Bandwidth::Mhz10,
+            5 => T2Bandwidth::Mhz1_712,
+            other => T2Bandwidth::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            T2Bandwidth::Mhz8 => 0,
+            T2Bandwidth::Mhz7 => 1,
+            T2Bandwidth::Mhz6 => 2,
+            T2Bandwidth::Mhz5 => 3,
+            T2Bandwidth::Mhz10 => 4,
+            T2Bandwidth::Mhz1_712 => 5,
+            T2Bandwidth::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            T2Bandwidth::Mhz8 => "8 MHz",
+            T2Bandwidth::Mhz7 => "7 MHz",
+            T2Bandwidth::Mhz6 => "6 MHz",
+            T2Bandwidth::Mhz5 => "5 MHz",
+            T2Bandwidth::Mhz10 => "10 MHz",
+            T2Bandwidth::Mhz1_712 => "1.712 MHz",
+            T2Bandwidth::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Guard interval — ETSI EN 300 468 Table 136.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum T2GuardInterval {
+    /// 1/32.
+    G1_32,
+    /// 1/16.
+    G1_16,
+    /// 1/8.
+    G1_8,
+    /// 1/4.
+    G1_4,
+    /// 1/128.
+    G1_128,
+    /// 19/128.
+    G19_128,
+    /// 19/256.
+    G19_256,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl T2GuardInterval {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => T2GuardInterval::G1_32,
+            1 => T2GuardInterval::G1_16,
+            2 => T2GuardInterval::G1_8,
+            3 => T2GuardInterval::G1_4,
+            4 => T2GuardInterval::G1_128,
+            5 => T2GuardInterval::G19_128,
+            6 => T2GuardInterval::G19_256,
+            other => T2GuardInterval::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            T2GuardInterval::G1_32 => 0,
+            T2GuardInterval::G1_16 => 1,
+            T2GuardInterval::G1_8 => 2,
+            T2GuardInterval::G1_4 => 3,
+            T2GuardInterval::G1_128 => 4,
+            T2GuardInterval::G19_128 => 5,
+            T2GuardInterval::G19_256 => 6,
+            T2GuardInterval::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            T2GuardInterval::G1_32 => "1/32",
+            T2GuardInterval::G1_16 => "1/16",
+            T2GuardInterval::G1_8 => "1/8",
+            T2GuardInterval::G1_4 => "1/4",
+            T2GuardInterval::G1_128 => "1/128",
+            T2GuardInterval::G19_128 => "19/128",
+            T2GuardInterval::G19_256 => "19/256",
+            T2GuardInterval::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Transmission mode — ETSI EN 300 468 Table 137.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum T2TransmissionMode {
+    /// 2k mode.
+    Mode2k,
+    /// 8k mode.
+    Mode8k,
+    /// 4k mode.
+    Mode4k,
+    /// 1k mode.
+    Mode1k,
+    /// 16k mode.
+    Mode16k,
+    /// 32k mode.
+    Mode32k,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl T2TransmissionMode {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => T2TransmissionMode::Mode2k,
+            1 => T2TransmissionMode::Mode8k,
+            2 => T2TransmissionMode::Mode4k,
+            3 => T2TransmissionMode::Mode1k,
+            4 => T2TransmissionMode::Mode16k,
+            5 => T2TransmissionMode::Mode32k,
+            other => T2TransmissionMode::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            T2TransmissionMode::Mode2k => 0,
+            T2TransmissionMode::Mode8k => 1,
+            T2TransmissionMode::Mode4k => 2,
+            T2TransmissionMode::Mode1k => 3,
+            T2TransmissionMode::Mode16k => 4,
+            T2TransmissionMode::Mode32k => 5,
+            T2TransmissionMode::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            T2TransmissionMode::Mode2k => "2k",
+            T2TransmissionMode::Mode8k => "8k",
+            T2TransmissionMode::Mode4k => "4k",
+            T2TransmissionMode::Mode1k => "1k",
+            T2TransmissionMode::Mode16k => "16k",
+            T2TransmissionMode::Mode32k => "32k",
+            T2TransmissionMode::Reserved(_) => "reserved",
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+//  Structs
+// ---------------------------------------------------------------------------
+
 /// One T2 cell (Table 133 inner `for`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -19,14 +272,33 @@ pub struct T2Cell {
     pub subcells: Vec<T2Subcell>,
 }
 
+impl T2Cell {
+    /// Decode all centre_frequencies to Hz (×10 Hz field resolution).
+    #[must_use]
+    pub fn centre_frequencies_hz(&self) -> Vec<u64> {
+        self.centre_frequencies
+            .iter()
+            .map(|&f| u64::from(f) * 10)
+            .collect()
+    }
+}
+
 /// One T2 subcell (Table 133 innermost `for`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct T2Subcell {
     /// cell_id_extension(8).
     pub cell_id_extension: u8,
-    /// transposer_frequency(32).
+    /// transposer_frequency(32) — ×10 Hz units.
     pub transposer_frequency: u32,
+}
+
+impl T2Subcell {
+    /// Decode transposer_frequency to Hz (×10 Hz field resolution).
+    #[must_use]
+    pub fn transposer_frequency_hz(&self) -> u64 {
+        u64::from(self.transposer_frequency) * 10
+    }
 }
 
 /// T2_delivery_system body (Table 133). The cell loop is unfolded.
@@ -37,17 +309,17 @@ pub struct T2DeliverySystem {
     pub plp_id: u8,
     /// T2 system identifier.
     pub t2_system_id: u16,
-    /// SISO_MISO(2), present iff `descriptor_length > 4` (flags block present).
-    pub siso_miso: Option<u8>,
-    /// bandwidth(4), present with `siso_miso`.
-    pub bandwidth: Option<u8>,
-    /// guard_interval(3), present with `siso_miso`.
-    pub guard_interval: Option<u8>,
-    /// transmission_mode(3), present with `siso_miso`.
-    pub transmission_mode: Option<u8>,
-    /// other_frequency_flag(1), present with `siso_miso`.
+    /// SISO_MISO, present iff `descriptor_length > 4` (flags block present).
+    pub siso_miso: Option<T2SisoMiso>,
+    /// bandwidth, present with `siso_miso`.
+    pub bandwidth: Option<T2Bandwidth>,
+    /// guard_interval, present with `siso_miso`.
+    pub guard_interval: Option<T2GuardInterval>,
+    /// transmission_mode, present with `siso_miso`.
+    pub transmission_mode: Option<T2TransmissionMode>,
+    /// other_frequency_flag, present with `siso_miso`.
     pub other_frequency_flag: Option<bool>,
-    /// tfs_flag(1), present with `siso_miso`.
+    /// tfs_flag, present with `siso_miso`.
     pub tfs_flag: Option<bool>,
     /// Cell loop entries (present only when flags block is present).
     pub cells: Vec<T2Cell>,
@@ -85,10 +357,10 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             let b1 = sel[pos + 1];
             pos += T2_FLAGS_BLOCK_LEN;
             (
-                Some(b0 >> 6),
-                Some((b0 >> 2) & 0x0F),
-                Some(b1 >> 5),
-                Some((b1 >> 2) & 0x07),
+                Some(T2SisoMiso::from_u8(b0 >> 6)),
+                Some(T2Bandwidth::from_u8((b0 >> 2) & 0x0F)),
+                Some(T2GuardInterval::from_u8(b1 >> 5)),
+                Some(T2TransmissionMode::from_u8((b1 >> 2) & 0x07)),
                 Some((b1 & 0x02) != 0),
                 Some((b1 & 0x01) != 0),
             )
@@ -252,8 +524,11 @@ impl Serialize for T2DeliverySystem {
             self.other_frequency_flag,
             self.tfs_flag,
         ) {
-            buf[p] = (sm << 6) | ((bw & 0x0F) << 2) | 0x03;
-            buf[p + 1] = (gi << 5) | ((tm & 0x07) << 2) | (u8::from(off) << 1) | u8::from(tfs);
+            buf[p] = (sm.to_u8() << 6) | ((bw.to_u8() & 0x0F) << 2) | 0x03;
+            buf[p + 1] = (gi.to_u8() << 5)
+                | ((tm.to_u8() & 0x07) << 2)
+                | (u8::from(off) << 1)
+                | u8::from(tfs);
             p += T2_FLAGS_BLOCK_LEN;
             for cell in &self.cells {
                 buf[p..p + 2].copy_from_slice(&cell.cell_id.to_be_bytes());
@@ -292,6 +567,27 @@ mod tests {
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
 
     #[test]
+    fn t2_bandwidth_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(T2Bandwidth::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn t2_guard_interval_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(T2GuardInterval::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn t2_transmission_mode_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(T2TransmissionMode::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
     fn parse_t2_minimal() {
         // body = plp + system_id = 3 bytes => no flags block
         let sel = [0x07, 0x12, 0x34];
@@ -311,7 +607,7 @@ mod tests {
 
     #[test]
     fn parse_t2_structured_flags_and_cells() {
-        // prefix + flags block (siso=0, bw=4, gi=6, tm=3, off=0, tfs=1)
+        // prefix + flags block (siso=0, bw=4(10MHz), gi=6(19/256), tm=3(1k), off=0, tfs=1)
         // + 2 cells: one empty, one with 3 freqs + 2 subcells
         let b0: u8 = ((0x04 & 0x0F) << 2) | 0x03; // siso_miso=0, bandwidth=4, reserved=11
         let b1: u8 = (0x06 << 5) | ((0x03 & 0x07) << 2) | (u8::from(false) << 1) | u8::from(true);
@@ -345,10 +641,10 @@ mod tests {
             ExtensionBody::T2DeliverySystem(b) => {
                 assert_eq!(b.plp_id, 0x07);
                 assert_eq!(b.t2_system_id, 0x1234);
-                assert_eq!(b.siso_miso, Some(0x00));
-                assert_eq!(b.bandwidth, Some(0x04));
-                assert_eq!(b.guard_interval, Some(0x06));
-                assert_eq!(b.transmission_mode, Some(0x03));
+                assert_eq!(b.siso_miso, Some(T2SisoMiso::Siso));
+                assert_eq!(b.bandwidth, Some(T2Bandwidth::Mhz10));
+                assert_eq!(b.guard_interval, Some(T2GuardInterval::G19_256));
+                assert_eq!(b.transmission_mode, Some(T2TransmissionMode::Mode1k));
                 assert_eq!(b.other_frequency_flag, Some(false));
                 assert_eq!(b.tfs_flag, Some(true));
                 assert_eq!(b.cells.len(), 2);
@@ -364,6 +660,16 @@ mod tests {
                 assert_eq!(b.cells[1].subcells[0].transposer_frequency, sc1_freq);
                 assert_eq!(b.cells[1].subcells[1].cell_id_extension, sc2_id);
                 assert_eq!(b.cells[1].subcells[1].transposer_frequency, sc2_freq);
+
+                // Accessor tests
+                assert_eq!(
+                    b.cells[1].subcells[0].transposer_frequency_hz(),
+                    u64::from(sc1_freq) * 10
+                );
+                assert_eq!(
+                    b.cells[1].centre_frequencies_hz(),
+                    vec![u64::from(f1) * 10, u64::from(f2) * 10, u64::from(f3) * 10]
+                );
             }
             other => panic!("expected T2DeliverySystem, got {other:?}"),
         }
@@ -380,10 +686,10 @@ mod tests {
             ExtensionBody::T2DeliverySystem(b) => {
                 assert_eq!(b.plp_id, 0x56);
                 assert_eq!(b.t2_system_id, 0x789A);
-                assert_eq!(b.siso_miso, Some(0));
-                assert_eq!(b.bandwidth, Some(4));
-                assert_eq!(b.guard_interval, Some(6));
-                assert_eq!(b.transmission_mode, Some(3));
+                assert_eq!(b.siso_miso, Some(T2SisoMiso::Siso));
+                assert_eq!(b.bandwidth, Some(T2Bandwidth::Mhz10));
+                assert_eq!(b.guard_interval, Some(T2GuardInterval::G19_256));
+                assert_eq!(b.transmission_mode, Some(T2TransmissionMode::Mode1k));
                 assert_eq!(b.other_frequency_flag, Some(false));
                 assert_eq!(b.tfs_flag, Some(true));
                 assert_eq!(b.cells.len(), 2);
