@@ -9,7 +9,7 @@ pub const POLY: u32 = 0x04C1_1DB7;
 
 /// Precomputed 256-entry forward table, built at compile time — zero
 /// runtime initialisation cost.
-pub const TABLE: [u32; 256] = {
+pub(crate) const TABLE: [u32; 256] = {
     let mut t = [0u32; 256];
     let mut i = 0u32;
     while i < 256 {

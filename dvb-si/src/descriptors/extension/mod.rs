@@ -327,9 +327,9 @@ declare_extension_bodies! {'a;
     /// `0x0D` — C2_delivery_system (Table 115, §6.4.6.1).
     C2DeliverySystem = 0x0D => C2DeliverySystem,
     /// `0x10` — video_depth_range (Table 160, §6.4.16.1).
-    VideoDepthRange = 0x10 => VideoDepthRangeDescriptor<'a>,
+    VideoDepthRange = 0x10 => VideoDepthRange<'a>,
     /// `0x11` — T2-MI (Table 158, §6.4.14).
-    T2mi = 0x11 => T2miDescriptor<'a>,
+    T2mi = 0x11 => T2mi<'a>,
     /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
     UriLinkage = 0x13 => UriLinkage<'a>,
     /// `0x15` — AC-4 (annex D).
@@ -345,7 +345,7 @@ declare_extension_bodies! {'a;
     /// `0x22` — service_prominence (Table 162c, §6.4.18).
     ServiceProminence = 0x22 => ServiceProminence<'a>,
     /// `0x23` — vvc_subpictures (Table 162a, §6.4.17).
-    VvcSubpictures = 0x23 => VvcSubpicturesDescriptor<'a>,
+    VvcSubpictures = 0x23 => VvcSubpictures<'a>,
 }
 
 /// Per-body metadata for the extension-descriptor sub-dispatch — the

@@ -1,7 +1,7 @@
 //! Video Depth Range Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10).
 use super::*;
 
-impl<'a> ExtensionBodyDef<'a> for VideoDepthRangeDescriptor<'a> {
+impl<'a> ExtensionBodyDef<'a> for VideoDepthRange<'a> {
     const TAG_EXTENSION: u8 = 0x10;
     const NAME: &'static str = "VIDEO_DEPTH_RANGE";
 }
@@ -42,7 +42,7 @@ pub enum DepthRangeBody<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-pub struct VideoDepthRangeDescriptor<'a> {
+pub struct VideoDepthRange<'a> {
     /// Depth range entries in wire order.
     pub ranges: Vec<DepthRange<'a>>,
 }
@@ -56,7 +56,7 @@ fn sext12(v: u16) -> i16 {
     }
 }
 
-impl<'a> Parse<'a> for VideoDepthRangeDescriptor<'a> {
+impl<'a> Parse<'a> for VideoDepthRange<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         let mut pos = 0;
@@ -107,11 +107,11 @@ impl<'a> Parse<'a> for VideoDepthRangeDescriptor<'a> {
             ranges.push(DepthRange { range_type, body });
             pos += range_length;
         }
-        Ok(VideoDepthRangeDescriptor { ranges })
+        Ok(VideoDepthRange { ranges })
     }
 }
 
-impl Serialize for VideoDepthRangeDescriptor<'_> {
+impl Serialize for VideoDepthRange<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
         self.ranges

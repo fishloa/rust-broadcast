@@ -232,7 +232,6 @@ const FREQUENCY_BODY_LEN: usize = 5;
 ///   (future extension).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 #[non_exhaustive]
 pub enum FunctionBody<'a> {
     /// ACE-PAPR (tag 0x10) — §5.2.8.2.2, Table 7.

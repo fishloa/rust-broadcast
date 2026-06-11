@@ -1,7 +1,7 @@
 //! VVC Subpictures Descriptor — ETSI EN 300 468 §6.4.17 (tag_extension 0x23).
 use super::*;
 
-impl<'a> ExtensionBodyDef<'a> for VvcSubpicturesDescriptor<'a> {
+impl<'a> ExtensionBodyDef<'a> for VvcSubpictures<'a> {
     const TAG_EXTENSION: u8 = 0x23;
     const NAME: &'static str = "VVC_SUBPICTURES";
 }
@@ -20,7 +20,7 @@ pub struct VvcSubpicture {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-pub struct VvcSubpicturesDescriptor<'a> {
+pub struct VvcSubpictures<'a> {
     /// default_service_mode(1) — byte 0 bit 7.
     pub default_service_mode: bool,
     /// Subpicture entries in wire order.
@@ -32,7 +32,7 @@ pub struct VvcSubpicturesDescriptor<'a> {
     pub service_description: Option<DvbText<'a>>,
 }
 
-impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
+impl<'a> Parse<'a> for VvcSubpictures<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
@@ -102,7 +102,7 @@ impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
             return Err(invalid("vvc_subpictures: trailing data"));
         }
 
-        Ok(VvcSubpicturesDescriptor {
+        Ok(VvcSubpictures {
             default_service_mode,
             subpictures,
             processing_mode,
@@ -111,7 +111,7 @@ impl<'a> Parse<'a> for VvcSubpicturesDescriptor<'a> {
     }
 }
 
-impl Serialize for VvcSubpicturesDescriptor<'_> {
+impl Serialize for VvcSubpictures<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
         1 + self.subpictures.len() * 2
@@ -263,7 +263,7 @@ mod tests {
     fn serde_serialize_vvc_subpictures() {
         let d = ExtensionDescriptor {
             tag_extension: 0x23,
-            body: ExtensionBody::VvcSubpictures(VvcSubpicturesDescriptor {
+            body: ExtensionBody::VvcSubpictures(VvcSubpictures {
                 default_service_mode: true,
                 subpictures: vec![VvcSubpicture {
                     component_tag: 0x10,

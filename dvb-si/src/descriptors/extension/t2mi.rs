@@ -4,7 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 
-impl<'a> ExtensionBodyDef<'a> for T2miDescriptor<'a> {
+impl<'a> ExtensionBodyDef<'a> for T2mi<'a> {
     const TAG_EXTENSION: u8 = 0x11;
     const NAME: &'static str = "T2MI";
 }
@@ -12,7 +12,7 @@ impl<'a> ExtensionBodyDef<'a> for T2miDescriptor<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
-pub struct T2miDescriptor<'a> {
+pub struct T2mi<'a> {
     /// t2mi_stream_id(3) — byte 0 low bits.
     pub t2mi_stream_id: u8,
     /// num_t2mi_streams_minus_one(3) — byte 1 low bits.
@@ -23,7 +23,7 @@ pub struct T2miDescriptor<'a> {
     pub reserved_tail: &'a [u8],
 }
 
-impl<'a> Parse<'a> for T2miDescriptor<'a> {
+impl<'a> Parse<'a> for T2mi<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.len() < T2MI_MIN_LEN {
@@ -33,7 +33,7 @@ impl<'a> Parse<'a> for T2miDescriptor<'a> {
                 what: "T2MI body",
             });
         }
-        Ok(T2miDescriptor {
+        Ok(T2mi {
             // Table 158 bytes 0-2:
             //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
             //   byte 1: reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
@@ -46,7 +46,7 @@ impl<'a> Parse<'a> for T2miDescriptor<'a> {
     }
 }
 
-impl Serialize for T2miDescriptor<'_> {
+impl Serialize for T2mi<'_> {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
         T2MI_MIN_LEN + self.reserved_tail.len()

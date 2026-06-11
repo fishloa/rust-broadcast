@@ -15,6 +15,7 @@ const SOGI_RESERVED_FUTURE_USE: u8 = 0x10;
 /// (Table 156, same shape as `target_region_descriptor`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceProminence<'a> {
     /// SOGI entries (the `SOGI_list_length`-delimited loop).
     pub sogi_list: Vec<SogiEntry>,
@@ -28,15 +29,11 @@ pub struct ServiceProminence<'a> {
 pub struct SogiEntry {
     /// `SOGI_flag` (1 bit).
     pub sogi_flag: bool,
-    /// `target_region_flag` (1 bit) — true iff `target_region_loop` is `Some`.
-    pub target_region_flag: bool,
-    /// `service_flag` (1 bit) — true iff `service_id` is `Some`.
-    pub service_flag: bool,
     /// `SOGI_priority` (12 bits).
     pub sogi_priority: u16,
-    /// `service_id` (16 bits), present iff `service_flag`.
+    /// `service_id` (16 bits), present iff `service_flag` wire bit is set.
     pub service_id: Option<u16>,
-    /// Typed `target_region` loop (Table 156 format), present iff `target_region_flag`.
+    /// Typed `target_region` loop (Table 156 format), present iff `target_region_flag` wire bit is set.
     pub target_region_loop: Option<Vec<super::target_region::TargetRegionEntry>>,
 }
 
@@ -116,8 +113,6 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             };
             sogi_list.push(SogiEntry {
                 sogi_flag,
-                target_region_flag,
-                service_flag,
                 sogi_priority,
                 service_id,
                 target_region_loop,
@@ -204,11 +199,10 @@ mod tests {
                 assert_eq!(b.sogi_list.len(), 1);
                 let e = &b.sogi_list[0];
                 assert!(!e.sogi_flag);
-                assert!(!e.target_region_flag);
-                assert!(e.service_flag);
+                assert!(e.target_region_loop.is_none());
+                assert!(e.service_id.is_some());
                 assert_eq!(e.sogi_priority, 0x0123);
                 assert_eq!(e.service_id, Some(0x4567));
-                assert!(e.target_region_loop.is_none());
                 assert_eq!(b.private_data, &[0xAB]);
             }
             other => panic!("expected ServiceProminence, got {other:?}"),
@@ -228,8 +222,6 @@ mod tests {
                 assert_eq!(b.sogi_list.len(), 1);
                 let e = &b.sogi_list[0];
                 assert!(!e.sogi_flag);
-                assert!(e.target_region_flag);
-                assert!(!e.service_flag);
                 assert_eq!(e.sogi_priority, 0x0001);
                 assert!(e.service_id.is_none());
                 assert!(e.target_region_loop.is_some());
@@ -259,14 +251,12 @@ mod tests {
             ExtensionBody::ServiceProminence(b) => {
                 assert_eq!(b.sogi_list.len(), 2);
                 let e0 = &b.sogi_list[0];
-                assert!(e0.service_flag);
                 assert_eq!(e0.sogi_priority, 0x0ABC);
                 assert_eq!(e0.service_id, Some(0x1111));
                 assert!(e0.target_region_loop.is_none());
                 let e1 = &b.sogi_list[1];
                 assert!(!e1.sogi_flag);
-                assert!(e1.target_region_flag);
-                assert!(!e1.service_flag);
+                assert!(e1.service_id.is_none());
                 assert_eq!(e1.sogi_priority, 0x0345);
                 assert!(e1.target_region_loop.is_some());
                 assert_eq!(e1.target_region_loop.as_ref().unwrap().len(), 1);
@@ -323,8 +313,6 @@ mod tests {
             body: ExtensionBody::ServiceProminence(ServiceProminence {
                 sogi_list: vec![SogiEntry {
                     sogi_flag: false,
-                    target_region_flag: false,
-                    service_flag: true,
                     sogi_priority: 0x123,
                     service_id: Some(0x4567),
                     target_region_loop: None,

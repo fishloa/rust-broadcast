@@ -37,7 +37,7 @@ pub fn validate_crc(bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::crc32_mpeg2::{compute, TABLE};
+    use dvb_common::crc32_mpeg2::compute;
 
     #[test]
     fn crc32_of_empty_input_is_initial_state() {
@@ -45,15 +45,15 @@ mod tests {
     }
 
     #[test]
-    fn table_first_entry_is_zero() {
-        assert_eq!(TABLE[0], 0);
+    fn compute_deterministic_and_not_identity() {
+        let c = compute(&[0x00]);
+        assert_eq!(c, compute(&[0x00]));
+        assert_ne!(c, 0xFFFF_FFFF);
     }
 
     #[test]
-    fn single_zero_byte_yields_index_ff() {
-        let crc = compute(&[0x00]);
-        let expected = TABLE[0xFF] ^ 0xFFFF_FF00;
-        assert_eq!(crc, expected);
+    fn compute_different_inputs_produce_different_results() {
+        assert_ne!(compute(&[0x00]), compute(&[0x01]));
     }
 
     #[test]

@@ -89,7 +89,6 @@ use std::collections::HashMap;
 /// Logical key identifying a service across the DVB network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct ServiceKey {
     /// original_network_id from the EIT/SDT.
     pub original_network_id: u16,
@@ -104,7 +103,6 @@ pub struct ServiceKey {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Rating {
     /// Three-character ISO 3166 country code.
     pub country: String,
@@ -117,7 +115,6 @@ pub struct Rating {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct Crid {
     /// CRID type (0x01 = series, 0x02 = programme, 0x03 = recommendation).
     pub crid_type: u8,
@@ -129,7 +126,6 @@ pub struct Crid {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct ExtendedItem {
     /// Item description.
     pub description: String,
@@ -142,7 +138,6 @@ pub struct ExtendedItem {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct ContentNibble {
     /// Content nibble level 1 (category).
     pub level_1: u8,
@@ -166,7 +161,6 @@ pub struct ContentNibble {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub struct EpgEvent {
     /// 16-bit event_id.
     pub event_id: u16,
@@ -211,7 +205,6 @@ pub struct EpgEvent {
 /// Serialisable service data exposed by [`EpgStore`] serde export.
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 struct ServiceData {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     service_name: Option<String>,
@@ -1542,11 +1535,11 @@ mod tests {
         let json = serde_json::to_string(&store).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         let svc_data = &v["1-1-100"];
-        assert_eq!(svc_data["serviceName"], "BBC One");
-        assert_eq!(svc_data["events"][0]["eventName"], "The News");
+        assert_eq!(svc_data["service_name"], "BBC One");
+        assert_eq!(svc_data["events"][0]["event_name"], "The News");
         assert_eq!(
-            svc_data["events"][0]["contentNibbles"][0],
-            serde_json::json!({"level1": 1, "level2": 1, "user": 0})
+            svc_data["events"][0]["content_nibbles"][0],
+            serde_json::json!({"level_1": 1, "level_2": 1, "user": 0})
         );
     }
 }

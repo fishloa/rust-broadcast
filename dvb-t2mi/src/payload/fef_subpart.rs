@@ -75,6 +75,7 @@ impl From<PrbsType> for u8 {
 /// - bytes 15..: subpart data (variable, format per variety)
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct FefSubPartPayload<'a> {
     /// FEF index within super-frame.
     pub fef_idx: u8,
