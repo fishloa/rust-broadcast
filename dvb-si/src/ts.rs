@@ -11,6 +11,10 @@ pub const TS_SYNC_BYTE: u8 = 0x47;
 /// 4093 → total 4096, but maximal short-form private sections may reach
 /// 4098; the reassembler accepts the absolute ceiling.)
 const MAX_SECTION_SIZE: usize = 4098;
+/// Bytes before the `section_length` payload: `table_id` (1) + the two bytes
+/// carrying the syntax/RFU flags and the 12-bit `section_length`
+/// (ISO/IEC 13818-1 §2.4.4.1).
+const SECTION_HEADER_LEN: usize = 3;
 
 /// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
@@ -406,11 +410,26 @@ impl SectionReassembler {
             if self.buf.is_empty() {
                 return;
             }
-            if self.buf.len() + payload.len() > MAX_SECTION_SIZE {
-                self.buf.clear();
-                return;
-            }
-            self.buf.extend_from_slice(payload);
+            // Append only the bytes the in-progress section still needs. A new
+            // section cannot start in a continuation (non-PUSI) packet
+            // (ISO/IEC 13818-1 §2.4.4), so once the section's declared length
+            // is satisfied the remaining payload bytes are 0xFF stuffing and
+            // are ignored. Counting that stuffing toward `MAX_SECTION_SIZE`
+            // previously dropped valid near-maximal sections (#148). Because
+            // the 12-bit `section_length` caps a section at `MAX_SECTION_SIZE`,
+            // `take` is inherently bounded and the buffer cannot grow without
+            // limit.
+            let take = if self.buf.len() >= SECTION_HEADER_LEN {
+                let exp = SECTION_HEADER_LEN
+                    + (((self.buf[1] & 0x0F) as usize) << 8 | self.buf[2] as usize);
+                exp.saturating_sub(self.buf.len()).min(payload.len())
+            } else {
+                // Header not yet complete (split across the packet boundary) —
+                // take enough to read `section_length` on the next drain,
+                // bounded by the maximum possible section size.
+                payload.len().min(MAX_SECTION_SIZE - self.buf.len())
+            };
+            self.buf.extend_from_slice(&payload[..take]);
         }
 
         self.drain_complete_sections();
@@ -428,7 +447,7 @@ impl SectionReassembler {
     /// the payload as stuffing.
     fn drain_complete_sections(&mut self) {
         loop {
-            if self.buf.len() < 3 {
+            if self.buf.len() < SECTION_HEADER_LEN {
                 // Not enough for a section header yet; keep the partial bytes
                 // and wait for the next packet to complete the header.
                 break;
@@ -438,7 +457,8 @@ impl SectionReassembler {
                 self.buf.clear();
                 break;
             }
-            let exp = 3 + (((self.buf[1] & 0x0F) as usize) << 8 | self.buf[2] as usize);
+            let exp =
+                SECTION_HEADER_LEN + (((self.buf[1] & 0x0F) as usize) << 8 | self.buf[2] as usize);
             if self.buf.len() >= exp {
                 // split_to returns the first `exp` bytes as an owned BytesMut,
                 // leaving the remainder in self.buf — cheap (shifts pointers).
@@ -735,30 +755,43 @@ mod tests {
     }
 
     #[test]
-    fn reassembler_discards_on_buffer_overflow() {
-        // Declare section_length larger than a single payload can carry. No
-        // pop happens until continuations arrive; if continuations push the
-        // buffer past MAX_SECTION_SIZE the reassembler must reset, not panic.
-        let mut section = Vec::with_capacity(3 + 4095);
+    fn reassembler_completes_max_length_section_and_stays_usable() {
+        // A section declaring the maximum `section_length` (0xFFF → 4098 bytes
+        // total). The 12-bit length structurally caps the buffer at
+        // MAX_SECTION_SIZE, so there is no unbounded growth — and (unlike the
+        // pre-#148 guard, which discarded once buf+payload crossed the cap) a
+        // valid max-length section completes at its declared length.
+        let mut section = Vec::with_capacity(MAX_SECTION_SIZE);
         section.push(0x00); // table_id
         section.push(0xB0 | ((4095u16 >> 8) as u8 & 0x0F));
-        section.push(0xFF);
-        section.extend_from_slice(&[0u8; 160]);
-        let payload1 = build_pusi_payload(0, &[], &section);
+        section.push(0xFF); // section_length = 0xFFF
+        section.resize(MAX_SECTION_SIZE, 0u8);
+        assert_eq!(section.len(), MAX_SECTION_SIZE);
 
         let mut reasm = SectionReassembler::default();
-        reasm.feed(&payload1, true);
-        assert!(reasm.pop_section().is_none());
-
-        // Push enough continuation data to cross MAX_SECTION_SIZE.
-        let filler = vec![0u8; 180];
-        for _ in 0..(MAX_SECTION_SIZE / 180 + 1) {
-            reasm.feed(&filler, false);
-        }
+        let mut first = vec![0x00u8]; // pointer_field 0
+        first.extend_from_slice(&section[..183]);
+        reasm.feed(&first, true);
         assert!(
             reasm.pop_section().is_none(),
-            "no section should pop after overflow reset"
+            "incomplete until the declared length arrives"
         );
+
+        for chunk in section[183..].chunks(184) {
+            reasm.feed(chunk, false);
+        }
+        let out = reasm
+            .pop_section()
+            .expect("max-length section completes at its declared length");
+        assert_eq!(out.len(), MAX_SECTION_SIZE);
+        assert_eq!(out.as_ref(), &section[..]);
+        assert!(reasm.is_empty());
+
+        // Extra trailing continuation data after completion is ignored (the
+        // buffer is empty, so a non-PUSI payload is dropped) — no panic, no
+        // spurious section.
+        reasm.feed(&[0u8; 184], false);
+        assert!(reasm.pop_section().is_none());
 
         // State must be resettable — a fresh valid PUSI section works.
         let valid_section = build_section(0x00, &[0xAA]);
@@ -838,6 +871,44 @@ mod tests {
         let out = reasm.pop_section().expect("4098-byte section should pop");
         assert_eq!(out.len(), 4098);
         assert_eq!(out.as_ref(), &section[..]);
+    }
+
+    /// Issue #148: a near-maximal section whose final continuation packet
+    /// carries the section tail followed by `0xFF` **stuffing** must still
+    /// complete. The old overflow guard counted the trailing stuffing toward
+    /// `MAX_SECTION_SIZE` and dropped the section.
+    #[test]
+    fn reassembler_completes_large_section_with_trailing_stuffing() {
+        let body = vec![0x5Au8; 4096 - 3];
+        let section = build_section(0x50, &body); // 4096 bytes total
+        assert_eq!(section.len(), 4096);
+
+        let mut reasm = SectionReassembler::default();
+        // First payload (PUSI): pointer_field 0 + first 183 section bytes.
+        let mut first = vec![0x00u8];
+        first.extend_from_slice(&section[..183]);
+        reasm.feed(&first, true);
+
+        // Continuation payloads of a full 184 bytes each; the final one is
+        // padded with 0xFF stuffing to a complete 184-byte payload, exactly as
+        // a real TS packet would carry it.
+        let mut pos = 183usize;
+        while pos < section.len() {
+            let take = (section.len() - pos).min(184);
+            let mut payload = section[pos..pos + take].to_vec();
+            if take < 184 {
+                payload.resize(184, 0xFF); // stuffing
+            }
+            reasm.feed(&payload, false);
+            pos += take;
+        }
+
+        let out = reasm
+            .pop_section()
+            .expect("4096-byte section must complete despite trailing stuffing (#148)");
+        assert_eq!(out.len(), 4096);
+        assert_eq!(out.as_ref(), &section[..]);
+        assert!(reasm.is_empty(), "stuffing tail must be discarded");
     }
 
     // ── adaptation field / PCR (ISO/IEC 13818-1 §2.4.3.4–2.4.3.5) ──

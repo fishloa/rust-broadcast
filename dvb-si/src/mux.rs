@@ -880,16 +880,14 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_section_near_reassembler_max() {
-        // The largest section that round-trips through the reassembler's buffer
-        // guard (which checks `buf.len() + payload.len() ≤ 4098` before each
-        // continuation extension).  With a full first PUSI packet (183 bytes)
-        // and full continuations (184 bytes each), the maximal total that fits
-        // without the last continuation overflowing the guard is:
-        //   183 + 20·184 + 184 = 4047  (§2.4.4)
-        let body = vec![0x11; 4044]; // 3-header + 4044 body = 4047
+    fn round_trip_section_at_max_size() {
+        // The maximum section (4096 total, the long-form ceiling), whose final
+        // continuation packet carries the tail followed by 0xFF stuffing. Since
+        // #148 the reassembler ignores that trailing stuffing instead of
+        // counting it toward MAX_SECTION_SIZE, so a full-size section round-trips.
+        let body = vec![0x11; 4096 - 3];
         let s = build_section(0x80, &body);
-        assert_eq!(s.len(), 4047);
+        assert_eq!(s.len(), 4096);
         assert_round_trip(&[s]);
     }
 
