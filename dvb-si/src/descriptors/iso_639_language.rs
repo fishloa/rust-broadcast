@@ -10,15 +10,70 @@ pub const TAG: u8 = 0x0A;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
 
+/// Audio type — ETSI EN 300 468 §6.2.22.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum AudioType {
+    /// 0x00 — undefined.
+    Undefined,
+    /// 0x01 — clean effects.
+    CleanEffects,
+    /// 0x02 — hearing impaired.
+    HearingImpaired,
+    /// 0x03 — visual impaired commentary.
+    VisualImpairedCommentary,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl AudioType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Undefined,
+            0x01 => Self::CleanEffects,
+            0x02 => Self::HearingImpaired,
+            0x03 => Self::VisualImpairedCommentary,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Undefined => 0x00,
+            Self::CleanEffects => 0x01,
+            Self::HearingImpaired => 0x02,
+            Self::VisualImpairedCommentary => 0x03,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Undefined => "undefined",
+            Self::CleanEffects => "clean effects",
+            Self::HearingImpaired => "hearing impaired",
+            Self::VisualImpairedCommentary => "visual impaired commentary",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// One (language code, audio type) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LanguageEntry {
     /// Three-character ISO 639-2 language code (e.g. `LangCode(*b"eng")`).
     pub language_code: LangCode,
-    /// Audio type (ETSI EN 300 468 §6.2.22): 0 = undefined, 1 = clean effects,
-    /// 2 = hearing impaired, 3 = visual impaired commentary.
-    pub audio_type: u8,
+    /// Audio type (ETSI EN 300 468 §6.2.22).
+    pub audio_type: AudioType,
 }
 
 /// ISO 639 Language Descriptor.
@@ -48,7 +103,7 @@ impl<'a> Parse<'a> for Iso639LanguageDescriptor {
         for chunk in body.chunks_exact(ENTRY_LEN) {
             entries.push(LanguageEntry {
                 language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
-                audio_type: chunk[3],
+                audio_type: AudioType::from_u8(chunk[3]),
             });
         }
         Ok(Self { entries })
@@ -74,7 +129,7 @@ impl Serialize for Iso639LanguageDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 3].copy_from_slice(&e.language_code.0);
-            buf[pos + 3] = e.audio_type;
+            buf[pos + 3] = e.audio_type.to_u8();
             pos += ENTRY_LEN;
         }
         Ok(len)
@@ -95,7 +150,7 @@ mod tests {
         let d = Iso639LanguageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].language_code, LangCode(*b"eng"));
-        assert_eq!(d.entries[0].audio_type, 0);
+        assert_eq!(d.entries[0].audio_type, AudioType::Undefined);
     }
 
     #[test]
@@ -104,7 +159,7 @@ mod tests {
         let d = Iso639LanguageDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
         assert_eq!(d.entries[1].language_code, LangCode(*b"fra"));
-        assert_eq!(d.entries[1].audio_type, 2);
+        assert_eq!(d.entries[1].audio_type, AudioType::HearingImpaired);
     }
 
     #[test]
@@ -132,11 +187,11 @@ mod tests {
             entries: vec![
                 LanguageEntry {
                     language_code: LangCode(*b"eng"),
-                    audio_type: 0,
+                    audio_type: AudioType::Undefined,
                 },
                 LanguageEntry {
                     language_code: LangCode(*b"fra"),
-                    audio_type: 1,
+                    audio_type: AudioType::CleanEffects,
                 },
             ],
         };
@@ -151,9 +206,29 @@ mod tests {
         let d = Iso639LanguageDescriptor {
             entries: vec![LanguageEntry {
                 language_code: LangCode(*b"eng"),
-                audio_type: 0,
+                audio_type: AudioType::Undefined,
             }],
         };
         assert_eq!(d.serialized_len() - 2, 4);
+    }
+
+    #[test]
+    fn audio_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let at = AudioType::from_u8(b);
+            assert_eq!(at.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn audio_type_name_for_known() {
+        assert_eq!(AudioType::Undefined.name(), "undefined");
+        assert_eq!(AudioType::CleanEffects.name(), "clean effects");
+        assert_eq!(AudioType::HearingImpaired.name(), "hearing impaired");
+        assert_eq!(
+            AudioType::VisualImpairedCommentary.name(),
+            "visual impaired commentary"
+        );
+        assert_eq!(AudioType::Reserved(0x55).name(), "reserved");
     }
 }

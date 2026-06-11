@@ -26,6 +26,66 @@ const DO_NOT_APPLY_REVOCATION_MASK: u8 = 0b0000_0001;
 /// Max value of the 2-bit control_remote_access_over_internet field.
 pub const CONTROL_REMOTE_ACCESS_MAX: u8 = 0b11;
 
+/// Control remote access over internet — ETSI EN 300 468 Table 58.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ControlRemoteAccess {
+    /// 0b00 — redistribution over the Internet is enabled.
+    Enabled,
+    /// 0b01 — redistribution over the Internet is enabled but only within a
+    /// managed domain.
+    EnabledManagedDomain,
+    /// 0b10 — redistribution over the Internet is enabled but only within a
+    /// managed domain and after a certain short period of time.
+    EnabledManagedDomainTimeLimited,
+    /// 0b11 — redistribution over the Internet is not allowed.
+    NotAllowed,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl ControlRemoteAccess {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0b00 => Self::Enabled,
+            0b01 => Self::EnabledManagedDomain,
+            0b10 => Self::EnabledManagedDomainTimeLimited,
+            0b11 => Self::NotAllowed,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Enabled => 0b00,
+            Self::EnabledManagedDomain => 0b01,
+            Self::EnabledManagedDomainTimeLimited => 0b10,
+            Self::NotAllowed => 0b11,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Enabled => "redistribution enabled",
+            Self::EnabledManagedDomain => "redistribution enabled (managed domain only)",
+            Self::EnabledManagedDomainTimeLimited => {
+                "redistribution enabled (managed domain, time-limited)"
+            }
+            Self::NotAllowed => "redistribution not allowed",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// FTA Content Management Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -35,7 +95,7 @@ pub struct FtaContentManagementDescriptor {
     /// 1-bit do_not_scramble flag.
     pub do_not_scramble: bool,
     /// 2-bit control_remote_access_over_internet field (Table 58).
-    pub control_remote_access_over_internet: u8,
+    pub control_remote_access_over_internet: ControlRemoteAccess,
     /// 1-bit do_not_apply_revocation flag.
     pub do_not_apply_revocation: bool,
 }
@@ -60,8 +120,9 @@ impl<'a> Parse<'a> for FtaContentManagementDescriptor {
         Ok(Self {
             user_defined: flags & USER_DEFINED_MASK != 0,
             do_not_scramble: flags & DO_NOT_SCRAMBLE_MASK != 0,
-            control_remote_access_over_internet: (flags & CONTROL_REMOTE_ACCESS_MASK)
-                >> CONTROL_REMOTE_ACCESS_SHIFT,
+            control_remote_access_over_internet: ControlRemoteAccess::from_u8(
+                (flags & CONTROL_REMOTE_ACCESS_MASK) >> CONTROL_REMOTE_ACCESS_SHIFT,
+            ),
             do_not_apply_revocation: flags & DO_NOT_APPLY_REVOCATION_MASK != 0,
         })
     }
@@ -74,7 +135,7 @@ impl Serialize for FtaContentManagementDescriptor {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.control_remote_access_over_internet > CONTROL_REMOTE_ACCESS_MAX {
+        if self.control_remote_access_over_internet.to_u8() > CONTROL_REMOTE_ACCESS_MAX {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "control_remote_access_over_internet exceeds 2 bits",
@@ -95,7 +156,7 @@ impl Serialize for FtaContentManagementDescriptor {
         if self.do_not_scramble {
             flags |= DO_NOT_SCRAMBLE_MASK;
         }
-        flags |= (self.control_remote_access_over_internet << CONTROL_REMOTE_ACCESS_SHIFT)
+        flags |= (self.control_remote_access_over_internet.to_u8() << CONTROL_REMOTE_ACCESS_SHIFT)
             & CONTROL_REMOTE_ACCESS_MASK;
         if self.do_not_apply_revocation {
             flags |= DO_NOT_APPLY_REVOCATION_MASK;
@@ -123,7 +184,10 @@ mod tests {
         let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
         assert!(d.user_defined);
         assert!(d.do_not_scramble);
-        assert_eq!(d.control_remote_access_over_internet, 0b10);
+        assert_eq!(
+            d.control_remote_access_over_internet,
+            ControlRemoteAccess::EnabledManagedDomainTimeLimited
+        );
         assert!(d.do_not_apply_revocation);
     }
 
@@ -134,7 +198,10 @@ mod tests {
         let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
         assert!(!d.user_defined);
         assert!(!d.do_not_scramble);
-        assert_eq!(d.control_remote_access_over_internet, 0);
+        assert_eq!(
+            d.control_remote_access_over_internet,
+            ControlRemoteAccess::Enabled
+        );
         assert!(!d.do_not_apply_revocation);
     }
 
@@ -167,7 +234,8 @@ mod tests {
         let d = FtaContentManagementDescriptor {
             user_defined: true,
             do_not_scramble: true,
-            control_remote_access_over_internet: 0b10,
+            control_remote_access_over_internet:
+                ControlRemoteAccess::EnabledManagedDomainTimeLimited,
             do_not_apply_revocation: true,
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -182,7 +250,7 @@ mod tests {
         let d = FtaContentManagementDescriptor {
             user_defined: false,
             do_not_scramble: false,
-            control_remote_access_over_internet: 0,
+            control_remote_access_over_internet: ControlRemoteAccess::Enabled,
             do_not_apply_revocation: false,
         };
         let mut buf = vec![0u8; 2];
@@ -197,7 +265,7 @@ mod tests {
         let d = FtaContentManagementDescriptor {
             user_defined: false,
             do_not_scramble: false,
-            control_remote_access_over_internet: 0b100, // 3 bits
+            control_remote_access_over_internet: ControlRemoteAccess::Reserved(0b100), // 3 bits
             do_not_apply_revocation: false,
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -213,11 +281,19 @@ mod tests {
         let d = FtaContentManagementDescriptor {
             user_defined: true,
             do_not_scramble: false,
-            control_remote_access_over_internet: 0b01,
+            control_remote_access_over_internet: ControlRemoteAccess::EnabledManagedDomain,
             do_not_apply_revocation: true,
         };
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn control_remote_access_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let cra = ControlRemoteAccess::from_u8(b);
+            assert_eq!(cra.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
     }
 }

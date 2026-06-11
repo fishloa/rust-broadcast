@@ -12,13 +12,193 @@ use dvb_common::{Parse, Serialize};
 pub const TAG: u8 = 0x48;
 const HEADER_LEN: usize = 2;
 
+/// Service type — ETSI EN 300 468 Table 89.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ServiceType {
+    /// 0x01 — digital television service.
+    DigitalTelevision,
+    /// 0x02 — digital radio sound service.
+    DigitalRadioSound,
+    /// 0x03 — teletext service.
+    Teletext,
+    /// 0x04 — NVOD reference service.
+    NvodReference,
+    /// 0x05 — NVOD time-shifted service.
+    NvodTimeShifted,
+    /// 0x06 — mosaic service.
+    Mosaic,
+    /// 0x07 — FM radio service.
+    FmRadio,
+    /// 0x08 — DVB SRM service.
+    DvbSrm,
+    /// 0x0A — advanced codec digital radio sound service.
+    AdvancedCodecDigitalRadio,
+    /// 0x0B — H.264/AVC mosaic service.
+    AvcMosaic,
+    /// 0x0C — data broadcast service.
+    DataBroadcast,
+    /// 0x0E — RCS Map.
+    RcsMap,
+    /// 0x0F — RCS FLS.
+    RcsFls,
+    /// 0x10 — DVB MHP service.
+    Mhp,
+    /// 0x11 — MPEG-2 HD digital television service.
+    HdDigitalTelevision,
+    /// 0x16 — H.264/AVC SD digital television service.
+    AvcSdDigitalTelevision,
+    /// 0x17 — H.264/AVC SD NVOD time-shifted service.
+    AvcSdNvodTimeShifted,
+    /// 0x18 — H.264/AVC SD NVOD reference service.
+    AvcSdNvodReference,
+    /// 0x19 — H.264/AVC HD digital television service.
+    AvcHdDigitalTelevision,
+    /// 0x1A — H.264/AVC HD NVOD time-shifted service.
+    AvcHdNvodTimeShifted,
+    /// 0x1B — H.264/AVC HD NVOD reference service.
+    AvcHdNvodReference,
+    /// 0x1C — H.264/AVC frame compatible plano-stereoscopic HD digital
+    /// television service.
+    AvcFrameCompatiblePlanoStereoscopicHd,
+    /// 0x1D — H.264/AVC frame compatible plano-stereoscopic HD NVOD
+    /// time-shifted service.
+    AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted,
+    /// 0x1E — H.264/AVC frame compatible plano-stereoscopic HD NVOD
+    /// reference service.
+    AvcFrameCompatiblePlanoStereoscopicHdNvodReference,
+    /// 0x1F — HEVC digital television service.
+    HevcDigitalTelevision,
+    /// 0x21 — VVC digital television service.
+    VvcDigitalTelevision,
+    /// 0x22 — AVS3 digital television service.
+    Avs3DigitalTelevision,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl ServiceType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x01 => Self::DigitalTelevision,
+            0x02 => Self::DigitalRadioSound,
+            0x03 => Self::Teletext,
+            0x04 => Self::NvodReference,
+            0x05 => Self::NvodTimeShifted,
+            0x06 => Self::Mosaic,
+            0x07 => Self::FmRadio,
+            0x08 => Self::DvbSrm,
+            0x0A => Self::AdvancedCodecDigitalRadio,
+            0x0B => Self::AvcMosaic,
+            0x0C => Self::DataBroadcast,
+            0x0E => Self::RcsMap,
+            0x0F => Self::RcsFls,
+            0x10 => Self::Mhp,
+            0x11 => Self::HdDigitalTelevision,
+            0x16 => Self::AvcSdDigitalTelevision,
+            0x17 => Self::AvcSdNvodTimeShifted,
+            0x18 => Self::AvcSdNvodReference,
+            0x19 => Self::AvcHdDigitalTelevision,
+            0x1A => Self::AvcHdNvodTimeShifted,
+            0x1B => Self::AvcHdNvodReference,
+            0x1C => Self::AvcFrameCompatiblePlanoStereoscopicHd,
+            0x1D => Self::AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted,
+            0x1E => Self::AvcFrameCompatiblePlanoStereoscopicHdNvodReference,
+            0x1F => Self::HevcDigitalTelevision,
+            0x21 => Self::VvcDigitalTelevision,
+            0x22 => Self::Avs3DigitalTelevision,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::DigitalTelevision => 0x01,
+            Self::DigitalRadioSound => 0x02,
+            Self::Teletext => 0x03,
+            Self::NvodReference => 0x04,
+            Self::NvodTimeShifted => 0x05,
+            Self::Mosaic => 0x06,
+            Self::FmRadio => 0x07,
+            Self::DvbSrm => 0x08,
+            Self::AdvancedCodecDigitalRadio => 0x0A,
+            Self::AvcMosaic => 0x0B,
+            Self::DataBroadcast => 0x0C,
+            Self::RcsMap => 0x0E,
+            Self::RcsFls => 0x0F,
+            Self::Mhp => 0x10,
+            Self::HdDigitalTelevision => 0x11,
+            Self::AvcSdDigitalTelevision => 0x16,
+            Self::AvcSdNvodTimeShifted => 0x17,
+            Self::AvcSdNvodReference => 0x18,
+            Self::AvcHdDigitalTelevision => 0x19,
+            Self::AvcHdNvodTimeShifted => 0x1A,
+            Self::AvcHdNvodReference => 0x1B,
+            Self::AvcFrameCompatiblePlanoStereoscopicHd => 0x1C,
+            Self::AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted => 0x1D,
+            Self::AvcFrameCompatiblePlanoStereoscopicHdNvodReference => 0x1E,
+            Self::HevcDigitalTelevision => 0x1F,
+            Self::VvcDigitalTelevision => 0x21,
+            Self::Avs3DigitalTelevision => 0x22,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DigitalTelevision => "digital television service",
+            Self::DigitalRadioSound => "digital radio sound service",
+            Self::Teletext => "teletext service",
+            Self::NvodReference => "NVOD reference service",
+            Self::NvodTimeShifted => "NVOD time-shifted service",
+            Self::Mosaic => "mosaic service",
+            Self::FmRadio => "FM radio service",
+            Self::DvbSrm => "DVB SRM service",
+            Self::AdvancedCodecDigitalRadio => "advanced codec digital radio sound service",
+            Self::AvcMosaic => "H.264/AVC mosaic service",
+            Self::DataBroadcast => "data broadcast service",
+            Self::RcsMap => "RCS Map",
+            Self::RcsFls => "RCS FLS",
+            Self::Mhp => "DVB MHP service",
+            Self::HdDigitalTelevision => "MPEG-2 HD digital television service",
+            Self::AvcSdDigitalTelevision => "H.264/AVC SD digital television service",
+            Self::AvcSdNvodTimeShifted => "H.264/AVC SD NVOD time-shifted service",
+            Self::AvcSdNvodReference => "H.264/AVC SD NVOD reference service",
+            Self::AvcHdDigitalTelevision => "H.264/AVC HD digital television service",
+            Self::AvcHdNvodTimeShifted => "H.264/AVC HD NVOD time-shifted service",
+            Self::AvcHdNvodReference => "H.264/AVC HD NVOD reference service",
+            Self::AvcFrameCompatiblePlanoStereoscopicHd => {
+                "H.264/AVC frame compatible plano-stereoscopic HD digital television service"
+            }
+            Self::AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted => {
+                "H.264/AVC frame compatible plano-stereoscopic HD NVOD time-shifted service"
+            }
+            Self::AvcFrameCompatiblePlanoStereoscopicHdNvodReference => {
+                "H.264/AVC frame compatible plano-stereoscopic HD NVOD reference service"
+            }
+            Self::HevcDigitalTelevision => "HEVC digital television service",
+            Self::VvcDigitalTelevision => "VVC digital television service",
+            Self::Avs3DigitalTelevision => "AVS3 digital television service",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ServiceDescriptor<'a> {
-    /// service_type byte (ETSI Table 87).
-    pub service_type: u8,
+    /// service_type byte (ETSI Table 89).
+    pub service_type: ServiceType,
     /// DVB Annex-A encoded provider name.
     pub provider_name: DvbText<'a>,
     /// DVB Annex-A encoded service name.
@@ -40,7 +220,7 @@ impl<'a> Parse<'a> for ServiceDescriptor<'a> {
                 reason: "service_descriptor body too short for service_type + two length fields",
             });
         }
-        let service_type = body[0];
+        let service_type = ServiceType::from_u8(body[0]);
         let provider_len = body[1] as usize;
         let provider_end = 2 + provider_len;
         if provider_end + 1 > body.len() {
@@ -83,7 +263,7 @@ impl Serialize for ServiceDescriptor<'_> {
         }
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
-        buf[2] = self.service_type;
+        buf[2] = self.service_type.to_u8();
         buf[3] = self.provider_name.len() as u8;
         let p_start = 4;
         let p_end = p_start + self.provider_name.len();
@@ -105,12 +285,12 @@ mod tests {
 
     #[test]
     fn parse_extracts_all_fields() {
-        // service_type=1, provider="EUTE", service="TF1"
+        // service_type=1 (DigitalTelevision), provider="EUTE", service="TF1"
         let bytes = [
             TAG, 10, 0x01, 4, b'E', b'U', b'T', b'E', 3, b'T', b'F', b'1',
         ];
         let d = ServiceDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.service_type, 1);
+        assert_eq!(d.service_type, ServiceType::DigitalTelevision);
         assert_eq!(d.provider_name.raw(), b"EUTE");
         assert_eq!(d.service_name.raw(), b"TF1");
     }
@@ -145,6 +325,7 @@ mod tests {
     fn empty_provider_and_service_names_valid() {
         let bytes = [TAG, 3, 0x01, 0, 0];
         let d = ServiceDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.service_type, ServiceType::DigitalTelevision);
         assert!(d.provider_name.raw().is_empty());
         assert!(d.service_name.raw().is_empty());
     }
@@ -152,7 +333,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let d = ServiceDescriptor {
-            service_type: 0x19,
+            service_type: ServiceType::AvcHdDigitalTelevision,
             provider_name: DvbText::new(b"BBC"),
             service_name: DvbText::new(b"BBC ONE HD"),
         };
@@ -165,11 +346,32 @@ mod tests {
     #[test]
     fn descriptor_length_matches_payload() {
         let d = ServiceDescriptor {
-            service_type: 1,
+            service_type: ServiceType::DigitalTelevision,
             provider_name: DvbText::new(b"AA"),
             service_name: DvbText::new(b"BBB"),
         };
         // 1 (type) + 1 (p_len) + 2 (p) + 1 (s_len) + 3 (s) = 8
         assert_eq!(d.serialized_len() - 2, 8);
+    }
+
+    #[test]
+    fn service_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let st = ServiceType::from_u8(b);
+            assert_eq!(st.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn service_type_name_for_known() {
+        assert_eq!(
+            ServiceType::DigitalTelevision.name(),
+            "digital television service"
+        );
+        assert_eq!(
+            ServiceType::HevcDigitalTelevision.name(),
+            "HEVC digital television service"
+        );
+        assert_eq!(ServiceType::Reserved(0x55).name(), "reserved");
     }
 }

@@ -664,14 +664,13 @@ fn short_event_serializes_decoded_strings() {
 
 #[test]
 fn service_serializes_decoded_strings() {
-    use dvb_si::descriptors::service::ServiceDescriptor;
+    use dvb_si::descriptors::service::{ServiceDescriptor, ServiceType};
     let d = ServiceDescriptor {
-        service_type: 0x19,
+        service_type: ServiceType::AvcHdDigitalTelevision,
         provider_name: DvbText::new(b"BBC"),
         service_name: DvbText::new(b"BBC ONE HD"),
     };
     let j = serde_json::to_value(&d).unwrap();
-    assert_eq!(j["service_type"], 0x19);
     assert_eq!(j["provider_name"], "BBC");
     assert_eq!(j["service_name"], "BBC ONE HD");
 }

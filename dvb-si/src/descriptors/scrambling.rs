@@ -14,12 +14,78 @@ const HEADER_LEN: usize = 2;
 /// Fixed payload length: a single scrambling_mode byte (EN 300 468 Table 86).
 const BODY_LEN: u8 = 1;
 
+/// Scrambling mode — ETSI EN 300 468 Table 87.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ScramblingMode {
+    /// 0x01 — DVB-CSA1.
+    DvbCsa1,
+    /// 0x02 — DVB-CSA2.
+    DvbCsa2,
+    /// 0x03 — DVB-CSA3 standard.
+    DvbCsa3,
+    /// 0x04 — DVB-CSA3 minimal enhanced.
+    DvbCsa3MinimalEnhanced,
+    /// 0x05 — DVB-CSA3 fully enhanced.
+    DvbCsa3FullyEnhanced,
+    /// 0x10 — DVB-CISSA v1.
+    DvbCissaV1,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl ScramblingMode {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x01 => Self::DvbCsa1,
+            0x02 => Self::DvbCsa2,
+            0x03 => Self::DvbCsa3,
+            0x04 => Self::DvbCsa3MinimalEnhanced,
+            0x05 => Self::DvbCsa3FullyEnhanced,
+            0x10 => Self::DvbCissaV1,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::DvbCsa1 => 0x01,
+            Self::DvbCsa2 => 0x02,
+            Self::DvbCsa3 => 0x03,
+            Self::DvbCsa3MinimalEnhanced => 0x04,
+            Self::DvbCsa3FullyEnhanced => 0x05,
+            Self::DvbCissaV1 => 0x10,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DvbCsa1 => "DVB-CSA1",
+            Self::DvbCsa2 => "DVB-CSA2",
+            Self::DvbCsa3 => "DVB-CSA3 (standard)",
+            Self::DvbCsa3MinimalEnhanced => "DVB-CSA3 (minimal enhanced)",
+            Self::DvbCsa3FullyEnhanced => "DVB-CSA3 (fully enhanced)",
+            Self::DvbCissaV1 => "DVB-CISSA v1",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Scrambling Descriptor (tag 0x65).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ScramblingDescriptor {
-    /// 8-bit scrambling_mode (ETSI Table 87, PDF p. 99).
-    pub scrambling_mode: u8,
+    /// 8-bit scrambling_mode (ETSI Table 87).
+    pub scrambling_mode: ScramblingMode,
 }
 
 impl<'a> Parse<'a> for ScramblingDescriptor {
@@ -38,7 +104,7 @@ impl<'a> Parse<'a> for ScramblingDescriptor {
             });
         }
         Ok(Self {
-            scrambling_mode: body[0],
+            scrambling_mode: ScramblingMode::from_u8(body[0]),
         })
     }
 }
@@ -59,7 +125,7 @@ impl Serialize for ScramblingDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = self.scrambling_mode;
+        buf[HEADER_LEN] = self.scrambling_mode.to_u8();
         Ok(len)
     }
 }
@@ -76,7 +142,7 @@ mod tests {
     fn parse_extracts_scrambling_mode() {
         let bytes = [TAG, 1, 0x02];
         let d = ScramblingDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.scrambling_mode, 0x02);
+        assert_eq!(d.scrambling_mode, ScramblingMode::DvbCsa2);
     }
 
     #[test]
@@ -107,7 +173,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let d = ScramblingDescriptor {
-            scrambling_mode: 0x10,
+            scrambling_mode: ScramblingMode::DvbCissaV1,
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -118,7 +184,7 @@ mod tests {
     #[test]
     fn serialize_rejects_too_small_buffer() {
         let d = ScramblingDescriptor {
-            scrambling_mode: 0x03,
+            scrambling_mode: ScramblingMode::DvbCsa3,
         };
         let mut tiny = [0u8; 1];
         let err = d.serialize_into(&mut tiny).unwrap_err();
@@ -128,7 +194,7 @@ mod tests {
     #[test]
     fn descriptor_length_matches_payload() {
         let d = ScramblingDescriptor {
-            scrambling_mode: 0x01,
+            scrambling_mode: ScramblingMode::DvbCsa1,
         };
         assert_eq!(d.serialized_len() - 2, 1);
     }
@@ -137,10 +203,25 @@ mod tests {
     #[test]
     fn serde_round_trip() {
         let d = ScramblingDescriptor {
-            scrambling_mode: 0x02,
+            scrambling_mode: ScramblingMode::DvbCsa2,
         };
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn scrambling_mode_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let sm = ScramblingMode::from_u8(b);
+            assert_eq!(sm.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn scrambling_mode_name_for_known() {
+        assert_eq!(ScramblingMode::DvbCsa1.name(), "DVB-CSA1");
+        assert_eq!(ScramblingMode::DvbCissaV1.name(), "DVB-CISSA v1");
+        assert_eq!(ScramblingMode::Reserved(0x55).name(), "reserved");
     }
 }

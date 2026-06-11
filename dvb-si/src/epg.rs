@@ -776,7 +776,10 @@ fn extract_crids(
                     CridLocation::Inline(bytes) => {
                         let s = String::from_utf8_lossy(bytes).into_owned();
                         Some(Crid {
-                            crid_type: CridType::from_u8(e.crid_type),
+                            // epg::CridType (TS 102 323 Table 117) bridged from
+                            // the content_identifier entry's own CridType via its
+                            // wire byte.
+                            crid_type: CridType::from_u8(e.crid_type.to_u8()),
                             crid: s,
                         })
                     }

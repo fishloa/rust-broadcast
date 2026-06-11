@@ -21,6 +21,23 @@ const APPLICATION_TYPE_MAX: u16 = 0x7FFF;
 /// Largest representable 5-bit AIT_version_number.
 const AIT_VERSION_MAX: u8 = 0x1F;
 
+/// Returns the well-known name for an `application_type`, or `None` if the
+/// type is not recognised.
+///
+/// Best-effort, non-exhaustive.  Well-known types per ETSI TS 102 809.
+#[must_use]
+pub fn application_type_name(val: u16) -> Option<&'static str> {
+    match val {
+        0x0001 => Some("DVB-J application"),
+        0x0010 => Some("DVB-HTML application"),
+        0x0011 => Some("HbbTV application"),
+        0x0012 => Some("HbbTV application (v2)"),
+        0x0013 => Some("HbbTV application (v3)"),
+        0x0020 => Some("CI Plus application"),
+        _ => None,
+    }
+}
+
 /// One application-signalling loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -154,6 +171,19 @@ mod tests {
         let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries[0].application_type, 0x7FFF);
         assert_eq!(d.entries[0].ait_version_number, 0x1F);
+    }
+
+    #[test]
+    fn application_type_name_known() {
+        assert_eq!(application_type_name(0x0001), Some("DVB-J application"));
+        assert_eq!(application_type_name(0x0010), Some("DVB-HTML application"));
+        assert_eq!(application_type_name(0x0011), Some("HbbTV application"));
+    }
+
+    #[test]
+    fn application_type_name_unknown() {
+        assert_eq!(application_type_name(0x0000), None);
+        assert_eq!(application_type_name(0xFFFF), None);
     }
 
     #[test]

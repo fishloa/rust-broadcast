@@ -4,6 +4,7 @@
 //! Enumerates the service_id/service_type pairs available on the TS.
 
 use super::descriptor_body;
+use super::service::ServiceType;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
@@ -18,8 +19,8 @@ const ENTRY_LEN: usize = 3;
 pub struct ServiceListEntry {
     /// DVB service_id (matches program_number in PAT).
     pub service_id: u16,
-    /// service_type byte (ETSI Table 87).
-    pub service_type: u8,
+    /// service_type (ETSI Table 89).
+    pub service_type: ServiceType,
 }
 
 /// Service List Descriptor.
@@ -49,7 +50,7 @@ impl<'a> Parse<'a> for ServiceListDescriptor {
         let mut offset = 0;
         while offset < body.len() {
             let service_id = u16::from_be_bytes([body[offset], body[offset + 1]]);
-            let service_type = body[offset + 2];
+            let service_type = ServiceType::from_u8(body[offset + 2]);
             entries.push(ServiceListEntry {
                 service_id,
                 service_type,
@@ -79,7 +80,7 @@ impl Serialize for ServiceListDescriptor {
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
             buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
-            buf[offset + 2] = entry.service_type;
+            buf[offset + 2] = entry.service_type.to_u8();
             offset += ENTRY_LEN;
         }
         Ok(len)
@@ -100,7 +101,7 @@ mod tests {
         let d = ServiceListDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
         assert_eq!(d.entries[0].service_id, 1);
-        assert_eq!(d.entries[0].service_type, 0x01);
+        assert_eq!(d.entries[0].service_type, ServiceType::DigitalTelevision);
     }
 
     #[test]
@@ -109,11 +110,11 @@ mod tests {
         let d = ServiceListDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 3);
         assert_eq!(d.entries[0].service_id, 1);
-        assert_eq!(d.entries[0].service_type, 0x01);
+        assert_eq!(d.entries[0].service_type, ServiceType::DigitalTelevision);
         assert_eq!(d.entries[1].service_id, 2);
-        assert_eq!(d.entries[1].service_type, 0x02);
+        assert_eq!(d.entries[1].service_type, ServiceType::DigitalRadioSound);
         assert_eq!(d.entries[2].service_id, 3);
-        assert_eq!(d.entries[2].service_type, 0x03);
+        assert_eq!(d.entries[2].service_type, ServiceType::Teletext);
     }
 
     #[test]
@@ -149,11 +150,11 @@ mod tests {
             entries: vec![
                 ServiceListEntry {
                     service_id: 1,
-                    service_type: 0x01,
+                    service_type: ServiceType::DigitalTelevision,
                 },
                 ServiceListEntry {
                     service_id: 0x0102,
-                    service_type: 0x04,
+                    service_type: ServiceType::NvodReference,
                 },
             ],
         };

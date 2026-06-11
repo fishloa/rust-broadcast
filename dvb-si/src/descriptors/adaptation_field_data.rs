@@ -2,8 +2,7 @@
 //!
 //! Carried inside the PMT ES_info loop. Fixed 1-byte body: a bit-flag field
 //! `adaptation_field_data_identifier` signalling which data fields are carried
-//! in the adaptation field private_data (Table 14: announcement_switching_data,
-//! AU_information, PVR_assist_information). We carry the raw flag byte.
+//! in the adaptation field private_data (Table 14).
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
@@ -16,12 +15,41 @@ pub const HEADER_LEN: usize = 2;
 /// Fixed body length: one identifier flag byte.
 pub const BODY_LEN: usize = 1;
 
+const ANNOUNCEMENT_SWITCHING_DATA: u8 = 1 << 0;
+const AU_INFORMATION: u8 = 1 << 2;
+const PVR_ASSIST_INFORMATION: u8 = 1 << 3;
+
+/// Decoded adaptation field data flags — ETSI EN 300 468 Table 14.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AdaptationFieldDataFlags {
+    /// Announcement switching data.
+    pub announcement_switching_data: bool,
+    /// AU information.
+    pub au_information: bool,
+    /// PVR assist information.
+    pub pvr_assist_information: bool,
+}
+
 /// Adaptation Field Data Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AdaptationFieldDataDescriptor {
     /// 8-bit adaptation_field_data_identifier flag field (Table 14).
     pub adaptation_field_data_identifier: u8,
+}
+
+impl AdaptationFieldDataDescriptor {
+    /// Decodes the `adaptation_field_data_identifier` flag byte into named
+    /// booleans per ETSI EN 300 468 Table 14.
+    #[must_use]
+    pub fn flags(&self) -> AdaptationFieldDataFlags {
+        let b = self.adaptation_field_data_identifier;
+        AdaptationFieldDataFlags {
+            announcement_switching_data: (b & ANNOUNCEMENT_SWITCHING_DATA) != 0,
+            au_information: (b & AU_INFORMATION) != 0,
+            pvr_assist_information: (b & PVR_ASSIST_INFORMATION) != 0,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for AdaptationFieldDataDescriptor {
@@ -79,6 +107,28 @@ mod tests {
         let bytes = [TAG, 1, 0x07];
         let d = AdaptationFieldDataDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.adaptation_field_data_identifier, 0x07);
+    }
+
+    #[test]
+    fn flags_decode_all_set() {
+        let d = AdaptationFieldDataDescriptor {
+            adaptation_field_data_identifier: 0x0D,
+        };
+        let f = d.flags();
+        assert!(f.announcement_switching_data);
+        assert!(f.au_information);
+        assert!(f.pvr_assist_information);
+    }
+
+    #[test]
+    fn flags_decode_none_set() {
+        let d = AdaptationFieldDataDescriptor {
+            adaptation_field_data_identifier: 0x00,
+        };
+        let f = d.flags();
+        assert!(!f.announcement_switching_data);
+        assert!(!f.au_information);
+        assert!(!f.pvr_assist_information);
     }
 
     #[test]

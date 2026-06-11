@@ -15,6 +15,58 @@ const HEADER_LEN: usize = 2;
 const CRID_TYPE_MASK: u8 = 0xFC;
 const CRID_LOCATION_MASK: u8 = 0x03;
 
+/// CRID type — ETSI TS 102 323 Table 117.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum CridType {
+    /// 0x00 — no type defined.
+    None,
+    /// 0x01 — CRID references the item of content that this event is an
+    /// instance of.
+    ContentReference,
+    /// 0x02 — CRID references a series that this event belongs to.
+    SeriesReference,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl CridType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::None,
+            0x01 => Self::ContentReference,
+            0x02 => Self::SeriesReference,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::None => 0x00,
+            Self::ContentReference => 0x01,
+            Self::SeriesReference => 0x02,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns a human-readable spec name for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "no type defined",
+            Self::ContentReference => "content reference (episode)",
+            Self::SeriesReference => "series reference",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// CRID location per TS 102 323 Table 10.
 ///
 /// Only the two defined locations are representable. Locations `0b10`/`0b11`
@@ -36,10 +88,8 @@ pub enum CridLocation<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct CridEntry<'a> {
-    /// crid_type byte — identifies what the entry references.
-    /// Per TS 102 323 Table 8: 0x01 = episode, 0x02 = series,
-    /// 0x03 = recommendation, 0x31..=0x3F = user-defined.
-    pub crid_type: u8,
+    /// crid_type — identifies what the entry references (TS 102 323 Table 117).
+    pub crid_type: CridType,
     /// crid_location and its payload.
     pub location: CridLocation<'a>,
 }
@@ -75,7 +125,7 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
         while pos < body.len() {
             let header_byte = body[pos];
             pos += 1;
-            let crid_type = (header_byte & CRID_TYPE_MASK) >> 2;
+            let crid_type = CridType::from_u8((header_byte & CRID_TYPE_MASK) >> 2);
             let crid_location = header_byte & CRID_LOCATION_MASK;
             let location = match crid_location {
                 0x00 => {
@@ -151,7 +201,7 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
         buf[1] = (len - HEADER_LEN) as u8;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            let header = (entry.crid_type << 2) & CRID_TYPE_MASK;
+            let header = (entry.crid_type.to_u8() << 2) & CRID_TYPE_MASK;
             match &entry.location {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;
@@ -188,7 +238,7 @@ mod tests {
         buf.extend_from_slice(data);
         let d = ContentIdentifierDescriptor::parse(&buf).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].crid_type, 0x01);
+        assert_eq!(d.entries[0].crid_type, CridType::ContentReference);
         match &d.entries[0].location {
             CridLocation::Inline(bytes) => assert_eq!(*bytes, data.as_slice()),
             _ => panic!("expected Inline"),
@@ -200,7 +250,7 @@ mod tests {
         let buf = [TAG, 0x03, (0x02 << 2) | 0x01, 0x00, 0x42];
         let d = ContentIdentifierDescriptor::parse(&buf).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].crid_type, 0x02);
+        assert_eq!(d.entries[0].crid_type, CridType::SeriesReference);
         match d.entries[0].location {
             CridLocation::Reference(val) => assert_eq!(val, 0x0042),
             _ => panic!("expected Reference"),
@@ -229,13 +279,13 @@ mod tests {
         let d = ContentIdentifierDescriptor::parse(&buf).unwrap();
         assert_eq!(d.entries.len(), 2);
         // Verify first entry
-        assert_eq!(d.entries[0].crid_type, 0x01);
+        assert_eq!(d.entries[0].crid_type, CridType::ContentReference);
         match &d.entries[0].location {
             CridLocation::Inline(bytes) => assert_eq!(*bytes, inline_data.as_slice()),
             _ => panic!("expected Inline for first entry"),
         }
         // Verify second entry
-        assert_eq!(d.entries[1].crid_type, 0x03);
+        assert_eq!(d.entries[1].crid_type, CridType::Reserved(0x03));
         match d.entries[1].location {
             CridLocation::Reference(val) => assert_eq!(val, ref_val),
             _ => panic!("expected Reference for second entry"),
@@ -303,11 +353,11 @@ mod tests {
         let desc = ContentIdentifierDescriptor {
             entries: vec![
                 CridEntry {
-                    crid_type: 0x01,
+                    crid_type: CridType::ContentReference,
                     location: CridLocation::Inline(inline_data.as_slice()),
                 },
                 CridEntry {
-                    crid_type: 0x03,
+                    crid_type: CridType::Reserved(0x03),
                     location: CridLocation::Reference(ref_val),
                 },
             ],
@@ -321,12 +371,31 @@ mod tests {
             CridLocation::Inline(bytes) => assert_eq!(*bytes, inline_data.as_slice()),
             _ => panic!("expected Inline"),
         }
-        assert_eq!(parsed.entries[0].crid_type, 0x01);
+        assert_eq!(parsed.entries[0].crid_type, CridType::ContentReference);
         // Check reference entry
         match parsed.entries[1].location {
             CridLocation::Reference(val) => assert_eq!(val, ref_val),
             _ => panic!("expected Reference"),
         }
-        assert_eq!(parsed.entries[1].crid_type, 0x03);
+        assert_eq!(parsed.entries[1].crid_type, CridType::Reserved(0x03));
+    }
+
+    #[test]
+    fn crid_type_full_range_round_trip() {
+        for b in 0..=0xFF_u8 {
+            let ct = CridType::from_u8(b);
+            assert_eq!(ct.to_u8(), b, "round-trip failed for byte 0x{b:02X}");
+        }
+    }
+
+    #[test]
+    fn crid_type_name_for_known() {
+        assert_eq!(CridType::None.name(), "no type defined");
+        assert_eq!(
+            CridType::ContentReference.name(),
+            "content reference (episode)"
+        );
+        assert_eq!(CridType::SeriesReference.name(), "series reference");
+        assert_eq!(CridType::Reserved(0x55).name(), "reserved");
     }
 }
