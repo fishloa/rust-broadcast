@@ -565,9 +565,9 @@ mod tests {
                 plp_id: 1,
                 data_slice_id: 2,
                 c2_system_tuning_frequency: 0xDEAD_BEEF,
-                c2_system_tuning_frequency_type: 1,
-                active_ofdm_symbol_duration: 2,
-                guard_interval: 3,
+                c2_system_tuning_frequency_type: C2TuningFrequencyType::Reserved(1),
+                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::Reserved(2),
+                guard_interval: C2GuardInterval::Reserved(3),
             }),
         };
         let json = serde_json::to_string(&typed).unwrap();

@@ -5,6 +5,137 @@ impl<'a> ExtensionBodyDef<'a> for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";
 }
+
+/// C2 system tuning frequency type — ETSI EN 300 468 Table 115 / Table 117.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum C2TuningFrequencyType {
+    /// Frequency as defined for the C2 system.
+    C2SystemFrequency,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl C2TuningFrequencyType {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => C2TuningFrequencyType::C2SystemFrequency,
+            other => C2TuningFrequencyType::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            C2TuningFrequencyType::C2SystemFrequency => 0,
+            C2TuningFrequencyType::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            C2TuningFrequencyType::C2SystemFrequency => "C2 system tuning frequency",
+            C2TuningFrequencyType::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// Active OFDM symbol duration — ETSI EN 300 468 Table 116.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ActiveOfdmSymbolDuration {
+    /// 448 µs (4k FFT mode for 8 MHz CATV systems).
+    Us448,
+    /// 597.33 µs (4k FFT mode for 6 MHz CATV systems).
+    Us597_33,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl ActiveOfdmSymbolDuration {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => ActiveOfdmSymbolDuration::Us448,
+            1 => ActiveOfdmSymbolDuration::Us597_33,
+            other => ActiveOfdmSymbolDuration::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            ActiveOfdmSymbolDuration::Us448 => 0,
+            ActiveOfdmSymbolDuration::Us597_33 => 1,
+            ActiveOfdmSymbolDuration::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            ActiveOfdmSymbolDuration::Us448 => "448 µs (4k FFT, 8 MHz)",
+            ActiveOfdmSymbolDuration::Us597_33 => "597.33 µs (4k FFT, 6 MHz)",
+            ActiveOfdmSymbolDuration::Reserved(_) => "reserved",
+        }
+    }
+}
+
+/// C2 guard interval — ETSI EN 300 468 Table 118.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum C2GuardInterval {
+    /// 1/128.
+    G1_128,
+    /// 1/64.
+    G1_64,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl C2GuardInterval {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => C2GuardInterval::G1_128,
+            1 => C2GuardInterval::G1_64,
+            other => C2GuardInterval::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            C2GuardInterval::G1_128 => 0,
+            C2GuardInterval::G1_64 => 1,
+            C2GuardInterval::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            C2GuardInterval::G1_128 => "1/128",
+            C2GuardInterval::G1_64 => "1/64",
+            C2GuardInterval::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -16,11 +147,11 @@ pub struct C2DeliverySystem {
     /// C2_System_tuning_frequency(32).
     pub c2_system_tuning_frequency: u32,
     /// C2_System_tuning_frequency_type(2).
-    pub c2_system_tuning_frequency_type: u8,
+    pub c2_system_tuning_frequency_type: C2TuningFrequencyType,
     /// active_OFDM_symbol_duration(3).
-    pub active_ofdm_symbol_duration: u8,
+    pub active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
     /// guard_interval(3).
-    pub guard_interval: u8,
+    pub guard_interval: C2GuardInterval,
 }
 
 impl<'a> Parse<'a> for C2DeliverySystem {
@@ -38,9 +169,9 @@ impl<'a> Parse<'a> for C2DeliverySystem {
             plp_id: sel[0],
             data_slice_id: sel[1],
             c2_system_tuning_frequency: u32::from_be_bytes([sel[2], sel[3], sel[4], sel[5]]),
-            c2_system_tuning_frequency_type: packed >> 6,
-            active_ofdm_symbol_duration: (packed >> 3) & 0x07,
-            guard_interval: packed & 0x07,
+            c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
+            active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8((packed >> 3) & 0x07),
+            guard_interval: C2GuardInterval::from_u8(packed & 0x07),
         })
     }
 }
@@ -61,9 +192,9 @@ impl Serialize for C2DeliverySystem {
         buf[0] = self.plp_id;
         buf[1] = self.data_slice_id;
         buf[2..6].copy_from_slice(&self.c2_system_tuning_frequency.to_be_bytes());
-        buf[6] = (self.c2_system_tuning_frequency_type << 6)
-            | ((self.active_ofdm_symbol_duration & 0x07) << 3)
-            | (self.guard_interval & 0x07);
+        buf[6] = (self.c2_system_tuning_frequency_type.to_u8() << 6)
+            | ((self.active_ofdm_symbol_duration.to_u8() & 0x07) << 3)
+            | (self.guard_interval.to_u8() & 0x07);
         Ok(len)
     }
 }
@@ -75,8 +206,29 @@ mod tests {
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
 
     #[test]
+    fn c2_tuning_frequency_type_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(C2TuningFrequencyType::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn active_ofdm_symbol_duration_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ActiveOfdmSymbolDuration::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn c2_guard_interval_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(C2GuardInterval::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
     fn parse_c2_delivery_system() {
-        let packed = (0x02 << 6) | (0x01 << 3) | 0x01;
+        let packed = (0x01u8 << 3) | 0x01;
         let sel = [0x05, 0x09, 0x12, 0x34, 0x56, 0x78, packed];
         let bytes = wrap(0x0D, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -85,9 +237,38 @@ mod tests {
                 assert_eq!(b.plp_id, 0x05);
                 assert_eq!(b.data_slice_id, 0x09);
                 assert_eq!(b.c2_system_tuning_frequency, 0x1234_5678);
-                assert_eq!(b.c2_system_tuning_frequency_type, 0x02);
-                assert_eq!(b.active_ofdm_symbol_duration, 0x01);
-                assert_eq!(b.guard_interval, 0x01);
+                assert_eq!(
+                    b.c2_system_tuning_frequency_type,
+                    C2TuningFrequencyType::C2SystemFrequency
+                );
+                assert_eq!(
+                    b.active_ofdm_symbol_duration,
+                    ActiveOfdmSymbolDuration::Us597_33
+                );
+                assert_eq!(b.guard_interval, C2GuardInterval::G1_64);
+            }
+            other => panic!("expected C2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_c2_delivery_system_reserved_values() {
+        let packed = (0x03u8 << 6) | (0x07u8 << 3) | 0x07;
+        let sel = [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, packed];
+        let bytes = wrap(0x0D, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2DeliverySystem(b) => {
+                assert_eq!(
+                    b.c2_system_tuning_frequency_type,
+                    C2TuningFrequencyType::Reserved(3)
+                );
+                assert_eq!(
+                    b.active_ofdm_symbol_duration,
+                    ActiveOfdmSymbolDuration::Reserved(7)
+                );
+                assert_eq!(b.guard_interval, C2GuardInterval::Reserved(7));
             }
             other => panic!("expected C2DeliverySystem, got {other:?}"),
         }

@@ -38,8 +38,7 @@ const TIMESLICE_FIELD_LEN: usize = 1;
 const FLAG_SCRAMBLING_SELECTOR: u8 = 0x80;
 const FLAG_MULTIPLE_INPUT_STREAM: u8 = 0x40;
 const FLAG_NOT_TIMESLICE: u8 = 0x10;
-/// TS_GS_mode occupies the bottom 2 bits of the flags byte; its value coding is
-/// Table 43 ("Coding of the TS GS mode"). The descriptor layout itself is Table 42.
+/// TS_GS_mode occupies the bottom 2 bits of the flags byte.
 const TS_GS_MODE_MASK: u8 = 0x03;
 /// Reserved flag bits set to 1 on serialize. Per §6.2.13.3 Table 42, bit 5 is
 /// `reserved_zero_future_use` (MUST be 0); only bits 3..2 (`reserved_future_use`)
@@ -49,6 +48,56 @@ const FLAG_RESERVED_BITS: u8 = 0x0C;
 const SCRAMBLING_RESERVED_MASK: u8 = 0xFC;
 const SCRAMBLING_INDEX_HI_MASK: u8 = 0x03;
 const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
+
+/// TS/GS mode — ETSI EN 300 468 Table 43.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum TsGsMode {
+    /// Generic Packetized.
+    GenericPacketized,
+    /// Generic Stream Encapsulation (GSE).
+    Gse,
+    /// DVB transport stream.
+    DvbTransportStream,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl TsGsMode {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => TsGsMode::GenericPacketized,
+            1 => TsGsMode::Gse,
+            2 => TsGsMode::DvbTransportStream,
+            other => TsGsMode::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            TsGsMode::GenericPacketized => 0,
+            TsGsMode::Gse => 1,
+            TsGsMode::DvbTransportStream => 2,
+            TsGsMode::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            TsGsMode::GenericPacketized => "Generic Packetized",
+            TsGsMode::Gse => "Generic Stream Encapsulation (GSE)",
+            TsGsMode::DvbTransportStream => "DVB transport stream",
+            TsGsMode::Reserved(_) => "reserved",
+        }
+    }
+}
 
 /// S2 Satellite Delivery System Descriptor (§6.2.13.3, Table 42).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,8 +109,8 @@ pub struct S2SatelliteDeliverySystemDescriptor {
     pub multiple_input_stream_flag: bool,
     /// When set, timeslicing is NOT used and `timeslice_number` is absent.
     pub not_timeslice_flag: bool,
-    /// 2-bit TS/GS mode (Table 43: 0 generic packetized, 1 GSE, 2 DVB TS, 3 reserved).
-    pub ts_gs_mode: u8,
+    /// 2-bit TS/GS mode (Table 43).
+    pub ts_gs_mode: TsGsMode,
     /// 18-bit PLS Gold scrambling sequence index.
     pub scrambling_sequence_index: Option<u32>,
     /// 8-bit input_stream_identifier (ISI).
@@ -98,7 +147,7 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
         let scrambling_sequence_selector = (flags & FLAG_SCRAMBLING_SELECTOR) != 0;
         let multiple_input_stream_flag = (flags & FLAG_MULTIPLE_INPUT_STREAM) != 0;
         let not_timeslice_flag = (flags & FLAG_NOT_TIMESLICE) != 0;
-        let ts_gs_mode = flags & TS_GS_MODE_MASK;
+        let ts_gs_mode = TsGsMode::from_u8(flags & TS_GS_MODE_MASK);
 
         let mut pos = FLAGS_LEN;
 
@@ -194,7 +243,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
         buf[0] = TAG;
         buf[1] = (len - HEADER_LEN) as u8;
 
-        let mut flags = FLAG_RESERVED_BITS | (self.ts_gs_mode & TS_GS_MODE_MASK);
+        let mut flags = FLAG_RESERVED_BITS | (self.ts_gs_mode.to_u8() & TS_GS_MODE_MASK);
         if self.scrambling_sequence_selector {
             flags |= FLAG_SCRAMBLING_SELECTOR;
         }
@@ -233,6 +282,17 @@ impl<'a> crate::traits::DescriptorDef<'a> for S2SatelliteDeliverySystemDescripto
 mod tests {
     use super::*;
 
+    #[test]
+    fn ts_gs_mode_from_u8_to_u8_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(
+                TsGsMode::from_u8(b).to_u8(),
+                b,
+                "round-trip fail for {b:#04x}"
+            );
+        }
+    }
+
     /// flags 0x2C = reserved bits set, all feature flags clear, ts_gs_mode 0,
     /// not_timeslice_flag clear → timeslice_number present.
     #[test]
@@ -242,7 +302,7 @@ mod tests {
         assert!(!d.scrambling_sequence_selector);
         assert!(!d.multiple_input_stream_flag);
         assert!(!d.not_timeslice_flag);
-        assert_eq!(d.ts_gs_mode, 0);
+        assert_eq!(d.ts_gs_mode, TsGsMode::GenericPacketized);
         assert_eq!(d.timeslice_number, Some(0x07));
         assert_eq!(d.scrambling_sequence_index, None);
         assert_eq!(d.input_stream_identifier, None);
@@ -254,7 +314,7 @@ mod tests {
         let raw = [TAG, 1, 0x3E];
         let d = S2SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
         assert!(d.not_timeslice_flag);
-        assert_eq!(d.ts_gs_mode, 2);
+        assert_eq!(d.ts_gs_mode, TsGsMode::DvbTransportStream);
         assert_eq!(d.timeslice_number, None);
     }
 
@@ -310,7 +370,7 @@ mod tests {
             scrambling_sequence_selector: true,
             multiple_input_stream_flag: true,
             not_timeslice_flag: false,
-            ts_gs_mode: 2,
+            ts_gs_mode: TsGsMode::DvbTransportStream,
             scrambling_sequence_index: Some(0x2BCDE),
             input_stream_identifier: Some(0x42),
             timeslice_number: Some(0x11),
@@ -326,7 +386,7 @@ mod tests {
             scrambling_sequence_selector: false,
             multiple_input_stream_flag: false,
             not_timeslice_flag: true,
-            ts_gs_mode: 1,
+            ts_gs_mode: TsGsMode::Gse,
             scrambling_sequence_index: None,
             input_stream_identifier: None,
             timeslice_number: None,
