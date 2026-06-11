@@ -22,6 +22,55 @@ pub const TABLE_ID: u8 = 0x4B;
 /// Well-known PID for UNT: **none** — the UNT has no fixed PID.
 pub const PID: u16 = 0x0000;
 
+/// Action type coding — ETSI TS 102 006 §9.4.2 Table 12.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum UntActionType {
+    /// 0x00 — reserved.
+    Reserved,
+    /// 0x01 — System Software Update.
+    SystemSoftwareUpdate,
+    /// 0x02..=0x7F — DVB reserved for future use.
+    DvbReserved(u8),
+    /// 0x80..=0xFF — user defined.
+    UserDefined(u8),
+}
+
+impl UntActionType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Reserved,
+            0x01 => Self::SystemSoftwareUpdate,
+            v if v < 0x80 => Self::DvbReserved(v),
+            _ => Self::UserDefined(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0x00,
+            Self::SystemSoftwareUpdate => 0x01,
+            Self::DvbReserved(v) | Self::UserDefined(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::SystemSoftwareUpdate => "System Software Update",
+            Self::DvbReserved(_) => "DVB Reserved",
+            Self::UserDefined(_) => "User Defined",
+        }
+    }
+}
+
 const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
 const COMMON_DESC_LEN_FIELD: usize = 2;
@@ -84,7 +133,7 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct UntSection<'a> {
     /// Action type (Table 12): 0x01 = System Software Update, 0x80–0xFF user defined.
-    pub action_type: u8,
+    pub action_type: UntActionType,
     /// OUI hash: XOR of the three OUI bytes.
     pub oui_hash: u8,
     /// 5-bit version_number of this sub-table.
@@ -130,7 +179,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
-        let action_type = bytes[OFFSET_ACTION_TYPE];
+        let action_type = UntActionType::from_u8(bytes[OFFSET_ACTION_TYPE]);
         let oui_hash = bytes[OFFSET_OUI_HASH];
         let flags_byte = bytes[OFFSET_FLAGS];
         let version_number = (flags_byte & VERSION_NUMBER_MASK) >> VERSION_NUMBER_SHIFT;
@@ -302,7 +351,7 @@ impl Serialize for UntSection<'_> {
             super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & LENGTH_HIGH_NIBBLE_MASK);
         buf[2] = (section_length & 0xFF) as u8;
 
-        buf[OFFSET_ACTION_TYPE] = self.action_type;
+        buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFFSET_OUI_HASH] = self.oui_hash;
         buf[OFFSET_FLAGS] = FLAGS_RESERVED_BITS
             | ((self.version_number & 0x1F) << VERSION_NUMBER_SHIFT)
@@ -379,7 +428,7 @@ mod tests {
         let oui_hash: u8 = 0x01 ^ 0x5A;
         let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash,
             version_number: 7,
             current_next_indicator: true,
@@ -402,7 +451,7 @@ mod tests {
         let mut buf = vec![0u8; sl];
         unt.serialize_into(&mut buf).unwrap();
         let parsed = UntSection::parse(&buf).unwrap();
-        assert_eq!(parsed.action_type, 0x01);
+        assert_eq!(parsed.action_type, UntActionType::SystemSoftwareUpdate);
         assert_eq!(parsed.oui_hash, oui_hash);
         assert_eq!(parsed.version_number, 7);
         assert!(parsed.current_next_indicator);
@@ -418,7 +467,7 @@ mod tests {
     #[test]
     fn parse_empty_platforms() {
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 1,
             current_next_indicator: false,
@@ -441,7 +490,7 @@ mod tests {
         let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
         let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 15,
             current_next_indicator: true,
@@ -482,15 +531,12 @@ mod tests {
 
     #[test]
     fn round_trip_platform_with_multiple_pairs() {
-        // TS 102 006 Table 11: platform_loop_length wraps N (target, operational)
-        // descriptor-loop pairs. This bites the multi-pair parse loop — the old
-        // code stopped after the first pair.
         let t0: &[u8] = &[0x09, 0x01, 0xAA];
         let o0: &[u8] = &[0x0A, 0x01, 0xBB];
         let t1: &[u8] = &[0x01, 0x02, 0xCC, 0xDD];
         let o1: &[u8] = &[];
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 15,
             current_next_indicator: true,
@@ -530,9 +576,12 @@ mod tests {
         // A platform carrying a non-empty compatibilityDescriptor() (one entry
         // with a sub-descriptor) — the other UNT tests only exercise the empty
         // form, so this pins the full compat block through UntSection framing.
-        use crate::compatibility::{CompatibilityDescriptorEntry, SubDescriptor};
+        use crate::compatibility::{
+            CompatibilityDescriptorEntry, DescriptorType, SpecifierType, SubDescriptor,
+            SubDescriptorType,
+        };
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 3,
             current_next_indicator: true,
@@ -544,13 +593,13 @@ mod tests {
             platforms: vec![UntPlatform {
                 compatibility_descriptor: CompatibilityDescriptor {
                     descriptors: vec![CompatibilityDescriptorEntry {
-                        descriptor_type: 0x01,
-                        specifier_type: 0x01,
+                        descriptor_type: DescriptorType::SystemHardware,
+                        specifier_type: SpecifierType::IeeeOui,
                         specifier_data: [0x00, 0x15, 0x0A],
                         model: 0x1234,
                         version: 0x0001,
                         sub_descriptors: vec![SubDescriptor {
-                            sub_descriptor_type: 0x05,
+                            sub_descriptor_type: SubDescriptorType::Unallocated(0x05),
                             data: &[0xAA, 0xBB],
                         }],
                     }],
@@ -566,7 +615,7 @@ mod tests {
         let re = UntSection::parse(&buf).unwrap();
         assert_eq!(re, unt);
         let entry = &re.platforms[0].compatibility_descriptor.descriptors[0];
-        assert_eq!(entry.descriptor_type, 0x01);
+        assert_eq!(entry.descriptor_type, DescriptorType::SystemHardware);
         assert_eq!(entry.model, 0x1234);
         assert_eq!(entry.sub_descriptors[0].data, &[0xAA, 0xBB]);
         let mut buf2 = vec![0u8; unt.serialized_len()];
@@ -577,7 +626,7 @@ mod tests {
     #[test]
     fn parse_rejects_wrong_table_id() {
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 0,
             current_next_indicator: true,
@@ -608,7 +657,7 @@ mod tests {
     #[test]
     fn serialize_rejects_small_output_buffer() {
         let unt = UntSection {
-            action_type: 0x01,
+            action_type: UntActionType::SystemSoftwareUpdate,
             oui_hash: 0x5B,
             version_number: 0,
             current_next_indicator: true,
@@ -649,9 +698,21 @@ mod tests {
         let crc = dvb_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let unt = UntSection::parse(&bytes).unwrap();
-        assert_eq!(unt.action_type, 0x01);
+        assert_eq!(unt.action_type, UntActionType::SystemSoftwareUpdate);
         assert_eq!(unt.oui, 0x00015A);
         assert!(unt.current_next_indicator);
         assert!(unt.platforms.is_empty());
+    }
+
+    #[test]
+    fn action_type_full_range_round_trip() {
+        for byte in 0u8..=0xFF {
+            let at = UntActionType::from_u8(byte);
+            assert_eq!(
+                at.to_u8(),
+                byte,
+                "UntActionType round-trip failed for {byte:#04x}"
+            );
+        }
     }
 }

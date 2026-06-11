@@ -14,6 +14,30 @@ const HEADER_LEN: usize = 2;
 /// Fixed payload length: a single 32-bit specifier (EN 300 468 Table 85).
 const BODY_LEN: u8 = 4;
 
+/// Best-effort, non-exhaustive mapping from a 32-bit `private_data_specifier`
+/// to a human-readable organization name.  Registered values are from
+/// ETSI TR 101 162 and common industry assignments.
+#[must_use]
+pub fn private_data_specifier_name(v: u32) -> Option<&'static str> {
+    match v {
+        0x0000_0028 => Some("EACEM / DIGITALEUROPE"),
+        0x0000_0029 => Some("NorDig"),
+        0x0000_0002 => Some("British Sky Broadcasting (BskyB)"),
+        0x0000_233A => Some("Free TV Australia"),
+        0x0000_001A => Some("SES Astra"),
+        0x0000_001B => Some("Eutelsat"),
+        0x0000_001C => Some("Hughes Network Systems"),
+        0x0000_002A => Some("Canal+ Technologies"),
+        0x0000_002B => Some("NDS"),
+        0x0000_002C => Some("Irdeto"),
+        0x0000_002D => Some("Nagravision"),
+        0x0000_0030 => Some("ATSC"),
+        0x0000_0031 => Some("SCTE"),
+        0x0000_0032 => Some("ARIB"),
+        _ => None,
+    }
+}
+
 /// Private Data Specifier Descriptor (tag 0x5F).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -143,5 +167,23 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn specifier_name_well_known() {
+        assert_eq!(
+            private_data_specifier_name(0x0000_0028),
+            Some("EACEM / DIGITALEUROPE")
+        );
+        assert_eq!(private_data_specifier_name(0x0000_0029), Some("NorDig"));
+        assert_eq!(
+            private_data_specifier_name(0x0000_0002),
+            Some("British Sky Broadcasting (BskyB)")
+        );
+    }
+
+    #[test]
+    fn specifier_name_unknown() {
+        assert_eq!(private_data_specifier_name(0xDEAD_BEEF), None);
     }
 }

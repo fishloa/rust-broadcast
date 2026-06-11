@@ -25,6 +25,79 @@ const FLAG_SAOC_DE: u8 = 0x40;
 /// reserved_zero_future_use(6) — the spec mandates these are zero.
 const RESERVED_ZERO_MASK: u8 = 0x3F;
 
+/// Decoded AAC component_type — ETSI EN 300 468 Table 26 / Annex H.
+///
+/// Returned by [`AacExtension::decoded_component_type`] when `aac_type` is
+/// `Some`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AacComponentType {
+    /// Single mono channel.
+    pub mono: bool,
+    /// Stereo.
+    pub stereo: bool,
+    /// Surround sound (> 2 channels).
+    pub surround: bool,
+    /// Audio description for the visually impaired.
+    pub visually_impaired: bool,
+    /// Audio for the hard of hearing.
+    pub hard_of_hearing: bool,
+    /// Supplementary audio (receiver-mix or broadcast-mix).
+    pub supplementary: bool,
+    /// HE-AAC v2 (SBR + PS) rather than HE-AAC v1.
+    pub v2: bool,
+    /// SAOC-DE ancillary data present.
+    pub saoc_de: bool,
+}
+
+impl AacComponentType {
+    /// Returns a human-readable description of the AAC component type.
+    #[must_use]
+    /// Returns a human-readable name.
+    pub fn name(&self) -> &'static str {
+        match (
+            self.mono,
+            self.stereo,
+            self.surround,
+            self.visually_impaired,
+            self.hard_of_hearing,
+            self.supplementary,
+            self.v2,
+            self.saoc_de,
+        ) {
+            (true, false, false, false, false, false, false, false) => {
+                "HE-AAC audio, single mono channel"
+            }
+            (false, true, false, false, false, false, false, false) => "HE-AAC audio, stereo",
+            (false, false, true, false, false, false, false, false) => {
+                "HE-AAC audio, surround sound"
+            }
+            (_, _, _, true, false, false, false, false) => {
+                "HE-AAC audio description for the visually impaired"
+            }
+            (_, _, _, false, true, false, false, false) => "HE-AAC audio for the hard of hearing",
+            (_, _, _, false, false, true, false, false) => {
+                "HE-AAC receiver-mix supplementary audio"
+            }
+            (false, true, false, false, false, false, true, false) => "HE-AAC v2 audio, stereo",
+            (_, _, _, true, false, false, true, false) => {
+                "HE-AAC v2 audio description for the visually impaired"
+            }
+            (_, _, _, false, true, false, true, false) => "HE-AAC v2 audio for the hard of hearing",
+            (_, _, _, false, false, true, true, false) => {
+                "HE-AAC v2 receiver-mix supplementary audio"
+            }
+            (_, _, _, true, false, true, false, false) => {
+                "HE-AAC receiver-mix audio description for the visually impaired"
+            }
+            (_, _, _, true, false, true, true, false) => {
+                "HE-AAC v2 receiver-mix audio description for the visually impaired"
+            }
+            (_, _, _, _, _, _, _, true) => "HE-AAC or HE-AAC v2 with SAOC-DE ancillary data",
+            _ => "unknown HE-AAC component type",
+        }
+    }
+}
+
 /// Optional extension carried when descriptor_length > 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -37,6 +110,136 @@ pub struct AacExtension<'a> {
     pub aac_type: Option<u8>,
     /// Trailing additional_info bytes.
     pub additional_info: &'a [u8],
+}
+
+impl AacExtension<'_> {
+    /// Decodes the `aac_type` field (when present) into a structured
+    /// [`AacComponentType`] per ETSI EN 300 468 Table 26 / Annex H.
+    ///
+    /// Returns `None` when `aac_type` is `None` or when the value is not
+    /// a recognised Table 26 component_type for AAC (stream_content 0x06).
+    #[must_use]
+    pub fn decoded_component_type(&self) -> Option<AacComponentType> {
+        let ct = self.aac_type?;
+        let saoc_de = self.saoc_de_flag;
+        if ct == 0xA0 {
+            return Some(AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: false,
+                v2: false,
+                saoc_de: true,
+            });
+        }
+        let v2 = matches!(ct, 0x43..=0x46 | 0x49..=0x4A);
+        let result = match ct {
+            0x01 => AacComponentType {
+                mono: true,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: false,
+                v2: false,
+                saoc_de,
+            },
+            0x03 => AacComponentType {
+                mono: false,
+                stereo: true,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: false,
+                v2: false,
+                saoc_de,
+            },
+            0x05 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: true,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: false,
+                v2: false,
+                saoc_de,
+            },
+            0x40 | 0x47 | 0x48 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: true,
+                hard_of_hearing: false,
+                supplementary: matches!(ct, 0x47 | 0x48),
+                v2: false,
+                saoc_de,
+            },
+            0x41 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: true,
+                supplementary: false,
+                v2: false,
+                saoc_de,
+            },
+            0x42 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: true,
+                v2: false,
+                saoc_de,
+            },
+            0x43 => AacComponentType {
+                mono: false,
+                stereo: true,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: false,
+                v2: true,
+                saoc_de,
+            },
+            0x44 | 0x49 | 0x4A => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: true,
+                hard_of_hearing: false,
+                supplementary: matches!(ct, 0x49 | 0x4A),
+                v2,
+                saoc_de,
+            },
+            0x45 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: true,
+                supplementary: false,
+                v2: true,
+                saoc_de,
+            },
+            0x46 => AacComponentType {
+                mono: false,
+                stereo: false,
+                surround: false,
+                visually_impaired: false,
+                hard_of_hearing: false,
+                supplementary: true,
+                v2: true,
+                saoc_de,
+            },
+            _ => return None,
+        };
+        Some(result)
+    }
 }
 
 /// AAC Descriptor.
@@ -202,6 +405,51 @@ mod tests {
         assert!(ext.saoc_de_flag);
         assert_eq!(ext.aac_type, Some(0x05));
         assert_eq!(ext.additional_info, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn decode_aac_component_type_he_aac_stereo() {
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension {
+                saoc_de_flag: false,
+                aac_type: Some(0x03),
+                additional_info: &[],
+            }),
+        };
+        let ct = d.extension.unwrap().decoded_component_type().unwrap();
+        assert!(!ct.mono);
+        assert!(ct.stereo);
+        assert!(!ct.surround);
+        assert_eq!(ct.name(), "HE-AAC audio, stereo");
+    }
+
+    #[test]
+    fn decode_aac_component_type_saoc_de() {
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension {
+                saoc_de_flag: true,
+                aac_type: Some(0xA0),
+                additional_info: &[],
+            }),
+        };
+        let ct = d.extension.unwrap().decoded_component_type().unwrap();
+        assert!(ct.saoc_de);
+        assert_eq!(ct.name(), "HE-AAC or HE-AAC v2 with SAOC-DE ancillary data");
+    }
+
+    #[test]
+    fn decode_aac_component_type_unknown() {
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension {
+                saoc_de_flag: false,
+                aac_type: Some(0xFF),
+                additional_info: &[],
+            }),
+        };
+        assert!(d.extension.unwrap().decoded_component_type().is_none());
     }
 
     #[test]

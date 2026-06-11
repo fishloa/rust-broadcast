@@ -56,6 +56,29 @@ pub fn decode_issy_long(bytes: [u8; 3]) -> Option<Issy> {
     }
 }
 
+impl Issy {
+    /// Decode the BUFS/TTO sub-coding from a Signalling payload (Annex C).
+    ///
+    /// Returns `(bufs, tto)` where:
+    /// - `bufs` is the 10-bit buffer status (`units` is 2-bit unit selector)
+    /// - `tto` is the 10-bit time-to-output value
+    #[must_use]
+    pub fn bufs_tto(&self) -> Option<(u16, u8, u16)> {
+        if let Issy::Signalling(payload) = self {
+            // Annex C: payload bits [21:0]
+            // [21:20] = units (2-bit unit selector)
+            // [19:10] = BUFS (10-bit buffer status)
+            // [9:0]   = TTO  (10-bit time-to-output)
+            let units = ((payload >> 20) & 0x03) as u8;
+            let bufs = ((payload >> 10) & 0x03FF) as u16;
+            let tto = (payload & 0x03FF) as u16;
+            Some((bufs, units, tto))
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

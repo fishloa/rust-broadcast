@@ -80,9 +80,17 @@ discipline is spec fidelity, verified several ways over:
   [`dvb-si/docs/`](dvb-si/docs/); every module doc cites its spec, section, and
   tag/table_id. No magic numbers — every hex literal outside tests is a named
   constant or enum.
-- **Symmetric and round-trip tested.** Every parser has a serializer; parse →
-  serialize → parse is byte-identical, and this is a hard project invariant
-  enforced by tests.
+- **Symmetric and round-trip tested — these crates *emit* as well as parse.**
+  Every table and descriptor implements `Serialize`, not just `Parse`: build a
+  `PatSection` / `PmtSection` / `CaDescriptor` and call `serialize_into` to get a
+  complete section (CRC-32 included). Parse → serialize → parse is byte-identical,
+  a hard project invariant enforced by tests. So there's no need to hand-roll PSI
+  encoders.
+- **Decoded, not just typed.** Spec-enumerated codes are typed enums with decoded
+  names — `running_status` is a `RunningStatus`, `stream_type` a `StreamType`,
+  `service_type` a `ServiceType`; content genre, parental-rating age, AC-3/E-AC-3
+  (0x6A/0x7A typed descriptors), and more decode in the library, so consumers
+  never re-implement an ETSI lookup table.
 - **Five adversarial spec-audit rounds** against the transcriptions, plus
   fixture tests run against **real transponder captures** (e.g. a live French
   TNT / M6 HbbTV mux; a 10 s satellite capture decoding "Emission Spéciale

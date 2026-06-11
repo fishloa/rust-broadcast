@@ -17,6 +17,103 @@ const FLAG_BSID: u8 = 0x40;
 const FLAG_MAINID: u8 = 0x20;
 const FLAG_ASVC: u8 = 0x10;
 
+/// Decoded AC-3 component_type — ETSI EN 300 468 Annex D.
+///
+/// The component_type byte packs bit-fields describing the audio service type,
+/// number of channels, and whether the stream is AC-3 or Enhanced AC-3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ac3ComponentType {
+    /// `false` = AC-3, `true` = Enhanced AC-3.
+    pub enhanced_ac3: bool,
+    /// `true` if this is a full service (suitable for solo presentation).
+    pub full_service: bool,
+    /// Decoded service type.
+    pub service_type: Ac3ServiceType,
+    /// Number of audio channels.
+    pub channels: Ac3ChannelMode,
+}
+
+/// AC-3 / Enhanced AC-3 service type — EN 300 468 Annex D Table D.4.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ac3ServiceType {
+    /// Complete Main (CM).
+    CompleteMain,
+    /// Music and Effects (ME).
+    MusicAndEffects,
+    /// Visually Impaired (VI).
+    VisuallyImpaired,
+    /// Hearing Impaired (HI).
+    HearingImpaired,
+    /// Dialogue (D).
+    Dialogue,
+    /// Commentary (C).
+    Commentary,
+    /// Emergency (E).
+    Emergency,
+    /// Voice Over (VO) or Karaoke (depending on full_service and channels).
+    VoiceOverOrKaraoke,
+    /// Unknown/reserved service type value.
+    Unknown(u8),
+}
+
+impl Ac3ServiceType {
+    /// Returns a human-readable name.
+    #[must_use]
+    /// Returns a human-readable name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::CompleteMain => "Complete Main (CM)",
+            Self::MusicAndEffects => "Music and Effects (ME)",
+            Self::VisuallyImpaired => "Visually Impaired (VI)",
+            Self::HearingImpaired => "Hearing Impaired (HI)",
+            Self::Dialogue => "Dialogue (D)",
+            Self::Commentary => "Commentary (C)",
+            Self::Emergency => "Emergency (E)",
+            Self::VoiceOverOrKaraoke => "Voice Over (VO) / Karaoke",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
+/// AC-3 / Enhanced AC-3 channel mode — EN 300 468 Annex D Table D.5.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ac3ChannelMode {
+    /// Mono.
+    Mono,
+    /// 1+1 Mode (dual mono).
+    OnePlusOne,
+    /// 2 channel (stereo).
+    Stereo,
+    /// 2 channel Surround encoded (stereo).
+    SurroundEncodedStereo,
+    /// Multichannel audio (> 2 channels).
+    Multichannel,
+    /// Multichannel audio (> 5.1 channels).
+    MultichannelAbove51,
+    /// Multiple programmes in independent substreams.
+    MultipleProgrammes,
+    /// Unknown/reserved channel mode.
+    Unknown(u8),
+}
+
+impl Ac3ChannelMode {
+    /// Returns a human-readable name.
+    #[must_use]
+    /// Returns a human-readable name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mono => "Mono",
+            Self::OnePlusOne => "1+1 Mode",
+            Self::Stereo => "2 channel (stereo)",
+            Self::SurroundEncodedStereo => "2 channel Surround encoded (stereo)",
+            Self::Multichannel => "Multichannel audio (> 2 channels)",
+            Self::MultichannelAbove51 => "Multichannel audio (> 5.1 channels)",
+            Self::MultipleProgrammes => "Multiple programmes in independent substreams",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
 /// AC-3 Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -32,6 +129,44 @@ pub struct Ac3Descriptor<'a> {
     pub asvc: Option<u8>,
     /// Raw trailing additional_info bytes.
     pub additional_info: &'a [u8],
+}
+
+impl Ac3Descriptor<'_> {
+    /// Decodes the optional `component_type` field per ETSI EN 300 468 Annex D.
+    ///
+    /// Returns `None` when `component_type` is `None`.
+    #[must_use]
+    pub fn decoded_component_type(&self) -> Option<Ac3ComponentType> {
+        let ct = self.component_type?;
+        let enhanced_ac3 = (ct & 0x80) != 0;
+        let full_service = (ct & 0x20) != 0;
+        let service_bits = (ct >> 3) & 0x03;
+        let channel_bits = (ct >> 1) & 0x03;
+
+        let service_type = match service_bits {
+            0b00 if !full_service => Ac3ServiceType::MusicAndEffects,
+            0b00 => Ac3ServiceType::CompleteMain,
+            0b01 => Ac3ServiceType::VisuallyImpaired,
+            0b10 => Ac3ServiceType::HearingImpaired,
+            0b11 => Ac3ServiceType::VoiceOverOrKaraoke,
+            _ => Ac3ServiceType::Unknown(service_bits),
+        };
+
+        let channels = match channel_bits {
+            0b00 => Ac3ChannelMode::Mono,
+            0b01 => Ac3ChannelMode::OnePlusOne,
+            0b10 => Ac3ChannelMode::Stereo,
+            0b11 => Ac3ChannelMode::SurroundEncodedStereo,
+            _ => Ac3ChannelMode::Unknown(channel_bits),
+        };
+
+        Some(Ac3ComponentType {
+            enhanced_ac3,
+            full_service,
+            service_type,
+            channels,
+        })
+    }
 }
 
 impl<'a> Parse<'a> for Ac3Descriptor<'a> {
@@ -172,6 +307,36 @@ mod tests {
         let d = Ac3Descriptor::parse(&bytes).unwrap();
         assert_eq!(d.component_type, None);
         assert_eq!(d.additional_info, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn decode_component_type_cm_stereo() {
+        // bit7=0 (AC-3), bit5=1 (full service), bits[4:3]=00 (CM), bits[2:1]=10 (stereo)
+        // 0_?_1_00_10_0 = 0b0010_0100 = 0x24
+        let d = Ac3Descriptor {
+            component_type: Some(0x24),
+            bsid: None,
+            mainid: None,
+            asvc: None,
+            additional_info: &[],
+        };
+        let ct = d.decoded_component_type().unwrap();
+        assert!(!ct.enhanced_ac3);
+        assert!(ct.full_service);
+        assert!(matches!(ct.service_type, Ac3ServiceType::CompleteMain));
+        assert!(matches!(ct.channels, Ac3ChannelMode::Stereo));
+    }
+
+    #[test]
+    fn decode_component_type_none() {
+        let d = Ac3Descriptor {
+            component_type: None,
+            bsid: None,
+            mainid: None,
+            asvc: None,
+            additional_info: &[],
+        };
+        assert!(d.decoded_component_type().is_none());
     }
 
     #[test]

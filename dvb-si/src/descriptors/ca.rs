@@ -12,6 +12,48 @@ pub const TAG: u8 = 0x09;
 const HEADER_LEN: usize = 2;
 const MIN_BODY_LEN: usize = 4; // ca_system_id (2) + ca_pid (2)
 
+/// Best-effort, non-exhaustive mapping from CA system ID to a human-readable
+/// name.  Ranges are per ETSI TR 101 162 and common industry assignments.
+#[must_use]
+pub fn ca_system_name(ca_system_id: u16) -> Option<&'static str> {
+    match ca_system_id {
+        0x0000 => Some("Reserved"),
+        // Seca / Mediaguard (0x0100–0x01FF)
+        0x0100 => Some("Seca/Mediaguard 1"),
+        0x0101..=0x01FF => Some("Seca/Mediaguard"),
+        // Viaccess (0x0500–0x05FF)
+        0x0500 => Some("Viaccess"),
+        0x0501..=0x05FF => Some("Viaccess (other)"),
+        // Irdeto (0x0600–0x06FF)
+        0x0600 => Some("Irdeto"),
+        0x0601..=0x06FF => Some("Irdeto (other)"),
+        // NDS / Videoguard (0x0900–0x09FF)
+        0x0900..=0x09FF => Some("NDS/Videoguard"),
+        // Conax (0x0B00–0x0BFF)
+        0x0B00 => Some("Conax"),
+        0x0B01..=0x0BFF => Some("Conax (other)"),
+        // Cryptoworks (0x0D00–0x0DFF)
+        0x0D00 => Some("Cryptoworks"),
+        0x0D01..=0x0DFF => Some("Cryptoworks (other)"),
+        // PowerVu (0x0E00–0x0EFF)
+        0x0E00 => Some("PowerVu"),
+        0x0E01..=0x0EFF => Some("PowerVu (other)"),
+        // Nagravision (0x1800–0x18FF)
+        0x1800..=0x18FF => Some("Nagravision"),
+        // BISS (0x2600)
+        0x2600 => Some("BISS"),
+        // Widevine (common in broadcast)
+        0x5601 => Some("Widevine"),
+        // Marlin
+        0x5602 => Some("Marlin"),
+        // PlayReady
+        0x5603 => Some("PlayReady"),
+        // PowerVu+ (0x4AEx)
+        0x4AE0..=0x4AEF => Some("PowerVu+"),
+        _ => None,
+    }
+}
+
 /// Conditional Access Descriptor.
 ///
 /// Carried in the program-level or ES-level descriptor loops of a PMT, or in
@@ -205,5 +247,23 @@ mod tests {
             private_data: &[0xAA],
         };
         assert_eq!(d.serialized_len() - 2, 5);
+    }
+
+    #[test]
+    fn ca_system_name_well_known() {
+        assert_eq!(ca_system_name(0x0500), Some("Viaccess"));
+        assert_eq!(ca_system_name(0x0100), Some("Seca/Mediaguard 1"));
+        assert_eq!(ca_system_name(0x0B00), Some("Conax"));
+        assert_eq!(ca_system_name(0x0D00), Some("Cryptoworks"));
+        assert_eq!(ca_system_name(0x2600), Some("BISS"));
+        assert_eq!(ca_system_name(0x0600), Some("Irdeto"));
+        assert_eq!(ca_system_name(0x1800), Some("Nagravision"));
+        assert_eq!(ca_system_name(0x4AE0), Some("PowerVu+"));
+        assert_eq!(ca_system_name(0x0900), Some("NDS/Videoguard"));
+    }
+
+    #[test]
+    fn ca_system_name_unknown() {
+        assert_eq!(ca_system_name(0xdead), None);
     }
 }

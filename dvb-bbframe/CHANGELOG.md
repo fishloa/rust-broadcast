@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [6.0.0] — 2026-06-11
+
+Lockstep major with the workspace decode-completeness release; additive decode
+accessors here.
+
+### Added
+- `Matype::roll_off()` — decodes the MATYPE `ext` roll-off bits `[1:0]`
+  (`RollOff`: α 0.35 / 0.25 / 0.20, reserved) in the DVB-S2 context.
+- `Issy::Signalling` BUFS/TTO sub-coding accessor (EN 302 755 Annex C) — decodes
+  the previously-raw 22-bit signalling payload.
+
 ## [5.0.0] — 2026-06-11
 
 Lockstep major across the workspace. `dvb-bbframe` adopts the shared

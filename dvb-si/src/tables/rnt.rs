@@ -30,6 +30,110 @@ const CA_HEADER_LEN: usize = 2;
 
 const RESERVED_NIBBLE: u8 = 0xF0;
 
+/// CRID authority policy — ETSI TS 102 323 §5.2.2 Table 3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum CridAuthorityPolicy {
+    /// '00' — Permanent (CRIDs are never re-used).
+    Permanent,
+    /// '01' — Transient (CRIDs may be re-used over time).
+    Transient,
+    /// '10' — Either (each CRID may be transient or permanent).
+    Either,
+    /// '11' — Reserved.
+    Reserved,
+}
+
+impl CridAuthorityPolicy {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x03 {
+            0 => Self::Permanent,
+            1 => Self::Transient,
+            2 => Self::Either,
+            _ => Self::Reserved,
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Permanent => 0,
+            Self::Transient => 1,
+            Self::Either => 2,
+            Self::Reserved => 3,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Permanent => "Permanent",
+            Self::Transient => "Transient",
+            Self::Either => "Either",
+            Self::Reserved => "Reserved",
+        }
+    }
+}
+
+/// Context ID type — ETSI TS 102 323 §5.2.2 Table 2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ContextIdType {
+    /// 0x00 — context_id is a value of bouquet_id.
+    BouquetId,
+    /// 0x01 — context_id is a value of original_network_id.
+    OriginalNetworkId,
+    /// 0x02 — context_id is a value of network_id.
+    NetworkId,
+    /// 0x03..=0x7F — DVB reserved.
+    DvbReserved(u8),
+    /// 0x80..=0xFF — User defined.
+    UserDefined(u8),
+}
+
+impl ContextIdType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::BouquetId,
+            0x01 => Self::OriginalNetworkId,
+            0x02 => Self::NetworkId,
+            v if v < 0x80 => Self::DvbReserved(v),
+            _ => Self::UserDefined(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::BouquetId => 0x00,
+            Self::OriginalNetworkId => 0x01,
+            Self::NetworkId => 0x02,
+            Self::DvbReserved(v) | Self::UserDefined(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::BouquetId => "Bouquet ID",
+            Self::OriginalNetworkId => "Original Network ID",
+            Self::NetworkId => "Network ID",
+            Self::DvbReserved(_) => "DVB Reserved",
+            Self::UserDefined(_) => "User Defined",
+        }
+    }
+}
+
 /// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -38,7 +142,7 @@ pub struct CridAuthority<'a> {
     pub name: DvbText<'a>,
     /// `CRID_authority_policy` — 2-bit value (Table 3):
     /// 0 = permanent, 1 = transient, 2 = either, 3 = reserved.
-    pub crid_authority_policy: u8,
+    pub crid_authority_policy: CridAuthorityPolicy,
     /// CRID authority descriptor loop.
     pub descriptors: DescriptorLoop<'a>,
 }
@@ -90,7 +194,7 @@ pub struct RntSection<'a> {
     /// last_section_number in the sub-table sequence.
     pub last_section_number: u8,
     /// `context_id_type` byte (Table 2).
-    pub context_id_type: u8,
+    pub context_id_type: ContextIdType,
     /// Common descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub common_descriptors: DescriptorLoop<'a>,
@@ -126,7 +230,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let context_id_type = bytes[8];
+        let context_id_type = ContextIdType::from_u8(bytes[8]);
 
         let common_desc_len_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
         let common_descriptors_length = (((bytes[common_desc_len_pos] & 0x0F) as usize) << 8)
@@ -231,7 +335,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                     });
                 }
                 let ca_packed = bytes[pos];
-                let crid_authority_policy = (ca_packed >> 4) & 0x03;
+                let crid_authority_policy = CridAuthorityPolicy::from_u8((ca_packed >> 4) & 0x03);
                 let ca_desc_len = (((ca_packed & 0x0F) as usize) << 8) | bytes[pos + 1] as usize;
                 pos += CA_HEADER_LEN;
                 let ca_desc_start = pos;
@@ -313,7 +417,7 @@ impl Serialize for RntSection<'_> {
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        buf[8] = self.context_id_type;
+        buf[8] = self.context_id_type.to_u8();
 
         let cdl = self.common_descriptors.len() as u16;
         let cdl_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -363,8 +467,9 @@ impl Serialize for RntSection<'_> {
                 pos += ca.name.len();
 
                 let adl = ca.descriptors.len() as u16;
-                buf[pos] =
-                    0xC0 | ((ca.crid_authority_policy & 0x03) << 4) | ((adl >> 8) as u8 & 0x0F);
+                buf[pos] = 0xC0
+                    | ((ca.crid_authority_policy.to_u8() & 0x03) << 4)
+                    | ((adl >> 8) as u8 & 0x0F);
                 buf[pos + 1] = (adl & 0xFF) as u8;
                 pos += CA_HEADER_LEN;
                 buf[pos..pos + ca.descriptors.len()].copy_from_slice(ca.descriptors.raw());
@@ -395,7 +500,7 @@ mod tests {
             descriptors: DescriptorLoop::new(&[]),
             crid_authorities: vec![CridAuthority {
                 name: DvbText::new(b"au"),
-                crid_authority_policy: 1,
+                crid_authority_policy: CridAuthorityPolicy::Transient,
                 descriptors: DescriptorLoop::new(&[]),
             }],
         };
@@ -405,7 +510,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            context_id_type: 0x01,
+            context_id_type: ContextIdType::BouquetId,
             common_descriptors: DescriptorLoop::new(&common_desc),
             resolution_providers: vec![rp],
         };
@@ -415,13 +520,13 @@ mod tests {
         assert_eq!(parsed.context_id, 0x0042);
         assert_eq!(parsed.version_number, 3);
         assert!(parsed.current_next_indicator);
-        assert_eq!(parsed.context_id_type, 0x01);
+        assert_eq!(parsed.context_id_type, ContextIdType::BouquetId);
         assert_eq!(parsed.resolution_providers.len(), 1);
         assert_eq!(parsed.resolution_providers[0].name.raw(), b"bb");
         assert_eq!(parsed.resolution_providers[0].crid_authorities.len(), 1);
         assert_eq!(
             parsed.resolution_providers[0].crid_authorities[0].crid_authority_policy,
-            1
+            CridAuthorityPolicy::Transient
         );
         assert_eq!(
             parsed.resolution_providers[0].crid_authorities[0]
@@ -439,7 +544,7 @@ mod tests {
             current_next_indicator: false,
             section_number: 0,
             last_section_number: 0,
-            context_id_type: 0x00,
+            context_id_type: ContextIdType::BouquetId,
             common_descriptors: DescriptorLoop::new(&[]),
             resolution_providers: Vec::new(),
         };
@@ -458,12 +563,12 @@ mod tests {
             crid_authorities: vec![
                 CridAuthority {
                     name: DvbText::new(b"auth1"),
-                    crid_authority_policy: 0,
+                    crid_authority_policy: CridAuthorityPolicy::Permanent,
                     descriptors: DescriptorLoop::new(&[]),
                 },
                 CridAuthority {
                     name: DvbText::new(b"auth2"),
-                    crid_authority_policy: 2,
+                    crid_authority_policy: CridAuthorityPolicy::Either,
                     descriptors: DescriptorLoop::new(&[0x42, 0x00]),
                 },
             ],
@@ -474,7 +579,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 1,
             last_section_number: 2,
-            context_id_type: 0x02,
+            context_id_type: ContextIdType::NetworkId,
             common_descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
             resolution_providers: vec![rp],
         };
@@ -490,7 +595,7 @@ mod tests {
         assert_eq!(re.resolution_providers[0].crid_authorities.len(), 2);
         assert_eq!(
             re.resolution_providers[0].crid_authorities[1].crid_authority_policy,
-            2
+            CridAuthorityPolicy::Either
         );
     }
 
@@ -502,7 +607,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            context_id_type: 0x00,
+            context_id_type: ContextIdType::BouquetId,
             common_descriptors: DescriptorLoop::new(&[]),
             resolution_providers: Vec::new(),
         };
@@ -531,7 +636,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            context_id_type: 0x00,
+            context_id_type: ContextIdType::BouquetId,
             common_descriptors: DescriptorLoop::new(&[]),
             resolution_providers: Vec::new(),
         };
@@ -569,5 +674,25 @@ mod tests {
         assert_eq!(rnt.version_number, 3);
         assert!(rnt.current_next_indicator);
         assert!(rnt.resolution_providers.is_empty());
+    }
+
+    #[test]
+    fn crid_authority_policy_round_trip() {
+        for v in 0u8..=3 {
+            let p = CridAuthorityPolicy::from_u8(v);
+            assert_eq!(p.to_u8(), v, "CridAuthorityPolicy round-trip for {v}");
+        }
+    }
+
+    #[test]
+    fn context_id_type_full_range_round_trip() {
+        for byte in 0u8..=0xFF {
+            let ct = ContextIdType::from_u8(byte);
+            assert_eq!(
+                ct.to_u8(),
+                byte,
+                "ContextIdType round-trip failed for {byte:#04x}"
+            );
+        }
     }
 }

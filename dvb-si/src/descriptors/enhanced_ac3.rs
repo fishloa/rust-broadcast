@@ -6,6 +6,7 @@
 //! by up to seven optional 1-byte fields and an optional free-form
 //! `additional_info_byte` trailer.
 
+use super::ac3::{Ac3ChannelMode, Ac3ComponentType, Ac3ServiceType};
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
@@ -47,6 +48,44 @@ pub struct EnhancedAc3Descriptor<'a> {
     pub substream3: Option<u8>,
     /// Raw trailing `additional_info_byte` run.
     pub additional_info: &'a [u8],
+}
+
+impl EnhancedAc3Descriptor<'_> {
+    /// Decodes the optional `component_type` field per ETSI EN 300 468 Annex D.
+    ///
+    /// Returns `None` when `component_type` is `None`.
+    #[must_use]
+    pub fn decoded_component_type(&self) -> Option<Ac3ComponentType> {
+        let ct = self.component_type?;
+        let enhanced_ac3 = (ct & 0x80) != 0;
+        let full_service = (ct & 0x20) != 0;
+        let service_bits = (ct >> 3) & 0x03;
+        let channel_bits = (ct >> 1) & 0x03;
+
+        let service_type = match service_bits {
+            0b00 if !full_service => Ac3ServiceType::MusicAndEffects,
+            0b00 => Ac3ServiceType::CompleteMain,
+            0b01 => Ac3ServiceType::VisuallyImpaired,
+            0b10 => Ac3ServiceType::HearingImpaired,
+            0b11 => Ac3ServiceType::VoiceOverOrKaraoke,
+            _ => Ac3ServiceType::Unknown(service_bits),
+        };
+
+        let channels = match channel_bits {
+            0b00 => Ac3ChannelMode::Mono,
+            0b01 => Ac3ChannelMode::OnePlusOne,
+            0b10 => Ac3ChannelMode::Stereo,
+            0b11 => Ac3ChannelMode::SurroundEncodedStereo,
+            _ => Ac3ChannelMode::Unknown(channel_bits),
+        };
+
+        Some(Ac3ComponentType {
+            enhanced_ac3,
+            full_service,
+            service_type,
+            channels,
+        })
+    }
 }
 
 impl<'a> Parse<'a> for EnhancedAc3Descriptor<'a> {
@@ -234,6 +273,28 @@ mod tests {
         assert_eq!(d.component_type, None);
         assert!(!d.mixinfoexists);
         assert_eq!(d.additional_info, &[0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn decode_component_type_vi_multichannel() {
+        // E-AC-3, full_service=0, service=01 (VI), channels=10 (stereo)
+        // 1_0_0_01_10_0 = 0b1000_1100 = 0x8C
+        let d = EnhancedAc3Descriptor {
+            component_type: Some(0x8C),
+            bsid: None,
+            mainid: None,
+            asvc: None,
+            mixinfoexists: false,
+            substream1: None,
+            substream2: None,
+            substream3: None,
+            additional_info: &[],
+        };
+        let ct = d.decoded_component_type().unwrap();
+        assert!(ct.enhanced_ac3);
+        assert!(!ct.full_service);
+        assert!(matches!(ct.service_type, Ac3ServiceType::VisuallyImpaired));
+        assert!(matches!(ct.channels, Ac3ChannelMode::Stereo));
     }
 
     #[test]

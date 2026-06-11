@@ -10,6 +10,7 @@
 //! Both loops are typed: the transmission-info loop is a [`DescriptorLoop`] and
 //! the service loop is a `Vec<SitService>`, each with its own descriptor loop.
 
+use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
@@ -41,8 +42,8 @@ const MIN_SECTION_LEN: usize =
 pub struct SitService<'a> {
     /// service_id of this service.
     pub service_id: u16,
-    /// 3-bit running_status (0=undefined .. 4=running).
-    pub running_status: u8,
+    /// 3-bit running_status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// Descriptor loop for this service. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
@@ -130,7 +131,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
             }
             let service_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
             // byte[pos+2]: reserved_future_use(1) | running_status(3) | len_hi(4)
-            let running_status = (bytes[pos + 2] >> 4) & 0x07;
+            let running_status = RunningStatus::from_u8((bytes[pos + 2] >> 4) & 0x07);
             let svc_desc_len = (((bytes[pos + 2] & 0x0F) as usize) << 8) | bytes[pos + 3] as usize;
             let desc_start = pos + SERVICE_HEADER_LEN;
             let desc_end = desc_start + svc_desc_len;
@@ -217,7 +218,7 @@ impl Serialize for SitSection<'_> {
             buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
             let dll = svc.descriptors.len() as u16;
             // reserved_future_use(1) emitted as 1 (§5.1 convention) | running_status(3) | len_hi(4)
-            buf[pos + 2] = 0x80 | ((svc.running_status & 0x07) << 4) | ((dll >> 8) as u8 & 0x0F);
+            buf[pos + 2] = 0x80 | (svc.running_status.to_u8() << 4) | ((dll >> 8) as u8 & 0x0F);
             buf[pos + 3] = (dll & 0xFF) as u8;
             let desc_start = pos + SERVICE_HEADER_LEN;
             let desc_end = desc_start + svc.descriptors.len();
@@ -320,13 +321,16 @@ mod tests {
         assert_eq!(sit.transmission_info_descriptors.raw(), &ti[..]);
         assert_eq!(sit.services.len(), 2);
         assert_eq!(sit.services[0].service_id, 0x0001);
-        assert_eq!(sit.services[0].running_status, 4);
+        assert_eq!(sit.services[0].running_status, RunningStatus::Running);
         assert_eq!(
             sit.services[0].descriptors.raw(),
             &[0x48, 0x02, 0xAA, 0xBB][..]
         );
         assert_eq!(sit.services[1].service_id, 0x0002);
-        assert_eq!(sit.services[1].running_status, 2);
+        assert_eq!(
+            sit.services[1].running_status,
+            RunningStatus::StartsInAFewSeconds
+        );
         assert!(sit.services[1].descriptors.is_empty());
     }
 
@@ -365,12 +369,12 @@ mod tests {
             services: vec![
                 SitService {
                     service_id: 0x0001,
-                    running_status: 4,
+                    running_status: RunningStatus::Running,
                     descriptors: DescriptorLoop::new(&[0x48, 0x02, 0xAA, 0xBB]),
                 },
                 SitService {
                     service_id: 0x0002,
-                    running_status: 2,
+                    running_status: RunningStatus::StartsInAFewSeconds,
                     descriptors: DescriptorLoop::new(&[]),
                 },
             ],
@@ -403,7 +407,7 @@ mod tests {
             transmission_info_descriptors: DescriptorLoop::new(&[]),
             services: vec![SitService {
                 service_id: 0x0001,
-                running_status: 4,
+                running_status: RunningStatus::Running,
                 descriptors: DescriptorLoop::new(&big),
             }],
         };
@@ -454,7 +458,7 @@ mod tests {
             "services must serialize as an array, got {v}"
         );
         assert_eq!(v["services"][0]["service_id"], 1);
-        assert_eq!(v["services"][0]["running_status"], 4);
+        assert_eq!(v["services"][0]["running_status"], "Running");
         // The service descriptor loop renders as a typed descriptor sequence.
         assert!(
             v["services"][0]["descriptors"].is_array(),

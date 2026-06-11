@@ -84,6 +84,7 @@
 //! start fresh, or `retain_services` to keep only the active service list.
 
 use crate::collect::CollectResult;
+use crate::tables::RunningStatus;
 use std::collections::HashMap;
 
 /// Logical key identifying a service across the DVB network.
@@ -106,8 +107,74 @@ pub struct ServiceKey {
 pub struct Rating {
     /// Three-character ISO 3166 country code.
     pub country: String,
-    /// Minimum recommended age.
+    /// Rating code per EN 300 468 §6.2.13 (0x01..=0x0F => minimum age = value+3).
     pub value: u8,
+}
+
+impl Rating {
+    /// Minimum age if `value` falls in the range 0x01..=0x0F, else `None`.
+    #[must_use]
+    pub fn minimum_age(&self) -> Option<u8> {
+        match self.value {
+            0x01..=0x0F => Some(self.value + 3),
+            _ => None,
+        }
+    }
+}
+
+/// CRID type per TS 102 323 Table 117.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum CridType {
+    /// 0x00 — No type defined.
+    NoTypeDefined,
+    /// 0x01 — Item of content (programme) this event is an instance of.
+    ItemOfContent,
+    /// 0x02 — Series this event belongs to.
+    Series,
+    /// 0x03 — Recommendation.
+    Recommendation,
+    /// Unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl CridType {
+    /// Map any byte value to a `CridType`.
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::NoTypeDefined,
+            0x01 => Self::ItemOfContent,
+            0x02 => Self::Series,
+            0x03 => Self::Recommendation,
+            r => Self::Reserved(r),
+        }
+    }
+
+    /// Return the wire byte.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::NoTypeDefined => 0x00,
+            Self::ItemOfContent => 0x01,
+            Self::Series => 0x02,
+            Self::Recommendation => 0x03,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    /// Human-readable spec name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NoTypeDefined => "no type defined",
+            Self::ItemOfContent => "item of content",
+            Self::Series => "series",
+            Self::Recommendation => "recommendation",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
 
 /// A content reference identifier entry from a
@@ -116,8 +183,8 @@ pub struct Rating {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Crid {
-    /// CRID type (0x01 = series, 0x02 = programme, 0x03 = recommendation).
-    pub crid_type: u8,
+    /// CRID type (TS 102 323 Table 117: 0x01 = item of content, 0x02 = series, 0x03 = recommendation).
+    pub crid_type: CridType,
     /// The CRID locator string.
     pub crid: String,
 }
@@ -147,6 +214,20 @@ pub struct ContentNibble {
     pub user: u8,
 }
 
+impl ContentNibble {
+    /// Level-1 broad category per EN 300 468 Table 29.
+    #[must_use]
+    pub fn genre(&self) -> crate::descriptors::content::ContentGenre {
+        crate::descriptors::content::ContentGenre::from_nibble_1(self.level_1)
+    }
+
+    /// Most specific genre name per EN 300 468 Table 29.
+    #[must_use]
+    pub fn genre_name(&self) -> &'static str {
+        crate::descriptors::content::content_genre_name(self.level_1, self.level_2)
+    }
+}
+
 /// A decoded view of an EPG event.
 ///
 /// Extracted from [`crate::collect::CompleteEitEvent`] with commonly needed
@@ -168,8 +249,8 @@ pub struct EpgEvent {
     pub start_time: Option<chrono::DateTime<chrono::Utc>>,
     /// Decoded BCD duration, if valid.
     pub duration: Option<core::time::Duration>,
-    /// 3-bit running status.
-    pub running_status: u8,
+    /// 3-bit running status (EN 300 468 Table 6).
+    pub running_status: RunningStatus,
     /// free_CA_mode.
     pub free_ca_mode: bool,
     /// Decoded short event name (from
@@ -695,7 +776,10 @@ fn extract_crids(
                     CridLocation::Inline(bytes) => {
                         let s = String::from_utf8_lossy(bytes).into_owned();
                         Some(Crid {
-                            crid_type: e.crid_type,
+                            // epg::CridType (TS 102 323 Table 117) bridged from
+                            // the content_identifier entry's own CridType via its
+                            // wire byte.
+                            crid_type: CridType::from_u8(e.crid_type.to_u8()),
                             crid: s,
                         })
                     }
@@ -905,7 +989,7 @@ mod tests {
             event_id: id,
             start_time: start,
             duration: dur,
-            running_status: 0,
+            running_status: RunningStatus::Undefined,
             free_ca_mode: false,
             event_name: None,
             event_text: None,
@@ -1048,7 +1132,7 @@ mod tests {
             event_id: 1,
             start_time: Some(t1000),
             duration: Some(sec),
-            running_status: 0,
+            running_status: RunningStatus::Undefined,
             free_ca_mode: false,
             event_name: Some("Event 1".into()),
             event_text: None,
@@ -1062,7 +1146,7 @@ mod tests {
             event_id: 2,
             start_time: Some(t1200),
             duration: Some(sec),
-            running_status: 0,
+            running_status: RunningStatus::Undefined,
             free_ca_mode: false,
             event_name: Some("Event 2".into()),
             event_text: None,
@@ -1131,7 +1215,7 @@ mod tests {
                 event_id: id,
                 start_time: Some(start),
                 duration: Some(dur),
-                running_status: 0,
+                running_status: RunningStatus::Undefined,
                 free_ca_mode: false,
                 event_name: Some(name.into()),
                 event_text: None,
@@ -1221,10 +1305,10 @@ mod tests {
         assert_eq!(ev.ratings[1].country, "GBR");
         assert_eq!(ev.ratings[1].value, 0x01);
 
-        assert_eq!(ev.crids.len(), 1 + 1); // one series + one recommendation
-        assert_eq!(ev.crids[0].crid_type, 0x01);
+        assert_eq!(ev.crids.len(), 1 + 1); // one item of content + one recommendation
+        assert_eq!(ev.crids[0].crid_type, CridType::ItemOfContent);
         assert_eq!(ev.crids[0].crid, "crid://bbc.co.uk/prog123");
-        assert_eq!(ev.crids[1].crid_type, 0x03);
+        assert_eq!(ev.crids[1].crid_type, CridType::Recommendation);
         assert_eq!(ev.crids[1].crid, "crid://bbc.co.uk/rec456");
     }
 
@@ -1371,7 +1455,7 @@ mod tests {
                     event_id: id,
                     start_time: Some(t),
                     duration: Some(sec),
-                    running_status: 0,
+                    running_status: RunningStatus::Undefined,
                     free_ca_mode: false,
                     event_name: Some(format!("Event {id}")),
                     event_text: None,
@@ -1516,7 +1600,7 @@ mod tests {
                 event_id: 1,
                 start_time: Some(t),
                 duration: Some(core::time::Duration::from_secs(3600)),
-                running_status: 4,
+                running_status: RunningStatus::Running,
                 free_ca_mode: false,
                 event_name: Some("The News".into()),
                 event_text: Some("Today's headlines".into()),

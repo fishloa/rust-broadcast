@@ -23,13 +23,349 @@ const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + PCR_PID_LEN + PROG_INFO_LEN_BYTES + CRC_LEN;
 const STREAM_HEADER_LEN: usize = 5;
 
+/// Stream type coding — ISO/IEC 13818-1 Table 2-34.
+///
+/// Identifies the elementary-stream type carried in the associated PID.
+/// Values 0x80–0xFF are user private.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum StreamType {
+    /// 0x00 — ITU-T | ISO/IEC Reserved.
+    Reserved,
+    /// 0x01 — ISO/IEC 11172-2 Video (MPEG-1 video).
+    Mpeg1Video,
+    /// 0x02 — ISO/IEC 13818-2 Video (MPEG-2 video).
+    Mpeg2Video,
+    /// 0x03 — ISO/IEC 11172-3 Audio (MPEG-1 audio).
+    Mpeg1Audio,
+    /// 0x04 — ISO/IEC 13818-3 Audio (MPEG-2 audio).
+    Mpeg2Audio,
+    /// 0x05 — ISO/IEC 13818-2 private_sections.
+    PrivateSections,
+    /// 0x06 — ISO/IEC 13818-1 PES packets containing private data.
+    PesPrivateData,
+    /// 0x07 — ISO/IEC 13522 MHEG.
+    Mheg,
+    /// 0x08 — ISO/IEC 13818-1 Annex A DSM-CC.
+    DsmCc,
+    /// 0x09 — ITU-T Rec. H.222.1.
+    H222_1,
+    /// 0x0A — ISO/IEC 13818-6 type A.
+    Iso13818_6TypeA,
+    /// 0x0B — ISO/IEC 13818-6 type B.
+    Iso13818_6TypeB,
+    /// 0x0C — ISO/IEC 13818-6 type C.
+    Iso13818_6TypeC,
+    /// 0x0D — ISO/IEC 13818-6 type D.
+    Iso13818_6TypeD,
+    /// 0x0E — ITU-T Rec. H.222.1 auxiliary.
+    H222_1Aux,
+    /// 0x0F — ISO/IEC 13818-7 Audio with ADTS transport syntax (AAC).
+    AacAdts,
+    /// 0x10 — ISO/IEC 14496-2 Visual (MPEG-4 video).
+    Mpeg4Video,
+    /// 0x11 — ISO/IEC 14496-3 Audio with LATM transport syntax (AAC LATM).
+    AacLatm,
+    /// 0x12 — ISO/IEC 14496-1 SL-packetized stream or FlexMux in PES.
+    SlFlexMuxPes,
+    /// 0x13 — ISO/IEC 14496-1 SL-packetized stream or FlexMux in ISO/IEC 13818-6 sections.
+    SlFlexMuxSections,
+    /// 0x14 — ISO/IEC 13818-6 Synchronized Download Protocol.
+    SyncDownload,
+    /// 0x15 — Metadata carried in PES packets.
+    MetadataPes,
+    /// 0x16 — Metadata carried in metadata_sections.
+    MetadataSections,
+    /// 0x17 — Metadata carried in ISO/IEC 13818-6 Data Carousel.
+    MetadataDataCarousel,
+    /// 0x18 — Metadata carried in ISO/IEC 13818-6 Object Carousel.
+    MetadataObjectCarousel,
+    /// 0x19 — Metadata carried in ISO/IEC 13818-6 Synchronized Download Protocol.
+    MetadataSyncDownload,
+    /// 0x1A — IPMP stream (ISO/IEC 13818-11 MPEG-2 IPMP).
+    Ipmp,
+    /// 0x1B — ITU-T Rec. H.264 | ISO/IEC 14496-10 Video (AVC/H.264).
+    H264,
+    /// 0x1C — ISO/IEC 14496-3 Audio without additional transport syntax.
+    Iso14496_3Audio,
+    /// 0x1D — ISO/IEC 14496-17 Text.
+    Iso14496_17Text,
+    /// 0x1E — ISO/IEC 23002-3 Auxiliary Video.
+    AuxiliaryVideo,
+    /// 0x1F — ISO/IEC 14496-10 SVC sub-bitstream.
+    Svc,
+    /// 0x20 — ISO/IEC 14496-10 MVC sub-bitstream.
+    Mvc,
+    /// 0x21 — ITU-T Rec. T.800 | ISO/IEC 15444 JPEG 2000 Video.
+    Jpeg2000,
+    /// 0x22 — ISO/IEC 14496-2 Additional view.
+    AdditionalViewRec14496_2,
+    /// 0x23 — ISO/IEC 14496-10 MVC base view sub-bitstream.
+    MvcBaseView,
+    /// 0x24 — ITU-T Rec. H.265 | ISO/IEC 23008-2 Video (HEVC/H.265).
+    Hevc,
+    /// 0x25 — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream.
+    HevcTemporal,
+    /// 0x26 — ISO/IEC 23008-2 HEVC Temporal Video subset of HEVC Annex A.
+    HevcTemporalAnnexA,
+    /// 0x27 — ITU-T Rec. H.265 Annex I video sub-bitstream.
+    HevcAnnexI,
+    /// 0x28 — ITU-T Rec. H.265 Annex I video.
+    HevcAnnexIMain,
+    /// 0x29 — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex I video.
+    HevcAnnexITemporal,
+    /// 0x2A — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex A enhanced range extension.
+    HevcTemporalEnhanced,
+    /// 0x2B — ISO/IEC 23008-2 HEVC Temporal Video sub-bitstream of HEVC Annex I enhanced range extension.
+    HevcAnnexITemporalEnhanced,
+    /// 0x30 — ISO/IEC 23090-3 Video (VVC/H.266).
+    Vvc,
+    /// 0x33 — ISO/IEC 23090-3 Video (VVC/H.266).
+    VvcAlt,
+    /// 0x80 — User private (range 0x80..=0xFF).
+    Private(u8),
+    /// 0x81 — ATSC AC-3 audio.
+    Ac3,
+    /// 0x84 — ATSC Dolby Digital Plus (E-AC-3).
+    EnhancedAc3,
+    /// 0x85 — ATSC DTS-HD audio.
+    DtsHd,
+    /// 0x86 — ATSC DTS audio.
+    Dts,
+    /// 0x87 — ATSC E-AC-3 / Dolby Digital Plus audio.
+    EAc3Alt,
+    /// 0x8A — DTS audio.
+    DtsAlt,
+    /// 0x8B — DTS-HD audio.
+    DtsHdAlt,
+    /// 0x8C — Dolby MAT (Metadata-enhanced Audio Transmission).
+    DolbyMat,
+    /// 0x90 — SCTE subtitling.
+    ScteSubtitling,
+    /// 0x91 — ARIB subtitling.
+    AribSubtitling,
+    /// 0x92 — TTML subtitling.
+    TtmlSubtitling,
+    /// 0xEA — User private (VC-1).
+    PrivateVc1,
+    /// Catch-all for unallocated / reserved values not named above.
+    Unallocated(u8),
+}
+
+impl StreamType {
+    /// Decode from the wire byte.  Every byte maps to a variant (lossless).
+    /// Decode from the wire byte.  Every byte maps to a variant (lossless).
+    #[must_use]
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Reserved,
+            0x01 => Self::Mpeg1Video,
+            0x02 => Self::Mpeg2Video,
+            0x03 => Self::Mpeg1Audio,
+            0x04 => Self::Mpeg2Audio,
+            0x05 => Self::PrivateSections,
+            0x06 => Self::PesPrivateData,
+            0x07 => Self::Mheg,
+            0x08 => Self::DsmCc,
+            0x09 => Self::H222_1,
+            0x0A => Self::Iso13818_6TypeA,
+            0x0B => Self::Iso13818_6TypeB,
+            0x0C => Self::Iso13818_6TypeC,
+            0x0D => Self::Iso13818_6TypeD,
+            0x0E => Self::H222_1Aux,
+            0x0F => Self::AacAdts,
+            0x10 => Self::Mpeg4Video,
+            0x11 => Self::AacLatm,
+            0x12 => Self::SlFlexMuxPes,
+            0x13 => Self::SlFlexMuxSections,
+            0x14 => Self::SyncDownload,
+            0x15 => Self::MetadataPes,
+            0x16 => Self::MetadataSections,
+            0x17 => Self::MetadataDataCarousel,
+            0x18 => Self::MetadataObjectCarousel,
+            0x19 => Self::MetadataSyncDownload,
+            0x1A => Self::Ipmp,
+            0x1B => Self::H264,
+            0x1C => Self::Iso14496_3Audio,
+            0x1D => Self::Iso14496_17Text,
+            0x1E => Self::AuxiliaryVideo,
+            0x1F => Self::Svc,
+            0x20 => Self::Mvc,
+            0x21 => Self::Jpeg2000,
+            0x22 => Self::AdditionalViewRec14496_2,
+            0x23 => Self::MvcBaseView,
+            0x24 => Self::Hevc,
+            0x25 => Self::HevcTemporal,
+            0x26 => Self::HevcTemporalAnnexA,
+            0x27 => Self::HevcAnnexI,
+            0x28 => Self::HevcAnnexIMain,
+            0x29 => Self::HevcAnnexITemporal,
+            0x2A => Self::HevcTemporalEnhanced,
+            0x2B => Self::HevcAnnexITemporalEnhanced,
+            0x30 => Self::Vvc,
+            0x33 => Self::VvcAlt,
+            0x80 => Self::Private(0x80),
+            0x81 => Self::Ac3,
+            0x84 => Self::EnhancedAc3,
+            0x85 => Self::DtsHd,
+            0x86 => Self::Dts,
+            0x87 => Self::EAc3Alt,
+            0x8A => Self::DtsAlt,
+            0x8B => Self::DtsHdAlt,
+            0x8C => Self::DolbyMat,
+            0x90 => Self::ScteSubtitling,
+            0x91 => Self::AribSubtitling,
+            0x92 => Self::TtmlSubtitling,
+            0xEA => Self::PrivateVc1,
+            v if v >= 0x80 => Self::Private(v),
+            _ => Self::Unallocated(v),
+        }
+    }
+
+    /// Encode to the wire byte.  Inverse of `from_u8`.
+    /// Encode to the wire byte.  Inverse of `from_u8`.
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0x00,
+            Self::Mpeg1Video => 0x01,
+            Self::Mpeg2Video => 0x02,
+            Self::Mpeg1Audio => 0x03,
+            Self::Mpeg2Audio => 0x04,
+            Self::PrivateSections => 0x05,
+            Self::PesPrivateData => 0x06,
+            Self::Mheg => 0x07,
+            Self::DsmCc => 0x08,
+            Self::H222_1 => 0x09,
+            Self::Iso13818_6TypeA => 0x0A,
+            Self::Iso13818_6TypeB => 0x0B,
+            Self::Iso13818_6TypeC => 0x0C,
+            Self::Iso13818_6TypeD => 0x0D,
+            Self::H222_1Aux => 0x0E,
+            Self::AacAdts => 0x0F,
+            Self::Mpeg4Video => 0x10,
+            Self::AacLatm => 0x11,
+            Self::SlFlexMuxPes => 0x12,
+            Self::SlFlexMuxSections => 0x13,
+            Self::SyncDownload => 0x14,
+            Self::MetadataPes => 0x15,
+            Self::MetadataSections => 0x16,
+            Self::MetadataDataCarousel => 0x17,
+            Self::MetadataObjectCarousel => 0x18,
+            Self::MetadataSyncDownload => 0x19,
+            Self::Ipmp => 0x1A,
+            Self::H264 => 0x1B,
+            Self::Iso14496_3Audio => 0x1C,
+            Self::Iso14496_17Text => 0x1D,
+            Self::AuxiliaryVideo => 0x1E,
+            Self::Svc => 0x1F,
+            Self::Mvc => 0x20,
+            Self::Jpeg2000 => 0x21,
+            Self::AdditionalViewRec14496_2 => 0x22,
+            Self::MvcBaseView => 0x23,
+            Self::Hevc => 0x24,
+            Self::HevcTemporal => 0x25,
+            Self::HevcTemporalAnnexA => 0x26,
+            Self::HevcAnnexI => 0x27,
+            Self::HevcAnnexIMain => 0x28,
+            Self::HevcAnnexITemporal => 0x29,
+            Self::HevcTemporalEnhanced => 0x2A,
+            Self::HevcAnnexITemporalEnhanced => 0x2B,
+            Self::Vvc => 0x30,
+            Self::VvcAlt => 0x33,
+            Self::Ac3 => 0x81,
+            Self::EnhancedAc3 => 0x84,
+            Self::DtsHd => 0x85,
+            Self::Dts => 0x86,
+            Self::EAc3Alt => 0x87,
+            Self::DtsAlt => 0x8A,
+            Self::DtsHdAlt => 0x8B,
+            Self::DolbyMat => 0x8C,
+            Self::ScteSubtitling => 0x90,
+            Self::AribSubtitling => 0x91,
+            Self::TtmlSubtitling => 0x92,
+            Self::PrivateVc1 => 0xEA,
+            Self::Private(v) | Self::Unallocated(v) => v,
+        }
+    }
+
+    /// Human-readable spec display name.
+    /// Human-readable spec display name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::Mpeg1Video => "MPEG-1 Video",
+            Self::Mpeg2Video => "MPEG-2 Video",
+            Self::Mpeg1Audio => "MPEG-1 Audio",
+            Self::Mpeg2Audio => "MPEG-2 Audio",
+            Self::PrivateSections => "Private Sections",
+            Self::PesPrivateData => "PES Private Data",
+            Self::Mheg => "MHEG",
+            Self::DsmCc => "DSM-CC",
+            Self::H222_1 => "H.222.1",
+            Self::Iso13818_6TypeA => "ISO/IEC 13818-6 Type A",
+            Self::Iso13818_6TypeB => "ISO/IEC 13818-6 Type B",
+            Self::Iso13818_6TypeC => "ISO/IEC 13818-6 Type C",
+            Self::Iso13818_6TypeD => "ISO/IEC 13818-6 Type D",
+            Self::H222_1Aux => "H.222.1 Auxiliary",
+            Self::AacAdts => "AAC ADTS",
+            Self::Mpeg4Video => "MPEG-4 Video",
+            Self::AacLatm => "AAC LATM",
+            Self::SlFlexMuxPes => "SL/FlexMux in PES",
+            Self::SlFlexMuxSections => "SL/FlexMux in Sections",
+            Self::SyncDownload => "Sync Download Protocol",
+            Self::MetadataPes => "Metadata in PES",
+            Self::MetadataSections => "Metadata in Sections",
+            Self::MetadataDataCarousel => "Metadata Data Carousel",
+            Self::MetadataObjectCarousel => "Metadata Object Carousel",
+            Self::MetadataSyncDownload => "Metadata Sync Download",
+            Self::Ipmp => "IPMP",
+            Self::H264 => "H.264/AVC",
+            Self::Iso14496_3Audio => "ISO/IEC 14496-3 Audio",
+            Self::Iso14496_17Text => "ISO/IEC 14496-17 Text",
+            Self::AuxiliaryVideo => "Auxiliary Video",
+            Self::Svc => "SVC",
+            Self::Mvc => "MVC",
+            Self::Jpeg2000 => "JPEG 2000",
+            Self::AdditionalViewRec14496_2 => "Additional View Rec. 14496-2",
+            Self::MvcBaseView => "MVC Base View",
+            Self::Hevc => "HEVC/H.265",
+            Self::HevcTemporal => "HEVC Temporal",
+            Self::HevcTemporalAnnexA => "HEVC Temporal Annex A",
+            Self::HevcAnnexI => "HEVC Annex I",
+            Self::HevcAnnexIMain => "HEVC Annex I Main",
+            Self::HevcAnnexITemporal => "HEVC Annex I Temporal",
+            Self::HevcTemporalEnhanced => "HEVC Temporal Enhanced",
+            Self::HevcAnnexITemporalEnhanced => "HEVC Annex I Temporal Enhanced",
+            Self::Vvc => "VVC/H.266",
+            Self::VvcAlt => "VVC/H.266 (alt)",
+            Self::Ac3 => "AC-3",
+            Self::EnhancedAc3 => "Enhanced AC-3",
+            Self::DtsHd => "DTS-HD",
+            Self::Dts => "DTS",
+            Self::EAc3Alt => "E-AC-3",
+            Self::DtsAlt => "DTS (alt)",
+            Self::DtsHdAlt => "DTS-HD (alt)",
+            Self::DolbyMat => "Dolby MAT",
+            Self::ScteSubtitling => "SCTE Subtitling",
+            Self::AribSubtitling => "ARIB Subtitling",
+            Self::TtmlSubtitling => "TTML Subtitling",
+            Self::PrivateVc1 => "VC-1 (Private)",
+            Self::Private(_) => "User Private",
+            Self::Unallocated(_) => "Unallocated",
+        }
+    }
+}
+
 /// One elementary stream entry in the PMT's ES loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct PmtStream<'a> {
     /// MPEG-2 stream_type byte (ISO/IEC 13818-1 Table 2-34).
-    pub stream_type: u8,
+    pub stream_type: StreamType,
     /// 13-bit elementary stream PID.
     pub elementary_pid: u16,
     /// Raw ES_info descriptor bytes; parsing lives in crate::descriptors.
@@ -109,7 +445,7 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         let mut streams = Vec::new();
         let mut pos = prog_info_end;
         while pos + STREAM_HEADER_LEN <= stream_loop_end {
-            let stream_type = bytes[pos];
+            let stream_type = StreamType::from_u8(bytes[pos]);
             let elementary_pid = (((bytes[pos + 1] & 0x1F) as u16) << 8) | bytes[pos + 2] as u16;
             let es_info_length =
                 (((bytes[pos + 3] & 0x0F) as usize) << 8) | bytes[pos + 4] as usize;
@@ -187,7 +523,7 @@ impl Serialize for PmtSection<'_> {
 
         let mut pos = prog_info_start + self.program_info.len();
         for stream in &self.streams {
-            buf[pos] = stream.stream_type;
+            buf[pos] = stream.stream_type.to_u8();
             buf[pos + 1] = 0xE0 | ((stream.elementary_pid >> 8) as u8 & 0x1F);
             buf[pos + 2] = (stream.elementary_pid & 0xFF) as u8;
             let esl = stream.es_info.len() as u16;
@@ -279,10 +615,10 @@ mod tests {
         );
         let pmt = PmtSection::parse(&bytes).unwrap();
         assert_eq!(pmt.streams.len(), 2);
-        assert_eq!(pmt.streams[0].stream_type, 0x02);
+        assert_eq!(pmt.streams[0].stream_type, StreamType::Mpeg2Video);
         assert_eq!(pmt.streams[0].elementary_pid, 0x102);
         assert_eq!(pmt.streams[0].es_info.raw(), &[0x11, 0x22]);
-        assert_eq!(pmt.streams[1].stream_type, 0x1B);
+        assert_eq!(pmt.streams[1].stream_type, StreamType::H264);
         assert_eq!(pmt.streams[1].elementary_pid, 0x103);
         assert_eq!(pmt.streams[1].es_info.raw(), &[0x33]);
     }
@@ -333,17 +669,17 @@ mod tests {
             program_info: DescriptorLoop::new(&prog_info),
             streams: vec![
                 PmtStream {
-                    stream_type: 0x02,
+                    stream_type: StreamType::Mpeg2Video,
                     elementary_pid: 0x100,
                     es_info: DescriptorLoop::new(&es1),
                 },
                 PmtStream {
-                    stream_type: 0x03,
+                    stream_type: StreamType::Mpeg1Audio,
                     elementary_pid: 0x101,
                     es_info: DescriptorLoop::new(&es2),
                 },
                 PmtStream {
-                    stream_type: 0x1B,
+                    stream_type: StreamType::H264,
                     elementary_pid: 0x102,
                     es_info: DescriptorLoop::new(&[]),
                 },
@@ -383,5 +719,38 @@ mod tests {
             PmtSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
         ));
+    }
+
+    #[test]
+    fn stream_type_full_range_round_trip() {
+        for byte in 0u8..=0xFF {
+            let st = StreamType::from_u8(byte);
+            assert_eq!(
+                st.to_u8(),
+                byte,
+                "StreamType round-trip failed for {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_type_named_values() {
+        assert_eq!(StreamType::Mpeg2Video.to_u8(), 0x02);
+        assert_eq!(StreamType::H264.to_u8(), 0x1B);
+        assert_eq!(StreamType::Hevc.to_u8(), 0x24);
+        assert_eq!(StreamType::VvcAlt.to_u8(), 0x33);
+        assert_eq!(StreamType::Ac3.to_u8(), 0x81);
+        assert_eq!(StreamType::EAc3Alt.to_u8(), 0x87);
+        assert_eq!(StreamType::AacAdts.to_u8(), 0x0F);
+    }
+
+    #[test]
+    fn stream_type_names() {
+        assert_eq!(StreamType::Mpeg2Video.name(), "MPEG-2 Video");
+        assert_eq!(StreamType::H264.name(), "H.264/AVC");
+        assert_eq!(StreamType::Hevc.name(), "HEVC/H.265");
+        assert_eq!(StreamType::Vvc.name(), "VVC/H.266");
+        assert_eq!(StreamType::DsmCc.name(), "DSM-CC");
+        assert_eq!(StreamType::Ac3.name(), "AC-3");
     }
 }

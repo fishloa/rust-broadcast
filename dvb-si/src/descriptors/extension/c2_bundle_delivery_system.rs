@@ -1,6 +1,8 @@
 //! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
 
+use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
+
 impl<'a> ExtensionBodyDef<'a> for C2BundleDeliverySystem {
     const TAG_EXTENSION: u8 = 0x16;
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
@@ -16,11 +18,11 @@ pub struct C2BundleEntry {
     /// C2_System_tuning_frequency(32).
     pub c2_system_tuning_frequency: u32,
     /// C2_System_tuning_frequency_type(2).
-    pub c2_system_tuning_frequency_type: u8,
+    pub c2_system_tuning_frequency_type: C2TuningFrequencyType,
     /// active_OFDM_symbol_duration(3).
-    pub active_ofdm_symbol_duration: u8,
+    pub active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
     /// guard_interval(3).
-    pub guard_interval: u8,
+    pub guard_interval: C2GuardInterval,
     /// primary_channel(1).
     pub primary_channel: bool,
 }
@@ -50,9 +52,11 @@ impl<'a> Parse<'a> for C2BundleDeliverySystem {
                 c2_system_tuning_frequency: u32::from_be_bytes([
                     chunk[2], chunk[3], chunk[4], chunk[5],
                 ]),
-                c2_system_tuning_frequency_type: packed >> 6,
-                active_ofdm_symbol_duration: (packed >> 3) & 0x07,
-                guard_interval: packed & 0x07,
+                c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
+                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
+                    (packed >> 3) & 0x07,
+                ),
+                guard_interval: C2GuardInterval::from_u8(packed & 0x07),
                 primary_channel: (chunk[7] & 0x80) != 0,
             });
         }
@@ -78,9 +82,9 @@ impl Serialize for C2BundleDeliverySystem {
             buf[p] = e.plp_id;
             buf[p + 1] = e.data_slice_id;
             buf[p + 2..p + 6].copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
-            buf[p + 6] = (e.c2_system_tuning_frequency_type << 6)
-                | ((e.active_ofdm_symbol_duration & 0x07) << 3)
-                | (e.guard_interval & 0x07);
+            buf[p + 6] = (e.c2_system_tuning_frequency_type.to_u8() << 6)
+                | ((e.active_ofdm_symbol_duration.to_u8() & 0x07) << 3)
+                | (e.guard_interval.to_u8() & 0x07);
             buf[p + 7] = u8::from(e.primary_channel) << 7;
             p += C2_BUNDLE_ENTRY_LEN;
         }
@@ -111,8 +115,12 @@ mod tests {
                 assert_eq!(b.entries.len(), 2);
                 assert_eq!(b.entries[0].plp_id, 0x01);
                 assert!(b.entries[0].primary_channel);
+                assert_eq!(
+                    b.entries[0].c2_system_tuning_frequency_type,
+                    C2TuningFrequencyType::Reserved(1)
+                );
                 assert_eq!(b.entries[1].plp_id, 0x05);
-                assert_eq!(b.entries[1].guard_interval, 0x01);
+                assert_eq!(b.entries[1].guard_interval, C2GuardInterval::G1_64);
             }
             other => panic!("expected C2BundleDeliverySystem, got {other:?}"),
         }

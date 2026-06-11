@@ -20,8 +20,50 @@ pub const TABLE_ID: u8 = 0x4C;
 /// ES_info loop.  This constant is therefore 0x0000 (unknown/variable).
 pub const PID: u16 = 0x0000;
 
-/// `action_type` value: IP/MAC stream announcement or location (Table 14).
-pub const ACTION_TYPE_STREAM_ANNOUNCEMENT: u8 = 0x01;
+/// Action type coding — ETSI EN 301 192 §8.4.4.1 Table 14.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum IntActionType {
+    /// 0x00 — reserved.
+    Reserved,
+    /// 0x01 — location of IP/MAC streams in DVB networks.
+    IpMacStreamLocation,
+    /// 0x02..=0xFF — reserved for future use.
+    DvbReserved(u8),
+}
+
+impl IntActionType {
+    #[must_use]
+    /// Decode from the wire value.  Every value maps (lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::Reserved,
+            0x01 => Self::IpMacStreamLocation,
+            _ => Self::DvbReserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Reserved => 0x00,
+            Self::IpMacStreamLocation => 0x01,
+            Self::DvbReserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Reserved => "Reserved",
+            Self::IpMacStreamLocation => "IP/MAC Stream Location",
+            Self::DvbReserved(_) => "DVB Reserved",
+        }
+    }
+}
 
 const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;
@@ -68,7 +110,7 @@ fn int_loop_entry_serialized_len(e: &IntLoopEntry) -> usize {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct IntSection<'a> {
     /// Semantics of this INT announcement — 0x01 = stream announcement/location.
-    pub action_type: u8,
+    pub action_type: IntActionType,
     /// 8-bit XOR hash over the 24-bit platform_id.
     pub platform_id_hash: u8,
     /// 5-bit version_number.
@@ -118,7 +160,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let action_type = bytes[OFF_ACTION_TYPE];
+        let action_type = IntActionType::from_u8(bytes[OFF_ACTION_TYPE]);
         let platform_id_hash = bytes[OFF_PLATFORM_ID_HASH];
         let version_byte = bytes[OFF_VERSION_BYTE];
         let version_number = (version_byte >> 1) & 0x1F;
@@ -235,7 +277,7 @@ impl Serialize for IntSection<'_> {
         buf[1] = super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
 
-        buf[OFF_ACTION_TYPE] = self.action_type;
+        buf[OFF_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFF_PLATFORM_ID_HASH] = self.platform_id_hash;
         buf[OFF_VERSION_BYTE] =
             0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -292,7 +334,7 @@ mod tests {
     fn parse_happy_path_no_loops() {
         let plat_desc: &[u8] = &[0x81, 0x02, 0xAB, 0xCD];
         let int = IntSection {
-            action_type: ACTION_TYPE_STREAM_ANNOUNCEMENT,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0x12 ^ 0x34,
             version_number: 3,
             current_next_indicator: true,
@@ -306,7 +348,7 @@ mod tests {
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         let parsed = IntSection::parse(&buf).unwrap();
-        assert_eq!(parsed.action_type, ACTION_TYPE_STREAM_ANNOUNCEMENT);
+        assert_eq!(parsed.action_type, IntActionType::IpMacStreamLocation);
         assert_eq!(parsed.platform_id, 0x00_12_34);
         assert_eq!(parsed.platform_descriptors.raw(), plat_desc);
         assert!(parsed.loops.is_empty());
@@ -317,7 +359,7 @@ mod tests {
         let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
         let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
         let int = IntSection {
-            action_type: 0x01,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0x56,
             version_number: 5,
             current_next_indicator: false,
@@ -351,7 +393,7 @@ mod tests {
     fn byte_exact_round_trip() {
         let plat_desc: &[u8] = &[0x7C, 0x04, 0x01, 0x02, 0x03, 0x04];
         let int = IntSection {
-            action_type: ACTION_TYPE_STREAM_ANNOUNCEMENT,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0xAB,
             version_number: 15,
             current_next_indicator: true,
@@ -377,7 +419,7 @@ mod tests {
     #[test]
     fn parse_rejects_wrong_table_id() {
         let int = IntSection {
-            action_type: 0x01,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0x00,
             version_number: 0,
             current_next_indicator: true,
@@ -411,7 +453,7 @@ mod tests {
     #[test]
     fn serialize_rejects_too_small_output_buffer() {
         let int = IntSection {
-            action_type: 0x01,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0x00,
             version_number: 0,
             current_next_indicator: true,
@@ -447,7 +489,7 @@ mod tests {
     #[test]
     fn platform_id_24bit_boundary() {
         let int = IntSection {
-            action_type: 0x01,
+            action_type: IntActionType::IpMacStreamLocation,
             platform_id_hash: 0xFF,
             version_number: 0,
             current_next_indicator: true,
@@ -472,10 +514,22 @@ mod tests {
         let crc = dvb_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let int = IntSection::parse(&bytes).unwrap();
-        assert_eq!(int.action_type, 0x01);
+        assert_eq!(int.action_type, IntActionType::IpMacStreamLocation);
         assert_eq!(int.platform_id, 0x000001);
         assert_eq!(int.version_number, 3);
         assert!(int.current_next_indicator);
         assert!(int.loops.is_empty());
+    }
+
+    #[test]
+    fn action_type_full_range_round_trip() {
+        for byte in 0u8..=0xFF {
+            let at = IntActionType::from_u8(byte);
+            assert_eq!(
+                at.to_u8(),
+                byte,
+                "IntActionType round-trip failed for {byte:#04x}"
+            );
+        }
     }
 }

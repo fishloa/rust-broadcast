@@ -14,6 +14,27 @@ const HEADER_LEN: usize = 2;
 /// Fixed prefix length: the 16-bit data_broadcast_id (EN 300 468 Table 32).
 const ID_LEN: usize = 2;
 
+/// Returns the well-known name for a `data_broadcast_id`, or `None` if the
+/// ID is not recognised.
+///
+/// Best-effort, non-exhaustive.  Well-known IDs per ETSI TR 101 162.
+#[must_use]
+pub fn data_broadcast_id_name(id: u16) -> Option<&'static str> {
+    match id {
+        0x0005 => Some("Multiprotocol Encapsulation"),
+        0x0006 => Some("Data Carousel"),
+        0x0007 => Some("Object Carousel"),
+        0x000A..=0x000B => Some("System Software Update (SSU)"),
+        0x00F0 => Some("MHP Object Carousel"),
+        0x00F1 => Some("MHP Multiprotocol Encapsulation"),
+        0x00F2 => Some("MHP Application Signalling"),
+        0x00F3 => Some("MHP Stream Events"),
+        0x00F4 => Some("MHP Stream Descriptors"),
+        0x0123 => Some("HbbTV"),
+        _ => None,
+    }
+}
+
 /// Data Broadcast Id Descriptor (tag 0x66).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -102,6 +123,24 @@ mod tests {
         let d = DataBroadcastIdDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.data_broadcast_id, 0x000A);
         assert!(d.id_selector.is_empty());
+    }
+
+    #[test]
+    fn data_broadcast_id_name_known() {
+        assert_eq!(
+            data_broadcast_id_name(0x0005),
+            Some("Multiprotocol Encapsulation")
+        );
+        assert_eq!(data_broadcast_id_name(0x0006), Some("Data Carousel"));
+        assert_eq!(data_broadcast_id_name(0x0007), Some("Object Carousel"));
+        assert_eq!(data_broadcast_id_name(0x0123), Some("HbbTV"));
+        assert_eq!(data_broadcast_id_name(0x00F0), Some("MHP Object Carousel"));
+    }
+
+    #[test]
+    fn data_broadcast_id_name_unknown() {
+        assert_eq!(data_broadcast_id_name(0x0000), None);
+        assert_eq!(data_broadcast_id_name(0xFFFF), None);
     }
 
     #[test]

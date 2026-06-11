@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+## 6.0.0 — 2026-06-11
+
+The "decode completeness" major. 5.0 *typed* every wire field but still handed
+back bare integers for spec-enumerated codes (running_status, service_type,
+stream_type, content genre, …) — forcing every consumer to re-implement the ETSI
+lookup tables. 6.0 decodes them in the library: single coded fields become typed
+enums (lossless via a `Reserved(u8)`/`UserDefined(u8)` variant, so round-trip is
+byte-identical), and multi-field / registry values gain decode accessors. See
+[`docs/release-notes/v6.0.0.md`](../docs/release-notes/v6.0.0.md).
+
+### Changed (breaking) — coded fields are now typed enums
+Each enum carries `from_u8`/`to_u8` (or `from_u16`) + `name()`, with unknown wire
+values preserved in a catch-all variant for byte-identical serialization.
+- **`RunningStatus`** (EN 300 468 Table 6) on `SdtService`, `EitEvent`,
+  `SitService`, `RstEvent`, the `collect` views, and `epg::EpgEvent`.
+- **`ServiceType`** (Table 87) on `ServiceDescriptor` and `ServiceListEntry`.
+- **PMT `stream_type` → `StreamType`** (ISO/IEC 13818-1 Table 2-34: MPEG-2 video,
+  H.264, HEVC, AAC ADTS/LATM, AC-3, E-AC-3, …).
+- **`epg::Crid.crid_type` → `CridType`** (TS 102 323 Table 117) — and the
+  previously-**swapped** doc is corrected (0x01 item-of-content, 0x02 series,
+  0x03 recommendation).
+- Descriptor codes: `SubtitlingType`, `AudioType`, `TeletextType`, linkage
+  (`LinkageType`/`HandOverType`/`LinkType`/`TargetIdType`), `ScramblingMode`,
+  content-identifier `CridType`, `tva_id` running status, application/announcement
+  types, FTA control.
+- Delivery-system consistency: satellite `fec_inner` → `FecInner` (shared with
+  cable); S2X reuses the satellite `Polarization`/`RollOff` enums; T2/SH/C2/C2-bundle
+  coded fields typed (Tables 116–137); AIT/INT/UNT/RNT/RCT/protection-message/SAT
+  codes; `compatibility` descriptor/specifier/sub-descriptor types (byte-identity
+  preserved — the M6 carousel fixture still round-trips).
+
+### Added — decode accessors (additive)
+- **Content genre** (Table 28): `ContentEntry::genre()`/`genre_name()` and the
+  same on `epg::ContentNibble`.
+- **`epg::Rating::minimum_age()`** (0x01..=0x0F → `value + 3`); the `value` doc is
+  corrected (it is the rating code, not the age).
+- BCD `frequency_hz()`/`orbital_position_deg()`/`symbol_rate_sps()` on the S2X
+  delivery descriptor (parity with its siblings); `_hz()`/`_deg()` accessors on
+  `cell_frequency_link`/`cell_list`.
+- Component-type decode on AC-3/E-AC-3/AAC; ancillary/adaptation-field bitflag
+  decode; DTS rate/surround decode.
+- Best-effort, non-exhaustive registry name lookups: `ca_system_name()` and
+  `private_data_specifier_name()` (TR 101 162); `data_broadcast_id_name()`.
+
+### Note
+The symmetric `Parse`/`Serialize` contract is unchanged — **every table already
+serializes** (build a `PatSection`/`PmtSection`/`CaDescriptor` and call
+`serialize_into`, CRC included); the typed AC-3 (0x6A) and E-AC-3 (0x7A)
+descriptors are reachable via `AnyDescriptor`. These are not new in 6.0; they are
+now documented in the README.
+
 ## 5.0.0 — 2026-06-11
 
 The "type everything and harden" major. Every raw structured loop that was

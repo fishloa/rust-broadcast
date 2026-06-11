@@ -93,4 +93,7 @@ pub mod pump;
 #[cfg(feature = "ts")]
 pub mod ts;
 
+#[cfg(feature = "ts")]
+pub mod inner_ts;
+
 pub use error::{Error, Result};

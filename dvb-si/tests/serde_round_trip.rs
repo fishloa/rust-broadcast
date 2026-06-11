@@ -17,8 +17,9 @@ use dvb_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::descriptors::DescriptorLoop;
+use dvb_si::tables::RunningStatus;
 use dvb_si::tables::{
-    ait::{AitApplication, AitSection, ApplicationIdentifier},
+    ait::{AitApplication, AitSection, ApplicationIdentifier, ApplicationType, ControlCode},
     bat::{BatSection, BatTransportStream},
     cat::CatSection,
     cit::CitSection,
@@ -27,16 +28,16 @@ use dvb_si::tables::{
     downloadable_font_info::{DownloadableFontInfoSection, FontInfo},
     dsmcc::DsmccSection,
     eit::{EitEvent, EitKind, EitSection},
-    int::IntSection,
+    int::{IntActionType, IntSection},
     mpe::MpeDatagramSection,
     mpe_fec::{MpeFecSection, RealTimeParameters as MpeFecRtp},
     mpe_ifec::{MpeIfecSection, RealTimeParameters as MpeIfecRtp},
     nit::{NitKind, NitSection, NitTransportStream},
     pat::{PatEntry, PatSection},
-    pmt::{PmtSection, PmtStream},
+    pmt::{PmtSection, PmtStream, StreamType},
     protection_message::{ProtectionMessageBody, ProtectionMessageSection},
     rct::RctSection,
-    rnt::RntSection,
+    rnt::{ContextIdType, RntSection},
     rst::{RstEntry, RstSection},
     sat::SatBody,
     sat::SatSection,
@@ -46,7 +47,7 @@ use dvb_si::tables::{
     tdt::TdtSection,
     tot::TotSection,
     tsdt::TsdtSection,
-    unt::UntSection,
+    unt::{UntActionType, UntSection},
 };
 use dvb_si::text::{DvbText, LangCode};
 
@@ -132,7 +133,7 @@ fn pmt_serializes_to_valid_json() {
         pcr_pid: 0x64,
         program_info: DescriptorLoop::new(&[]),
         streams: vec![PmtStream {
-            stream_type: 0x02,
+            stream_type: StreamType::Mpeg2Video,
             elementary_pid: 0xC8,
             es_info: DescriptorLoop::new(&[]),
         }],
@@ -155,7 +156,7 @@ fn sdt_serializes_to_valid_json() {
             service_id: 1,
             eit_schedule_flag: false,
             eit_present_following_flag: true,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(&[]),
         }],
@@ -186,7 +187,7 @@ fn sdt_service_descriptor_loop_serializes_decoded_name() {
             service_id: 1,
             eit_schedule_flag: false,
             eit_present_following_flag: true,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(raw_loop),
         }],
@@ -220,7 +221,7 @@ fn eit_serializes_to_valid_json() {
             event_id: 0x0001,
             start_time_raw: [0xDA, 0x06, 0x12, 0x34, 0x56],
             duration_raw: [0x00, 0x00, 0x10],
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: DescriptorLoop::new(&[]),
         }],
@@ -262,7 +263,7 @@ fn tot_serializes_to_valid_json() {
 #[test]
 fn ait_serializes_to_valid_json() {
     let ait = AitSection {
-        application_type: 0x0010,
+        application_type: ApplicationType::HbbTv,
         version_number: 0,
         current_next_indicator: true,
         test_application_flag: false,
@@ -274,7 +275,7 @@ fn ait_serializes_to_valid_json() {
                 organisation_id: 0x0001_0001,
                 application_id: 0x0001,
             },
-            control_code: 1,
+            control_code: ControlCode::Autostart,
             descriptors: DescriptorLoop::new(&[]),
         }],
     };
@@ -348,7 +349,7 @@ fn rst_serializes_to_valid_json() {
             original_network_id: 0x0020,
             service_id: 0x0001,
             event_id: 0x0001,
-            running_status: 4,
+            running_status: RunningStatus::Running,
         }],
     };
     let j = serde_json::to_string(&rst).expect("serialize RST");
@@ -376,7 +377,7 @@ fn sit_serializes_to_valid_json() {
         transmission_info_descriptors: DescriptorLoop::new(&[]),
         services: vec![SitService {
             service_id: 0x0001,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             // service_descriptor (tag 0x48): type 0x01, "BBC"/"ONE".
             descriptors: DescriptorLoop::new(&[
                 0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
@@ -387,7 +388,7 @@ fn sit_serializes_to_valid_json() {
     assert!(v.is_object(), "expected JSON object, got {v}");
     assert!(v["transmission_info_descriptors"].is_array());
     assert_eq!(v["services"][0]["service_id"], 1);
-    assert_eq!(v["services"][0]["running_status"], 4);
+    assert_eq!(v["services"][0]["running_status"], "Running");
     // Typed descriptors render inside the service.
     assert_eq!(
         v["services"][0]["descriptors"][0]["service"]["service_name"],
@@ -414,7 +415,7 @@ fn sat_serializes_to_valid_json() {
 #[test]
 fn unt_serializes_to_valid_json() {
     let unt = UntSection {
-        action_type: 0x01,
+        action_type: UntActionType::SystemSoftwareUpdate,
         oui_hash: 0x00,
         version_number: 0,
         current_next_indicator: true,
@@ -432,7 +433,7 @@ fn unt_serializes_to_valid_json() {
 #[test]
 fn int_serializes_to_valid_json() {
     let int = IntSection {
-        action_type: 0x01,
+        action_type: IntActionType::IpMacStreamLocation,
         platform_id_hash: 0x00,
         version_number: 0,
         current_next_indicator: true,
@@ -490,7 +491,7 @@ fn rnt_serializes_to_valid_json() {
         current_next_indicator: true,
         section_number: 0,
         last_section_number: 0,
-        context_id_type: 0,
+        context_id_type: ContextIdType::BouquetId,
         common_descriptors: DescriptorLoop::new(&[]),
         resolution_providers: vec![],
     };
@@ -663,14 +664,13 @@ fn short_event_serializes_decoded_strings() {
 
 #[test]
 fn service_serializes_decoded_strings() {
-    use dvb_si::descriptors::service::ServiceDescriptor;
+    use dvb_si::descriptors::service::{ServiceDescriptor, ServiceType};
     let d = ServiceDescriptor {
-        service_type: 0x19,
+        service_type: ServiceType::AvcHdDigitalTelevision,
         provider_name: DvbText::new(b"BBC"),
         service_name: DvbText::new(b"BBC ONE HD"),
     };
     let j = serde_json::to_value(&d).unwrap();
-    assert_eq!(j["service_type"], 0x19);
     assert_eq!(j["provider_name"], "BBC");
     assert_eq!(j["service_name"], "BBC ONE HD");
 }

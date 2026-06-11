@@ -626,13 +626,13 @@ mod tests {
     fn nonempty_compat() -> CompatibilityDescriptor<'static> {
         CompatibilityDescriptor {
             descriptors: vec![crate::compatibility::CompatibilityDescriptorEntry {
-                descriptor_type: 0x01,
-                specifier_type: 0x01,
+                descriptor_type: crate::compatibility::DescriptorType::SystemHardware,
+                specifier_type: crate::compatibility::SpecifierType::IeeeOui,
                 specifier_data: [0x00, 0x15, 0x0A],
                 model: 0x1234,
                 version: 0x0001,
                 sub_descriptors: vec![crate::compatibility::SubDescriptor {
-                    sub_descriptor_type: 0x05,
+                    sub_descriptor_type: crate::compatibility::SubDescriptorType::Unallocated(0x05),
                     data: &[0xAA, 0xBB],
                 }],
             }],

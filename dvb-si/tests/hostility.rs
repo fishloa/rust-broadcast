@@ -16,6 +16,7 @@ use dvb_common::Serialize;
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::parse_loop;
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
+use dvb_si::tables::RunningStatus;
 
 // ── Deterministic LCG (no deps) ───────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ fn build_sdt_bytes() -> Vec<u8> {
             service_id: 0x0001,
             eit_schedule_flag: false,
             eit_present_following_flag: true,
-            running_status: 4,
+            running_status: RunningStatus::Running,
             free_ca_mode: false,
             descriptors: dvb_si::descriptors::DescriptorLoop::new(&[]),
         }],

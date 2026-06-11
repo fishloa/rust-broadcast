@@ -18,6 +18,27 @@ const SELECTOR_LEN_FIELD: usize = 1;
 const LANG_LEN: usize = 3;
 const TEXT_LEN_FIELD: usize = 1;
 
+/// Returns the well-known name for a `data_broadcast_id`, or `None` if the
+/// ID is not recognised.
+///
+/// Best-effort, non-exhaustive.  Well-known IDs per ETSI TR 101 162.
+#[must_use]
+pub fn data_broadcast_id_name(id: u16) -> Option<&'static str> {
+    match id {
+        0x0005 => Some("Multiprotocol Encapsulation"),
+        0x0006 => Some("Data Carousel"),
+        0x0007 => Some("Object Carousel"),
+        0x000A..=0x000B => Some("System Software Update (SSU)"),
+        0x00F0 => Some("MHP Object Carousel"),
+        0x00F1 => Some("MHP Multiprotocol Encapsulation"),
+        0x00F2 => Some("MHP Application Signalling"),
+        0x00F3 => Some("MHP Stream Events"),
+        0x00F4 => Some("MHP Stream Descriptors"),
+        0x0123 => Some("HbbTV"),
+        _ => None,
+    }
+}
+
 /// Data Broadcast Descriptor (tag 0x64).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -193,6 +214,21 @@ mod tests {
         assert_eq!(d.selector, &[0xAA, 0xBB]);
         assert_eq!(d.language_code, LangCode(*b"eng"));
         assert_eq!(d.text.raw(), b"Hello");
+    }
+
+    #[test]
+    fn data_broadcast_id_name_known() {
+        assert_eq!(data_broadcast_id_name(0x0006), Some("Data Carousel"));
+        assert_eq!(data_broadcast_id_name(0x0123), Some("HbbTV"));
+        assert_eq!(
+            data_broadcast_id_name(0x00F2),
+            Some("MHP Application Signalling")
+        );
+    }
+
+    #[test]
+    fn data_broadcast_id_name_unknown() {
+        assert_eq!(data_broadcast_id_name(0x0000), None);
     }
 
     #[test]
