@@ -1,13 +1,14 @@
 //! DSM-CC section parser — ISO/IEC 13818-6 + ETSI EN 301 192 §9.
 //!
 //! This is intentionally minimal: header framing, table_id dispatch,
-//! length check, and carrying the payload as `Cow<'a, [u8]>`. Full
-//! DSM-CC payload parsing is deliberately out of scope (YAGNI).
+//! length check, and carrying the payload as `&[u8]`. Full DSM-CC payload
+//! parsing is deliberately out of scope (YAGNI).
 //!
-//! Known limitation: the parser assumes long-form framing (extension header +
-//! trailing CRC_32) regardless of `section_syntax_indicator`. ISO/IEC 13818-6
-//! permits SSI=0 sections whose trailing 4 bytes carry a checksum under a
-//! different rule; those are not distinguished here.
+//! SSI-dependent trailer: when `section_syntax_indicator == 1` the trailing
+//! 4 bytes are a CRC-32 (computed over the whole section); when SSI == 0
+//! they are an ISO/IEC 13818-6 checksum preserved verbatim in
+//! [`DsmccSection::checksum`]. For SSI=1 the serializer recomputes CRC-32;
+//! for SSI=0 the serializer re-emits the preserved checksum bytes.
 
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
@@ -26,12 +27,18 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// A DSM-CC section — minimal wrapper that validates header framing
 /// and carries the raw payload.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DsmccSection<'a> {
     /// The table_id byte (0x3A..=0x3F).
     pub table_id: u8,
+    /// `section_syntax_indicator` bit. When `true` the trailer is a computed
+    /// CRC-32; when `false` it is an ISO/IEC 13818-6 checksum preserved
+    /// verbatim in [`Self::checksum`].
+    pub section_syntax_indicator: bool,
+    /// `private_indicator` bit (byte 1, bit 6).
+    pub private_indicator: bool,
     /// 16-bit table_id_extension.
     pub extension_id: u16,
     /// 5-bit version_number.
@@ -42,8 +49,27 @@ pub struct DsmccSection<'a> {
     pub section_number: u8,
     /// last_section_number.
     pub last_section_number: u8,
-    /// Raw payload bytes (everything between the extension header and the CRC).
+    /// Raw payload bytes (everything between the extension header and the trailer).
     pub payload: &'a [u8],
+    /// Verbatim trailer bytes when `section_syntax_indicator == false` (an
+    /// ISO/IEC 13818-6 checksum). Ignored when SSI is `true`, where the
+    /// trailer is a computed CRC-32.
+    pub checksum: [u8; 4],
+}
+
+impl PartialEq for DsmccSection<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.table_id == other.table_id
+            && self.section_syntax_indicator == other.section_syntax_indicator
+            && self.private_indicator == other.private_indicator
+            && self.extension_id == other.extension_id
+            && self.version_number == other.version_number
+            && self.current_next_indicator == other.current_next_indicator
+            && self.section_number == other.section_number
+            && self.last_section_number == other.last_section_number
+            && self.payload == other.payload
+            && (self.section_syntax_indicator || self.checksum == other.checksum)
+    }
 }
 
 impl<'a> Parse<'a> for DsmccSection<'a> {
@@ -67,6 +93,8 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             });
         }
 
+        let section_syntax_indicator = (bytes[1] & 0x80) != 0;
+        let private_indicator = (bytes[1] & 0x40) != 0;
         let section_length = ((bytes[1] & 0x0F) as u16) << 8 | bytes[2] as u16;
         let total = super::check_section_length(
             bytes.len(),
@@ -85,14 +113,25 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
         let payload_end = total - CRC_LEN;
         let payload = &bytes[payload_start..payload_end];
 
+        let trailer_start = total - CRC_LEN;
+        let checksum = [
+            bytes[trailer_start],
+            bytes[trailer_start + 1],
+            bytes[trailer_start + 2],
+            bytes[trailer_start + 3],
+        ];
+
         Ok(DsmccSection {
             table_id,
+            section_syntax_indicator,
+            private_indicator,
             extension_id,
             version_number,
             current_next_indicator,
             section_number,
             last_section_number,
             payload,
+            checksum,
         })
     }
 }
@@ -114,7 +153,11 @@ impl Serialize for DsmccSection<'_> {
 
         let section_length: u16 = (len - MIN_HEADER_LEN) as u16;
         buf[0] = self.table_id;
-        buf[1] = super::SECTION_B1_FLAGS_PSI | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = if self.section_syntax_indicator {
+            super::SECTION_B1_FLAGS_PSI
+        } else {
+            (u8::from(self.private_indicator) << 6) | super::SECTION_B1_RESERVED_HI
+        } | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
@@ -125,9 +168,13 @@ impl Serialize for DsmccSection<'_> {
         let payload_end = payload_start + self.payload.len();
         buf[payload_start..payload_end].copy_from_slice(self.payload);
 
-        let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        let trailer_start = payload_end;
+        if self.section_syntax_indicator {
+            let crc = dvb_common::crc32_mpeg2::compute(&buf[..trailer_start]);
+            buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
+        } else {
+            buf[trailer_start..len].copy_from_slice(&self.checksum);
+        }
         Ok(len)
     }
 }
@@ -229,12 +276,15 @@ mod tests {
     fn serialize_round_trip_empty() {
         let sec = DsmccSection {
             table_id: 0x3B,
+            section_syntax_indicator: true,
+            private_indicator: false,
             extension_id: 0x0001,
             version_number: 0,
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
             payload: &[],
+            checksum: [0; 4],
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -247,17 +297,44 @@ mod tests {
         let payload: [u8; 5] = [0xDE, 0xAD, 0xBE, 0xEF, 0x00];
         let sec = DsmccSection {
             table_id: 0x3C,
+            section_syntax_indicator: true,
+            private_indicator: false,
             extension_id: 0xABCD,
             version_number: 3,
             current_next_indicator: true,
             section_number: 1,
             last_section_number: 2,
             payload: &payload,
+            checksum: [0; 4],
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
         let reparsed = DsmccSection::parse(&buf).unwrap();
         assert_eq!(sec, reparsed);
+    }
+
+    #[test]
+    fn serialize_round_trip_ssi_clear_preserves_checksum() {
+        let payload: [u8; 3] = [0x01, 0x02, 0x03];
+        let checksum: [u8; 4] = [0xAA, 0xBB, 0xCC, 0xDD];
+        let sec = DsmccSection {
+            table_id: 0x3B,
+            section_syntax_indicator: false,
+            private_indicator: true,
+            extension_id: 0x5678,
+            version_number: 1,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            payload: &payload,
+            checksum,
+        };
+        let mut buf = vec![0u8; sec.serialized_len()];
+        sec.serialize_into(&mut buf).unwrap();
+        assert_eq!(&buf[buf.len() - 4..], &checksum);
+        let reparsed = DsmccSection::parse(&buf).unwrap();
+        assert_eq!(sec, reparsed);
+        assert_eq!(reparsed.checksum, checksum);
     }
 
     #[test]

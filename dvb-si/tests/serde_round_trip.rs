@@ -29,7 +29,7 @@ use dvb_si::tables::{
     dsmcc::DsmccSection,
     eit::{EitEvent, EitKind, EitSection},
     int::{IntActionType, IntSection},
-    mpe::MpeDatagramSection,
+    mpe::{Checksum, MacAddress, MpeDatagramSection},
     mpe_fec::{MpeFecSection, RealTimeParameters as MpeFecRtp},
     mpe_ifec::{MpeIfecSection, RealTimeParameters as MpeIfecRtp},
     nit::{NitKind, NitSection, NitTransportStream},
@@ -217,14 +217,14 @@ fn eit_serializes_to_valid_json() {
         original_network_id: 0x0020,
         segment_last_section_number: 0,
         last_table_id: 0x4E,
-        events: vec![EitEvent {
-            event_id: 0x0001,
-            start_time_raw: [0xDA, 0x06, 0x12, 0x34, 0x56],
-            duration_raw: [0x00, 0x00, 0x10],
-            running_status: RunningStatus::Running,
-            free_ca_mode: false,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
+        events: vec![EitEvent::new(
+            0x0001,
+            [0xDA, 0x06, 0x12, 0x34, 0x56],
+            [0x00, 0x00, 0x10],
+            RunningStatus::Running,
+            false,
+            DescriptorLoop::new(&[]),
+        )],
     };
     let j = serde_json::to_string(&eit).expect("serialize EIT");
     assert_valid_json_with_keys(&j, &["kind", "service_id", "events"]);
@@ -252,10 +252,7 @@ fn nit_serializes_to_valid_json() {
 
 #[test]
 fn tot_serializes_to_valid_json() {
-    let tot = TotSection {
-        utc_time_raw: [0xDA, 0x06, 0x12, 0x34, 0x56],
-        descriptors: DescriptorLoop::new(&[]),
-    };
+    let tot = TotSection::new([0xDA, 0x06, 0x12, 0x34, 0x56], DescriptorLoop::new(&[]));
     let j = serde_json::to_string(&tot).expect("serialize TOT");
     assert_valid_json_with_keys(&j, &["utc_time_raw", "descriptors"]);
 }
@@ -476,7 +473,7 @@ fn cit_serializes_to_valid_json() {
         last_section_number: 0,
         transport_stream_id: 0x1234,
         original_network_id: 0x0020,
-        prepend_strings: &[],
+        prepend_strings: DvbText::new(&[]),
         crid_entries: vec![],
     };
     let j = serde_json::to_string(&cit).expect("serialize CIT");
@@ -521,7 +518,7 @@ fn mpe_datagram_section_serializes_to_valid_json() {
     let mpe = MpeDatagramSection {
         section_syntax_indicator: false,
         private_indicator: true,
-        mac_address: [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
+        mac_address: MacAddress([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
         payload_scrambling_control: 0b01,
         address_scrambling_control: 0b11,
         llc_snap_flag: true,
@@ -529,7 +526,7 @@ fn mpe_datagram_section_serializes_to_valid_json() {
         section_number: 3,
         last_section_number: 7,
         payload: &[0xAB, 0xCD],
-        checksum: [0xDE, 0xAD, 0xBE, 0xEF],
+        checksum: Checksum([0xDE, 0xAD, 0xBE, 0xEF]),
     };
     let j = serde_json::to_string(&mpe).expect("serialize MpeDatagramSection");
     assert_valid_json_with_keys(&j, &["mac_address", "payload", "checksum"]);

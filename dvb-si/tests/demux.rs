@@ -184,7 +184,7 @@ fn tot_crc_validated_emitted_and_corrupted_dropped() {
     assert_eq!(events.len(), 1);
     match events[0].table_section().unwrap() {
         AnyTableSection::TotSection(tot) => {
-            assert_eq!(tot.utc_time_raw, [0xE4, 0x09, 0x12, 0x34, 0x56]);
+            assert_eq!(tot.utc_time_raw(), [0xE4, 0x09, 0x12, 0x34, 0x56]);
         }
         other => panic!("expected TotSection, got {other:?}"),
     }

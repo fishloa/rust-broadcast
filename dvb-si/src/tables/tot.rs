@@ -30,11 +30,53 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD +
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct TotSection<'a> {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS).
-    pub utc_time_raw: [u8; 5],
+    /// Private — use [`utc_time_decoded`](Self::utc_time_decoded) for
+    /// decoded access.
+    pub(crate) utc_time_raw: [u8; 5],
     /// Raw descriptor bytes (typically local_time_offset_descriptor tag 0x58).
     /// Descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+}
+
+impl<'a> TotSection<'a> {
+    /// Decode the UTC time to a plain date-time struct (no `chrono` feature
+    /// required).
+    ///
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C.
+    #[must_use]
+    pub fn utc_time_decoded(&self) -> Option<dvb_common::time::MjdBcdDateTime> {
+        dvb_common::time::decode_mjd_bcd(self.utc_time_raw)
+    }
+
+    /// Set the UTC time, encoding it from a [`dvb_common::time::MjdBcdDateTime`].
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_utc_time_decoded(&mut self, dt: dvb_common::time::MjdBcdDateTime) -> Result<()> {
+        self.utc_time_raw = dvb_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
+            field: "TotSection::utc_time",
+            reason: "date not representable in 16-bit MJD",
+        })?;
+        Ok(())
+    }
+
+    /// Raw 5-byte UTC time field (for round-trip / serialization).
+    #[must_use]
+    pub fn utc_time_raw(&self) -> [u8; 5] {
+        self.utc_time_raw
+    }
+
+    /// Construct a `TotSection` from raw wire fields.
+    #[must_use]
+    pub fn new(utc_time_raw: [u8; 5], descriptors: DescriptorLoop<'a>) -> Self {
+        Self {
+            utc_time_raw,
+            descriptors,
+        }
+    }
 }
 
 #[cfg(feature = "chrono")]
@@ -129,7 +171,7 @@ impl Serialize for TotSection<'_> {
         buf[0] = TABLE_ID;
         // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
-        buf[1] = 0x70 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         let dl = self.descriptors.len() as u16;
@@ -173,7 +215,7 @@ mod tests {
     fn parse_with_no_descriptors() {
         let bytes = build_tot(&[]);
         let tot = TotSection::parse(&bytes).unwrap();
-        assert_eq!(tot.utc_time_raw, [0xE4, 0x09, 0x12, 0x34, 0x56]);
+        assert_eq!(tot.utc_time_raw(), [0xE4, 0x09, 0x12, 0x34, 0x56]);
         assert_eq!(tot.descriptors.raw(), &[] as &[u8]);
     }
 

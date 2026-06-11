@@ -140,6 +140,12 @@ pub(crate) const SECTION_B1_SSI: u8 = 0x80;
 /// Reserved bits `[5:4]` in long-form section byte 1, set to `11`.
 pub(crate) const SECTION_B1_RESERVED_HI: u8 = 0x30;
 
+/// Byte 1 flags nibble for short-form sections (no extension header, no CRC).
+///
+/// Layout: `section_syntax_indicator(0) | reserved_future_use(1) | reserved(11)`.
+/// Top nibble `0b0111` = `0x70`. Used by RST, ST, DIT, TDT, TOT.
+pub(crate) const SECTION_B1_FLAGS_SHORT: u8 = 0x70;
+
 /// Validate a section_length field and compute the total encoded length.
 ///
 /// Returns `total` (= `header_len + section_length`) on success, or

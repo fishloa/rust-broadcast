@@ -10,6 +10,7 @@
 //! just a single byte — there is no per-entry sub-structure to unfold.
 
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use dvb_common::{Parse, Serialize};
 
 /// `table_id` for Content Identifier Table.
@@ -41,9 +42,8 @@ pub struct CridEntry<'a> {
     /// `prepend_string_index` — index into the prepend-string block.
     /// `0xFF` means no prepend string (the unique string is the full CRID).
     pub prepend_string_index: u8,
-    /// `unique_string` — the unique portion of the CRID (borrowed from the
-    /// input buffer).
-    pub unique_string: &'a [u8],
+    /// `unique_string` — the unique portion of the CRID, decoded as DVB text.
+    pub unique_string: DvbText<'a>,
 }
 
 /// Content Identifier Table (ETSI TS 102 323 v1.4.1 §12.2, Table 119).
@@ -72,10 +72,9 @@ pub struct CitSection<'a> {
     pub transport_stream_id: u16,
     /// `original_network_id` of the originating network.
     pub original_network_id: u16,
-    /// Raw prepend-string block (null-terminated fragments addressed by index).
-    /// The wire `prepend_strings_length` byte is derived from
-    /// `prepend_strings.len()` on serialize (≤ 255).
-    pub prepend_strings: &'a [u8],
+    /// Prepend-string block (null-terminated fragments addressed by index),
+    /// decoded as DVB text.
+    pub prepend_strings: DvbText<'a>,
     /// CRID entry loop — unfolded per Table 119.
     pub crid_entries: Vec<CridEntry<'a>>,
 }
@@ -88,8 +87,9 @@ impl<'a> CitSection<'a> {
     /// second, etc. The returned slice includes everything up to (but not
     /// including) the terminating NUL byte; an empty slice means the index
     /// points to an empty or immediately-terminated fragment.
-    pub fn prepend_string(&self, index: u8) -> Option<&'a [u8]> {
-        let mut remaining = self.prepend_strings;
+    pub fn prepend_string(&self, index: u8) -> Option<&[u8]> {
+        let raw: &[u8] = &self.prepend_strings;
+        let mut remaining: &[u8] = raw;
         let mut current: u8 = 0;
         while !remaining.is_empty() {
             let nul_pos = remaining
@@ -157,7 +157,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
                 available: payload_end.saturating_sub(ps_start),
             });
         }
-        let prepend_strings = &bytes[ps_start..ps_end];
+        let prepend_strings = DvbText::new(&bytes[ps_start..ps_end]);
 
         let mut pos = ps_end;
         let mut crid_entries = Vec::new();
@@ -180,7 +180,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
                     what: "CitSection unique_string",
                 });
             }
-            let unique_string = &bytes[pos..pos + unique_string_length];
+            let unique_string = DvbText::new(&bytes[pos..pos + unique_string_length]);
             pos += unique_string_length;
             crid_entries.push(CridEntry {
                 crid_ref,
@@ -258,7 +258,7 @@ impl Serialize for CitSection<'_> {
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
         let ps_end = ps_start + self.prepend_strings.len();
-        buf[ps_start..ps_end].copy_from_slice(self.prepend_strings);
+        buf[ps_start..ps_end].copy_from_slice(&self.prepend_strings);
 
         let mut pos = ps_end;
         for entry in &self.crid_entries {
@@ -266,7 +266,7 @@ impl Serialize for CitSection<'_> {
             buf[pos + 2] = entry.prepend_string_index;
             buf[pos + 3] = entry.unique_string.len() as u8;
             pos += CRID_ENTRY_FIXED_LEN;
-            buf[pos..pos + entry.unique_string.len()].copy_from_slice(entry.unique_string);
+            buf[pos..pos + entry.unique_string.len()].copy_from_slice(&entry.unique_string);
             pos += entry.unique_string.len();
         }
 
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn parse_happy_path_no_crid_entries() {
-        let prepend = b"CRID://example.com\x00";
+        let prepend = DvbText::new(b"CRID://example.com\x00");
         let cit = CitSection {
             private_indicator: false,
             service_id: 0x1234,
@@ -311,17 +311,17 @@ mod tests {
 
     #[test]
     fn parse_happy_path_with_crid_entries() {
-        let prepend = b"crid://bbc.co.uk/\x00";
+        let prepend = DvbText::new(b"crid://bbc.co.uk/\x00");
         let entries = vec![
             CridEntry {
                 crid_ref: 0x0001,
                 prepend_string_index: 0x00,
-                unique_string: b"ep1",
+                unique_string: DvbText::new(b"ep1"),
             },
             CridEntry {
                 crid_ref: 0x0002,
                 prepend_string_index: 0xFF,
-                unique_string: b"crid://bbc.co.uk/EV-1",
+                unique_string: DvbText::new(b"crid://bbc.co.uk/EV-1"),
             },
         ];
         let cit = CitSection {
@@ -343,22 +343,22 @@ mod tests {
         assert_eq!(parsed.crid_entries.len(), 2);
         assert_eq!(parsed.crid_entries[0].crid_ref, 0x0001);
         assert_eq!(parsed.crid_entries[0].prepend_string_index, 0x00);
-        assert_eq!(parsed.crid_entries[0].unique_string, b"ep1");
+        assert_eq!(parsed.crid_entries[0].unique_string, DvbText::new(b"ep1"));
         assert_eq!(parsed.crid_entries[1].crid_ref, 0x0002);
         assert_eq!(parsed.crid_entries[1].prepend_string_index, 0xFF);
         assert_eq!(
             parsed.crid_entries[1].unique_string,
-            b"crid://bbc.co.uk/EV-1"
+            DvbText::new(b"crid://bbc.co.uk/EV-1")
         );
     }
 
     #[test]
     fn byte_exact_round_trip() {
-        let prepend = b"crid://example.com/\x00";
+        let prepend = DvbText::new(b"crid://example.com/\x00");
         let entries = vec![CridEntry {
             crid_ref: 0x0042,
             prepend_string_index: 0x00,
-            unique_string: b"episode42",
+            unique_string: DvbText::new(b"episode42"),
         }];
         let original = CitSection {
             private_indicator: true,
@@ -380,7 +380,10 @@ mod tests {
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         assert_eq!(parsed.crid_entries.len(), 1);
         assert_eq!(parsed.crid_entries[0].crid_ref, 0x0042);
-        assert_eq!(parsed.crid_entries[0].unique_string, b"episode42");
+        assert_eq!(
+            parsed.crid_entries[0].unique_string,
+            DvbText::new(b"episode42")
+        );
     }
 
     #[test]
@@ -394,7 +397,7 @@ mod tests {
             last_section_number: 0,
             transport_stream_id: 0x0001,
             original_network_id: 0x0001,
-            prepend_strings: &[],
+            prepend_strings: DvbText::new(&[]),
             crid_entries: Vec::new(),
         };
         let mut buf = vec![0u8; cit.serialized_len()];
@@ -416,7 +419,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_truncated_crid_entry() {
-        let prepend: &[u8] = &[];
+        let prepend = DvbText::new(&[]);
         let cit = CitSection {
             private_indicator: false,
             service_id: 0x0001,
@@ -450,7 +453,7 @@ mod tests {
             last_section_number: 0,
             transport_stream_id: 0x0001,
             original_network_id: 0x0001,
-            prepend_strings: &[],
+            prepend_strings: DvbText::new(&[]),
             crid_entries: Vec::new(),
         };
         let mut buf = vec![0u8; 2];
@@ -499,7 +502,7 @@ mod tests {
             last_section_number: 0,
             transport_stream_id: 0x0001,
             original_network_id: 0x0001,
-            prepend_strings: b"crid://example.com/\x00crid://other.com/\x00",
+            prepend_strings: DvbText::new(b"crid://example.com/\x00crid://other.com/\x00"),
             crid_entries: Vec::new(),
         };
         assert_eq!(cit.prepend_string(0), Some(&b"crid://example.com/"[..]));

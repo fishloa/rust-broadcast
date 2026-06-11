@@ -86,7 +86,11 @@ impl<'a> Parse<'a> for PatSection {
         let mut pos = 8;
         while pos < end {
             if pos + ENTRY_LEN > end {
-                break;
+                return Err(Error::BufferTooShort {
+                    need: end - pos,
+                    have: 0,
+                    what: "PatSection trailing entry bytes",
+                });
             }
             let chunk = &bytes[pos..pos + ENTRY_LEN];
             let program_number = u16::from_be_bytes([chunk[0], chunk[1]]);
@@ -307,5 +311,24 @@ mod tests {
         assert_eq!(pat.nit_pid(), Some(0x0010));
         assert_eq!(pat.programmes().count(), 1);
         assert_eq!(pat.programmes().next().unwrap().program_number, 1);
+    }
+
+    #[test]
+    fn parse_rejects_trailing_slack_bytes() {
+        let mut bytes = build_pat(1, 0, &[(1, 0x100)]);
+        let sl = (bytes.len() - MIN_HEADER_LEN) as u16;
+        bytes[1] = (bytes[1] & 0xF0) | (((sl + 2) >> 8) as u8 & 0x0F);
+        bytes[2] = ((sl + 2) & 0xFF) as u8;
+        bytes.extend_from_slice(&[0xFF, 0xFF]);
+        let crc_pos = bytes.len();
+        let crc = dvb_common::crc32_mpeg2::compute(&bytes[..crc_pos - CRC_LEN]);
+        bytes[crc_pos - CRC_LEN..crc_pos].copy_from_slice(&crc.to_be_bytes());
+        assert!(matches!(
+            PatSection::parse(&bytes).unwrap_err(),
+            Error::BufferTooShort {
+                what: "PatSection trailing entry bytes",
+                ..
+            }
+        ));
     }
 }

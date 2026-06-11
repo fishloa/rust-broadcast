@@ -106,7 +106,7 @@ impl Serialize for StSection {
 
         // Byte 1: SSI=0, reserved_future_use='1', reserved='11', upper nibble of
         // section_length. Top nibble 0b0111 = 0x70, matching DIT/RST/TDT/TOT.
-        buf[1] = 0x70 | ((self.payload.len() >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((self.payload.len() >> 8) as u8 & 0x0F);
 
         // Byte 2: section_length low byte
         buf[2] = (self.payload.len() & 0xFF) as u8;
