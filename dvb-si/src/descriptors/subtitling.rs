@@ -14,7 +14,9 @@ pub const TAG: u8 = 0x59;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 8;
 
-/// Subtitling type — ETSI EN 300 468 §6.2.41.
+/// Subtitling type — ETSI EN 300 468 Table 26 (`stream_content = 0x03`).
+///
+/// Wire values `0x10`–`0x2F` are defined per §6.2.41 / Table 26.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -35,6 +37,9 @@ pub enum SubtitlingType {
     DvbSubtitlesNormal2p21x1,
     /// 0x14 — DVB subtitles (normal) for display on a high definition monitor.
     DvbSubtitlesNormalHd,
+    /// 0x16 — DVB subtitles (normal) for display on an ultra high definition
+    /// monitor.
+    DvbSubtitlesNormalUhd,
     /// 0x20 — DVB subtitles (hard of hearing) with no monitor aspect ratio
     /// critical.
     DvbSubtitlesHardOfHearing,
@@ -50,8 +55,13 @@ pub enum SubtitlingType {
     /// 0x24 — DVB subtitles (hard of hearing) for display on a high definition
     /// monitor.
     DvbSubtitlesHardOfHearingHd,
-    /// 0x30 — open (hard-coded) subtitles using IMSC-1.
-    OpenImsc1,
+    /// 0x26 — DVB subtitles (hard of hearing) for display on an ultra high
+    /// definition monitor.
+    DvbSubtitlesHardOfHearingUhd,
+    /// 0x30 — open (in-vision) sign language interpretation for the deaf.
+    OpenSignLanguage,
+    /// 0x31 — closed sign language interpretation for the deaf.
+    ClosedSignLanguage,
     /// Reserved/unallocated wire value, preserved verbatim for round-trip.
     Reserved(u8),
 }
@@ -70,12 +80,15 @@ impl SubtitlingType {
             0x12 => Self::DvbSubtitlesNormal16x9,
             0x13 => Self::DvbSubtitlesNormal2p21x1,
             0x14 => Self::DvbSubtitlesNormalHd,
+            0x16 => Self::DvbSubtitlesNormalUhd,
             0x20 => Self::DvbSubtitlesHardOfHearing,
             0x21 => Self::DvbSubtitlesHardOfHearing4x3,
             0x22 => Self::DvbSubtitlesHardOfHearing16x9,
             0x23 => Self::DvbSubtitlesHardOfHearing2p21x1,
             0x24 => Self::DvbSubtitlesHardOfHearingHd,
-            0x30 => Self::OpenImsc1,
+            0x26 => Self::DvbSubtitlesHardOfHearingUhd,
+            0x30 => Self::OpenSignLanguage,
+            0x31 => Self::ClosedSignLanguage,
             v => Self::Reserved(v),
         }
     }
@@ -92,12 +105,15 @@ impl SubtitlingType {
             Self::DvbSubtitlesNormal16x9 => 0x12,
             Self::DvbSubtitlesNormal2p21x1 => 0x13,
             Self::DvbSubtitlesNormalHd => 0x14,
+            Self::DvbSubtitlesNormalUhd => 0x16,
             Self::DvbSubtitlesHardOfHearing => 0x20,
             Self::DvbSubtitlesHardOfHearing4x3 => 0x21,
             Self::DvbSubtitlesHardOfHearing16x9 => 0x22,
             Self::DvbSubtitlesHardOfHearing2p21x1 => 0x23,
             Self::DvbSubtitlesHardOfHearingHd => 0x24,
-            Self::OpenImsc1 => 0x30,
+            Self::DvbSubtitlesHardOfHearingUhd => 0x26,
+            Self::OpenSignLanguage => 0x30,
+            Self::ClosedSignLanguage => 0x31,
             Self::Reserved(v) => v,
         }
     }
@@ -114,6 +130,7 @@ impl SubtitlingType {
             Self::DvbSubtitlesNormal16x9 => "DVB subtitles (normal), 16:9",
             Self::DvbSubtitlesNormal2p21x1 => "DVB subtitles (normal), 2.21:1",
             Self::DvbSubtitlesNormalHd => "DVB subtitles (normal), HD",
+            Self::DvbSubtitlesNormalUhd => "DVB subtitles (normal), UHD",
             Self::DvbSubtitlesHardOfHearing => {
                 "DVB subtitles (hard of hearing), no aspect ratio critical"
             }
@@ -121,7 +138,9 @@ impl SubtitlingType {
             Self::DvbSubtitlesHardOfHearing16x9 => "DVB subtitles (hard of hearing), 16:9",
             Self::DvbSubtitlesHardOfHearing2p21x1 => "DVB subtitles (hard of hearing), 2.21:1",
             Self::DvbSubtitlesHardOfHearingHd => "DVB subtitles (hard of hearing), HD",
-            Self::OpenImsc1 => "open IMSC-1 subtitles",
+            Self::DvbSubtitlesHardOfHearingUhd => "DVB subtitles (hard of hearing), UHD",
+            Self::OpenSignLanguage => "open (in-vision) sign language interpretation",
+            Self::ClosedSignLanguage => "closed sign language interpretation",
             Self::Reserved(_) => "reserved",
         }
     }
@@ -133,7 +152,7 @@ impl SubtitlingType {
 pub struct SubtitlingEntry {
     /// ISO 639-2 language code.
     pub language_code: LangCode,
-    /// subtitling_type (ETSI EN 300 468 §6.2.41).
+    /// subtitling_type (ETSI EN 300 468 Table 26, `stream_content = 0x03`).
     pub subtitling_type: SubtitlingType,
     /// composition_page_id.
     pub composition_page_id: u16,
@@ -290,6 +309,22 @@ mod tests {
         assert_eq!(
             SubtitlingType::DvbSubtitlesNormal.name(),
             "DVB subtitles (normal), no aspect ratio critical"
+        );
+        assert_eq!(
+            SubtitlingType::DvbSubtitlesNormalUhd.name(),
+            "DVB subtitles (normal), UHD"
+        );
+        assert_eq!(
+            SubtitlingType::DvbSubtitlesHardOfHearingUhd.name(),
+            "DVB subtitles (hard of hearing), UHD"
+        );
+        assert_eq!(
+            SubtitlingType::OpenSignLanguage.name(),
+            "open (in-vision) sign language interpretation"
+        );
+        assert_eq!(
+            SubtitlingType::ClosedSignLanguage.name(),
+            "closed sign language interpretation"
         );
         assert_eq!(SubtitlingType::Reserved(0x50).name(), "reserved");
     }

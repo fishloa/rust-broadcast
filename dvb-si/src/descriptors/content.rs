@@ -51,8 +51,12 @@ pub enum ContentGenre {
 
 impl ContentGenre {
     /// Convert a level-1 nibble to a [`ContentGenre`].
+    ///
+    /// The input must be a 4-bit nibble value (`0..=0xF`); values outside
+    /// this range are masked with `& 0x0F`.
     #[must_use]
     pub fn from_nibble_1(n1: u8) -> Self {
+        let n1 = n1 & 0x0F;
         match n1 {
             0x0 => Self::UndefinedContent,
             0x1 => Self::MovieDrama,
@@ -70,6 +74,57 @@ impl ContentGenre {
             0xD | 0xE => Self::Reserved(n1),
             0xF => Self::UserDefined(n1),
             _ => Self::Reserved(n1),
+        }
+    }
+
+    /// Returns the level-1 nibble for this genre (inverse of
+    /// [`ContentGenre::from_nibble_1`]).
+    #[must_use]
+    pub fn to_nibble_1(self) -> u8 {
+        self.to_u8()
+    }
+
+    /// Returns the wire byte for this value (same as the level-1 nibble).
+    #[must_use]
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::UndefinedContent => 0x0,
+            Self::MovieDrama => 0x1,
+            Self::NewsCurrentAffairs => 0x2,
+            Self::ShowGameShow => 0x3,
+            Self::Sports => 0x4,
+            Self::ChildrenYouth => 0x5,
+            Self::MusicBalletDance => 0x6,
+            Self::ArtsCulture => 0x7,
+            Self::SocialPoliticalEconomics => 0x8,
+            Self::EducationScienceFactual => 0x9,
+            Self::LeisureHobbies => 0xA,
+            Self::SpecialCharacteristics => 0xB,
+            Self::Adult => 0xC,
+            Self::Reserved(v) => v,
+            Self::UserDefined(v) => v,
+        }
+    }
+
+    /// Returns the broad level-1 category name per EN 300 468 Table 29.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::UndefinedContent => "undefined content",
+            Self::MovieDrama => "Movie/Drama",
+            Self::NewsCurrentAffairs => "News/Current Affairs",
+            Self::ShowGameShow => "Show/Game Show",
+            Self::Sports => "Sports",
+            Self::ChildrenYouth => "Children/Youth",
+            Self::MusicBalletDance => "Music/Ballet/Dance",
+            Self::ArtsCulture => "Arts/Culture",
+            Self::SocialPoliticalEconomics => "Social/Political/Economics",
+            Self::EducationScienceFactual => "Education/Science/Factual",
+            Self::LeisureHobbies => "Leisure hobbies",
+            Self::SpecialCharacteristics => "Special characteristics",
+            Self::Adult => "Adult",
+            Self::Reserved(_) => "reserved",
+            Self::UserDefined(_) => "user defined",
         }
     }
 }
@@ -372,7 +427,6 @@ mod tests {
 
     #[test]
     fn parse_rejects_body_truncation() {
-        // length=4 means body is 4 bytes, but only 1 byte follows header
         assert!(matches!(
             ContentDescriptor::parse(&[TAG, 4, 0x01]).unwrap_err(),
             Error::BufferTooShort { .. }
@@ -381,7 +435,6 @@ mod tests {
 
     #[test]
     fn parse_rejects_length_not_multiple_of_2() {
-        // length=3 is odd, can't form complete entries
         assert!(matches!(
             ContentDescriptor::parse(&[TAG, 3, 0x01, 0x02, 0x03]).unwrap_err(),
             Error::InvalidDescriptor { .. }
@@ -415,5 +468,32 @@ mod tests {
         let bytes = [TAG, 0];
         let result = ContentDescriptor::parse(&bytes).unwrap();
         assert!(result.entries.is_empty());
+    }
+
+    #[test]
+    fn content_genre_nibble1_round_trip() {
+        for n1 in 0..=0xF_u8 {
+            let genre = ContentGenre::from_nibble_1(n1);
+            assert_eq!(
+                genre.to_nibble_1(),
+                n1,
+                "round-trip failed for nibble 0x{n1:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn content_genre_nibble1_masks_wide_input() {
+        assert_eq!(ContentGenre::from_nibble_1(0x21), ContentGenre::MovieDrama);
+        assert_eq!(ContentGenre::from_nibble_1(0xFF).to_nibble_1(), 0x0F);
+    }
+
+    #[test]
+    fn content_genre_name_for_all_categories() {
+        assert_eq!(ContentGenre::UndefinedContent.name(), "undefined content");
+        assert_eq!(ContentGenre::MovieDrama.name(), "Movie/Drama");
+        assert_eq!(ContentGenre::Sports.name(), "Sports");
+        assert_eq!(ContentGenre::Reserved(0xD).name(), "reserved");
+        assert_eq!(ContentGenre::UserDefined(0xF).name(), "user defined");
     }
 }

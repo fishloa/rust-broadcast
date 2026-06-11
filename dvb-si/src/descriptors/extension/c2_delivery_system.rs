@@ -6,13 +6,17 @@ impl<'a> ExtensionBodyDef<'a> for C2DeliverySystem {
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";
 }
 
-/// C2 system tuning frequency type — ETSI EN 300 468 Table 115 / Table 117.
+/// C2 system tuning frequency type — ETSI EN 300 468 Table 116.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum C2TuningFrequencyType {
-    /// Frequency as defined for the C2 system.
-    C2SystemFrequency,
+    /// 0b00 — Data Slice tuning frequency.
+    DataSliceTuningFrequency,
+    /// 0b01 — C2 system centre frequency.
+    C2SystemCentreFrequency,
+    /// 0b10 — Initial tuning position for a (dependent) Static Data Slice.
+    InitialTuningPositionStaticDataSlice,
     /// Reserved / future use.
     Reserved(u8),
 }
@@ -22,7 +26,9 @@ impl C2TuningFrequencyType {
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
         match v {
-            0 => C2TuningFrequencyType::C2SystemFrequency,
+            0 => C2TuningFrequencyType::DataSliceTuningFrequency,
+            1 => C2TuningFrequencyType::C2SystemCentreFrequency,
+            2 => C2TuningFrequencyType::InitialTuningPositionStaticDataSlice,
             other => C2TuningFrequencyType::Reserved(other),
         }
     }
@@ -31,22 +37,28 @@ impl C2TuningFrequencyType {
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
     pub fn to_u8(self) -> u8 {
         match self {
-            C2TuningFrequencyType::C2SystemFrequency => 0,
+            C2TuningFrequencyType::DataSliceTuningFrequency => 0,
+            C2TuningFrequencyType::C2SystemCentreFrequency => 1,
+            C2TuningFrequencyType::InitialTuningPositionStaticDataSlice => 2,
             C2TuningFrequencyType::Reserved(v) => v,
         }
     }
 
     #[must_use]
-    /// Human-readable spec name per the governing Table.
+    /// Human-readable spec name per Table 116.
     pub fn name(self) -> &'static str {
         match self {
-            C2TuningFrequencyType::C2SystemFrequency => "C2 system tuning frequency",
+            C2TuningFrequencyType::DataSliceTuningFrequency => "Data Slice tuning frequency",
+            C2TuningFrequencyType::C2SystemCentreFrequency => "C2 system centre frequency",
+            C2TuningFrequencyType::InitialTuningPositionStaticDataSlice => {
+                "initial tuning position for a Static Data Slice"
+            }
             C2TuningFrequencyType::Reserved(_) => "reserved",
         }
     }
 }
 
-/// Active OFDM symbol duration — ETSI EN 300 468 Table 116.
+/// Active OFDM symbol duration — ETSI EN 300 468 Table 117.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -146,11 +158,11 @@ pub struct C2DeliverySystem {
     pub data_slice_id: u8,
     /// C2_System_tuning_frequency(32).
     pub c2_system_tuning_frequency: u32,
-    /// C2_System_tuning_frequency_type(2).
+    /// C2_System_tuning_frequency_type(2) — Table 116.
     pub c2_system_tuning_frequency_type: C2TuningFrequencyType,
-    /// active_OFDM_symbol_duration(3).
+    /// active_OFDM_symbol_duration(3) — Table 117.
     pub active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
-    /// guard_interval(3).
+    /// guard_interval(3) — Table 118.
     pub guard_interval: C2GuardInterval,
 }
 
@@ -213,6 +225,23 @@ mod tests {
     }
 
     #[test]
+    fn c2_tuning_frequency_type_name() {
+        assert_eq!(
+            C2TuningFrequencyType::DataSliceTuningFrequency.name(),
+            "Data Slice tuning frequency"
+        );
+        assert_eq!(
+            C2TuningFrequencyType::C2SystemCentreFrequency.name(),
+            "C2 system centre frequency"
+        );
+        assert_eq!(
+            C2TuningFrequencyType::InitialTuningPositionStaticDataSlice.name(),
+            "initial tuning position for a Static Data Slice"
+        );
+        assert_eq!(C2TuningFrequencyType::Reserved(3).name(), "reserved");
+    }
+
+    #[test]
     fn active_ofdm_symbol_duration_roundtrip() {
         for b in 0..=0xFFu8 {
             assert_eq!(ActiveOfdmSymbolDuration::from_u8(b).to_u8(), b);
@@ -239,13 +268,49 @@ mod tests {
                 assert_eq!(b.c2_system_tuning_frequency, 0x1234_5678);
                 assert_eq!(
                     b.c2_system_tuning_frequency_type,
-                    C2TuningFrequencyType::C2SystemFrequency
+                    C2TuningFrequencyType::DataSliceTuningFrequency
                 );
                 assert_eq!(
                     b.active_ofdm_symbol_duration,
                     ActiveOfdmSymbolDuration::Us597_33
                 );
                 assert_eq!(b.guard_interval, C2GuardInterval::G1_64);
+            }
+            other => panic!("expected C2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_c2_delivery_system_centre_frequency() {
+        let packed = 0x01u8 << 6;
+        let sel = [0x05, 0x09, 0x12, 0x34, 0x56, 0x78, packed];
+        let bytes = wrap(0x0D, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2DeliverySystem(b) => {
+                assert_eq!(
+                    b.c2_system_tuning_frequency_type,
+                    C2TuningFrequencyType::C2SystemCentreFrequency
+                );
+            }
+            other => panic!("expected C2DeliverySystem, got {other:?}"),
+        }
+        round_trip(&d);
+    }
+
+    #[test]
+    fn parse_c2_delivery_system_initial_tuning() {
+        let packed = 0x02u8 << 6;
+        let sel = [0x05, 0x09, 0x12, 0x34, 0x56, 0x78, packed];
+        let bytes = wrap(0x0D, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2DeliverySystem(b) => {
+                assert_eq!(
+                    b.c2_system_tuning_frequency_type,
+                    C2TuningFrequencyType::InitialTuningPositionStaticDataSlice
+                );
             }
             other => panic!("expected C2DeliverySystem, got {other:?}"),
         }

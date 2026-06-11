@@ -7,7 +7,7 @@
 
 use dvb_bbframe::crc::crc8;
 use dvb_bbframe::header::Bbheader;
-use dvb_bbframe::issy::Issy;
+use dvb_bbframe::issy::{Issy, SignallingKind};
 
 #[test]
 fn bbheader_serializes_to_valid_json() {
@@ -37,7 +37,10 @@ fn issy_serializes_to_valid_json() {
     let cases = [
         (Issy::IscrShort(0x1234), "IscrShort"),
         (Issy::IscrLong(0x0003_FFFF), "IscrLong"),
-        (Issy::Signalling(0x0012_3456), "Signalling"),
+        (
+            Issy::Signalling(SignallingKind::Reserved(0x0012_3456)),
+            "Signalling",
+        ),
     ];
     for (issy, tag) in cases {
         let v = serde_json::to_value(issy).expect("serialize Issy");

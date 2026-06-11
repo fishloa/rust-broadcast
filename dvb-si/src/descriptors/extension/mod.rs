@@ -565,7 +565,7 @@ mod tests {
                 plp_id: 1,
                 data_slice_id: 2,
                 c2_system_tuning_frequency: 0xDEAD_BEEF,
-                c2_system_tuning_frequency_type: C2TuningFrequencyType::Reserved(1),
+                c2_system_tuning_frequency_type: C2TuningFrequencyType::C2SystemCentreFrequency,
                 active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::Reserved(2),
                 guard_interval: C2GuardInterval::Reserved(3),
             }),

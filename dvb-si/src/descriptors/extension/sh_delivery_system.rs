@@ -73,6 +73,7 @@ impl ShDiversityMode {
 /// Polarization for SH — ETSI EN 300 468 Table 123.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShPolarization {
     /// Linear horizontal.
     LinearHorizontal,
@@ -82,6 +83,46 @@ pub enum ShPolarization {
     CircularLeft,
     /// Circular right.
     CircularRight,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl ShPolarization {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::LinearHorizontal,
+            1 => Self::LinearVertical,
+            2 => Self::CircularLeft,
+            3 => Self::CircularRight,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::LinearHorizontal => 0,
+            Self::LinearVertical => 1,
+            Self::CircularLeft => 2,
+            Self::CircularRight => 3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LinearHorizontal => "linear horizontal",
+            Self::LinearVertical => "linear vertical",
+            Self::CircularLeft => "circular left",
+            Self::CircularRight => "circular right",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
 
 /// Roll-off factor for SH — ETSI EN 300 468 Table 124.
@@ -99,6 +140,41 @@ pub enum ShRollOff {
     Reserved(u8),
 }
 
+impl ShRollOff {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Alpha035,
+            1 => Self::Alpha025,
+            2 => Self::Alpha015,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Alpha035 => 0,
+            Self::Alpha025 => 1,
+            Self::Alpha015 => 2,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Alpha035 => "α = 0.35",
+            Self::Alpha025 => "α = 0.25",
+            Self::Alpha015 => "α = 0.15",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Modulation mode for TDM — ETSI EN 300 468 Table 125.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -112,6 +188,41 @@ pub enum ShModulationModeType {
     Apsk16,
     /// Reserved / future use.
     Reserved(u8),
+}
+
+impl ShModulationModeType {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Qpsk,
+            1 => Self::Psk8,
+            2 => Self::Apsk16,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Qpsk => 0,
+            Self::Psk8 => 1,
+            Self::Apsk16 => 2,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Qpsk => "QPSK",
+            Self::Psk8 => "8PSK",
+            Self::Apsk16 => "16APSK",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
 
 /// Code rate for SH — ETSI EN 300 468 Table 126 (4 bits).
@@ -228,6 +339,47 @@ pub enum ShBandwidth {
     Reserved(u8),
 }
 
+impl ShBandwidth {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Mhz8,
+            1 => Self::Mhz7,
+            2 => Self::Mhz6,
+            3 => Self::Mhz5,
+            4 => Self::Mhz1_7,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Mhz8 => 0,
+            Self::Mhz7 => 1,
+            Self::Mhz6 => 2,
+            Self::Mhz5 => 3,
+            Self::Mhz1_7 => 4,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mhz8 => "8 MHz",
+            Self::Mhz7 => "7 MHz",
+            Self::Mhz6 => "6 MHz",
+            Self::Mhz5 => "5 MHz",
+            Self::Mhz1_7 => "1.7 MHz",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Constellation and hierarchy — ETSI EN 300 468 Table 130 (3 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -247,9 +399,51 @@ pub enum ShConstellationAndHierarchy {
     Reserved(u8),
 }
 
+impl ShConstellationAndHierarchy {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Qpsk,
+            1 => Self::Qam16NonHierarchical,
+            2 => Self::Qam16Alpha1,
+            3 => Self::Qam16Alpha2,
+            4 => Self::Qam16Alpha3,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Qpsk => 0,
+            Self::Qam16NonHierarchical => 1,
+            Self::Qam16Alpha1 => 2,
+            Self::Qam16Alpha2 => 3,
+            Self::Qam16Alpha3 => 4,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Qpsk => "QPSK",
+            Self::Qam16NonHierarchical => "16QAM, non-hierarchical",
+            Self::Qam16Alpha1 => "16QAM, α = 1",
+            Self::Qam16Alpha2 => "16QAM, α = 2",
+            Self::Qam16Alpha3 => "16QAM, α = 3",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
 /// Guard interval for OFDM — ETSI EN 300 468 Table 131 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShGuardInterval {
     /// 1/32.
     G1_32,
@@ -259,11 +453,52 @@ pub enum ShGuardInterval {
     G1_8,
     /// 1/4.
     G1_4,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl ShGuardInterval {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::G1_32,
+            1 => Self::G1_16,
+            2 => Self::G1_8,
+            3 => Self::G1_4,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::G1_32 => 0,
+            Self::G1_16 => 1,
+            Self::G1_8 => 2,
+            Self::G1_4 => 3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::G1_32 => "1/32",
+            Self::G1_16 => "1/16",
+            Self::G1_8 => "1/8",
+            Self::G1_4 => "1/4",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
 
 /// Transmission mode for OFDM — ETSI EN 300 468 Table 132 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShTransmissionMode {
     /// 1k mode.
     Mode1k,
@@ -273,6 +508,46 @@ pub enum ShTransmissionMode {
     Mode4k,
     /// 8k mode.
     Mode8k,
+    /// Reserved / future use.
+    Reserved(u8),
+}
+
+impl ShTransmissionMode {
+    #[must_use]
+    /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0 => Self::Mode1k,
+            1 => Self::Mode2k,
+            2 => Self::Mode4k,
+            3 => Self::Mode8k,
+            other => Self::Reserved(other),
+        }
+    }
+
+    #[must_use]
+    /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::Mode1k => 0,
+            Self::Mode2k => 1,
+            Self::Mode4k => 2,
+            Self::Mode8k => 3,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Human-readable spec name per the governing Table.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mode1k => "1k mode",
+            Self::Mode2k => "2k mode",
+            Self::Mode4k => "4k mode",
+            Self::Mode8k => "8k mode",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +656,6 @@ impl<'a> Parse<'a> for ShDeliverySystem {
         let mut pos = 1;
         let mut modulations = Vec::new();
         while pos < sel.len() {
-            // Need flags byte + 2 modulation bytes
             if sel.len() - pos < 3 {
                 return Err(Error::BufferTooShort {
                     need: pos + 3,
@@ -398,28 +672,9 @@ impl<'a> Parse<'a> for ShDeliverySystem {
             pos += 3;
 
             let modulation = if modulation_type == 0 {
-                // TDM
-                let pol_raw = mb0 >> 6;
-                let polarization = match pol_raw {
-                    0 => ShPolarization::LinearHorizontal,
-                    1 => ShPolarization::LinearVertical,
-                    2 => ShPolarization::CircularLeft,
-                    _ => ShPolarization::CircularRight,
-                };
-                let ro_raw = (mb0 >> 4) & 0x03;
-                let roll_off = match ro_raw {
-                    0 => ShRollOff::Alpha035,
-                    1 => ShRollOff::Alpha025,
-                    2 => ShRollOff::Alpha015,
-                    v => ShRollOff::Reserved(v),
-                };
-                let mm_raw = (mb0 >> 2) & 0x03;
-                let modulation_mode = match mm_raw {
-                    0 => ShModulationModeType::Qpsk,
-                    1 => ShModulationModeType::Psk8,
-                    2 => ShModulationModeType::Apsk16,
-                    v => ShModulationModeType::Reserved(v),
-                };
+                let polarization = ShPolarization::from_u8(mb0 >> 6);
+                let roll_off = ShRollOff::from_u8((mb0 >> 4) & 0x03);
+                let modulation_mode = ShModulationModeType::from_u8((mb0 >> 2) & 0x03);
                 let code_rate_raw = ((mb0 & 0x03) << 2) | (mb1 >> 6);
                 let code_rate = ShCodeRate::from_u8(code_rate_raw);
                 let symbol_rate = (mb1 >> 1) & 0x1F;
@@ -431,42 +686,14 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                     symbol_rate,
                 }
             } else {
-                // OFDM
-                let bw_raw = mb0 >> 5;
-                let bandwidth = match bw_raw {
-                    0 => ShBandwidth::Mhz8,
-                    1 => ShBandwidth::Mhz7,
-                    2 => ShBandwidth::Mhz6,
-                    3 => ShBandwidth::Mhz5,
-                    4 => ShBandwidth::Mhz1_7,
-                    v => ShBandwidth::Reserved(v),
-                };
+                let bandwidth = ShBandwidth::from_u8(mb0 >> 5);
                 let priority = ((mb0 >> 4) & 0x01) != 0;
-                let cah_raw = (mb0 >> 1) & 0x07;
-                let constellation_and_hierarchy = match cah_raw {
-                    0 => ShConstellationAndHierarchy::Qpsk,
-                    1 => ShConstellationAndHierarchy::Qam16NonHierarchical,
-                    2 => ShConstellationAndHierarchy::Qam16Alpha1,
-                    3 => ShConstellationAndHierarchy::Qam16Alpha2,
-                    4 => ShConstellationAndHierarchy::Qam16Alpha3,
-                    v => ShConstellationAndHierarchy::Reserved(v),
-                };
+                let constellation_and_hierarchy =
+                    ShConstellationAndHierarchy::from_u8((mb0 >> 1) & 0x07);
                 let code_rate_raw = ((mb0 & 0x01) << 3) | (mb1 >> 5);
                 let code_rate = ShCodeRate::from_u8(code_rate_raw);
-                let gi_raw = (mb1 >> 3) & 0x03;
-                let guard_interval = match gi_raw {
-                    0 => ShGuardInterval::G1_32,
-                    1 => ShGuardInterval::G1_16,
-                    2 => ShGuardInterval::G1_8,
-                    _ => ShGuardInterval::G1_4,
-                };
-                let tm_raw = (mb1 >> 1) & 0x03;
-                let transmission_mode = match tm_raw {
-                    0 => ShTransmissionMode::Mode1k,
-                    1 => ShTransmissionMode::Mode2k,
-                    2 => ShTransmissionMode::Mode4k,
-                    _ => ShTransmissionMode::Mode8k,
-                };
+                let guard_interval = ShGuardInterval::from_u8((mb1 >> 3) & 0x03);
+                let transmission_mode = ShTransmissionMode::from_u8((mb1 >> 1) & 0x03);
                 let common_frequency = (mb1 & 0x01) != 0;
                 ShModulationMode::Ofdm {
                     bandwidth,
@@ -481,7 +708,6 @@ impl<'a> Parse<'a> for ShDeliverySystem {
 
             let interleaver = if interleaver_presence == 1 {
                 if interleaver_type == 0 {
-                    // 4-byte Type0 interleaver block
                     if sel.len() - pos < 4 {
                         return Err(Error::BufferTooShort {
                             need: pos + 4,
@@ -507,7 +733,6 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                         non_late_increments,
                     })
                 } else {
-                    // 1-byte Type1 interleaver block
                     if sel.len() - pos < 1 {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -558,7 +783,6 @@ impl Serialize for ShDeliverySystem {
                 have: buf.len(),
             });
         }
-        // diversity_mode(4) | reserved_future_use(4)=1
         buf[0] = (self.diversity_mode.to_u8() << 4) | 0x0F;
         let mut p = 1;
         for m in &self.modulations {
@@ -566,8 +790,6 @@ impl Serialize for ShDeliverySystem {
             let interleaver_presence_bit = m.interleaver.is_some() as u8;
             let interleaver_type_bit =
                 matches!(m.interleaver, Some(ShInterleaver::Type1 { .. })) as u8;
-            // modulation_type(1) | interleaver_presence(1) | interleaver_type(1)
-            //   | reserved_future_use(5)=1
             buf[p] = (modulation_type_bit << 7)
                 | (interleaver_presence_bit << 6)
                 | (interleaver_type_bit << 5)
@@ -582,28 +804,11 @@ impl Serialize for ShDeliverySystem {
                     code_rate,
                     symbol_rate,
                 } => {
-                    let pol = match polarization {
-                        ShPolarization::LinearHorizontal => 0,
-                        ShPolarization::LinearVertical => 1,
-                        ShPolarization::CircularLeft => 2,
-                        ShPolarization::CircularRight => 3,
-                    };
-                    let ro = match roll_off {
-                        ShRollOff::Alpha035 => 0,
-                        ShRollOff::Alpha025 => 1,
-                        ShRollOff::Alpha015 => 2,
-                        ShRollOff::Reserved(v) => v & 0x03,
-                    };
-                    let mm = match modulation_mode {
-                        ShModulationModeType::Qpsk => 0,
-                        ShModulationModeType::Psk8 => 1,
-                        ShModulationModeType::Apsk16 => 2,
-                        ShModulationModeType::Reserved(v) => v & 0x03,
-                    };
                     let cr = code_rate.to_u8();
-                    buf[p] =
-                        (pol << 6) | ((ro & 0x03) << 4) | ((mm & 0x03) << 2) | ((cr >> 2) & 0x03);
-                    // code_rate low 2 | symbol_rate(5) | reserved_future_use(1)=1
+                    buf[p] = (polarization.to_u8() << 6)
+                        | ((roll_off.to_u8() & 0x03) << 4)
+                        | ((modulation_mode.to_u8() & 0x03) << 2)
+                        | ((cr >> 2) & 0x03);
                     buf[p + 1] = ((cr & 0x03) << 6) | ((symbol_rate & 0x1F) << 1) | 0x01;
                 }
                 ShModulationMode::Ofdm {
@@ -615,42 +820,14 @@ impl Serialize for ShDeliverySystem {
                     transmission_mode,
                     common_frequency,
                 } => {
-                    let bw = match bandwidth {
-                        ShBandwidth::Mhz8 => 0,
-                        ShBandwidth::Mhz7 => 1,
-                        ShBandwidth::Mhz6 => 2,
-                        ShBandwidth::Mhz5 => 3,
-                        ShBandwidth::Mhz1_7 => 4,
-                        ShBandwidth::Reserved(v) => v & 0x07,
-                    };
-                    let cah = match constellation_and_hierarchy {
-                        ShConstellationAndHierarchy::Qpsk => 0,
-                        ShConstellationAndHierarchy::Qam16NonHierarchical => 1,
-                        ShConstellationAndHierarchy::Qam16Alpha1 => 2,
-                        ShConstellationAndHierarchy::Qam16Alpha2 => 3,
-                        ShConstellationAndHierarchy::Qam16Alpha3 => 4,
-                        ShConstellationAndHierarchy::Reserved(v) => v & 0x07,
-                    };
-                    let gi = match guard_interval {
-                        ShGuardInterval::G1_32 => 0,
-                        ShGuardInterval::G1_16 => 1,
-                        ShGuardInterval::G1_8 => 2,
-                        ShGuardInterval::G1_4 => 3,
-                    };
-                    let tm = match transmission_mode {
-                        ShTransmissionMode::Mode1k => 0,
-                        ShTransmissionMode::Mode2k => 1,
-                        ShTransmissionMode::Mode4k => 2,
-                        ShTransmissionMode::Mode8k => 3,
-                    };
                     let cr = code_rate.to_u8();
-                    buf[p] = (bw << 5)
+                    buf[p] = (bandwidth.to_u8() << 5)
                         | (u8::from(*priority) << 4)
-                        | ((cah & 0x07) << 1)
+                        | ((constellation_and_hierarchy.to_u8() & 0x07) << 1)
                         | ((cr >> 3) & 0x01);
                     buf[p + 1] = ((cr & 0x07) << 5)
-                        | ((gi & 0x03) << 3)
-                        | ((tm & 0x03) << 1)
+                        | ((guard_interval.to_u8() & 0x03) << 3)
+                        | ((transmission_mode.to_u8() & 0x03) << 1)
                         | u8::from(*common_frequency);
                 }
             }
@@ -676,7 +853,6 @@ impl Serialize for ShDeliverySystem {
                     p += 4;
                 }
                 Some(ShInterleaver::Type1 { common_multiplier }) => {
-                    // common_multiplier(6) | reserved_future_use(2)=1
                     buf[p] = ((common_multiplier & 0x3F) << 2) | 0x03;
                     p += 1;
                 }
@@ -701,6 +877,27 @@ mod tests {
     }
 
     #[test]
+    fn sh_polarization_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShPolarization::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_roll_off_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShRollOff::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_modulation_mode_type_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShModulationModeType::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
     fn sh_code_rate_roundtrip() {
         for b in 0..=0xFFu8 {
             assert_eq!(ShCodeRate::from_u8(b).to_u8(), b);
@@ -708,13 +905,51 @@ mod tests {
     }
 
     #[test]
+    fn sh_bandwidth_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShBandwidth::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_constellation_and_hierarchy_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShConstellationAndHierarchy::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_guard_interval_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShGuardInterval::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_transmission_mode_roundtrip() {
+        for b in 0..=0xFFu8 {
+            assert_eq!(ShTransmissionMode::from_u8(b).to_u8(), b);
+        }
+    }
+
+    #[test]
+    fn sh_enum_names() {
+        assert_eq!(ShPolarization::LinearHorizontal.name(), "linear horizontal");
+        assert_eq!(ShPolarization::CircularRight.name(), "circular right");
+        assert_eq!(ShRollOff::Alpha035.name(), "α = 0.35");
+        assert_eq!(ShModulationModeType::Psk8.name(), "8PSK");
+        assert_eq!(ShBandwidth::Mhz1_7.name(), "1.7 MHz");
+        assert_eq!(
+            ShConstellationAndHierarchy::Qam16Alpha2.name(),
+            "16QAM, α = 2"
+        );
+        assert_eq!(ShGuardInterval::G1_8.name(), "1/8");
+        assert_eq!(ShTransmissionMode::Mode4k.name(), "4k mode");
+        assert_eq!(ShPolarization::Reserved(5).name(), "reserved");
+    }
+
+    #[test]
     fn parse_sh_tdm_no_interleaver() {
-        // diversity_mode=0x0D (1101), one TDM entry, no interleaver.
-        // TDM: polarization=2 (circular-left), roll_off=1 (0.25), modulation_mode=3 (reserved),
-        //      code_rate=10, symbol_rate=21.
-        // flags: mod_type=0, inter_pres=0, inter_type=0 -> 0x00
-        // mb0 = (2<<6)|(1<<4)|(3<<2)|((10>>2)&3) = 0x80|0x10|0x0C|0x02 = 0x9E
-        // mb1 = ((10&3)<<6)|(21<<1) = (2<<6)|42 = 0x80|0x2A = 0xAA
         let sel = [0xD0, 0x00, 0x9E, 0xAA];
         let bytes = wrap(0x05, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -749,13 +984,6 @@ mod tests {
 
     #[test]
     fn parse_sh_ofdm_interleaver_type1() {
-        // diversity_mode=0x05 (reserved), one OFDM entry, interleaver Type1.
-        // OFDM: bw=1(7MHz), pri=true, cah=2(16QAM alpha=1), cr=11, gi=3(1/4), tm=2(4k), cf=true
-        // Interleaver Type1: cm=21(0x15)
-        // flags: mod_type=1, inter_pres=1, inter_type=1 -> 0xE0
-        // mb0 = (1<<5)|(1<<4)|(2<<1)|((11>>3)&1) = 0x20|0x10|0x04|0x01 = 0x35
-        // mb1 = ((11&7)<<5)|(3<<3)|(2<<1)|1 = 0x60|0x18|0x04|0x01 = 0x7D
-        // Type1 byte: (21<<2) = 0x54
         let sel = [0x50, 0xE0, 0x35, 0x7D, 0x54];
         let bytes = wrap(0x05, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -801,16 +1029,6 @@ mod tests {
 
     #[test]
     fn parse_sh_tdm_interleaver_type0() {
-        // diversity_mode=0x08, one TDM entry, interleaver Type0.
-        // TDM: pol=0, ro=3(reserved), mm=1(8PSK), cr=5, sr=10
-        // Type0: cm=10, lt=20, ns=30, sd=100, nli=40
-        // flags: mod_type=0, inter_pres=1, inter_type=0 -> 0x40
-        // mb0 = (0<<6)|(3<<4)|(1<<2)|((5>>2)&3) = 0x30|0x04|0x01 = 0x35
-        // mb1 = ((5&3)<<6)|(10<<1) = (1<<6)|20 = 0x40|0x14 = 0x54
-        // Type0 byte0: (10<<2)|(20>>4) = 40|1 = 0x29
-        // Type0 byte1: ((20&15)<<4)|(30>>2) = (4<<4)|7 = 0x47
-        // Type0 byte2: ((30&3)<<6)|(100>>2) = (2<<6)|25 = 0x99
-        // Type0 byte3: ((100&3)<<6)|40 = 0x28
         let sel = [0x80, 0x40, 0x35, 0x54, 0x29, 0x47, 0x99, 0x28];
         let bytes = wrap(0x05, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -859,18 +1077,6 @@ mod tests {
 
     #[test]
     fn parse_sh_two_entries_mixed() {
-        // diversity_mode=0x0D
-        // Entry 1: TDM (same as test 1), no interleaver.
-        // Entry 2: OFDM bw=4(1.7MHz) pri=false cah=5(reserved) cr=9 gi=1(1/16) tm=1(2k) cf=false,
-        //          Type0 interleaver cm=15 lt=25 ns=35 sd=50 nli=55
-        // Entry1: flags=0x00, mb0=0x9E, mb1=0xAA
-        // Entry2 flags: 0xC0 (mod=1, pres=1, type=0)
-        // OFDM mb0: (4<<5)|(0<<4)|(5<<1)|((9>>3)&1) = 0x80|0x0A|0x01 = 0x8B
-        // OFDM mb1: ((9&7)<<5)|(1<<3)|(1<<1)|0 = 0x20|0x08|0x02 = 0x2A
-        // Type0 byte0: (15<<2)|(25>>4) = 60|1 = 0x3D
-        // Type0 byte1: ((25&15)<<4)|(35>>2) = (9<<4)|8 = 0x98
-        // Type0 byte2: ((35&3)<<6)|(50>>2) = (3<<6)|12 = 0xCC
-        // Type0 byte3: ((50&3)<<6)|55 = (2<<6)|55 = 0xB7
         let sel = [
             0xD0, 0x00, 0x9E, 0xAA, 0xC0, 0x8B, 0x2A, 0x3D, 0x98, 0xCC, 0xB7,
         ];
@@ -880,11 +1086,9 @@ mod tests {
             ExtensionBody::ShDeliverySystem(b) => {
                 assert_eq!(b.diversity_mode, ShDiversityMode::FecAtLink);
                 assert_eq!(b.modulations.len(), 2);
-                // Entry 1
                 let m0 = &b.modulations[0];
                 assert!(matches!(m0.modulation, ShModulationMode::Tdm { .. }));
                 assert!(m0.interleaver.is_none());
-                // Entry 2
                 let m1 = &b.modulations[1];
                 assert!(matches!(m1.modulation, ShModulationMode::Ofdm { .. }));
                 match &m1.modulation {
@@ -914,7 +1118,6 @@ mod tests {
 
     #[test]
     fn parse_sh_rejects_partial_entry() {
-        // Complete entry followed by a lone flags byte with no modulation block
         let sel = [0xD0, 0x00, 0x9E, 0xAA, 0x00];
         let bytes = wrap(0x05, &sel);
         assert!(matches!(
@@ -925,7 +1128,6 @@ mod tests {
 
     #[test]
     fn parse_sh_single_diversity_byte() {
-        // Only diversity_mode byte, no modulations.
         let sel = [0xD0];
         let bytes = wrap(0x05, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -950,7 +1152,6 @@ mod tests {
 
     #[test]
     fn tsduck_sh_round_trips() {
-        // From the tsduck reference test vectors in mod.rs
         let vectors: [(&str, u8); 2] =
             [("7f02055f", 0x05), ("7f0d05afff94ac175f68831d8d99ad", 0x05)];
         for (hex, _ext) in vectors {

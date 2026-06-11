@@ -17,7 +17,7 @@ pub struct C2BundleEntry {
     pub data_slice_id: u8,
     /// C2_System_tuning_frequency(32).
     pub c2_system_tuning_frequency: u32,
-    /// C2_System_tuning_frequency_type(2).
+    /// C2_System_tuning_frequency_type(2) — Table 116.
     pub c2_system_tuning_frequency_type: C2TuningFrequencyType,
     /// active_OFDM_symbol_duration(3).
     pub active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
@@ -101,8 +101,7 @@ mod tests {
     #[test]
     fn parse_c2_bundle_two_entries() {
         let entry = |off: u8| {
-            let packed = (0x01u8 << 6) | 0x01; // freq_type=1, ofdm=0, guard=1
-                                               // 8 bytes per Table 139: ... + primary_channel(1)+reserved_zero(7)
+            let packed = (0x01u8 << 6) | 0x01;
             [off, off + 1, 0x00, 0x00, 0x10, 0x00, packed, 0x80]
         };
         let mut sel = Vec::new();
@@ -117,7 +116,7 @@ mod tests {
                 assert!(b.entries[0].primary_channel);
                 assert_eq!(
                     b.entries[0].c2_system_tuning_frequency_type,
-                    C2TuningFrequencyType::Reserved(1)
+                    C2TuningFrequencyType::C2SystemCentreFrequency
                 );
                 assert_eq!(b.entries[1].plp_id, 0x05);
                 assert_eq!(b.entries[1].guard_interval, C2GuardInterval::G1_64);
@@ -129,7 +128,7 @@ mod tests {
 
     #[test]
     fn parse_c2_bundle_rejects_partial_entry() {
-        let sel = [0x01, 0x02, 0x03]; // 3 bytes, not a multiple of 8
+        let sel = [0x01, 0x02, 0x03];
         let bytes = wrap(0x16, &sel);
         assert!(matches!(
             ExtensionDescriptor::parse(&bytes).unwrap_err(),

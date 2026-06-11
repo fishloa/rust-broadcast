@@ -123,59 +123,9 @@ impl Rating {
 }
 
 /// CRID type per TS 102 323 Table 117.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum CridType {
-    /// 0x00 — No type defined.
-    NoTypeDefined,
-    /// 0x01 — Item of content (programme) this event is an instance of.
-    ItemOfContent,
-    /// 0x02 — Series this event belongs to.
-    Series,
-    /// 0x03 — Recommendation.
-    Recommendation,
-    /// Unallocated wire value, preserved verbatim for round-trip.
-    Reserved(u8),
-}
-
-impl CridType {
-    /// Map any byte value to a `CridType`.
-    #[must_use]
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0x00 => Self::NoTypeDefined,
-            0x01 => Self::ItemOfContent,
-            0x02 => Self::Series,
-            0x03 => Self::Recommendation,
-            r => Self::Reserved(r),
-        }
-    }
-
-    /// Return the wire byte.
-    #[must_use]
-    pub fn to_u8(self) -> u8 {
-        match self {
-            Self::NoTypeDefined => 0x00,
-            Self::ItemOfContent => 0x01,
-            Self::Series => 0x02,
-            Self::Recommendation => 0x03,
-            Self::Reserved(v) => v,
-        }
-    }
-
-    /// Human-readable spec name.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::NoTypeDefined => "no type defined",
-            Self::ItemOfContent => "item of content",
-            Self::Series => "series",
-            Self::Recommendation => "recommendation",
-            Self::Reserved(_) => "reserved",
-        }
-    }
-}
+///
+/// Re-exported from [`crate::descriptors::content_identifier::CridType`].
+pub use crate::descriptors::content_identifier::CridType;
 
 /// A content reference identifier entry from a
 /// [`ContentIdentifierDescriptor`](crate::descriptors::content_identifier::ContentIdentifierDescriptor).
@@ -776,10 +726,7 @@ fn extract_crids(
                     CridLocation::Inline(bytes) => {
                         let s = String::from_utf8_lossy(bytes).into_owned();
                         Some(Crid {
-                            // epg::CridType (TS 102 323 Table 117) bridged from
-                            // the content_identifier entry's own CridType via its
-                            // wire byte.
-                            crid_type: CridType::from_u8(e.crid_type.to_u8()),
+                            crid_type: e.crid_type,
                             crid: s,
                         })
                     }
