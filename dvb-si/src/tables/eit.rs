@@ -76,9 +76,11 @@ pub struct EitEvent<'a> {
     /// 16-bit event_id.
     pub event_id: u16,
     /// 40-bit start_time: 16-bit MJD followed by 24-bit BCD UTC (HHMMSS).
-    pub start_time_raw: [u8; 5],
+    /// Private — use [`start_time`](Self::start_time) for decoded access.
+    pub(crate) start_time_raw: [u8; 5],
     /// 24-bit BCD duration HHMMSS.
-    pub duration_raw: [u8; 3],
+    /// Private — use [`duration`](Self::duration) for decoded access.
+    pub(crate) duration_raw: [u8; 3],
     /// 3-bit running_status (EN 300 468 Table 6).
     pub running_status: RunningStatus,
     /// free_CA_mode flag.
@@ -292,7 +294,35 @@ impl<'a> crate::traits::TableDef<'a> for EitSection<'a> {
     const NAME: &'static str = "EVENT_INFORMATION";
 }
 
-impl EitEvent<'_> {
+impl<'a> EitEvent<'a> {
+    /// Decode the 40-bit `start_time` (16-bit MJD + 24-bit BCD UTC) to a plain
+    /// date-time struct.
+    ///
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C. Available without the `chrono`
+    /// feature.
+    #[must_use]
+    pub fn start_time(&self) -> Option<dvb_common::time::MjdBcdDateTime> {
+        dvb_common::time::decode_mjd_bcd(self.start_time_raw)
+    }
+
+    /// Set the event start time, encoding it into the 40-bit `start_time` field.
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_start_time_decoded(
+        &mut self,
+        dt: dvb_common::time::MjdBcdDateTime,
+    ) -> crate::Result<()> {
+        self.start_time_raw =
+            dvb_common::time::encode_mjd_bcd(dt).ok_or(crate::Error::ValueOutOfRange {
+                field: "EitEvent::start_time",
+                reason: "date not representable in 16-bit MJD",
+            })?;
+        Ok(())
+    }
+
     /// Decode the 24-bit BCD `duration` (HHMMSS) to a [`core::time::Duration`].
     ///
     /// Returns `None` if the BCD nibbles are out of range. Available without the
@@ -316,6 +346,43 @@ impl EitEvent<'_> {
         )?;
         Ok(())
     }
+
+    /// Raw 5-byte start_time field (for serialization and round-trip).
+    #[must_use]
+    pub fn start_time_raw(&self) -> [u8; 5] {
+        self.start_time_raw
+    }
+
+    /// Raw 3-byte duration field (for serialization and round-trip).
+    #[must_use]
+    pub fn duration_raw(&self) -> [u8; 3] {
+        self.duration_raw
+    }
+
+    /// Construct an `EitEvent` from raw wire fields.
+    ///
+    /// This is the stable public constructor — the `start_time_raw` and
+    /// `duration_raw` fields are `pub(crate)` for in-crate parse/serialize
+    /// only.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub fn new(
+        event_id: u16,
+        start_time_raw: [u8; 5],
+        duration_raw: [u8; 3],
+        running_status: RunningStatus,
+        free_ca_mode: bool,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            event_id,
+            start_time_raw,
+            duration_raw,
+            running_status,
+            free_ca_mode,
+            descriptors,
+        }
+    }
 }
 
 #[cfg(feature = "chrono")]
@@ -325,7 +392,7 @@ impl EitEvent<'_> {
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
-    pub fn start_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn start_time_chrono(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         dvb_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
 
@@ -495,22 +562,22 @@ mod tests {
             segment_last_section_number: 0,
             last_table_id: TABLE_ID_PF_ACTUAL,
             events: vec![
-                EitEvent {
-                    event_id: 1,
-                    start_time_raw: [0xDF, 0xA1, 0x12, 0x34, 0x56],
-                    duration_raw: [0x00, 0x30, 0x00],
-                    running_status: RunningStatus::Running,
-                    free_ca_mode: false,
-                    descriptors: DescriptorLoop::new(&desc1),
-                },
-                EitEvent {
-                    event_id: 2,
-                    start_time_raw: [0xDF, 0xA1, 0x13, 0x00, 0x00],
-                    duration_raw: [0x01, 0x00, 0x00],
-                    running_status: RunningStatus::NotRunning,
-                    free_ca_mode: true,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+                EitEvent::new(
+                    1,
+                    [0xDF, 0xA1, 0x12, 0x34, 0x56],
+                    [0x00, 0x30, 0x00],
+                    RunningStatus::Running,
+                    false,
+                    DescriptorLoop::new(&desc1),
+                ),
+                EitEvent::new(
+                    2,
+                    [0xDF, 0xA1, 0x13, 0x00, 0x00],
+                    [0x01, 0x00, 0x00],
+                    RunningStatus::NotRunning,
+                    true,
+                    DescriptorLoop::new(&[]),
+                ),
             ],
         };
         let mut buf = vec![0u8; eit.serialized_len()];
@@ -531,15 +598,15 @@ mod tests {
     fn event_start_time_decodes_to_utc_datetime() {
         // MJD 59945 is 2023-01-01 per ETSI EN 300 468 Annex C; BCD time 12:34:56.
         let mjd: u16 = 59945;
-        let ev = EitEvent {
-            event_id: 1,
-            start_time_raw: [(mjd >> 8) as u8, (mjd & 0xFF) as u8, 0x12, 0x34, 0x56],
-            duration_raw: [0, 0, 0],
-            running_status: RunningStatus::Undefined,
-            free_ca_mode: false,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let dt = ev.start_time().unwrap();
+        let ev = EitEvent::new(
+            1,
+            [(mjd >> 8) as u8, (mjd & 0xFF) as u8, 0x12, 0x34, 0x56],
+            [0, 0, 0],
+            RunningStatus::Undefined,
+            false,
+            DescriptorLoop::new(&[]),
+        );
+        let dt = ev.start_time_chrono().unwrap();
         use chrono::Datelike;
         assert_eq!(dt.year(), 2023);
         assert_eq!(dt.month(), 1);
@@ -548,6 +615,27 @@ mod tests {
         assert_eq!(dt.hour(), 12);
         assert_eq!(dt.minute(), 34);
         assert_eq!(dt.second(), 56);
+    }
+
+    #[test]
+    fn event_start_time_decodes_without_chrono() {
+        let mjd: u16 = 59945;
+        let ev = EitEvent::new(
+            1,
+            [(mjd >> 8) as u8, (mjd & 0xFF) as u8, 0x12, 0x34, 0x56],
+            [0, 0, 0],
+            RunningStatus::Undefined,
+            false,
+            DescriptorLoop::new(&[]),
+        );
+        let dt = ev.start_time().unwrap();
+        // MJD 59945 = 2023-01-01 per Annex C
+        assert_eq!(dt.year, 2023);
+        assert_eq!(dt.month, 1);
+        assert_eq!(dt.day, 1);
+        assert_eq!(dt.hour, 12);
+        assert_eq!(dt.minute, 34);
+        assert_eq!(dt.second, 56);
     }
 
     #[test]

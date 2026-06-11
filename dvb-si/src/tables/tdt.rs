@@ -19,8 +19,46 @@ const UTC_TIME_LEN: usize = 5;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TdtSection {
     /// Raw 5-byte UTC time (16-bit MJD + 24-bit BCD HHMMSS) per
-    /// EN 300 468 Annex C.
-    pub utc_time_raw: [u8; 5],
+    /// EN 300 468 Annex C. Private — use [`utc_time_decoded`](Self::utc_time_decoded)
+    /// for decoded access.
+    pub(crate) utc_time_raw: [u8; 5],
+}
+
+impl TdtSection {
+    /// Decode the UTC time to a plain date-time struct (no `chrono` feature
+    /// required).
+    ///
+    /// Returns `None` if the date/time fields are out of range. MJD→calendar
+    /// conversion per ETSI EN 300 468 Annex C.
+    #[must_use]
+    pub fn utc_time_decoded(&self) -> Option<dvb_common::time::MjdBcdDateTime> {
+        dvb_common::time::decode_mjd_bcd(self.utc_time_raw)
+    }
+
+    /// Set the UTC time, encoding it from a [`dvb_common::time::MjdBcdDateTime`].
+    ///
+    /// # Errors
+    /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
+    /// outside the representable 16-bit MJD range.
+    pub fn set_utc_time_decoded(&mut self, dt: dvb_common::time::MjdBcdDateTime) -> Result<()> {
+        self.utc_time_raw = dvb_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
+            field: "TdtSection::utc_time",
+            reason: "date not representable in 16-bit MJD",
+        })?;
+        Ok(())
+    }
+
+    /// Raw 5-byte UTC time field (for round-trip / serialization).
+    #[must_use]
+    pub fn utc_time_raw(&self) -> [u8; 5] {
+        self.utc_time_raw
+    }
+
+    /// Construct a `TdtSection` from raw wire fields.
+    #[must_use]
+    pub fn new(utc_time_raw: [u8; 5]) -> Self {
+        Self { utc_time_raw }
+    }
 }
 
 #[cfg(feature = "chrono")]
@@ -92,7 +130,7 @@ impl Serialize for TdtSection {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = 0x70 | ((UTC_TIME_LEN as u16 >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((UTC_TIME_LEN as u16 >> 8) as u8 & 0x0F);
         buf[2] = UTC_TIME_LEN as u8;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         Ok(len)
@@ -111,7 +149,7 @@ mod tests {
     fn parse_extracts_utc_time_raw() {
         let bytes = [TABLE_ID, 0x70, 0x05, 0xE4, 0x09, 0x12, 0x34, 0x56];
         let tdt = TdtSection::parse(&bytes).unwrap();
-        assert_eq!(tdt.utc_time_raw, [0xE4, 0x09, 0x12, 0x34, 0x56]);
+        assert_eq!(tdt.utc_time_raw(), [0xE4, 0x09, 0x12, 0x34, 0x56]);
     }
 
     #[test]
@@ -151,5 +189,19 @@ mod tests {
         };
         let dt = tdt.utc_time();
         assert!(dt.is_some());
+    }
+
+    #[test]
+    fn utc_time_decodes_without_chrono() {
+        let tdt = TdtSection {
+            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
+        };
+        let dt = tdt.utc_time_decoded().unwrap();
+        assert_eq!(dt.year, 2018);
+        assert_eq!(dt.month, 9);
+        assert_eq!(dt.day, 16);
+        assert_eq!(dt.hour, 12);
+        assert_eq!(dt.minute, 34);
+        assert_eq!(dt.second, 56);
     }
 }

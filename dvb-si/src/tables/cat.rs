@@ -59,10 +59,9 @@ pub struct CatSection<'a> {
 
 impl<'a> CatSection<'a> {
     /// Typed view of the CA descriptors (tag 0x09) in the descriptor loop.
-    /// Non-CA descriptors are skipped; a truncated trailing descriptor ends
-    /// the walk.
-    #[must_use]
-    pub fn ca_descriptors(&self) -> Vec<CatCaEntry> {
+    /// Non-CA descriptors are skipped; a truncated trailing descriptor returns
+    /// an error.
+    pub fn ca_descriptors(&self) -> Result<Vec<CatCaEntry>> {
         let mut out = Vec::new();
         let mut pos = 0;
         while pos + 2 <= self.descriptors.len() {
@@ -70,7 +69,11 @@ impl<'a> CatSection<'a> {
             let length = self.descriptors[pos + 1] as usize;
             let end = pos + 2 + length;
             if end > self.descriptors.len() {
-                break;
+                return Err(Error::BufferTooShort {
+                    need: end - pos,
+                    have: self.descriptors.len() - pos,
+                    what: "CatSection ca_descriptors truncated descriptor",
+                });
             }
             if tag == crate::descriptors::ca::TAG {
                 if let Ok(ca) = CaDescriptor::parse(&self.descriptors[pos..end]) {
@@ -83,7 +86,7 @@ impl<'a> CatSection<'a> {
             }
             pos = end;
         }
-        out
+        Ok(out)
     }
 }
 
@@ -216,7 +219,7 @@ mod tests {
         assert_eq!(cat.version_number, 5);
         assert!(cat.current_next_indicator);
         assert!(cat.descriptors.is_empty());
-        assert_eq!(cat.ca_descriptors().len(), 0);
+        assert_eq!(cat.ca_descriptors().unwrap().len(), 0);
     }
 
     #[test]
@@ -225,7 +228,7 @@ mod tests {
         desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
         let bytes = build_cat(0, &desc);
         let cat = CatSection::parse(&bytes).unwrap();
-        let cas = cat.ca_descriptors();
+        let cas = cat.ca_descriptors().unwrap();
         assert_eq!(cas.len(), 1);
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[0].ca_pid, 0x0050);
@@ -240,7 +243,7 @@ mod tests {
         desc.extend_from_slice(&ca_descriptor(0x0100, 0x0080));
         let bytes = build_cat(2, &desc);
         let cat = CatSection::parse(&bytes).unwrap();
-        let cas = cat.ca_descriptors();
+        let cas = cat.ca_descriptors().unwrap();
         assert_eq!(cas.len(), 3);
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[1].ca_system_id, 0x0650);
@@ -275,7 +278,7 @@ mod tests {
         desc.extend_from_slice(&ca_descriptor(0x0650, 0x0062));
         let bytes = build_cat(0, &desc);
         let cat = CatSection::parse(&bytes).unwrap();
-        let cas = cat.ca_descriptors();
+        let cas = cat.ca_descriptors().unwrap();
         assert_eq!(cas.len(), 2);
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[1].ca_system_id, 0x0650);
@@ -334,6 +337,23 @@ mod tests {
         assert!(matches!(
             CatSection::parse(&buf).unwrap_err(),
             Error::SectionLengthOverflow { .. }
+        ));
+    }
+
+    #[test]
+    fn ca_descriptors_rejects_truncated_descriptor() {
+        let mut desc = Vec::new();
+        desc.extend_from_slice(&ca_descriptor(0x0500, 0x0050));
+        desc.push(0x09);
+        desc.push(0x10);
+        let bytes = build_cat(0, &desc);
+        let cat = CatSection::parse(&bytes).unwrap();
+        assert!(matches!(
+            cat.ca_descriptors().unwrap_err(),
+            Error::BufferTooShort {
+                what: "CatSection ca_descriptors truncated descriptor",
+                ..
+            }
         ));
     }
 }

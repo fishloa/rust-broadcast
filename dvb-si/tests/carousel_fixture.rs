@@ -242,12 +242,15 @@ fn synthetic_full_pipeline_reassembles_module() {
     let wrap = |table_id: u8, payload: &[u8]| -> Vec<u8> {
         let sec = DsmccSection {
             table_id,
+            section_syntax_indicator: true,
+            private_indicator: false,
             extension_id: 0,
             version_number: 0,
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
             payload,
+            checksum: [0; 4],
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();

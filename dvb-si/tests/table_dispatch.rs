@@ -365,7 +365,7 @@ fn dispatched_ranges_are_sorted_and_disjoint() {
 /// a `0x3E` section.
 #[test]
 fn parse_as_mpe_datagram_for_0x3e() {
-    use dvb_si::tables::mpe::MpeDatagramSection;
+    use dvb_si::tables::mpe::{MacAddress, MpeDatagramSection};
 
     // Build a minimal valid MPE datagram_section (table_id=0x3E).
     // header(3) + extension(9) + payload(0) + trailer(4) = 16 bytes.
@@ -391,7 +391,10 @@ fn parse_as_mpe_datagram_for_0x3e() {
     let mpe =
         AnyTableSection::parse_as::<MpeDatagramSection>(&v).expect("valid MPE section must parse");
     // MAC is reassembled network-order: MAC_1..MAC_6
-    assert_eq!(mpe.mac_address, [0x44, 0x33, 0x22, 0x11, 0xBB, 0xAA]);
+    assert_eq!(
+        mpe.mac_address,
+        MacAddress([0x44, 0x33, 0x22, 0x11, 0xBB, 0xAA])
+    );
     assert!(mpe.payload.is_empty());
 }
 

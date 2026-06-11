@@ -8,14 +8,14 @@ use dvb_si::tables::eit::EitEvent;
 use dvb_si::tables::RunningStatus;
 
 fn eit_event() -> EitEvent<'static> {
-    EitEvent {
-        event_id: 1,
-        start_time_raw: [0; 5],
-        duration_raw: [0; 3],
-        running_status: RunningStatus::Undefined,
-        free_ca_mode: false,
-        descriptors: DescriptorLoop::new(&[]),
-    }
+    EitEvent::new(
+        1,
+        [0; 5],
+        [0; 3],
+        RunningStatus::Undefined,
+        false,
+        DescriptorLoop::new(&[]),
+    )
 }
 
 #[test]
@@ -24,7 +24,7 @@ fn eit_event_duration_round_trips() {
     ev.set_duration(Duration::from_secs(3600 + 30 * 60 + 45))
         .unwrap();
     // Wrote the duration field (not start_time), BCD-encoded HHMMSS.
-    assert_eq!(ev.duration_raw, [0x01, 0x30, 0x45]);
+    assert_eq!(ev.duration_raw(), [0x01, 0x30, 0x45]);
     assert_eq!(ev.duration(), Some(Duration::from_secs(5445)));
 }
 
@@ -41,7 +41,7 @@ fn eit_event_start_time_round_trips() {
     let mut ev = eit_event();
     let dt = Utc.with_ymd_and_hms(2023, 6, 8, 12, 34, 56).unwrap();
     ev.set_start_time(dt).unwrap();
-    let got = ev.start_time().unwrap();
+    let got = ev.start_time_chrono().unwrap();
     assert_eq!((got.year(), got.month(), got.day()), (2023, 6, 8));
     assert_eq!((got.hour(), got.minute(), got.second()), (12, 34, 56));
 }
@@ -51,10 +51,7 @@ fn eit_event_start_time_round_trips() {
 fn tot_utc_time_round_trips() {
     use chrono::{TimeZone, Utc};
     use dvb_si::tables::tot::TotSection;
-    let mut tot = TotSection {
-        utc_time_raw: [0; 5],
-        descriptors: DescriptorLoop::new(&[]),
-    };
+    let mut tot = TotSection::new([0; 5], DescriptorLoop::new(&[]));
     let dt = Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap();
     tot.set_utc_time(dt).unwrap();
     assert_eq!(tot.utc_time(), Some(dt));
@@ -65,9 +62,7 @@ fn tot_utc_time_round_trips() {
 fn tdt_utc_time_round_trips() {
     use chrono::{TimeZone, Utc};
     use dvb_si::tables::tdt::TdtSection;
-    let mut tdt = TdtSection {
-        utc_time_raw: [0; 5],
-    };
+    let mut tdt = TdtSection::new([0; 5]);
     let dt = Utc.with_ymd_and_hms(2025, 1, 2, 3, 4, 5).unwrap();
     tdt.set_utc_time(dt).unwrap();
     assert_eq!(tdt.utc_time(), Some(dt));

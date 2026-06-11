@@ -39,6 +39,56 @@ pub const TABLE_ID: u8 = 0x3E;
 /// MPE has no well-known PID — the elementary PID comes from the PMT.
 pub const PID: u16 = 0x0000;
 
+/// 48-bit MAC address in network order (most-significant byte first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct MacAddress(pub [u8; 6]);
+
+impl MacAddress {
+    /// Network-order bytes (MSB first).
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 6] {
+        &self.0
+    }
+}
+
+impl core::fmt::Display for MacAddress {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+            self.0[0], self.0[1], self.0[2], self.0[3], self.0[4], self.0[5]
+        )
+    }
+}
+
+impl AsRef<[u8; 6]> for MacAddress {
+    fn as_ref(&self) -> &[u8; 6] {
+        &self.0
+    }
+}
+
+/// 4-byte checksum/CRC trailer preserved verbatim for SSI=0 sections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Checksum(pub [u8; 4]);
+
+impl Checksum {
+    /// Raw checksum bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 4] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8; 4]> for Checksum {
+    fn as_ref(&self) -> &[u8; 4] {
+        &self.0
+    }
+}
+
 /// Bytes 0-2: table_id(1) + SSI/private/reserved/section_length(2).
 const HEADER_LEN: usize = 3;
 
@@ -81,7 +131,7 @@ pub struct MpeDatagramSection<'a> {
 
     /// Destination MAC address in network order, `MAC_1` (MSB) first through
     /// `MAC_6` (LSB) last. See the struct docs for the wire scatter.
-    pub mac_address: [u8; 6],
+    pub mac_address: MacAddress,
 
     /// 2-bit `payload_scrambling_control` (EN 301 192 Table 4). `0` =
     /// unscrambled; `1`/`2`/`3` = service-defined.
@@ -114,7 +164,7 @@ pub struct MpeDatagramSection<'a> {
     /// Verbatim trailer bytes when `section_syntax_indicator == false` (an
     /// ISO/IEC 13818-6 checksum we cannot recompute). Ignored when SSI is
     /// `true`, where the trailer is a computed `CRC_32`.
-    pub checksum: [u8; 4],
+    pub checksum: Checksum,
 }
 
 impl<'a> Parse<'a> for MpeDatagramSection<'a> {
@@ -162,17 +212,17 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         let mac_3 = bytes[9];
         let mac_2 = bytes[10];
         let mac_1 = bytes[11];
-        let mac_address = [mac_1, mac_2, mac_3, mac_4, mac_5, mac_6];
+        let mac_address = MacAddress([mac_1, mac_2, mac_3, mac_4, mac_5, mac_6]);
 
         let payload_start = HEADER_LEN + EXTENSION_LEN;
         let trailer_start = total - CRC_LEN;
         let payload = &bytes[payload_start..trailer_start];
-        let checksum = [
+        let checksum = Checksum([
             bytes[trailer_start],
             bytes[trailer_start + 1],
             bytes[trailer_start + 2],
             bytes[trailer_start + 3],
-        ];
+        ]);
 
         Ok(MpeDatagramSection {
             section_syntax_indicator,
@@ -238,8 +288,8 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[2] = (section_length & 0xFF) as u8;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.
-        buf[3] = self.mac_address[5];
-        buf[4] = self.mac_address[4];
+        buf[3] = self.mac_address.0[5];
+        buf[4] = self.mac_address.0[4];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
         buf[5] = 0xC0
@@ -252,10 +302,10 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[7] = self.last_section_number;
 
         // bytes 8-11 = MAC_4, MAC_3, MAC_2, MAC_1.
-        buf[8] = self.mac_address[3];
-        buf[9] = self.mac_address[2];
-        buf[10] = self.mac_address[1];
-        buf[11] = self.mac_address[0];
+        buf[8] = self.mac_address.0[3];
+        buf[9] = self.mac_address.0[2];
+        buf[10] = self.mac_address.0[1];
+        buf[11] = self.mac_address.0[0];
 
         let payload_start = HEADER_LEN + EXTENSION_LEN;
         let trailer_start = payload_start + self.payload.len();
@@ -268,7 +318,7 @@ impl Serialize for MpeDatagramSection<'_> {
         } else {
             // SSI=0 → ISO/IEC 13818-6 checksum we cannot recompute; re-emit
             // the preserved trailer bytes verbatim.
-            buf[trailer_start..len].copy_from_slice(&self.checksum);
+            buf[trailer_start..len].copy_from_slice(&self.checksum.0);
         }
 
         Ok(len)
@@ -297,14 +347,14 @@ mod tests {
     fn build_mpe(
         ssi: bool,
         private_indicator: bool,
-        mac_address: [u8; 6],
+        mac_address: MacAddress,
         payload_sc: u8,
         address_sc: u8,
         llc_snap: bool,
         section_number: u8,
         last_section_number: u8,
         payload: &[u8],
-        trailer: [u8; 4],
+        trailer: Checksum,
     ) -> Vec<u8> {
         let section_length = (EXTENSION_LEN + payload.len() + CRC_LEN) as u16;
         let flags = 0xC0
@@ -319,18 +369,18 @@ mod tests {
                 | 0x30
                 | ((section_length >> 8) as u8 & 0x0F),
             (section_length & 0xFF) as u8,
-            mac_address[5], // MAC_6
-            mac_address[4], // MAC_5
+            mac_address.0[5], // MAC_6
+            mac_address.0[4], // MAC_5
             flags,
             section_number,
             last_section_number,
-            mac_address[3], // MAC_4
-            mac_address[2], // MAC_3
-            mac_address[1], // MAC_2
-            mac_address[0], // MAC_1
+            mac_address.0[3], // MAC_4
+            mac_address.0[2], // MAC_3
+            mac_address.0[1], // MAC_2
+            mac_address.0[0], // MAC_1
         ];
         v.extend_from_slice(payload);
-        v.extend_from_slice(&trailer);
+        v.extend_from_slice(&trailer.0);
         v
     }
 
@@ -341,19 +391,19 @@ mod tests {
         let bytes = build_mpe(
             false,
             true,
-            mac,
+            MacAddress(mac),
             0b10,
             0b01,
             true,
             2,
             3,
             &payload,
-            [0xAA, 0xBB, 0xCC, 0xDD],
+            Checksum([0xAA, 0xBB, 0xCC, 0xDD]),
         );
         let sec = MpeDatagramSection::parse(&bytes).unwrap();
         assert!(!sec.section_syntax_indicator);
         assert!(sec.private_indicator);
-        assert_eq!(sec.mac_address, mac);
+        assert_eq!(sec.mac_address, MacAddress(mac));
         assert_eq!(sec.payload_scrambling_control, 0b10);
         assert_eq!(sec.address_scrambling_control, 0b01);
         assert!(sec.llc_snap_flag);
@@ -361,14 +411,25 @@ mod tests {
         assert_eq!(sec.section_number, 2);
         assert_eq!(sec.last_section_number, 3);
         assert_eq!(sec.payload, &payload);
-        assert_eq!(sec.checksum, [0xAA, 0xBB, 0xCC, 0xDD]);
+        assert_eq!(sec.checksum, Checksum([0xAA, 0xBB, 0xCC, 0xDD]));
     }
 
     #[test]
     fn mac_scatter_decoded_in_network_order() {
         // Distinct bytes per MAC position so a wrong scatter is obvious.
         let mac = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66];
-        let bytes = build_mpe(true, false, mac, 0, 0, false, 0, 0, &[], [0, 0, 0, 0]);
+        let bytes = build_mpe(
+            true,
+            false,
+            MacAddress(mac),
+            0,
+            0,
+            false,
+            0,
+            0,
+            &[],
+            Checksum([0; 4]),
+        );
         // Verify the on-wire scatter directly:
         assert_eq!(bytes[3], 0x66, "byte 3 = MAC_6 (LSB)");
         assert_eq!(bytes[4], 0x55, "byte 4 = MAC_5");
@@ -377,7 +438,7 @@ mod tests {
         assert_eq!(bytes[10], 0x22, "byte 10 = MAC_2");
         assert_eq!(bytes[11], 0x11, "byte 11 = MAC_1 (MSB)");
         let sec = MpeDatagramSection::parse(&bytes).unwrap();
-        assert_eq!(sec.mac_address, mac);
+        assert_eq!(sec.mac_address, MacAddress(mac));
     }
 
     #[test]
@@ -385,18 +446,18 @@ mod tests {
         let bytes = build_mpe(
             true,
             false,
-            [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+            MacAddress([0xFF; 6]),
             0,
             0,
             false,
             0,
             0,
             &[],
-            [0, 0, 0, 0],
+            Checksum([0; 4]),
         );
         let sec = MpeDatagramSection::parse(&bytes).unwrap();
         assert!(sec.payload.is_empty());
-        assert_eq!(sec.mac_address, [0xFF; 6]);
+        assert_eq!(sec.mac_address, MacAddress([0xFF; 6]));
     }
 
     #[test]
@@ -404,14 +465,14 @@ mod tests {
         let mut bytes = build_mpe(
             true,
             false,
-            [0; 6],
+            MacAddress([0; 6]),
             0,
             0,
             false,
             0,
             0,
             &[0x01],
-            [0, 0, 0, 0],
+            Checksum([0; 4]),
         );
         bytes[0] = 0x3F; // valid DSM-CC range value, but not the MPE table_id
         assert!(matches!(
@@ -431,14 +492,14 @@ mod tests {
         let mut bytes = build_mpe(
             true,
             false,
-            [0; 6],
+            MacAddress([0; 6]),
             0,
             0,
             false,
             0,
             0,
             &[0xAA],
-            [0, 0, 0, 0],
+            Checksum([0; 4]),
         );
         // Inflate declared section_length well past the actual buffer.
         let fake_sl: u16 = (bytes.len() as u16) + 100 - HEADER_LEN as u16;
@@ -460,7 +521,7 @@ mod tests {
         let original = MpeDatagramSection {
             section_syntax_indicator: true,
             private_indicator: false,
-            mac_address: mac,
+            mac_address: MacAddress(mac),
             payload_scrambling_control: 0,
             address_scrambling_control: 0,
             llc_snap_flag: false,
@@ -468,14 +529,14 @@ mod tests {
             section_number: 0,
             last_section_number: 0,
             payload: &payload,
-            checksum: [0, 0, 0, 0],
+            checksum: Checksum([0; 4]),
         };
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         let parsed = MpeDatagramSection::parse(&buf).unwrap();
         // Everything but the (ignored-on-SSI=1) checksum must match.
         assert!(parsed.section_syntax_indicator);
-        assert_eq!(parsed.mac_address, mac);
+        assert_eq!(parsed.mac_address, MacAddress(mac));
         assert_eq!(parsed.payload, &payload);
         // Re-serialize the parsed value: bytes must be byte-identical.
         let mut buf2 = vec![0u8; parsed.serialized_len()];
@@ -488,8 +549,19 @@ mod tests {
         // SSI=0: the trailer is an opaque checksum preserved verbatim.
         let mac = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
         let payload = [0x11, 0x22, 0x33];
-        let trailer = [0x12, 0x34, 0x56, 0x78];
-        let bytes = build_mpe(false, true, mac, 0b11, 0b10, true, 1, 5, &payload, trailer);
+        let trailer = Checksum([0x12, 0x34, 0x56, 0x78]);
+        let bytes = build_mpe(
+            false,
+            true,
+            MacAddress(mac),
+            0b11,
+            0b10,
+            true,
+            1,
+            5,
+            &payload,
+            trailer,
+        );
         let parsed = MpeDatagramSection::parse(&bytes).unwrap();
         assert_eq!(parsed.checksum, trailer);
         let mut buf = vec![0u8; parsed.serialized_len()];
@@ -504,7 +576,7 @@ mod tests {
         let sec = MpeDatagramSection {
             section_syntax_indicator: true,
             private_indicator: false,
-            mac_address: [0; 6],
+            mac_address: MacAddress([0; 6]),
             payload_scrambling_control: 0,
             address_scrambling_control: 0,
             llc_snap_flag: false,
@@ -512,7 +584,7 @@ mod tests {
             section_number: 0,
             last_section_number: 0,
             payload: &[],
-            checksum: [0; 4],
+            checksum: Checksum([0; 4]),
         };
         let mut buf = [0u8; 2];
         assert!(matches!(
@@ -526,7 +598,7 @@ mod tests {
         let sec = MpeDatagramSection {
             section_syntax_indicator: true,
             private_indicator: false,
-            mac_address: [0; 6],
+            mac_address: MacAddress([0; 6]),
             payload_scrambling_control: 0x04, // > 2-bit field
             address_scrambling_control: 0,
             llc_snap_flag: false,
@@ -534,7 +606,7 @@ mod tests {
             section_number: 0,
             last_section_number: 0,
             payload: &[],
-            checksum: [0; 4],
+            checksum: Checksum([0; 4]),
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
@@ -559,14 +631,14 @@ mod tests {
         let bytes = build_mpe(
             false,
             true,
-            [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
+            MacAddress([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
             0b01,
             0b11,
             true,
             3,
             7,
             &payload,
-            [0xDE, 0xAD, 0xBE, 0xEF],
+            Checksum([0xDE, 0xAD, 0xBE, 0xEF]),
         );
         let sec = MpeDatagramSection::parse(&bytes).unwrap();
         let j = serde_json::to_string(&sec).unwrap();

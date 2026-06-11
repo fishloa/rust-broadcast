@@ -77,9 +77,10 @@ impl<'a> Parse<'a> for RstSection {
             });
         }
         if section_length % ENTRY_LEN != 0 {
-            return Err(Error::SectionLengthOverflow {
-                declared: section_length,
-                available: (section_length / ENTRY_LEN) * ENTRY_LEN,
+            return Err(Error::BufferTooShort {
+                need: (section_length / ENTRY_LEN + 1) * ENTRY_LEN,
+                have: section_length,
+                what: "RstSection entry alignment",
             });
         }
         let mut entries = Vec::with_capacity(section_length / ENTRY_LEN);
@@ -117,7 +118,7 @@ impl Serialize for RstSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = 0x70 | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] = super::SECTION_B1_FLAGS_SHORT | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         let mut off = HEADER_LEN;
         for e in &self.entries {
@@ -214,11 +215,13 @@ mod tests {
 
     #[test]
     fn parse_rejects_non_multiple_loop() {
-        // section_length = 4 (not a multiple of 9)
         let bytes = [TABLE_ID, 0x70, 0x04, 0x00, 0x00, 0x00, 0x00];
         assert!(matches!(
             RstSection::parse(&bytes).unwrap_err(),
-            Error::SectionLengthOverflow { .. }
+            Error::BufferTooShort {
+                what: "RstSection entry alignment",
+                ..
+            }
         ));
     }
 
