@@ -524,4 +524,42 @@ the descriptor-loop byte count.
 | 0x35 | EVC video stream or an EVC temporal video sub-bitstream (ISO/IEC 23094-1) |
 | 0x36–0x7E | Rec. ITU-T H.222.0 \| ISO/IEC 13818-1 reserved |
 | 0x7F | IPMP stream |
-| 0x80–0xFF | User Private (incl. by industry convention: 0x81 ATSC AC-3, 0x86 SCTE-35 splice_info, 0x87 ATSC E-AC-3 — these are NOT assigned by H.222.0 and must be cited to their own specs) |
+| 0x80–0xFF | User Private |
+
+> NOTE (not part of Table 2-34): within the `0x80–0xFF` User Private range,
+> industry conventions assign `0x81` = ATSC AC-3 (ATSC A/52), `0x86` =
+> SCTE-35 splice_info (ANSI/SCTE 35), `0x87` = ATSC E-AC-3 (ATSC A/52B). These
+> are **not** assigned by Rec. ITU-T H.222.0 | ISO/IEC 13818-1 and are cited to
+> their own specifications; `dvb-si` decodes them as a documented convenience.
+
+## Table 2-53 — Data stream alignment (alignment_type)
+_ISO/IEC 13818-1 §2.6.10–2.6.11 (data_stream_alignment_descriptor, tag 0x06); hand-transcribed verbatim 2026-06-12_
+
+The geometry extractor did not capture this annex/clause table; transcribed
+verbatim from the vendored PDF.
+
+| alignment_type | Description |
+|---|---|
+| 0x00 | Reserved |
+| 0x01 | Slice, or video access unit |
+| 0x02 | Video access unit |
+| 0x03 | GOP, or SEQ |
+| 0x04 | SEQ |
+| 0x05–0xFF | Reserved |
+
+## Table 2-63 — Audio type values
+_ISO/IEC 13818-1 §2.6.19 (ISO_639_language_descriptor); hand-transcribed verbatim 2026-06-12_
+
+| audio type | Description |
+|---|---|
+| 0x00 | Undefined |
+| 0x01 | Clean effects |
+| 0x02 | Hearing impaired |
+| 0x03 | Visual impaired commentary |
+| 0x04 .. 0x7F | User Private |
+| 0x80 | Primary |
+| 0x81 | Native |
+| 0x82 | Emergency |
+| 0x83 | Primary commentary |
+| 0x84 | Alternate commentary |
+| 0x85 .. 0xFF | Reserved |
