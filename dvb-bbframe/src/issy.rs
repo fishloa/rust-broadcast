@@ -80,6 +80,23 @@ impl BufsUnit {
             Self::Kbits8 => "8 Kbits",
         }
     }
+
+    #[must_use]
+    /// Number of bits per BUFS unit.
+    ///
+    /// Per EN 302 755 Annex C Table C.1, the 2-bit unit selector names the
+    /// scale (bits / Kbits / Mbits / 8Kbits). The standard does not numerically
+    /// define K/M; the decimal convention (K = 1 000, M = 1 000 000, 8K = 8 000)
+    /// is used, consistent with the standard's use of decimal `Mbit/s`
+    /// elsewhere (see `docs/en_302_755_t2.md` §BUFS/TTO semantics).
+    pub fn multiplier_bits(self) -> u64 {
+        match self {
+            Self::Bits => 1,
+            Self::Kbits => 1_000,
+            Self::Mbits => 1_000_000,
+            Self::Kbits8 => 8_000,
+        }
+    }
 }
 
 /// Decoded BUFS/TTO signalling — EN 302 755 Annex C, Table C.1.
@@ -119,6 +136,67 @@ pub enum SignallingKind {
     /// live in `Bbheader::issy_in_header` and are serialized verbatim, so the
     /// dropped selector does not affect round-trip fidelity.
     Reserved(u32),
+}
+
+impl SignallingKind {
+    #[must_use]
+    /// Decoded BUFS buffer size in bits, or `None` if this is not a BUFS variant.
+    ///
+    /// `bufs_bits = bufs × units.multiplier_bits()`
+    ///
+    /// See EN 302 755 Annex C Table C.1 + §BUFS/TTO semantics
+    /// (`docs/en_302_755_t2.md`).
+    ///
+    /// # Note on encoders
+    ///
+    /// Only decode accessors are provided. No `set_*` or `from_*` encoders are
+    /// added because the physical-value → mantissa/exponent TTO encoding is
+    /// lossy and the wire round-trip is already guaranteed by the existing
+    /// raw-field serialization in `Bbheader`. Use the raw-field constructors
+    /// (`SignallingKind::Bufs { … }` / `SignallingKind::Tto { … }`) for
+    /// encoding.
+    pub fn bufs_bits(&self) -> Option<u64> {
+        match self {
+            Self::Bufs { bufs, units } => Some(*bufs as u64 * units.multiplier_bits()),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    /// Decoded BUFS buffer size in bytes (integer floor), or `None`.
+    ///
+    /// `bufs_bytes = bufs_bits() / 8`. Integer division is used: BUFS is a
+    /// maximum-size bound per the standard, so a floor is appropriate.
+    ///
+    /// See EN 302 755 Annex C Table C.1 + §BUFS/TTO semantics
+    /// (`docs/en_302_755_t2.md`).
+    pub fn bufs_bytes(&self) -> Option<u64> {
+        self.bufs_bits().map(|b| b / 8)
+    }
+
+    #[must_use]
+    /// Decoded time-to-output in units of T/256, or `None` if this is not a
+    /// TTO variant.
+    ///
+    /// `tto_t_over_256 = ((TTO_M × 256) + TTO_L) × 2^TTO_E`
+    ///
+    /// This is `TTO × 256` in units of the elementary period **T** (see EN 302
+    /// 755 §9.5 / Table 65). The `TTO_L / 256` fractional term is preserved
+    /// exactly without floating point; consumers divide by 256.0 to obtain
+    /// `TTO` in units of T.
+    ///
+    /// Per EN 302 755 Annex C Table C.1 + §8.3.3
+    /// (`docs/en_302_755_t2.md`).
+    pub fn tto_t_over_256(&self) -> Option<u64> {
+        match self {
+            Self::Tto {
+                tto_e,
+                tto_m,
+                tto_l,
+            } => Some((u64::from(*tto_m) * 256 + u64::from(*tto_l)) << tto_e),
+            _ => None,
+        }
+    }
 }
 
 /// Decoded ISSY value (EN 302 755 §5.1.7, Annex C).
@@ -326,5 +404,89 @@ mod tests {
         assert_eq!(BufsUnit::Kbits.name(), "Kbits");
         assert_eq!(BufsUnit::Mbits.name(), "Mbits");
         assert_eq!(BufsUnit::Kbits8.name(), "8 Kbits");
+    }
+
+    #[test]
+    fn multiplier_bits() {
+        assert_eq!(BufsUnit::Bits.multiplier_bits(), 1);
+        assert_eq!(BufsUnit::Kbits.multiplier_bits(), 1_000);
+        assert_eq!(BufsUnit::Mbits.multiplier_bits(), 1_000_000);
+        assert_eq!(BufsUnit::Kbits8.multiplier_bits(), 8_000);
+    }
+
+    #[test]
+    fn bufs_bits_and_bytes() {
+        // BUFS = 2 Mbits → 2 * 1_000_000 = 2_000_000 bits → 250_000 bytes
+        let b = SignallingKind::Bufs {
+            bufs: 2,
+            units: BufsUnit::Mbits,
+        };
+        assert_eq!(b.bufs_bits(), Some(2_000_000));
+        assert_eq!(b.bufs_bytes(), Some(250_000));
+
+        // BUFS = 1 bit
+        let b = SignallingKind::Bufs {
+            bufs: 1,
+            units: BufsUnit::Bits,
+        };
+        assert_eq!(b.bufs_bits(), Some(1));
+        assert_eq!(b.bufs_bytes(), Some(0)); // 1/8 = 0 (integer floor)
+
+        // BUFS = 3 × 8Kbits → 3 * 8000 = 24_000 bits → 3_000 bytes
+        let b = SignallingKind::Bufs {
+            bufs: 3,
+            units: BufsUnit::Kbits8,
+        };
+        assert_eq!(b.bufs_bits(), Some(24_000));
+        assert_eq!(b.bufs_bytes(), Some(3_000));
+
+        // TTO variant returns None
+        let t = SignallingKind::Tto {
+            tto_e: 0,
+            tto_m: 0,
+            tto_l: 0,
+        };
+        assert_eq!(t.bufs_bits(), None);
+        assert_eq!(t.bufs_bytes(), None);
+
+        // Reserved variant returns None
+        assert_eq!(SignallingKind::Reserved(0).bufs_bits(), None);
+    }
+
+    #[test]
+    fn tto_t_over_256() {
+        // TTO_E=0, TTO_M=1, TTO_L=0 → ((1*256 + 0) << 0) = 256 (= 1·T in T/256 units)
+        let t = SignallingKind::Tto {
+            tto_e: 0,
+            tto_m: 1,
+            tto_l: 0,
+        };
+        assert_eq!(t.tto_t_over_256(), Some(256));
+
+        // TTO_E=1, TTO_M=0, TTO_L=128 → ((0*256 + 128) << 1) = 256 (= (128/256)*T*2 = 1·T → 256 in T/256 units)
+        let t = SignallingKind::Tto {
+            tto_e: 1,
+            tto_m: 0,
+            tto_l: 128,
+        };
+        assert_eq!(t.tto_t_over_256(), Some(256));
+
+        // TTO_E=5, TTO_M=3, TTO_L=64 → ((3*256 + 64) << 5) = (768 + 64) * 32 = 832 * 32 = 26_624
+        let t = SignallingKind::Tto {
+            tto_e: 5,
+            tto_m: 3,
+            tto_l: 64,
+        };
+        assert_eq!(t.tto_t_over_256(), Some(26_624));
+
+        // Bufs variant returns None
+        let b = SignallingKind::Bufs {
+            bufs: 1,
+            units: BufsUnit::Bits,
+        };
+        assert_eq!(b.tto_t_over_256(), None);
+
+        // Reserved variant returns None
+        assert_eq!(SignallingKind::Reserved(0).tto_t_over_256(), None);
     }
 }
