@@ -1,25 +1,28 @@
 //! ETSI TR 101 290 v1.4.1 transport-stream conformance monitor.
 //!
-//! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6) and
-//! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6) indicator
+//! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6),
+//! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6), and
+//! **SI-repetition** (Table 5.0c, indicator 3.2 — maximum interval) indicator
 //! sets. Indicator 2.4 (PCR_accuracy_error) is intentionally excluded — it
 //! requires hardware arrival timestamps not available under the caller-supplied-
-//! time model. SI-repetition (Priority 3) indicators will be added in a future
-//! release.
+//! time model. Indicator 3.2's minimum-gap (25 ms) dimension is deferred —
+//! it needs per-`(table_id, section_number)` tracking to avoid false positives
+//! on dense multi-section tables.
 //!
 //! # Caller-supplied time
 //!
 //! [`ConformanceMonitor::feed`] takes a [`core::time::Duration`] timestamp
 //! alongside each TS packet. All presence/absence timeout checks (1.3.a, 1.5.a,
-//! 1.6, 2.3a, 2.3b, 2.5) are evaluated against this clock. The caller must
-//! ensure that timestamps are **monotonic non-decreasing** across calls; the
-//! monitor does not enforce this but non-monotonic timestamps will produce
+//! 1.6, 2.3a, 2.3b, 2.5, 3.2) are evaluated against this clock. The caller
+//! must ensure that timestamps are **monotonic non-decreasing** across calls;
+//! the monitor does not enforce this but non-monotonic timestamps will produce
 //! spurious events.
 //!
 //! # References
 //!
 //! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.1, Table 5.0a
 //! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.2, Table 5.0b
+//! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.3, Table 5.0c
 //! - ISO/IEC 13818-1 (MPEG-2 Systems)
 
 use core::time::Duration;
@@ -86,6 +89,22 @@ const DEFAULT_PCR_DISCONTINUITY_LIMIT_MS: u64 = 100;
 /// repetition interval (700 ms; not applied to still pictures).
 const DEFAULT_PTS_REPETITION_LIMIT_MS: u64 = 700;
 
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — NIT_actual maximum repetition
+/// interval (10 s; EN 300 468 §5.2.1).
+const DEFAULT_SI_NIT_INTERVAL_SECS: u64 = 10;
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — SDT_actual maximum repetition
+/// interval (2 s; EN 300 468 §5.2.2).
+const DEFAULT_SI_SDT_INTERVAL_SECS: u64 = 2;
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — EIT P/F actual maximum
+/// repetition interval (2 s; EN 300 468 §5.2.4).
+const DEFAULT_SI_EIT_PF_INTERVAL_SECS: u64 = 2;
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — TDT maximum repetition
+/// interval (30 s; EN 300 468 §5.2.5).
+const DEFAULT_SI_TDT_INTERVAL_SECS: u64 = 30;
+
 // ── PCR / PES constants ─────────────────────────────────────────────────────
 
 /// PCR modulus on the 27 MHz clock: `2^33 × 300` (33-bit base × 300 ticks).
@@ -116,6 +135,18 @@ const PES_PTS_PRESENT: u8 = 0b1000_0000;
 /// CAT `table_id` value (ISO/IEC 13818-1 §2.4.4.5).
 const CAT_TABLE_ID: u8 = dvb_si::table_id::TableId::Cat as u8;
 
+/// NIT_actual `table_id` (EN 300 468 §5.2.1, table_id 0x40).
+const NIT_ACTUAL_TABLE_ID: u8 = dvb_si::table_id::TableId::NetworkInformationActual as u8;
+
+/// SDT_actual `table_id` (EN 300 468 §5.2.2, table_id 0x42).
+const SDT_ACTUAL_TABLE_ID: u8 = dvb_si::table_id::TableId::ServiceDescriptionActual as u8;
+
+/// EIT P/F actual `table_id` (EN 300 468 §5.2.4, table_id 0x4E).
+const EIT_PF_ACTUAL_TABLE_ID: u8 = dvb_si::table_id::TableId::EventInformationPfActual as u8;
+
+/// TDT `table_id` (EN 300 468 §5.2.5, table_id 0x70).
+const TDT_TABLE_ID: u8 = dvb_si::table_id::TableId::TimeAndDate as u8;
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 /// Severity tier per TR 101 290 §5.2 (Tables 5.0a/5.0b/5.0c).
@@ -133,7 +164,7 @@ pub enum Priority {
 
 /// A TR 101 290 measurement indicator.
 ///
-/// `#[non_exhaustive]` — SI-repetition variants may be added later.
+/// `#[non_exhaustive]` — additional Priority-3 variants may be added later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -167,6 +198,11 @@ pub enum Indicator {
     PtsError,
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.6 — CAT_error.
     CatError,
+
+    // ── Priority 3 (Table 5.0c) ──────────────────────────────────────────
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — SI_repetition_error
+    /// (maximum interval dimension; minimum-gap deferred).
+    SiRepetitionError,
 }
 
 impl Indicator {
@@ -186,6 +222,7 @@ impl Indicator {
             | Self::PcrDiscontinuityError
             | Self::PtsError
             | Self::CatError => Priority::Second,
+            Self::SiRepetitionError => Priority::Third,
         }
     }
 
@@ -205,6 +242,7 @@ impl Indicator {
             Self::PcrDiscontinuityError => "PCR_discontinuity_indicator_error",
             Self::PtsError => "PTS_error",
             Self::CatError => "CAT_error",
+            Self::SiRepetitionError => "SI_repetition_error",
         }
     }
 
@@ -224,6 +262,7 @@ impl Indicator {
             Self::PcrDiscontinuityError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
             Self::PtsError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.5",
             Self::CatError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.6",
+            Self::SiRepetitionError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.2",
         }
     }
 }
@@ -286,6 +325,18 @@ pub struct Config {
     /// Maximum interval between consecutive PTS values on an elementary-stream
     /// PID (Table 5.0b 2.5 / note 3). Default: 700 ms.
     pub pts_repetition_limit: Duration,
+    /// Maximum repetition interval for NIT_actual sections (Table 5.0c 3.2 /
+    /// EN 300 468 §5.2.1). Default: 10 s.
+    pub si_nit_interval: Duration,
+    /// Maximum repetition interval for SDT_actual sections (Table 5.0c 3.2 /
+    /// EN 300 468 §5.2.2). Default: 2 s.
+    pub si_sdt_interval: Duration,
+    /// Maximum repetition interval for EIT P/F actual sections (Table 5.0c
+    /// 3.2 / EN 300 468 §5.2.4). Default: 2 s.
+    pub si_eit_pf_interval: Duration,
+    /// Maximum repetition interval for TDT sections (Table 5.0c 3.2 /
+    /// EN 300 468 §5.2.5). Default: 30 s.
+    pub si_tdt_interval: Duration,
 }
 
 impl Default for Config {
@@ -299,6 +350,10 @@ impl Default for Config {
             pcr_repetition_limit: Duration::from_millis(DEFAULT_PCR_REPETITION_LIMIT_MS),
             pcr_discontinuity_limit: Duration::from_millis(DEFAULT_PCR_DISCONTINUITY_LIMIT_MS),
             pts_repetition_limit: Duration::from_millis(DEFAULT_PTS_REPETITION_LIMIT_MS),
+            si_nit_interval: Duration::from_secs(DEFAULT_SI_NIT_INTERVAL_SECS),
+            si_sdt_interval: Duration::from_secs(DEFAULT_SI_SDT_INTERVAL_SECS),
+            si_eit_pf_interval: Duration::from_secs(DEFAULT_SI_EIT_PF_INTERVAL_SECS),
+            si_tdt_interval: Duration::from_secs(DEFAULT_SI_TDT_INTERVAL_SECS),
         }
     }
 }
@@ -348,6 +403,15 @@ struct SiReassembly {
     reassembler: SectionReassembler,
 }
 
+/// Timer state for an SI table repetition-interval check (indicator 3.2).
+/// Lazily armed — only starts checking after the first section of that
+/// table_id is seen.
+struct SiRepetitionTimer {
+    last_seen: Duration,
+    reported: bool,
+    armed: bool,
+}
+
 // ── ConformanceMonitor ───────────────────────────────────────────────────────
 
 /// ETSI TR 101 290 transport-stream conformance monitor.
@@ -390,6 +454,9 @@ pub struct ConformanceMonitor {
     // CAT tracking (2.6)
     cat_seen: bool,
     scrambled_without_cat_reported: bool,
+
+    // SI repetition-interval timers keyed by table_id (3.2)
+    si_timers: HashMap<u8, SiRepetitionTimer>,
 }
 
 impl ConformanceMonitor {
@@ -433,6 +500,7 @@ impl ConformanceMonitor {
             pts_states: HashMap::new(),
             cat_seen: false,
             scrambled_without_cat_reported: false,
+            si_timers: HashMap::new(),
         }
     }
 
@@ -602,6 +670,7 @@ impl ConformanceMonitor {
             for section_bytes in &sections {
                 self.check_crc_for_si(section_bytes, pid, t);
                 self.check_cat_table_id(section_bytes, pid, t);
+                self.update_si_repetition(section_bytes, pid, t);
             }
         }
         // Also CRC-check completed PAT/PMT sections via the si_reassemblies
@@ -1066,6 +1135,38 @@ impl ConformanceMonitor {
         state.last_pts_time = t;
     }
 
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — update SI repetition timer
+    /// when a completed section on a well-known SI PID matches one of the four
+    /// tracked table_ids.
+    fn update_si_repetition(&mut self, section_bytes: &[u8], _pid: u16, t: Duration) {
+        let table_id = match Section::parse(section_bytes) {
+            Ok(s) => s.table_id,
+            Err(_) => return,
+        };
+
+        let is_tracked = table_id == NIT_ACTUAL_TABLE_ID
+            || table_id == SDT_ACTUAL_TABLE_ID
+            || table_id == EIT_PF_ACTUAL_TABLE_ID
+            || table_id == TDT_TABLE_ID;
+
+        if !is_tracked {
+            return;
+        }
+
+        let timer = self
+            .si_timers
+            .entry(table_id)
+            .or_insert_with(|| SiRepetitionTimer {
+                last_seen: Duration::ZERO,
+                reported: false,
+                armed: false,
+            });
+
+        timer.last_seen = t;
+        timer.reported = false;
+        timer.armed = true;
+    }
+
     /// Evaluate all presence/absence timeouts against the current time `t`.
     fn check_presence_timeouts(&mut self, t: Duration) {
         // 1.3.a: PAT presence timeout
@@ -1139,6 +1240,57 @@ impl ConformanceMonitor {
                 format!(
                     "referenced PID 0x{:04X} absent for > {} s",
                     pid, period_secs
+                ),
+            );
+        }
+
+        // 3.2: SI_repetition_error — maximum interval for tracked SI tables.
+        // Collect table_ids that need events, then emit outside the iteration.
+        let si_timeouts: Vec<(u8, u64, u16, u64)> = self
+            .si_timers
+            .iter()
+            .filter_map(|(&table_id, timer)| {
+                if !timer.armed || timer.reported {
+                    return None;
+                }
+                let (limit, pid) = match table_id {
+                    NIT_ACTUAL_TABLE_ID => (self.config.si_nit_interval, PID_NIT),
+                    SDT_ACTUAL_TABLE_ID => (self.config.si_sdt_interval, PID_SDT_BAT),
+                    EIT_PF_ACTUAL_TABLE_ID => (self.config.si_eit_pf_interval, PID_EIT),
+                    TDT_TABLE_ID => (self.config.si_tdt_interval, PID_TDT_TOT),
+                    _ => return None,
+                };
+                let interval = t.saturating_sub(timer.last_seen);
+                if interval > limit {
+                    Some((
+                        table_id,
+                        interval.as_millis() as u64,
+                        pid,
+                        limit.as_millis() as u64,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (table_id, interval_ms, pid, limit_ms) in si_timeouts {
+            if let Some(timer) = self.si_timers.get_mut(&table_id) {
+                timer.reported = true;
+            }
+            let table_name = match table_id {
+                NIT_ACTUAL_TABLE_ID => "NIT_actual",
+                SDT_ACTUAL_TABLE_ID => "SDT_actual",
+                EIT_PF_ACTUAL_TABLE_ID => "EIT_P/F_actual",
+                TDT_TABLE_ID => "TDT",
+                _ => "unknown",
+            };
+            self.emit(
+                Indicator::SiRepetitionError,
+                Some(pid),
+                t,
+                format!(
+                    "{} repetition interval {} ms exceeds {} ms",
+                    table_name, interval_ms, limit_ms
                 ),
             );
         }

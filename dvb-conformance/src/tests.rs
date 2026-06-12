@@ -1,9 +1,14 @@
 use core::time::Duration;
 
 use dvb_common::Serialize;
+use dvb_si::descriptors::any::DescriptorLoop;
 use dvb_si::mux::SectionPacketizer;
+use dvb_si::tables::eit::{EitKind, EitSection};
+use dvb_si::tables::nit::{NitKind, NitSection};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream};
+use dvb_si::tables::sdt::{SdtKind, SdtSection};
+use dvb_si::tables::tdt::TdtSection;
 use dvb_si::ts::{TsHeader, TS_PACKET_SIZE};
 
 use crate::{Config, ConformanceMonitor, Indicator};
@@ -12,6 +17,10 @@ use crate::{Config, ConformanceMonitor, Indicator};
 
 const PID_PAT: u16 = 0x0000;
 const PID_CAT: u16 = 0x0001;
+const PID_NIT: u16 = 0x0010;
+const PID_SDT_BAT: u16 = 0x0011;
+const PID_EIT: u16 = 0x0012;
+const PID_TDT_TOT: u16 = 0x0014;
 const PID_NULL: u16 = 0x1FFF;
 
 fn ms(millis: u64) -> Duration {
@@ -930,4 +939,292 @@ fn cat_error_absent_when_cat_seen_then_scrambled() {
             .any(|e| e.indicator == Indicator::CatError && e.detail.contains("no CAT seen")),
         "CatError 'no CAT' should not fire after CAT section seen"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Priority 3 tests — SI_repetition_error (3.2) ────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Build an SDT_actual section's wire bytes.
+fn build_sdt_actual_section() -> Vec<u8> {
+    let sdt = SdtSection {
+        kind: SdtKind::Actual,
+        transport_stream_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        original_network_id: 1,
+        services: vec![],
+    };
+    let mut buf = vec![0u8; sdt.serialized_len()];
+    sdt.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build a NIT_actual section's wire bytes.
+fn build_nit_actual_section() -> Vec<u8> {
+    let nit = NitSection {
+        kind: NitKind::Actual,
+        network_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        network_descriptors: DescriptorLoop::new(&[]),
+        transport_streams: vec![],
+    };
+    let mut buf = vec![0u8; nit.serialized_len()];
+    nit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build an EIT P/F actual section's wire bytes.
+fn build_eit_pf_actual_section() -> Vec<u8> {
+    let eit = EitSection {
+        kind: EitKind::PresentFollowingActual,
+        table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        service_id: 1,
+        version_number: 0,
+        current_next_indicator: true,
+        section_number: 0,
+        last_section_number: 0,
+        transport_stream_id: 1,
+        original_network_id: 1,
+        segment_last_section_number: 0,
+        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        events: vec![],
+    };
+    let mut buf = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+/// Build a TDT section's wire bytes.
+fn build_tdt_section() -> Vec<u8> {
+    let tdt = TdtSection::new([0x00, 0x00, 0x00, 0x00, 0x00]);
+    let mut buf = vec![0u8; tdt.serialized_len()];
+    tdt.serialize_into(&mut buf).unwrap();
+    buf
+}
+
+// ── 3.2 SDT_actual repetition ────────────────────────────────────────────────
+
+#[test]
+fn si_repetition_sdt_trips_on_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed an SDT_actual section.
+    let section = build_sdt_actual_section();
+    let packets = packetize_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed a packet on another PID past the 2 s SDT interval.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(3));
+    assert!(has_indicator(events, Indicator::SiRepetitionError));
+    let si_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::SiRepetitionError)
+        .collect();
+    assert_eq!(si_events.len(), 1);
+    assert_eq!(si_events[0].pid, Some(PID_SDT_BAT));
+    assert!(si_events[0].detail.contains("SDT_actual"));
+}
+
+#[test]
+fn si_repetition_sdt_compliant_within_interval() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed an SDT_actual section.
+    let section = build_sdt_actual_section();
+    let packets = packetize_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed another SDT_actual within 2 s.
+    let packets2 = packetize_section(PID_SDT_BAT, &section);
+    let events = feed_all(&mut monitor, &packets2, ms(1000), ms(1));
+    assert!(!has_indicator(&events, Indicator::SiRepetitionError));
+}
+
+// ── 3.2 TDT repetition ──────────────────────────────────────────────────────
+
+#[test]
+fn si_repetition_tdt_trips_on_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a TDT section.
+    let section = build_tdt_section();
+    let packets = packetize_section(PID_TDT_TOT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed a packet past the 30 s TDT interval.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(35));
+    assert!(has_indicator(events, Indicator::SiRepetitionError));
+    let si_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::SiRepetitionError)
+        .collect();
+    assert_eq!(si_events.len(), 1);
+    assert_eq!(si_events[0].pid, Some(PID_TDT_TOT));
+    assert!(si_events[0].detail.contains("TDT"));
+}
+
+#[test]
+fn si_repetition_tdt_compliant_within_interval() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a TDT section.
+    let section = build_tdt_section();
+    let packets = packetize_section(PID_TDT_TOT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed another TDT within 30 s.
+    let packets2 = packetize_section(PID_TDT_TOT, &section);
+    let events = feed_all(&mut monitor, &packets2, secs(20), ms(1));
+    assert!(!has_indicator(&events, Indicator::SiRepetitionError));
+}
+
+// ── 3.2 NIT_actual repetition ────────────────────────────────────────────────
+
+#[test]
+fn si_repetition_nit_trips_on_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a NIT_actual section.
+    let section = build_nit_actual_section();
+    let packets = packetize_section(PID_NIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed a packet past the 10 s NIT interval.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(12));
+    assert!(has_indicator(events, Indicator::SiRepetitionError));
+    let si_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::SiRepetitionError)
+        .collect();
+    assert_eq!(si_events.len(), 1);
+    assert_eq!(si_events[0].pid, Some(PID_NIT));
+    assert!(si_events[0].detail.contains("NIT_actual"));
+}
+
+#[test]
+fn si_repetition_nit_compliant_within_interval() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a NIT_actual section.
+    let section = build_nit_actual_section();
+    let packets = packetize_section(PID_NIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed another NIT within 10 s.
+    let packets2 = packetize_section(PID_NIT, &section);
+    let events = feed_all(&mut monitor, &packets2, secs(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::SiRepetitionError));
+}
+
+// ── 3.2 EIT P/F actual repetition ───────────────────────────────────────────
+
+#[test]
+fn si_repetition_eit_pf_trips_on_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed an EIT P/F actual section.
+    let section = build_eit_pf_actual_section();
+    let packets = packetize_section(PID_EIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed a packet past the 2 s EIT interval.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(3));
+    assert!(has_indicator(events, Indicator::SiRepetitionError));
+    let si_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::SiRepetitionError)
+        .collect();
+    assert_eq!(si_events.len(), 1);
+    assert_eq!(si_events[0].pid, Some(PID_EIT));
+    assert!(si_events[0].detail.contains("EIT_P/F_actual"));
+}
+
+#[test]
+fn si_repetition_eit_pf_compliant_within_interval() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed an EIT P/F actual section.
+    let section = build_eit_pf_actual_section();
+    let packets = packetize_section(PID_EIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed another EIT within 2 s.
+    let packets2 = packetize_section(PID_EIT, &section);
+    let events = feed_all(&mut monitor, &packets2, secs(1), ms(1));
+    assert!(!has_indicator(&events, Indicator::SiRepetitionError));
+}
+
+// ── 3.2 Lazy arming — absent table not flagged ───────────────────────────────
+
+#[test]
+fn si_repetition_not_armed_before_first_section() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed packets on unrelated PIDs well past all SI intervals.
+    // No SI table has been seen, so no timer is armed.
+    for i in 0..5u8 {
+        let pkt = make_ts_packet(0x200, i, false, false, &[], &[]);
+        let events = monitor.feed(&pkt, secs(60 + i as u64));
+        assert!(
+            !has_indicator(events, Indicator::SiRepetitionError),
+            "SiRepetitionError should not fire before any SI section is seen"
+        );
+    }
+}
+
+// ── 3.2 Emit-once semantics ──────────────────────────────────────────────────
+
+#[test]
+fn si_repetition_emits_once_not_per_packet() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed an SDT_actual section.
+    let section = build_sdt_actual_section();
+    let packets = packetize_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Feed packets past the 2 s interval — only the FIRST should emit.
+    let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
+    let e1 = monitor.feed(&pkt, secs(3)).to_vec();
+    let e2 = monitor.feed(&pkt, secs(4)).to_vec();
+    let e3 = monitor.feed(&pkt, secs(5)).to_vec();
+
+    assert_eq!(
+        e1.iter()
+            .filter(|e| e.indicator == Indicator::SiRepetitionError)
+            .count(),
+        1
+    );
+    assert!(!has_indicator(&e2, Indicator::SiRepetitionError));
+    assert!(!has_indicator(&e3, Indicator::SiRepetitionError));
 }
