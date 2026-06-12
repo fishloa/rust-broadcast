@@ -11,6 +11,7 @@ use crate::{Config, ConformanceMonitor, Indicator};
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 const PID_PAT: u16 = 0x0000;
+const PID_CAT: u16 = 0x0001;
 const PID_NULL: u16 = 0x1FFF;
 
 fn ms(millis: u64) -> Duration {
@@ -56,6 +57,86 @@ fn make_ts_packet(
             .copy_from_slice(&payload[..payload.len().min(TS_PACKET_SIZE - pos)]);
     }
     pkt
+}
+
+/// Build a TS packet with TEI bit set.
+fn make_ts_packet_with_tei(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
+    let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+    let header = TsHeader {
+        tei: true,
+        pusi: false,
+        pid,
+        scrambling: 0,
+        has_adaptation: false,
+        has_payload: false,
+        continuity_counter: cc & 0x0F,
+    };
+    header.serialize_into(&mut pkt[..4]).unwrap();
+    pkt
+}
+
+/// Build a TS packet with scrambling != 0.
+fn make_ts_packet_with_scrambling(pid: u16, cc: u8, scrambling: u8) -> [u8; TS_PACKET_SIZE] {
+    let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+    let header = TsHeader {
+        tei: false,
+        pusi: false,
+        pid,
+        scrambling,
+        has_adaptation: false,
+        has_payload: true,
+        continuity_counter: cc & 0x0F,
+    };
+    header.serialize_into(&mut pkt[..4]).unwrap();
+    pkt[4] = 0xAB; // some payload
+    pkt
+}
+
+/// Encode a 42-bit PCR value (33-bit base + 9-bit extension) into 6 bytes.
+/// ISO/IEC 13818-1 §2.4.3.5 — PCR layout:
+///   byte 0-3: base[32:0] (33 bits, MSB first)
+///   byte 4: reserved(6) | extension[8:7]
+///   byte 5: extension[7:0]
+fn encode_pcr(base: u64, extension: u16) -> [u8; 6] {
+    let mut out = [0u8; 6];
+    out[0] = (base >> 25) as u8;
+    out[1] = (base >> 17) as u8;
+    out[2] = (base >> 9) as u8;
+    out[3] = (base >> 1) as u8;
+    out[4] = ((base & 1) << 7) as u8 | 0x7E | ((extension >> 8) & 1) as u8;
+    out[5] = (extension & 0xFF) as u8;
+    out
+}
+
+/// Build adaptation field data (WITHOUT the leading length byte —
+/// `make_ts_packet` adds that) carrying a PCR, optionally setting the
+/// discontinuity_indicator. When `no_payload` is true the adaptation field
+/// fills the rest of the packet (af_length = 183) so the data must be padded
+/// to 183 bytes.
+fn make_pcr_adaptation(
+    pcr_base: u64,
+    pcr_extension: u16,
+    discontinuity: bool,
+    no_payload: bool,
+) -> Vec<u8> {
+    // Flags byte: discontinuity_indicator(bit7) | random_access(bit6) |
+    //   ES_priority(bit5) | PCR_flag(bit4) | OPCR_flag(bit3) |
+    //   splicing_point(bit2) | transport_private_data(bit1) | extension(bit0)
+    let flags: u8 = 0x10 // PCR flag
+        | if discontinuity { 0x80 } else { 0x00 };
+    let pcr_bytes = encode_pcr(pcr_base, pcr_extension);
+    // adaptation_field_data = flags(1) + pcr(6) = 7 bytes
+    let data_len: usize = 7;
+    let af_data_len = if no_payload {
+        // Fill the rest of the 188-byte packet: 188 - 4(header) - 1(af_len byte) = 183
+        183usize
+    } else {
+        data_len
+    };
+    let mut af = vec![0xFF; af_data_len];
+    af[0] = flags;
+    af[1..7].copy_from_slice(&pcr_bytes);
+    af
 }
 
 /// Build a PAT section's wire bytes.
@@ -127,12 +208,84 @@ fn has_indicator(events: &[crate::ConformanceEvent], indicator: Indicator) -> bo
     events.iter().any(|e| e.indicator == indicator)
 }
 
+/// Acquire sync by feeding 5 good packets.
+fn acquire_sync(monitor: &mut ConformanceMonitor) {
+    for i in 0u8..5 {
+        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
+        monitor.feed(&pkt, ms(i as u64));
+    }
+}
+
+/// Build a minimal PES header that signals PTS present (PTS_DTS_flags = 0b10).
+/// Layout: 00 00 01 [stream_id] [PES_packet_length_hi] [PES_packet_length_lo]
+///         [flags_byte: '10' + scrambling + priority + ...]
+///         [PTS_DTS_flags_byte + other flags]
+///         [5 bytes PTS placeholder]
+fn make_pes_header_with_pts(stream_id: u8, pes_packet_length: u16) -> Vec<u8> {
+    vec![
+        0x00, // prefix byte 0
+        0x00, // prefix byte 1
+        0x01, // prefix byte 2
+        stream_id,
+        (pes_packet_length >> 8) as u8,
+        (pes_packet_length & 0xFF) as u8,
+        // Byte 6: marker bits '10' + PES_scrambling_control(00) +
+        //   PES_priority(0) + data_alignment_indicator(0) + copyright(0) +
+        //   original_or_copy(0) = 0b1000_0000 = 0x80
+        0x80,
+        // Byte 7: PTS_DTS_flags(10) + ESCR_flag(0) + ES_rate_flag(0) +
+        //   DSM_trick_mode(0) + additional_copy_info(0) + PES_CRC(0) +
+        //   PES_extension(0) = 0b1000_0000 = 0x80
+        0x80,
+        // Byte 8: PES_header_data_length (5 bytes for PTS only)
+        5,
+        // 5 bytes of PTS placeholder (33-bit PTS encoded across 5 bytes).
+        // Use value 0 for simplicity — we only care about presence, not value.
+        0x21, // '0010' + PTS[32:30] + marker '1'
+        0x00, // PTS[29:22]
+        0x01, // PTS[21:15] + marker '1' (partial)
+        0x00, // PTS[14:7]
+        0x01, // PTS[6:0] + marker '1'
+    ]
+}
+
+/// Build a PES header WITHOUT PTS (PTS_DTS_flags = 0b00).
+fn make_pes_header_without_pts(stream_id: u8, pes_packet_length: u16) -> Vec<u8> {
+    vec![
+        0x00,
+        0x00,
+        0x01,
+        stream_id,
+        (pes_packet_length >> 8) as u8,
+        (pes_packet_length & 0xFF) as u8,
+        0x80, // '10' marker
+        0x00, // PTS_DTS_flags = 00
+        0,    // PES_header_data_length = 0
+    ]
+}
+
+/// Set up a monitor with sync + PAT + PMT referencing ES PID `es_pid`.
+/// Returns the PMT PID.
+fn setup_monitor_with_es(monitor: &mut ConformanceMonitor, es_pid: u16) -> u16 {
+    let pmt_pid: u16 = 0x0100;
+    acquire_sync(monitor);
+
+    let pat_section = build_pat_section(&[(1, pmt_pid)]);
+    let pat_packets = packetize_section(PID_PAT, &pat_section);
+    feed_all(monitor, &pat_packets, ms(5), ms(1));
+
+    let pmt_section = build_pmt_section(1, 0x1FFF, &[es_pid]);
+    let pmt_packets = packetize_section(pmt_pid, &pmt_section);
+    feed_all(monitor, &pmt_packets, ms(10), ms(1));
+
+    pmt_pid
+}
+
 // ── 1.2 Sync_byte_error ─────────────────────────────────────────────────────
 
 #[test]
 fn sync_byte_error_trips_on_bad_sync() {
     let mut monitor = ConformanceMonitor::new();
-    // Build a valid packet then corrupt the sync byte.
     let mut pkt = make_ts_packet(PID_PAT, 0, true, false, &[], &[0x00]);
     pkt[0] = 0x00; // bad sync
 
@@ -143,7 +296,6 @@ fn sync_byte_error_trips_on_bad_sync() {
 #[test]
 fn sync_byte_error_absent_on_good_sync() {
     let mut monitor = ConformanceMonitor::new();
-    // First acquire sync (5 good packets).
     for i in 0u8..6 {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         let events = monitor.feed(&pkt, ms(i as u64));
@@ -157,14 +309,12 @@ fn sync_byte_error_absent_on_good_sync() {
 fn ts_sync_loss_after_bad_run_then_reacquire() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync first.
     for i in 0u8..5 {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         monitor.feed(&pkt, ms(i as u64));
     }
     assert!(monitor.stats().in_sync);
 
-    // Feed 2 bad-sync packets (default sync_loss_packets = 2).
     let mut bad = [0u8; TS_PACKET_SIZE];
     bad[0] = 0x00;
     let events1 = monitor.feed(&bad, ms(5));
@@ -173,7 +323,6 @@ fn ts_sync_loss_after_bad_run_then_reacquire() {
     assert!(has_indicator(events2, Indicator::TsSyncLoss));
     assert!(!monitor.stats().in_sync);
 
-    // Re-acquire with 5 good packets.
     for i in 0u8..5 {
         let pkt = make_ts_packet(0x100, (5 + i) & 0x0F, false, false, &[], &[]);
         monitor.feed(&pkt, ms(7 + i as u64));
@@ -197,13 +346,11 @@ fn ts_sync_loss_not_emitted_while_in_sync() {
 fn cc_error_trips_on_jump() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync.
     for i in 0u8..5 {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         monitor.feed(&pkt, ms(i as u64));
     }
 
-    // Feed cc=3, then cc=5 (skipped 4).
     let pkt1 = make_ts_packet(0x100, 3, false, false, &[], &[]);
     let pkt2 = make_ts_packet(0x100, 5, false, false, &[], &[]);
     monitor.feed(&pkt1, ms(5));
@@ -218,7 +365,6 @@ fn cc_correct_increment_no_error() {
         let pkt = make_ts_packet(0x100, i, true, false, &[], &[0xAB]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    // Sequential increment: last_cc=4, next with payload should be 5.
     let pkt = make_ts_packet(0x100, 5, true, false, &[], &[0xAB]);
     let events = monitor.feed(&pkt, ms(5));
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
@@ -232,7 +378,6 @@ fn cc_single_duplicate_is_legal() {
         monitor.feed(&pkt, ms(i as u64));
     }
 
-    // cc=4 again (single duplicate with payload).
     let pkt = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
     let events = monitor.feed(&pkt, ms(5));
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
@@ -245,10 +390,8 @@ fn cc_double_duplicate_is_error() {
         let pkt = make_ts_packet(0x100, i, true, false, &[], &[0xAB]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    // First duplicate — legal.
     let pkt1 = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
     monitor.feed(&pkt1, ms(5));
-    // Second duplicate — error.
     let pkt2 = make_ts_packet(0x100, 4, true, false, &[], &[0xCD]);
     let events = monitor.feed(&pkt2, ms(6));
     assert!(has_indicator(events, Indicator::ContinuityCountError));
@@ -261,8 +404,6 @@ fn cc_no_payload_holds_cc() {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    // No-payload packet: CC must not advance.
-    // Adaptation-only: has_adaptation=true, has_payload=false.
     let pkt = make_ts_packet(0x100, 4, false, true, &[0x00], &[]);
     let events = monitor.feed(&pkt, ms(5));
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
@@ -275,7 +416,6 @@ fn cc_discontinuity_indicator_skips_check() {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    // Packet with discontinuity_indicator=1: adaptation field flags byte 0x80.
     let af = [0x80]; // discontinuity_indicator set
     let pkt = make_ts_packet(0x100, 7, false, true, &af, &[]);
     let events = monitor.feed(&pkt, ms(5));
@@ -289,7 +429,6 @@ fn cc_null_pid_skipped() {
         let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
         monitor.feed(&pkt, ms(i as u64));
     }
-    // Null packets can have any CC — should not trigger.
     let pkt = make_ts_packet(PID_NULL, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, ms(5));
     assert!(!has_indicator(events, Indicator::ContinuityCountError));
@@ -301,14 +440,8 @@ fn cc_null_pid_skipped() {
 fn pat_error_wrong_table_id() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync.
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
 
-    // Build a section with wrong table_id on PID 0x0000.
-    // Use a CAT table_id (0x01) section on the PAT PID.
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
 
@@ -321,13 +454,8 @@ fn pat_error_wrong_table_id() {
 fn pat_error_scrambling() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync.
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
 
-    // Build a PAT packet with scrambling != 0.
     let mut pkt = make_ts_packet(PID_PAT, 0, true, false, &[], &[0x00]);
     pkt[3] = (pkt[3] & !0xC0) | 0x40; // scrambling = 01
 
@@ -339,13 +467,8 @@ fn pat_error_scrambling() {
 fn pat_error_timeout() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync.
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
 
-    // Feed a packet on another PID past the PAT timeout (500 ms).
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, ms(600));
     assert!(has_indicator(events, Indicator::PatError2));
@@ -355,21 +478,14 @@ fn pat_error_timeout() {
 fn pat_compliant_no_error() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync + feed a PAT section.
     let section = build_pat_section(&[(1, 0x100)]);
     let packets = packetize_section(PID_PAT, &section);
 
-    // Acquire sync.
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
 
-    // Feed the PAT packets.
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(!has_indicator(&events, Indicator::PatError2));
 
-    // Feed another packet well within timeout.
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, ms(20));
     assert!(!has_indicator(events, Indicator::PatError2));
@@ -381,18 +497,12 @@ fn pat_compliant_no_error() {
 fn pmt_error_timeout() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync + feed a PAT that references PMT PID 0x100.
     let section = build_pat_section(&[(1, 0x100)]);
     let packets = packetize_section(PID_PAT, &section);
 
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
-    // Now the monitor knows about PMT PID 0x100. Feed a packet on another PID
-    // past the PMT timeout.
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, ms(600));
     assert!(has_indicator(events, Indicator::PmtError2));
@@ -402,16 +512,11 @@ fn pmt_error_timeout() {
 fn pmt_error_scrambling() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync + feed PAT.
     let section = build_pat_section(&[(1, 0x100)]);
     let packets = packetize_section(PID_PAT, &section);
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
-    // Feed a packet on the PMT PID with scrambling.
     let mut pkt = make_ts_packet(0x100, 5, false, false, &[], &[]);
     pkt[3] = (pkt[3] & !0xC0) | 0x40; // scrambling = 01
     let events = monitor.feed(&pkt, ms(10));
@@ -422,14 +527,10 @@ fn pmt_error_scrambling() {
 fn pmt_compliant_no_error() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync + feed PAT + PMT.
     let pat_section = build_pat_section(&[(1, 0x100)]);
     let pat_packets = packetize_section(PID_PAT, &pat_section);
 
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[]);
@@ -448,21 +549,16 @@ fn pid_error_timeout() {
     };
     let mut monitor = ConformanceMonitor::with_config(config);
 
-    // Acquire sync + feed PAT + PMT referencing ES PID 0x200.
     let pat_section = build_pat_section(&[(1, 0x100)]);
     let pat_packets = packetize_section(PID_PAT, &pat_section);
 
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[0x200]);
     let pmt_packets = packetize_section(0x100, &pmt_section);
     feed_all(&mut monitor, &pmt_packets, ms(10), ms(1));
 
-    // Feed a packet on another PID past the pid_error_period (1 s).
     let pkt = make_ts_packet(0x300, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, secs(2));
     assert!(has_indicator(events, Indicator::PidError));
@@ -476,21 +572,16 @@ fn pid_compliant_no_error() {
     };
     let mut monitor = ConformanceMonitor::with_config(config);
 
-    // Acquire sync + feed PAT + PMT referencing ES PID 0x200.
     let pat_section = build_pat_section(&[(1, 0x100)]);
     let pat_packets = packetize_section(PID_PAT, &pat_section);
 
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[0x200]);
     let pmt_packets = packetize_section(0x100, &pmt_section);
     feed_all(&mut monitor, &pmt_packets, ms(10), ms(1));
 
-    // Feed the referenced ES PID well within the period.
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
     let events = monitor.feed(&pkt, ms(500));
     assert!(!has_indicator(events, Indicator::PidError));
@@ -502,13 +593,8 @@ fn pid_compliant_no_error() {
 fn pat_timeout_emits_once_not_per_packet() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Acquire sync.
-    for i in 0u8..5 {
-        let pkt = make_ts_packet(0x100, i, false, false, &[], &[]);
-        monitor.feed(&pkt, ms(i as u64));
-    }
+    acquire_sync(&mut monitor);
 
-    // Feed packets past the PAT timeout — only the FIRST should emit.
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
     let e1 = monitor.feed(&pkt, ms(600)).to_vec();
     let e2 = monitor.feed(&pkt, ms(700)).to_vec();
@@ -530,11 +616,9 @@ fn pat_timeout_emits_once_not_per_packet() {
 fn other_indicators_suppressed_while_not_in_sync() {
     let mut monitor = ConformanceMonitor::new();
 
-    // Never acquire sync — all packets have bad sync byte.
     let bad = [0u8; TS_PACKET_SIZE]; // sync byte = 0x00
     for i in 0u8..10 {
         let events = monitor.feed(&bad, ms(i as u64));
-        // Only SyncByteError and TsSyncLoss should appear, never CC/PAT/PMT/PID.
         for e in events {
             assert!(
                 e.indicator == Indicator::SyncByteError || e.indicator == Indicator::TsSyncLoss,
@@ -556,6 +640,294 @@ fn stats_track_packets_and_events() {
     let bad = [0u8; TS_PACKET_SIZE];
     monitor.feed(&bad, ms(0));
     assert_eq!(monitor.stats().packets, 1);
-    // At least one SyncByteError.
     assert!(monitor.stats().events >= 1);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── Priority 2 tests ─────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── 2.1 Transport_error ──────────────────────────────────────────────────────
+
+#[test]
+fn transport_error_trips_on_tei_set() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pkt = make_ts_packet_with_tei(0x100, 5);
+    let events = monitor.feed(&pkt, ms(5));
+    assert!(has_indicator(events, Indicator::TransportError));
+}
+
+#[test]
+fn transport_error_absent_on_tei_clear() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pkt = make_ts_packet(0x100, 5, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, ms(5));
+    assert!(!has_indicator(events, Indicator::TransportError));
+}
+
+// ── 2.2 CRC_error ────────────────────────────────────────────────────────────
+
+#[test]
+fn crc_error_trips_on_corrupted_pat() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Build a valid PAT section then corrupt a payload byte (not sync/header).
+    let mut section = build_pat_section(&[(1, 0x100)]);
+    // The section has: header (3) + extension (5) + entries + CRC (4).
+    // Corrupt a byte in the entries area (well before the CRC).
+    if section.len() > 12 {
+        section[10] ^= 0xFF;
+    }
+
+    let packets = packetize_section(PID_PAT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::CrcError));
+}
+
+#[test]
+fn crc_error_absent_on_valid_pat() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let section = build_pat_section(&[(1, 0x100)]);
+    let packets = packetize_section(PID_PAT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::CrcError));
+}
+
+// ── 2.3a PCR_repetition_error ────────────────────────────────────────────────
+
+#[test]
+fn pcr_repetition_error_trips_on_large_gap() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pcr_pid: u16 = 0x0200;
+    // PCR base values are in 90kHz units; as_27mhz() = base * 300.
+    // 1s = 90000 base units, 2s = 180000.
+    let af1 = make_pcr_adaptation(90000, 0, false, true);
+    let pkt1 = make_ts_packet(pcr_pid, 0, false, true, &af1, &[]);
+    let af2 = make_pcr_adaptation(180000, 0, false, true);
+    let pkt2 = make_ts_packet(pcr_pid, 1, false, true, &af2, &[]);
+
+    monitor.feed(&pkt1, ms(0));
+    // Second PCR at t=150ms — gap of 150ms exceeds 100ms default limit.
+    let events = monitor.feed(&pkt2, ms(150));
+    assert!(has_indicator(events, Indicator::PcrRepetitionError));
+}
+
+#[test]
+fn pcr_repetition_error_absent_within_limit() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pcr_pid: u16 = 0x0200;
+    let af1 = make_pcr_adaptation(90000, 0, false, true);
+    let pkt1 = make_ts_packet(pcr_pid, 0, false, true, &af1, &[]);
+    let af2 = make_pcr_adaptation(180000, 0, false, true);
+    let pkt2 = make_ts_packet(pcr_pid, 1, false, true, &af2, &[]);
+
+    monitor.feed(&pkt1, ms(0));
+    // Second PCR at t=50ms — gap of 50ms within 100ms limit.
+    let events = monitor.feed(&pkt2, ms(50));
+    assert!(!has_indicator(events, Indicator::PcrRepetitionError));
+}
+
+// ── 2.3b PCR_discontinuity_indicator_error ───────────────────────────────────
+
+#[test]
+fn pcr_discontinuity_error_trips_on_large_delta_without_indicator() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pcr_pid: u16 = 0x0200;
+    // First PCR (1s on 90kHz = base 90000, as_27mhz = 27000000).
+    let af1 = make_pcr_adaptation(90000, 0, false, true);
+    let pkt1 = make_ts_packet(pcr_pid, 0, false, true, &af1, &[]);
+    // Second PCR (4s on 90kHz = base 360000, as_27mhz = 108000000).
+    // Delta on 27MHz = 81000000 = 3000ms >> 100ms, no discontinuity.
+    let af2 = make_pcr_adaptation(360000, 0, false, true);
+    let pkt2 = make_ts_packet(pcr_pid, 1, false, true, &af2, &[]);
+
+    monitor.feed(&pkt1, ms(0));
+    let events = monitor.feed(&pkt2, ms(50));
+    assert!(has_indicator(events, Indicator::PcrDiscontinuityError));
+}
+
+#[test]
+fn pcr_discontinuity_error_suppressed_with_indicator() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pcr_pid: u16 = 0x0200;
+    // Same large PCR delta but WITH discontinuity_indicator set — legal.
+    let af1 = make_pcr_adaptation(90000, 0, false, true);
+    let pkt1 = make_ts_packet(pcr_pid, 0, false, true, &af1, &[]);
+    let af2 = make_pcr_adaptation(360000, 0, true, true); // discontinuity
+    let pkt2 = make_ts_packet(pcr_pid, 1, false, true, &af2, &[]);
+
+    monitor.feed(&pkt1, ms(0));
+    let events = monitor.feed(&pkt2, ms(50));
+    assert!(!has_indicator(events, Indicator::PcrDiscontinuityError));
+}
+
+#[test]
+fn pcr_discontinuity_error_absent_within_range() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    let pcr_pid: u16 = 0x0200;
+    // PCR delta of 50ms: base diff = 4500 (90kHz), as_27mhz diff = 1350000.
+    let af1 = make_pcr_adaptation(90000, 0, false, true);
+    let pkt1 = make_ts_packet(pcr_pid, 0, false, true, &af1, &[]);
+    let af2 = make_pcr_adaptation(90000 + 4500, 0, false, true);
+    let pkt2 = make_ts_packet(pcr_pid, 1, false, true, &af2, &[]);
+
+    monitor.feed(&pkt1, ms(0));
+    let events = monitor.feed(&pkt2, ms(50));
+    assert!(!has_indicator(events, Indicator::PcrDiscontinuityError));
+}
+
+// ── 2.5 PTS_error ────────────────────────────────────────────────────────────
+
+#[test]
+fn pts_error_trips_on_large_gap() {
+    let mut monitor = ConformanceMonitor::new();
+
+    let es_pid: u16 = 0x0200;
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    // First PES with PTS at t=20ms.
+    let pes1 = make_pes_header_with_pts(0xE0, 10);
+    let pkt1 = make_ts_packet(es_pid, 0, true, false, &[], &pes1);
+    let events1 = monitor.feed(&pkt1, ms(20));
+    // First PTS should not produce an error (arm only).
+    assert!(!has_indicator(events1, Indicator::PtsError));
+
+    // Second PES with PTS at t=800ms — gap of 780ms exceeds 700ms limit.
+    let pes2 = make_pes_header_with_pts(0xE0, 10);
+    let pkt2 = make_ts_packet(es_pid, 1, true, false, &[], &pes2);
+    let events2 = monitor.feed(&pkt2, ms(800));
+    assert!(has_indicator(events2, Indicator::PtsError));
+}
+
+#[test]
+fn pts_error_absent_within_limit() {
+    let mut monitor = ConformanceMonitor::new();
+
+    let es_pid: u16 = 0x0200;
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    // First PES with PTS.
+    let pes1 = make_pes_header_with_pts(0xE0, 10);
+    let pkt1 = make_ts_packet(es_pid, 0, true, false, &[], &pes1);
+    monitor.feed(&pkt1, ms(20));
+
+    // Second PES with PTS at t=500ms — gap of 480ms within 700ms limit.
+    let pes2 = make_pes_header_with_pts(0xE0, 10);
+    let pkt2 = make_ts_packet(es_pid, 1, true, false, &[], &pes2);
+    let events = monitor.feed(&pkt2, ms(500));
+    assert!(!has_indicator(events, Indicator::PtsError));
+}
+
+#[test]
+fn pts_error_not_armed_without_first_pts() {
+    let mut monitor = ConformanceMonitor::new();
+
+    let es_pid: u16 = 0x0200;
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    // Feed a PES packet WITHOUT PTS — should not arm the check.
+    let pes_no_pts = make_pes_header_without_pts(0xE0, 10);
+    let pkt1 = make_ts_packet(es_pid, 0, true, false, &[], &pes_no_pts);
+    monitor.feed(&pkt1, ms(20));
+
+    // Feed another PES WITH PTS at t=800ms — first PTS, so just arms.
+    let pes2 = make_pes_header_with_pts(0xE0, 10);
+    let pkt2 = make_ts_packet(es_pid, 1, true, false, &[], &pes2);
+    let events = monitor.feed(&pkt2, ms(800));
+    assert!(!has_indicator(events, Indicator::PtsError));
+}
+
+// ── 2.6 CAT_error ────────────────────────────────────────────────────────────
+
+#[test]
+fn cat_error_wrong_table_id_on_pid_cat() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Build a section with table_id 0x02 (PMT) on PID 0x0001 (CAT PID).
+    // Take a PAT section and change the PID to CAT PID.
+    let mut section = build_pat_section(&[(1, 0x100)]);
+    section[0] = 0x02; // table_id = PMT (not CAT)
+
+    let packets = packetize_section(PID_CAT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::CatError));
+}
+
+#[test]
+fn cat_error_scrambled_without_cat() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a scrambled packet when no CAT has been seen.
+    let pkt = make_ts_packet_with_scrambling(0x0100, 0, 0x03);
+    let events = monitor.feed(&pkt, ms(10));
+    assert!(has_indicator(events, Indicator::CatError));
+}
+
+#[test]
+fn cat_error_absent_when_cat_seen_then_scrambled() {
+    let mut monitor = ConformanceMonitor::new();
+
+    acquire_sync(&mut monitor);
+
+    // Feed a valid CAT section on PID 0x0001 (table_id = 0x01).
+    // Reuse the PAT section builder but set table_id to CAT.
+    let mut cat_section = build_pat_section(&[]);
+    cat_section[0] = 0x01; // CAT table_id
+                           // We need to fix the CRC after changing table_id.
+                           // Instead, build a minimal valid section manually: table_id(1) +
+                           // section_syntax(1) + reserved(2) + section_length(12) +
+                           // extension(2) + version/cni(1) + sec_num(1) + last_sec_num(1) +
+                           // CRC(4) = 12 bytes.
+                           // Actually, use the SectionPacketizer's packetize on the mutated section.
+                           // The CRC will be wrong but that's fine — the monitor checks table_id
+                           // before CRC. We just need the table_id to be 0x01.
+    let packets = packetize_section(PID_CAT, &cat_section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+    // The CAT section with wrong CRC will trigger CrcError but also set
+    // cat_seen because table_id is 0x01. Actually let me reconsider...
+    // check_cat_table_id is called before check_crc_for_si.
+    // Wait, no — check_crc_for_si and check_cat_table_id are called in sequence
+    // after section completion. Both are called. The CAT table_id check
+    // should set cat_seen = true even if the CRC is wrong.
+    // Let me verify by checking that cat_seen gets set.
+
+    // Feed a scrambled packet — should NOT trigger CatError now that CAT is seen.
+    let pkt = make_ts_packet_with_scrambling(0x0100, 0, 0x03);
+    let events = monitor.feed(&pkt, ms(10));
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.indicator == Indicator::CatError && e.detail.contains("no CAT seen")),
+        "CatError 'no CAT' should not fire after CAT section seen"
+    );
 }

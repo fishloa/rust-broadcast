@@ -1,20 +1,25 @@
 //! ETSI TR 101 290 v1.4.1 transport-stream conformance monitor.
 //!
-//! Implements the **first-priority** indicator set (Table 5.0a, indicators
-//! 1.1–1.6). Priority 2 and SI-repetition indicators will be added in a future
+//! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6) and
+//! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6) indicator
+//! sets. Indicator 2.4 (PCR_accuracy_error) is intentionally excluded — it
+//! requires hardware arrival timestamps not available under the caller-supplied-
+//! time model. SI-repetition (Priority 3) indicators will be added in a future
 //! release.
 //!
 //! # Caller-supplied time
 //!
 //! [`ConformanceMonitor::feed`] takes a [`core::time::Duration`] timestamp
 //! alongside each TS packet. All presence/absence timeout checks (1.3.a, 1.5.a,
-//! 1.6) are evaluated against this clock. The caller must ensure that
-//! timestamps are **monotonic non-decreasing** across calls; the monitor does
-//! not enforce this but non-monotonic timestamps will produce spurious events.
+//! 1.6, 2.3a, 2.3b, 2.5) are evaluated against this clock. The caller must
+//! ensure that timestamps are **monotonic non-decreasing** across calls; the
+//! monitor does not enforce this but non-monotonic timestamps will produce
+//! spurious events.
 //!
 //! # References
 //!
 //! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.1, Table 5.0a
+//! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.2, Table 5.0b
 //! - ISO/IEC 13818-1 (MPEG-2 Systems)
 
 use core::time::Duration;
@@ -30,11 +35,24 @@ use dvb_si::ts::{SectionReassembler, TsPacket};
 
 /// PID 0x0000 — Program Association Table (ISO/IEC 13818-1 §2.4.4.3).
 const PID_PAT: u16 = 0x0000;
+/// PID 0x0001 — Conditional Access Table (ISO/IEC 13818-1 §2.4.4.5).
+const PID_CAT: u16 = 0x0001;
+/// PID 0x0010 — Network Information Table (EN 300 468 §5.2.1).
+const PID_NIT: u16 = 0x0010;
+/// PID 0x0011 — SDT/BAT (EN 300 468 §5.2.2 / §5.2.3).
+const PID_SDT_BAT: u16 = 0x0011;
+/// PID 0x0012 — Event Information Table (EN 300 468 §5.2.4).
+const PID_EIT: u16 = 0x0012;
+/// PID 0x0014 — TDT/TOT (EN 300 468 §5.2.5 / §5.2.6).
+const PID_TDT_TOT: u16 = 0x0014;
 /// PID 0x1FFF — Null/padding packets (ISO/IEC 13818-1 §2.4.3.3).
 const PID_NULL: u16 = 0x1FFF;
 
 /// Sync byte value (ISO/IEC 13818-1 §2.4.3.3).
 const SYNC_BYTE: u8 = 0x47;
+
+/// Well-known SI/PSI PIDs on which CRC-checked long-form sections appear.
+const SI_PIDS: [u16; 6] = [PID_PAT, PID_CAT, PID_NIT, PID_SDT_BAT, PID_EIT, PID_TDT_TOT];
 
 // ── Default timing constants ────────────────────────────────────────────────
 
@@ -56,6 +74,48 @@ const DEFAULT_SYNC_ACQUIRE_PACKETS: u8 = 5;
 /// two or more consecutive corrupted sync bytes.
 const DEFAULT_SYNC_LOSS_PACKETS: u8 = 2;
 
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.3a / note 2 — PCR maximum
+/// repetition interval (100 ms; note 2 removed the 40 ms limit).
+const DEFAULT_PCR_REPETITION_LIMIT_MS: u64 = 100;
+
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.3b — PCR discontinuity indicator
+/// maximum interval (100 ms).
+const DEFAULT_PCR_DISCONTINUITY_LIMIT_MS: u64 = 100;
+
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.5 / note 3 — PTS maximum
+/// repetition interval (700 ms; not applied to still pictures).
+const DEFAULT_PTS_REPETITION_LIMIT_MS: u64 = 700;
+
+// ── PCR / PES constants ─────────────────────────────────────────────────────
+
+/// PCR modulus on the 27 MHz clock: `2^33 × 300` (33-bit base × 300 ticks).
+/// ISO/IEC 13818-1 §2.4.3.5 — PCR wraps modulo this value.
+const PCR_MODULUS_27MHZ: u64 = (1u64 << 33) * 300;
+
+/// 27 MHz clock rate (ticks per second).
+const CLOCK_27MHZ: u64 = 27_000_000;
+
+/// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.7 Table 2-18).
+const PES_PREFIX_0: u8 = 0x00;
+/// PES start-code prefix byte 1.
+const PES_PREFIX_1: u8 = 0x00;
+/// PES start-code prefix byte 2.
+const PES_PREFIX_2: u8 = 0x01;
+
+/// Offset of the PES header `marker_bits + flags` byte relative to the PES
+/// packet start (byte 6: `'10' + PES_scrambling_control + …`).
+const PES_FLAGS_OFFSET: usize = 6;
+
+/// Mask for the `PTS_DTS_flags` field within the PES header byte at offset 7
+/// (bits `[7:6]` — `0b10` means PTS present, `0b11` means PTS+DTS).
+const PES_PTS_DTS_FLAGS_MASK: u8 = 0b1100_0000;
+
+/// Value indicating PTS is present in `PTS_DTS_flags` (bit 7 set).
+const PES_PTS_PRESENT: u8 = 0b1000_0000;
+
+/// CAT `table_id` value (ISO/IEC 13818-1 §2.4.4.5).
+const CAT_TABLE_ID: u8 = dvb_si::table_id::TableId::Cat as u8;
+
 // ── Public types ─────────────────────────────────────────────────────────────
 
 /// Severity tier per TR 101 290 §5.2 (Tables 5.0a/5.0b/5.0c).
@@ -73,11 +133,12 @@ pub enum Priority {
 
 /// A TR 101 290 measurement indicator.
 ///
-/// `#[non_exhaustive]` — Priority 2 and SI-repetition variants are added later.
+/// `#[non_exhaustive]` — SI-repetition variants may be added later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum Indicator {
+    // ── Priority 1 (Table 5.0a) ──────────────────────────────────────────
     /// TR 101 290 v1.4.1 Table 5.0a indicator 1.1 — loss of synchronisation
     /// with hysteresis.
     TsSyncLoss,
@@ -91,6 +152,21 @@ pub enum Indicator {
     PmtError2,
     /// TR 101 290 v1.4.1 Table 5.0a indicator 1.6 — PID_error.
     PidError,
+
+    // ── Priority 2 (Table 5.0b) ──────────────────────────────────────────
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.1 — Transport_error.
+    TransportError,
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
+    CrcError,
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.3a — PCR_repetition_error.
+    PcrRepetitionError,
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.3b —
+    /// PCR_discontinuity_indicator_error.
+    PcrDiscontinuityError,
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.5 — PTS_error.
+    PtsError,
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.6 — CAT_error.
+    CatError,
 }
 
 impl Indicator {
@@ -104,6 +180,12 @@ impl Indicator {
             | Self::ContinuityCountError
             | Self::PmtError2
             | Self::PidError => Priority::First,
+            Self::TransportError
+            | Self::CrcError
+            | Self::PcrRepetitionError
+            | Self::PcrDiscontinuityError
+            | Self::PtsError
+            | Self::CatError => Priority::Second,
         }
     }
 
@@ -117,6 +199,12 @@ impl Indicator {
             Self::ContinuityCountError => "Continuity_count_error",
             Self::PmtError2 => "PMT_error_2",
             Self::PidError => "PID_error",
+            Self::TransportError => "Transport_error",
+            Self::CrcError => "CRC_error",
+            Self::PcrRepetitionError => "PCR_repetition_error",
+            Self::PcrDiscontinuityError => "PCR_discontinuity_indicator_error",
+            Self::PtsError => "PTS_error",
+            Self::CatError => "CAT_error",
         }
     }
 
@@ -130,6 +218,12 @@ impl Indicator {
             Self::ContinuityCountError => "TR 101 290 v1.4.1 Table 5.0a indicator 1.4",
             Self::PmtError2 => "TR 101 290 v1.4.1 Table 5.0a indicator 1.5.a",
             Self::PidError => "TR 101 290 v1.4.1 Table 5.0a indicator 1.6",
+            Self::TransportError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.1",
+            Self::CrcError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.2",
+            Self::PcrRepetitionError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.3a",
+            Self::PcrDiscontinuityError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
+            Self::PtsError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.5",
+            Self::CatError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.6",
         }
     }
 }
@@ -183,6 +277,15 @@ pub struct Config {
     /// Consecutive bad sync bytes to declare sync loss (1.1).
     /// Default: 2.
     pub sync_loss_packets: u8,
+    /// Maximum interval between consecutive PCR values on a single PID
+    /// (Table 5.0b 2.3a / note 2). Default: 100 ms.
+    pub pcr_repetition_limit: Duration,
+    /// Maximum legal PCR delta (in time) without a signalled discontinuity
+    /// (Table 5.0b 2.3b). Default: 100 ms.
+    pub pcr_discontinuity_limit: Duration,
+    /// Maximum interval between consecutive PTS values on an elementary-stream
+    /// PID (Table 5.0b 2.5 / note 3). Default: 700 ms.
+    pub pts_repetition_limit: Duration,
 }
 
 impl Default for Config {
@@ -193,6 +296,9 @@ impl Default for Config {
             pid_error_period: Duration::from_secs(DEFAULT_PID_ERROR_PERIOD_SECS),
             sync_acquire_packets: DEFAULT_SYNC_ACQUIRE_PACKETS,
             sync_loss_packets: DEFAULT_SYNC_LOSS_PACKETS,
+            pcr_repetition_limit: Duration::from_millis(DEFAULT_PCR_REPETITION_LIMIT_MS),
+            pcr_discontinuity_limit: Duration::from_millis(DEFAULT_PCR_DISCONTINUITY_LIMIT_MS),
+            pts_repetition_limit: Duration::from_millis(DEFAULT_PTS_REPETITION_LIMIT_MS),
         }
     }
 }
@@ -224,6 +330,24 @@ struct EsTracking {
     timer: PresenceTimer,
 }
 
+/// Per-PID PCR tracking state (indicators 2.3a, 2.3b).
+struct PcrState {
+    last_pcr_27mhz: u64,
+    last_pcr_time: Duration,
+    initialised: bool,
+}
+
+/// Per-PID PTS tracking state (indicator 2.5).
+struct PtsState {
+    last_pts_time: Duration,
+    armed: bool,
+}
+
+/// Per-PID section reassembly state for the well-known SI/PSI PIDs.
+struct SiReassembly {
+    reassembler: SectionReassembler,
+}
+
 // ── ConformanceMonitor ───────────────────────────────────────────────────────
 
 /// ETSI TR 101 290 transport-stream conformance monitor.
@@ -244,7 +368,7 @@ pub struct ConformanceMonitor {
     // Per-PID continuity counter (1.4)
     cc_states: HashMap<u16, CcState>,
 
-    // PAT section reassembly (1.3.a)
+    // PAT section reassembly + timing (1.3.a)
     pat_reassembler: SectionReassembler,
     pat_timer: PresenceTimer,
 
@@ -253,6 +377,19 @@ pub struct ConformanceMonitor {
 
     // Referenced ES PID timing (1.6)
     es_trackings: HashMap<u16, EsTracking>,
+
+    // Well-known SI/PSI section reassembly + CRC checking (2.2)
+    si_reassemblies: HashMap<u16, SiReassembly>,
+
+    // Per-PID PCR tracking (2.3a, 2.3b)
+    pcr_states: HashMap<u16, PcrState>,
+
+    // Per-PID PTS tracking (2.5)
+    pts_states: HashMap<u16, PtsState>,
+
+    // CAT tracking (2.6)
+    cat_seen: bool,
+    scrambled_without_cat_reported: bool,
 }
 
 impl ConformanceMonitor {
@@ -263,6 +400,15 @@ impl ConformanceMonitor {
 
     /// Create a monitor with the given configuration.
     pub fn with_config(config: Config) -> Self {
+        let mut si_reassemblies = HashMap::new();
+        for &pid in &SI_PIDS {
+            si_reassemblies.insert(
+                pid,
+                SiReassembly {
+                    reassembler: SectionReassembler::default(),
+                },
+            );
+        }
         Self {
             config,
             events: Vec::new(),
@@ -282,6 +428,11 @@ impl ConformanceMonitor {
             },
             pmt_trackings: HashMap::new(),
             es_trackings: HashMap::new(),
+            si_reassemblies,
+            pcr_states: HashMap::new(),
+            pts_states: HashMap::new(),
+            cat_seen: false,
+            scrambled_without_cat_reported: false,
         }
     }
 
@@ -338,6 +489,16 @@ impl ConformanceMonitor {
         let header = &packet.header;
         let pid = header.pid;
 
+        // ── 2.1 Transport_error (Table 5.0b indicator 2.1) ──────────────
+        if header.tei {
+            self.emit(
+                Indicator::TransportError,
+                Some(pid),
+                t,
+                format!("transport_error_indicator set on PID 0x{:04X}", pid),
+            );
+        }
+
         // ── Step 5: Continuity_count_error (1.4) ─────────────────────────
         if pid != PID_NULL {
             self.check_cc(
@@ -375,7 +536,21 @@ impl ConformanceMonitor {
             );
         }
 
-        // ── Step 6: Section reassembly ───────────────────────────────────
+        // ── 2.6 CAT_error — scrambled packet with no CAT (Table 5.0b 2.6)
+        if header.scrambling != 0 && !self.cat_seen && !self.scrambled_without_cat_reported {
+            self.scrambled_without_cat_reported = true;
+            self.emit(
+                Indicator::CatError,
+                Some(pid),
+                t,
+                format!(
+                    "scrambled packet on PID 0x{:04X} but no CAT seen on PID 0x0001",
+                    pid
+                ),
+            );
+        }
+
+        // ── Step 6: Section reassembly — PAT ─────────────────────────────
         if pid == PID_PAT && header.has_payload {
             if let Some(payload) = packet.payload {
                 self.pat_reassembler.feed(payload, header.pusi);
@@ -383,18 +558,17 @@ impl ConformanceMonitor {
             self.pat_timer.last_seen = t;
             self.pat_timer.reported = false;
             while let Some(section_bytes) = self.pat_reassembler.pop_section() {
-                self.process_pat_section(&section_bytes, t);
+                self.check_crc_and_process_pat(&section_bytes, pid, t);
             }
         }
 
-        // PMT section reassembly
+        // ── Step 6b: Section reassembly — PMT PIDs ───────────────────────
         if self.pmt_trackings.contains_key(&pid) && header.has_payload {
             if let Some(payload) = packet.payload {
                 if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                     tracking.reassembler.feed(payload, header.pusi);
                 }
             }
-            // Collect sections first, then process — avoids double &mut self.
             let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                 tracking.timer.last_seen = t;
                 tracking.timer.reported = false;
@@ -403,14 +577,61 @@ impl ConformanceMonitor {
                 Vec::new()
             };
             for section_bytes in &sections {
-                self.process_pmt_section(section_bytes, pid, t);
+                self.check_crc_and_process_pmt(section_bytes, pid, t);
             }
         }
+
+        // ── Step 6c: Section reassembly — well-known SI/PSI PIDs (2.2) ───
+        // PAT and PMT PIDs are handled above (they have separate reassembly
+        // for P1 logic). Only process the non-PAT, non-PMT SI PIDs here.
+        if pid != PID_PAT
+            && !self.pmt_trackings.contains_key(&pid)
+            && self.si_reassemblies.contains_key(&pid)
+            && header.has_payload
+        {
+            if let Some(payload) = packet.payload {
+                if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                    si_ra.reassembler.feed(payload, header.pusi);
+                }
+            }
+            let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
+                std::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
+            } else {
+                Vec::new()
+            };
+            for section_bytes in &sections {
+                self.check_crc_for_si(section_bytes, pid, t);
+                self.check_cat_table_id(section_bytes, pid, t);
+            }
+        }
+        // Also CRC-check completed PAT/PMT sections via the si_reassemblies
+        // map (these share the same PID). PAT and PMT already have their own
+        // reassemblers above — the si_reassemblies entries for those PIDs are
+        // not fed again. CRC checking for PAT/PMT is done inside
+        // check_crc_and_process_pat / check_crc_and_process_pmt.
 
         // ── Step 9: PID_error — update last_seen for referenced PIDs ─────
         if let Some(tracking) = self.es_trackings.get_mut(&pid) {
             tracking.timer.last_seen = t;
             tracking.timer.reported = false;
+        }
+
+        // ── 2.3a / 2.3b: PCR checks (Table 5.0b indicators 2.3a, 2.3b) ──
+        if let Some(Ok(af)) = packet.adaptation_field() {
+            if let Some(pcr) = af.pcr {
+                self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
+            }
+        }
+
+        // ── 2.5: PTS check (Table 5.0b indicator 2.5) ───────────────────
+        if header.pusi
+            && header.scrambling == 0
+            && self.es_trackings.contains_key(&pid)
+            && header.has_payload
+        {
+            if let Some(payload) = packet.payload {
+                self.check_pts(pid, payload, t);
+            }
         }
 
         // ── Presence-timeout evaluation (1.3.a, 1.5.a, 1.6) ────────────
@@ -556,6 +777,80 @@ impl ConformanceMonitor {
         }
     }
 
+    /// CRC-check a completed section and, if on PID_PAT, process it.
+    fn check_crc_and_process_pat(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        // 2.2: CRC check on PAT section.
+        self.check_crc_for_section(section_bytes, pid, t);
+
+        self.process_pat_section(section_bytes, t);
+    }
+
+    /// CRC-check a completed section and, if on a PMT PID, process it.
+    fn check_crc_and_process_pmt(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        // 2.2: CRC check on PMT section.
+        self.check_crc_for_section(section_bytes, pid, t);
+
+        self.process_pmt_section(section_bytes, pid, t);
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.2 — CRC_error.
+    ///
+    /// On any tracked PID, if a completed long-form section has a CRC
+    /// mismatch, emit `CrcError`.
+    fn check_crc_for_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+
+        // validate_crc returns Ok for short-form sections (no CRC to check).
+        if let Err(dvb_si::error::Error::CrcMismatch { .. }) = section.validate_crc(section_bytes) {
+            self.emit(
+                Indicator::CrcError,
+                Some(pid),
+                t,
+                format!(
+                    "CRC-32 mismatch on PID 0x{:04X} (table_id 0x{:02X})",
+                    pid, section.table_id
+                ),
+            );
+        }
+    }
+
+    /// CRC-check for SI PIDs that are not PAT/PMT (handled via si_reassemblies).
+    fn check_crc_for_si(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        self.check_crc_for_section(section_bytes, pid, t);
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.6 — CAT_error, condition 1:
+    /// section with `table_id != 0x01` on PID_CAT.
+    fn check_cat_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_CAT {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        if section.table_id == CAT_TABLE_ID {
+            // Valid CAT section — mark as seen.
+            self.cat_seen = true;
+            // Re-arm the "scrambled without CAT" check so that if a CAT was
+            // previously absent and then appears, the check resets.
+            self.scrambled_without_cat_reported = false;
+        } else {
+            self.emit(
+                Indicator::CatError,
+                Some(PID_CAT),
+                t,
+                format!(
+                    "section with table_id 0x{:02X} on PID 0x0001 (expected 0x01 for CAT)",
+                    section.table_id
+                ),
+            );
+        }
+    }
+
     /// Process a completed section on PID_PAT.
     fn process_pat_section(&mut self, section_bytes: &[u8], t: Duration) {
         let section = match Section::parse(section_bytes) {
@@ -643,6 +938,132 @@ impl ConformanceMonitor {
                 },
             );
         }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0b indicators 2.3a / 2.3b — PCR checks.
+    fn check_pcr(&mut self, pid: u16, pcr_27mhz: u64, discontinuity: bool, t: Duration) {
+        let state = self.pcr_states.entry(pid).or_insert_with(|| PcrState {
+            last_pcr_27mhz: 0,
+            last_pcr_time: Duration::ZERO,
+            initialised: false,
+        });
+
+        if !state.initialised {
+            state.last_pcr_27mhz = pcr_27mhz;
+            state.last_pcr_time = t;
+            state.initialised = true;
+            return;
+        }
+
+        // Snapshot state for decision-making before any emit.
+        let last_pcr_time = state.last_pcr_time;
+        let last_pcr_27mhz = state.last_pcr_27mhz;
+
+        // 2.3a: PCR_repetition_error — interval between consecutive PCR
+        // values exceeds the configured limit.
+        let rep_interval = t.saturating_sub(last_pcr_time);
+        let should_emit_rep = rep_interval > self.config.pcr_repetition_limit;
+
+        // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
+        // without a signalled discontinuity.
+        let delta =
+            (pcr_27mhz.wrapping_add(PCR_MODULUS_27MHZ) - last_pcr_27mhz) % PCR_MODULUS_27MHZ;
+        let delta_ms = delta * 1000 / CLOCK_27MHZ;
+        let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
+        let should_emit_disc = delta_ms > limit_ms && !discontinuity;
+
+        // Emit outside the HashMap borrow.
+        if should_emit_rep {
+            self.emit(
+                Indicator::PcrRepetitionError,
+                Some(pid),
+                t,
+                format!(
+                    "PCR interval {} ms exceeds limit {} ms on PID 0x{:04X}",
+                    rep_interval.as_millis(),
+                    self.config.pcr_repetition_limit.as_millis(),
+                    pid
+                ),
+            );
+        }
+        if should_emit_disc {
+            self.emit(
+                Indicator::PcrDiscontinuityError,
+                Some(pid),
+                t,
+                format!(
+                    "PCR delta {} ms exceeds limit {} ms on PID 0x{:04X} without discontinuity_indicator",
+                    delta_ms, limit_ms, pid
+                ),
+            );
+        }
+
+        // Update state.
+        let state = self.pcr_states.get_mut(&pid).unwrap();
+        state.last_pcr_27mhz = pcr_27mhz;
+        state.last_pcr_time = t;
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0b indicator 2.5 — PTS_error.
+    ///
+    /// Peeks the PES header on an elementary-stream PID for PTS_DTS_flags.
+    /// Only checks PIDs that have been "armed" by seeing at least one PTS.
+    fn check_pts(&mut self, pid: u16, payload: &[u8], t: Duration) {
+        // PES start-code prefix: 00 00 01.
+        if payload.len() < PES_FLAGS_OFFSET + 2 {
+            return;
+        }
+        if payload[0] != PES_PREFIX_0 || payload[1] != PES_PREFIX_1 || payload[2] != PES_PREFIX_2 {
+            return;
+        }
+
+        // Byte 6: `'10' + flags` — the top two bits must be `10`.
+        let flags_byte = payload[PES_FLAGS_OFFSET];
+        if (flags_byte >> 6) != 0b10 {
+            return;
+        }
+
+        // Byte 7: PTS_DTS_flags in bits `[7:6]`.
+        let pts_dts_flags = payload[PES_FLAGS_OFFSET + 1] & PES_PTS_DTS_FLAGS_MASK;
+        let pts_present = (pts_dts_flags & PES_PTS_PRESENT) != 0;
+        if !pts_present {
+            return;
+        }
+
+        let state = self.pts_states.entry(pid).or_insert_with(|| PtsState {
+            last_pts_time: Duration::ZERO,
+            armed: false,
+        });
+
+        if !state.armed {
+            // First PTS on this PID — arm the check, no error yet.
+            state.last_pts_time = t;
+            state.armed = true;
+            return;
+        }
+
+        // Snapshot state for decision-making before any emit.
+        let last_pts_time = state.last_pts_time;
+        let pts_interval = t.saturating_sub(last_pts_time);
+        let should_emit = pts_interval > self.config.pts_repetition_limit;
+
+        if should_emit {
+            self.emit(
+                Indicator::PtsError,
+                Some(pid),
+                t,
+                format!(
+                    "PTS interval {} ms exceeds limit {} ms on PID 0x{:04X}",
+                    pts_interval.as_millis(),
+                    self.config.pts_repetition_limit.as_millis(),
+                    pid
+                ),
+            );
+        }
+
+        // Update state.
+        let state = self.pts_states.get_mut(&pid).unwrap();
+        state.last_pts_time = t;
     }
 
     /// Evaluate all presence/absence timeouts against the current time `t`.
