@@ -37,6 +37,8 @@ pub enum SubtitlingType {
     DvbSubtitlesNormal2p21x1,
     /// 0x14 — DVB subtitles (normal) for display on a high definition monitor.
     DvbSubtitlesNormalHd,
+    /// 0x15 — DVB subtitles (normal), plano-stereoscopic disparity, HD.
+    DvbSubtitlesNormalPlanoStereoscopicHd,
     /// 0x16 — DVB subtitles (normal) for display on an ultra high definition
     /// monitor.
     DvbSubtitlesNormalUhd,
@@ -55,6 +57,8 @@ pub enum SubtitlingType {
     /// 0x24 — DVB subtitles (hard of hearing) for display on a high definition
     /// monitor.
     DvbSubtitlesHardOfHearingHd,
+    /// 0x25 — DVB subtitles (hard of hearing), plano-stereoscopic disparity, HD.
+    DvbSubtitlesHardOfHearingPlanoStereoscopicHd,
     /// 0x26 — DVB subtitles (hard of hearing) for display on an ultra high
     /// definition monitor.
     DvbSubtitlesHardOfHearingUhd,
@@ -80,12 +84,14 @@ impl SubtitlingType {
             0x12 => Self::DvbSubtitlesNormal16x9,
             0x13 => Self::DvbSubtitlesNormal2p21x1,
             0x14 => Self::DvbSubtitlesNormalHd,
+            0x15 => Self::DvbSubtitlesNormalPlanoStereoscopicHd,
             0x16 => Self::DvbSubtitlesNormalUhd,
             0x20 => Self::DvbSubtitlesHardOfHearing,
             0x21 => Self::DvbSubtitlesHardOfHearing4x3,
             0x22 => Self::DvbSubtitlesHardOfHearing16x9,
             0x23 => Self::DvbSubtitlesHardOfHearing2p21x1,
             0x24 => Self::DvbSubtitlesHardOfHearingHd,
+            0x25 => Self::DvbSubtitlesHardOfHearingPlanoStereoscopicHd,
             0x26 => Self::DvbSubtitlesHardOfHearingUhd,
             0x30 => Self::OpenSignLanguage,
             0x31 => Self::ClosedSignLanguage,
@@ -105,12 +111,14 @@ impl SubtitlingType {
             Self::DvbSubtitlesNormal16x9 => 0x12,
             Self::DvbSubtitlesNormal2p21x1 => 0x13,
             Self::DvbSubtitlesNormalHd => 0x14,
+            Self::DvbSubtitlesNormalPlanoStereoscopicHd => 0x15,
             Self::DvbSubtitlesNormalUhd => 0x16,
             Self::DvbSubtitlesHardOfHearing => 0x20,
             Self::DvbSubtitlesHardOfHearing4x3 => 0x21,
             Self::DvbSubtitlesHardOfHearing16x9 => 0x22,
             Self::DvbSubtitlesHardOfHearing2p21x1 => 0x23,
             Self::DvbSubtitlesHardOfHearingHd => 0x24,
+            Self::DvbSubtitlesHardOfHearingPlanoStereoscopicHd => 0x25,
             Self::DvbSubtitlesHardOfHearingUhd => 0x26,
             Self::OpenSignLanguage => 0x30,
             Self::ClosedSignLanguage => 0x31,
@@ -130,6 +138,9 @@ impl SubtitlingType {
             Self::DvbSubtitlesNormal16x9 => "DVB subtitles (normal), 16:9",
             Self::DvbSubtitlesNormal2p21x1 => "DVB subtitles (normal), 2.21:1",
             Self::DvbSubtitlesNormalHd => "DVB subtitles (normal), HD",
+            Self::DvbSubtitlesNormalPlanoStereoscopicHd => {
+                "DVB subtitles (normal), plano-stereoscopic disparity, HD"
+            }
             Self::DvbSubtitlesNormalUhd => "DVB subtitles (normal), UHD",
             Self::DvbSubtitlesHardOfHearing => {
                 "DVB subtitles (hard of hearing), no aspect ratio critical"
@@ -138,6 +149,9 @@ impl SubtitlingType {
             Self::DvbSubtitlesHardOfHearing16x9 => "DVB subtitles (hard of hearing), 16:9",
             Self::DvbSubtitlesHardOfHearing2p21x1 => "DVB subtitles (hard of hearing), 2.21:1",
             Self::DvbSubtitlesHardOfHearingHd => "DVB subtitles (hard of hearing), HD",
+            Self::DvbSubtitlesHardOfHearingPlanoStereoscopicHd => {
+                "DVB subtitles (hard of hearing), plano-stereoscopic disparity, HD"
+            }
             Self::DvbSubtitlesHardOfHearingUhd => "DVB subtitles (hard of hearing), UHD",
             Self::OpenSignLanguage => "open (in-vision) sign language interpretation",
             Self::ClosedSignLanguage => "closed sign language interpretation",
@@ -327,5 +341,11 @@ mod tests {
             "closed sign language interpretation"
         );
         assert_eq!(SubtitlingType::Reserved(0x50).name(), "reserved");
+    }
+
+    #[test]
+    fn subtitling_type_round_trip_0x15_0x25() {
+        assert_eq!(SubtitlingType::from_u8(0x15).to_u8(), 0x15);
+        assert_eq!(SubtitlingType::from_u8(0x25).to_u8(), 0x25);
     }
 }

@@ -10,7 +10,7 @@ pub const TAG: u8 = 0x0A;
 const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
 
-/// Audio type — ETSI EN 300 468 §6.2.22.
+/// Audio type — ISO/IEC 13818-1 §2.6.19 Table 2-63.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -23,7 +23,19 @@ pub enum AudioType {
     HearingImpaired,
     /// 0x03 — visual impaired commentary.
     VisualImpairedCommentary,
-    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    /// 0x04–0x7F — user private.
+    UserPrivate(u8),
+    /// 0x80 — primary.
+    Primary,
+    /// 0x81 — native.
+    Native,
+    /// 0x82 — emergency.
+    Emergency,
+    /// 0x83 — primary commentary.
+    PrimaryCommentary,
+    /// 0x84 — alternate commentary.
+    AlternateCommentary,
+    /// 0x85–0xFF — reserved.
     Reserved(u8),
 }
 
@@ -37,6 +49,12 @@ impl AudioType {
             0x01 => Self::CleanEffects,
             0x02 => Self::HearingImpaired,
             0x03 => Self::VisualImpairedCommentary,
+            0x04..=0x7F => Self::UserPrivate(v),
+            0x80 => Self::Primary,
+            0x81 => Self::Native,
+            0x82 => Self::Emergency,
+            0x83 => Self::PrimaryCommentary,
+            0x84 => Self::AlternateCommentary,
             v => Self::Reserved(v),
         }
     }
@@ -49,6 +67,12 @@ impl AudioType {
             Self::CleanEffects => 0x01,
             Self::HearingImpaired => 0x02,
             Self::VisualImpairedCommentary => 0x03,
+            Self::UserPrivate(v) => v,
+            Self::Primary => 0x80,
+            Self::Native => 0x81,
+            Self::Emergency => 0x82,
+            Self::PrimaryCommentary => 0x83,
+            Self::AlternateCommentary => 0x84,
             Self::Reserved(v) => v,
         }
     }
@@ -61,6 +85,12 @@ impl AudioType {
             Self::CleanEffects => "clean effects",
             Self::HearingImpaired => "hearing impaired",
             Self::VisualImpairedCommentary => "visual impaired commentary",
+            Self::UserPrivate(_) => "user private",
+            Self::Primary => "primary",
+            Self::Native => "native",
+            Self::Emergency => "emergency",
+            Self::PrimaryCommentary => "primary commentary",
+            Self::AlternateCommentary => "alternate commentary",
             Self::Reserved(_) => "reserved",
         }
     }
@@ -230,5 +260,21 @@ mod tests {
             "visual impaired commentary"
         );
         assert_eq!(AudioType::Reserved(0x55).name(), "reserved");
+    }
+
+    #[test]
+    fn audio_type_round_trip_known_values() {
+        for b in [0x00u8, 0x03, 0x40, 0x80, 0x84, 0x85, 0xFF] {
+            assert_eq!(
+                AudioType::from_u8(b).to_u8(),
+                b,
+                "round-trip failed for byte 0x{b:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn audio_type_primary_name() {
+        assert_eq!(AudioType::from_u8(0x80).name(), "primary");
     }
 }

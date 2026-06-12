@@ -24,6 +24,9 @@ parse one (#56).
   intervals (`*_MAX_INTERVAL`): NIT/BAT/SDT/EIT/TDT/TOT from TR 101 211
   §4.4.1/§4.4.2, PAT/PMT 100 ms from TS 101 154 §4.1.7, and the 25 ms
   inter-section floor (`MIN_SECTION_INTERVAL`, EN 300 468 §5.1.4.1).
+- service_type 0x20 (HEVC UHD), audio_type 0x04–0x7F user-private + 0x80–0x84
+  (Primary/Native/Emergency/Primary commentary/Alternate commentary), subtitling
+  0x15/0x25 (plano-stereoscopic HD).
 
 ### Fixed
 - **`ts::SectionReassembler`** no longer drops a valid near-maximal section
@@ -31,6 +34,9 @@ parse one (#56).
   (#148). A new section cannot start in a continuation packet, so trailing
   stuffing past the section's declared length is now ignored instead of counted
   toward the `MAX_SECTION_SIZE` guard.
+- Removed fabricated scrambling_mode 0x04/0x05 ("DVB-CSA3 minimal/fully
+  enhanced" — EN 300 468 Table 87 marks 0x04–0x0F reserved); corrected AudioType
+  / data_stream_alignment spec citations and two alignment_type names.
 
 ## 6.0.0 — 2026-06-11
 

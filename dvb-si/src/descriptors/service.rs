@@ -78,6 +78,8 @@ pub enum ServiceType {
     AvcFrameCompatiblePlanoStereoscopicHdNvodReference,
     /// 0x1F — HEVC digital television service.
     HevcDigitalTelevision,
+    /// 0x20 — HEVC UHD digital television service.
+    HevcUhdDigitalTelevision,
     /// 0x21 — VVC digital television service.
     VvcDigitalTelevision,
     /// 0x22 — AVS3 digital television service.
@@ -117,6 +119,7 @@ impl ServiceType {
             0x1D => Self::AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted,
             0x1E => Self::AvcFrameCompatiblePlanoStereoscopicHdNvodReference,
             0x1F => Self::HevcDigitalTelevision,
+            0x20 => Self::HevcUhdDigitalTelevision,
             0x21 => Self::VvcDigitalTelevision,
             0x22 => Self::Avs3DigitalTelevision,
             v => Self::Reserved(v),
@@ -152,6 +155,7 @@ impl ServiceType {
             Self::AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted => 0x1D,
             Self::AvcFrameCompatiblePlanoStereoscopicHdNvodReference => 0x1E,
             Self::HevcDigitalTelevision => 0x1F,
+            Self::HevcUhdDigitalTelevision => 0x20,
             Self::VvcDigitalTelevision => 0x21,
             Self::Avs3DigitalTelevision => 0x22,
             Self::Reserved(v) => v,
@@ -193,6 +197,7 @@ impl ServiceType {
                 "H.264/AVC frame compatible plano-stereoscopic HD NVOD reference service"
             }
             Self::HevcDigitalTelevision => "HEVC digital television service",
+            Self::HevcUhdDigitalTelevision => "HEVC UHD digital television service",
             Self::VvcDigitalTelevision => "VVC digital television service",
             Self::Avs3DigitalTelevision => "AVS3 digital television service",
             Self::Reserved(_) => "reserved",
@@ -379,6 +384,15 @@ mod tests {
         assert_eq!(
             ServiceType::HevcDigitalTelevision.name(),
             "HEVC digital television service"
+        );
+        assert_eq!(
+            ServiceType::HevcUhdDigitalTelevision.name(),
+            "HEVC UHD digital television service"
+        );
+        assert_eq!(ServiceType::HevcUhdDigitalTelevision.to_u8(), 0x20);
+        assert_eq!(
+            ServiceType::from_u8(0x20),
+            ServiceType::HevcUhdDigitalTelevision
         );
         assert_eq!(ServiceType::Reserved(0x55).name(), "reserved");
     }

@@ -2754,4 +2754,31 @@ mod tests {
         buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
         assert!(SatSection::parse(&buf).is_err());
     }
+
+    #[test]
+    fn sat_table_id_wire_to_name() {
+        let stid = SatTableId::try_from(0u8).unwrap();
+        assert_eq!(stid, SatTableId::PositionV2);
+        let stid = SatTableId::try_from(2u8).unwrap();
+        assert_eq!(stid, SatTableId::TimeAssociation);
+        let stid = SatTableId::try_from(4u8).unwrap();
+        assert_eq!(stid, SatTableId::PositionV3);
+    }
+
+    #[test]
+    fn association_type_wire_to_name() {
+        assert_eq!(
+            AssociationType::from_u8(0).name(),
+            "UTC without leap second"
+        );
+        assert_eq!(AssociationType::from_u8(1).name(), "UTC with leap second");
+    }
+
+    #[test]
+    fn interpolation_type_wire_to_name() {
+        assert_eq!(InterpolationType::from_u8(1).name(), "Linear");
+        assert_eq!(InterpolationType::from_u8(2).name(), "Lagrange");
+        assert_eq!(InterpolationType::from_u8(4).name(), "Hermite");
+        assert_eq!(InterpolationType::from_u8(0).name(), "Reserved");
+    }
 }

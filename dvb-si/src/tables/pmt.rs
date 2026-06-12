@@ -769,4 +769,13 @@ mod tests {
         assert_eq!(StreamType::Ac3.name(), "AC-3");
         assert_eq!(StreamType::Scte35.name(), "SCTE-35");
     }
+
+    #[test]
+    fn stream_type_wire_to_name() {
+        assert_eq!(StreamType::from_u8(0x02).name(), "MPEG-2 Video");
+        assert_eq!(StreamType::from_u8(0x1B).name(), "H.264/AVC");
+        assert_eq!(StreamType::from_u8(0x24).name(), "HEVC/H.265");
+        assert_eq!(StreamType::from_u8(0x00).name(), "Reserved");
+        assert_eq!(StreamType::from_u8(0x81).name(), "AC-3");
+    }
 }

@@ -1,4 +1,4 @@
-//! Data Stream Alignment Descriptor — ISO/IEC 13818-1 §2.6.14 (tag 0x06).
+//! Data Stream Alignment Descriptor — ISO/IEC 13818-1 §2.6.10 (tag 0x06).
 //!
 //! Indicates the alignment of data within PES packets.
 //! Alignment type values per ISO/IEC 13818-1 Table 2-53.
@@ -50,9 +50,9 @@ impl AlignmentType {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::SliceOrVideoAccessUnit => "Slice or video access unit",
+            Self::SliceOrVideoAccessUnit => "Slice, or video access unit",
             Self::VideoAccessUnit => "Video access unit",
-            Self::GopOrSeq => "GOP or SEQ",
+            Self::GopOrSeq => "GOP, or SEQ",
             Self::Seq => "SEQ",
         }
     }
@@ -190,10 +190,10 @@ mod tests {
     fn alignment_type_name() {
         assert_eq!(
             AlignmentType::SliceOrVideoAccessUnit.name(),
-            "Slice or video access unit"
+            "Slice, or video access unit"
         );
         assert_eq!(AlignmentType::VideoAccessUnit.name(), "Video access unit");
-        assert_eq!(AlignmentType::GopOrSeq.name(), "GOP or SEQ");
+        assert_eq!(AlignmentType::GopOrSeq.name(), "GOP, or SEQ");
         assert_eq!(AlignmentType::Seq.name(), "SEQ");
     }
 

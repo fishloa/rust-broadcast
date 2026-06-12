@@ -25,10 +25,6 @@ pub enum ScramblingMode {
     DvbCsa2,
     /// 0x03 — DVB-CSA3 standard.
     DvbCsa3,
-    /// 0x04 — DVB-CSA3 minimal enhanced.
-    DvbCsa3MinimalEnhanced,
-    /// 0x05 — DVB-CSA3 fully enhanced.
-    DvbCsa3FullyEnhanced,
     /// 0x10 — DVB-CISSA v1.
     DvbCissaV1,
     /// Reserved/unallocated wire value, preserved verbatim for round-trip.
@@ -44,8 +40,6 @@ impl ScramblingMode {
             0x01 => Self::DvbCsa1,
             0x02 => Self::DvbCsa2,
             0x03 => Self::DvbCsa3,
-            0x04 => Self::DvbCsa3MinimalEnhanced,
-            0x05 => Self::DvbCsa3FullyEnhanced,
             0x10 => Self::DvbCissaV1,
             v => Self::Reserved(v),
         }
@@ -58,8 +52,6 @@ impl ScramblingMode {
             Self::DvbCsa1 => 0x01,
             Self::DvbCsa2 => 0x02,
             Self::DvbCsa3 => 0x03,
-            Self::DvbCsa3MinimalEnhanced => 0x04,
-            Self::DvbCsa3FullyEnhanced => 0x05,
             Self::DvbCissaV1 => 0x10,
             Self::Reserved(v) => v,
         }
@@ -72,8 +64,6 @@ impl ScramblingMode {
             Self::DvbCsa1 => "DVB-CSA1",
             Self::DvbCsa2 => "DVB-CSA2",
             Self::DvbCsa3 => "DVB-CSA3 (standard)",
-            Self::DvbCsa3MinimalEnhanced => "DVB-CSA3 (minimal enhanced)",
-            Self::DvbCsa3FullyEnhanced => "DVB-CSA3 (fully enhanced)",
             Self::DvbCissaV1 => "DVB-CISSA v1",
             Self::Reserved(_) => "reserved",
         }
@@ -221,7 +211,20 @@ mod tests {
     #[test]
     fn scrambling_mode_name_for_known() {
         assert_eq!(ScramblingMode::DvbCsa1.name(), "DVB-CSA1");
+        assert_eq!(ScramblingMode::DvbCsa3.name(), "DVB-CSA3 (standard)");
         assert_eq!(ScramblingMode::DvbCissaV1.name(), "DVB-CISSA v1");
         assert_eq!(ScramblingMode::Reserved(0x55).name(), "reserved");
+    }
+
+    #[test]
+    fn scrambling_mode_0x04_0x05_are_reserved() {
+        assert_eq!(
+            ScramblingMode::from_u8(0x04),
+            ScramblingMode::Reserved(0x04)
+        );
+        assert_eq!(
+            ScramblingMode::from_u8(0x05),
+            ScramblingMode::Reserved(0x05)
+        );
     }
 }

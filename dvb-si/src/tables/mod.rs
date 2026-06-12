@@ -118,6 +118,13 @@ mod running_status_tests {
         assert_eq!(RunningStatus::ServiceOffAir.name(), "service off-air");
         assert_eq!(RunningStatus::Reserved(6).name(), "reserved");
     }
+
+    #[test]
+    fn running_status_wire_to_name() {
+        assert_eq!(RunningStatus::from_u8(4).name(), "running");
+        assert_eq!(RunningStatus::from_u8(2).name(), "starts in a few seconds");
+        assert_eq!(RunningStatus::from_u8(0).name(), "undefined");
+    }
 }
 
 /// Byte 1 flags nibble for MPEG-2 PSI long-form sections.

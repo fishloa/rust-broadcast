@@ -6,3 +6,4 @@ specs/iso_iec_*.pdf
 tools/dvb-si-audit/.venv/
 tools/dvb-si-audit/out/
 .worktree/
+.delegate/

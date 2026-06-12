@@ -624,6 +624,14 @@ mod tests {
     }
 
     #[test]
+    fn control_code_wire_to_name() {
+        assert_eq!(ControlCode::from_u8(0x01).name(), "AUTOSTART");
+        assert_eq!(ControlCode::from_u8(0x04).name(), "KILL");
+        assert_eq!(ControlCode::from_u8(0x08).name(), "PLAYBACK_AUTOSTART");
+        assert_eq!(ControlCode::from_u8(0x00).name(), "Reserved");
+    }
+
+    #[test]
     fn application_type_full_range_round_trip() {
         for at in 0u16..=0xFFFF {
             let app = ApplicationType::from_u16(at);
