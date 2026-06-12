@@ -15,6 +15,10 @@ const MAX_SECTION_SIZE: usize = 4098;
 /// carrying the syntax/RFU flags and the 12-bit `section_length`
 /// (ISO/IEC 13818-1 §2.4.4.1).
 const SECTION_HEADER_LEN: usize = 3;
+/// Mask for the 4 most-significant `section_length` bits in a section's second
+/// byte (ISO/IEC 13818-1 §2.4.4.1 — `section_length` is 12 bits). Shared with
+/// the packetizer in `mux.rs`.
+pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
 /// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
@@ -421,7 +425,8 @@ impl SectionReassembler {
             // limit.
             let take = if self.buf.len() >= SECTION_HEADER_LEN {
                 let exp = SECTION_HEADER_LEN
-                    + (((self.buf[1] & 0x0F) as usize) << 8 | self.buf[2] as usize);
+                    + (((self.buf[1] & SECTION_LENGTH_HI_MASK) as usize) << 8
+                        | self.buf[2] as usize);
                 exp.saturating_sub(self.buf.len()).min(payload.len())
             } else {
                 // Header not yet complete (split across the packet boundary) —
@@ -457,8 +462,8 @@ impl SectionReassembler {
                 self.buf.clear();
                 break;
             }
-            let exp =
-                SECTION_HEADER_LEN + (((self.buf[1] & 0x0F) as usize) << 8 | self.buf[2] as usize);
+            let exp = SECTION_HEADER_LEN
+                + (((self.buf[1] & SECTION_LENGTH_HI_MASK) as usize) << 8 | self.buf[2] as usize);
             if self.buf.len() >= exp {
                 // split_to returns the first `exp` bytes as an owned BytesMut,
                 // leaving the remainder in self.buf — cheap (shifts pointers).

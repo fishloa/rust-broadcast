@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.1.0] — 2026-06-12
+
+Lockstep minor with the workspace; #55 chain conveniences for this crate.
+
 ### Added
 - Decoded ISSY accessors `BufsUnit::multiplier_bits`,
   `SignallingKind::bufs_bits` / `bufs_bytes` / `tto_t_over_256`

@@ -2,8 +2,16 @@
 
 ## Unreleased
 
+## 6.1.0 — 2026-06-12
+
 The SI **output half** — the crate can now emit a transport stream, not just
-parse one (#56).
+parse one (#56) — plus a spec-transcription / coded-enum correctness pass and a
+pre-release audit.
+
+> Breaking-by-intent in a minor (6.0.0 had no released consumers): the
+> **fabricated** `ScramblingMode` 0x04/0x05 variants are removed (EN 300 468
+> Table 87 reserves them), and `DataStreamAlignmentDescriptor.alignment_type`
+> becomes the typed `AlignmentType` (was raw `u8`; `.alignment()` removed).
 
 ### Changed
 - `ca_system_name` / `private_data_specifier_name` lookups are now generated at

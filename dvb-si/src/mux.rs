@@ -9,11 +9,7 @@
 use core::time::Duration;
 
 use crate::pid::well_known;
-use crate::ts::{TsHeader, CC_MASK, TS_PACKET_SIZE};
-
-/// Mask for the 4 most-significant `section_length` bits in a section's second
-/// byte (ISO/IEC 13818-1 §2.4.4.1 — `section_length` is 12 bits).
-const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
+use crate::ts::{TsHeader, CC_MASK, SECTION_LENGTH_HI_MASK, TS_PACKET_SIZE};
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;
