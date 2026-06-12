@@ -27,6 +27,31 @@
 //! `dvb_t2mi::inner_ts::InnerTsRecovery`, which drives this header + the
 //! [`packet`] extractor for you.
 //!
+//! # Generic Stream (GSE) handoff
+//!
+//! When `Bbheader::parse` yields `matype.ts_gs == TsGs::Gse`, the data field
+//! carries GSE (Generic Stream Encapsulation) packets (EN 302 307-1 / EN 302 755).
+//! GSE parsing is out of scope for this crate — hand the data field to the
+//! third-party `dvb-gse` crate:
+//!
+//! ```ignore
+//! use dvb_bbframe::header::{Bbheader, TsGs, BBHEADER_LEN};
+//!
+//! let hdr = Bbheader::parse(df_bytes).unwrap();
+//! let data_field = &df_bytes[BBHEADER_LEN..];
+//! match hdr.matype.ts_gs {
+//!     TsGs::Ts => {
+//!         /* TS user packets: dvb_bbframe::packet::up_iter(data_field, &hdr) */
+//!     }
+//!     TsGs::Gse => {
+//!         /* GSE packets: hand `data_field` to the `dvb-gse` crate */
+//!     }
+//!     other => {
+//!         /* GFPS / GCS — generic continuous or packetized */
+//!     }
+//! }
+//! ```
+//!
 //! # RFU policy
 //!
 //! BBFrame `reserved_future_use` bits are **emitted as 1** and

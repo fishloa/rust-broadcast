@@ -11,6 +11,9 @@
   in one infallible `feed(plp_id, df_bytes) -> &[[u8; 188]]` call. Composes
   `CarryOverExtractor`; no `dvb-t2mi` dependency. (DVB-S2 NM/HEM user-packet
   framing, EN 302 307-1 §5.1.4 / EN 302 755 Annex F.)
+- GSE handoff doc example (#55c) — crate-root section showing the `TsGs::Gse`
+  match arm and how to pass the data field to the `dvb-gse` crate for GSE packet
+  parsing.
 
 ## [6.0.0] — 2026-06-11
 

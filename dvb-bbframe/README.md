@@ -7,6 +7,8 @@ A BBFRAME is the unit of payload carried in a DVB-S2/S2X/T2 baseband stream: a
 10-byte BBHEADER followed by a data field of user packets (a Transport Stream or
 Generic Stream). This crate parses and rebuilds the header and walks the data
 field; it does **not** implement the physical layer (LDPC/BCH coding, modulation).
+GSE payloads (Generic Stream Encapsulation) are out of scope — hand the data
+field to the third-party [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 
 ## Coverage
 
