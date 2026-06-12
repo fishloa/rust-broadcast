@@ -32,7 +32,7 @@ jobs:
       - name: Gate — tag matches crate versions
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          for c in dvb-common dvb-si dvb-t2mi dvb-bbframe dvb-tools; do
+          for c in dvb-common dvb-si dvb-conformance dvb-t2mi dvb-bbframe dvb-tools; do
             V=$(cargo metadata --no-deps --format-version 1 --locked \
                 | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['$c'])")
             if [ "$V" != "$TAG" ]; then
@@ -76,6 +76,7 @@ jobs:
           publish_crate dvb-common
           publish_crate dvb-bbframe
           publish_crate dvb-si
+          publish_crate dvb-conformance
           publish_crate dvb-t2mi
           publish_crate dvb-tools
         env:
