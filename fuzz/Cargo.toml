@@ -1,0 +1,67 @@
+[package]
+name         = "rust-dvb-fuzz"
+version      = "0.0.0"
+edition      = "2021"
+description  = "cargo-fuzz harness for the rust-dvb workspace"
+license      = "MIT OR Apache-2.0"
+publish      = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+dvb-common  = { path = "../dvb-common" }
+dvb-si      = { path = "../dvb-si", features = ["ts", "serde"] }
+dvb-t2mi    = { path = "../dvb-t2mi", features = ["ts"] }
+dvb-bbframe = { path = "../dvb-bbframe" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "si_table_section"
+path = "fuzz_targets/si_table_section.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "si_descriptor_loop"
+path = "fuzz_targets/si_descriptor_loop.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "si_demux"
+path = "fuzz_targets/si_demux.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "si_text"
+path = "fuzz_targets/si_text.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "carousel"
+path = "fuzz_targets/carousel.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "t2mi_pump"
+path = "fuzz_targets/t2mi_pump.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "bbframe"
+path = "fuzz_targets/bbframe.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
