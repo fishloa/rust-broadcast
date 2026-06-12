@@ -10,6 +10,12 @@ parse one (#56).
   build time from vendored TSDuck `.names` data (#141) — same
   `Option<&'static str>` signature, fuller + drift-free coverage, attribution in
   `registries/README.md`.
+- **`DataStreamAlignmentDescriptor.alignment_type` is now typed `AlignmentType`**
+  (was raw `pub u8`); `AlignmentType` is `#[non_exhaustive]` with a `Reserved(u8)`
+  catch-all (was a closed enum + `Option` accessor), so reserved bytes round-trip
+  losslessly. The now-redundant `.alignment()` accessor is removed. (Breaking;
+  pre-release audit follow-up.) `ServiceType` 0x11 name corrected to the verbatim
+  spec "HD digital television service".
 
 ### Added
 - **`mux::SectionPacketizer`** (#56, feature `ts`) — packs serialized PSI/SI

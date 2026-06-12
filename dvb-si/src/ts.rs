@@ -517,6 +517,46 @@ mod tests {
     }
 
     #[test]
+    fn ts_header_round_trip() {
+        // struct → serialize → parse must reproduce the header (the project's
+        // symmetric Parse/Serialize invariant) across flag/field combinations.
+        let cases = [
+            TsHeader {
+                tei: false,
+                pusi: true,
+                pid: 0x0000,
+                scrambling: 0,
+                has_adaptation: false,
+                has_payload: true,
+                continuity_counter: 0,
+            },
+            TsHeader {
+                tei: true,
+                pusi: false,
+                pid: 0x1FFF,
+                scrambling: 0b11,
+                has_adaptation: true,
+                has_payload: true,
+                continuity_counter: 0x0F,
+            },
+            TsHeader {
+                tei: false,
+                pusi: false,
+                pid: 0x0100,
+                scrambling: 0b10,
+                has_adaptation: true,
+                has_payload: false,
+                continuity_counter: 7,
+            },
+        ];
+        for h in cases {
+            let mut buf = [0u8; 4];
+            assert_eq!(h.serialize_into(&mut buf).unwrap(), 4);
+            assert_eq!(TsHeader::parse(&buf).unwrap(), h, "round-trip mismatch");
+        }
+    }
+
+    #[test]
     fn parse_extracts_pid_and_continuity_counter() {
         // PID = 0x1234 → upper 5 bits = 0x12, lower 8 bits = 0x34
         // CC = 5 → 0x05

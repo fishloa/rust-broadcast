@@ -9,7 +9,11 @@
 use core::time::Duration;
 
 use crate::pid::well_known;
-use crate::ts::{TsHeader, TS_PACKET_SIZE};
+use crate::ts::{TsHeader, CC_MASK, TS_PACKET_SIZE};
+
+/// Mask for the 4 most-significant `section_length` bits in a section's second
+/// byte (ISO/IEC 13818-1 §2.4.4.1 — `section_length` is 12 bits).
+const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;
@@ -44,7 +48,7 @@ impl SectionPacketizer {
     pub fn with_continuity(pid: u16, cc: u8) -> Self {
         Self {
             pid,
-            continuity_counter: cc & 0x0F,
+            continuity_counter: cc & CC_MASK,
         }
     }
 
@@ -128,7 +132,7 @@ impl SectionPacketizer {
                 .serialize_into(&mut pkt[..4])
                 .expect("4-byte header buffer");
 
-            self.continuity_counter = (self.continuity_counter + 1) & 0x0F;
+            self.continuity_counter = (self.continuity_counter + 1) & CC_MASK;
 
             let mut write_pos = 4usize;
 
@@ -362,7 +366,8 @@ fn split_sections(data: &[u8]) -> Vec<&[u8]> {
     let mut result = Vec::new();
     let mut pos = 0;
     while pos + 3 <= data.len() {
-        let section_length = (((data[pos + 1] & 0x0F) as usize) << 8) | (data[pos + 2] as usize);
+        let section_length =
+            (((data[pos + 1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | (data[pos + 2] as usize);
         let end = pos + 3 + section_length;
         if end > data.len() {
             break;

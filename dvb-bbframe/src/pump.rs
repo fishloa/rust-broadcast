@@ -1,5 +1,9 @@
 //! [`BbframePump`] — per-PLP BBFrame→inner-TS pump.
 //!
+//! BBFrame user-packet framing per EN 302 755 §5.1.7 (BBHEADER) / §5.1.8
+//! (user-packet carriage, SYNCD); composes [`crate::header::Bbheader`] and the
+//! [`crate::packet::CarryOverExtractor`].
+//!
 //! Packages the BBFrame→inner-TS extraction chain that consumers otherwise
 //! hand-wire: parse the BBHEADER, detect the mode, run carry-over extraction
 //! keyed by PLP id, and return the completed 188-byte TS packets per frame.

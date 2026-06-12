@@ -53,7 +53,7 @@ pub enum ServiceType {
     RcsFls,
     /// 0x10 — DVB MHP service.
     Mhp,
-    /// 0x11 — MPEG-2 HD digital television service.
+    /// 0x11 — HD digital television service.
     HdDigitalTelevision,
     /// 0x16 — H.264/AVC SD digital television service.
     AvcSdDigitalTelevision,
@@ -180,7 +180,7 @@ impl ServiceType {
             Self::RcsMap => "RCS Map",
             Self::RcsFls => "RCS FLS",
             Self::Mhp => "DVB MHP service",
-            Self::HdDigitalTelevision => "MPEG-2 HD digital television service",
+            Self::HdDigitalTelevision => "HD digital television service",
             Self::AvcSdDigitalTelevision => "H.264/AVC SD digital television service",
             Self::AvcSdNvodTimeShifted => "H.264/AVC SD NVOD time-shifted service",
             Self::AvcSdNvodReference => "H.264/AVC SD NVOD reference service",

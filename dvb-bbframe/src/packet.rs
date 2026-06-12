@@ -659,6 +659,54 @@ mod tests {
     }
 
     #[test]
+    fn carry_over_hem_completion_success_path() {
+        // Exercises the carry-over COMPLETION path (feed_hem_into success branch
+        // `syncd_bytes == need`): frame2's syncd must point exactly past the bytes
+        // that finish frame1's partial UP. The sibling test above uses syncd=0, so
+        // it hits the discard branch instead — this one covers the success branch.
+        let make_hem_header = |syncd_bits: u16, dfl_bits: u16| -> [u8; 10] {
+            let mut h = [0u8; 10];
+            h[0] = 0xF0; // TS, SIS, CCM (HEM via byte-9 MODE xor)
+            h[4] = (dfl_bits >> 8) as u8;
+            h[5] = (dfl_bits & 0xFF) as u8;
+            h[7] = (syncd_bits >> 8) as u8;
+            h[8] = (syncd_bits & 0xFF) as u8;
+            h[9] = crate::crc::crc8(&h[..9]) ^ 1; // MODE=1 (HEM)
+            h
+        };
+
+        // Frame1: 70-byte partial UP → after it, extractor.pos = 1 + 70 = 71.
+        let frame1: Vec<u8> = (0..70u8).map(|i| 0xA0 | (i & 0x0F)).collect();
+        // need = HEM_UP_SIZE(187) + 1 - pos(71) = 117. syncd must equal `need`.
+        let need = 117usize;
+        // Frame2: `need` completion bytes, then one fresh 187-byte UP.
+        let frame2: Vec<u8> = (0..(need + HEM_UP_SIZE) as u16)
+            .map(|i| 0xB0 | (i & 0x0F) as u8)
+            .collect();
+        let h1 = make_hem_header(0, (frame1.len() * 8) as u16);
+        let h2 = make_hem_header((need * 8) as u16, (frame2.len() * 8) as u16);
+
+        let mut ex = CarryOverExtractor::new();
+        let p1 = ex.feed_hem(&h1, &frame1, false);
+        assert_eq!(p1.len(), 0, "frame1's 70-byte partial emits nothing yet");
+
+        let p2 = ex.feed_hem(&h2, &frame2, false);
+        assert_eq!(
+            ex.stats().partial_discards,
+            0,
+            "completion path must be taken, NOT the discard branch"
+        );
+        assert_eq!(p2.len(), 2, "completed boundary UP + one fresh UP");
+        // Completed UP = sync + frame1's 70 carried bytes + frame2's 117 completion bytes.
+        assert_eq!(p2[0][0], TS_SYNC_BYTE);
+        assert_eq!(&p2[0][1..71], &frame1[..]);
+        assert_eq!(&p2[0][71..188], &frame2[..need]);
+        // Fresh UP = sync + frame2[need..need+187].
+        assert_eq!(p2[1][0], TS_SYNC_BYTE);
+        assert_eq!(&p2[1][1..188], &frame2[need..need + HEM_UP_SIZE]);
+    }
+
+    #[test]
     fn feed_into_matches_allocating_api() {
         // Run the same two-frame HEM sequence (partial UP carried across the
         // boundary) through the allocating `feed_hem` and the buffer-reusing
