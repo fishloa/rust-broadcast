@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.2.0 — 2026-06-13
+
 ### Changed
 - The `si_dump` example has moved into the new `dvb-tools` binary crate as
   `dvb-tools dump` (#59). The example file and its `[[example]]` manifest

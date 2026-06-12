@@ -65,7 +65,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "dvb-bbframe"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "dvb-common",
  "num_enum",
@@ -77,14 +77,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "chrono",
 ]
 
 [[package]]
 name = "dvb-conformance"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "dvb-common",
  "dvb-si",
@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -110,7 +110,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "bytes",
  "dvb-bbframe",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "6.1.0"
+version = "6.2.0"
 dependencies = [
  "dvb-si",
  "dvb-t2mi",

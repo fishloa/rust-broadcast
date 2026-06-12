@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.2.0] — 2026-06-13
+
 ### Added
 - **`dvb-tools`** (#59) — new published binary crate over the `rust-dvb`
   family. Five subcommands, all driven over aligned 188-byte `.ts` captures

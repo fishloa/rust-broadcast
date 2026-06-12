@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [6.2.0] — 2026-06-13
+
+Version-lockstep release with the workspace (new `dvb-tools` and
+`dvb-conformance` crates; dvb-t2mi per-PLP inner-TS filter). No changes to this
+crate.
+
 ## [6.1.0] — 2026-06-12
 
 Version-lockstep release with the workspace (dvb-si SI output half + correctness

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.2.0] — 2026-06-13
+
 ### Added
 - New crate `dvb-conformance`: ETSI TR 101 290 v1.4.1 transport-stream
   conformance monitor (#57).

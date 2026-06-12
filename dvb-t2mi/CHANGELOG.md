@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [6.2.0] — 2026-06-13
+
+Workspace minor: the per-PLP inner-TS filter (#146), and the `t2mi_dump` example
+absorbed into the new `dvb-tools` binary (#59).
+
 ### Added
 - **`InnerTsRecovery::new_for_plp` + `filtered_bbframes`** (#146) — optional
   per-PLP filter on the recovery driver; only BBFrames matching the target
