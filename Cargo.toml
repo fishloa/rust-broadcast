@@ -1,5 +1,6 @@
 [workspace]
 members = ["dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe"]
+exclude = ["fuzz"]
 resolver = "2"
 
 [workspace.package]
