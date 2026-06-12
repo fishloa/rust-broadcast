@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- **`InnerTsRecovery::new_for_plp` + `filtered_bbframes`** (#146) — optional
+  per-PLP filter on the recovery driver; only BBFrames matching the target
+  PLP are decoded. `filtered_bbframes()` reports how many were skipped.
+
 ## [6.1.0] — 2026-06-12
 
 Version-lockstep release with the workspace. No changes to this crate (the #55a
