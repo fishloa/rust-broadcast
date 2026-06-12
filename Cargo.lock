@@ -83,6 +83,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-conformance"
+version = "6.1.0"
+dependencies = [
+ "dvb-common",
+ "dvb-si",
+ "serde",
+]
+
+[[package]]
 name = "dvb-si"
 version = "6.1.0"
 dependencies = [

@@ -1,5 +1,5 @@
 [workspace]
-members = ["dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-tools"]
+members = ["dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools"]
 exclude = ["fuzz"]
 resolver = "2"
 
