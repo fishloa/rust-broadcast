@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [6.1.0] — 2026-06-12
+
+Version-lockstep release with the workspace (dvb-si SI output half + correctness
+pass, dvb-bbframe chain conveniences). No changes to this crate.
+
 ## [6.0.0] — 2026-06-11
 
 Lockstep major with the workspace (the dvb-si/dvb-t2mi "decode completeness"

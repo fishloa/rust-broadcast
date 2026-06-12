@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [6.1.0] — 2026-06-12
+
+Version-lockstep release with the workspace. No changes to this crate
+(the #55a `BbframePump` adaptor lives in dvb-bbframe; the chain test now drives
+it).
+
 ## [6.0.0] — 2026-06-11
 
 Lockstep major. Adds the one-call inner-TS recovery driver and decodes the P1
