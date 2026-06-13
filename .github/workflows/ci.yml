@@ -25,19 +25,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
       # versions (some newer transitive crates require edition2024 / Cargo 1.85).
+      # dvb-stream is excluded from the core matrix: it depends on tokio whose
+      # MSRV moves faster than the workspace 1.75 pin; it has its own CI job
+      # below (stable-only). dvb-tools and dvb-conformance are excluded because
+      # they are feature-forcing leaf crates that would mask regressions in
+      # the library crates' bare --no-default-features build.
       - name: Build (all features)
-        run: cargo build --workspace --all-features --locked
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
       - name: Test (all features)
-        run: cargo test --workspace --all-features --locked
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
-      # ts/serde. Including either would — via workspace feature unification —
-      # force those features on and mask a regression in the library crates'
-      # bare --no-default-features build.
+      # ts/serde; dvb-stream always depends on tokio which has a faster-moving
+      # MSRV than the workspace 1.75 lock. Including any of them would — via
+      # workspace feature unification — force those features on and mask a
+      # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
-        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --no-default-features --locked
+        run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
       - name: Test (no default features)
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --no-default-features --locked
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
 
   lint:
     name: clippy
@@ -66,5 +72,30 @@ jobs:
       # so it can't be mistaken for intra-doc links. Keep it that way.
       - name: cargo doc
         run: cargo doc --workspace --all-features --no-deps --locked
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # dvb-stream is versioned and released independently from the lockstep
+  # v-tag publish (tokio's MSRV moves faster than workspace 1.75). It is
+  # tested on stable only in this dedicated job.
+  dvb-stream:
+    name: dvb-stream (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build -p dvb-stream --all-features --locked
+      - name: Test
+        run: cargo test -p dvb-stream --all-features --locked
+      - name: Clippy
+        run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: Doc
+        run: cargo doc -p dvb-stream --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
