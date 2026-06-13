@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- `DescriptorTag` now implements `TryFrom<u8>` (via `num_enum::TryFromPrimitive`),
+  matching `TableId`. Additive — converts a known descriptor-tag byte to the
+  typed value (`Err` for unallocated tags).
+- Spec-table data mirrors under `dvb-si/spec_tables/` (`table_id.toml`,
+  `descriptor_tag.toml`, `stream_type.toml`) — reviewable, spec-cited
+  value→name tables — plus `tests/spec_drift.rs` drift tests that byte-sweep
+  each enum and fail CI if the Rust enum and its TOML ever diverge (#158).
+
 ## 6.3.0 — 2026-06-13
 
 ### Added

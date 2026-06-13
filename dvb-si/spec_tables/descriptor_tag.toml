@@ -1,0 +1,406 @@
+# ETSI EN 300 468 §6.1 Table 12 (+ ISO/IEC 13818-1 for MPEG descriptors 0x02-0x12)
+
+[[entry]]
+value = 0x02
+variant = "VideoStream"
+spec = "video_stream_descriptor"
+
+[[entry]]
+value = 0x03
+variant = "AudioStream"
+spec = "audio_stream_descriptor"
+
+[[entry]]
+value = 0x04
+variant = "Hierarchy"
+spec = "hierarchy_descriptor"
+
+[[entry]]
+value = 0x05
+variant = "Registration"
+spec = "registration_descriptor"
+
+[[entry]]
+value = 0x06
+variant = "DataStreamAlignment"
+spec = "data_stream_alignment_descriptor"
+
+[[entry]]
+value = 0x07
+variant = "TargetBackgroundGrid"
+spec = "target_background_grid_descriptor"
+
+[[entry]]
+value = 0x08
+variant = "VideoWindow"
+spec = "video_window_descriptor"
+
+[[entry]]
+value = 0x09
+variant = "ConditionalAccess"
+spec = "CA_descriptor"
+
+[[entry]]
+value = 0x0A
+variant = "Iso639Language"
+spec = "ISO_639_language_descriptor"
+
+[[entry]]
+value = 0x0B
+variant = "SystemClock"
+spec = "system_clock_descriptor"
+
+[[entry]]
+value = 0x0C
+variant = "MultiplexBufferUtilization"
+spec = "multiplex_buffer_utilization_descriptor"
+
+[[entry]]
+value = 0x0D
+variant = "Copyright"
+spec = "copyright_descriptor"
+
+[[entry]]
+value = 0x0E
+variant = "MaximumBitrate"
+spec = "maximum_bitrate_descriptor"
+
+[[entry]]
+value = 0x0F
+variant = "PrivateDataIndicator"
+spec = "private_data_indicator_descriptor"
+
+[[entry]]
+value = 0x10
+variant = "SmoothingBuffer"
+spec = "smoothing_buffer_descriptor"
+
+[[entry]]
+value = 0x11
+variant = "Std"
+spec = "STD_descriptor"
+
+[[entry]]
+value = 0x12
+variant = "Ibp"
+spec = "IBP_descriptor"
+
+[[entry]]
+value = 0x40
+variant = "NetworkName"
+spec = "network_name_descriptor"
+
+[[entry]]
+value = 0x41
+variant = "ServiceList"
+spec = "service_list_descriptor"
+
+[[entry]]
+value = 0x42
+variant = "Stuffing"
+spec = "stuffing_descriptor"
+
+[[entry]]
+value = 0x43
+variant = "SatelliteDeliverySystem"
+spec = "satellite_delivery_system_descriptor"
+
+[[entry]]
+value = 0x44
+variant = "CableDeliverySystem"
+spec = "cable_delivery_system_descriptor"
+
+[[entry]]
+value = 0x45
+variant = "VbiData"
+spec = "VBI_data_descriptor"
+
+[[entry]]
+value = 0x46
+variant = "VbiTeletext"
+spec = "VBI_teletext_descriptor"
+
+[[entry]]
+value = 0x47
+variant = "BouquetName"
+spec = "bouquet_name_descriptor"
+
+[[entry]]
+value = 0x48
+variant = "Service"
+spec = "service_descriptor"
+
+[[entry]]
+value = 0x49
+variant = "CountryAvailability"
+spec = "country_availability_descriptor"
+
+[[entry]]
+value = 0x4A
+variant = "Linkage"
+spec = "linkage_descriptor"
+
+[[entry]]
+value = 0x4B
+variant = "NvodReference"
+spec = "NVOD_reference_descriptor"
+
+[[entry]]
+value = 0x4C
+variant = "TimeShiftedService"
+spec = "time_shifted_service_descriptor"
+
+[[entry]]
+value = 0x4D
+variant = "ShortEvent"
+spec = "short_event_descriptor"
+
+[[entry]]
+value = 0x4E
+variant = "ExtendedEvent"
+spec = "extended_event_descriptor"
+
+[[entry]]
+value = 0x4F
+variant = "TimeShiftedEvent"
+spec = "time_shifted_event_descriptor"
+
+[[entry]]
+value = 0x50
+variant = "Component"
+spec = "component_descriptor"
+
+[[entry]]
+value = 0x51
+variant = "Mosaic"
+spec = "mosaic_descriptor"
+
+[[entry]]
+value = 0x52
+variant = "StreamIdentifier"
+spec = "stream_identifier_descriptor"
+
+[[entry]]
+value = 0x53
+variant = "CaIdentifier"
+spec = "CA_identifier_descriptor"
+
+[[entry]]
+value = 0x54
+variant = "Content"
+spec = "content_descriptor"
+
+[[entry]]
+value = 0x55
+variant = "ParentalRating"
+spec = "parental_rating_descriptor"
+
+[[entry]]
+value = 0x56
+variant = "Teletext"
+spec = "teletext_descriptor"
+
+[[entry]]
+value = 0x57
+variant = "Telephone"
+spec = "telephone_descriptor"
+
+[[entry]]
+value = 0x58
+variant = "LocalTimeOffset"
+spec = "local_time_offset_descriptor"
+
+[[entry]]
+value = 0x59
+variant = "Subtitling"
+spec = "subtitling_descriptor"
+
+[[entry]]
+value = 0x5A
+variant = "TerrestrialDeliverySystem"
+spec = "terrestrial_delivery_system_descriptor"
+
+[[entry]]
+value = 0x5B
+variant = "MultilingualNetworkName"
+spec = "multilingual_network_name_descriptor"
+
+[[entry]]
+value = 0x5C
+variant = "MultilingualBouquetName"
+spec = "multilingual_bouquet_name_descriptor"
+
+[[entry]]
+value = 0x5D
+variant = "MultilingualServiceName"
+spec = "multilingual_service_name_descriptor"
+
+[[entry]]
+value = 0x5E
+variant = "MultilingualComponent"
+spec = "multilingual_component_descriptor"
+
+[[entry]]
+value = 0x5F
+variant = "PrivateDataSpecifier"
+spec = "private_data_specifier_descriptor"
+
+[[entry]]
+value = 0x60
+variant = "ServiceMove"
+spec = "service_move_descriptor"
+
+[[entry]]
+value = 0x61
+variant = "ShortSmoothingBuffer"
+spec = "short_smoothing_buffer_descriptor"
+
+[[entry]]
+value = 0x62
+variant = "FrequencyList"
+spec = "frequency_list_descriptor"
+
+[[entry]]
+value = 0x63
+variant = "PartialTransportStream"
+spec = "partial_transport_stream_descriptor"
+
+[[entry]]
+value = 0x64
+variant = "DataBroadcast"
+spec = "data_broadcast_descriptor"
+
+[[entry]]
+value = 0x65
+variant = "Scrambling"
+spec = "scrambling_descriptor"
+
+[[entry]]
+value = 0x66
+variant = "DataBroadcastId"
+spec = "data_broadcast_id_descriptor"
+
+[[entry]]
+value = 0x67
+variant = "TransportStream"
+spec = "transport_stream_descriptor"
+
+[[entry]]
+value = 0x68
+variant = "Dsng"
+spec = "DSNG_descriptor"
+
+[[entry]]
+value = 0x69
+variant = "Pdc"
+spec = "PDC_descriptor"
+
+[[entry]]
+value = 0x6A
+variant = "Ac3"
+spec = "AC-3_descriptor"
+
+[[entry]]
+value = 0x6B
+variant = "AncillaryData"
+spec = "ancillary_data_descriptor"
+
+[[entry]]
+value = 0x6C
+variant = "CellList"
+spec = "cell_list_descriptor"
+
+[[entry]]
+value = 0x6D
+variant = "CellFrequencyLink"
+spec = "cell_frequency_link_descriptor"
+
+[[entry]]
+value = 0x6E
+variant = "AnnouncementSupport"
+spec = "announcement_support_descriptor"
+
+[[entry]]
+value = 0x6F
+variant = "ApplicationSignalling"
+spec = "application_signalling_descriptor"
+
+[[entry]]
+value = 0x70
+variant = "AdaptationFieldData"
+spec = "adaptation_field_data_descriptor"
+
+[[entry]]
+value = 0x71
+variant = "ServiceIdentifier"
+spec = "service_identifier_descriptor"
+
+[[entry]]
+value = 0x72
+variant = "ServiceAvailability"
+spec = "service_availability_descriptor"
+
+[[entry]]
+value = 0x73
+variant = "DefaultAuthority"
+spec = "default_authority_descriptor"
+
+[[entry]]
+value = 0x74
+variant = "RelatedContent"
+spec = "related_content_descriptor"
+
+[[entry]]
+value = 0x75
+variant = "TvaId"
+spec = "TVA_id_descriptor"
+
+[[entry]]
+value = 0x76
+variant = "ContentIdentifier"
+spec = "content_identifier_descriptor"
+
+[[entry]]
+value = 0x77
+variant = "TimeSliceFecIdentifier"
+spec = "time_slice_fec_identifier_descriptor"
+
+[[entry]]
+value = 0x78
+variant = "EcmRepetitionRate"
+spec = "ECM_repetition_rate_descriptor"
+
+[[entry]]
+value = 0x79
+variant = "S2SatelliteDeliverySystem"
+spec = "S2_satellite_delivery_system_descriptor"
+
+[[entry]]
+value = 0x7A
+variant = "EnhancedAc3"
+spec = "enhanced_AC-3_descriptor"
+
+[[entry]]
+value = 0x7B
+variant = "Dts"
+spec = "DTS_descriptor"
+
+[[entry]]
+value = 0x7C
+variant = "Aac"
+spec = "AAC_descriptor"
+
+[[entry]]
+value = 0x7D
+variant = "XaitLocation"
+spec = "XAIT_location_descriptor"
+
+[[entry]]
+value = 0x7E
+variant = "FtaContentManagement"
+spec = "FTA_content_management_descriptor"
+
+[[entry]]
+value = 0x7F
+variant = "Extension"
+spec = "extension_descriptor"

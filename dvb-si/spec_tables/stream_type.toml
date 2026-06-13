@@ -1,0 +1,292 @@
+# Rec. ITU-T H.222.0 (ISO/IEC 13818-1) Table 2-34 — stream_type values
+# Named variants only; ReservedRange and UserPrivate catch-alls are excluded.
+
+[[entry]]
+value = 0x00
+variant = "Reserved"
+spec = "Reserved"
+
+[[entry]]
+value = 0x01
+variant = "Mpeg1Video"
+spec = "MPEG-1 Video"
+
+[[entry]]
+value = 0x02
+variant = "Mpeg2Video"
+spec = "MPEG-2 Video"
+
+[[entry]]
+value = 0x03
+variant = "Mpeg1Audio"
+spec = "MPEG-1 Audio"
+
+[[entry]]
+value = 0x04
+variant = "Mpeg2Audio"
+spec = "MPEG-2 Audio"
+
+[[entry]]
+value = 0x05
+variant = "PrivateSections"
+spec = "Private Sections"
+
+[[entry]]
+value = 0x06
+variant = "PesPrivateData"
+spec = "PES Private Data"
+
+[[entry]]
+value = 0x07
+variant = "Mheg"
+spec = "MHEG"
+
+[[entry]]
+value = 0x08
+variant = "DsmCc"
+spec = "DSM-CC"
+
+[[entry]]
+value = 0x09
+variant = "H222_1"
+spec = "H.222.1"
+
+[[entry]]
+value = 0x0A
+variant = "Iso13818_6TypeA"
+spec = "ISO/IEC 13818-6 Type A"
+
+[[entry]]
+value = 0x0B
+variant = "Iso13818_6TypeB"
+spec = "ISO/IEC 13818-6 Type B"
+
+[[entry]]
+value = 0x0C
+variant = "Iso13818_6TypeC"
+spec = "ISO/IEC 13818-6 Type C"
+
+[[entry]]
+value = 0x0D
+variant = "Iso13818_6TypeD"
+spec = "ISO/IEC 13818-6 Type D"
+
+[[entry]]
+value = 0x0E
+variant = "Auxiliary"
+spec = "Auxiliary"
+
+[[entry]]
+value = 0x0F
+variant = "AacAdts"
+spec = "AAC ADTS"
+
+[[entry]]
+value = 0x10
+variant = "Mpeg4Video"
+spec = "MPEG-4 Video"
+
+[[entry]]
+value = 0x11
+variant = "AacLatm"
+spec = "AAC LATM"
+
+[[entry]]
+value = 0x12
+variant = "SlFlexMuxPes"
+spec = "SL/FlexMux in PES"
+
+[[entry]]
+value = 0x13
+variant = "SlFlexMuxSections"
+spec = "SL/FlexMux in Sections"
+
+[[entry]]
+value = 0x14
+variant = "SyncDownload"
+spec = "Sync Download Protocol"
+
+[[entry]]
+value = 0x15
+variant = "MetadataPes"
+spec = "Metadata in PES"
+
+[[entry]]
+value = 0x16
+variant = "MetadataSections"
+spec = "Metadata in Sections"
+
+[[entry]]
+value = 0x17
+variant = "MetadataDataCarousel"
+spec = "Metadata Data Carousel"
+
+[[entry]]
+value = 0x18
+variant = "MetadataObjectCarousel"
+spec = "Metadata Object Carousel"
+
+[[entry]]
+value = 0x19
+variant = "MetadataSyncDownload"
+spec = "Metadata Sync Download"
+
+[[entry]]
+value = 0x1A
+variant = "Ipmp"
+spec = "IPMP"
+
+[[entry]]
+value = 0x1B
+variant = "H264"
+spec = "H.264/AVC"
+
+[[entry]]
+value = 0x1C
+variant = "Iso14496_3Audio"
+spec = "ISO/IEC 14496-3 Audio"
+
+[[entry]]
+value = 0x1D
+variant = "Iso14496_17Text"
+spec = "ISO/IEC 14496-17 Text"
+
+[[entry]]
+value = 0x1E
+variant = "AuxiliaryVideo"
+spec = "Auxiliary Video"
+
+[[entry]]
+value = 0x1F
+variant = "Svc"
+spec = "SVC"
+
+[[entry]]
+value = 0x20
+variant = "Mvc"
+spec = "MVC"
+
+[[entry]]
+value = 0x21
+variant = "Jpeg2000"
+spec = "JPEG 2000"
+
+[[entry]]
+value = 0x22
+variant = "AdditionalViewH262"
+spec = "Additional View H.262 (3D)"
+
+[[entry]]
+value = 0x23
+variant = "AdditionalViewH264"
+spec = "Additional View H.264 (3D)"
+
+[[entry]]
+value = 0x24
+variant = "Hevc"
+spec = "HEVC/H.265"
+
+[[entry]]
+value = 0x25
+variant = "HevcTemporalSubset"
+spec = "HEVC Temporal Subset"
+
+[[entry]]
+value = 0x26
+variant = "Mvcd"
+spec = "MVCD (H.264 Annex I)"
+
+[[entry]]
+value = 0x27
+variant = "Temi"
+spec = "TEMI"
+
+[[entry]]
+value = 0x28
+variant = "HevcAnnexG"
+spec = "HEVC Annex G"
+
+[[entry]]
+value = 0x29
+variant = "HevcAnnexGTemporal"
+spec = "HEVC Annex G Temporal"
+
+[[entry]]
+value = 0x2A
+variant = "HevcAnnexH"
+spec = "HEVC Annex H"
+
+[[entry]]
+value = 0x2B
+variant = "HevcAnnexHTemporal"
+spec = "HEVC Annex H Temporal"
+
+[[entry]]
+value = 0x2C
+variant = "GreenAccessUnits"
+spec = "Green Access Units"
+
+[[entry]]
+value = 0x2D
+variant = "MhasAudioMain"
+spec = "MHAS Audio Main"
+
+[[entry]]
+value = 0x2E
+variant = "MhasAudioAux"
+spec = "MHAS Audio Aux"
+
+[[entry]]
+value = 0x2F
+variant = "QualityAccessUnits"
+spec = "Quality Access Units"
+
+[[entry]]
+value = 0x30
+variant = "MediaOrchestration"
+spec = "Media Orchestration"
+
+[[entry]]
+value = 0x31
+variant = "MctsHevc"
+spec = "MCTS HEVC"
+
+[[entry]]
+value = 0x32
+variant = "JpegXs"
+spec = "JPEG XS"
+
+[[entry]]
+value = 0x33
+variant = "Vvc"
+spec = "VVC/H.266"
+
+[[entry]]
+value = 0x34
+variant = "VvcTemporalSubset"
+spec = "VVC Temporal Subset"
+
+[[entry]]
+value = 0x35
+variant = "Evc"
+spec = "EVC"
+
+[[entry]]
+value = 0x7F
+variant = "IpmpHigh"
+spec = "IPMP (0x7F)"
+
+[[entry]]
+value = 0x81
+variant = "Ac3"
+spec = "AC-3"
+
+[[entry]]
+value = 0x86
+variant = "Scte35"
+spec = "SCTE-35"
+
+[[entry]]
+value = 0x87
+variant = "EAc3"
+spec = "E-AC-3"

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- Spec-table data mirror `dvb-scte35/spec_tables/segmentation_type_id.toml`
+  (reviewable, spec-cited `segmentation_type_id` value→name table) plus
+  `tests/spec_drift.rs`, a drift test that byte-sweeps `SegmentationTypeId`
+  and fails CI if the enum and its TOML diverge (#158). Test/data only.
+
 ## [6.3.0] — 2026-06-13
 
 _Initial release._

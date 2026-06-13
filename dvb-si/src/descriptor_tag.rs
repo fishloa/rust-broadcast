@@ -11,7 +11,7 @@
 /// Unknown or reserved tags are returned as
 /// [`crate::descriptors::AnyDescriptor::Unknown`] during parse and should not
 /// appear here.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, num_enum::TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 #[repr(u8)]

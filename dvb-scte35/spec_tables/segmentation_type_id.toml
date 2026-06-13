@@ -1,0 +1,242 @@
+# ANSI/SCTE 35 2023r1 §10.3.3.1 Table 23 — segmentation_type_id values
+# Reserved(u8) catch-all is excluded; only named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "NotIndicated"
+spec = "Not Indicated"
+
+[[entry]]
+value = 0x01
+variant = "ContentIdentification"
+spec = "Content Identification"
+
+[[entry]]
+value = 0x02
+variant = "Private"
+spec = "Private"
+
+[[entry]]
+value = 0x10
+variant = "ProgramStart"
+spec = "Program Start"
+
+[[entry]]
+value = 0x11
+variant = "ProgramEnd"
+spec = "Program End"
+
+[[entry]]
+value = 0x12
+variant = "ProgramEarlyTermination"
+spec = "Program Early Termination"
+
+[[entry]]
+value = 0x13
+variant = "ProgramBreakaway"
+spec = "Program Breakaway"
+
+[[entry]]
+value = 0x14
+variant = "ProgramResumption"
+spec = "Program Resumption"
+
+[[entry]]
+value = 0x15
+variant = "ProgramRunoverPlanned"
+spec = "Program Runover Planned"
+
+[[entry]]
+value = 0x16
+variant = "ProgramRunoverUnplanned"
+spec = "Program Runover Unplanned"
+
+[[entry]]
+value = 0x17
+variant = "ProgramOverlapStart"
+spec = "Program Overlap Start"
+
+[[entry]]
+value = 0x18
+variant = "ProgramBlackoutOverride"
+spec = "Program Blackout Override"
+
+[[entry]]
+value = 0x19
+variant = "ProgramJoin"
+spec = "Program Join"
+
+[[entry]]
+value = 0x1A
+variant = "ProgramImmediateResumption"
+spec = "Program Immediate Resumption"
+
+[[entry]]
+value = 0x20
+variant = "ChapterStart"
+spec = "Chapter Start"
+
+[[entry]]
+value = 0x21
+variant = "ChapterEnd"
+spec = "Chapter End"
+
+[[entry]]
+value = 0x22
+variant = "BreakStart"
+spec = "Break Start"
+
+[[entry]]
+value = 0x23
+variant = "BreakEnd"
+spec = "Break End"
+
+[[entry]]
+value = 0x24
+variant = "OpeningCreditStart"
+spec = "Opening Credit Start"
+
+[[entry]]
+value = 0x25
+variant = "OpeningCreditEnd"
+spec = "Opening Credit End"
+
+[[entry]]
+value = 0x26
+variant = "ClosingCreditStart"
+spec = "Closing Credit Start"
+
+[[entry]]
+value = 0x27
+variant = "ClosingCreditEnd"
+spec = "Closing Credit End"
+
+[[entry]]
+value = 0x30
+variant = "ProviderAdvertisementStart"
+spec = "Provider Advertisement Start"
+
+[[entry]]
+value = 0x31
+variant = "ProviderAdvertisementEnd"
+spec = "Provider Advertisement End"
+
+[[entry]]
+value = 0x32
+variant = "DistributorAdvertisementStart"
+spec = "Distributor Advertisement Start"
+
+[[entry]]
+value = 0x33
+variant = "DistributorAdvertisementEnd"
+spec = "Distributor Advertisement End"
+
+[[entry]]
+value = 0x34
+variant = "ProviderPlacementOpportunityStart"
+spec = "Provider Placement Opportunity Start"
+
+[[entry]]
+value = 0x35
+variant = "ProviderPlacementOpportunityEnd"
+spec = "Provider Placement Opportunity End"
+
+[[entry]]
+value = 0x36
+variant = "DistributorPlacementOpportunityStart"
+spec = "Distributor Placement Opportunity Start"
+
+[[entry]]
+value = 0x37
+variant = "DistributorPlacementOpportunityEnd"
+spec = "Distributor Placement Opportunity End"
+
+[[entry]]
+value = 0x38
+variant = "ProviderOverlayPlacementOpportunityStart"
+spec = "Provider Overlay Placement Opportunity Start"
+
+[[entry]]
+value = 0x39
+variant = "ProviderOverlayPlacementOpportunityEnd"
+spec = "Provider Overlay Placement Opportunity End"
+
+[[entry]]
+value = 0x3A
+variant = "DistributorOverlayPlacementOpportunityStart"
+spec = "Distributor Overlay Placement Opportunity Start"
+
+[[entry]]
+value = 0x3B
+variant = "DistributorOverlayPlacementOpportunityEnd"
+spec = "Distributor Overlay Placement Opportunity End"
+
+[[entry]]
+value = 0x3C
+variant = "ProviderPromoStart"
+spec = "Provider Promo Start"
+
+[[entry]]
+value = 0x3D
+variant = "ProviderPromoEnd"
+spec = "Provider Promo End"
+
+[[entry]]
+value = 0x3E
+variant = "DistributorPromoStart"
+spec = "Distributor Promo Start"
+
+[[entry]]
+value = 0x3F
+variant = "DistributorPromoEnd"
+spec = "Distributor Promo End"
+
+[[entry]]
+value = 0x40
+variant = "UnscheduledEventStart"
+spec = "Unscheduled Event Start"
+
+[[entry]]
+value = 0x41
+variant = "UnscheduledEventEnd"
+spec = "Unscheduled Event End"
+
+[[entry]]
+value = 0x42
+variant = "AlternateContentOpportunityStart"
+spec = "Alternate Content Opportunity Start"
+
+[[entry]]
+value = 0x43
+variant = "AlternateContentOpportunityEnd"
+spec = "Alternate Content Opportunity End"
+
+[[entry]]
+value = 0x44
+variant = "ProviderAdBlockStart"
+spec = "Provider Ad Block Start"
+
+[[entry]]
+value = 0x45
+variant = "ProviderAdBlockEnd"
+spec = "Provider Ad Block End"
+
+[[entry]]
+value = 0x46
+variant = "DistributorAdBlockStart"
+spec = "Distributor Ad Block Start"
+
+[[entry]]
+value = 0x47
+variant = "DistributorAdBlockEnd"
+spec = "Distributor Ad Block End"
+
+[[entry]]
+value = 0x50
+variant = "NetworkStart"
+spec = "Network Start"
+
+[[entry]]
+value = 0x51
+variant = "NetworkEnd"
+spec = "Network End"

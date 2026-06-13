@@ -1,0 +1,147 @@
+# ETSI EN 300 468 §5.1.3 Table 2 (+ ISO/IEC 13818-1 for MPEG tables)
+# EIT schedule ranges 0x50-0x5F / 0x60-0x6F are intentionally excluded (not enum variants).
+
+[[entry]]
+value = 0x00
+variant = "Pat"
+spec = "program_association_section"
+
+[[entry]]
+value = 0x01
+variant = "Cat"
+spec = "conditional_access_section"
+
+[[entry]]
+value = 0x02
+variant = "Pmt"
+spec = "program_map_section"
+
+[[entry]]
+value = 0x03
+variant = "TransportStreamDescription"
+spec = "transport_stream_description_section"
+
+[[entry]]
+value = 0x40
+variant = "NetworkInformationActual"
+spec = "network_information_section - actual network"
+
+[[entry]]
+value = 0x41
+variant = "NetworkInformationOther"
+spec = "network_information_section - other network"
+
+[[entry]]
+value = 0x42
+variant = "ServiceDescriptionActual"
+spec = "service_description_section - actual DVB transport stream"
+
+[[entry]]
+value = 0x46
+variant = "ServiceDescriptionOther"
+spec = "service_description_section - other DVB transport stream"
+
+[[entry]]
+value = 0x4A
+variant = "BouquetAssociation"
+spec = "bouquet_association_section"
+
+[[entry]]
+value = 0x4B
+variant = "UpdateNotification"
+spec = "update notification table section"
+
+[[entry]]
+value = 0x4C
+variant = "IpMacNotification"
+spec = "IP/MAC_notification_section"
+
+[[entry]]
+value = 0x4D
+variant = "SatelliteAccess"
+spec = "satellite_access_section"
+
+[[entry]]
+value = 0x4E
+variant = "EventInformationPfActual"
+spec = "event_information_section - actual DVB transport stream, present/following"
+
+[[entry]]
+value = 0x4F
+variant = "EventInformationPfOther"
+spec = "event_information_section - other DVB transport stream, present/following"
+
+[[entry]]
+value = 0x70
+variant = "TimeAndDate"
+spec = "time_date_section"
+
+[[entry]]
+value = 0x71
+variant = "RunningStatus"
+spec = "running_status_section"
+
+[[entry]]
+value = 0x72
+variant = "Stuffing"
+spec = "stuffing_section"
+
+[[entry]]
+value = 0x73
+variant = "TimeOffset"
+spec = "time_offset_section"
+
+[[entry]]
+value = 0x74
+variant = "ApplicationInformation"
+spec = "application information section"
+
+[[entry]]
+value = 0x75
+variant = "Container"
+spec = "container section"
+
+[[entry]]
+value = 0x76
+variant = "RelatedContent"
+spec = "related content section"
+
+[[entry]]
+value = 0x77
+variant = "ContentIdentifier"
+spec = "content identifier section"
+
+[[entry]]
+value = 0x78
+variant = "MpeFec"
+spec = "MPE-FEC section"
+
+[[entry]]
+value = 0x79
+variant = "ResolutionNotification"
+spec = "resolution provider notification section"
+
+[[entry]]
+value = 0x7A
+variant = "MpeIfec"
+spec = "MPE-IFEC section"
+
+[[entry]]
+value = 0x7B
+variant = "ProtectionMessage"
+spec = "protection message section"
+
+[[entry]]
+value = 0x7C
+variant = "DownloadableFontInfo"
+spec = "downloadable font info section"
+
+[[entry]]
+value = 0x7E
+variant = "DiscontinuityInformation"
+spec = "discontinuity_information_section"
+
+[[entry]]
+value = 0x7F
+variant = "SelectionInformation"
+spec = "selection_information_section"
