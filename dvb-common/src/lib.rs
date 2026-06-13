@@ -22,6 +22,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 pub mod bcd;
+pub mod bits;
 pub mod crc32_mpeg2;
 pub mod time;
 pub mod traits;
