@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed (BREAKING)
+- `PmtSection` now exposes `section_number: u8` and `last_section_number: u8`
+  fields (ISO/IEC 13818-1 §2.4.4.8 wire bytes `[6]`/`[7]`). Both shall be
+  `0x00` for conformant PMTs but are now parsed and preserved for round-trip
+  fidelity instead of being silently discarded on parse and hardcoded to zero
+  on serialize (#181).
+- `PmtSection` is now `#[non_exhaustive]` — struct literal construction outside
+  this crate requires the `..` rest pattern or a builder; future field additions
+  will not break downstream code (#181).
+
 ### Added
 - `DescriptorTag` now implements `TryFrom<u8>` (via `num_enum::TryFromPrimitive`),
   matching `TableId`. Additive — converts a known descriptor-tag byte to the

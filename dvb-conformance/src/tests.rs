@@ -171,13 +171,15 @@ fn build_pat_section(program_map_pids: &[(u16, u16)]) -> Vec<u8> {
 
 /// Build a PMT section's wire bytes.
 fn build_pmt_section(program_number: u16, pcr_pid: u16, es_pids: &[u16]) -> Vec<u8> {
-    let pmt = PmtSection {
+    let pmt = PmtSection::new(
         program_number,
-        version_number: 0,
-        current_next_indicator: true,
+        0,
+        true,
+        0,
+        0,
         pcr_pid,
-        program_info: Default::default(),
-        streams: es_pids
+        Default::default(),
+        es_pids
             .iter()
             .map(|&pid| PmtStream {
                 stream_type: dvb_si::tables::pmt::StreamType::Mpeg2Video,
@@ -185,7 +187,7 @@ fn build_pmt_section(program_number: u16, pcr_pid: u16, es_pids: &[u16]) -> Vec<
                 es_info: Default::default(),
             })
             .collect(),
-    };
+    );
     let mut buf = vec![0u8; pmt.serialized_len()];
     pmt.serialize_into(&mut buf).unwrap();
     buf

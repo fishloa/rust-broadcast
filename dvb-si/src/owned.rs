@@ -142,6 +142,8 @@ pub mod doc {
             program_number: 1,
             version_number: 0,
             current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
             pcr_pid: 0x0100,
             program_info: crate::descriptors::DescriptorLoop::new(&[]),
             streams: vec![PmtStream {

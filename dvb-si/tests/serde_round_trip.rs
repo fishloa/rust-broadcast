@@ -126,18 +126,20 @@ fn assert_valid_json_with_keys(j: &str, keys: &[&str]) {
 
 #[test]
 fn pmt_serializes_to_valid_json() {
-    let pmt = PmtSection {
-        program_number: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        pcr_pid: 0x64,
-        program_info: DescriptorLoop::new(&[]),
-        streams: vec![PmtStream {
+    let pmt = PmtSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        0x64,
+        DescriptorLoop::new(&[]),
+        vec![PmtStream {
             stream_type: StreamType::Mpeg2Video,
             elementary_pid: 0xC8,
             es_info: DescriptorLoop::new(&[]),
         }],
-    };
+    );
     let j = serde_json::to_string(&pmt).expect("serialize PMT");
     assert_valid_json_with_keys(&j, &["program_number", "pcr_pid", "streams"]);
 }

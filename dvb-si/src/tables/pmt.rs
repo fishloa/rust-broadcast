@@ -382,6 +382,7 @@ pub struct PmtStream<'a> {
 }
 
 /// Program Map Table.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
@@ -392,6 +393,12 @@ pub struct PmtSection<'a> {
     pub version_number: u8,
     /// current_next_indicator bit.
     pub current_next_indicator: bool,
+    /// section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.8;
+    /// shall be 0x00 for conformant PMTs but preserved for round-trip fidelity).
+    pub section_number: u8,
+    /// last_section_number in the sub-table sequence (ISO/IEC 13818-1 §2.4.4.8;
+    /// shall be 0x00 for conformant PMTs but preserved for round-trip fidelity).
+    pub last_section_number: u8,
     /// 13-bit PCR PID.
     pub pcr_pid: u16,
     /// Raw program_info descriptor bytes.
@@ -400,6 +407,37 @@ pub struct PmtSection<'a> {
     pub program_info: DescriptorLoop<'a>,
     /// Elementary streams in wire order.
     pub streams: Vec<PmtStream<'a>>,
+}
+
+impl<'a> PmtSection<'a> {
+    /// Construct a `PmtSection` from its fields.
+    ///
+    /// This is the canonical constructor for external code. `PmtSection` is
+    /// `#[non_exhaustive]` so struct literal syntax is not available outside
+    /// the crate; use this function instead.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        program_number: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        pcr_pid: u16,
+        program_info: DescriptorLoop<'a>,
+        streams: Vec<PmtStream<'a>>,
+    ) -> Self {
+        Self {
+            program_number,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            pcr_pid,
+            program_info,
+            streams,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for PmtSection<'a> {
@@ -433,6 +471,8 @@ impl<'a> Parse<'a> for PmtSection<'a> {
         let program_number = u16::from_be_bytes([bytes[3], bytes[4]]);
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let section_number = bytes[6];
+        let last_section_number = bytes[7];
 
         let pcr_pid = (((bytes[8] & 0x1F) as u16) << 8) | bytes[9] as u16;
         let program_info_length = (((bytes[10] & 0x0F) as usize) << 8) | bytes[11] as usize;
@@ -476,6 +516,8 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             program_number,
             version_number,
             current_next_indicator,
+            section_number,
+            last_section_number,
             pcr_pid,
             program_info,
             streams,
@@ -515,8 +557,8 @@ impl Serialize for PmtSection<'_> {
         buf[2] = (section_length & 0xFF) as u8;
         buf[3..5].copy_from_slice(&self.program_number.to_be_bytes());
         buf[5] = 0xC0 | ((self.version_number & 0x1F) << 1) | u8::from(self.current_next_indicator);
-        buf[6] = 0;
-        buf[7] = 0;
+        buf[6] = self.section_number;
+        buf[7] = self.last_section_number;
         buf[8] = 0xE0 | ((self.pcr_pid >> 8) as u8 & 0x1F);
         buf[9] = (self.pcr_pid & 0xFF) as u8;
         let pil = self.program_info.len() as u16;
@@ -653,6 +695,8 @@ mod tests {
             program_number: 1,
             version_number: 0,
             current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
             pcr_pid: 0x100,
             program_info: DescriptorLoop::new(&[]),
             streams: vec![],
@@ -672,6 +716,8 @@ mod tests {
             program_number: 0xABCD,
             version_number: 7,
             current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
             pcr_pid: 0x1F0,
             program_info: DescriptorLoop::new(&prog_info),
             streams: vec![
@@ -777,5 +823,32 @@ mod tests {
         assert_eq!(StreamType::from_u8(0x24).name(), "HEVC/H.265");
         assert_eq!(StreamType::from_u8(0x00).name(), "Reserved");
         assert_eq!(StreamType::from_u8(0x81).name(), "AC-3");
+    }
+
+    /// Regression test for #181: non-zero section_number/last_section_number must
+    /// survive a serialize → parse round-trip. Before the fix, serialize_into
+    /// hardcoded buf[6]=0 and buf[7]=0, so this test would fail.
+    #[test]
+    fn section_number_round_trip_nonzero() {
+        let pmt = PmtSection {
+            program_number: 42,
+            version_number: 1,
+            current_next_indicator: true,
+            section_number: 3,
+            last_section_number: 7,
+            pcr_pid: 0x0200,
+            program_info: DescriptorLoop::new(&[]),
+            streams: vec![],
+        };
+        let mut buf = vec![0u8; pmt.serialized_len()];
+        pmt.serialize_into(&mut buf).unwrap();
+        // Wire bytes[6] and [7] must carry the encoded values.
+        assert_eq!(buf[6], 3, "wire byte[6] must be section_number=3");
+        assert_eq!(buf[7], 7, "wire byte[7] must be last_section_number=7");
+        // Re-parse must recover the same values.
+        let re = PmtSection::parse(&buf).unwrap();
+        assert_eq!(re.section_number, 3);
+        assert_eq!(re.last_section_number, 7);
+        assert_eq!(pmt, re);
     }
 }
