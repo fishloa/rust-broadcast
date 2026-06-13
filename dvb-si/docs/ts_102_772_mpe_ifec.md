@@ -1,5 +1,7 @@
 # ETSI TS 102 772 v1.1.1 — MPE inter-burst FEC (MPE-IFEC)
 
+> **✓ Accuracy-verified against the PDF — 2026-06-13.** Split-cell mangling removed and cosmetic column-padding trimmed; every table cross-checked against BlazeDocs OCR and reconciled against the canonical PDF pages. Table 10's reserved range is reproduced verbatim from the spec (`01 to 11`, see the spec note there) rather than silently "corrected". Source: BlazeDocs OCR + direct PDF page verification.
+
 Reference transcribed from the canonical PDF (`specs/etsi_ts_102_772_v01.01.01_dvb_mpe_ifec.pdf`) by the
 geometry-based extractor in `tools/dvb-si-audit/` — field rows aligned to
 their bit-widths by page geometry, reproduced verbatim. The PDF in `specs/`
@@ -23,29 +25,21 @@ is the authoritative source.
 ## Table 1 — MPE-IFEC generic parameters list
 _§4.4, PDF pp. 14-15_
 
-| Parameter | Unit | Category | Description | Signalling | Scoping |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| EP | Datagram | Taxonomy | IFEC Encoding Period | Direct via | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | burst |  |  | Time_slice_fec_identifier | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| D | Datagram | Taxonomy | Datagram burst sending | Direct via | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | burst |  | delay | Time_slice_fec_identifier | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | Table sizing |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| C | columns | Table sizing | Number of ADST columns | Direct via | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  | Time_slice_fec_identifier | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| K | columns | Table sizing | Number of ADT columns = | Indirect via | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | EP*C | Time_slice_fec_identifier | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| N | columns | Table sizing | Number of iFDT columns | Indirect via | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | = EP*R*G | Time_slice_fec_identifier | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| G | columns | Table sizing | Maximum number of iFDT | Direct | Time_slice_fec_ide |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | columns per IFEC section |  | ntifier |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| K | datagrambu | Index | continuous burst counter | N/A | Loop |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | rst |  | internal to sender |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| k' | IFEC burst | field | Burst number | N/A | IFEC section |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | iiFFEECC__hheeaaddeerr |  |  |  |  |  |  |  | iiFFEECC__ddaattaa__bbyytteess |  | CCRRCC |  |  |  |  |  |  |  |
-|  |  | iiFFEECC__hheeaaddeerr |  |  |  |  |  |  | iiFFEECC__ddaattaa__bbyytteess |  |  | CCRRCC |  |  |  |  |  |  |
-|  |  |  | iiFFEECC__hheeaaddeerr |  |  |  |  |  | iiFFEECC__ddaattaa__bbyytteess |  |  |  | CCRRCC |  |  |  |  |  |
-|  |  |  |  | iiFFEECC__hheeaaddeerr |  |  |  |  | iiFFEECC__ddaattaa__bbyytteess |  |  |  |  | CCRRCC |  |  |  |  |
-|  |  |  |  | iiFFEECC__hheeaaddeerr |  |  |  |  | iiFFEECC__ddaattaa__bbyytteess |  |  |  |  | CCRRCC3322 |  |  |  |  |
+| Parameter | Unit | Category | Description | Signalling | Scoping |
+|---|---|---|---|---|---|
+| EP | Datagram burst | Taxonomy | IFEC Encoding Period | Direct via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| D | Datagram burst | Taxonomy | Datagram burst sending delay | Direct via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| T | rows | Table sizing | Number of ADST, ADT, iFDT rows; T=MPE-FEC Frame rows /G | Indirect via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| C | columns | Table sizing | Number of ADST columns | Direct via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| R | sections | Table sizing | Maximum number of MPE IFEC sections per Time-Slice Burst | Direct via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| K | columns | Table sizing | Number of ADT columns = EP*C | Indirect via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| N | columns | Table sizing | Number of iFDT columns = EP*R*G | Indirect via Time_slice_fec_identifier | Time_slice_fec_identifier |
+| G | columns | Table sizing | Maximum number of iFDT columns per IFEC section | Direct | Time_slice_fec_identifier |
+| M | ADT | Protocol sizing | Number of concurrent encoding matrices M | Indirect (formula dependent on T_code and given in the parameter definition of clause 6) | Time_slice_fec_identifier |
+| kmax | N/A | Protocol sizing | Modulo operator for IFEC burst counter | Indirect (formula dependent on T_code and given in the parameter definition of clause 6) | Time_slice_fec_identifier |
+| lmax | N/A | Protocol sizing | Maximum backward pointing for datagram burst size used in PREV_BURST_SIZE parameter in clause 3.5 | Indirect (formula dependent on T_code and given in the parameter definition of clause 6) | Time_slice_fec_identifier |
+| k | datagram burst | Index | continuous burst counter internal to sender | N/A | Loop |
+| k' | IFEC burst | field | Burst number | N/A | IFEC section |
 
 ## Table 2 — MPE-IFEC section
 _§5.2, PDF pp. 17-17_
@@ -99,8 +93,7 @@ _§6.2, PDF pp. 19-19_
 | max_burst_duration | 8 | uimsbf |
 | max_average_rate | 4 | uimsbf |
 | time_slice_fec_id | 4 | uimsbf |
-| for( i=0; I<id_selector_length; i++ ) |  |  |
-| { |  |  |
+| for( i=0; i<id_selector_length; i++ ) { |  |  |
 | id_selector_byte | 8 | bslbf |
 | } |  |  |
 | } |  |  |
@@ -178,6 +171,8 @@ _§6.2, PDF pp. 22-22_
 | 01 | Raptor Codes ([2], clause C.4) |
 | 01 to 11 | Reserved for future use |
 
+> **Spec note:** the PDF's Table 10 literally lists the reserved range as `01 to 11`, which textually overlaps the `01` (Raptor) row above it. This is reproduced verbatim from the spec — it is an apparent editorial quirk in EN/TS 102 772 V1.1.1, not a transcription choice. Implementations should treat `01` as Raptor and `10`/`11` as reserved.
+
 ## Table 11 — Syntax and semantics for G_code parameter
 _§6.2, PDF pp. 22-22_
 
@@ -193,74 +188,12 @@ _§6.2, PDF pp. 22-22_
 | 111 | 128 |
 
 ## Table 12 — Recommended parameter settings for frame_size=0x03
-_§6.4.5, PDF pp. 26-33_
+_§6.4.5, PDF pp. 26-26_
 
-|  | EP=1 |  | EP=4 |  | EP=8 |  | EP=16 |  | EP=32 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-|  | C | G | C | G | C | G | C | G | C | G |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| r=7/8 | 3584 | 16 | 896 | 4 | 224 | 1 | 448 | 2 | 224 | 1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| r=3/4 | 3072 | 16 | 768 | 4 | 192 | 1 | 384 | 2 | 192 | 1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| r=2/3 | 2730 | 16 | 682 | 4 | 170 | 1 | 341 | 2 | 170 | 1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| r=1/2 | 2048 | 16 | 512 | 4 | 128 | 1 | 256 | 2 | 128 | 1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | Time Slice |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | Burst |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| MPE | data |  |  |  | MPE iFEC |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  | H |  |  | Datagram |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| MPEse | dcatitoan |  |  |  | MPEs ieFcEtiCon |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| MPE | data | MPE-FEC | HMPE |  | iFEC |  |  | Burst |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| section |  |  | H |  | section |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| section |  | Decoding |  |  | section |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | Padding | Burst Number |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | Information | Detection |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| ADST |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  | ADST |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  | FDT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  | ADT M-1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  | M-1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  | ADT 1 | FDT | 1 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  | ADT 0 | FDT 0 |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| Static Parameters | Description |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| EP | IFEC Encoding period |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| B | IFEC Data Interleaving |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| S | IFEC Spread |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| D | Data delay at sender |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| C | Maximum number of data columns per ADST |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| T | Symbol size of code (Number of rows in ADST/ADT/iFDT) |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| G | Maximum number of symbols per MPE-IFEC section |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| M | Number of Concurrent ADT and iFDT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| K | Number of columns in ADT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| N | Number of columns in iFDT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| R | maximum number of IFEC sections in an IFEC burst |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| k | Modulo counter for burst |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| max |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| T | maximum burst duration |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| bmax |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | p |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | MPE-OFEC |  |  | MPE |  |  |  | MPE-OFEC |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | p |  |  | c |  |  |  | n |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | p |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | MPE-OFEC |  |  |  | MPE |  | MPE-OFEC |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | p |  |  |  | c |  | n |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | ΔT |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | p |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | MPE-OFEC |  | MPE |  |  |  | MPE-OFEC |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | p |  | c |  |  |  | n |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  | rebmun_noitces_tsal |  |  |  |  |  |  |  |  | rebmun_noitces_tsal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | rebmun_noitces_tsal |  |  |  |  |  |  |  |  | rebmun_noitces_tsal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | EPM |  |  |  |  |  |  | EPM |  |  |  |  |  |  |  |  | EPM |  |  |  |  | )0,’k(CEFi |  | )1,’k(CEFi |  |  | )2,’k(CEFi |  | )k,’k(CEFi |
-|  | tsoL |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  | EPM |  |  |  |  |  |  |  |  | EPM |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  | EPM |  |  |  |  |  |  |  |  | EPM |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  | ? |  |  |  |  | ? |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  | Unreliable |  | (lost | MPE |  |  | or unknown) |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  | Padding |  | fromlast_section_number |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  | Padding |  | from | PREV_BURST_SIZE |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  |  |  |  |  |  |  |  |  |  |  |  |  | Well | received |  | (fromMPE |  |  | header) |  |  |  |  |  |  |  |  |  |
-|  |  | Document history |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-| V1.1.1 | September 2010 | Publication |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
+|  | EP=1 |  | EP=4 |  | EP=8 |  | EP=16 |  | EP=32 |  |
+|---|---|---|---|---|---|---|---|---|---|---|
+|  | C | G | C | G | C | G | C | G | C | G |
+| r=7/8 | 3584 | 16 | 896 | 4 | 224 | 1 | 448 | 2 | 224 | 1 |
+| r=3/4 | 3072 | 16 | 768 | 4 | 192 | 1 | 384 | 2 | 192 | 1 |
+| r=2/3 | 2730 | 16 | 682 | 4 | 170 | 1 | 341 | 2 | 170 | 1 |
+| r=1/2 | 2048 | 16 | 512 | 4 | 128 | 1 | 256 | 2 | 128 | 1 |

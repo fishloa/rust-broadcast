@@ -1,5 +1,7 @@
 # ISO/IEC 13818-1:2007 (MPEG-2 Systems) — adaptation field, PCR, and PSI section framing
 
+> **✓ Field widths & mnemonics verified against the PDF — 2026-06-13.** The syntax-table field widths and mnemonic encodings (uimsbf/bslbf/tcimsbf/rpchof) in Tables 2-2, 2-6, 2-30 etc. were confirmed against the 2007 standard PDF, and the pseudocode equality operator was normalised to `==`. **Caveat:** the **Table 2-34 stream_type descriptions are condensed summaries** of the H.222.0 (2021) text, not verbatim — the *values* (0x00–0x35) are authoritative and verified, but for exact normative wording (profile/Annex qualifiers, Notes) consult the PDF. No split-cell repair was needed or performed in this pass.
+
 **Provenance.** ISO/IEC 13818-1:2007 (identical text: ITU-T Rec. H.222.0
 (05/2006)) is a paid ISO standard and cannot be vendored into this repository
 — the PDF consulted for this transcription lives locally at
@@ -37,10 +39,10 @@ Transport Stream packets shall be 188 bytes long (§2.4.3).
 | transport_scrambling_control | 2 | bslbf |
 | adaptation_field_control | 2 | bslbf |
 | continuity_counter | 4 | uimsbf |
-| if(adaptation_field_control = = '10' \|\| adaptation_field_control = = '11'){ |  |  |
+| if(adaptation_field_control=='10' \|\| adaptation_field_control=='11'){ |  |  |
 | adaptation_field() |  |  |
 | } |  |  |
-| if(adaptation_field_control = = '01' \|\| adaptation_field_control = = '11') { |  |  |
+| if(adaptation_field_control=='01' \|\| adaptation_field_control=='11') { |  |  |
 | for (i = 0; i < N; i++){ |  |  |
 | data_byte | 8 | bslbf |
 | } |  |  |
@@ -85,40 +87,40 @@ _§2.4.3.4, PDF pp. 33-34_
 | splicing_point_flag | 1 | bslbf |
 | transport_private_data_flag | 1 | bslbf |
 | adaptation_field_extension_flag | 1 | bslbf |
-| if (PCR_flag = = '1') { |  |  |
+| if (PCR_flag=='1') { |  |  |
 | program_clock_reference_base | 33 | uimsbf |
 | reserved | 6 | bslbf |
 | program_clock_reference_extension | 9 | uimsbf |
 | } |  |  |
-| if (OPCR_flag = = '1') { |  |  |
+| if (OPCR_flag=='1') { |  |  |
 | original_program_clock_reference_base | 33 | uimsbf |
 | reserved | 6 | bslbf |
 | original_program_clock_reference_extension | 9 | uimsbf |
 | } |  |  |
-| if (splicing_point_flag = = '1') { |  |  |
+| if (splicing_point_flag=='1') { |  |  |
 | splice_countdown | 8 | tcimsbf |
 | } |  |  |
-| if (transport_private_data_flag = = '1') { |  |  |
+| if (transport_private_data_flag=='1') { |  |  |
 | transport_private_data_length | 8 | uimsbf |
 | for (i = 0; i < transport_private_data_length; i++) { |  |  |
 | private_data_byte | 8 | bslbf |
 | } |  |  |
 | } |  |  |
-| if (adaptation_field_extension_flag = = '1') { |  |  |
+| if (adaptation_field_extension_flag=='1') { |  |  |
 | adaptation_field_extension_length | 8 | uimsbf |
 | ltw_flag | 1 | bslbf |
 | piecewise_rate_flag | 1 | bslbf |
 | seamless_splice_flag | 1 | bslbf |
 | reserved | 5 | bslbf |
-| if (ltw_flag = = '1') { |  |  |
+| if (ltw_flag=='1') { |  |  |
 | ltw_valid_flag | 1 | bslbf |
 | ltw_offset | 15 | uimsbf |
 | } |  |  |
-| if (piecewise_rate_flag = = '1') { |  |  |
+| if (piecewise_rate_flag=='1') { |  |  |
 | reserved | 2 | bslbf |
 | piecewise_rate | 22 | uimsbf |
 | } |  |  |
-| if (seamless_splice_flag = = '1') { |  |  |
+| if (seamless_splice_flag=='1') { |  |  |
 | splice_type | 4 | bslbf |
 | DTS_next_AU`[32..30]` | 3 | bslbf |
 | marker_bit | 1 | bslbf |
@@ -383,7 +385,7 @@ _§2.4.4.3–2.4.4.4, PDF pp. 55-57_
 | for (i = 0; i < N; i++) { |  |  |
 | program_number | 16 | uimsbf |
 | reserved | 3 | bslbf |
-| if (program_number = = '0') { |  |  |
+| if (program_number=='0') { |  |  |
 | network_PID | 13 | uimsbf |
 | } |  |  |
 | else { |  |  |
