@@ -83,7 +83,7 @@ impl fmt::Display for AddressingFunctionTag {
 
 // ── Typed function bodies (§5.2.8.2 Tables 7–12b) ──────────────────────────
 
-/// ACE-PAPR function body per §5.2.8.2.2, Table 7.
+/// ACE-PAPR function body per §5.2.8.2.1, Table 7.
 ///
 /// Layout (16 bits = 2 bytes):
 /// - byte 0 `[7:3]`: ACE_gain (5 bits)
@@ -234,7 +234,7 @@ const FREQUENCY_BODY_LEN: usize = 5;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum FunctionBody<'a> {
-    /// ACE-PAPR (tag 0x10) — §5.2.8.2.2, Table 7.
+    /// ACE-PAPR (tag 0x10) — §5.2.8.2.1, Table 7.
     AcePapr(AcePaprBody),
     /// MISO group (tag 0x11) — §5.2.8.2.2, Table 8.
     MisoGroup(MisoGroupBody),

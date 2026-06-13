@@ -149,7 +149,7 @@ pub struct TerrestrialDeliverySystemDescriptor {
     pub centre_frequency_10hz: u32,
     /// Channel bandwidth.
     pub bandwidth: Bandwidth,
-    /// High-priority stream indicator.
+    /// Spec `priority` bit (EN 300 468 Table 46): `false` = HP (high priority), `true` = LP (low priority).
     pub priority: bool,
     /// Time slicing used (spec field polarity: 0 = used → store as bool "used").
     pub time_slicing_used: bool,
