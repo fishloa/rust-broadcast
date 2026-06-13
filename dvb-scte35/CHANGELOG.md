@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- **Typed MPU/MID UPID sub-structures** (§10.3.3.3-4, Tables 24-25): `Mpu<'a>`
+  (format_identifier + private_data) and `MidUpid<'a>` (per-entry type + raw upid
+  bytes) decoded on demand via `SegmentationDescriptor::mpu()` /
+  `SegmentationDescriptor::mid()`. Raw `segmentation_upid: &[u8]` is unchanged so
+  round-trip serialization is unaffected.
+
+### Fixed
+- **Serde test vector**: replaced the self-assembled base64 in
+  `tests/serde_round_trip.rs` with the real ANSI/SCTE 35 2023r1 §14.1 vector
+  (`/DA0AAAAAAAA///wBQb+…`); assertions updated to match the spec-decoded fields.
+
 - **New crate `dvb-scte35`** (#58) — ANSI/SCTE 35 2023r1 splice information
   (Digital Program Insertion cueing) parser **and** builder, with the
   workspace's symmetric `Parse`/`Serialize` round-trip discipline.

@@ -28,8 +28,10 @@ fn splice_insert_section_serializes_to_json() {
 
 #[test]
 fn segmentation_section_serializes_descriptors() {
+    // ANSI/SCTE 35 2023r1 §14.1 — time_signal + segmentation_descriptor
+    // (Placement Opportunity Start). Base64 verbatim from the spec; CRC validates.
     let bytes = STANDARD
-        .decode("/DAvAAAAAAAAAP/wBQb+AAAAAAAZAhdDVUVJAAAACj+/CAiqu8zdESIzRBABASszklA=")
+        .decode("/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGKNAIAmsnRfg==")
         .unwrap();
     let s = SpliceInfoSection::parse(&bytes).unwrap();
 
@@ -41,7 +43,10 @@ fn segmentation_section_serializes_descriptors() {
     let descs: Vec<_> = s.descriptors().map(Result::unwrap).collect();
     let dv = serde_json::to_value(&descs[0]).unwrap();
     assert!(dv.get("segmentation").is_some(), "got {dv}");
-    assert_eq!(dv["segmentation"]["segmentation_event_id"], 0x0A);
+    // segmentation_event_id per §14.1 decoded breakdown.
+    assert_eq!(dv["segmentation"]["segmentation_event_id"], 0x4800_008Eu32);
+    // upid_type per §14.1 = Ti (0x08).
+    assert_eq!(dv["segmentation"]["segmentation_upid_type"], "Ti");
 }
 
 #[test]
