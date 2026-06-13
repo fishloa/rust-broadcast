@@ -74,6 +74,38 @@ for packet in ts_packets {                       // each aligned 188-byte packet
 }
 ```
 
+## DVB System Software Update (SSU) chain
+
+`dvb-si` ships complete end-to-end support for the DVB-SSU receiver chain
+(ETSI TS 102 006). Every layer is typed:
+
+```text
+NIT linkage_descriptor (type 0x0A)
+  └─▶ PMT data_broadcast_id_descriptor (tag 0x66, id = 0x000A)
+         └─▶ IdSelector::Ssu → SsuIdSelector  (TS 102 006 §7.1 Table 4)
+               UNT (table_id 0x4B) on the signalled PID
+                 └─▶ UntPlatform × N (compatibilityDescriptor + descriptors)
+                       DSM-CC carousel: DSI (messageId 0x1006) + DII + DDB
+                         └─▶ GroupInfoIndication  (TS 102 006 §8.1.1 Table 6)
+                               ModuleReassembler → complete firmware module bytes
+```
+
+To decode an SSU stream:
+
+1. Parse a `NitSection`; find a `linkage_descriptor` with `linkage_type = 0x0A`
+   — it points to the network carrying the UNT.
+2. Parse the `PmtSection` for the SSU service; find a `DataBroadcastIdDescriptor`
+   with `data_broadcast_id = 0x000A`. Its `id_selector` will be
+   `IdSelector::Ssu(SsuIdSelector { oui_entries, … })`.
+3. The same PMT ES entry's PID carries UNT sections (`table_id 0x4B`). Parse
+   `UntSection`; each `UntPlatform` describes a compatible device group with its
+   own `CompatibilityDescriptor` and operational descriptors.
+4. Feed the carousel PID into `SiDemux` + `DsmccSection` → `UnMessage::Dsi`.
+   Decode `dsi.private_data` as `GroupInfoIndication::parse(dsi.private_data)` to
+   find the update groups and their sizes.
+5. Parse `UnMessage::Dii` to enumerate modules; feed `DownloadDataBlock` messages
+   into `ModuleReassembler` to reconstruct complete firmware bytes.
+
 ## Why these crates
 
 These are not "good enough to parse the common case" parsers. The defining

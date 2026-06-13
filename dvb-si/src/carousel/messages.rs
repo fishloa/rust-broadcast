@@ -8,6 +8,13 @@
 //! Control messages (DSI/DII) are the payload of DSM-CC sections with
 //! table_id 0x3B; data messages (DDB) of table_id 0x3C — see
 //! [`crate::tables::dsmcc`] for the section framing.
+//!
+//! # SSU DSI `privateData`
+//!
+//! When a DSI is part of a DVB System Software Update carousel
+//! (TS 102 006 §8.1.1), its `private_data` field carries a
+//! [`GroupInfoIndication`] (Table 6). Parse it with
+//! `GroupInfoIndication::parse(dsi.private_data)`.
 
 use crate::compatibility::CompatibilityDescriptor;
 use crate::error::{Error, Result};
@@ -42,6 +49,250 @@ const MODULE_HEADER_LEN: usize = 8;
 /// DDB body bytes before blockData: moduleId(2) + moduleVersion(1) +
 /// reserved(1) + blockNumber(2).
 const DDB_FIXED_LEN: usize = 6;
+
+// ── GroupInfoIndication layout constants (TS 102 006 Table 6) ────────────────
+/// NumberOfGroups field: 2 bytes.
+const GII_NUMBER_OF_GROUPS_LEN: usize = 2;
+/// GroupId field: 4 bytes.
+const GII_GROUP_ID_LEN: usize = 4;
+/// GroupSize field: 4 bytes.
+const GII_GROUP_SIZE_LEN: usize = 4;
+/// GroupInfoLength field: 2 bytes.
+const GII_GROUP_INFO_LEN_FIELD: usize = 2;
+/// PrivateDataLength field: 2 bytes.
+const GII_PRIVATE_DATA_LEN_FIELD: usize = 2;
+
+/// One group entry in a [`GroupInfoIndication`] — TS 102 006 Table 6.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct GroupInfo<'a> {
+    /// `GroupId` — 4-byte group identifier.
+    pub group_id: u32,
+    /// `GroupSize` — total size of the SSU update group in bytes.
+    pub group_size: u32,
+    /// `GroupCompatibility` — compatibility descriptor for this group
+    /// (TS 102 006 Table 7 / Table 15).
+    pub group_compatibility: CompatibilityDescriptor<'a>,
+    /// `GroupInfoByte` loop — application-specific per-group data.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub group_info: &'a [u8],
+    /// `PrivateDataByte` loop — private extension bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub private_data: &'a [u8],
+}
+
+/// GroupInfoIndication — TS 102 006 §8.1.1 Table 6.
+///
+/// Carried as the `privateData` payload of a DSI message
+/// ([`Dsi::private_data`]) when the carousel is an SSU update carousel
+/// (`data_broadcast_id = 0x000A`). It lists one entry per update group
+/// delivered in the carousel, with its compatibility requirements
+/// (hardware/software OUI constraints) and size.
+///
+/// Wire layout (bytes):
+///
+/// ```text
+/// GroupInfoIndication() {
+///   NumberOfGroups           2
+///   for (i=0; i<N; i++) {
+///     GroupId                4
+///     GroupSize              4
+///     GroupCompatibility     variable  (CompatibilityDescriptor — Table 7)
+///     GroupInfoLength        2
+///     for (j=0; j<M; j++) GroupInfoByte   1
+///     PrivateDataLength      2
+///     for (j=0; j<M; j++) PrivateDataByte 1
+///   }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct GroupInfoIndication<'a> {
+    /// Group entries in wire order.
+    pub groups: Vec<GroupInfo<'a>>,
+}
+
+impl<'a> Parse<'a> for GroupInfoIndication<'a> {
+    type Error = crate::error::Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < GII_NUMBER_OF_GROUPS_LEN {
+            return Err(Error::BufferTooShort {
+                need: GII_NUMBER_OF_GROUPS_LEN,
+                have: bytes.len(),
+                what: "GroupInfoIndication NumberOfGroups",
+            });
+        }
+        let number_of_groups = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        let mut pos = GII_NUMBER_OF_GROUPS_LEN;
+        let end = bytes.len();
+        let mut groups = Vec::with_capacity(number_of_groups.min(256));
+
+        for _ in 0..number_of_groups {
+            // GroupId (4 bytes) + GroupSize (4 bytes)
+            let fixed = GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
+            if pos + fixed > end {
+                return Err(Error::BufferTooShort {
+                    need: pos + fixed,
+                    have: end,
+                    what: "GroupInfo GroupId/GroupSize",
+                });
+            }
+            let group_id =
+                u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
+            let group_size = u32::from_be_bytes([
+                bytes[pos + 4],
+                bytes[pos + 5],
+                bytes[pos + 6],
+                bytes[pos + 7],
+            ]);
+            pos += fixed;
+
+            // GroupCompatibility — CompatibilityDescriptor (Table 7).
+            // CompatibilityDescriptor::parse consumes exactly the declared
+            // compatibilityDescriptorLength + 2-byte length prefix.
+            use crate::compatibility::COMPAT_DESC_LEN_FIELD;
+            if pos + COMPAT_DESC_LEN_FIELD > end {
+                return Err(Error::BufferTooShort {
+                    need: pos + COMPAT_DESC_LEN_FIELD,
+                    have: end,
+                    what: "GroupCompatibility length field",
+                });
+            }
+            let compat_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let compat_total = COMPAT_DESC_LEN_FIELD + compat_len;
+            if pos + compat_total > end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: compat_len,
+                    available: end - pos - COMPAT_DESC_LEN_FIELD,
+                });
+            }
+            let group_compatibility =
+                CompatibilityDescriptor::parse(&bytes[pos..pos + compat_total])?;
+            pos += compat_total;
+
+            // GroupInfoLength + GroupInfoByte loop.
+            if pos + GII_GROUP_INFO_LEN_FIELD > end {
+                return Err(Error::BufferTooShort {
+                    need: pos + GII_GROUP_INFO_LEN_FIELD,
+                    have: end,
+                    what: "GroupInfo GroupInfoLength",
+                });
+            }
+            let group_info_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            pos += GII_GROUP_INFO_LEN_FIELD;
+            if pos + group_info_len > end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: group_info_len,
+                    available: end - pos,
+                });
+            }
+            let group_info = &bytes[pos..pos + group_info_len];
+            pos += group_info_len;
+
+            // PrivateDataLength + PrivateDataByte loop.
+            if pos + GII_PRIVATE_DATA_LEN_FIELD > end {
+                return Err(Error::BufferTooShort {
+                    need: pos + GII_PRIVATE_DATA_LEN_FIELD,
+                    have: end,
+                    what: "GroupInfo PrivateDataLength",
+                });
+            }
+            let private_data_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            pos += GII_PRIVATE_DATA_LEN_FIELD;
+            if pos + private_data_len > end {
+                return Err(Error::SectionLengthOverflow {
+                    declared: private_data_len,
+                    available: end - pos,
+                });
+            }
+            let private_data = &bytes[pos..pos + private_data_len];
+            pos += private_data_len;
+
+            groups.push(GroupInfo {
+                group_id,
+                group_size,
+                group_compatibility,
+                group_info,
+                private_data,
+            });
+        }
+
+        Ok(GroupInfoIndication { groups })
+    }
+}
+
+impl Serialize for GroupInfoIndication<'_> {
+    type Error = crate::error::Error;
+
+    fn serialized_len(&self) -> usize {
+        GII_NUMBER_OF_GROUPS_LEN
+            + self
+                .groups
+                .iter()
+                .map(|g| {
+                    GII_GROUP_ID_LEN
+                        + GII_GROUP_SIZE_LEN
+                        + g.group_compatibility.serialized_len()
+                        + GII_GROUP_INFO_LEN_FIELD
+                        + g.group_info.len()
+                        + GII_PRIVATE_DATA_LEN_FIELD
+                        + g.private_data.len()
+                })
+                .sum::<usize>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        if buf.len() < len {
+            return Err(Error::OutputBufferTooSmall {
+                need: len,
+                have: buf.len(),
+            });
+        }
+        if self.groups.len() > u16::MAX as usize {
+            return Err(Error::SectionLengthOverflow {
+                declared: self.groups.len(),
+                available: u16::MAX as usize,
+            });
+        }
+        buf[0..2].copy_from_slice(&(self.groups.len() as u16).to_be_bytes());
+        let mut pos = GII_NUMBER_OF_GROUPS_LEN;
+
+        for g in &self.groups {
+            buf[pos..pos + 4].copy_from_slice(&g.group_id.to_be_bytes());
+            buf[pos + 4..pos + 8].copy_from_slice(&g.group_size.to_be_bytes());
+            pos += GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
+
+            let written = g.group_compatibility.serialize_into(&mut buf[pos..])?;
+            pos += written;
+
+            if g.group_info.len() > u16::MAX as usize {
+                return Err(Error::SectionLengthOverflow {
+                    declared: g.group_info.len(),
+                    available: u16::MAX as usize,
+                });
+            }
+            buf[pos..pos + 2].copy_from_slice(&(g.group_info.len() as u16).to_be_bytes());
+            pos += GII_GROUP_INFO_LEN_FIELD;
+            buf[pos..pos + g.group_info.len()].copy_from_slice(g.group_info);
+            pos += g.group_info.len();
+
+            if g.private_data.len() > u16::MAX as usize {
+                return Err(Error::SectionLengthOverflow {
+                    declared: g.private_data.len(),
+                    available: u16::MAX as usize,
+                });
+            }
+            buf[pos..pos + 2].copy_from_slice(&(g.private_data.len() as u16).to_be_bytes());
+            pos += GII_PRIVATE_DATA_LEN_FIELD;
+            buf[pos..pos + g.private_data.len()].copy_from_slice(g.private_data);
+            pos += g.private_data.len();
+        }
+
+        Ok(len)
+    }
+}
 
 /// DownloadServerInitiate (§7.3.6, messageId 0x1006).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -818,5 +1069,135 @@ mod tests {
         let j = serde_json::to_string(&msg).unwrap();
         assert!(j.contains("\"download_id\":171"));
         assert!(j.contains("\"block_size\":4066"));
+    }
+
+    // ── GroupInfoIndication tests ─────────────────────────────────────────────
+
+    /// Construct a minimal single-group GII (no group_info, no private_data,
+    /// empty CompatibilityDescriptor).
+    ///
+    /// Hand-built wire layout (all offsets from byte 0 of the GII):
+    ///
+    /// ```text
+    /// [0..2]  NumberOfGroups = 0x00 0x01 (1)
+    /// [2..6]  GroupId        = 0x00 0x00 0x00 0x01
+    /// [6..10] GroupSize      = 0x00 0x07 0xA1 0x20  (500 000 bytes)
+    /// [10..12] CompatibilityDescriptorLength = 0x00 0x00 (empty)
+    /// [12..14] GroupInfoLength = 0x00 0x02
+    /// [14..16] GroupInfoByte  = 0xCA 0xFE
+    /// [16..18] PrivateDataLength = 0x00 0x01
+    /// [18]     PrivateDataByte   = 0xBB
+    /// Total = 19 bytes
+    /// ```
+    fn sample_gii() -> GroupInfoIndication<'static> {
+        GroupInfoIndication {
+            groups: vec![GroupInfo {
+                group_id: 0x0000_0001,
+                group_size: 500_000,
+                group_compatibility: CompatibilityDescriptor {
+                    descriptors: vec![],
+                },
+                group_info: &[0xCA, 0xFE],
+                private_data: &[0xBB],
+            }],
+        }
+    }
+
+    #[test]
+    fn gii_round_trip() {
+        let gii = sample_gii();
+        let mut buf = vec![0u8; gii.serialized_len()];
+        gii.serialize_into(&mut buf).unwrap();
+        let re = GroupInfoIndication::parse(&buf).unwrap();
+        assert_eq!(re, gii);
+        // Byte-identical re-serialize.
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "GII byte-exact re-serialize");
+    }
+
+    /// Verify exact byte positions against the hand-computed layout comment in
+    /// `sample_gii` — this test will catch a layout bug that a pure
+    /// serialize→parse round-trip cannot.
+    #[test]
+    fn gii_hand_built_byte_anchor() {
+        // NumberOfGroups=1, GroupId=1, GroupSize=500000=0x0007_A120,
+        // CompatLen=0, GroupInfoLen=2, bytes CA FE,
+        // PrivateDataLen=1, byte BB.
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            0x00, 0x01,             // NumberOfGroups = 1
+            0x00, 0x00, 0x00, 0x01, // GroupId = 1
+            0x00, 0x07, 0xA1, 0x20, // GroupSize = 500 000
+            0x00, 0x00,             // CompatibilityDescriptorLength = 0 (empty)
+            0x00, 0x02,             // GroupInfoLength = 2
+            0xCA, 0xFE,             // GroupInfoByte × 2
+            0x00, 0x01,             // PrivateDataLength = 1
+            0xBB,                   // PrivateDataByte
+        ];
+        let gii = sample_gii();
+        let mut buf = vec![0u8; gii.serialized_len()];
+        gii.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf.as_slice(), expected);
+        let re = GroupInfoIndication::parse(expected).unwrap();
+        assert_eq!(re, gii);
+    }
+
+    #[test]
+    fn gii_empty_groups() {
+        let gii = GroupInfoIndication { groups: vec![] };
+        let mut buf = vec![0u8; gii.serialized_len()];
+        gii.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, &[0x00, 0x00]); // NumberOfGroups = 0
+        let re = GroupInfoIndication::parse(&buf).unwrap();
+        assert!(re.groups.is_empty());
+    }
+
+    #[test]
+    fn gii_with_compat_round_trip() {
+        let gii = GroupInfoIndication {
+            groups: vec![GroupInfo {
+                group_id: 0xDEAD_BEEF,
+                group_size: 0x0001_0000,
+                group_compatibility: nonempty_compat(),
+                group_info: &[0x01, 0x02, 0x03],
+                private_data: &[],
+            }],
+        };
+        let mut buf = vec![0u8; gii.serialized_len()];
+        gii.serialize_into(&mut buf).unwrap();
+        let re = GroupInfoIndication::parse(&buf).unwrap();
+        assert_eq!(re, gii);
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "GII with compat byte-exact re-serialize");
+    }
+
+    #[test]
+    fn gii_parse_rejects_short_buffer() {
+        assert!(matches!(
+            GroupInfoIndication::parse(&[0x00]).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
+    }
+
+    #[test]
+    fn gii_parse_rejects_truncated_group() {
+        // NumberOfGroups=1 but only 3 bytes of body (needs at least 8 for id+size).
+        let bytes = &[0x00, 0x01, 0x00, 0x00, 0x00];
+        assert!(matches!(
+            GroupInfoIndication::parse(bytes).unwrap_err(),
+            Error::BufferTooShort { .. }
+        ));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn gii_serde_round_trip() {
+        let gii = sample_gii();
+        let json = serde_json::to_string(&gii).unwrap();
+        assert!(json.contains("\"group_id\":1"));
+        assert!(json.contains("\"group_size\":500000"));
+        assert!(json.contains("\"group_info\""));
     }
 }

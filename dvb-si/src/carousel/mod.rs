@@ -13,5 +13,7 @@
 pub mod messages;
 pub mod reassembler;
 
-pub use messages::{Dii, DiiModule, DownloadDataBlock, Dsi, UnMessage};
+pub use messages::{
+    Dii, DiiModule, DownloadDataBlock, Dsi, GroupInfo, GroupInfoIndication, UnMessage,
+};
 pub use reassembler::{Module, ModuleKey, ModuleReassembler, DEFAULT_MAX_MODULE_SIZE};

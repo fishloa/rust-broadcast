@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added
+- `carousel::GroupInfoIndication` + `GroupInfo` — typed parse/serialize for the
+  SSU DSI `privateData` field (TS 102 006 §8.1.1 Table 6). Carries
+  `NumberOfGroups` entries, each with a `CompatibilityDescriptor`, per-group
+  info bytes, and private data bytes. Parse via
+  `GroupInfoIndication::parse(dsi.private_data)` (#50).
+- `DataBroadcastIdDescriptor::id_selector_decoded()` — decode-on-demand accessor
+  returning a typed `IdSelector` (`IdSelector::Ssu` for `data_broadcast_id =
+  0x000A` per TS 102 006 §7.1 Table 4, else `IdSelector::Raw`). The
+  `id_selector` field stays `&'a [u8]` (raw, byte-identical round-trip) — purely
+  additive, zero regression for non-SSU callers (#50).
+- `descriptors::data_broadcast_id::SsuIdSelector` + `SsuOuiEntry` + `IdSelector`
+  types (with their own `Parse`/`Serialize`) + `DATA_BROADCAST_ID_SSU` (`0x000A`)
+  constant (#50).
+
 ## 6.4.0 — 2026-06-13
 
 ### Changed (BREAKING)
