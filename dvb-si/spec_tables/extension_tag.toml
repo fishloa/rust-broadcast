@@ -100,3 +100,8 @@ spec = "service_prominence_descriptor"
 value = 0x23
 variant = "VvcSubpictures"
 spec = "vvc_subpictures_descriptor"
+
+[[entry]]
+value = 0x24
+variant = "S2Xv2SatelliteDeliverySystem"
+spec = "S2Xv2_satellite_delivery_system_descriptor"

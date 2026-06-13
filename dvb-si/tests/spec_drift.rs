@@ -976,6 +976,7 @@ fn extension_tag_toml_matches_enum() {
         TtmlSubtitling,
         ServiceProminence,
         VvcSubpictures,
+        S2Xv2SatelliteDeliverySystem,
     ];
     let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
     for v in all_variants {
@@ -984,8 +985,8 @@ fn extension_tag_toml_matches_enum() {
 
     assert_eq!(
         code_set.len(),
-        20,
-        "ExtensionTag has {} variants, expected 20",
+        21,
+        "ExtensionTag has {} variants, expected 21",
         code_set.len()
     );
 

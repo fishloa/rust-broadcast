@@ -16,6 +16,15 @@
 - `descriptors::data_broadcast_id::SsuIdSelector` + `SsuOuiEntry` + `IdSelector`
   types (with their own `Parse`/`Serialize`) + `DATA_BROADCAST_ID_SSU` (`0x000A`)
   constant (#50).
+- `S2Xv2SatelliteDeliverySystem` — typed body for extension tag `0x24`
+  (`S2Xv2_satellite_delivery_system_descriptor`, Tables 144a–144c, §6.4.6.5.3).
+  All conditional blocks typed: scrambling sequence selector + index (modes 1/2),
+  timeslice_number (modes 2/5), channel-bond secondary-system-ID loop,
+  superframe block with `SFFI`/`beamhopping_time_plan_id` sub-fields (modes 4/5).
+  Trailing `reserved_zero_future_use` bytes preserved verbatim in `reserved_tail`.
+  `S2Xv2Mode` enum (Table 144c); `S2Xv2Superframe` inner struct. (#53)
+- Updated Group (c) deferral comment in `descriptors/extension/mod.rs` to
+  explicitly list specs-not-yet-vendored items; removed stale `0x24` deferred entry.
 
 ## 6.4.0 — 2026-06-13
 

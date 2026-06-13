@@ -52,15 +52,16 @@
 //! - `0x20` TTML_subtitling (`en_303_560_ttml.md` Table 1, §5.2.1.1).
 //! - `0x22` service_prominence (Table 162c, §6.4.18) — SOGI loop typed; target_region loop raw.
 //! - `0x23` vvc_subpictures (Table 162a, §6.4.17) — fully typed.
+//! - `0x24` S2Xv2_satellite_delivery_system (Tables 144a–144c, §6.4.6.5.3) — fully typed.
 //!
-//! Kept [`ExtensionBody::Raw`] (tag value preserved), with reason:
+//! Kept [`ExtensionBody::Raw`] (tag value preserved) — spec PDF not vendored;
+//! will be typed once the governing spec is transcribed into `dvb-si/docs/`:
 //! - `0x01` cpcm_delivery_signalling — spec not vendored (ETSI TS 102 825).
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
 //! - `0x0C` XAIT_PID — deferred (TS 102 727 PDF vendored, no extracted syntax table yet).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
 //! - `0x18` protection_message — spec not vendored (ETSI TS 102 809).
-//! - `0x24` S2Xv2 — niche; deferred.
 //! - any other value (incl. `0x80`..=`0xFF` user-defined) — unknown; preserved.
 
 use crate::error::{Error, Result};
@@ -76,6 +77,7 @@ mod message;
 mod network_change_notify;
 pub mod registry;
 mod s2x_satellite_delivery_system;
+mod s2xv2_satellite_delivery_system;
 mod service_prominence;
 mod service_relocated;
 mod sh_delivery_system;
@@ -100,6 +102,7 @@ pub use image_icon::*;
 pub use message::*;
 pub use network_change_notify::*;
 pub use s2x_satellite_delivery_system::*;
+pub use s2xv2_satellite_delivery_system::*;
 pub use service_prominence::*;
 pub use service_relocated::*;
 pub use sh_delivery_system::*;
@@ -192,6 +195,8 @@ pub enum ExtensionTag {
     ServiceProminence = 0x22,
     /// vvc_subpictures_descriptor (Table 162a, §6.4.17).
     VvcSubpictures = 0x23,
+    /// S2Xv2_satellite_delivery_system_descriptor (Tables 144a–144c, §6.4.6.5.3).
+    S2Xv2SatelliteDeliverySystem = 0x24,
 }
 
 /// Generates the extension-body dispatch from one list (ADR-0001): the
@@ -346,6 +351,8 @@ declare_extension_bodies! {'a;
     ServiceProminence = 0x22 => ServiceProminence<'a>,
     /// `0x23` — vvc_subpictures (Table 162a, §6.4.17).
     VvcSubpictures = 0x23 => VvcSubpictures<'a>,
+    /// `0x24` — S2Xv2_satellite_delivery_system (Tables 144a–144c, §6.4.6.5.3).
+    S2Xv2SatelliteDeliverySystem = 0x24 => S2Xv2SatelliteDeliverySystem<'a>,
 }
 
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
