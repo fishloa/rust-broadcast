@@ -1,0 +1,42 @@
+# ETSI EN 300 468 Annex D Table D.4 — AC-3 service_type codes (3-bit field)
+# Unknown(u8) catch-all excluded; all 8 values (0-7) are named in the spec.
+
+[[entry]]
+value = 0x00
+variant = "CompleteMain"
+spec = "Complete Main (CM)"
+
+[[entry]]
+value = 0x01
+variant = "MusicAndEffects"
+spec = "Music and Effects (ME)"
+
+[[entry]]
+value = 0x02
+variant = "VisuallyImpaired"
+spec = "Visually Impaired (VI)"
+
+[[entry]]
+value = 0x03
+variant = "HearingImpaired"
+spec = "Hearing Impaired (HI)"
+
+[[entry]]
+value = 0x04
+variant = "Dialogue"
+spec = "Dialogue (D)"
+
+[[entry]]
+value = 0x05
+variant = "Commentary"
+spec = "Commentary (C)"
+
+[[entry]]
+value = 0x06
+variant = "Emergency"
+spec = "Emergency (E)"
+
+[[entry]]
+value = 0x07
+variant = "VoiceOver"
+spec = "Voice Over (VO)"

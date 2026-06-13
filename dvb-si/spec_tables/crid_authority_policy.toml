@@ -1,0 +1,22 @@
+# ETSI TS 102 323 §5.2.2 Table 3 — CRID authority policy codes (2-bit field, exhaustive)
+# No catch-all; all 4 values named.
+
+[[entry]]
+value = 0x00
+variant = "Permanent"
+spec = "Permanent"
+
+[[entry]]
+value = 0x01
+variant = "Transient"
+spec = "Transient"
+
+[[entry]]
+value = 0x02
+variant = "Either"
+spec = "Either"
+
+[[entry]]
+value = 0x03
+variant = "Reserved"
+spec = "Reserved"

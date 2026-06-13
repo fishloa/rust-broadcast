@@ -1,0 +1,27 @@
+# ETSI EN 300 468 Table 120 — SH diversity_mode codes (4-bit field)
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "NoDiversity"
+spec = "no diversity"
+
+[[entry]]
+value = 0x08
+variant = "PaTsOnly"
+spec = "paTS only"
+
+[[entry]]
+value = 0x0D
+variant = "FecAtLink"
+spec = "paTS + FEC diversity, FEC at link"
+
+[[entry]]
+value = 0x0E
+variant = "FecAtPhy"
+spec = "paTS + FEC diversity, FEC at PHY"
+
+[[entry]]
+value = 0x0F
+variant = "FecAtPhyAndLink"
+spec = "paTS + FEC diversity, FEC at PHY and link"

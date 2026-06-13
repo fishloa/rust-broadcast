@@ -1,0 +1,47 @@
+# ETSI TS 102 809 §5.2.4.1 Table 3 — application control_code codes
+# Unallocated(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "Reserved"
+spec = "Reserved"
+
+[[entry]]
+value = 0x01
+variant = "Autostart"
+spec = "AUTOSTART"
+
+[[entry]]
+value = 0x02
+variant = "Present"
+spec = "PRESENT"
+
+[[entry]]
+value = 0x03
+variant = "Destroy"
+spec = "DESTROY"
+
+[[entry]]
+value = 0x04
+variant = "Kill"
+spec = "KILL"
+
+[[entry]]
+value = 0x05
+variant = "Prefetch"
+spec = "PREFETCH"
+
+[[entry]]
+value = 0x06
+variant = "Remote"
+spec = "REMOTE"
+
+[[entry]]
+value = 0x07
+variant = "Disabled"
+spec = "DISABLED"
+
+[[entry]]
+value = 0x08
+variant = "PlaybackAutostart"
+spec = "PLAYBACK_AUTOSTART"

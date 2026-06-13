@@ -1,0 +1,78 @@
+# ETSI EN 300 468 Table 60 — linkage_type codes
+# ExtendedEventLinkage(u8) range variant (0x0E..=0x1F) excluded.
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "InformationService"
+spec = "information service"
+
+[[entry]]
+value = 0x02
+variant = "EpgService"
+spec = "EPG service"
+
+[[entry]]
+value = 0x03
+variant = "CaReplacementService"
+spec = "CA replacement service"
+
+[[entry]]
+value = 0x04
+variant = "TsContainingCompleteSi"
+spec = "TS containing complete network/bouquet SI"
+
+[[entry]]
+value = 0x05
+variant = "ServiceReplacementService"
+spec = "service replacement service"
+
+[[entry]]
+value = 0x06
+variant = "DataBroadcastService"
+spec = "data broadcast service"
+
+[[entry]]
+value = 0x07
+variant = "RcsMap"
+spec = "RCS map"
+
+[[entry]]
+value = 0x08
+variant = "MobileHandOver"
+spec = "mobile hand-over"
+
+[[entry]]
+value = 0x09
+variant = "SsuService"
+spec = "SSU service"
+
+[[entry]]
+value = 0x0A
+variant = "TsContainingSsuBatOrNit"
+spec = "TS containing SSU BAT or NIT"
+
+[[entry]]
+value = 0x0B
+variant = "IpMacNotificationService"
+spec = "IP/MAC notification service"
+
+[[entry]]
+value = 0x0C
+variant = "TsContainingIntBatOrNit"
+spec = "TS containing INT BAT or NIT"
+
+[[entry]]
+value = 0x0D
+variant = "EventLinkage"
+spec = "event linkage"
+
+[[entry]]
+value = 0x20
+variant = "DownloadableFontInfoLinkage"
+spec = "downloadable font info linkage"
+
+[[entry]]
+value = 0x21
+variant = "NativeIpBootstrapMpeStream"
+spec = "Native IP bootstrap MPE stream"

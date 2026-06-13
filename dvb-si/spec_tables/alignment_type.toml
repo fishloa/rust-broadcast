@@ -1,0 +1,22 @@
+# ISO/IEC 13818-1 Table 2-53 — alignment_type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "SliceOrVideoAccessUnit"
+spec = "Slice, or video access unit"
+
+[[entry]]
+value = 0x02
+variant = "VideoAccessUnit"
+spec = "Video access unit"
+
+[[entry]]
+value = 0x03
+variant = "GopOrSeq"
+spec = "GOP, or SEQ"
+
+[[entry]]
+value = 0x04
+variant = "Seq"
+spec = "SEQ"

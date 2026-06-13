@@ -1,0 +1,48 @@
+# ISO/IEC 13818-1 §2.6.19 Table 2-63 — audio_type codes
+# UserPrivate(u8) range (0x04-0x7F) excluded.
+# Reserved(u8) catch-all (0x85-0xFF) excluded.
+
+[[entry]]
+value = 0x00
+variant = "Undefined"
+spec = "undefined"
+
+[[entry]]
+value = 0x01
+variant = "CleanEffects"
+spec = "clean effects"
+
+[[entry]]
+value = 0x02
+variant = "HearingImpaired"
+spec = "hearing impaired"
+
+[[entry]]
+value = 0x03
+variant = "VisualImpairedCommentary"
+spec = "visual impaired commentary"
+
+[[entry]]
+value = 0x80
+variant = "Primary"
+spec = "primary"
+
+[[entry]]
+value = 0x81
+variant = "Native"
+spec = "native"
+
+[[entry]]
+value = 0x82
+variant = "Emergency"
+spec = "emergency"
+
+[[entry]]
+value = 0x83
+variant = "PrimaryCommentary"
+spec = "primary commentary"
+
+[[entry]]
+value = 0x84
+variant = "AlternateCommentary"
+spec = "alternate commentary"

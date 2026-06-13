@@ -1,0 +1,97 @@
+# ETSI EN 300 468 Table 26 — subtitling_type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "EbuTeletextSubtitles"
+spec = "EBU teletext subtitles"
+
+[[entry]]
+value = 0x02
+variant = "AssociatedEbuTeletext"
+spec = "associated EBU teletext"
+
+[[entry]]
+value = 0x03
+variant = "VbiData"
+spec = "VBI data"
+
+[[entry]]
+value = 0x10
+variant = "DvbSubtitlesNormal"
+spec = "DVB subtitles (normal), no aspect ratio critical"
+
+[[entry]]
+value = 0x11
+variant = "DvbSubtitlesNormal4x3"
+spec = "DVB subtitles (normal), 4:3"
+
+[[entry]]
+value = 0x12
+variant = "DvbSubtitlesNormal16x9"
+spec = "DVB subtitles (normal), 16:9"
+
+[[entry]]
+value = 0x13
+variant = "DvbSubtitlesNormal2p21x1"
+spec = "DVB subtitles (normal), 2.21:1"
+
+[[entry]]
+value = 0x14
+variant = "DvbSubtitlesNormalHd"
+spec = "DVB subtitles (normal), HD"
+
+[[entry]]
+value = 0x15
+variant = "DvbSubtitlesNormalPlanoStereoscopicHd"
+spec = "DVB subtitles (normal), plano-stereoscopic disparity, HD"
+
+[[entry]]
+value = 0x16
+variant = "DvbSubtitlesNormalUhd"
+spec = "DVB subtitles (normal), UHD"
+
+[[entry]]
+value = 0x20
+variant = "DvbSubtitlesHardOfHearing"
+spec = "DVB subtitles (hard of hearing), no aspect ratio critical"
+
+[[entry]]
+value = 0x21
+variant = "DvbSubtitlesHardOfHearing4x3"
+spec = "DVB subtitles (hard of hearing), 4:3"
+
+[[entry]]
+value = 0x22
+variant = "DvbSubtitlesHardOfHearing16x9"
+spec = "DVB subtitles (hard of hearing), 16:9"
+
+[[entry]]
+value = 0x23
+variant = "DvbSubtitlesHardOfHearing2p21x1"
+spec = "DVB subtitles (hard of hearing), 2.21:1"
+
+[[entry]]
+value = 0x24
+variant = "DvbSubtitlesHardOfHearingHd"
+spec = "DVB subtitles (hard of hearing), HD"
+
+[[entry]]
+value = 0x25
+variant = "DvbSubtitlesHardOfHearingPlanoStereoscopicHd"
+spec = "DVB subtitles (hard of hearing), plano-stereoscopic disparity, HD"
+
+[[entry]]
+value = 0x26
+variant = "DvbSubtitlesHardOfHearingUhd"
+spec = "DVB subtitles (hard of hearing), UHD"
+
+[[entry]]
+value = 0x30
+variant = "OpenSignLanguage"
+spec = "open (in-vision) sign language interpretation"
+
+[[entry]]
+value = 0x31
+variant = "ClosedSignLanguage"
+spec = "closed sign language interpretation"

@@ -1,0 +1,27 @@
+# ETSI EN 300 468 Table 102 — teletext_type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "InitialPage"
+spec = "initial teletext page"
+
+[[entry]]
+value = 0x02
+variant = "SubtitlePage"
+spec = "teletext subtitle page"
+
+[[entry]]
+value = 0x03
+variant = "AdditionalInformationPage"
+spec = "additional information page"
+
+[[entry]]
+value = 0x04
+variant = "ProgrammeSchedulePage"
+spec = "programme schedule page"
+
+[[entry]]
+value = 0x05
+variant = "HearingImpairedSubtitlePage"
+spec = "teletext subtitle page for hearing impaired people"

@@ -1,0 +1,42 @@
+# ETSI EN 300 468 Table 19 — announcement_type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "EmergencyAlarm"
+spec = "Emergency alarm"
+
+[[entry]]
+value = 0x01
+variant = "RoadTrafficFlash"
+spec = "Road Traffic flash"
+
+[[entry]]
+value = 0x02
+variant = "PublicTransportFlash"
+spec = "Public Transport flash"
+
+[[entry]]
+value = 0x03
+variant = "WarningMessage"
+spec = "Warning message"
+
+[[entry]]
+value = 0x04
+variant = "NewsFlash"
+spec = "News flash"
+
+[[entry]]
+value = 0x05
+variant = "WeatherFlash"
+spec = "Weather flash"
+
+[[entry]]
+value = 0x06
+variant = "EventAnnouncement"
+spec = "Event announcement"
+
+[[entry]]
+value = 0x07
+variant = "PersonalCall"
+spec = "Personal call"

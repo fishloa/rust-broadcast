@@ -1,0 +1,17 @@
+# ETSI EN 300 468 Table 43 — TS/GS mode codes (2-bit field)
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "GenericPacketized"
+spec = "Generic Packetized"
+
+[[entry]]
+value = 0x01
+variant = "Gse"
+spec = "Generic Stream Encapsulation (GSE)"
+
+[[entry]]
+value = 0x02
+variant = "DvbTransportStream"
+spec = "DVB transport stream"
