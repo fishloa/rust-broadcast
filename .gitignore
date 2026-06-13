@@ -8,3 +8,4 @@ tools/dvb-si-audit/out/
 .worktree/
 .worktrees/
 .delegate/
+.worktrees/
