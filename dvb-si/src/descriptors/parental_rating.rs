@@ -18,7 +18,7 @@ const ENTRY_LEN: usize = 4;
 pub struct RatingEntry {
     /// ISO 3166 alpha country code (e.g. `LangCode(*b"FRA")`, `LangCode(*b"GBR")`).
     pub country_code: LangCode,
-    /// Rating byte per §6.2.28 Table 79.
+    /// Rating byte per §6.2.30 Table 83.
     pub rating: u8,
 }
 

@@ -26,8 +26,8 @@ const RDS_UECP: u8 = 1 << 6;
 
 /// Decoded ancillary data flags — ETSI EN 300 468 Table 16.
 ///
-/// Bit numbering per the spec: `b₁` (LSB, transmitted last per §5.1.6)
-/// through `b₈` (MSB).
+/// Bit numbering per the spec: `b₀` (LSB, transmitted last per §5.1.6)
+/// through `b₇` (MSB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AncillaryDataFlags {
     /// DVD Video Ancillary Data (`b₁` = bit 0).

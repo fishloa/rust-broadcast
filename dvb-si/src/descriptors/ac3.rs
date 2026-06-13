@@ -345,7 +345,7 @@ impl Serialize for Ac3Descriptor<'_> {
         if self.asvc.is_some() {
             flags |= FLAG_ASVC;
         }
-        // The low 4 bits are reserved_future_use and must be set to 1.
+        // The low 4 bits are reserved_flags and must be set to 1.
         buf[2] = flags | 0x0F;
         let mut pos = 3;
         for b in [self.component_type, self.bsid, self.mainid, self.asvc]

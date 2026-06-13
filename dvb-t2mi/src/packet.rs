@@ -7,7 +7,7 @@ const HEADER_LEN: usize = 6;
 
 /// Packet types per ETSI TS 102 773 Table 1.
 ///
-/// Reserved for future use: `0x22..=0x2F`, `0x34..=0xFF`.
+/// All other values are reserved for future use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
