@@ -22,6 +22,8 @@ pub use audio::{AudioComponent, AudioDescriptor};
 pub use avail::AvailDescriptor;
 pub use dtmf::DtmfDescriptor;
 pub use header::CUEI;
-pub use segmentation::{DeliveryRestrictions, SegmentationComponent, SegmentationDescriptor};
+pub use segmentation::{
+    DeliveryRestrictions, MidUpid, Mpu, SegmentationComponent, SegmentationDescriptor,
+};
 pub use segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 pub use time::TimeDescriptor;

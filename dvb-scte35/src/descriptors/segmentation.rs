@@ -9,12 +9,62 @@
 //!
 //! Component Segmentation Mode (`program_segmentation_flag == 0`) is deprecated
 //! but parsed/serialized losslessly via [`SegmentationDescriptor::components`].
+//!
+//! Two UPID types carry sub-structure that is decoded on demand:
+//!
+//! - **MPU()** — §10.3.3.3, Table 24: `format_identifier` (32-bit) + `private_data`.
+//!   Access via [`SegmentationDescriptor::mpu`].
+//! - **MID()** — §10.3.3.4, Table 25: a sequence of `{ type, length, upid }` entries.
+//!   Access via [`SegmentationDescriptor::mid`].
 
 use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
 use dvb_common::{Parse, Serialize};
+
+/// Width in bits (and bytes) of the `format_identifier` field in MPU() (§10.3.3.3, Table 24).
+const MPU_FORMAT_IDENTIFIER_LEN: usize = 4; // 32 bits / 8
+
+/// Minimum byte length of an MID() sub-entry header: `segmentation_upid_type` (1) + `length` (1).
+const MID_ENTRY_HEADER_LEN: usize = 2;
+
+/// Decoded view of a Managed Private UPID (MPU()) — §10.3.3.3, Table 24.
+///
+/// `segmentation_upid_type` 0x0C. The `segmentation_upid()` bytes begin with a
+/// 32-bit `format_identifier` (uimsbf, registered with SMPTE) followed by
+/// `private_data` whose length is `segmentation_upid_length − 4` (the
+/// `format_identifier` is counted in the declared length).
+///
+/// This is a **derived view** of the raw `segmentation_upid` bytes already held
+/// by the parent [`SegmentationDescriptor`]; it borrows from the same slice and
+/// does not affect round-trip serialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Mpu<'a> {
+    /// 32-bit `format_identifier` (uimsbf), registered with SMPTE
+    /// (ISO/IEC 13818-1 §2.6.8).
+    pub format_identifier: u32,
+    /// Remaining UPID bytes after the `format_identifier`; length =
+    /// `segmentation_upid_length − 4`.
+    pub private_data: &'a [u8],
+}
+
+/// One entry in a Multiple UPID (MID()) structure — §10.3.3.4, Table 25.
+///
+/// Each entry carries its own `segmentation_upid_type` (from Table 22) and the
+/// corresponding raw UPID bytes. A MID sub-entry must not itself be of type MID.
+///
+/// This is a **derived view** borrowed from the parent descriptor's
+/// `segmentation_upid` slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct MidUpid<'a> {
+    /// `segmentation_upid_type` for this sub-entry (Table 22).
+    pub upid_type: SegmentationUpidType,
+    /// Raw UPID bytes for this sub-entry (length = the sub-entry's `length` field).
+    pub upid: &'a [u8],
+}
 
 /// `splice_descriptor_tag` for segmentation_descriptor (§10.1, Table 16).
 pub const TAG: u8 = 0x02;
@@ -248,7 +298,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
     }
 }
 
-impl SegmentationDescriptor<'_> {
+impl<'a> SegmentationDescriptor<'a> {
     fn body_len(&self) -> usize {
         if self.segmentation_event_cancel_indicator {
             return 5; // event_id (4) + cancel byte (1)
@@ -267,6 +317,72 @@ impl SegmentationDescriptor<'_> {
             len += 2;
         }
         len
+    }
+
+    /// Decode the `segmentation_upid` as an MPU() structure (§10.3.3.3, Table 24).
+    ///
+    /// Returns `Some(Ok(Mpu { .. }))` when `segmentation_upid_type == Mpu` and the
+    /// UPID bytes contain at least the 4-byte `format_identifier`.
+    /// Returns `Some(Err(..))` if the UPID is shorter than 4 bytes (truncated).
+    /// Returns `None` for any other UPID type.
+    #[must_use]
+    pub fn mpu(&self) -> Option<Result<Mpu<'a>>> {
+        if self.segmentation_upid_type != SegmentationUpidType::Mpu {
+            return None;
+        }
+        let bytes = self.segmentation_upid;
+        if bytes.len() < MPU_FORMAT_IDENTIFIER_LEN {
+            return Some(Err(Error::BufferTooShort {
+                need: MPU_FORMAT_IDENTIFIER_LEN,
+                have: bytes.len(),
+                what: "MPU() format_identifier",
+            }));
+        }
+        let format_identifier = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let private_data = &bytes[MPU_FORMAT_IDENTIFIER_LEN..];
+        Some(Ok(Mpu {
+            format_identifier,
+            private_data,
+        }))
+    }
+
+    /// Decode the `segmentation_upid` as a MID() structure (§10.3.3.4, Table 25).
+    ///
+    /// Returns `Some(Ok(Vec<MidUpid>))` when `segmentation_upid_type == Mid` and
+    /// every entry in the byte sequence parses cleanly.
+    /// Returns `Some(Err(..))` if any entry header or payload is truncated.
+    /// Returns `None` for any other UPID type.
+    #[must_use]
+    pub fn mid(&self) -> Option<Result<Vec<MidUpid<'a>>>> {
+        if self.segmentation_upid_type != SegmentationUpidType::Mid {
+            return None;
+        }
+        let mut entries = Vec::new();
+        let mut pos = 0;
+        let bytes = self.segmentation_upid;
+        while pos < bytes.len() {
+            if bytes.len() - pos < MID_ENTRY_HEADER_LEN {
+                return Some(Err(Error::BufferTooShort {
+                    need: pos + MID_ENTRY_HEADER_LEN,
+                    have: bytes.len(),
+                    what: "MID() entry header",
+                }));
+            }
+            let upid_type = SegmentationUpidType::from_u8(bytes[pos]);
+            let entry_len = bytes[pos + 1] as usize;
+            pos += MID_ENTRY_HEADER_LEN;
+            if bytes.len() - pos < entry_len {
+                return Some(Err(Error::LengthOverflow {
+                    declared: entry_len,
+                    available: bytes.len() - pos,
+                    what: "MID() entry segmentation_upid",
+                }));
+            }
+            let upid = &bytes[pos..pos + entry_len];
+            pos += entry_len;
+            entries.push(MidUpid { upid_type, upid });
+        }
+        Some(Ok(entries))
     }
 }
 
@@ -454,5 +570,137 @@ mod tests {
             segmentation_type_id: SegmentationTypeId::BreakStart,
             ..Default::default()
         });
+    }
+
+    // ── MPU() tests — §10.3.3.3, Table 24 ────────────────────────────────────
+
+    /// Build an MPU() UPID field-by-field from Table 24:
+    ///   format_identifier (32 bits uimsbf) | private_data (remaining bytes).
+    /// The `segmentation_upid_length` includes the 4-byte format_identifier.
+    #[test]
+    fn mpu_accessor_decodes_correctly() {
+        // format_identifier = 0x41424344 ("ABCD"), private_data = [0x01, 0x02, 0x03].
+        // Wire MPU() bytes: [0x41, 0x42, 0x43, 0x44, 0x01, 0x02, 0x03].
+        const FORMAT_ID: u32 = 0x4142_4344;
+        let upid_bytes: &[u8] = &[0x41, 0x42, 0x43, 0x44, 0x01, 0x02, 0x03];
+
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 0x1,
+            segmentation_upid_type: SegmentationUpidType::Mpu,
+            segmentation_upid: upid_bytes,
+            segmentation_type_id: SegmentationTypeId::ContentIdentification,
+            segment_num: 1,
+            segments_expected: 1,
+            ..Default::default()
+        };
+
+        // Accessor returns Some(Ok(..)).
+        let mpu = d.mpu().expect("Some").expect("Ok");
+        assert_eq!(mpu.format_identifier, FORMAT_ID);
+        assert_eq!(mpu.private_data, &[0x01u8, 0x02, 0x03]);
+
+        // Non-MPU UPID type returns None.
+        let d_ti = SegmentationDescriptor {
+            segmentation_upid_type: SegmentationUpidType::Ti,
+            segmentation_upid: &[0u8; 8],
+            ..d.clone()
+        };
+        assert!(d_ti.mpu().is_none());
+
+        // Whole descriptor still round-trips byte-identical.
+        rt(&d);
+    }
+
+    /// Truncated MPU() UPID (< 4 bytes) returns Some(Err(..)).
+    #[test]
+    fn mpu_accessor_truncated_returns_err() {
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 0x2,
+            segmentation_upid_type: SegmentationUpidType::Mpu,
+            segmentation_upid: &[0xAA, 0xBB], // only 2 bytes — truncated
+            segmentation_type_id: SegmentationTypeId::NotIndicated,
+            ..Default::default()
+        };
+        assert!(matches!(
+            d.mpu(),
+            Some(Err(Error::BufferTooShort {
+                what: "MPU() format_identifier",
+                ..
+            }))
+        ));
+    }
+
+    // ── MID() tests — §10.3.3.4, Table 25 ───────────────────────────────────
+
+    /// Build a 2-entry MID() UPID field-by-field from Table 25:
+    ///   for each entry: segmentation_upid_type (8) | length (8) | segmentation_upid (length * 8).
+    /// Number of entries is implicit — parsing ends when the outer UPID bytes are exhausted.
+    #[test]
+    fn mid_accessor_decodes_two_entries() {
+        // Entry 1: type=0x03 (AdId), length=12, upid = b"ABCD12345678"
+        // Entry 2: type=0x08 (Ti), length=8, upid = 8 zero bytes
+        let mut upid_bytes = Vec::new();
+        // Entry 1: AdId
+        upid_bytes.push(0x03u8); // segmentation_upid_type = AdId
+        upid_bytes.push(12u8); // length
+        upid_bytes.extend_from_slice(b"ABCD12345678");
+        // Entry 2: Ti
+        upid_bytes.push(0x08u8); // segmentation_upid_type = Ti
+        upid_bytes.push(8u8); // length
+        upid_bytes.extend_from_slice(&[0u8; 8]);
+
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 0x3,
+            segmentation_upid_type: SegmentationUpidType::Mid,
+            segmentation_upid: &upid_bytes,
+            segmentation_type_id: SegmentationTypeId::ProgramStart,
+            segment_num: 1,
+            segments_expected: 1,
+            ..Default::default()
+        };
+
+        let entries = d.mid().expect("Some").expect("Ok");
+        assert_eq!(entries.len(), 2);
+
+        assert_eq!(entries[0].upid_type, SegmentationUpidType::AdId);
+        assert_eq!(entries[0].upid, b"ABCD12345678");
+
+        assert_eq!(entries[1].upid_type, SegmentationUpidType::Ti);
+        assert_eq!(entries[1].upid, &[0u8; 8]);
+
+        // Non-MID UPID type returns None.
+        let d_adid = SegmentationDescriptor {
+            segmentation_upid_type: SegmentationUpidType::AdId,
+            ..d.clone()
+        };
+        assert!(d_adid.mid().is_none());
+
+        // Whole descriptor still round-trips byte-identical.
+        rt(&d);
+    }
+
+    /// Truncated MID() entry (entry header present but payload truncated) returns Some(Err(..)).
+    #[test]
+    fn mid_accessor_truncated_entry_returns_err() {
+        // Entry declares length=5 but only 2 bytes of upid follow.
+        let upid_bytes: &[u8] = &[
+            0x03u8, // segmentation_upid_type = AdId
+            5u8,    // declared length = 5
+            0xAA, 0xBB, // only 2 bytes — truncated
+        ];
+        let d = SegmentationDescriptor {
+            segmentation_event_id: 0x4,
+            segmentation_upid_type: SegmentationUpidType::Mid,
+            segmentation_upid: upid_bytes,
+            segmentation_type_id: SegmentationTypeId::NotIndicated,
+            ..Default::default()
+        };
+        assert!(matches!(
+            d.mid(),
+            Some(Err(Error::LengthOverflow {
+                what: "MID() entry segmentation_upid",
+                ..
+            }))
+        ));
     }
 }

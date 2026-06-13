@@ -25,6 +25,10 @@
 //!   `audio`, unified by
 //!   [`AnySpliceDescriptor`](descriptors::AnySpliceDescriptor) with a raw
 //!   fall-through.
+//! - Typed UPID sub-structures: [`descriptors::Mpu`] (§10.3.3.3, Table 24)
+//!   and [`descriptors::MidUpid`] (§10.3.3.4, Table 25) decoded on demand via
+//!   [`descriptors::SegmentationDescriptor::mpu`] /
+//!   [`descriptors::SegmentationDescriptor::mid`].
 //! - Decoded accessors: 90 kHz fields → [`core::time::Duration`]
 //!   (`pts_time`, `break_duration`, `pts_adjustment`).
 //!
