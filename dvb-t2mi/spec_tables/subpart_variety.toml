@@ -1,0 +1,23 @@
+# ETSI TS 102 773 §5.2.12 Table 13 — subpart_variety values (16-bit field)
+# SubpartVariety uses TryFromPrimitive on u16; values 0x0004..=0xFFFF return Err (no catch-all).
+# Only the 4 named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "Null"
+spec = "Null — reserved_for_future_use(32) = 0"
+
+[[entry]]
+value = 0x01
+variant = "Iq"
+spec = "IQ — reserved_for_future_use(32) + iq_data"
+
+[[entry]]
+value = 0x02
+variant = "Prbs"
+spec = "PRBS — prbs_type(8) + reserved_for_future_use(96)"
+
+[[entry]]
+value = 0x03
+variant = "TxSigFef"
+spec = "TX-SIG FEF — reserved_for_future_use(32)"

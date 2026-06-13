@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+- New `tests/spec_drift.rs` with drift-guard coverage for six code-backing enums
+  (#158): `PacketType` (Table 1, 12 variants), `AddressingFunctionTag` (Tables 5 &
+  6, 14 variants), `Bandwidth` (Table 3, 6 variants), `FrequencySource` (Table 2, 3
+  variants), `S1Field` (EN 302 755 Table 18, 8 variants), and `SubpartVariety`
+  (Table 13, 4 variants). Adds the matching `spec_tables/*.toml` data mirrors.
+  Test/data only.
+
 ## [6.3.0] — 2026-06-13
 
 Version-lockstep release with the workspace (new `dvb-scte35` crate; dvb-si `TsResync` byte-stream resync helper). No changes to this crate.

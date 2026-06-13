@@ -1,0 +1,23 @@
+# EN 302 755 Annex C, Table C.1 — BUFS_UNIT values (2-bit field)
+# BufsUnit has from_u8/to_u8 with exhaustive 2-bit domain; no catch-all variant.
+# All 4 variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "Bits"
+spec = "bits"
+
+[[entry]]
+value = 0x01
+variant = "Kbits"
+spec = "Kbits"
+
+[[entry]]
+value = 0x02
+variant = "Mbits"
+spec = "Mbits"
+
+[[entry]]
+value = 0x03
+variant = "Kbits8"
+spec = "8 Kbits"

@@ -1,0 +1,33 @@
+# ETSI TS 102 773 §5.2.7 Table 3 — bandwidth values (4-bit field, bw)
+# Bandwidth uses TryFromPrimitive; values 6..=255 return Err (no catch-all).
+# Only the 6 named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "Mhz1_7"
+spec = "1.7 MHz bandwidth"
+
+[[entry]]
+value = 0x01
+variant = "Mhz5"
+spec = "5 MHz bandwidth"
+
+[[entry]]
+value = 0x02
+variant = "Mhz6"
+spec = "6 MHz bandwidth"
+
+[[entry]]
+value = 0x03
+variant = "Mhz7"
+spec = "7 MHz bandwidth"
+
+[[entry]]
+value = 0x04
+variant = "Mhz8"
+spec = "8 MHz bandwidth"
+
+[[entry]]
+value = 0x05
+variant = "Mhz10"
+spec = "10 MHz bandwidth"

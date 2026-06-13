@@ -1,0 +1,43 @@
+# EN 302 755 §7.2.1 Table 18 — S1 field values (3 bits)
+# S1Field is exhaustive (covers all 8 possible 3-bit values); no catch-all variant.
+# All 8 variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "V0"
+spec = "T2_SISO"
+
+[[entry]]
+value = 0x01
+variant = "V1"
+spec = "T2_MISO"
+
+[[entry]]
+value = 0x02
+variant = "V2"
+spec = "Non-T2"
+
+[[entry]]
+value = 0x03
+variant = "V3"
+spec = "T2_LITE_SISO"
+
+[[entry]]
+value = 0x04
+variant = "V4"
+spec = "T2_LITE_MISO"
+
+[[entry]]
+value = 0x05
+variant = "V5"
+spec = "reserved"
+
+[[entry]]
+value = 0x06
+variant = "V6"
+spec = "reserved"
+
+[[entry]]
+value = 0x07
+variant = "V7"
+spec = "reserved"

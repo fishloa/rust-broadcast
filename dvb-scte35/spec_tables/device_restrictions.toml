@@ -1,0 +1,22 @@
+# ANSI/SCTE 35 2023r1 §10.3.3.1 Table 21 — device_restrictions values (2 bits)
+# All 4 values are named; no catch-all variant exists.
+
+[[entry]]
+value = 0x00
+variant = "RestrictGroup0"
+spec = "Restricted for device group 0 (out-of-band defined)"
+
+[[entry]]
+value = 0x01
+variant = "RestrictGroup1"
+spec = "Restricted for device group 1"
+
+[[entry]]
+value = 0x02
+variant = "RestrictGroup2"
+spec = "Restricted for device group 2"
+
+[[entry]]
+value = 0x03
+variant = "None"
+spec = "No device restrictions"

@@ -1,0 +1,63 @@
+# ETSI TS 102 773 Table 1 — T2-MI packet_type values
+# PacketType uses TryFromPrimitive; unrecognised bytes return Err (no catch-all).
+# Only the 12 named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "BasebandFrame"
+spec = "Baseband Frame (BBFRAME) — §5.2.1"
+
+[[entry]]
+value = 0x01
+variant = "AuxiliaryIqData"
+spec = "Auxiliary stream I/Q data — §5.2.2"
+
+[[entry]]
+value = 0x02
+variant = "ArbitraryCellInsertion"
+spec = "Arbitrary cell insertion — §5.2.3"
+
+[[entry]]
+value = 0x10
+variant = "L1Current"
+spec = "L1-current signalling — §5.2.4"
+
+[[entry]]
+value = 0x11
+variant = "L1Future"
+spec = "L1-future signalling — §5.2.5"
+
+[[entry]]
+value = 0x12
+variant = "P2BiasBalancing"
+spec = "P2 bias balancing cells — §5.2.6"
+
+[[entry]]
+value = 0x20
+variant = "Timestamp"
+spec = "DVB-T2 timestamp — §5.2.7"
+
+[[entry]]
+value = 0x21
+variant = "IndividualAddressing"
+spec = "Individual addressing — §5.2.8"
+
+[[entry]]
+value = 0x30
+variant = "FefPartNull"
+spec = "FEF part: Null — §5.2.9"
+
+[[entry]]
+value = 0x31
+variant = "FefPartIqData"
+spec = "FEF part: I/Q data — §5.2.10"
+
+[[entry]]
+value = 0x32
+variant = "FefPartComposite"
+spec = "FEF part: composite — §5.2.11"
+
+[[entry]]
+value = 0x33
+variant = "FefSubPart"
+spec = "FEF sub-part — §5.2.12"
