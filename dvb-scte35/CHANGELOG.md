@@ -7,6 +7,13 @@
   (reviewable, spec-cited `segmentation_type_id` value→name table) plus
   `tests/spec_drift.rs`, a drift test that byte-sweeps `SegmentationTypeId`
   and fails CI if the enum and its TOML diverge (#158). Test/data only.
+- Extended `tests/spec_drift.rs` with drift-guard coverage for three further
+  code-backing enums/dispatch tables (#158): `DeviceRestrictions` (Table 21,
+  4 variants), `SegmentationUpidType` (Table 22, 18 named variants) and
+  `splice_command_type` via `AnyCommand::DISPATCHED_TYPES` (Table 7, 6
+  implemented types). Adds `spec_tables/device_restrictions.toml`,
+  `spec_tables/segmentation_upid_type.toml`, and
+  `spec_tables/splice_command_type.toml`. Test/data only.
 
 ## [6.3.0] — 2026-06-13
 

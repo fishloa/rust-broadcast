@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added
+- New `tests/spec_drift.rs` with drift-guard coverage for two code-backing enums
+  (#158): `TsGs` (EN 302 755 Table 1, 4 variants) and `BufsUnit` (Annex C Table
+  C.1, 4 variants). Adds `spec_tables/ts_gs.toml` and `spec_tables/bufs_unit.toml`
+  data mirrors. Test/data only.
+
 ### Fixed
 - `Bbheader::serialize_into` in HEM with `issy_in_header = None` left stale bytes
   at positions `buf[2]`, `buf[3]`, and `buf[6]` when the caller's buffer was not

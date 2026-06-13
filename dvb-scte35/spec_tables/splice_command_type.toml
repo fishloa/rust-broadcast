@@ -1,0 +1,34 @@
+# ANSI/SCTE 35 2023r1 §9.6.1 Table 7 — splice_command_type values
+# The crate implements these as individual command structs dispatched via
+# AnyCommand::DISPATCHED_TYPES.  Unknown/reserved bytes fall through to
+# AnyCommand::Unknown.  Only the implemented (named) command types are listed.
+
+[[entry]]
+value = 0x00
+variant = "SpliceNull"
+spec = "splice_null"
+
+[[entry]]
+value = 0x04
+variant = "SpliceSchedule"
+spec = "splice_schedule"
+
+[[entry]]
+value = 0x05
+variant = "SpliceInsert"
+spec = "splice_insert"
+
+[[entry]]
+value = 0x06
+variant = "TimeSignal"
+spec = "time_signal"
+
+[[entry]]
+value = 0x07
+variant = "BandwidthReservation"
+spec = "bandwidth_reservation"
+
+[[entry]]
+value = 0xFF
+variant = "PrivateCommand"
+spec = "private_command"

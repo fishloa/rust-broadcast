@@ -1,0 +1,73 @@
+# ETSI TS 102 773 §5.2.8.2 Tables 5 & 6 — addressing_function_tag values
+# AddressingFunctionTag uses TryFromPrimitive; unrecognised bytes return Err (no catch-all).
+# Only the 14 named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "TimeOffset"
+spec = "Transmitter time offset"
+
+[[entry]]
+value = 0x01
+variant = "FrequencyOffset"
+spec = "Transmitter frequency offset"
+
+[[entry]]
+value = 0x02
+variant = "Power"
+spec = "Transmitter power"
+
+[[entry]]
+value = 0x03
+variant = "PrivateData"
+spec = "Private data"
+
+[[entry]]
+value = 0x04
+variant = "CellId"
+spec = "Cell ID"
+
+[[entry]]
+value = 0x05
+variant = "Enable"
+spec = "Enable"
+
+[[entry]]
+value = 0x06
+variant = "Bandwidth"
+spec = "Bandwidth (not applicable for T2)"
+
+[[entry]]
+value = 0x10
+variant = "AcePapr"
+spec = "ACE-PAPR reduction (T2-specific)"
+
+[[entry]]
+value = 0x11
+variant = "MisoGroup"
+spec = "MISO group (T2-specific)"
+
+[[entry]]
+value = 0x12
+variant = "TrPapr"
+spec = "TR-PAPR reduction (T2-specific)"
+
+[[entry]]
+value = 0x13
+variant = "L1AcePapr"
+spec = "L1-ACE-PAPR (T2-specific)"
+
+[[entry]]
+value = 0x15
+variant = "TxSigFefSeqNum"
+spec = "TX-SIG FEF sequence number (T2-specific)"
+
+[[entry]]
+value = 0x16
+variant = "TxSigAuxStreamTxId"
+spec = "TX-SIG auxiliary stream TX ID (T2-specific)"
+
+[[entry]]
+value = 0x17
+variant = "Frequency"
+spec = "Frequency (T2-specific)"

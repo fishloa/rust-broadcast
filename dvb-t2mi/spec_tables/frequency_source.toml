@@ -1,0 +1,18 @@
+# ETSI TS 102 773 §5.2.4 Table 2 — freq_source values (2-bit field)
+# FrequencySource uses TryFromPrimitive; value 0b11 returns Err (no catch-all).
+# Only the 3 named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "UseL1CurrentData"
+spec = "Use L1-current data field"
+
+[[entry]]
+value = 0x01
+variant = "UseIndividualAddressing"
+spec = "Use individual addressing frequency function"
+
+[[entry]]
+value = 0x02
+variant = "ManualPerModulator"
+spec = "Manually set per modulator"

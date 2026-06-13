@@ -1,0 +1,23 @@
+# EN 302 755 Table 1 — TS/GS field values (MATYPE-1 bits [7:6], 2-bit field)
+# TsGs is exhaustive (all 4 two-bit values); no catch-all variant.
+# All 4 variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "Gfps"
+spec = "Generic Packetized Stream"
+
+[[entry]]
+value = 0x01
+variant = "Gcs"
+spec = "Generic Continuous Stream"
+
+[[entry]]
+value = 0x02
+variant = "Gse"
+spec = "Generic Encapsulated Stream"
+
+[[entry]]
+value = 0x03
+variant = "Ts"
+spec = "Transport Stream (MPEG-2 TS, 188-byte packets)"

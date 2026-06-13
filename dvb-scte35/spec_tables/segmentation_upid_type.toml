@@ -1,0 +1,92 @@
+# ANSI/SCTE 35 2023r1 §10.3.3.1 Table 22 — segmentation_upid_type values
+# Reserved(u8) catch-all is excluded; only named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "NotUsed"
+spec = "Not Used"
+
+[[entry]]
+value = 0x01
+variant = "UserDefinedDeprecated"
+spec = "User Defined (deprecated)"
+
+[[entry]]
+value = 0x02
+variant = "Isci"
+spec = "ISCI"
+
+[[entry]]
+value = 0x03
+variant = "AdId"
+spec = "Ad-ID"
+
+[[entry]]
+value = 0x04
+variant = "Umid"
+spec = "UMID"
+
+[[entry]]
+value = 0x05
+variant = "IsanDeprecated"
+spec = "ISAN (deprecated)"
+
+[[entry]]
+value = 0x06
+variant = "Isan"
+spec = "ISAN"
+
+[[entry]]
+value = 0x07
+variant = "Tid"
+spec = "TID"
+
+[[entry]]
+value = 0x08
+variant = "Ti"
+spec = "TI"
+
+[[entry]]
+value = 0x09
+variant = "Adi"
+spec = "ADI"
+
+[[entry]]
+value = 0x0A
+variant = "Eidr"
+spec = "EIDR"
+
+[[entry]]
+value = 0x0B
+variant = "AtscContentIdentifier"
+spec = "ATSC Content Identifier"
+
+[[entry]]
+value = 0x0C
+variant = "Mpu"
+spec = "MPU"
+
+[[entry]]
+value = 0x0D
+variant = "Mid"
+spec = "MID"
+
+[[entry]]
+value = 0x0E
+variant = "AdsInformation"
+spec = "ADS Information"
+
+[[entry]]
+value = 0x0F
+variant = "Uri"
+spec = "URI"
+
+[[entry]]
+value = 0x10
+variant = "Uuid"
+spec = "UUID"
+
+[[entry]]
+value = 0x11
+variant = "Scr"
+spec = "SCR"
