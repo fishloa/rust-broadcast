@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- **`time::SECS_2000_EPOCH`** — Unix timestamp (946 684 800) of the T2-MI / DVB
+  time-of-day epoch 2000-01-01T00:00:00 UTC (#47).
+- **`time::decode_seconds_since_2000_utc()`** (feature `chrono`) — decodes a
+  `seconds_since_2000` + subsecond-nanos pair + `utco` offset to a `DateTime<Utc>`.
+- **`time::encode_seconds_since_2000_utc()`** (feature `chrono`) — inverse encoder.
+
 ## [6.4.0] — 2026-06-13
 
 Version-lockstep release with the workspace (#158 spec-table drift-guards + spec-fidelity audit; dvb-si PMT section/last-section fields; dvb-bbframe DVB-S2 BUFSTAT ISSY decode). No changes to this crate.

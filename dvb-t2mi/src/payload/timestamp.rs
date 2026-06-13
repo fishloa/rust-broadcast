@@ -1,12 +1,39 @@
-//! T2-MI payload type 0x20: DVB-T2 timestamp — §5.2.7.
+//! T2-MI payload type 0x20: DVB-T2 timestamp — ETSI TS 102 773 §5.2.7.
 //!
-//! Absolute or relative emission time.
-//! Emission time = seconds_since_2000 + subseconds * Tsub (where Tsub depends on bandwidth).
-//! Null timestamp: all bits of seconds_since_2000, subseconds, utco = 1.
+//! Carries an absolute or relative emission time for the T2 transmitter.
 //!
-//! Civil UTC conversion (applying the `utco` leap-second offset) is intentionally not
-//! provided yet; `utco` is exposed as a field. `emission_offset` is in the timestamp's
-//! own time base relative to 2000-01-01T00:00:00.
+//! ## Wire layout (88 bits = 11 bytes)
+//!
+//! - byte 0 `[7:4]`: rfu (must be 0)
+//! - byte 0 `[3:0]`: `bw` — bandwidth code, Table 4
+//! - bytes 1–5: `seconds_since_2000` (40 bits) — whole seconds since
+//!   2000-01-01T00:00:00 in the timestamp's own time base
+//! - bytes 6–9 `[7:5]`: `subseconds` (27 bits) — sub-second count in units of Tsub
+//! - byte 9 `[4:0]` + byte 10: `utco` (13 bits) — leap-second offset to subtract
+//!   to obtain civil UTC
+//!
+//! ## Emission-time formula (Table 4)
+//!
+//! ```text
+//! emission_offset = seconds_since_2000 + subseconds × Tsub
+//! civil_utc       = epoch_2000 + emission_offset − utco
+//! ```
+//!
+//! where `Tsub` per bandwidth (ETSI TS 102 773 §5.2.7, Table 4):
+//!
+//! | Bandwidth | bw | Tsub        |
+//! |-----------|----|-------------|
+//! | 1.7 MHz   | 0  | 1/131 µs    |
+//! | 5 MHz     | 1  | 1/40 µs     |
+//! | 6 MHz     | 2  | 1/48 µs     |
+//! | 7 MHz     | 3  | 1/56 µs     |
+//! | 8 MHz     | 4  | 1/64 µs     |
+//! | 10 MHz    | 5  | 1/80 µs     |
+//!
+//! ## Special values
+//!
+//! - **Null timestamp**: all 80 data bits (seconds + subseconds + utco) are 1.
+//! - **Relative timestamp**: `seconds_since_2000 == 0` (and not null).
 
 use num_enum::TryFromPrimitive;
 
@@ -72,6 +99,42 @@ const SUBSEC_DENOM_8MHZ: u64 = 64;
 const SUBSEC_DENOM_10MHZ: u64 = 80;
 
 impl Bandwidth {
+    /// Return the elementary period Tsub as a rational `(numerator, denominator)`
+    /// in **nanoseconds**, exact and without floating-point.
+    ///
+    /// ETSI TS 102 773 §5.2.7 Table 4 gives `Tsub = 1/D µs` (where D is the
+    /// bandwidth-dependent denominator), so in nanoseconds: `Tsub = 1000/D ns`.
+    ///
+    /// The returned value `(numer, denom)` satisfies `Tsub_ns = numer / denom`.
+    /// The fraction is **not** reduced (numer is always 1000, denom is D), so
+    /// callers can multiply `subseconds × 1000` and divide by `denom` to get
+    /// the total subsecond nanoseconds without any floating-point.
+    ///
+    /// # Example
+    /// ```
+    /// use dvb_t2mi::payload::timestamp::Bandwidth;
+    ///
+    /// // 8 MHz: Tsub = 1/64 µs = 1000/64 ns.
+    /// let (n, d) = Bandwidth::Mhz8.t_sub();
+    /// assert_eq!((n, d), (1000, 64));
+    /// // subseconds = 32_000_000 → total nanos = 32_000_000 × 1000 / 64 = 500_000_000 ns = 0.5 s.
+    /// let nanos = 32_000_000u128 * u128::from(n) / u128::from(d);
+    /// assert_eq!(nanos, 500_000_000);
+    /// ```
+    #[must_use]
+    pub fn t_sub(self) -> (u32, u32) {
+        // Tsub = 1/D µs = 1000/D ns.  numer = 1000, denom = D.
+        let denom = match self {
+            Bandwidth::Mhz1_7 => SUBSEC_DENOM_1_7MHZ,
+            Bandwidth::Mhz5 => SUBSEC_DENOM_5MHZ,
+            Bandwidth::Mhz6 => SUBSEC_DENOM_6MHZ,
+            Bandwidth::Mhz7 => SUBSEC_DENOM_7MHZ,
+            Bandwidth::Mhz8 => SUBSEC_DENOM_8MHZ,
+            Bandwidth::Mhz10 => SUBSEC_DENOM_10MHZ,
+        };
+        (1000, denom as u32)
+    }
+
     /// Return the number of subsecond ticks per second for this bandwidth.
     ///
     /// Equals D × 1_000_000, where D is the denominator from
@@ -293,6 +356,63 @@ impl T2TimestampPayload {
     }
 }
 
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+impl T2TimestampPayload {
+    /// Decode this timestamp to a civil [`chrono::DateTime<chrono::Utc>`],
+    /// applying the `utco` leap-second correction.
+    ///
+    /// Per ETSI TS 102 773 §5.2.7:
+    /// ```text
+    /// civil_utc = epoch_2000 + seconds_since_2000 + subseconds × Tsub − utco
+    /// ```
+    /// where `utco` is the number of leap seconds to subtract.
+    ///
+    /// Returns `None` for a Null timestamp or if the value is out of range.
+    #[must_use]
+    pub fn emission_time_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        let offset = self.emission_offset()?;
+        dvb_common::time::decode_seconds_since_2000_utc(
+            offset.as_secs(),
+            offset.subsec_nanos(),
+            self.utco,
+        )
+    }
+
+    /// Set `seconds_since_2000`, `subseconds`, and `utco` from a civil UTC
+    /// [`chrono::DateTime<chrono::Utc>`] and a `utco` leap-second offset.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReservedBitsViolation`](crate::error::Error::ReservedBitsViolation)
+    /// if the resulting `seconds_since_2000` would not fit in 40 bits (i.e. the
+    /// date is before 2000 or more than ~34657 years in the future).
+    pub fn set_emission_time_utc(
+        &mut self,
+        dt: chrono::DateTime<chrono::Utc>,
+        utco: u16,
+    ) -> Result<(), crate::error::Error> {
+        let (secs, nanos) = dvb_common::time::encode_seconds_since_2000_utc(dt, utco).ok_or(
+            crate::error::Error::ReservedBitsViolation {
+                field: "seconds_since_2000",
+                reason: "date before 2000 epoch or exceeds 40-bit range",
+            },
+        )?;
+        let sps = self.bw.subseconds_per_second();
+        let subseconds = (u128::from(nanos) * sps as u128 / 1_000_000_000u128) as u32;
+        if subseconds > SUBSECONDS_MAX {
+            return Err(crate::error::Error::ReservedBitsViolation {
+                field: "subseconds",
+                reason: "nanosecond component exceeds 27-bit subseconds range",
+            });
+        }
+        self.seconds_since_2000 = secs;
+        self.subseconds = subseconds;
+        self.utco = utco;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,5 +599,126 @@ mod tests {
         assert!(p.is_relative());
         assert!(!p.is_null());
         assert!(p.emission_offset().is_some());
+    }
+
+    // ── Bandwidth::t_sub() known-value tests ─────────────────────────────────
+    // Table 4 (ETSI TS 102 773 §5.2.7): Tsub = 1/D µs = 1000/D ns.
+    // We use subseconds = D*1000 (= 1 ms worth of ticks) to verify the arithmetic.
+
+    #[test]
+    fn t_sub_1_7mhz() {
+        // D = 131: Tsub = 1000/131 ns.
+        // subseconds = 131_000 → total nanos = 131_000 × 1000 / 131 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz1_7.t_sub();
+        assert_eq!((n, d), (1000, 131));
+        let nanos = 131_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "1.7 MHz: 131_000 ticks should be 1 ms");
+    }
+
+    #[test]
+    fn t_sub_5mhz() {
+        // D = 40: Tsub = 1000/40 = 25 ns.
+        // subseconds = 40_000 → total nanos = 40_000 × 1000 / 40 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz5.t_sub();
+        assert_eq!((n, d), (1000, 40));
+        let nanos = 40_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "5 MHz: 40_000 ticks should be 1 ms");
+    }
+
+    #[test]
+    fn t_sub_6mhz() {
+        // D = 48: Tsub = 1000/48 ns ≈ 20.83 ns.
+        // subseconds = 48_000 → total nanos = 48_000 × 1000 / 48 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz6.t_sub();
+        assert_eq!((n, d), (1000, 48));
+        let nanos = 48_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "6 MHz: 48_000 ticks should be 1 ms");
+    }
+
+    #[test]
+    fn t_sub_7mhz() {
+        // D = 56: Tsub = 1000/56 ns ≈ 17.86 ns.
+        // subseconds = 56_000 → total nanos = 56_000 × 1000 / 56 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz7.t_sub();
+        assert_eq!((n, d), (1000, 56));
+        let nanos = 56_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "7 MHz: 56_000 ticks should be 1 ms");
+    }
+
+    #[test]
+    fn t_sub_8mhz() {
+        // D = 64: Tsub = 1000/64 = 15.625 ns.
+        // subseconds = 64_000 → total nanos = 64_000 × 1000 / 64 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz8.t_sub();
+        assert_eq!((n, d), (1000, 64));
+        let nanos = 64_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "8 MHz: 64_000 ticks should be 1 ms");
+    }
+
+    #[test]
+    fn t_sub_10mhz() {
+        // D = 80: Tsub = 1000/80 = 12.5 ns.
+        // subseconds = 80_000 → total nanos = 80_000 × 1000 / 80 = 1_000_000 ns = 1 ms.
+        let (n, d) = Bandwidth::Mhz10.t_sub();
+        assert_eq!((n, d), (1000, 80));
+        let nanos = 80_000u128 * u128::from(n) / u128::from(d);
+        assert_eq!(nanos, 1_000_000, "10 MHz: 80_000 ticks should be 1 ms");
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn emission_time_utc_known_value() {
+        use chrono::{Datelike, Timelike};
+        // seconds_since_2000 = 0, subseconds = 0, utco = 0 → 2000-01-01T00:00:00 UTC.
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        let dt = p.emission_time_utc().expect("should decode");
+        assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
+        assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
+
+        // utco = 37: epoch_2000 + 0s − 37s = 1999-12-31T23:59:23 UTC.
+        let p2 = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 37,
+        };
+        let dt2 = p2.emission_time_utc().expect("should decode");
+        assert_eq!((dt2.year(), dt2.month(), dt2.day()), (1999, 12, 31));
+        assert_eq!((dt2.hour(), dt2.minute(), dt2.second()), (23, 59, 23));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn set_emission_time_utc_round_trips() {
+        use chrono::TimeZone;
+        let dt = chrono::Utc
+            .with_ymd_and_hms(2023, 6, 8, 12, 34, 56)
+            .unwrap();
+        let mut p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: 0,
+            subseconds: 0,
+            utco: 0,
+        };
+        p.set_emission_time_utc(dt, 37).unwrap();
+        let decoded = p.emission_time_utc().expect("decodes");
+        assert_eq!(decoded, dt);
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn emission_time_utc_null_returns_none() {
+        let p = T2TimestampPayload {
+            bw: Bandwidth::Mhz8,
+            seconds_since_2000: SECONDS_SINCE_2000_MAX,
+            subseconds: SUBSECONDS_MAX,
+            utco: UTCO_MAX,
+        };
+        assert!(p.emission_time_utc().is_none());
     }
 }

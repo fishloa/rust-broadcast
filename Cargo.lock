@@ -142,6 +142,7 @@ name = "dvb-t2mi"
 version = "6.4.0"
 dependencies = [
  "bytes",
+ "chrono",
  "dvb-bbframe",
  "dvb-common",
  "dvb-si",

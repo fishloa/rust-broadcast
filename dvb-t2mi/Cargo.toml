@@ -18,6 +18,7 @@ all-features = true
 [dependencies]
 dvb-common   = { path = "../dvb-common", version = "6.4" }
 dvb-bbframe  = { path = "../dvb-bbframe", version = "6.4", optional = true }
+chrono       = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
 erased-serde = { version = "0.4", optional = true }
 thiserror    = "2"
 num_enum     = "0.7"
@@ -35,6 +36,10 @@ default = ["ts"]
 # which pulls in `bytes` and the `dvb-bbframe` BBFrame extractor.
 ts      = ["dep:bytes", "dep:dvb-bbframe"]
 serde   = ["dep:serde", "dep:erased-serde"]
+
+# `chrono`: decoded UTC emission-time accessor on T2TimestampPayload.
+# Mirrors dvb-si's chrono feature; OFF by default.
+chrono  = ["dep:chrono", "dvb-common/chrono"]
 
 # yoke::Yokeable on the zero-copy payload view types (mirrors dvb-si's `yoke`
 # feature) — own a parsed T2-MI payload past the input buffer's borrow.

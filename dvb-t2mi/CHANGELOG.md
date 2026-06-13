@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **`Bandwidth::t_sub()`** — rational Tsub as `(numer: u32, denom: u32)` in nanoseconds,
+  exact integer arithmetic from ETSI TS 102 773 §5.2.7 Table 4 (#47).
+- **`T2TimestampPayload::emission_time_utc()`** (feature `chrono`) — decodes the
+  timestamp to `chrono::DateTime<Utc>`, applying the `utco` leap-second offset per §5.2.7.
+- **`T2TimestampPayload::set_emission_time_utc()`** (feature `chrono`) — encodes a
+  `DateTime<Utc>` + `utco` into the wire fields.
+- New `chrono` feature (off by default): `chrono = ["dep:chrono", "dvb-common/chrono"]`,
+  mirroring dvb-si's pattern.
+
 ## [6.4.0] — 2026-06-13
 
 ### Added

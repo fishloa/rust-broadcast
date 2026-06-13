@@ -243,6 +243,68 @@ pub fn encode_mjd_bcd_utc(dt: chrono::DateTime<chrono::Utc>) -> Option<[u8; 5]> 
     ])
 }
 
+/// Unix timestamp (seconds since Unix epoch 1970-01-01T00:00:00 UTC) of the
+/// T2-MI / DVB time-of-day epoch: 2000-01-01T00:00:00 UTC.
+///
+/// Computed as: days from 1970-01-01 to 2000-01-01 = 10957 days
+/// (30 years, 8 of which are leap years: 1972, 1976, …, 1996 → 365×30 + 8 = 10958 - 1 day;
+/// precise count 1970→2000 is 10957 days). 10957 × 86400 = 946684800.
+pub const SECS_2000_EPOCH: i64 = 946_684_800;
+
+/// Decode a T2-MI `seconds_since_2000` / subsecond-nanoseconds pair to a
+/// [`chrono::DateTime<chrono::Utc>`], applying a `utco` leap-second offset.
+///
+/// The T2-MI spec (ETSI TS 102 773 §5.2.7) defines:
+/// - `seconds_since_2000`: whole seconds since 2000-01-01T00:00:00 UTC (the
+///   timestamp's own time base, not civil UTC).
+/// - `utco`: the number of leap seconds to **subtract** from the timestamp's
+///   time base to obtain civil UTC. At publication of the spec this was 34 s.
+/// - `subsec_nanos`: sub-second component in nanoseconds (caller converts from
+///   the bandwidth-dependent `subseconds` field).
+///
+/// Returns `None` if the resulting timestamp is out of range.
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[must_use]
+pub fn decode_seconds_since_2000_utc(
+    seconds_since_2000: u64,
+    subsec_nanos: u32,
+    utco: u16,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::TimeZone;
+    // Convert to Unix timestamp: add the 2000-epoch offset, subtract utco.
+    let unix_secs = SECS_2000_EPOCH
+        .checked_add(i64::try_from(seconds_since_2000).ok()?)?
+        .checked_sub(i64::from(utco))?;
+    chrono::Utc.timestamp_opt(unix_secs, subsec_nanos).single()
+}
+
+/// Encode a [`chrono::DateTime<chrono::Utc>`] to `seconds_since_2000` with a
+/// `utco` leap-second offset.
+///
+/// Inverse of [`decode_seconds_since_2000_utc`]. Returns `None` if the date
+/// is before the 2000 epoch or `seconds_since_2000` would not fit in 40 bits.
+#[cfg(feature = "chrono")]
+#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[must_use]
+pub fn encode_seconds_since_2000_utc(
+    dt: chrono::DateTime<chrono::Utc>,
+    utco: u16,
+) -> Option<(u64, u32)> {
+    use chrono::Timelike;
+    let unix_secs = dt.timestamp();
+    // seconds_since_2000 = (unix_secs - SECS_2000_EPOCH) + utco
+    let raw = unix_secs
+        .checked_sub(SECS_2000_EPOCH)?
+        .checked_add(i64::from(utco))?;
+    let secs = u64::try_from(raw).ok()?;
+    // 40-bit field maximum
+    if secs > 0xFF_FFFF_FFFF {
+        return None;
+    }
+    Some((secs, dt.nanosecond()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,5 +420,38 @@ mod tests {
         assert_eq!(plain.year, 2018);
         assert_eq!(plain.month, 9);
         assert_eq!(plain.day, 16);
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn secs_2000_epoch_is_correct() {
+        use chrono::{Datelike, TimeZone, Timelike};
+        // SECS_2000_EPOCH must decode to 2000-01-01T00:00:00 UTC.
+        let dt = chrono::Utc.timestamp_opt(SECS_2000_EPOCH, 0).unwrap();
+        assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
+        assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn decode_seconds_since_2000_utc_known_value() {
+        use chrono::{Datelike, Timelike};
+        // seconds_since_2000 = 0, utco = 0 → 2000-01-01T00:00:00 UTC.
+        let dt = decode_seconds_since_2000_utc(0, 0, 0).expect("decodes");
+        assert_eq!((dt.year(), dt.month(), dt.day()), (2000, 1, 1));
+        assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn encode_decode_seconds_since_2000_utc_round_trips() {
+        use chrono::TimeZone;
+        // 2023-06-08T12:34:56 UTC, utco = 37 (current at time of writing).
+        let dt = chrono::Utc
+            .with_ymd_and_hms(2023, 6, 8, 12, 34, 56)
+            .unwrap();
+        let (secs, nanos) = encode_seconds_since_2000_utc(dt, 37).expect("encodes");
+        let decoded = decode_seconds_since_2000_utc(secs, nanos, 37).expect("decodes");
+        assert_eq!(decoded, dt);
     }
 }
