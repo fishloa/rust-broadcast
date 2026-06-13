@@ -1,0 +1,55 @@
+name: Release dvb-stream
+
+# Publishes the dvb-stream crate to crates.io on a `dvb-stream-v*` tag.
+# dvb-stream is versioned and released INDEPENDENTLY of the lockstep `v*`
+# tag (its tokio MSRV floats faster than the workspace MSRV), so it has its
+# own publish workflow. CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+
+on:
+  push:
+    tags: ["dvb-stream-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish dvb-stream to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — dvb-stream tests
+        run: cargo test -p dvb-stream --all-features --locked
+
+      - name: Gate — dvb-stream clippy
+        run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — tag matches dvb-stream version
+        run: |
+          TAG="${GITHUB_REF_NAME#dvb-stream-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['dvb-stream'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::dvb-stream is $V but tag is $TAG"; exit 1
+          fi
+
+      # dvb-stream's dvb-si / dvb-t2mi / dvb-common dependencies must already be
+      # on crates.io (they ship via the lockstep `v*` release). Idempotent: an
+      # "already uploaded" error is treated as success so a re-run is safe.
+      - name: Publish dvb-stream
+        run: |
+          if out=$(cargo publish -p dvb-stream --locked 2>&1); then
+            echo "$out"; echo "::notice::published dvb-stream"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::dvb-stream already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish dvb-stream"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
