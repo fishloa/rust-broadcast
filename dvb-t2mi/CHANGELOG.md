@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.5.0] — 2026-06-13
+
 ### Added
 - **`Bandwidth::t_sub()`** — rational Tsub as `(numer: u32, denom: u32)` in nanoseconds,
   exact integer arithmetic from ETSI TS 102 773 §5.2.7 Table 4 (#47).

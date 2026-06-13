@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.5.0 — 2026-06-13
+
 ### Added
 - `carousel::GroupInfoIndication` + `GroupInfo` — typed parse/serialize for the
   SSU DSI `privateData` field (TS 102 006 §8.1.1 Table 6). Carries

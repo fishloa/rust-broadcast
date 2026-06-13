@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.5.0] — 2026-06-13
+
 ### Added
 - **`time::SECS_2000_EPOCH`** — Unix timestamp (946 684 800) of the T2-MI / DVB
   time-of-day epoch 2000-01-01T00:00:00 UTC (#47).

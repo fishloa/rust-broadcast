@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.5.0] — 2026-06-13
+
+Version-lockstep release with the workspace (#47 T2 emission-time accessors; #50 SSU GroupInfoIndication + data_broadcast_id 0x000A selector; #53 S2Xv2 0x24 extension descriptor). No changes to this crate.
+
 ## [6.4.0] — 2026-06-13
 
 ### Added
