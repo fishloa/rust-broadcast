@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+- `Bbheader::serialize_into` in HEM with `issy_in_header = None` left stale bytes
+  at positions `buf[2]`, `buf[3]`, and `buf[6]` when the caller's buffer was not
+  zero-initialised, corrupting the CRC-8.  Those positions are now explicitly
+  written to zero, making `serialize_into` fully deterministic regardless of
+  incoming buffer content and matching the output of `to_bytes()`.
+- `CarryOverExtractor::feed_hem_into` / `feed_nm_into` mishandled `SYNCD = 65535`
+  (0xFFFF) — the spec-defined sentinel meaning "no UP starts in the DATA FIELD"
+  (EN 302 755 Table 2).  The old code computed `syncd_bytes = 65535 / 8 = 8191`,
+  which never matched the actual `need`, so the pending partial was discarded
+  (`partial_discards++`) instead of being continued.  `SYNCD = 0xFFFF` is now
+  handled as a distinct case before the stride-mismatch logic in both the HEM and
+  NM paths: the entire data field is appended to the pending partial; if the
+  partial thereby reaches its full length it is emitted, otherwise it continues to
+  the next frame.
+
 ## [6.3.0] — 2026-06-13
 
 Version-lockstep release with the workspace (new `dvb-scte35` crate; dvb-si `TsResync` byte-stream resync helper). No changes to this crate.

@@ -348,9 +348,16 @@ impl Serialize for Bbheader {
                     buf[7] = syncd[0];
                     buf[8] = syncd[1];
                 } else {
+                    // No ISSY in header: explicitly zero the three ISSY positions
+                    // so serialize_into is fully deterministic regardless of whether
+                    // the caller's buffer was zero-initialised or not. Without this,
+                    // stale bytes at buf[2], buf[3], buf[6] corrupt the CRC-8.
+                    buf[2] = 0;
+                    buf[3] = 0;
                     let dfl = self.dfl.to_be_bytes();
                     buf[4] = dfl[0];
                     buf[5] = dfl[1];
+                    buf[6] = 0;
                     let syncd = self.syncd.to_be_bytes();
                     buf[7] = syncd[0];
                     buf[8] = syncd[1];
@@ -946,6 +953,53 @@ mod tests {
         assert_eq!(orig.dfl, parsed.dfl);
         assert_eq!(orig.syncd, parsed.syncd);
         assert_eq!(orig.mode, parsed.mode);
+    }
+
+    #[test]
+    fn serialize_into_hem_no_issy_is_deterministic_regardless_of_buffer_content() {
+        // BUG 1 regression: HEM + issy_in_header=None leaves buf[2], buf[3], buf[6]
+        // untouched. A pre-filled (0xFF) buffer must produce the same bytes as
+        // to_bytes() which zero-inits.
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: 48000,
+            syncd: 256,
+            mode: Mode::HighEfficiency,
+            issy_in_header: None,
+        };
+
+        // Reference: to_bytes() zero-inits so those bytes come out 0.
+        let clean = <Bbheader as Serialize>::to_bytes(&hdr);
+
+        // Dirty buffer pre-filled with 0xFF — buf[2], buf[3], buf[6] would keep
+        // 0xFF if the else-branch doesn't explicitly zero them.
+        let mut dirty = [0xFFu8; BBHEADER_LEN];
+        hdr.serialize_into(&mut dirty).unwrap();
+
+        assert_eq!(
+            clean.as_slice(),
+            dirty.as_slice(),
+            "serialize_into into dirty buffer must produce identical bytes to to_bytes()"
+        );
+
+        // Also verify re-parsing succeeds with correct fields.
+        // In HEM the parser always fills issy_in_header — zeros here because we
+        // set None (no ISSY) in the struct, which serialises the ISSY bytes as 0.
+        let parsed = Bbheader::parse(&dirty).unwrap();
+        assert_eq!(parsed.mode, Mode::HighEfficiency);
+        assert_eq!(parsed.issy_in_header, Some([0, 0, 0]));
+        assert_eq!(parsed.dfl, 48000);
+        assert_eq!(parsed.syncd, 256);
     }
 
     #[test]

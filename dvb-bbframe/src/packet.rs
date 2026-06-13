@@ -287,9 +287,37 @@ impl CarryOverExtractor {
         }
 
         let stride = HEM_UP_SIZE;
-        let syncd_bytes = (hdr.syncd / 8) as usize;
+        // SYNCD=0xFFFF (65535) means "no UP starts in the DATA FIELD" — the
+        // entire data field is a continuation of the carried-over partial UP.
+        // EN 302 755 Table 2.
+        let all_continuation = hdr.syncd == 0xFFFF;
+        let syncd_bytes = if all_continuation {
+            0
+        } else {
+            (hdr.syncd / 8) as usize
+        };
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
+
+        if all_continuation {
+            // The whole data field continues the previous partial UP.
+            if self.pos > 0 {
+                let space = stride + 1 - self.pos; // bytes still needed to complete
+                let take = data.len().min(space);
+                self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
+                self.pos += take;
+                if self.pos == stride + 1 {
+                    // UP is now complete.
+                    self.buf[0] = TS_SYNC_BYTE;
+                    out.push(self.buf);
+                    self.pos = 0;
+                }
+            }
+            // Any bytes beyond the completed UP are a new partial; in practice
+            // SYNCD=0xFFFF means the whole field is the continuation, so there
+            // should be nothing left — but buffer any excess defensively.
+            return;
+        }
 
         // Complete the partial UP from the previous frame.
         if self.pos > 0 {
@@ -363,9 +391,34 @@ impl CarryOverExtractor {
         }
 
         let stride = NM_UP_SIZE;
-        let syncd_bytes = (hdr.syncd / 8) as usize;
+        // SYNCD=0xFFFF (65535) means "no UP starts in the DATA FIELD" — the
+        // entire data field is a continuation of the carried-over partial UP.
+        // EN 302 755 Table 2.
+        let all_continuation = hdr.syncd == 0xFFFF;
+        let syncd_bytes = if all_continuation {
+            0
+        } else {
+            (hdr.syncd / 8) as usize
+        };
         let dfl_bytes = (hdr.dfl / 8) as usize;
         let data = &data_field[..dfl_bytes.min(data_field.len())];
+
+        if all_continuation {
+            // The whole data field continues the previous partial UP.
+            if self.pos > 0 {
+                let space = stride - self.pos; // bytes still needed to complete
+                let take = data.len().min(space);
+                self.buf[self.pos..self.pos + take].copy_from_slice(&data[..take]);
+                self.pos += take;
+                if self.pos == stride {
+                    // UP is now complete.
+                    self.buf[0] = TS_SYNC_BYTE; // replace CRC-8 with sync byte
+                    out.push(self.buf);
+                    self.pos = 0;
+                }
+            }
+            return;
+        }
 
         // Complete partial UP from previous frame.
         if self.pos > 0 {
@@ -769,6 +822,83 @@ mod tests {
         };
         let remaining = iter.remaining();
         assert!(remaining.is_empty());
+    }
+
+    /// Build a serialised HEM BBHEADER with given syncd (bits) and dfl (bits).
+    fn make_hem_hdr_bytes(syncd_bits: u16, dfl_bits: u16) -> [u8; 10] {
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: dfl_bits,
+            syncd: syncd_bits,
+            mode: crate::header::Mode::HighEfficiency,
+            issy_in_header: None,
+        };
+        hdr.serialize()
+    }
+
+    #[test]
+    fn syncd_65535_hem_continues_carry_over_without_partial_discard() {
+        // BUG 2 regression: SYNCD=65535 means "no UP starts in this DATA FIELD" —
+        // the entire data field is a continuation of the carried-over partial UP.
+        // The old code computed syncd_bytes = 65535/8 = 8191, which never matched
+        // `need`, and took the discard branch (partial_discards++).
+        //
+        // Test sequence (HEM, stride=187):
+        //   Frame A: data field = first 100 bytes of a 187-byte UP.
+        //            SYNCD=0 (UP starts at byte 0).  Extractor must carry 100 bytes.
+        //   Frame B: data field = next 87 bytes of the SAME UP.
+        //            SYNCD=0xFFFF (no new UP starts).  Must APPEND to partial, emit UP.
+        //   No partial_discards should occur.
+
+        // Build recognisable UP content: bytes 0..186 = 0x00..0xBA (distinct from sync)
+        let up_payload: Vec<u8> = (0u8..187).collect(); // 187 bytes
+
+        // Frame A: send the first 100 bytes; DFL = 100*8 bits; SYNCD=0.
+        let frame_a_data: Vec<u8> = up_payload[..100].to_vec();
+        let hdr_a = make_hem_hdr_bytes(0, (frame_a_data.len() * 8) as u16);
+
+        // Frame B: send the remaining 87 bytes; SYNCD=0xFFFF (no new UP starts).
+        // DFL = 87*8 bits.
+        let frame_b_data: Vec<u8> = up_payload[100..].to_vec();
+        let hdr_b = make_hem_hdr_bytes(0xFFFF, (frame_b_data.len() * 8) as u16);
+
+        let mut extractor = CarryOverExtractor::new();
+
+        let pkts_a = extractor.feed_hem(&hdr_a, &frame_a_data, false);
+        assert_eq!(
+            pkts_a.len(),
+            0,
+            "frame A: 100 bytes < 187, must not emit yet"
+        );
+
+        let pkts_b = extractor.feed_hem(&hdr_b, &frame_b_data, false);
+        assert_eq!(
+            extractor.stats().partial_discards,
+            0,
+            "SYNCD=0xFFFF must NOT trigger a partial discard"
+        );
+        assert_eq!(
+            pkts_b.len(),
+            1,
+            "SYNCD=0xFFFF: the UP must complete and be emitted"
+        );
+        assert_eq!(pkts_b[0][0], TS_SYNC_BYTE, "sync byte prepended correctly");
+        // Verify the 187 payload bytes are correct: [sync][up_payload[0..187]].
+        assert_eq!(
+            &pkts_b[0][1..],
+            up_payload.as_slice(),
+            "completed UP must contain the exact original 187-byte payload"
+        );
     }
 
     #[test]
