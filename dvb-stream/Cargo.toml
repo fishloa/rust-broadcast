@@ -1,0 +1,34 @@
+[package]
+name         = "dvb-stream"
+version      = "0.1.0"
+edition      = "2021"
+description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["dvb", "tokio", "async", "stream", "mpeg"]
+categories   = ["asynchronous", "multimedia", "network-programming"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+# dvb-stream is versioned and released INDEPENDENTLY from the dvb-si/dvb-t2mi
+# lockstep. tokio's MSRV moves faster than the workspace 1.75; set explicitly.
+rust-version = "1.75"
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+dvb-si       = { path = "../dvb-si",   version = "6.2", default-features = false, features = ["ts"] }
+dvb-t2mi     = { path = "../dvb-t2mi", version = "6.2", default-features = false, features = ["ts"] }
+futures-core = "0.3"
+tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
+
+[dev-dependencies]
+tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
+dvb-common    = { path = "../dvb-common", version = "6.2" }
+
+[features]
+default = ["udp"]
+# Enables SectionStream::bind_multicast and T2miEventStream::bind_multicast.
+# tokio's "net" feature is always present in [dependencies]; this feature flag
+# just gates the convenience constructors themselves.
+udp = []
