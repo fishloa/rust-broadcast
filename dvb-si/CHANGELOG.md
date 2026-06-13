@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 6.3.0 — 2026-06-13
+
+### Added
+- `resync::TsResync` (feature `ts`) — stateful 188/204-byte TS byte-stream
+  resynchroniser: requires 5 consecutive stride-aligned sync bytes to lock,
+  detects 204-byte Reed-Solomon-coded packets and strips the 16 parity bytes,
+  and reports packets/resyncs/dropped-byte stats (#61). ISO/IEC 13818-1 §2.4.3.2.
+
 ## 6.2.0 — 2026-06-13
 
 ### Changed

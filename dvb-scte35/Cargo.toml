@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-scte35"
-version      = "6.2.0"
+version      = "6.3.0"
 edition      = "2021"
 description  = "ANSI/SCTE 35 2023r1 splice information (Digital Program Insertion cueing) parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ exclude      = ["docs/**"]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "6.2" }
+dvb-common = { path = "../dvb-common", version = "6.3" }
 thiserror  = "2"
 serde      = { version = "1", optional = true, features = ["derive"] }
 

@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-t2mi"
-version = "6.2.0"
+version = "6.3.0"
 edition = "2021"
 description = "ETSI TS 102 773 DVB-T2 Modulator Interface parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -16,8 +16,8 @@ exclude      = ["docs/**", "tests/fixtures/**"]
 all-features = true
 
 [dependencies]
-dvb-common   = { path = "../dvb-common", version = "6.2" }
-dvb-bbframe  = { path = "../dvb-bbframe", version = "6.2", optional = true }
+dvb-common   = { path = "../dvb-common", version = "6.3" }
+dvb-bbframe  = { path = "../dvb-bbframe", version = "6.3", optional = true }
 erased-serde = { version = "0.4", optional = true }
 thiserror    = "2"
 num_enum     = "0.7"

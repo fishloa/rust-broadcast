@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.3.0] — 2026-06-13
+
+_Initial release._
+
 ### Added
 - **Typed MPU/MID UPID sub-structures** (§10.3.3.3-4, Tables 24-25): `Mpu<'a>`
   (format_identifier + private_data) and `MidUpid<'a>` (per-entry type + raw upid

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [6.3.0] — 2026-06-13
+
+### Changed
+- `for_each_packet` now drives the shared `dvb_si::ts::TsResync` (188/204-byte
+  resync helper) instead of ad-hoc 188-byte chunking (#61); behaviour for
+  aligned input is unchanged.
+
 ## [6.2.0] — 2026-06-13
 
 ### Added

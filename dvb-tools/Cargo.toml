@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-tools"
-version      = "6.2.0"
+version      = "6.3.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-dvb crates."
 edition      = "2021"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
@@ -16,6 +16,6 @@ name = "dvb-tools"
 path = "src/main.rs"
 
 [dependencies]
-dvb-si    = { path = "../dvb-si",    version = "6.2.0", features = ["ts", "serde", "chrono"] }
-dvb-t2mi  = { path = "../dvb-t2mi",  version = "6.2.0", features = ["ts"] }
+dvb-si    = { path = "../dvb-si",    version = "6.3.0", features = ["ts", "serde", "chrono"] }
+dvb-t2mi  = { path = "../dvb-t2mi",  version = "6.3.0", features = ["ts"] }
 serde_json = "1"

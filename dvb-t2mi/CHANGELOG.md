@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.3.0] — 2026-06-13
+
+Version-lockstep release with the workspace (new `dvb-scte35` crate; dvb-si `TsResync` byte-stream resync helper). No changes to this crate.
+
 ## [6.2.0] — 2026-06-13
 
 Workspace minor: the per-PLP inner-TS filter (#146), and the `t2mi_dump` example
