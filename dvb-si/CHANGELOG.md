@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.4.0 — 2026-06-13
+
 ### Changed (BREAKING)
 - `PmtSection` now exposes `section_number: u8` and `last_section_number: u8`
   fields (ISO/IEC 13818-1 §2.4.4.8 wire bytes `[6]`/`[7]`). Both shall be

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.4.0] — 2026-06-13
+
 ### Added
 - `SignallingKind::BufStat { bufstat, units }` — decodes the DVB-S2 **BUFSTAT**
   ISSY signalling type (`[5:4]=0b10`, the `0xEXXXXX` code range) per EN 302 307-1

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.4.0] — 2026-06-13
+
 ### Added
 - Spec-table data mirror `dvb-scte35/spec_tables/segmentation_type_id.toml`
   (reviewable, spec-cited `segmentation_type_id` value→name table) plus

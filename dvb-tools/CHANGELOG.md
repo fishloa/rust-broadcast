@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.4.0] — 2026-06-13
+
+Version-lockstep release with the workspace (#158 spec-table drift-guards + spec-fidelity audit; dvb-si PMT section/last-section fields; dvb-bbframe DVB-S2 BUFSTAT ISSY decode). No changes to this crate.
+
 ## [6.3.0] — 2026-06-13
 
 ### Changed

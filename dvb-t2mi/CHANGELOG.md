@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.4.0] — 2026-06-13
+
 ### Added
 - New `tests/spec_drift.rs` with drift-guard coverage for six code-backing enums
   (#158): `PacketType` (Table 1, 12 variants), `AddressingFunctionTag` (Tables 5 &
