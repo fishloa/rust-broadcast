@@ -24,6 +24,11 @@ yoke       = { version = "0.7", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = "1.0"
+criterion  = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name    = "bbframe_hot_paths"
+harness = false
 
 [features]
 serde = ["dep:serde"]

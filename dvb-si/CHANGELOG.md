@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+- Criterion benchmark suite (`benches/si_hot_paths.rs`) covering `SiDemux::feed`
+  on both real fixture streams, `AnyTableSection::parse` dispatch, `parse_loop`
+  descriptor-loop walk, and `DvbText::decode` — dev-only, no API change (#62).
+
 ## 6.5.0 — 2026-06-13
 
 ### Added

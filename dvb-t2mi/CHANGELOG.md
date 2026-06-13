@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+- Criterion benchmark suite (`benches/t2mi_hot_paths.rs`) measuring
+  `T2miPump::feed_ts` throughput on the Colombia T2-MI real-capture fixture —
+  dev-only, no API change (#62).
+
 ## [6.5.0] — 2026-06-13
 
 ### Added

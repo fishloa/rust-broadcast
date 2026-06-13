@@ -24,3 +24,10 @@ chrono = ["dep:chrono"]
 # they aren't already paying for downstream. `chrono` is pulled only when the
 # `chrono` feature is enabled (e.g. by dvb-si's own `chrono` feature).
 chrono = { version = "0.4", optional = true, default-features = false }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name    = "crc32"
+harness = false

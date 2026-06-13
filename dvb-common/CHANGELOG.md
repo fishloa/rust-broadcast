@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- Criterion benchmark suite (`benches/crc32.rs`) measuring `crc32_mpeg2::compute`
+  throughput at 188 B / 4096 B / 65536 B payload sizes — dev-only, no API change (#62).
+
 ## [6.5.0] — 2026-06-13
 
 ### Added
