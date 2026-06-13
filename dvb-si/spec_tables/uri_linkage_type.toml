@@ -1,0 +1,22 @@
+# ETSI TS 101 162 registry — uri_linkage_type codes
+# Other(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "OnlineSdt"
+spec = "online SDT (Service Discovery & Selection)"
+
+[[entry]]
+value = 0x01
+variant = "DvbIptvSds"
+spec = "DVB-IPTV SD&S"
+
+[[entry]]
+value = 0x02
+variant = "MaterialResolutionServer"
+spec = "material resolution server"
+
+[[entry]]
+value = 0x03
+variant = "DvbIServiceList"
+spec = "DVB-I service list"

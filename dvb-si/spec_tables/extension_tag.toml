@@ -1,0 +1,102 @@
+# ETSI EN 300 468 Table 109 §6.4.0 — descriptor_tag_extension codes (ExtensionTag enum)
+# All variants are named (no catch-all); repr(u8).
+
+[[entry]]
+value = 0x00
+variant = "ImageIcon"
+spec = "image_icon_descriptor"
+
+[[entry]]
+value = 0x04
+variant = "T2DeliverySystem"
+spec = "T2_delivery_system_descriptor"
+
+[[entry]]
+value = 0x05
+variant = "ShDeliverySystem"
+spec = "SH_delivery_system_descriptor"
+
+[[entry]]
+value = 0x06
+variant = "SupplementaryAudio"
+spec = "supplementary_audio_descriptor"
+
+[[entry]]
+value = 0x07
+variant = "NetworkChangeNotify"
+spec = "network_change_notify_descriptor"
+
+[[entry]]
+value = 0x08
+variant = "Message"
+spec = "message_descriptor"
+
+[[entry]]
+value = 0x09
+variant = "TargetRegion"
+spec = "target_region_descriptor"
+
+[[entry]]
+value = 0x0A
+variant = "TargetRegionName"
+spec = "target_region_name_descriptor"
+
+[[entry]]
+value = 0x0B
+variant = "ServiceRelocated"
+spec = "service_relocated_descriptor"
+
+[[entry]]
+value = 0x0D
+variant = "C2DeliverySystem"
+spec = "C2_delivery_system_descriptor"
+
+[[entry]]
+value = 0x10
+variant = "VideoDepthRange"
+spec = "video_depth_range_descriptor"
+
+[[entry]]
+value = 0x11
+variant = "T2mi"
+spec = "T2-MI_descriptor"
+
+[[entry]]
+value = 0x13
+variant = "UriLinkage"
+spec = "URI_linkage_descriptor"
+
+[[entry]]
+value = 0x15
+variant = "Ac4"
+spec = "AC-4_descriptor"
+
+[[entry]]
+value = 0x16
+variant = "C2BundleDeliverySystem"
+spec = "C2_bundle_delivery_system_descriptor"
+
+[[entry]]
+value = 0x17
+variant = "S2XSatelliteDeliverySystem"
+spec = "S2X_satellite_delivery_system_descriptor"
+
+[[entry]]
+value = 0x19
+variant = "AudioPreselection"
+spec = "audio_preselection_descriptor"
+
+[[entry]]
+value = 0x20
+variant = "TtmlSubtitling"
+spec = "TTML_subtitling_descriptor"
+
+[[entry]]
+value = 0x22
+variant = "ServiceProminence"
+spec = "service_prominence_descriptor"
+
+[[entry]]
+value = 0x23
+variant = "VvcSubpictures"
+spec = "vvc_subpictures_descriptor"

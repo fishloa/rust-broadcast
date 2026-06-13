@@ -1,0 +1,22 @@
+# ETSI TS 102 323 §10.4.3 Table 111 — link_type codes (4-bit field)
+# DvbReserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "UriString"
+spec = "URI String"
+
+[[entry]]
+value = 0x01
+variant = "BinaryLocator"
+spec = "Binary Locator"
+
+[[entry]]
+value = 0x02
+variant = "Both"
+spec = "Both"
+
+[[entry]]
+value = 0x03
+variant = "Descriptor"
+spec = "Descriptor"

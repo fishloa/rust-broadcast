@@ -1,0 +1,22 @@
+# ETSI EN 300 468 Table 58 — control_remote_access_over_internet codes (2-bit field)
+# Reserved(u8) catch-all excluded; all 4 values (0-3) are named in the spec.
+
+[[entry]]
+value = 0x00
+variant = "Enabled"
+spec = "redistribution enabled"
+
+[[entry]]
+value = 0x01
+variant = "EnabledManagedDomain"
+spec = "redistribution enabled (managed domain only)"
+
+[[entry]]
+value = 0x02
+variant = "EnabledManagedDomainTimeLimited"
+spec = "redistribution enabled (managed domain, time-limited)"
+
+[[entry]]
+value = 0x03
+variant = "NotAllowed"
+spec = "redistribution not allowed"

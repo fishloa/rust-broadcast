@@ -1,0 +1,23 @@
+# ETSI EN 300 468 Table 142 — S2X mode codes (2-bit field)
+# Reserved(u8) catch-all excluded.
+# Note: value 0x00 is "Reserved0" (a named reserved variant, not a catch-all).
+
+[[entry]]
+value = 0x00
+variant = "Reserved0"
+spec = "reserved for future use"
+
+[[entry]]
+value = 0x01
+variant = "S2X"
+spec = "S2X"
+
+[[entry]]
+value = 0x02
+variant = "S2XTimeSlicing"
+spec = "S2X + time slicing"
+
+[[entry]]
+value = 0x03
+variant = "S2XChannelBonding"
+spec = "S2X + channel bonding"

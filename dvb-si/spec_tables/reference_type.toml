@@ -1,0 +1,17 @@
+# ETSI TS 102 809 §9.4.3 Table 45 — reference_type codes (4-bit field)
+# Unallocated(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "Reserved"
+spec = "Reserved"
+
+[[entry]]
+value = 0x01
+variant = "SameEs"
+spec = "same ES"
+
+[[entry]]
+value = 0x02
+variant = "ComponentTagEs"
+spec = "component tag ES"

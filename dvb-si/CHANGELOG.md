@@ -10,6 +10,14 @@
   `descriptor_tag.toml`, `stream_type.toml`) — reviewable, spec-cited
   value→name tables — plus `tests/spec_drift.rs` drift tests that byte-sweep
   each enum and fail CI if the Rust enum and its TOML ever diverge (#158).
+- Extended `spec_tables/` drift coverage to 30 additional code-backing enums:
+  `ServiceType`, `SubtitlingType`, `TeletextType`, `LinkageType`, `AudioType`,
+  `AnnouncementType`, `AlignmentType`, `Ac3ServiceType`, `Ac4ChannelMode`,
+  `CridType`, `ControlRemoteAccess`, `ScramblingMode`, `Polarization`,
+  `FecOuter`, `TsGsMode`, `S2XMode`, `T2SisoMiso`, `ShDiversityMode`,
+  `C2TuningFrequencyType`, `UriLinkageType`, `ExtensionTag`, `RunningStatus`,
+  `IntActionType`, `UntActionType`, `ControlCode`, `ReferenceType`,
+  `CridAuthorityPolicy`, `LinkType`, `DescriptorType`, `TvaRunningStatus` (#158).
 
 ## 6.3.0 — 2026-06-13
 

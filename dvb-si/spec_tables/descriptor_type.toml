@@ -1,0 +1,17 @@
+# ETSI TS 102 006 Table 16 / ISO/IEC 13818-6 — compatibility descriptor_type codes
+# IsoReserved(u8), DvbReserved(u8), UserDefined(u8) catch-alls excluded.
+
+[[entry]]
+value = 0x00
+variant = "Pad"
+spec = "pad descriptor"
+
+[[entry]]
+value = 0x01
+variant = "SystemHardware"
+spec = "system hardware descriptor"
+
+[[entry]]
+value = 0x02
+variant = "SystemSoftware"
+spec = "system software descriptor"

@@ -1,0 +1,12 @@
+# ETSI EN 301 192 §8.4.4.1 Table 14 — INT action_type codes
+# DvbReserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "Reserved"
+spec = "Reserved"
+
+[[entry]]
+value = 0x01
+variant = "IpMacStreamLocation"
+spec = "IP/MAC Stream Location"

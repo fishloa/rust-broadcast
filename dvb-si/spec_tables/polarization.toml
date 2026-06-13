@@ -1,0 +1,22 @@
+# ETSI EN 300 468 Table 38 — polarization codes (2-bit field, exhaustive)
+# No catch-all: all 4 values are named.
+
+[[entry]]
+value = 0x00
+variant = "LinearHorizontal"
+spec = "linear horizontal"
+
+[[entry]]
+value = 0x01
+variant = "LinearVertical"
+spec = "linear vertical"
+
+[[entry]]
+value = 0x02
+variant = "CircularLeft"
+spec = "circular left"
+
+[[entry]]
+value = 0x03
+variant = "CircularRight"
+spec = "circular right"

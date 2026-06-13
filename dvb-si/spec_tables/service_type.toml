@@ -1,0 +1,142 @@
+# ETSI EN 300 468 Table 89 — service_type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "DigitalTelevision"
+spec = "digital television service"
+
+[[entry]]
+value = 0x02
+variant = "DigitalRadioSound"
+spec = "digital radio sound service"
+
+[[entry]]
+value = 0x03
+variant = "Teletext"
+spec = "teletext service"
+
+[[entry]]
+value = 0x04
+variant = "NvodReference"
+spec = "NVOD reference service"
+
+[[entry]]
+value = 0x05
+variant = "NvodTimeShifted"
+spec = "NVOD time-shifted service"
+
+[[entry]]
+value = 0x06
+variant = "Mosaic"
+spec = "mosaic service"
+
+[[entry]]
+value = 0x07
+variant = "FmRadio"
+spec = "FM radio service"
+
+[[entry]]
+value = 0x08
+variant = "DvbSrm"
+spec = "DVB SRM service"
+
+[[entry]]
+value = 0x0A
+variant = "AdvancedCodecDigitalRadio"
+spec = "advanced codec digital radio sound service"
+
+[[entry]]
+value = 0x0B
+variant = "AvcMosaic"
+spec = "H.264/AVC mosaic service"
+
+[[entry]]
+value = 0x0C
+variant = "DataBroadcast"
+spec = "data broadcast service"
+
+[[entry]]
+value = 0x0E
+variant = "RcsMap"
+spec = "RCS Map"
+
+[[entry]]
+value = 0x0F
+variant = "RcsFls"
+spec = "RCS FLS"
+
+[[entry]]
+value = 0x10
+variant = "Mhp"
+spec = "DVB MHP service"
+
+[[entry]]
+value = 0x11
+variant = "HdDigitalTelevision"
+spec = "HD digital television service"
+
+[[entry]]
+value = 0x16
+variant = "AvcSdDigitalTelevision"
+spec = "H.264/AVC SD digital television service"
+
+[[entry]]
+value = 0x17
+variant = "AvcSdNvodTimeShifted"
+spec = "H.264/AVC SD NVOD time-shifted service"
+
+[[entry]]
+value = 0x18
+variant = "AvcSdNvodReference"
+spec = "H.264/AVC SD NVOD reference service"
+
+[[entry]]
+value = 0x19
+variant = "AvcHdDigitalTelevision"
+spec = "H.264/AVC HD digital television service"
+
+[[entry]]
+value = 0x1A
+variant = "AvcHdNvodTimeShifted"
+spec = "H.264/AVC HD NVOD time-shifted service"
+
+[[entry]]
+value = 0x1B
+variant = "AvcHdNvodReference"
+spec = "H.264/AVC HD NVOD reference service"
+
+[[entry]]
+value = 0x1C
+variant = "AvcFrameCompatiblePlanoStereoscopicHd"
+spec = "H.264/AVC frame compatible plano-stereoscopic HD digital television service"
+
+[[entry]]
+value = 0x1D
+variant = "AvcFrameCompatiblePlanoStereoscopicHdNvodTimeShifted"
+spec = "H.264/AVC frame compatible plano-stereoscopic HD NVOD time-shifted service"
+
+[[entry]]
+value = 0x1E
+variant = "AvcFrameCompatiblePlanoStereoscopicHdNvodReference"
+spec = "H.264/AVC frame compatible plano-stereoscopic HD NVOD reference service"
+
+[[entry]]
+value = 0x1F
+variant = "HevcDigitalTelevision"
+spec = "HEVC digital television service"
+
+[[entry]]
+value = 0x20
+variant = "HevcUhdDigitalTelevision"
+spec = "HEVC UHD digital television service"
+
+[[entry]]
+value = 0x21
+variant = "VvcDigitalTelevision"
+spec = "VVC digital television service"
+
+[[entry]]
+value = 0x22
+variant = "Avs3DigitalTelevision"
+spec = "AVS3 digital television service"

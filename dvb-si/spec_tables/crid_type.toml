@@ -1,0 +1,22 @@
+# ETSI TS 102 323 Table 117 — CRID type codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x00
+variant = "NoTypeDefined"
+spec = "no type defined"
+
+[[entry]]
+value = 0x01
+variant = "ItemOfContent"
+spec = "item of content"
+
+[[entry]]
+value = 0x02
+variant = "Series"
+spec = "series"
+
+[[entry]]
+value = 0x03
+variant = "Recommendation"
+spec = "recommendation"

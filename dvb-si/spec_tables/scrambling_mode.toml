@@ -1,0 +1,22 @@
+# ETSI EN 300 468 Table 87 — scrambling_mode codes
+# Reserved(u8) catch-all excluded.
+
+[[entry]]
+value = 0x01
+variant = "DvbCsa1"
+spec = "DVB-CSA1"
+
+[[entry]]
+value = 0x02
+variant = "DvbCsa2"
+spec = "DVB-CSA2"
+
+[[entry]]
+value = 0x03
+variant = "DvbCsa3"
+spec = "DVB-CSA3 (standard)"
+
+[[entry]]
+value = 0x10
+variant = "DvbCissaV1"
+spec = "DVB-CISSA v1"

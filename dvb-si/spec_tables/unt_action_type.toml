@@ -1,0 +1,12 @@
+# ETSI TS 102 006 §9.4.2 Table 12 — UNT action_type codes
+# DvbReserved(u8) and UserDefined(u8) catch-alls excluded.
+
+[[entry]]
+value = 0x00
+variant = "Reserved"
+spec = "Reserved"
+
+[[entry]]
+value = 0x01
+variant = "SystemSoftwareUpdate"
+spec = "System Software Update"
