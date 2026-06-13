@@ -1,4 +1,5 @@
-//! ISSY (Input Stream SYnchronizer) field decoding per EN 302 755 §5.1.7 / Annex C.
+//! ISSY (Input Stream SYnchronizer) field decoding per EN 302 755 §5.1.7 /
+//! Annex C Table C.1 (DVB-T2) and EN 302 307-1 Annex D Table D.1 (DVB-S2 BUFSTAT).
 //!
 //! ISSY carries the Input Stream Clock Reference (ISCR) and, in its long form,
 //! buffer-status / time-to-output signalling, used for jitter-free transport
@@ -129,7 +130,23 @@ pub enum SignallingKind {
         /// 8-bit low-fraction `TTO_L` (zero when ISCRshort is in use).
         tto_l: u8,
     },
-    /// Reserved signalling type (bits `[5:4]` = `0b10` or `0b11`).
+    /// BUFSTAT — actual receiver-buffer fill status (DVB-S2 only).
+    ///
+    /// EN 302 307-1 Annex D Table D.1: selected by bits `[5:4] = 0b10` (the
+    /// ISSY code range `0xE_XXXX`). Same field layout as [`Self::Bufs`] — a
+    /// 2-bit `units` selector and a 10-bit value (the number of filled bits,
+    /// scaled by `units`). **Not used in DVB-T2**, where EN 302 755 Annex C
+    /// reserves this code range ("shall not be transmitted in DVB-T2") and
+    /// replaces it with [`Self::Tto`]; decoding it as BUFSTAT here is correct
+    /// for DVB-S2 streams and harmless for T2 (the range is not transmitted).
+    BufStat {
+        /// 10-bit buffer-status value (filled bits, scaled by `units`).
+        bufstat: u16,
+        /// 2-bit unit selector (EN 302 307-1 Annex D Table D.1; note S2 marks
+        /// `0b11` reserved whereas T2's [`BufsUnit::Kbits8`] uses it).
+        units: BufsUnit,
+    },
+    /// Reserved signalling type (bits `[5:4]` = `0b11`).
     ///
     /// Holds the low 20 bits of the signalling payload; the 2-bit kind
     /// selector is not retained. This is a decode-only view — the wire bytes
@@ -172,6 +189,24 @@ impl SignallingKind {
     /// (`docs/en_302_755_t2.md`).
     pub fn bufs_bytes(&self) -> Option<u64> {
         self.bufs_bits().map(|b| b / 8)
+    }
+
+    #[must_use]
+    /// Decoded BUFSTAT fill status in bits, or `None` if this is not a BUFSTAT
+    /// variant (DVB-S2 only — EN 302 307-1 Annex D Table D.1).
+    ///
+    /// `bufstat_bits = bufstat × units.multiplier_bits()`
+    pub fn bufstat_bits(&self) -> Option<u64> {
+        match self {
+            Self::BufStat { bufstat, units } => Some(*bufstat as u64 * units.multiplier_bits()),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    /// Decoded BUFSTAT fill status in bytes (integer floor), or `None`.
+    pub fn bufstat_bytes(&self) -> Option<u64> {
+        self.bufstat_bits().map(|b| b / 8)
     }
 
     #[must_use]
@@ -251,13 +286,16 @@ pub fn decode_issy_long(bytes: [u8; 3]) -> crate::Result<Issy> {
     }
 }
 
-/// Decode the 22-bit `11`-prefix payload per Annex C Table C.1.
+/// Decode the 22-bit `11`-prefix payload per EN 302 755 Annex C Table C.1
+/// (DVB-T2) and EN 302 307-1 Annex D Table D.1 (DVB-S2).
 ///
 /// Bits `[21:20]` select the signalling type:
 /// - `0b00` → BUFS: bits `[19:18]` = unit, bits `[17:8]` = 10-bit BUFS, `[7:0]` reserved
-/// - `0b01` → TTO: bits `[19:16]` = 4 MSBs of TTO_E, byte 1 bit `[7]` = LSB of TTO_E,
-///   byte 1 bits `[6:0]` = TTO_M, byte 2 = TTO_L (or reserved for ISCRshort)
-/// - `0b10`, `0b11` → reserved
+/// - `0b01` → TTO (DVB-T2): bits `[19:16]` = 4 MSBs of TTO_E, byte 1 bit `[7]` = LSB
+///   of TTO_E, byte 1 bits `[6:0]` = TTO_M, byte 2 = TTO_L (or reserved for ISCRshort)
+/// - `0b10` → BUFSTAT (DVB-S2): bits `[19:18]` = unit, bits `[17:8]` = 10-bit BUFSTAT
+///   (reserved / not transmitted in DVB-T2 — replaced by TTO)
+/// - `0b11` → reserved
 fn decode_signalling(payload: u32) -> SignallingKind {
     let kind = (payload >> SIGNALLING_KIND_SHIFT) & SIGNALLING_KIND_MASK;
     match kind {
@@ -276,6 +314,12 @@ fn decode_signalling(payload: u32) -> SignallingKind {
                 tto_m,
                 tto_l,
             }
+        }
+        2 => {
+            // BUFSTAT (DVB-S2, EN 302 307-1 Annex D Table D.1) — same layout as BUFS.
+            let units = BufsUnit::from_u8(((payload >> BUFS_UNIT_SHIFT) & BUFS_UNIT_MASK) as u8);
+            let bufstat = ((payload >> BUFS_VALUE_SHIFT) & BUFS_VALUE_MASK) as u16;
+            SignallingKind::BufStat { bufstat, units }
         }
         _ => {
             let remainder = payload & RESERVED_PAYLOAD_MASK;
@@ -377,12 +421,37 @@ mod tests {
     }
 
     #[test]
+    fn signalling_bufstat_decode() {
+        // BUFSTAT (DVB-S2, EN 302 307-1 Annex D Table D.1): '11' prefix,
+        // bits[21:20]=0b10 (BUFSTAT), bits[19:18]=0b10 (Mbits unit),
+        // bits[17:8]=11_1111_1111=0x3FF (BUFSTAT=1023).
+        // byte0: 0b11_10_10_11 = 0xEB; payload = (0xEB & 0x3F)<<16 | 0xFF<<8 = 0x2BFF00.
+        let result = decode_issy_long([0xEB, 0xFF, 0x00]).unwrap();
+        match result {
+            Issy::Signalling(SignallingKind::BufStat { bufstat, units }) => {
+                assert_eq!(bufstat, 0x3FF);
+                assert_eq!(units, BufsUnit::Mbits);
+            }
+            other => panic!("expected BufStat, got {other:?}"),
+        }
+        // BUFSTAT accessors
+        let bs = SignallingKind::BufStat {
+            bufstat: 2,
+            units: BufsUnit::Mbits,
+        };
+        assert_eq!(bs.bufstat_bits(), Some(2_000_000));
+        assert_eq!(bs.bufstat_bytes(), Some(250_000));
+        // non-BUFSTAT variants return None
+        assert_eq!(SignallingKind::Reserved(0).bufstat_bits(), None);
+    }
+
+    #[test]
     fn signalling_reserved_decode() {
-        // '11' prefix, bits[21:20]=0b10 (reserved)
-        // byte0: 0b11_10_XXXX = 0b11_10_0000 = 0xE0
-        // payload = ((0xE0 & 0x3F) << 16) | 0x0000 = 0x200000
-        // kind = (0x200000 >> 20) & 0x03 = 2 => reserved
-        let result = decode_issy_long([0xE0, 0x00, 0x00]).unwrap();
+        // '11' prefix, bits[21:20]=0b11 (reserved — the only remaining reserved kind
+        // now that 0b10 is decoded as BUFSTAT).
+        // byte0: 0b11_11_0000 = 0xF0; payload = ((0xF0 & 0x3F) << 16) = 0x300000
+        // kind = (0x300000 >> 20) & 0x03 = 3 => reserved; remainder = 0x300000 & 0x0FFFFF = 0
+        let result = decode_issy_long([0xF0, 0x00, 0x00]).unwrap();
         match result {
             Issy::Signalling(SignallingKind::Reserved(remainder)) => {
                 assert_eq!(remainder, 0x00000);

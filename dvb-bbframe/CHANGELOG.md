@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Added
+- `SignallingKind::BufStat { bufstat, units }` — decodes the DVB-S2 **BUFSTAT**
+  ISSY signalling type (`[5:4]=0b10`, the `0xEXXXXX` code range) per EN 302 307-1
+  Annex D Table D.1, with `bufstat_bits()` / `bufstat_bytes()` accessors.
+  Previously this code range decoded to `SignallingKind::Reserved` (#182).
+- `docs/en_302_755_t2.md` Annex C — Table C.1 (ISSY field coding) transcribed
+  verbatim from the PDF; the `issy.rs` ISCR/BUFS/TTO decode was verified
+  cell-by-cell against it (#183).
 - New `tests/spec_drift.rs` with drift-guard coverage for two code-backing enums
   (#158): `TsGs` (EN 302 755 Table 1, 4 variants) and `BufsUnit` (Annex C Table
   C.1, 4 variants). Adds `spec_tables/ts_gs.toml` and `spec_tables/bufs_unit.toml`
