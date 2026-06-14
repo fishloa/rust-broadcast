@@ -100,6 +100,8 @@ impl BufsUnit {
     }
 }
 
+dvb_common::impl_spec_display!(BufsUnit);
+
 /// Decoded BUFS/TTO signalling — EN 302 755 Annex C, Table C.1.
 ///
 /// The `11` prefix in the first ISSY byte selects one of two alternatives:
@@ -232,7 +234,20 @@ impl SignallingKind {
             _ => None,
         }
     }
+
+    #[must_use]
+    /// Human-readable spec display name for the signalling kind.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Bufs { .. } => "BUFS",
+            Self::Tto { .. } => "TTO",
+            Self::BufStat { .. } => "BUFSTAT",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
+
+dvb_common::impl_spec_display!(SignallingKind);
 
 /// Decoded ISSY value (EN 302 755 §5.1.7, Annex C).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,6 +264,20 @@ pub enum Issy {
     /// Annex C for the sub-coding.
     Signalling(SignallingKind),
 }
+
+impl Issy {
+    #[must_use]
+    /// Human-readable spec display name for the ISSY form.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::IscrShort(_) => "ISCR short",
+            Self::IscrLong(_) => "ISCR long",
+            Self::Signalling(_) => "signalling",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(Issy);
 
 /// Decode a 2-byte (short) ISSY field.
 ///
