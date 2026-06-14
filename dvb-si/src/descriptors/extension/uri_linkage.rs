@@ -62,7 +62,10 @@ impl UriLinkageType {
             UriLinkageType::Other(_) => "other (TS 101 162 registry)",
         }
     }
+}
+dvb_common::impl_spec_display!(UriLinkageType, Other);
 
+impl UriLinkageType {
     /// `true` when this type carries a `min_polling_interval` field per
     /// EN 300 468 Table 159 (types `0x00` and `0x01`).
     #[must_use]

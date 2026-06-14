@@ -38,7 +38,19 @@ impl DeviceRestrictions {
     pub fn bits(self) -> u8 {
         self as u8
     }
+
+    /// Human-readable spec label (ANSI/SCTE 35 2023r1 Table 21).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::RestrictGroup0 => "restricted for device group 0",
+            Self::RestrictGroup1 => "restricted for device group 1",
+            Self::RestrictGroup2 => "restricted for device group 2",
+            Self::None => "no device restrictions",
+        }
+    }
 }
+dvb_common::impl_spec_display!(DeviceRestrictions);
 
 /// `segmentation_upid_type` — §10.3.3.1, Table 22 (8 bits).
 ///
@@ -124,7 +136,34 @@ impl SegmentationUpidType {
             Self::Reserved(v) => v,
         }
     }
+
+    /// Human-readable spec label (ANSI/SCTE 35 2023r1 Table 22).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotUsed => "Not Used",
+            Self::UserDefinedDeprecated => "User Defined (deprecated)",
+            Self::Isci => "ISCI",
+            Self::AdId => "Ad-ID",
+            Self::Umid => "UMID",
+            Self::IsanDeprecated => "ISAN (deprecated)",
+            Self::Isan => "ISAN",
+            Self::Tid => "TID",
+            Self::Ti => "TI",
+            Self::Adi => "ADI",
+            Self::Eidr => "EIDR",
+            Self::AtscContentIdentifier => "ATSC Content Identifier",
+            Self::Mpu => "MPU()",
+            Self::Mid => "MID()",
+            Self::AdsInformation => "ADS Information",
+            Self::Uri => "URI",
+            Self::Uuid => "UUID",
+            Self::Scr => "SCR",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
+dvb_common::impl_spec_display!(SegmentationUpidType, Reserved);
 
 /// `segmentation_type_id` — §10.3.3.1, Table 23 (8 bits).
 ///
@@ -314,6 +353,73 @@ impl SegmentationTypeId {
         )
     }
 }
+
+impl SegmentationTypeId {
+    /// Human-readable spec label (ANSI/SCTE 35 2023r1 Table 23).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotIndicated => "Not Indicated",
+            Self::ContentIdentification => "Content Identification",
+            Self::Private => "Private",
+            Self::ProgramStart => "Program Start",
+            Self::ProgramEnd => "Program End",
+            Self::ProgramEarlyTermination => "Program Early Termination",
+            Self::ProgramBreakaway => "Program Breakaway",
+            Self::ProgramResumption => "Program Resumption",
+            Self::ProgramRunoverPlanned => "Program Runover Planned",
+            Self::ProgramRunoverUnplanned => "Program Runover Unplanned",
+            Self::ProgramOverlapStart => "Program Overlap Start",
+            Self::ProgramBlackoutOverride => "Program Blackout Override",
+            Self::ProgramJoin => "Program Join",
+            Self::ProgramImmediateResumption => "Program Immediate Resumption",
+            Self::ChapterStart => "Chapter Start",
+            Self::ChapterEnd => "Chapter End",
+            Self::BreakStart => "Break Start",
+            Self::BreakEnd => "Break End",
+            Self::OpeningCreditStart => "Opening Credit Start",
+            Self::OpeningCreditEnd => "Opening Credit End",
+            Self::ClosingCreditStart => "Closing Credit Start",
+            Self::ClosingCreditEnd => "Closing Credit End",
+            Self::ProviderAdvertisementStart => "Provider Advertisement Start",
+            Self::ProviderAdvertisementEnd => "Provider Advertisement End",
+            Self::DistributorAdvertisementStart => "Distributor Advertisement Start",
+            Self::DistributorAdvertisementEnd => "Distributor Advertisement End",
+            Self::ProviderPlacementOpportunityStart => "Provider Placement Opportunity Start",
+            Self::ProviderPlacementOpportunityEnd => "Provider Placement Opportunity End",
+            Self::DistributorPlacementOpportunityStart => "Distributor Placement Opportunity Start",
+            Self::DistributorPlacementOpportunityEnd => "Distributor Placement Opportunity End",
+            Self::ProviderOverlayPlacementOpportunityStart => {
+                "Provider Overlay Placement Opportunity Start"
+            }
+            Self::ProviderOverlayPlacementOpportunityEnd => {
+                "Provider Overlay Placement Opportunity End"
+            }
+            Self::DistributorOverlayPlacementOpportunityStart => {
+                "Distributor Overlay Placement Opportunity Start"
+            }
+            Self::DistributorOverlayPlacementOpportunityEnd => {
+                "Distributor Overlay Placement Opportunity End"
+            }
+            Self::ProviderPromoStart => "Provider Promo Start",
+            Self::ProviderPromoEnd => "Provider Promo End",
+            Self::DistributorPromoStart => "Distributor Promo Start",
+            Self::DistributorPromoEnd => "Distributor Promo End",
+            Self::UnscheduledEventStart => "Unscheduled Event Start",
+            Self::UnscheduledEventEnd => "Unscheduled Event End",
+            Self::AlternateContentOpportunityStart => "Alternate Content Opportunity Start",
+            Self::AlternateContentOpportunityEnd => "Alternate Content Opportunity End",
+            Self::ProviderAdBlockStart => "Provider Ad Block Start",
+            Self::ProviderAdBlockEnd => "Provider Ad Block End",
+            Self::DistributorAdBlockStart => "Distributor Ad Block Start",
+            Self::DistributorAdBlockEnd => "Distributor Ad Block End",
+            Self::NetworkStart => "Network Start",
+            Self::NetworkEnd => "Network End",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(SegmentationTypeId, Reserved);
 
 #[cfg(test)]
 mod tests {

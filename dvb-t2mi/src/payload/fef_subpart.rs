@@ -47,6 +47,20 @@ impl From<num_enum::TryFromPrimitiveError<SubpartVariety>> for crate::error::Err
     }
 }
 
+impl SubpartVariety {
+    /// Human-readable spec label (ETSI TS 102 773 §5.2.12 Table 13).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Null => "Null",
+            Self::Iq => "IQ",
+            Self::Prbs => "PRBS",
+            Self::TxSigFef => "TX-SIG FEF",
+        }
+    }
+}
+dvb_common::impl_spec_display!(SubpartVariety);
+
 /// PRBS type for SubpartVariety::Prbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -62,6 +76,17 @@ impl From<PrbsType> for u8 {
         pt as u8
     }
 }
+
+impl PrbsType {
+    /// Human-readable spec label (ETSI TS 102 773 §5.2.12).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::UserDefined => "user-defined",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PrbsType);
 
 /// FEF sub-part payload (type 0x33) per ETSI TS 102 773 §5.2.12.
 ///

@@ -365,6 +365,7 @@ impl StreamType {
         }
     }
 }
+dvb_common::impl_spec_display!(StreamType, ReservedRange, UserPrivate);
 
 /// One elementary stream entry in the PMT's ES loop.
 #[derive(Debug, Clone, PartialEq, Eq)]

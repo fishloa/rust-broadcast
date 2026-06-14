@@ -95,6 +95,7 @@ impl AudioType {
         }
     }
 }
+dvb_common::impl_spec_display!(AudioType, UserPrivate, Reserved);
 
 /// One (language code, audio type) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]

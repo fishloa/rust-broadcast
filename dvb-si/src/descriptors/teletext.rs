@@ -76,6 +76,7 @@ impl TeletextType {
         }
     }
 }
+dvb_common::impl_spec_display!(TeletextType, Reserved);
 
 /// One teletext component.
 #[derive(Debug, Clone, PartialEq, Eq)]

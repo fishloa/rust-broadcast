@@ -28,6 +28,17 @@ pub enum Polarization {
 }
 
 impl Polarization {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.2 Table 38).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::LinearHorizontal => "linear horizontal",
+            Self::LinearVertical => "linear vertical",
+            Self::CircularLeft => "circular left",
+            Self::CircularRight => "circular right",
+        }
+    }
+
     #[must_use]
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
@@ -50,6 +61,7 @@ impl Polarization {
         }
     }
 }
+dvb_common::impl_spec_display!(Polarization);
 
 /// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +72,18 @@ pub enum ModulationSystem {
     /// DVB-S2 (second generation).
     DvbS2,
 }
+
+impl ModulationSystem {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.2 Table 40).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DvbS => "DVB-S",
+            Self::DvbS2 => "DVB-S2",
+        }
+    }
+}
+dvb_common::impl_spec_display!(ModulationSystem);
 
 /// Modulation type (§6.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +98,20 @@ pub enum ModulationType {
     /// 16QAM.
     Qam16,
 }
+
+impl ModulationType {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.2 Table 41).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Qpsk => "QPSK",
+            Self::Psk8 => "8PSK",
+            Self::Qam16 => "16-QAM",
+        }
+    }
+}
+dvb_common::impl_spec_display!(ModulationType);
 
 /// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only; also used by S2X
 /// with extended values per Table 144).
@@ -114,7 +152,19 @@ impl RollOff {
             RollOff::Reserved(v) => v,
         }
     }
+
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.2 Table 39).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Alpha035 => "α=0.35",
+            Self::Alpha025 => "α=0.25",
+            Self::Alpha020 => "α=0.20",
+            Self::Reserved(_) => "reserved",
+        }
+    }
 }
+dvb_common::impl_spec_display!(RollOff, Reserved);
 
 /// Satellite Delivery System Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

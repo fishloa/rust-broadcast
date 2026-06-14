@@ -682,9 +682,275 @@ impl PlpCodeRate {
     }
 }
 
+// ── §204 spec-label convention ──────────────────────────────────────────────
+// Each enum exposes `name() -> &'static str` (the spec token; reserved/unknown
+// → "reserved") and a `Display` impl via `impl_spec_display!`, which preserves
+// the byte on the `Reserved(u8)` arm as `reserved(0x..)`. Labels use EN 302 755
+// spec notation (Tables 21–36, 23a/23b).
+
+impl TxInputStreamType {
+    /// Human-readable spec label (EN 302 755 Table 21).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TsOnly => "TS",
+            Self::GenericStream => "Generic Stream",
+            Self::Both => "TS + Generic",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(TxInputStreamType, Reserved);
+
+impl GuardInterval {
+    /// Human-readable spec label (EN 302 755 Table 22).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::G1_32 => "1/32",
+            Self::G1_16 => "1/16",
+            Self::G1_8 => "1/8",
+            Self::G1_4 => "1/4",
+            Self::G1_128 => "1/128",
+            Self::G19_128 => "19/128",
+            Self::G19_256 => "19/256",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(GuardInterval, Reserved);
+
+impl L1Modulation {
+    /// Human-readable spec label (EN 302 755 Table 24).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Bpsk => "BPSK",
+            Self::Qpsk => "QPSK",
+            Self::Qam16 => "16-QAM",
+            Self::Qam64 => "64-QAM",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(L1Modulation, Reserved);
+
+impl L1CodeRate {
+    /// Human-readable spec label (EN 302 755 Table 25).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::R1_2 => "1/2",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(L1CodeRate, Reserved);
+
+impl L1FecType {
+    /// Human-readable spec label (EN 302 755 Table 26).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ldpc16K => "16K LDPC",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(L1FecType, Reserved);
+
+impl PilotPattern {
+    /// Human-readable spec label (EN 302 755 Table 27).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Pp1 => "PP1",
+            Self::Pp2 => "PP2",
+            Self::Pp3 => "PP3",
+            Self::Pp4 => "PP4",
+            Self::Pp5 => "PP5",
+            Self::Pp6 => "PP6",
+            Self::Pp7 => "PP7",
+            Self::Pp8 => "PP8",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PilotPattern, Reserved);
+
+impl T2Version {
+    /// Human-readable spec label (EN 302 755 Table 28).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::V1_1_1 => "1.1.1",
+            Self::V1_2_1 => "1.2.1",
+            Self::V1_3_1 => "1.3.1",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(T2Version, Reserved);
+
+impl PlpType {
+    /// Human-readable spec label (EN 302 755 Table 30).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Common => "Common",
+            Self::DataType1 => "Data Type 1",
+            Self::DataType2 => "Data Type 2",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpType, Reserved);
+
+impl PlpPayloadType {
+    /// Human-readable spec label (EN 302 755 Table 31).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Gfps => "GFPS",
+            Self::Gcs => "GCS",
+            Self::Gse => "GSE",
+            Self::Ts => "TS",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpPayloadType, Reserved);
+
+impl PlpModulation {
+    /// Human-readable spec label (EN 302 755 Table 33).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Qpsk => "QPSK",
+            Self::Qam16 => "16-QAM",
+            Self::Qam64 => "64-QAM",
+            Self::Qam256 => "256-QAM",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpModulation, Reserved);
+
+impl PlpFecType {
+    /// Human-readable spec label (EN 302 755 Table 34).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Ldpc16K => "16K LDPC",
+            Self::Ldpc64K => "64K LDPC",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpFecType, Reserved);
+
+impl PlpMode {
+    /// Human-readable spec label (EN 302 755 Table 35).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotSpecified => "Not specified",
+            Self::Normal => "Normal",
+            Self::HighEfficiency => "High Efficiency",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpMode, Reserved);
+
+impl AuxStreamType {
+    /// Human-readable spec label (EN 302 755 Table 36).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TxSig => "TX-SIG",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(AuxStreamType, Reserved);
+
+impl PaprReductionV0 {
+    /// Human-readable spec label (EN 302 755 Table 23a).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NoReduction => "No PAPR reduction",
+            Self::AceOnly => "ACE-PAPR only",
+            Self::TrOnly => "TR-PAPR only",
+            Self::AceAndTr => "ACE and TR",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PaprReductionV0, Reserved);
+
+impl PaprReductionVn {
+    /// Human-readable spec label (EN 302 755 Table 23b).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::L1AceTrOnP2 => "L1-ACE, TR on P2 only",
+            Self::L1AceAndAce => "L1-ACE and ACE",
+            Self::L1AceAndTr => "L1-ACE and TR",
+            Self::L1AceAceAndTr => "L1-ACE, ACE and TR",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PaprReductionVn, Reserved);
+
+impl PaprReduction {
+    /// Human-readable spec label, delegating to the version-specific table.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::V0(inner) => inner.name(),
+            Self::Vn(inner) => inner.name(),
+        }
+    }
+}
+dvb_common::impl_spec_display!(PaprReduction);
+
+impl PlpCodeRate {
+    /// Human-readable spec label (EN 302 755 Table 32, T2-base column).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::R1_2 => "1/2",
+            Self::R3_5 => "3/5",
+            Self::R2_3 => "2/3",
+            Self::R3_4 => "3/4",
+            Self::R4_5 => "4/5",
+            Self::R5_6 => "5/6",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PlpCodeRate, Reserved);
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spec_label_known_and_reserved() {
+        assert_eq!(GuardInterval::G19_256.name(), "19/256");
+        assert_eq!(GuardInterval::G19_256.to_string(), "19/256");
+        assert_eq!(PlpModulation::Qam256.to_string(), "256-QAM");
+        // reserved: name() is lossy, Display preserves the byte
+        assert_eq!(GuardInterval::Reserved(0x07).name(), "reserved");
+        assert_eq!(GuardInterval::Reserved(0x07).to_string(), "reserved(0x07)");
+        assert_eq!(
+            PaprReduction::V0(PaprReductionV0::AceOnly).to_string(),
+            "ACE-PAPR only"
+        );
+    }
 
     #[test]
     fn tx_input_stream_type_round_trip() {

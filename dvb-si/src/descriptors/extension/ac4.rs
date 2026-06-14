@@ -55,6 +55,7 @@ impl Ac4ChannelMode {
         }
     }
 }
+dvb_common::impl_spec_display!(Ac4ChannelMode, Reserved);
 
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]

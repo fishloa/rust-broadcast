@@ -122,6 +122,7 @@ impl AnnouncementType {
         }
     }
 }
+dvb_common::impl_spec_display!(AnnouncementType, Reserved);
 
 /// Reference type — ETSI EN 300 468 Table 20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,6 +187,7 @@ impl ReferenceType {
         }
     }
 }
+dvb_common::impl_spec_display!(ReferenceType, Reserved);
 
 /// Conditional reference block, present for reference_type 1, 2, 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

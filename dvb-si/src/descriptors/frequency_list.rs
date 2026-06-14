@@ -35,6 +35,20 @@ pub enum CodingType {
     Terrestrial,
 }
 
+impl CodingType {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.17).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Undefined => "not defined",
+            Self::Satellite => "satellite",
+            Self::Cable => "cable",
+            Self::Terrestrial => "terrestrial",
+        }
+    }
+}
+dvb_common::impl_spec_display!(CodingType);
+
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

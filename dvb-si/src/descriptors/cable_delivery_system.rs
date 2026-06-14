@@ -30,6 +30,20 @@ pub enum FecOuter {
     Reserved(u8),
 }
 
+impl FecOuter {
+    /// Human-readable spec label (ETSI EN 300 468 Table 34).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NotDefined => "not defined",
+            Self::NoOuterFec => "no outer FEC coding",
+            Self::ReedSolomon204_188 => "Reed-Solomon (204, 188)",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(FecOuter, Reserved);
+
 /// Modulation scheme — ETSI EN 300 468 Table 35.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -50,6 +64,23 @@ pub enum Modulation {
     /// Reserved / future use.
     Reserved(u8),
 }
+
+impl Modulation {
+    /// Human-readable spec label (ETSI EN 300 468 Table 35).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NotDefined => "not defined",
+            Self::Qam16 => "16-QAM",
+            Self::Qam32 => "32-QAM",
+            Self::Qam64 => "64-QAM",
+            Self::Qam128 => "128-QAM",
+            Self::Qam256 => "256-QAM",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Modulation, Reserved);
 
 /// FEC inner convolutional code rate — ETSI EN 300 468 Table 36.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +171,7 @@ impl FecInner {
         }
     }
 }
+dvb_common::impl_spec_display!(FecInner, Reserved);
 
 /// Cable Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -40,6 +40,19 @@ impl From<num_enum::TryFromPrimitiveError<FrequencySource>> for crate::error::Er
     }
 }
 
+impl FrequencySource {
+    /// Human-readable spec label (ETSI TS 102 773 §5.2.4 Table 2).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::UseL1CurrentData => "L1-current data",
+            Self::UseIndividualAddressing => "individual addressing",
+            Self::ManualPerModulator => "manual per modulator",
+        }
+    }
+}
+dvb_common::impl_spec_display!(FrequencySource);
+
 /// L1-current payload (type 0x10) per ETSI TS 102 773 §5.2.4.
 ///
 /// Layout:

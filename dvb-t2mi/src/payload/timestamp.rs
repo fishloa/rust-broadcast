@@ -74,6 +74,22 @@ impl From<num_enum::TryFromPrimitiveError<Bandwidth>> for crate::error::Error {
     }
 }
 
+impl Bandwidth {
+    /// Human-readable spec label (ETSI TS 102 773 Table 3).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Mhz1_7 => "1.7 MHz",
+            Self::Mhz5 => "5 MHz",
+            Self::Mhz6 => "6 MHz",
+            Self::Mhz7 => "7 MHz",
+            Self::Mhz8 => "8 MHz",
+            Self::Mhz10 => "10 MHz",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Bandwidth);
+
 /// Subsecond denominator D for 1.7 MHz bandwidth.
 /// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 131.
 const SUBSEC_DENOM_1_7MHZ: u64 = 131;

@@ -68,6 +68,7 @@ impl S2XMode {
         }
     }
 }
+dvb_common::impl_spec_display!(S2XMode, Reserved);
 
 /// TS/GS S2X mode — ETSI EN 300 468 Table 143.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,6 +124,7 @@ impl TsGsS2XMode {
         }
     }
 }
+dvb_common::impl_spec_display!(TsGsS2XMode, Reserved);
 
 // Receiver profile bit flags (additive — field stays raw u8).
 const RP_BROADCAST: u8 = 0x01;

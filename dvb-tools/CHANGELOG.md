@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [6.7.0] — 2026-06-14
+
+### Changed
+- Lockstep release with the library crates; no functional changes (consumes the
+  #204 `name()`/`Display` label convention).
+
 ## [6.6.0] — 2026-06-14
 
 Version-lockstep release with the workspace (dvb-t2mi L1-pre/L1-post signalling parser #54; dvb-si BIOP object-carousel layer #64; criterion benchmark suites #62). No changes to this crate.

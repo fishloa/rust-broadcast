@@ -61,7 +61,14 @@ impl S1Field {
             Self::V7 => "reserved",
         }
     }
+
+    /// Human-readable spec label (EN 302 755 §7.2.1 Table 18) — the S1 meaning.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        self.meaning()
+    }
 }
+dvb_common::impl_spec_display!(S1Field);
 
 /// S2 field 1 (upper 3 bits of the 4-bit S2 field) per EN 302 755 §7.2.3 Tables 19-20.
 ///
@@ -148,7 +155,14 @@ impl S2Field1 {
             Self::Reserved1 | Self::Reserved2 => "reserved",
         }
     }
+
+    /// Human-readable spec label (EN 302 755 §7.2.3 Tables 19-20) — the FFT size.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        self.fft_size()
+    }
 }
+dvb_common::impl_spec_display!(S2Field1);
 
 /// FEF part: Null payload (type 0x30) per ETSI TS 102 773 §5.2.9.
 #[derive(Debug, Clone, PartialEq, Eq)]

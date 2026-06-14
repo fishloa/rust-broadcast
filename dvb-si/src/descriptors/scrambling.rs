@@ -69,6 +69,7 @@ impl ScramblingMode {
         }
     }
 }
+dvb_common::impl_spec_display!(ScramblingMode, Reserved);
 
 /// Scrambling Descriptor (tag 0x65).
 #[derive(Debug, Clone, PartialEq, Eq)]

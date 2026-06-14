@@ -128,6 +128,7 @@ impl ContentGenre {
         }
     }
 }
+dvb_common::impl_spec_display!(ContentGenre, Reserved, UserDefined);
 
 /// Return the most specific content genre name from EN 300 468 Table 29.
 ///

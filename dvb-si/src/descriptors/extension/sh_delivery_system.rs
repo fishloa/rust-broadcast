@@ -69,6 +69,7 @@ impl ShDiversityMode {
         }
     }
 }
+dvb_common::impl_spec_display!(ShDiversityMode, Reserved);
 
 /// Polarization for SH — ETSI EN 300 468 Table 123.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +125,7 @@ impl ShPolarization {
         }
     }
 }
+dvb_common::impl_spec_display!(ShPolarization, Reserved);
 
 /// Roll-off factor for SH — ETSI EN 300 468 Table 124.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +176,7 @@ impl ShRollOff {
         }
     }
 }
+dvb_common::impl_spec_display!(ShRollOff, Reserved);
 
 /// Modulation mode for TDM — ETSI EN 300 468 Table 125.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,6 +227,7 @@ impl ShModulationModeType {
         }
     }
 }
+dvb_common::impl_spec_display!(ShModulationModeType, Reserved);
 
 /// Code rate for SH — ETSI EN 300 468 Table 126 (4 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,6 +323,7 @@ impl ShCodeRate {
         }
     }
 }
+dvb_common::impl_spec_display!(ShCodeRate, Reserved);
 
 /// Bandwidth for OFDM — ETSI EN 300 468 Table 128 (3 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -379,6 +384,7 @@ impl ShBandwidth {
         }
     }
 }
+dvb_common::impl_spec_display!(ShBandwidth, Reserved);
 
 /// Constellation and hierarchy — ETSI EN 300 468 Table 130 (3 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -439,6 +445,7 @@ impl ShConstellationAndHierarchy {
         }
     }
 }
+dvb_common::impl_spec_display!(ShConstellationAndHierarchy, Reserved);
 
 /// Guard interval for OFDM — ETSI EN 300 468 Table 131 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -494,6 +501,7 @@ impl ShGuardInterval {
         }
     }
 }
+dvb_common::impl_spec_display!(ShGuardInterval, Reserved);
 
 /// Transmission mode for OFDM — ETSI EN 300 468 Table 132 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,6 +557,7 @@ impl ShTransmissionMode {
         }
     }
 }
+dvb_common::impl_spec_display!(ShTransmissionMode, Reserved);
 
 // ---------------------------------------------------------------------------
 //  Structs

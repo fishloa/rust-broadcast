@@ -152,6 +152,7 @@ impl LinkageType {
         }
     }
 }
+dvb_common::impl_spec_display!(LinkageType, ExtendedEventLinkage, Reserved);
 
 /// Hand-over type — ETSI EN 300 468 Table 62.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,6 +206,7 @@ impl HandOverType {
         }
     }
 }
+dvb_common::impl_spec_display!(HandOverType, Reserved);
 
 /// Link type — ETSI EN 300 468 Table 66.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +270,7 @@ impl LinkType {
         }
     }
 }
+dvb_common::impl_spec_display!(LinkType, Reserved);
 
 /// Target id type — ETSI EN 300 468 Table 67.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,6 +327,7 @@ impl TargetIdType {
         }
     }
 }
+dvb_common::impl_spec_display!(TargetIdType, Reserved);
 
 /// Mobile hand-over info — EN 300 468 Table 61 (`linkage_type == 0x08`).
 #[derive(Debug, Clone, PartialEq, Eq)]

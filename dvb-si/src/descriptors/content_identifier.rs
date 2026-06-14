@@ -71,6 +71,7 @@ impl CridType {
         }
     }
 }
+dvb_common::impl_spec_display!(CridType, Reserved);
 
 /// CRID location per TS 102 323 Table 10.
 ///

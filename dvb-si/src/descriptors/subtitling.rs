@@ -159,6 +159,7 @@ impl SubtitlingType {
         }
     }
 }
+dvb_common::impl_spec_display!(SubtitlingType, Reserved);
 
 /// One subtitling component.
 #[derive(Debug, Clone, PartialEq, Eq)]

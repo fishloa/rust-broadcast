@@ -47,11 +47,20 @@ impl From<num_enum::TryFromPrimitiveError<TsGs>> for Error {
     }
 }
 
-impl std::fmt::Display for TsGs {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TsGs::{self:?}")
+impl TsGs {
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Gfps => "GFPS",
+            Self::Ts => "TS",
+            Self::Gcs => "GCS",
+            Self::Gse => "GSE",
+        }
     }
 }
+
+dvb_common::impl_spec_display!(TsGs);
 
 /// Operating mode: Normal or High Efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -70,6 +79,19 @@ impl From<num_enum::TryFromPrimitiveError<Mode>> for Error {
         Error::InvalidMode { mode: e.number }
     }
 }
+
+impl Mode {
+    #[must_use]
+    /// Human-readable spec display name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Normal => "Normal",
+            Self::HighEfficiency => "High Efficiency",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(Mode);
 
 /// The pair of MATYPE bytes describing the input stream format and mode adaptation.
 ///
@@ -153,13 +175,15 @@ impl RollOff {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::Alpha035 => "α0.35",
-            Self::Alpha025 => "α0.25",
-            Self::Alpha020 => "α0.20",
+            Self::Alpha035 => "α=0.35",
+            Self::Alpha025 => "α=0.25",
+            Self::Alpha020 => "α=0.20",
             Self::Reserved => "reserved/S2X-low",
         }
     }
 }
+
+dvb_common::impl_spec_display!(RollOff);
 
 impl Matype {
     /// Decode the roll-off factor from the EXT bits `[1:0]`.

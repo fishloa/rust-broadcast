@@ -109,6 +109,7 @@ impl LinkType {
         }
     }
 }
+dvb_common::impl_spec_display!(LinkType, DvbReserved);
 
 /// How-related classification scheme ID — ETSI TS 102 323 §10.4.3 Table 112.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +164,7 @@ impl HowRelated {
         }
     }
 }
+dvb_common::impl_spec_display!(HowRelated, DvbReserved, UserPrivate);
 
 /// A promotional text item within a link_info entry (Table 110, §10.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
