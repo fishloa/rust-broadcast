@@ -8,6 +8,7 @@
 /// Transmitter input stream types — EN 302 755 §7.2.2 Table 21 (8-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum TxInputStreamType {
     /// 0x00 — Transport Stream (TS) only.
     TsOnly,
@@ -46,6 +47,7 @@ impl TxInputStreamType {
 /// Guard interval — EN 302 755 §7.2.2 Table 22 (3-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum GuardInterval {
     /// 000 — 1/32.
     G1_32,
@@ -100,6 +102,7 @@ impl GuardInterval {
 /// L1-post constellation — EN 302 755 §7.2.2 Table 24 (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum L1Modulation {
     /// 0000 — BPSK.
     Bpsk,
@@ -142,6 +145,7 @@ impl L1Modulation {
 /// L1-post code rate — EN 302 755 §7.2.2 Table 25 (2-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum L1CodeRate {
     /// 00 — 1/2.
     R1_2,
@@ -172,6 +176,7 @@ impl L1CodeRate {
 /// L1-post FEC type — EN 302 755 §7.2.2 Table 26 (2-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum L1FecType {
     /// 00 — LDPC 16K.
     Ldpc16K,
@@ -202,6 +207,7 @@ impl L1FecType {
 /// Scattered pilot pattern — EN 302 755 §7.2.2 Table 27 (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PilotPattern {
     /// 0000 — PP1.
     Pp1,
@@ -260,6 +266,7 @@ impl PilotPattern {
 /// T2 version field — EN 302 755 §7.2.2 Table 28 (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum T2Version {
     /// 0000 — Specification version 1.1.1.
     V1_1_1,
@@ -298,6 +305,7 @@ impl T2Version {
 /// PLP type — EN 302 755 §7.2.3.1 Table 30 (3-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpType {
     /// 000 — Common PLP.
     Common,
@@ -336,6 +344,7 @@ impl PlpType {
 /// PLP payload type — EN 302 755 §7.2.3.1 Table 31 (5-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpPayloadType {
     /// 00000 — GFPS.
     Gfps,
@@ -378,6 +387,7 @@ impl PlpPayloadType {
 /// PLP modulation — EN 302 755 §7.2.3.1 Table 33 (3-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpModulation {
     /// 000 — QPSK.
     Qpsk,
@@ -420,6 +430,7 @@ impl PlpModulation {
 /// PLP FEC type — EN 302 755 §7.2.3.1 Table 34 (2-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpFecType {
     /// 00 — 16K LDPC.
     Ldpc16K,
@@ -454,6 +465,7 @@ impl PlpFecType {
 /// PLP mode — EN 302 755 §7.2.3.1 Table 35 (2-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpMode {
     /// 00 — Not specified (valid only if T2_VERSION='0000').
     NotSpecified,
@@ -492,6 +504,7 @@ impl PlpMode {
 /// Auxiliary stream type — EN 302 755 §7.2.3.1 Table 36 (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum AuxStreamType {
     /// 0000 — TX-SIG (see ETSI TS 102 992).
     TxSig,
@@ -522,6 +535,7 @@ impl AuxStreamType {
 /// PAPR reduction for T2_VERSION = '0000' — EN 302 755 §7.2.2 Table 23a (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PaprReductionV0 {
     /// 0000 — No PAPR reduction is used.
     NoReduction,
@@ -564,6 +578,7 @@ impl PaprReductionV0 {
 /// PAPR reduction for T2_VERSION > '0000' — EN 302 755 §7.2.2 Table 23b (4-bit field).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PaprReductionVn {
     /// 0000 — L1-ACE is used and TR is used on P2 symbols only.
     L1AceTrOnP2,
@@ -606,6 +621,7 @@ impl PaprReductionVn {
 /// Version-tagged PAPR reduction result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PaprReduction {
     /// Decoded using Table 23a (T2_VERSION = '0000').
     V0(PaprReductionV0),
@@ -618,6 +634,7 @@ pub enum PaprReduction {
 /// The T2-Lite column differs (see Table 32); this enum decodes the T2-base column only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PlpCodeRate {
     /// 000 — 1/2.
     R1_2,
