@@ -8,6 +8,7 @@
 use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
@@ -29,6 +30,7 @@ const SERVICE_HEADER_LEN: usize = 5;
 /// SDT kind — distinguishes `0x42` (actual) from `0x46` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum SdtKind {
     /// Services on the transport stream the receiver is tuned to.
     Actual,

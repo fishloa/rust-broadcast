@@ -46,6 +46,7 @@ const SKIP: &[&str] = &[
     "ExtensionBody",
     "TargetId",
     "LinkageData",
+    "FormatSpecifier",
     "IdSelector",
     "CridLocation",
     "DepthRangeBody",

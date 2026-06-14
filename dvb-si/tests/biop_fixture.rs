@@ -9,10 +9,11 @@
 #![cfg(feature = "ts")]
 
 use dvb_common::{Parse, Serialize};
+use dvb_si::carousel::biop::message::BindingType;
 use dvb_si::carousel::biop::{
     Binding, BiopMessage, BiopProfileBody, CarouselFs, ConnBinder, DirectoryMessage, FileMessage,
     Ior, ModuleInfo, NameComponent, ObjectKind, ObjectLocation, ServiceGatewayInfo, TaggedProfile,
-    Tap, BINDING_NOBJECT, BIOP_DELIVERY_PARA_USE,
+    Tap, BIOP_DELIVERY_PARA_USE,
 };
 use dvb_si::carousel::UnMessage;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -174,13 +175,13 @@ fn synthetic_carousel_fs_file_lookup() {
         object_kind: *b"srg\0",
         object_key: &[0x01],
         object_info: &[],
-        service_context: &[0x00], // serviceContextList_count=0
+        service_context: vec![], // serviceContextList_count=0
         bindings: vec![Binding {
             name: vec![NameComponent {
                 id: b"index.html",
                 kind: b"fil\0",
             }],
-            binding_type: BINDING_NOBJECT,
+            binding_type: BindingType::NObject,
             ior: file_ior,
             object_info: &[],
         }],
@@ -190,7 +191,7 @@ fn synthetic_carousel_fs_file_lookup() {
         object_key: &[0x02],
         content_size: file_content.len() as u64,
         object_info_extra: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         content: file_content,
     });
 
@@ -321,7 +322,6 @@ fn sgi_round_trip() {
 /// Byte-anchor test for a hand-built Directory message.
 #[test]
 fn directory_message_byte_anchor() {
-    use dvb_si::carousel::biop::BINDING_NCONTEXT;
     // A ServiceGateway with one ncontext binding "subdir" -> module 3, key [0x03]
     let ior = Ior {
         type_id: b"dir\0",
@@ -341,13 +341,13 @@ fn directory_message_byte_anchor() {
         object_kind: *b"srg\0",
         object_key: &[0x01],
         object_info: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         bindings: vec![Binding {
             name: vec![NameComponent {
                 id: b"subdir",
                 kind: b"dir\0",
             }],
-            binding_type: BINDING_NCONTEXT,
+            binding_type: BindingType::NContext,
             ior,
             object_info: &[],
         }],
@@ -369,7 +369,7 @@ fn file_message_byte_anchor() {
         object_key: &[0x04],
         content_size: content.len() as u64,
         object_info_extra: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         content,
     });
     let mut buf = vec![0u8; fm.serialized_len()];

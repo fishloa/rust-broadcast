@@ -76,7 +76,8 @@
 //! [`Stats::crc_failures`]; they are never emitted and never update the gate.
 //! TDT carries no CRC and is therefore never dropped for CRC reasons.
 
-use std::collections::{HashMap, VecDeque};
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec::Vec;
 
 use bytes::Bytes;
 
@@ -310,7 +311,7 @@ impl SiDemuxBuilder {
     /// Build the [`SiDemux`].
     #[must_use]
     pub fn build(self) -> SiDemux {
-        let mut pids: HashMap<Pid, SectionReassembler> = HashMap::new();
+        let mut pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
         if self.dvb_si_pids {
             use crate::pid::well_known as wk;
             for pid in [
@@ -331,7 +332,7 @@ impl SiDemuxBuilder {
         }
         SiDemux {
             pids,
-            gate: HashMap::new(),
+            gate: BTreeMap::new(),
             gate_order: VecDeque::new(),
             cfg: Config {
                 follow_pat: self.follow_pat,
@@ -349,11 +350,11 @@ impl SiDemuxBuilder {
 ///
 /// See the [module docs](crate::demux) for the gate and CRC policies.
 pub struct SiDemux {
-    pids: HashMap<Pid, SectionReassembler>,
+    pids: BTreeMap<Pid, SectionReassembler>,
     // TODO(perf): keys are uniform internal u64s — a non-SipHash hasher (e.g.
     // FxHash) would shave cycles at high section rates; revisit if profiling
     // shows it.
-    gate: HashMap<u64, GateEntry>,
+    gate: BTreeMap<u64, GateEntry>,
     gate_order: VecDeque<u64>,
     cfg: Config,
     stats: Stats,
@@ -392,7 +393,7 @@ impl SiDemux {
                 // PIDs into the map, so it cannot run while the borrow is live).
                 // A non-watched PID costs exactly one lookup and stops here;
                 // `completed` does not allocate until a section actually pops.
-                let mut completed = std::mem::take(&mut self.completed_scratch);
+                let mut completed = core::mem::take(&mut self.completed_scratch);
                 if let Some(reasm) = self.pids.get_mut(&pid) {
                     reasm.feed(payload, ts.header.pusi);
                     while let Some(section) = reasm.pop_section() {
@@ -495,10 +496,10 @@ impl SiDemux {
             self.gate_order.push_back(key);
         }
         match self.gate.entry(key) {
-            std::collections::hash_map::Entry::Occupied(mut oe) => {
+            alloc::collections::btree_map::Entry::Occupied(mut oe) => {
                 *oe.get_mut() = entry;
             }
-            std::collections::hash_map::Entry::Vacant(ve) => {
+            alloc::collections::btree_map::Entry::Vacant(ve) => {
                 ve.insert(entry);
             }
         }

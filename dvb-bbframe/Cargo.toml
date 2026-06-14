@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-bbframe"
-version = "6.7.0"
+version = "7.0.0"
 edition = "2021"
 description = "ETSI DVB-S2 / S2X / T2 BBFrame parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -9,16 +9,16 @@ keywords = ["dvb", "bbframe", "s2", "t2", "mpeg"]
 categories = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
-rust-version = "1.75"
+rust-version = "1.81"
 exclude = ["docs/**", "tests/fixtures/**", "TODO.md"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "6.7" }
-thiserror  = "2"
-num_enum   = "0.7"
+dvb-common = { path = "../dvb-common", version = "7.0", default-features = false }
+thiserror = { version = "2", default-features = false }
+num_enum = { version = "0.7", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 yoke       = { version = "0.7", optional = true, features = ["derive"] }
 
@@ -31,6 +31,10 @@ name    = "bbframe_hot_paths"
 harness = false
 
 [features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std   = ["dvb-common/std", "thiserror/std", "num_enum/std"]
 serde = ["dep:serde"]
 
 # yoke::Yokeable on the zero-copy user-packet iterator view types (mirrors

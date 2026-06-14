@@ -1,5 +1,6 @@
 //! Service Prominence Descriptor — ETSI EN 300 468 §6.4.18 (tag_extension 0x22).
 use super::*;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const TAG_EXTENSION: u8 = 0x22;

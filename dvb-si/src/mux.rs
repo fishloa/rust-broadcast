@@ -6,6 +6,7 @@
 //! with a `pointer_field` where sections begin, concatenated contiguously, and
 //! 0xFF-stuffed at the batch tail.
 
+use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::pid::well_known;

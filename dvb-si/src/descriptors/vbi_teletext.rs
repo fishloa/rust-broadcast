@@ -9,6 +9,7 @@ use super::descriptor_body;
 use super::teletext::TeletextType;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for VBI_teletext_descriptor.

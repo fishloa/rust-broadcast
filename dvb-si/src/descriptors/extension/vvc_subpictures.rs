@@ -1,5 +1,6 @@
 //! VVC Subpictures Descriptor — ETSI EN 300 468 §6.4.17 (tag_extension 0x23).
 use super::*;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for VvcSubpictures<'a> {
     const TAG_EXTENSION: u8 = 0x23;

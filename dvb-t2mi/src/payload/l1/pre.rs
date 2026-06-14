@@ -4,6 +4,7 @@
 //! 32-bit CRC in the standalone (non-T2-MI) form. In T2-MI (ETSI TS 102 773
 //! §5.2.4) the CRC is dropped; the T2-MI packet CRC covers the whole packet.
 
+use alloc::vec::Vec;
 use dvb_common::bits::{BitReader, BitWriter};
 use dvb_common::{Parse, Serialize};
 

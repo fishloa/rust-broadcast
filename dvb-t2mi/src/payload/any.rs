@@ -28,6 +28,8 @@
 //! 4. The integration completeness test walks the generated
 //!    [`AnyPayload::DISPATCHED_TYPES`] automatically — no test edits needed.
 
+use alloc::boxed::Box;
+
 /// Declares [`AnyPayload`] + its dispatcher from one packet-type list.
 ///
 /// Each line is `Variant = 0xTYPE => module::Type[<'a>]`.

@@ -10,21 +10,21 @@ categories   = ["asynchronous", "multimedia", "network-programming"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
 # dvb-stream is versioned and released INDEPENDENTLY from the dvb-si/dvb-t2mi
-# lockstep. tokio's MSRV moves faster than the workspace 1.75; set explicitly.
-rust-version = "1.75"
+# lockstep. tokio's MSRV moves faster than the workspace 1.81; set explicitly.
+rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-dvb-si       = { path = "../dvb-si",   version = "6.6", default-features = false, features = ["ts"] }
-dvb-t2mi     = { path = "../dvb-t2mi", version = "6.6", default-features = false, features = ["ts"] }
+dvb-si       = { path = "../dvb-si",   version = "7.0", default-features = false, features = ["ts", "std"] }
+dvb-t2mi     = { path = "../dvb-t2mi", version = "7.0", default-features = false, features = ["ts", "std"] }
 futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
 
 [dev-dependencies]
 tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
-dvb-common    = { path = "../dvb-common", version = "6.6" }
+dvb-common    = { path = "../dvb-common", version = "7.0" }
 
 [features]
 default = ["udp"]

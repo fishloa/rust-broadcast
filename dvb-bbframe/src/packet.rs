@@ -20,6 +20,8 @@
 //! packet is followed by a 1-byte DNP counter. The [`HemTsIter`] skips
 //! these DNP bytes automatically.
 
+use alloc::vec::Vec;
+
 use crate::header::{Bbheader, Mode, BBHEADER_LEN};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
@@ -134,6 +136,7 @@ impl Iterator for HemTsIter<'_> {
 /// Selects NM or HEM iteration at runtime without heap allocation or
 /// dynamic dispatch — the mode is baked into the variant.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum UpIter<'a> {
     /// Normal Mode iteration.
     Normal(NmTsIter<'a>),

@@ -3,6 +3,8 @@
 //! Lets a receiver generate a legacy analog DTMF sequence on a splice. Carries
 //! a `preroll` (tenths of a second) and `dtmf_count` ASCII DTMF characters.
 
+use alloc::vec::Vec;
+
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;

@@ -357,7 +357,7 @@ impl AdaptationField {
 #[derive(Default)]
 pub struct SectionReassembler {
     buf: bytes::BytesMut,
-    ready: std::collections::VecDeque<bytes::Bytes>,
+    ready: alloc::collections::VecDeque<bytes::Bytes>,
 }
 
 impl SectionReassembler {

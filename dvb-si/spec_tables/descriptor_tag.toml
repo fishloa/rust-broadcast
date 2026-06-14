@@ -86,6 +86,11 @@ variant = "Ibp"
 spec = "IBP_descriptor"
 
 [[entry]]
+value = 0x13
+variant = "CarouselIdentifier"
+spec = "carousel_identifier_descriptor"
+
+[[entry]]
 value = 0x40
 variant = "NetworkName"
 spec = "network_name_descriptor"

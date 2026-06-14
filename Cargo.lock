@@ -232,7 +232,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dvb-bbframe"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "criterion",
  "dvb-common",
@@ -245,15 +245,16 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "chrono",
  "criterion",
+ "libm",
 ]
 
 [[package]]
 name = "dvb-conformance"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "dvb-common",
  "dvb-si",
@@ -262,7 +263,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-scte35"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "base64",
  "dvb-common",
@@ -274,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -284,6 +285,7 @@ dependencies = [
  "erased-serde",
  "flate2",
  "hex",
+ "libm",
  "num_enum",
  "serde",
  "serde_json",
@@ -304,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -322,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "6.7.0"
+version = "7.0.0"
 dependencies = [
  "dvb-si",
  "dvb-t2mi",
@@ -506,6 +508,12 @@ name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
+
+[[package]]
+name = "libm"
+version = "0.2.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "log"

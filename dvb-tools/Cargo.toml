@@ -1,12 +1,12 @@
 [package]
 name         = "dvb-tools"
-version      = "6.7.0"
+version      = "7.0.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-dvb crates."
 edition      = "2021"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-dvb"
-rust-version = "1.75"
+rust-version = "1.81"
 readme       = "README.md"
 keywords     = ["dvb", "mpeg-ts", "analyzer", "cli", "broadcast"]
 categories   = ["command-line-utilities", "parsing"]
@@ -16,6 +16,6 @@ name = "dvb-tools"
 path = "src/main.rs"
 
 [dependencies]
-dvb-si    = { path = "../dvb-si",    version = "6.7.0", features = ["ts", "serde", "chrono"] }
-dvb-t2mi  = { path = "../dvb-t2mi",  version = "6.7.0", features = ["ts"] }
+dvb-si    = { path = "../dvb-si",    version = "7.0.0", features = ["ts", "serde", "chrono"] }
+dvb-t2mi  = { path = "../dvb-t2mi",  version = "7.0.0", features = ["ts"] }
 serde_json = "1"

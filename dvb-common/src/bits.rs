@@ -72,7 +72,7 @@ impl fmt::Display for BitError {
     }
 }
 
-impl std::error::Error for BitError {}
+impl core::error::Error for BitError {}
 
 /// Reads fields MSB-first from a borrowed byte slice.
 #[derive(Debug, Clone)]

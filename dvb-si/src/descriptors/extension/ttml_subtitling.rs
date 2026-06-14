@@ -3,6 +3,7 @@
 //! The `reserved_tail` field holds trailing `reserved_zero_future_use` bytes
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
     const TAG_EXTENSION: u8 = 0x20;

@@ -5,6 +5,8 @@
 //! (GPS-epoch seconds, §9.7.2.1). Component Splice Mode
 //! (`program_splice_flag == 0`) is deprecated but parsed/serialized losslessly.
 
+use alloc::vec::Vec;
+
 use crate::error::{Error, Result};
 use crate::time::BreakDuration;
 use crate::traits::CommandDef;

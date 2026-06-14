@@ -17,6 +17,8 @@
 //! - **MID()** — §10.3.3.4, Table 25: a sequence of `{ type, length, upid }` entries.
 //!   Access via [`SegmentationDescriptor::mid`].
 
+use alloc::vec::Vec;
+
 use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 use crate::error::{Error, Result};

@@ -27,7 +27,8 @@
 //! byte-exact.  This applies to the top-level `rfu` byte and to every RFU
 //! field inside the typed function bodies.
 
-use std::fmt;
+use alloc::vec::Vec;
+use core::fmt;
 
 use num_enum::TryFromPrimitive;
 

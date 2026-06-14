@@ -11,6 +11,7 @@
 //! `reserved_zero_future_use` bytes is kept verbatim in `reserved_tail`.
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for S2Xv2SatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x24;

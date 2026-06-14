@@ -1,5 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::descriptors::DescriptorRegistry;
 use crate::section::Section;
@@ -40,16 +42,16 @@ pub const DEFAULT_MAX_LOGICAL_KEYS: usize = 256;
 /// [`crate::carousel::ModuleReassembler`].
 #[derive(Debug)]
 pub struct EitCollector {
-    sections: HashMap<EitSectionSetKey, PartialEitSectionSet>,
-    schedules: HashMap<EitLogicalKey, PartialEitSchedule>,
+    sections: BTreeMap<EitSectionSetKey, PartialEitSectionSet>,
+    schedules: BTreeMap<EitLogicalKey, PartialEitSchedule>,
     max_logical_keys: usize,
 }
 
 impl Default for EitCollector {
     fn default() -> Self {
         Self {
-            sections: HashMap::new(),
-            schedules: HashMap::new(),
+            sections: BTreeMap::new(),
+            schedules: BTreeMap::new(),
             max_logical_keys: DEFAULT_MAX_LOGICAL_KEYS,
         }
     }
@@ -269,7 +271,7 @@ impl CompletedEit {
 
 /// Logical EIT table key used by [`EitCollector`].
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EitLogicalKey {
     /// Optional PID context supplied by the caller.
     pub pid: Option<u16>,
@@ -285,7 +287,7 @@ pub struct EitLogicalKey {
     pub current_next_indicator: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct EitSectionSetKey {
     logical_key: EitLogicalKey,
     table_id: u8,

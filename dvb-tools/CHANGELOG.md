@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-06-14
+
+**BREAKING (MSRV 1.75 → 1.81).**
+
+### Changed
+- MSRV **1.81**; tracks the breaking library changes (BIOP typing, typed coded
+  fields, `#[non_exhaustive]` enums). Stays a std-only application.
+
 ## [6.7.0] — 2026-06-14
 
 ### Changed

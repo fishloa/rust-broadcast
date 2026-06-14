@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-06-14
+
+**BREAKING (MSRV 1.75 → 1.81).**
+
+### Added
+- **no_std + alloc support** (#63). `#![no_std]` when the new default `std`
+  feature is off; only `alloc` is required. `BitError` now impls
+  `core::error::Error`. The MJD↔calendar codec uses `libm::floor` (bit-identical
+  to `f64::floor`, which is std-only) so it is no_std. chrono is configured
+  no_std+alloc (clock/std gated behind `std`).
+
+### Changed
+- MSRV is now **1.81** (for `core::error::Error`).
+
 ## [6.7.0] — 2026-06-14
 
 ### Added

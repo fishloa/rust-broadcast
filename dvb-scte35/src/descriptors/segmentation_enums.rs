@@ -10,6 +10,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[rustfmt::skip] // deliberate column-aligned discriminants
+#[non_exhaustive]
 pub enum DeviceRestrictions {
     /// Restricted for device group 0 (out-of-band defined).
     RestrictGroup0 = 0b00,
@@ -60,6 +61,7 @@ dvb_common::impl_spec_display!(DeviceRestrictions);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[allow(missing_docs)] // variant names are the spec's own Table 22 names
 #[rustfmt::skip] // deliberate column-aligned table (values in from_u8/to_u8)
+#[non_exhaustive]
 pub enum SegmentationUpidType {
     NotUsed,               // 0x00
     UserDefinedDeprecated, // 0x01
@@ -173,6 +175,7 @@ dvb_common::impl_spec_display!(SegmentationUpidType, Reserved);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[allow(missing_docs)] // variant names are the spec's own Table 23 names
 #[rustfmt::skip] // deliberate column-aligned table (values in from_u8/to_u8)
+#[non_exhaustive]
 pub enum SegmentationTypeId {
     NotIndicated,                                // 0x00
     ContentIdentification,                       // 0x01

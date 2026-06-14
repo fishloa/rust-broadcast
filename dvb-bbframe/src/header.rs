@@ -24,6 +24,7 @@ pub const DFL_MAX_BITS: u16 = 64800;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum TsGs {
     /// Generic Packetized Stream.
     Gfps = 0b00,

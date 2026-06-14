@@ -1,5 +1,6 @@
 //! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
+use alloc::vec::Vec;
 
 use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
 

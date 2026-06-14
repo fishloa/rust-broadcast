@@ -1,5 +1,6 @@
 //! SH Delivery System Descriptor — ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05).
 use super::*;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
@@ -590,6 +591,7 @@ pub struct ShModulation {
 /// Modulation mode for an SH delivery system entry (Table 121).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShModulationMode {
     /// `modulation_type == 0` — Time-Domain Multiplex.
     Tdm {
@@ -626,6 +628,7 @@ pub enum ShModulationMode {
 /// Interleaver block for an SH modulation entry (Table 122).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShInterleaver {
     /// `interleaver_type == 0` — full interleaver parameters.
     Type0 {

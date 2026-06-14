@@ -55,8 +55,9 @@
 //! }
 //! ```
 
-use std::any::Any;
-use std::collections::HashMap;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use core::any::Any;
 
 // ---------------------------------------------------------------------------
 // TableObject trait
@@ -70,7 +71,7 @@ use std::collections::HashMap;
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(not(feature = "serde"))]
-pub trait TableObject: std::fmt::Debug + Any + Send + Sync {
+pub trait TableObject: core::fmt::Debug + Any + Send + Sync {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -83,7 +84,7 @@ pub trait TableObject: std::fmt::Debug + Any + Send + Sync {
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(feature = "serde")]
-pub trait TableObject: std::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
+pub trait TableObject: core::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -92,7 +93,7 @@ pub trait TableObject: std::fmt::Debug + Any + Send + Sync + erased_serde::Seria
 #[cfg(not(feature = "serde"))]
 impl<T> TableObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync,
+    T: core::fmt::Debug + Any + Send + Sync,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -103,7 +104,7 @@ where
 #[cfg(feature = "serde")]
 impl<T> TableObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync + serde::Serialize,
+    T: core::fmt::Debug + Any + Send + Sync + serde::Serialize,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -184,7 +185,7 @@ pub(crate) type CustomParse =
 /// 3. Unknown → [`crate::tables::AnyTableSection::Unknown`]
 #[derive(Default)]
 pub struct TableRegistry {
-    custom: HashMap<u8, CustomParse>,
+    custom: BTreeMap<u8, CustomParse>,
 }
 
 impl TableRegistry {

@@ -4,6 +4,7 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for S2XSatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x17;

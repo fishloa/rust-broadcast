@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, "1.75"] # 1.75 == workspace rust-version (MSRV)
+        rust: [stable, "1.81"] # 1.81 == workspace rust-version (MSRV; core::error::Error)
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -26,7 +26,7 @@ jobs:
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
       # versions (some newer transitive crates require edition2024 / Cargo 1.85).
       # dvb-stream is excluded from the core matrix: it depends on tokio whose
-      # MSRV moves faster than the workspace 1.75 pin; it has its own CI job
+      # MSRV moves faster than the workspace 1.81 pin; it has its own CI job
       # below (stable-only). dvb-tools and dvb-conformance are excluded because
       # they are feature-forcing leaf crates that would mask regressions in
       # the library crates' bare --no-default-features build.
@@ -37,13 +37,18 @@ jobs:
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio which has a faster-moving
-      # MSRV than the workspace 1.75 lock. Including any of them would — via
+      # MSRV than the workspace 1.81 lock. Including any of them would — via
       # workspace feature unification — force those features on and mask a
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
-      - name: Test (no default features)
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
+      # `--features std`: the library crates are #![no_std] with the default
+      # `std` feature off, and the libtest harness requires std — so tests are
+      # run with std re-enabled but the OTHER optional features (chrono/ts/serde)
+      # still off, to catch feature-gating regressions. The bare-metal `no_std`
+      # job below is what proves the #![no_std] build.
+      - name: Test (no optional features, std on)
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked
 
   lint:
     name: clippy
@@ -75,8 +80,31 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  # True no_std proof: build each library crate for a bare-metal target with
+  # its default `std` feature off. This is per-crate (no workspace feature
+  # unification) and links without the std runtime — the only check that
+  # genuinely enforces #![no_std] (the `--no-default-features` host lane above
+  # does not, since std is present on the host). dvb-tools/dvb-stream are
+  # std-only applications and are intentionally not built here.
+  no-std:
+    name: no_std (thumbv7em-none-eabi)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+      - name: Build each library crate for bare-metal (no_std)
+        run: |
+          for c in dvb-common dvb-bbframe dvb-scte35 dvb-t2mi dvb-si dvb-conformance; do
+            echo "::group::$c (no_std)"
+            cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
+            echo "::endgroup::"
+          done
+
   # dvb-stream is versioned and released independently from the lockstep
-  # v-tag publish (tokio's MSRV moves faster than workspace 1.75). It is
+  # v-tag publish (tokio's MSRV moves faster than workspace 1.81). It is
   # tested on stable only in this dedicated job.
   dvb-stream:
     name: dvb-stream (stable)

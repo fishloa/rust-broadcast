@@ -1,6 +1,57 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
 
+/// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
+/// (`docs/en_300_468.md`, Table 146 — Icon transport mode coding).
+///
+/// 2-bit field. Selects where the icon data is carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum IconTransportMode {
+    /// `0` — the icon is delivered in the `icon_data_byte` sequence of bytes.
+    InlineData,
+    /// `1` — the location of the icon file is identified by the URL conveyed in
+    /// the `url_char` sequence of bytes.
+    Url,
+    /// `2`–`3` — reserved for future use.
+    Reserved(u8),
+}
+
+impl IconTransportMode {
+    #[must_use]
+    /// Creates a value from a 2-bit wire nibble (upper bits masked off),
+    /// preserving every possible value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x03 {
+            0 => Self::InlineData,
+            1 => Self::Url,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the 2-bit wire nibble for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::InlineData => 0,
+            Self::Url => 1,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::InlineData => "inline data",
+            Self::Url => "URL",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(IconTransportMode, Reserved);
+
 impl<'a> ExtensionBodyDef<'a> for ImageIcon<'a> {
     const TAG_EXTENSION: u8 = 0x00;
     const NAME: &'static str = "IMAGE_ICON";
@@ -33,6 +84,7 @@ pub struct ImageIcon<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub enum ImageIconBody<'a> {
     /// `descriptor_number == 0`: icon metadata + first payload chunk.
     First(ImageIconFirst<'a>),
@@ -49,7 +101,7 @@ pub enum ImageIconBody<'a> {
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct ImageIconFirst<'a> {
     /// `icon_transport_mode` (2 bits) — Table 146.
-    pub icon_transport_mode: u8,
+    pub icon_transport_mode: IconTransportMode,
     /// `position` is `Some` iff `position_flag == 1`.
     pub position: Option<IconPosition>,
     /// `icon_type_char` text run (length-delimited in the wire).
@@ -112,7 +164,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                 });
             }
             let packed = sel[2];
-            let icon_transport_mode = packed >> 6;
+            let icon_transport_mode = IconTransportMode::from_u8(packed >> 6);
             let position_flag = (packed >> 5) & 0x01;
             let mut pos = 3usize;
 
@@ -162,7 +214,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
 
             // Transport-mode-dependent payload
             let payload = match icon_transport_mode {
-                0 => {
+                IconTransportMode::InlineData => {
                     if sel.len() < pos + 1 {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -183,7 +235,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                     pos += payload_len;
                     IconLocation::Data(p)
                 }
-                1 => {
+                IconTransportMode::Url => {
                     if sel.len() < pos + 1 {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -285,9 +337,10 @@ impl Serialize for ImageIcon<'_> {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
                 let position_flag = u8::from(f.position.is_some());
+                let itm = f.icon_transport_mode.to_u8() & 0x03;
                 if let Some(pos) = &f.position {
                     // ... | coordinate_system(3) | reserved_future_use(2)=1
-                    buf[p] = (f.icon_transport_mode << 6)
+                    buf[p] = (itm << 6)
                         | (position_flag << 5)
                         | ((pos.coordinate_system & 0x07) << 2)
                         | 0x03;
@@ -301,7 +354,7 @@ impl Serialize for ImageIcon<'_> {
                     p += 3;
                 } else {
                     // ... | position_flag(1) | reserved_future_use(5)=1
-                    buf[p] = (f.icon_transport_mode << 6) | (position_flag << 5) | 0x1F;
+                    buf[p] = (itm << 6) | (position_flag << 5) | 0x1F;
                     p += 1;
                 }
                 // icon_type_length + run
@@ -362,7 +415,7 @@ mod tests {
                 assert_eq!(b.icon_id, 5);
                 match &b.body {
                     ImageIconBody::First(f) => {
-                        assert_eq!(f.icon_transport_mode, 0);
+                        assert_eq!(f.icon_transport_mode, IconTransportMode::InlineData);
                         assert!(f.position.is_some());
                         let pos = f.position.as_ref().unwrap();
                         assert_eq!(pos.coordinate_system, 1);
@@ -394,7 +447,7 @@ mod tests {
         match &d.body {
             ExtensionBody::ImageIcon(b) => match &b.body {
                 ImageIconBody::First(f) => {
-                    assert_eq!(f.icon_transport_mode, 1);
+                    assert_eq!(f.icon_transport_mode, IconTransportMode::Url);
                     assert!(f.position.is_none());
                     assert_eq!(f.icon_type.raw(), &[0xAB]);
                     match &f.payload {
@@ -420,7 +473,7 @@ mod tests {
         match &d.body {
             ExtensionBody::ImageIcon(b) => match &b.body {
                 ImageIconBody::First(f) => {
-                    assert_eq!(f.icon_transport_mode, 2);
+                    assert_eq!(f.icon_transport_mode, IconTransportMode::Reserved(2));
                     assert!(f.position.is_none());
                     assert!(f.icon_type.is_empty());
                     assert!(matches!(f.payload, IconLocation::None));
@@ -501,5 +554,30 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":0"));
         assert!(json.contains("\"imageIcon\""));
+    }
+
+    #[test]
+    fn icon_transport_mode_full_range_round_trip() {
+        for v in 0u8..=0x03 {
+            let itm = IconTransportMode::from_u8(v);
+            assert_eq!(
+                itm.to_u8(),
+                v,
+                "IconTransportMode round-trip failed for {v}"
+            );
+        }
+    }
+
+    #[test]
+    fn icon_transport_mode_known_values() {
+        assert_eq!(IconTransportMode::from_u8(0), IconTransportMode::InlineData);
+        assert_eq!(IconTransportMode::from_u8(1), IconTransportMode::Url);
+        assert_eq!(
+            IconTransportMode::from_u8(2),
+            IconTransportMode::Reserved(2)
+        );
+        assert_eq!(IconTransportMode::InlineData.name(), "inline data");
+        assert_eq!(IconTransportMode::Url.name(), "URL");
+        assert_eq!(IconTransportMode::Reserved(3).name(), "reserved");
     }
 }

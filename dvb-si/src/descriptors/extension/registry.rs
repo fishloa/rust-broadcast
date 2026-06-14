@@ -18,8 +18,9 @@
 //!
 //! [`DescriptorRegistry`]: super::super::registry::DescriptorRegistry
 
-use std::any::Any;
-use std::collections::HashMap;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use core::any::Any;
 
 use super::{validate_and_split, ExtensionBodyDef, ExtensionDescriptor};
 use crate::error::Result;
@@ -36,7 +37,7 @@ use crate::error::Result;
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(not(feature = "serde"))]
-pub trait ExtensionObject: std::fmt::Debug + Any + Send + Sync {
+pub trait ExtensionObject: core::fmt::Debug + Any + Send + Sync {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -49,7 +50,7 @@ pub trait ExtensionObject: std::fmt::Debug + Any + Send + Sync {
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(feature = "serde")]
-pub trait ExtensionObject: std::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
+pub trait ExtensionObject: core::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -58,7 +59,7 @@ pub trait ExtensionObject: std::fmt::Debug + Any + Send + Sync + erased_serde::S
 #[cfg(not(feature = "serde"))]
 impl<T> ExtensionObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync,
+    T: core::fmt::Debug + Any + Send + Sync,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -69,7 +70,7 @@ where
 #[cfg(feature = "serde")]
 impl<T> ExtensionObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync + serde::Serialize,
+    T: core::fmt::Debug + Any + Send + Sync + serde::Serialize,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -121,7 +122,7 @@ impl dyn ExtensionObject {
 pub(crate) fn serialize_erased<S: serde::Serializer>(
     v: &Box<dyn ExtensionObject>,
     s: S,
-) -> std::result::Result<S::Ok, S::Error> {
+) -> core::result::Result<S::Ok, S::Error> {
     erased_serde::serialize(&**v, s)
 }
 
@@ -151,7 +152,7 @@ pub(crate) type CustomParse =
 /// [`ExtensionBody`]: super::ExtensionBody
 #[derive(Default)]
 pub struct ExtensionRegistry {
-    custom: HashMap<u8, CustomParse>,
+    custom: BTreeMap<u8, CustomParse>,
 }
 
 impl ExtensionRegistry {

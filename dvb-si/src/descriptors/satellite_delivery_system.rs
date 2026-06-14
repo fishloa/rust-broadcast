@@ -16,6 +16,7 @@ const BODY_LEN: u8 = 11;
 /// Polarization (§6.2.13.2 Table 38).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum Polarization {
     /// Linear horizontal.
     LinearHorizontal,
@@ -66,6 +67,7 @@ dvb_common::impl_spec_display!(Polarization);
 /// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ModulationSystem {
     /// DVB-S (first generation).
     DvbS,
@@ -88,6 +90,7 @@ dvb_common::impl_spec_display!(ModulationSystem);
 /// Modulation type (§6.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ModulationType {
     /// Auto-detect.
     Auto,
@@ -261,7 +264,7 @@ impl SatelliteDeliverySystemDescriptor {
                 reason: "degrees must be in 0.0..=6553.5",
             });
         }
-        let tenths = (deg * 10.0).round() as u64;
+        let tenths = libm::round(deg * 10.0) as u64;
         self.orbital_position_bcd = super::encode_bcd_field(
             tenths,
             4,

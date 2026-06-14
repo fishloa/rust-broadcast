@@ -1,5 +1,7 @@
 //! T2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.3 (tag_extension 0x04).
 use super::*;
+use alloc::vec;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;

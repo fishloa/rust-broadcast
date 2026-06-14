@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-scte35"
-version      = "6.7.0"
+version      = "7.0.0"
 edition      = "2021"
 description  = "ANSI/SCTE 35 2023r1 splice information (Digital Program Insertion cueing) parser + builder."
 license      = "MIT OR Apache-2.0"
@@ -9,15 +9,15 @@ keywords     = ["scte35", "splice", "ad-insertion", "mpeg", "broadcast"]
 categories   = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
-rust-version = "1.75"
+rust-version = "1.81"
 exclude      = ["docs/**"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "6.7" }
-thiserror  = "2"
+dvb-common = { path = "../dvb-common", version = "7.0", default-features = false }
+thiserror = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
@@ -26,7 +26,10 @@ base64     = "0.22"
 serde_json = "1.0"
 
 [features]
-default = ["serde"]
+default = ["std", "serde"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std  = ["dvb-common/std", "thiserror/std"]
 
 # JSON / generic serialization on parsed + owned variants (Serialize-only,
 # mirroring the workspace posture — there is no Deserialize).

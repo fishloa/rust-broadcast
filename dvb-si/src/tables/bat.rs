@@ -7,6 +7,8 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use alloc::string::String;
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id value for BAT.

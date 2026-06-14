@@ -156,6 +156,9 @@
 //! `MIGRATION-4.0.md` covers the 3.x → 4.0 API break.
 
 #![warn(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+extern crate alloc;
 
 pub mod carousel;
 pub mod collect;

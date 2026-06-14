@@ -9,7 +9,9 @@
 //! Spec: `docs/iso_13818_6_biop.md` (ETSI TR 101 202 §4.7.4).
 
 use super::message::{BiopMessage, DirectoryMessage};
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
 
 // ── CarouselObject ────────────────────────────────────────────────────────────
 
@@ -41,7 +43,7 @@ pub struct FileObjectData {
 
 // ── Key type ──────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct ObjectKey {
     module_id: u16,
     object_key: Vec<u8>,
@@ -65,7 +67,7 @@ struct ObjectKey {
 /// Binding names that end in `\0` have the trailing NUL stripped before matching.
 #[derive(Debug, Clone)]
 pub struct CarouselFs {
-    objects: HashMap<ObjectKey, CarouselObject>,
+    objects: BTreeMap<ObjectKey, CarouselObject>,
     /// Key of the ServiceGateway (root) object, if found.
     root_key: Option<ObjectKey>,
 }
@@ -76,7 +78,7 @@ impl CarouselFs {
     /// Each module's bytes are walked via `BiopMessage::parse_at`.
     /// Unknown message kinds are silently skipped.
     pub fn from_modules(modules: &[(u16, &[u8])]) -> Self {
-        let mut objects: HashMap<ObjectKey, CarouselObject> = HashMap::new();
+        let mut objects: BTreeMap<ObjectKey, CarouselObject> = BTreeMap::new();
         let mut root_key: Option<ObjectKey> = None;
 
         for &(module_id, data) in modules {
@@ -212,8 +214,7 @@ mod tests {
     use crate::carousel::biop::ior::NameComponent;
     use crate::carousel::biop::{
         ior::{BiopProfileBody, ConnBinder, Ior, ObjectLocation, TaggedProfile},
-        message::{Binding, BiopMessage, DirectoryMessage, FileMessage},
-        BINDING_NOBJECT,
+        message::{Binding, BindingType, BiopMessage, DirectoryMessage, FileMessage},
     };
     use dvb_common::Serialize;
 
@@ -241,13 +242,13 @@ mod tests {
             object_kind: *b"srg\0",
             object_key: &[0x01],
             object_info: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             bindings: vec![Binding {
                 name: vec![NameComponent {
                     id: b"index.html",
                     kind: b"fil\0",
                 }],
-                binding_type: BINDING_NOBJECT,
+                binding_type: BindingType::NObject,
                 ior: file_ior,
                 object_info: &[],
             }],
@@ -257,7 +258,7 @@ mod tests {
             object_key: &[0x02],
             content_size: 11,
             object_info_extra: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             content: b"hello world",
         });
 

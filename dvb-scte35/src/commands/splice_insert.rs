@@ -6,6 +6,8 @@
 //! (flag 0) is deprecated but parsed/serialized losslessly via
 //! [`SpliceInsert::components`].
 
+use alloc::vec::Vec;
+
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
 use crate::traits::CommandDef;

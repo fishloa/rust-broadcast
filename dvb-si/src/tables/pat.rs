@@ -5,6 +5,7 @@
 //! program_number 0x0000 is special — its PID is the NIT PID.
 
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// PAT table_id (ISO/IEC 13818-1 Table 2-30).

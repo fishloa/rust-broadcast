@@ -10,6 +10,7 @@
 use crate::descriptors::ca::CaDescriptor;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).

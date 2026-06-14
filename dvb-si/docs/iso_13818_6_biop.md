@@ -315,3 +315,111 @@ stream. The implementation therefore parses the IOR with no alignment gap and
 **rejects** a non-alias `type_id_length` (`N1 % 4 ≠ 0`) as unsupported rather
 than guessing the ISO alignment rule. The `*_byte_order` fields are the CDR
 byte-order flag and are fixed at `0x00` (big-endian) by DVB guideline.
+
+## Table 4.12 — Tap use values for Stream / StreamEvent messages
+_§4.7.4.3, PDF p. 40_
+
+| Constant | Value | Broadcast on PID |
+|---|---|---|
+| `STR_NPT_USE` | `0x000B` | Stream NPT descriptors |
+| `STR_STATUS_AND_EVENT_USE` | `0x000C` | Stream mode + stream event descriptors |
+| `STR_EVENT_USE` | `0x000D` | Stream event descriptors |
+| `STR_STATUS_USE` | `0x000E` | Stream mode descriptors |
+| `BIOP_ES_USE` | `0x0018` | Elementary stream (video/audio) |
+| `BIOP_PROGRAM_USE` | `0x0019` | Program (DVB service) reference |
+
+## Table 4.11 — BIOP::StreamMessage syntax
+_§4.7.4.3, PDF p. 39 — `objectKind = "str"`_
+
+| Syntax | bits | Value | Comment |
+|---|---|---|---|
+| common header (magic..message_size) | | | as Table 4.9 |
+| `objectKey_length` | 8 | N1 | |
+| `objectKey_data_byte` × N1 | 8 each | + | |
+| `objectKind_length` | 32 | `0x00000004` | |
+| `objectKind_data` | 4×8 | `0x73747200` | "str\0" |
+| `objectInfo_length` | 16 | N6 | |
+| **DSM::Stream::Info_T {** | | | objectInfo head |
+| `aDescription_length` | 8 | N2 | |
+| `aDescription_bytes` × N2 | 8 each | + | |
+| `duration.aSeconds` | 32 | + | AppNPT seconds (**signed**, `simsbf`) |
+| `duration.aMicroSeconds` | 16 | + | AppNPT microseconds |
+| `audio` | 8 | + | |
+| `video` | 8 | + | |
+| `data` | 8 | + | |
+| **}** | | | (Info_T = N2 + 10 bytes) |
+| `objectInfo_byte` × (N6 − (N2+10)) | 8 each | + | trailing objectInfo |
+| `serviceContextList_count` | 8 | N3 | + loop (context_id 32, context_data_length 16, data) |
+| `messageBody_length` | 32 | * | |
+| `taps_count` | 8 | N4 | |
+| per tap: `id` | 16 | `0x0000` | |
+| per tap: `use` | 16 | + | Table 4.12 (ES_USE / PROGRAM_USE / STR_*_USE) |
+| per tap: `association_tag` | 16 | + | |
+| per tap: `selector_length` | 8 | `0x00` | no selector |
+
+## Table 4.13 — BIOP::StreamEventMessage syntax
+_§4.7.4.5, PDF p. 41 — `objectKind = "ste"`_
+
+Identical to StreamMessage through the `DSM::Stream::Info_T` block, then adds an
+event-name list, and ends with an `eventId` list after the tap loop:
+
+| Syntax | bits | Value | Comment |
+|---|---|---|---|
+| common header + objectKey + objectKind | | `0x73746500` | "ste\0" |
+| `objectInfo_length` | 16 | N6 | |
+| `DSM::Stream::Info_T { … }` | | | exactly as Table 4.11 (N2 + 10 bytes) |
+| **DSM::Event::EventList_T {** | | | |
+| `eventNames_count` | 16 | N3 | |
+| per name: `eventName_length` | 8 | N4 | |
+| `eventName_data_byte` × N4 | 8 each | + | NUL-terminated |
+| **}** | | | |
+| `objectInfo_byte` × (N6 − (N2+10) − (2 + ΣeventName)) | 8 each | + | trailing objectInfo |
+| `serviceContextList_count` | 8 | N | + loop |
+| `messageBody_length` | 32 | * | |
+| `taps_count` | 8 | N5 | tap = id(16)/use(16, Table 4.12)/association_tag(16)/selector_length(8)=0 |
+| `eventIds_count` | 8 | N3 | = `eventNames_count` |
+| `eventId` × N3 | 16 each | + | correlates to the event names |
+
+DVB note: the eventId sequence count equals the eventNames count. DSM-CC events
+are **not** DVB-SI events.
+
+## Table 4.17 — carousel_identifier_descriptor (tag 0x13)
+_§4.7.7.1, PDF p. 45 — inserted in the PMT 2nd (ES_info) descriptor loop of the DSI's elementary stream_
+
+| Syntax | bits | Value | Comment |
+|---|---|---|---|
+| `descriptor_tag` | 8 | `0x13` | |
+| `descriptor_length` | 8 | * | |
+| `carousel_id` | 32 | + | = the object carousel's carouselId |
+| `FormatId` | 8 | + | identifies the FormatSpecifier — Table 4.17a |
+| `FormatSpecifier()` | 8×N2 | + | length depends on `FormatId` (Table 4.17a) |
+| `private_data_byte` × N1 | 8 each | + | remainder of the descriptor |
+
+`FormatId` selects the FormatSpecifier layout (Table 4.17a): `0x00` = none (no
+FormatSpecifier bytes); `0x01` = the aggregated ServiceGateway-location fields
+(see Table 4.17a below); `0x02–0x7F` reserved; `0x80–0xFF` private.
+
+## Table 4.17a — FormatSpecifier in the carousel_identifier_descriptor
+_§4.7.7.1, PDF p. 46 — bit-widths read from the page-46 PDF render (the
+`pdftotext` bits column was misaligned; verified against the rendered table)._
+
+| FormatId | FormatSpecifier | Notes |
+|---|---|---|
+| `0x00` | (none) | ServiceGateway located only via the DSI/DII messages |
+| `0x01` | the aggregated ServiceGateway-location fields below | all `uimsbf` |
+| `0x02`–`0x7F` | reserved (DVB) | |
+| `0x80`–`0xFF` | reserved (private) | |
+
+`FormatId = 0x01` FormatSpecifier (16 bytes fixed + ObjectKeyData):
+
+| Field | bits | Comment |
+|---|---|---|
+| `ModuleVersion` | 8 | |
+| `ModuleId` | 16 | |
+| `BlockSize` | 16 | |
+| `ModuleSize` | 32 | |
+| `CompressionMethod` | 8 | |
+| `OriginalSize` | 32 | |
+| `TimeOut` | 8 | seconds — **NB:** TR 101 202 v1.2.1 shows 8 bits here; the later canonical carousel_identifier_descriptor (TS 102 809 / EN 301 192) uses a 32-bit TimeOut. This crate follows the vendored TR 101 202 (8-bit). |
+| `ObjectKeyLength` | 8 | N1 |
+| `ObjectKeyData` × N1 | 8 each | object key of the ServiceGateway object |

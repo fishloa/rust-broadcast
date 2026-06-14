@@ -13,7 +13,73 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
+
+/// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
+/// (`docs/ts_102_006_ssu.md`, Table 5 — Update_type coding).
+///
+/// 4-bit field in each OUI entry of the SSU `id_selector`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum UpdateType {
+    /// `0x0` — proprietary update solution.
+    ProprietaryUpdateSolution,
+    /// `0x1` — standard update carousel (i.e. without notification table) via broadcast.
+    StandardUpdateCarousel,
+    /// `0x2` — system software update carousel with notification table (UNT) both available via broadcast.
+    UntCarousel,
+    /// `0x3` — system software update signalled via broadcast UNT, update available from the return channel.
+    UntReturnChannel,
+    /// `0x4` — system software update signalled via broadcast UNT, update available from the Internet.
+    UntInternet,
+    /// `0x5`–`0xF` — reserved for future use.
+    Reserved(u8),
+}
+
+impl UpdateType {
+    #[must_use]
+    /// Creates a value from a 4-bit wire nibble, preserving every possible
+    /// value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x0F {
+            0x0 => Self::ProprietaryUpdateSolution,
+            0x1 => Self::StandardUpdateCarousel,
+            0x2 => Self::UntCarousel,
+            0x3 => Self::UntReturnChannel,
+            0x4 => Self::UntInternet,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the 4-bit wire nibble for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::ProprietaryUpdateSolution => 0x0,
+            Self::StandardUpdateCarousel => 0x1,
+            Self::UntCarousel => 0x2,
+            Self::UntReturnChannel => 0x3,
+            Self::UntInternet => 0x4,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ProprietaryUpdateSolution => "proprietary update solution",
+            Self::StandardUpdateCarousel => "standard update carousel",
+            Self::UntCarousel => "SSU carousel with UNT",
+            Self::UntReturnChannel => "SSU UNT (return channel)",
+            Self::UntInternet => "SSU UNT (Internet)",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(UpdateType, Reserved);
 
 /// Descriptor tag for data_broadcast_id_descriptor.
 pub const TAG: u8 = 0x66;
@@ -72,8 +138,7 @@ pub struct SsuOuiEntry<'a> {
     /// `OUI` — 24-bit IEEE Organizationally Unique Identifier.
     pub oui: [u8; 3],
     /// `update_type` `[3:0]` — TS 102 006 Table 5 coding.
-    /// `0x1` = standard update carousel, `0x2` = carousel with UNT, etc.
-    pub update_type: u8,
+    pub update_type: UpdateType,
     /// `update_versioning_flag` — when `1`, `update_version` is valid.
     pub update_versioning_flag: bool,
     /// `update_version` `[4:0]` — version counter; only meaningful when
@@ -118,6 +183,7 @@ pub struct SsuIdSelector<'a> {
 /// non-SSU callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum IdSelector<'a> {
     /// `data_broadcast_id = 0x000A` — TS 102 006 §7.1 Table 4 SSU selector.
     Ssu(SsuIdSelector<'a>),
@@ -199,7 +265,7 @@ impl<'a> Parse<'a> for SsuIdSelector<'a> {
             pos += selector_length;
             oui_entries.push(SsuOuiEntry {
                 oui,
-                update_type: byte3 & SSU_UPDATE_TYPE_MASK,
+                update_type: UpdateType::from_u8(byte3 & SSU_UPDATE_TYPE_MASK),
                 update_versioning_flag: (byte4 & SSU_UPDATE_VERSIONING_FLAG_MASK) != 0,
                 update_version: byte4 & SSU_UPDATE_VERSION_MASK,
                 selector,
@@ -254,7 +320,7 @@ impl Serialize for SsuIdSelector<'_> {
                 });
             }
             buf[pos..pos + 3].copy_from_slice(&e.oui);
-            buf[pos + 3] = e.update_type & SSU_UPDATE_TYPE_MASK; // reserved=0 | update_type
+            buf[pos + 3] = e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK; // reserved=0 | update_type
             let uvf_bit: u8 = if e.update_versioning_flag {
                 SSU_UPDATE_VERSIONING_FLAG_MASK
             } else {
@@ -513,7 +579,7 @@ mod tests {
         SsuIdSelector {
             oui_entries: vec![SsuOuiEntry {
                 oui: [0x00, 0x15, 0x0A],
-                update_type: 0x02, // UNT carousel
+                update_type: UpdateType::UntCarousel,
                 update_versioning_flag: true,
                 update_version: 0x01,
                 selector: &[0xAA, 0xBB, 0xCC],
@@ -576,7 +642,7 @@ mod tests {
         let s = SsuIdSelector {
             oui_entries: vec![SsuOuiEntry {
                 oui: [0x00, 0x00, 0x00],
-                update_type: 0x01,
+                update_type: UpdateType::StandardUpdateCarousel,
                 update_versioning_flag: false,
                 update_version: 0x00,
                 selector: &[],
@@ -587,6 +653,7 @@ mod tests {
         s.serialize_into(&mut buf).unwrap();
         // Wire layout: [0]=OUI_data_length, [1..4]=OUI, [4]=byte3(update_type),
         // [5]=byte4(uvf|uversion), [6]=selector_length.
+        // StandardUpdateCarousel.to_u8() = 0x01
         assert_eq!(buf[4], 0x01); // byte3: update_type = 1
         assert_eq!(buf[5], 0x00); // byte4: uvf=0, uversion=0
         let re = SsuIdSelector::parse(&buf).unwrap();
@@ -676,8 +743,34 @@ mod tests {
         // The typed SSU fields appear in the decoded selector's JSON.
         let decoded = d.id_selector_decoded().unwrap();
         let sj = serde_json::to_string(&decoded).unwrap();
-        assert!(sj.contains("\"update_type\":2"));
+        assert!(sj.contains("\"update_type\""));
         assert!(sj.contains("\"update_versioning_flag\":true"));
         assert!(sj.contains("\"update_version\":1"));
+    }
+
+    #[test]
+    fn update_type_full_range_round_trip() {
+        for v in 0u8..=0x0F {
+            let ut = UpdateType::from_u8(v);
+            assert_eq!(ut.to_u8(), v, "UpdateType round-trip failed for 0x{v:01X}");
+        }
+    }
+
+    #[test]
+    fn update_type_known_values() {
+        assert_eq!(
+            UpdateType::from_u8(0x0),
+            UpdateType::ProprietaryUpdateSolution
+        );
+        assert_eq!(UpdateType::from_u8(0x1), UpdateType::StandardUpdateCarousel);
+        assert_eq!(UpdateType::from_u8(0x2), UpdateType::UntCarousel);
+        assert_eq!(UpdateType::from_u8(0x3), UpdateType::UntReturnChannel);
+        assert_eq!(UpdateType::from_u8(0x4), UpdateType::UntInternet);
+        assert_eq!(UpdateType::from_u8(0x5), UpdateType::Reserved(0x5));
+        assert_eq!(
+            UpdateType::StandardUpdateCarousel.name(),
+            "standard update carousel"
+        );
+        assert_eq!(UpdateType::Reserved(0xF).name(), "reserved");
     }
 }

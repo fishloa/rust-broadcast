@@ -11,6 +11,8 @@
 //!
 //! Parsing uses [`dvb_common::bits::BitReader`] / [`dvb_common::bits::BitWriter`] (MSB-first).
 
+use alloc::vec;
+use alloc::vec::Vec;
 use dvb_common::bits::{BitReader, BitWriter};
 
 use super::enums::{

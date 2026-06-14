@@ -1,5 +1,90 @@
 //! Network Change Notify Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x07).
 use super::*;
+use alloc::vec::Vec;
+
+/// Change type — ETSI EN 300 468 §6.4.10 Table 151
+/// (`docs/en_300_468.md`, Table 151 — Change type coding).
+///
+/// 4-bit field. Classifies the nature of the network change event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum ChangeType {
+    /// `0` — message only.
+    MessageOnly,
+    /// `1` — minor - default.
+    MinorDefault,
+    /// `2` — minor - multiplex removed.
+    MinorMultiplexRemoved,
+    /// `3` — minor - service changed.
+    MinorServiceChanged,
+    /// `4`–`7` — reserved for future use for other minor changes.
+    MinorReserved(u8),
+    /// `8` — major - default.
+    MajorDefault,
+    /// `9` — major - multiplex frequency changed.
+    MajorFrequencyChanged,
+    /// `10` — major - multiplex coverage changed.
+    MajorCoverageChanged,
+    /// `11` — major - multiplex added.
+    MajorMultiplexAdded,
+    /// `12`–`15` — reserved for future use for other major changes.
+    MajorReserved(u8),
+}
+
+impl ChangeType {
+    #[must_use]
+    /// Creates a value from a 4-bit wire nibble (upper bits masked off),
+    /// preserving every possible value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x0F {
+            0 => Self::MessageOnly,
+            1 => Self::MinorDefault,
+            2 => Self::MinorMultiplexRemoved,
+            3 => Self::MinorServiceChanged,
+            v @ 4..=7 => Self::MinorReserved(v),
+            8 => Self::MajorDefault,
+            9 => Self::MajorFrequencyChanged,
+            10 => Self::MajorCoverageChanged,
+            11 => Self::MajorMultiplexAdded,
+            v => Self::MajorReserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the 4-bit wire nibble for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::MessageOnly => 0,
+            Self::MinorDefault => 1,
+            Self::MinorMultiplexRemoved => 2,
+            Self::MinorServiceChanged => 3,
+            Self::MinorReserved(v) | Self::MajorReserved(v) => v,
+            Self::MajorDefault => 8,
+            Self::MajorFrequencyChanged => 9,
+            Self::MajorCoverageChanged => 10,
+            Self::MajorMultiplexAdded => 11,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::MessageOnly => "message only",
+            Self::MinorDefault => "minor - default",
+            Self::MinorMultiplexRemoved => "minor - multiplex removed",
+            Self::MinorServiceChanged => "minor - service changed",
+            Self::MinorReserved(_) => "reserved (minor)",
+            Self::MajorDefault => "major - default",
+            Self::MajorFrequencyChanged => "major - multiplex frequency changed",
+            Self::MajorCoverageChanged => "major - multiplex coverage changed",
+            Self::MajorMultiplexAdded => "major - multiplex added",
+            Self::MajorReserved(_) => "reserved (major)",
+        }
+    }
+}
+dvb_common::impl_spec_display!(ChangeType, MinorReserved, MajorReserved);
 
 const CELL_HEADER_LEN: usize = 2; // cell_id(16)
 const LOOP_LENGTH_LEN: usize = 1; // loop_length(8)
@@ -38,8 +123,8 @@ pub struct NetworkChange {
     pub change_duration: u32,
     /// receiver_category(3).
     pub receiver_category: u8,
-    /// change_type(4).
-    pub change_type: u8,
+    /// change_type(4) — [`ChangeType`].
+    pub change_type: ChangeType,
     /// message_id(8).
     pub message_id: u8,
     /// invariant_ts (tsid, onid), present iff invariant_ts_present==1.
@@ -149,7 +234,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 let packed = sel[pos + 10];
                 let receiver_category = packed >> 5;
                 let invariant_ts_present = (packed >> 4) & 1;
-                let change_type = packed & 0x0F;
+                let change_type = ChangeType::from_u8(packed & 0x0F);
                 let message_id = sel[pos + 11];
                 pos += CHANGE_BASE_LEN;
 
@@ -239,7 +324,7 @@ impl Serialize for NetworkChangeNotify {
                 buf[pos + 9] = dur as u8;
                 let packed = ((ch.receiver_category & 0x07) << 5)
                     | ((ch.invariant_ts.is_some() as u8) << 4)
-                    | (ch.change_type & 0x0F);
+                    | (ch.change_type.to_u8() & 0x0F);
                 buf[pos + 10] = packed;
                 buf[pos + 11] = ch.message_id;
                 pos += CHANGE_BASE_LEN;
@@ -303,7 +388,7 @@ mod tests {
                 assert_eq!(ch0.start_time_of_change, 1);
                 assert_eq!(ch0.change_duration, 1);
                 assert_eq!(ch0.receiver_category, 1);
-                assert_eq!(ch0.change_type, 3);
+                assert_eq!(ch0.change_type, ChangeType::MinorServiceChanged);
                 assert_eq!(ch0.message_id, 0x40);
                 assert!(ch0.invariant_ts.is_none());
 
@@ -313,7 +398,7 @@ mod tests {
                 assert_eq!(ch1.start_time_of_change, 2);
                 assert_eq!(ch1.change_duration, 2);
                 assert_eq!(ch1.receiver_category, 2);
-                assert_eq!(ch1.change_type, 4);
+                assert_eq!(ch1.change_type, ChangeType::MinorReserved(4));
                 assert_eq!(ch1.message_id, 0x50);
                 let inv = ch1.invariant_ts.as_ref().unwrap();
                 assert_eq!(inv.tsid, 0xAAAA);
@@ -353,7 +438,7 @@ mod tests {
                 assert_eq!(ch0.start_time_of_change, 0xE5CC231234);
                 assert_eq!(ch0.change_duration, 0x085203);
                 assert_eq!(ch0.receiver_category, 0);
-                assert_eq!(ch0.change_type, 2);
+                assert_eq!(ch0.change_type, ChangeType::MinorMultiplexRemoved);
                 assert_eq!(ch0.message_id, 0x81);
                 assert!(ch0.invariant_ts.is_none());
 
@@ -364,7 +449,7 @@ mod tests {
                 assert_eq!(ch1.start_time_of_change, 0xE5E2023456);
                 assert_eq!(ch1.change_duration, 0x113245);
                 assert_eq!(ch1.receiver_category, 1);
-                assert_eq!(ch1.change_type, 0xB);
+                assert_eq!(ch1.change_type, ChangeType::MajorMultiplexAdded);
                 assert_eq!(ch1.message_id, 0x83);
                 let inv = ch1.invariant_ts.as_ref().unwrap();
                 assert_eq!(inv.tsid, 0xDEAD);
@@ -414,5 +499,29 @@ mod tests {
             }
             other => panic!("expected NetworkChangeNotify, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn change_type_full_range_round_trip() {
+        for v in 0u8..=0x0F {
+            let ct = ChangeType::from_u8(v);
+            assert_eq!(ct.to_u8(), v, "ChangeType round-trip failed for {v}");
+        }
+    }
+
+    #[test]
+    fn change_type_known_values() {
+        assert_eq!(ChangeType::from_u8(0), ChangeType::MessageOnly);
+        assert_eq!(ChangeType::from_u8(1), ChangeType::MinorDefault);
+        assert_eq!(ChangeType::from_u8(4), ChangeType::MinorReserved(4));
+        assert_eq!(ChangeType::from_u8(8), ChangeType::MajorDefault);
+        assert_eq!(ChangeType::from_u8(9), ChangeType::MajorFrequencyChanged);
+        assert_eq!(ChangeType::from_u8(10), ChangeType::MajorCoverageChanged);
+        assert_eq!(ChangeType::from_u8(11), ChangeType::MajorMultiplexAdded);
+        assert_eq!(ChangeType::from_u8(12), ChangeType::MajorReserved(12));
+        assert_eq!(ChangeType::MessageOnly.name(), "message only");
+        assert_eq!(ChangeType::MajorDefault.name(), "major - default");
+        assert_eq!(ChangeType::MinorReserved(5).name(), "reserved (minor)");
+        assert_eq!(ChangeType::MajorReserved(13).name(), "reserved (major)");
     }
 }

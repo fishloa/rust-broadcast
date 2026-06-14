@@ -25,8 +25,14 @@
 //! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.3, Table 5.0c
 //! - ISO/IEC 13818-1 (MPEG-2 Systems)
 
+#![cfg_attr(not(feature = "std"), no_std)]
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 use core::time::Duration;
-use std::collections::HashMap;
 
 use dvb_common::Parse;
 use dvb_si::section::Section;
@@ -444,33 +450,33 @@ pub struct ConformanceMonitor {
     bad_run: u8,
 
     // Per-PID continuity counter (1.4)
-    cc_states: HashMap<u16, CcState>,
+    cc_states: BTreeMap<u16, CcState>,
 
     // PAT section reassembly + timing (1.3.a)
     pat_reassembler: SectionReassembler,
     pat_timer: PresenceTimer,
 
     // PMT section reassembly + timing per program_map_PID (1.5.a)
-    pmt_trackings: HashMap<u16, PmtTracking>,
+    pmt_trackings: BTreeMap<u16, PmtTracking>,
 
     // Referenced ES PID timing (1.6)
-    es_trackings: HashMap<u16, EsTracking>,
+    es_trackings: BTreeMap<u16, EsTracking>,
 
     // Well-known SI/PSI section reassembly + CRC checking (2.2)
-    si_reassemblies: HashMap<u16, SiReassembly>,
+    si_reassemblies: BTreeMap<u16, SiReassembly>,
 
     // Per-PID PCR tracking (2.3a, 2.3b)
-    pcr_states: HashMap<u16, PcrState>,
+    pcr_states: BTreeMap<u16, PcrState>,
 
     // Per-PID PTS tracking (2.5)
-    pts_states: HashMap<u16, PtsState>,
+    pts_states: BTreeMap<u16, PtsState>,
 
     // CAT tracking (2.6)
     cat_seen: bool,
     scrambled_without_cat_reported: bool,
 
     // SI repetition-interval timers keyed by table_id (3.2)
-    si_timers: HashMap<u8, SiRepetitionTimer>,
+    si_timers: BTreeMap<u8, SiRepetitionTimer>,
 }
 
 impl ConformanceMonitor {
@@ -481,7 +487,7 @@ impl ConformanceMonitor {
 
     /// Create a monitor with the given configuration.
     pub fn with_config(config: Config) -> Self {
-        let mut si_reassemblies = HashMap::new();
+        let mut si_reassemblies = BTreeMap::new();
         for &pid in &SI_PIDS {
             si_reassemblies.insert(
                 pid,
@@ -501,20 +507,20 @@ impl ConformanceMonitor {
             in_sync: false,
             good_run: 0,
             bad_run: 0,
-            cc_states: HashMap::new(),
+            cc_states: BTreeMap::new(),
             pat_reassembler: SectionReassembler::default(),
             pat_timer: PresenceTimer {
                 last_seen: Duration::ZERO,
                 reported: false,
             },
-            pmt_trackings: HashMap::new(),
-            es_trackings: HashMap::new(),
+            pmt_trackings: BTreeMap::new(),
+            es_trackings: BTreeMap::new(),
             si_reassemblies,
-            pcr_states: HashMap::new(),
-            pts_states: HashMap::new(),
+            pcr_states: BTreeMap::new(),
+            pts_states: BTreeMap::new(),
             cat_seen: false,
             scrambled_without_cat_reported: false,
-            si_timers: HashMap::new(),
+            si_timers: BTreeMap::new(),
         }
     }
 
@@ -657,7 +663,7 @@ impl ConformanceMonitor {
             let sections: Vec<_> = if let Some(tracking) = self.pmt_trackings.get_mut(&pid) {
                 tracking.timer.last_seen = t;
                 tracking.timer.reported = false;
-                std::iter::from_fn(|| tracking.reassembler.pop_section()).collect()
+                core::iter::from_fn(|| tracking.reassembler.pop_section()).collect()
             } else {
                 Vec::new()
             };
@@ -680,7 +686,7 @@ impl ConformanceMonitor {
                 }
             }
             let sections: Vec<_> = if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
-                std::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
+                core::iter::from_fn(|| si_ra.reassembler.pop_section()).collect()
             } else {
                 Vec::new()
             };

@@ -2,7 +2,7 @@
 //!
 //! Reconstructs T2-MI packets from MPEG-2 TS payloads per ETSI TS 102 773 §6.1.1.
 
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 
 use crate::crc::CRC_LEN;
 

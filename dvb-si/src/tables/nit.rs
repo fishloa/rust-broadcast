@@ -7,6 +7,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id value for NIT actual (current TS).
@@ -31,6 +32,7 @@ const TS_HEADER_LEN: usize = 6;
 /// NIT kind — distinguishes `0x40` (actual) from `0x41` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum NitKind {
     /// NIT for the transport stream the receiver is tuned to.
     Actual,
