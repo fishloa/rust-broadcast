@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-06-14
+
+**BREAKING (MSRV 1.75 → 1.81).**
+
+### Added
+- **no_std + alloc support** (#63).
+
+### Changed (breaking)
+- Every public enum is `#[non_exhaustive]` (#208) — incl. `DeviceRestrictions`,
+  `SegmentationUpidType`, `SegmentationTypeId`.
+- MSRV **1.81**.
+
 ## [6.7.0] — 2026-06-14
 
 ### Added

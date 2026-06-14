@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 7.0.0 — 2026-06-14
+
+**BREAKING.**
+
+### Added
+- **BIOP stream + carousel typing**: `StreamMessage`/`StreamEventMessage`
+  (Tables 4.11/4.13), typed `serviceContextList` (`ServiceContext`), and the
+  `carousel_identifier_descriptor` (tag 0x13, Tables 4.17/4.17a).
+- **no_std + alloc** (#63): `#![no_std]` without the default `std` feature
+  (HashMap→BTreeMap, Arc→alloc).
+
+### Changed (breaking)
+- **`BiopMessage::Stream`/`StreamEvent`** now carry typed messages, not `&[u8]`.
+- **`serviceContext`** fields are `Vec<ServiceContext>`, not `&[u8]`.
+- **Coded fields are now typed enums** (#210): `binding_type`→`BindingType`,
+  `application_type`→`ApplicationType`, `update_type`→`UpdateType`,
+  `icon_transport_mode`→`IconTransportMode`, `identifier_type`→`IdentifierType`,
+  `change_type`→`ChangeType`, `range_type`→`RangeType`, `time_plan_mode`→`TimePlanMode`.
+- **Every public enum is `#[non_exhaustive]`** (#208).
+- MSRV **1.81**.
+
 ## 6.7.0 — 2026-06-14
 
 ### Added

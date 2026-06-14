@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [7.0.0] — 2026-06-14
+
+**BREAKING (MSRV 1.75 → 1.81).**
+
+### Added
+- **no_std + alloc support** (#63; HashMap→BTreeMap).
+
+### Changed (breaking)
+- MSRV **1.81**.
+
 ## [6.7.0] — 2026-06-14
 
 ### Added
