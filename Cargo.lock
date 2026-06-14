@@ -285,6 +285,7 @@ dependencies = [
  "erased-serde",
  "flate2",
  "hex",
+ "libm",
  "num_enum",
  "serde",
  "serde_json",

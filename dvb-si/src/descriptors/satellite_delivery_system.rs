@@ -264,7 +264,7 @@ impl SatelliteDeliverySystemDescriptor {
                 reason: "degrees must be in 0.0..=6553.5",
             });
         }
-        let tenths = (deg * 10.0).round() as u64;
+        let tenths = libm::round(deg * 10.0) as u64;
         self.orbital_position_bcd = super::encode_bcd_field(
             tenths,
             4,
