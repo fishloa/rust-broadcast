@@ -1,56 +1,105 @@
 # dvb-conformance
 
+[![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance)
+[![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
+
 ETSI TR 101 290 v1.4.1 transport-stream conformance monitor (DVB measurement
 guidelines). Feed TS packets with a caller-supplied monotonic clock, drain
-structured conformance events for each indicator.
+structured conformance events per indicator.
 
-## Indicator coverage
+## Quick start
 
-| Priority | Indicator | Status |
-|----------|-----------|--------|
-| 1 | 1.1 `TS_sync_loss` | ✅ |
-| 1 | 1.2 `Sync_byte_error` | ✅ |
-| 1 | 1.3.a `PAT_error_2` | ✅ |
-| 1 | 1.4 `Continuity_count_error` | ✅ |
-| 1 | 1.5.a `PMT_error_2` | ✅ |
-| 1 | 1.6 `PID_error` | ✅ |
-| 2 | 2.1 `Transport_error` | ✅ |
-| 2 | 2.2 `CRC_error` | ✅ |
-| 2 | 2.3a `PCR_repetition_error` | ✅ |
-| 2 | 2.3b `PCR_discontinuity_indicator_error` | ✅ |
-| 2 | 2.4 `PCR_accuracy_error` | ❌ requires hardware arrival timestamps; not computable under the caller-supplied-time model |
-| 2 | 2.5 `PTS_error` | ✅ |
-| 2 | 2.6 `CAT_error` | ✅ |
-| 3 | 3.2 `SI_repetition_error` (max interval) | ✅ |
-| 3 | 3.2 `SI_repetition_error` (25 ms min gap) | ❌ deferred — needs per-`(table_id, section_number)` tracking to avoid false positives on dense multi-section tables |
-| 3 | 3.1/3.3–3.10 | ❌ (out of scope) |
-| SI | Per-table presence (3.1/3.5/3.6/3.8) | ❌ (out of scope) |
+```rust
+use dvb_conformance::{ConformanceMonitor, ConformanceEvent, Indicator};
+use core::time::Duration;
 
-## SI_repetition_error (3.2) — implementation notes
+let mut monitor = ConformanceMonitor::new();  // default config
 
-- **Maximum-interval checks** are implemented for NIT_actual (10 s), SDT_actual
+let mut t = Duration::ZERO;
+for packet in ts_packets {
+    t += Duration::from_micros(188 * 8 * 1_000_000 / 6_000_000); // ≈188 bytes @ 6 Mbit/s
+    for event in monitor.feed(packet, t) {
+        eprintln!("[{:?}] {}: {}", event.priority, event.indicator.name(), event.detail);
+    }
+}
+```
+
+Use `ConformanceMonitor::with_config(Config { .. })` to tune thresholds (PAT/PMT
+max intervals, PCR repetition and discontinuity limits, SI repetition intervals, etc.).
+
+## What's implemented
+
+### Indicators — 13 implemented, per the `Indicator` enum in `src/lib.rs`
+
+| Priority | Clause | Indicator | Notes |
+|----------|--------|-----------|-------|
+| 1 | 1.1 | `TsSyncLoss` | Hysteresis: 5 consecutive good → in-sync; 2 consecutive bad → sync lost |
+| 1 | 1.2 | `SyncByteError` | `sync_byte != 0x47` on any packet |
+| 1 | 1.3.a | `PatError2` | PAT absent > 500 ms (default); wrong table_id or scrambled on PID 0x0000 |
+| 1 | 1.4 | `ContinuityCountError` | CC wrap + duplicate-packet allowance (one dup per sequence) |
+| 1 | 1.5.a | `PmtError2` | PMT absent > 500 ms per `program_map_PID`; scrambled on PMT PID |
+| 1 | 1.6 | `PidError` | Referenced ES PID absent > 5 s (default) |
+| 2 | 2.1 | `TransportError` | `transport_error_indicator` set |
+| 2 | 2.2 | `CrcError` | CRC-32 mismatch on completed long-form SI/PSI section |
+| 2 | 2.3a | `PcrRepetitionError` | PCR interval > 100 ms (default) on any PCR-carrying PID |
+| 2 | 2.3b | `PcrDiscontinuityError` | PCR delta > 100 ms (default) without `discontinuity_indicator` |
+| 2 | 2.5 | `PtsError` | PTS interval > 700 ms (default) on ES PIDs |
+| 2 | 2.6 | `CatError` | Wrong table_id on PID 0x0001; scrambled packet with no CAT seen |
+| 3 | 3.2 | `SiRepetitionError` | Max-interval dimension: NIT_actual (10 s), SDT_actual (2 s), EIT P/F actual (2 s), TDT (30 s) |
+
+Intentionally excluded:
+
+| Clause | Indicator | Reason |
+|--------|-----------|--------|
+| 2.4 | `PCR_accuracy_error` | Requires hardware arrival timestamps — not computable under the caller-supplied-time model |
+| 3.2 | SI_repetition_error (25 ms min gap) | Deferred — needs per-`(table_id, section_number)` tracking to avoid false positives on dense multi-section tables |
+| 3.1 / 3.3–3.10 | — | Out of scope |
+
+### Caller-supplied time model
+
+`ConformanceMonitor::feed(packet, t)` takes a `core::time::Duration` alongside
+each TS packet. The monitor uses this clock for all presence/absence timeout
+checks (1.3.a, 1.5.a, 1.6, 2.3a, 2.3b, 2.5, 3.2). The caller must supply
+monotonic non-decreasing timestamps; the monitor does not enforce this but
+non-monotonic timestamps will produce spurious events. Because there is no
+independent hardware clock, PCR accuracy (2.4) and buffer-model indicators are
+not computable.
+
+### SI_repetition_error (3.2) — implementation notes
+
+- Maximum-interval checks are implemented for NIT_actual (10 s), SDT_actual
   (2 s), EIT P/F actual (2 s), and TDT (30 s). Each table's timer is lazily
-  armed — checking starts only after the first section of that table is seen.
-  An entirely absent table is **not** flagged by this indicator; that is the
-  role of the per-table presence indicators (3.1, 3.5, 3.6, 3.8) which are
-  out of scope here.
-- **EIT P/F** is tracked at the table level (any section with table_id 0x4E
-  resets the timer), not per section_number (0 / 1). This simplification
-  avoids false positives from dense EIT schedules while still catching the
-  case where no EIT P/F section appears for too long.
-- **25 ms minimum-gap** dimension is deferred — it requires per-section_number
-  tracking to distinguish a legitimate multi-section burst from a
-  repetition-rate violation; without it the check would produce false positives
-  on streams with many short EIT schedule sections.
+  armed — checking starts only after the first section of that table is seen;
+  an entirely absent table is not flagged by this indicator (that is the role
+  of the out-of-scope per-table presence indicators).
+- EIT P/F is tracked at the table level (any section with table_id `0x4E`
+  resets the timer), not per section_number, to avoid false positives on dense
+  EIT schedules.
 
-## Caller-supplied time model
+### PAT-following PMT discovery
 
-`ConformanceMonitor::feed(packet, t)` takes a `Duration` timestamp per packet.
-The monitor uses this clock for all presence/absence timeout checks (1.3.a,
-1.5.a, 1.6, 2.3a, 2.3b, 2.5, 3.2). The caller is responsible for providing a
-monotonic, roughly-wall-clock-aligned timestamp — the monitor does not enforce
-monotonicity, but non-monotonic timestamps will produce spurious timeout events.
+The monitor parses each completed PAT section and automatically starts tracking
+the `program_map_PID` entries it finds, enabling indicator 1.5.a (PMT absence)
+and ES PID extraction (indicator 1.6).
 
-Because the monitor has no independent clock, some later-priority indicators
-(PCR accuracy, buffer model) that require sub-packet timing resolution or
-absolute reference clocks are best-effort under this model.
+## Feature flags
+
+| Feature | Default | Description |
+|---------|---------|-------------|
+| `std` | **on** | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
+| `serde` | **on** | Serialize-only (`serde::Serialize`) on `ConformanceEvent`, `Indicator`, `Priority`, `Stats`. |
+
+## MSRV
+
+Rust **1.81**.
+
+## References
+
+- ETSI TR 101 290 v1.4.1 (2023-05) — DVB Measurement Guidelines (§5.2.1 Table 5.0a, §5.2.2 Table 5.0b, §5.2.3 Table 5.0c)
+- ISO/IEC 13818-1 — MPEG-2 Systems
+
+## License
+
+Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0
+([LICENSE-APACHE](../LICENSE-APACHE)), at your option.

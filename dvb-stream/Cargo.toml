@@ -10,8 +10,8 @@ categories   = ["asynchronous", "multimedia", "network-programming"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
 # dvb-stream is versioned and released INDEPENDENTLY from the dvb-si/dvb-t2mi
-# lockstep. tokio's MSRV moves faster than the workspace 1.75; set explicitly.
-rust-version = "1.75"
+# lockstep. tokio's MSRV moves faster than the workspace 1.81; set explicitly.
+rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true

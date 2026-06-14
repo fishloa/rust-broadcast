@@ -12,7 +12,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
 - **dvb-scte35** — reserved crate (planned; directory exists but is not yet a workspace member).
 
-MSRV is **1.75** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
+MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 
 ## Commands
 
@@ -49,7 +49,7 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
 2. **Branch per issue** off `main`, named for the work (e.g. `complete-descriptors`, `fix-tot-crc`).
 3. **Commit style** follows the existing history: `feat(carousel): …`, `fix(text): …`, `docs(dvb-si): …`, or a plain scoped summary. Imperative, specific, references the spec section when relevant.
 4. **Open a PR** with `gh pr create`, body referencing the issue (`Closes #n`). CI must pass before merge:
-   - test matrix on stable **and** 1.75 (MSRV) — all-features and no-default-features builds
+   - test matrix on stable **and** 1.81 (MSRV) — all-features and no-default-features builds
    - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
    - doc build with `RUSTDOCFLAGS="-D warnings"`

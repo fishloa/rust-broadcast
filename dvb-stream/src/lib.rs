@@ -40,7 +40,7 @@
 //!
 //! # MSRV
 //!
-//! `dvb-stream` **1.75** (mirrors the workspace). This crate is versioned and
+//! `dvb-stream` **1.81** (mirrors the workspace). This crate is versioned and
 //! released **independently** from the `dvb-si` / `dvb-t2mi` lockstep because
 //! tokio's own MSRV moves faster.
 

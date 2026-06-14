@@ -15,6 +15,22 @@ TS (T2-MI PID) ─▶ dvb-t2mi ─▶ BBFrame ─▶ dvb-bbframe ─▶ inner TS
 Each crate is independently useful; together they decode a DVB-T2 modulator
 feed all the way down to a service name string.
 
+## Status & MSRV
+
+| | |
+|---|---|
+| **Versions** | 7 library crates at **7.0.0** (lockstep); `dvb-stream` independently at **0.1.0** |
+| **MSRV** | **1.81** across the workspace |
+| **`no_std`** | The 6 library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
+| **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
+
+To build the library crates for an embedded target:
+
+```console
+$ cargo build --workspace --no-default-features --locked \
+    --exclude dvb-tools --exclude dvb-stream
+```
+
 ## The crates
 
 | Crate | Version | Docs | What it does |
