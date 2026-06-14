@@ -1,0 +1,28 @@
+# BIOP U-U object type_id aliases (objectKind / IOR type_id, 4 bytes).
+# Source: ETSI TR 101 202 §4.7.3.1, Table 4.4.
+# Pinned against docs/iso_13818_6_biop.md ObjectKind enum.
+
+[[entry]]
+value = "dir"
+variant = "Directory"
+spec = "DSM::Directory — TR 101 202 Table 4.4 (alias \"dir\", 0x64697200)"
+
+[[entry]]
+value = "fil"
+variant = "File"
+spec = "DSM::File — TR 101 202 Table 4.4 (alias \"fil\", 0x66696C00)"
+
+[[entry]]
+value = "str"
+variant = "Stream"
+spec = "DSM::Stream — TR 101 202 Table 4.4 (alias \"str\", 0x73747200)"
+
+[[entry]]
+value = "srg"
+variant = "ServiceGateway"
+spec = "DSM::ServiceGateway — TR 101 202 Table 4.4 (alias \"srg\", 0x73726700)"
+
+[[entry]]
+value = "ste"
+variant = "StreamEvent"
+spec = "BIOP::StreamEvent — TR 101 202 Table 4.4 (alias \"ste\", 0x73746500)"

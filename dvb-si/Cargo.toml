@@ -24,6 +24,7 @@ serde         = { version = "1", optional = true, features = ["derive"] }
 erased-serde  = { version = "0.4", optional = true }
 bytes         = { version = "1", optional = true }
 yoke          = { version = "0.7", optional = true, features = ["derive"] }
+flate2        = { version = "1", optional = true }
 encoding_rs = "0.8"
 
 [dev-dependencies]
@@ -52,3 +53,7 @@ serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde"]
 # parsed table/descriptor can be retained past the input buffer's borrow
 # (store/cache/send across threads) without re-parsing or a mirror type.
 yoke     = ["dep:yoke"]
+
+# zlib decompression of compressed_module_descriptor (BIOP module carousels).
+# Off by default; without it the compressed module bytes are exposed raw.
+flate2   = ["dep:flate2"]
