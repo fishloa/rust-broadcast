@@ -2,6 +2,56 @@
 use super::*;
 use alloc::vec::Vec;
 
+/// Range type — ETSI EN 300 468 §6.4.16.1 Table 161
+/// (`docs/en_300_468.md`, Table 161 — Range type coding).
+///
+/// 8-bit field. Selects the interpretation of the `range_selector` bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum RangeType {
+    /// `0x00` — production disparity hint (`production_disparity_hint_info()`).
+    ProductionDisparityHint,
+    /// `0x01` — multi-region disparity Supplemental Enhancement Information (SEI) present.
+    MultiRegionSei,
+    /// `0x02`–`0xFF` — reserved for future use.
+    Reserved(u8),
+}
+
+impl RangeType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible
+    /// byte value for lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            0x00 => Self::ProductionDisparityHint,
+            0x01 => Self::MultiRegionSei,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::ProductionDisparityHint => 0x00,
+            Self::MultiRegionSei => 0x01,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::ProductionDisparityHint => "production disparity hint",
+            Self::MultiRegionSei => "multi-region SEI",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(RangeType, Reserved);
+
 impl<'a> ExtensionBodyDef<'a> for VideoDepthRange<'a> {
     const TAG_EXTENSION: u8 = 0x10;
     const NAME: &'static str = "VIDEO_DEPTH_RANGE";
@@ -12,8 +62,8 @@ impl<'a> ExtensionBodyDef<'a> for VideoDepthRange<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct DepthRange<'a> {
-    /// range_type(8) — Table 161.
-    pub range_type: u8,
+    /// range_type(8) — Table 161 — [`RangeType`].
+    pub range_type: RangeType,
     /// Body interpreted by `range_type`.
     pub body: DepthRangeBody<'a>,
 }
@@ -74,7 +124,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
                     what: "video_depth_range body",
                 });
             }
-            let range_type = sel[pos];
+            let range_type = RangeType::from_u8(sel[pos]);
             let range_length = sel[pos + 1] as usize;
             pos += VD_RANGE_HDR_LEN;
             if sel.len() < pos + range_length {
@@ -86,7 +136,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
             }
             let body = match range_type {
                 // Table 161: production_disparity_hint_info() — Table 162.
-                0x00 => {
+                RangeType::ProductionDisparityHint => {
                     if range_length < VD_DISPARITY_LEN {
                         return Err(invalid(
                             "video_depth_range: production_disparity_hint requires 3+ bytes",
@@ -101,7 +151,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
                     DepthRangeBody::ProductionDisparityHint { max, min }
                 }
                 // Table 161: multi-region SEI present (no body).
-                0x01 => DepthRangeBody::MultiRegionSei,
+                RangeType::MultiRegionSei => DepthRangeBody::MultiRegionSei,
                 // Any other range_type: raw range_selector bytes.
                 _ => DepthRangeBody::Other(&sel[pos..pos + range_length]),
             };
@@ -137,7 +187,7 @@ impl Serialize for VideoDepthRange<'_> {
         }
         let mut p = 0;
         for r in &self.ranges {
-            buf[p] = r.range_type;
+            buf[p] = r.range_type.to_u8();
             match &r.body {
                 DepthRangeBody::ProductionDisparityHint { max, min } => {
                     // Table 162: two 12-bit tcimsbf values packed into 3 bytes.
@@ -198,7 +248,7 @@ mod tests {
         match &d.body {
             ExtensionBody::VideoDepthRange(b) => {
                 assert_eq!(b.ranges.len(), 2);
-                assert_eq!(b.ranges[0].range_type, 0x00);
+                assert_eq!(b.ranges[0].range_type, RangeType::ProductionDisparityHint);
                 match &b.ranges[0].body {
                     DepthRangeBody::ProductionDisparityHint { max, min } => {
                         assert_eq!(*max, 100);
@@ -206,7 +256,7 @@ mod tests {
                     }
                     _ => panic!("expected ProductionDisparityHint"),
                 }
-                assert_eq!(b.ranges[1].range_type, 0x05);
+                assert_eq!(b.ranges[1].range_type, RangeType::Reserved(0x05));
                 match &b.ranges[1].body {
                     DepthRangeBody::Other(s) => assert_eq!(s, &[0xAA, 0xBB]),
                     _ => panic!("expected Other"),
@@ -300,5 +350,26 @@ mod tests {
             ExtensionDescriptor::parse(&bytes).unwrap_err(),
             crate::error::Error::BufferTooShort { .. }
         ));
+    }
+
+    #[test]
+    fn range_type_full_range_round_trip() {
+        for v in 0u8..=0xFF {
+            let rt = RangeType::from_u8(v);
+            assert_eq!(rt.to_u8(), v, "RangeType round-trip failed for 0x{v:02X}");
+        }
+    }
+
+    #[test]
+    fn range_type_known_values() {
+        assert_eq!(RangeType::from_u8(0x00), RangeType::ProductionDisparityHint);
+        assert_eq!(RangeType::from_u8(0x01), RangeType::MultiRegionSei);
+        assert_eq!(RangeType::from_u8(0x02), RangeType::Reserved(0x02));
+        assert_eq!(
+            RangeType::ProductionDisparityHint.name(),
+            "production disparity hint"
+        );
+        assert_eq!(RangeType::MultiRegionSei.name(), "multi-region SEI");
+        assert_eq!(RangeType::Reserved(0xFF).name(), "reserved");
     }
 }

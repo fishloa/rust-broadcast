@@ -14,11 +14,62 @@ use alloc::vec::Vec;
 
 use super::{
     ior::{Ior, NameComponent},
-    BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR, BYTE_ORDER_BIG_ENDIAN,
-    COMPRESSED_MODULE_DESCRIPTOR_TAG,
+    BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
+    BYTE_ORDER_BIG_ENDIAN, COMPRESSED_MODULE_DESCRIPTOR_TAG,
 };
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
+
+/// Binding type — TR 101 202 §4.7.4.1, Table 4.9
+/// (`docs/iso_13818_6_biop.md`, p. 55–56).
+///
+/// Indicates whether a BIOP binding names a non-directory/gateway object
+/// (`nobject`) or a directory or service gateway (`ncontext`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum BindingType {
+    /// `0x01` — name bound to a non-Directory/ServiceGateway object (`nobject`).
+    NObject,
+    /// `0x02` — name bound to a Directory or ServiceGateway (`ncontext`).
+    NContext,
+    /// Reserved/unallocated wire value, preserved verbatim for round-trip.
+    Reserved(u8),
+}
+
+impl BindingType {
+    #[must_use]
+    /// Creates a value from a wire byte, preserving every possible byte value for
+    /// lossless round-trip.
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            BINDING_NOBJECT => Self::NObject,
+            BINDING_NCONTEXT => Self::NContext,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the wire byte for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::NObject => BINDING_NOBJECT,
+            Self::NContext => BINDING_NCONTEXT,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NObject => "nobject",
+            Self::NContext => "ncontext",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(BindingType, Reserved);
 
 // ── Message header constants ──────────────────────────────────────────────────
 
@@ -86,7 +137,7 @@ pub struct Binding<'a> {
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub name: Vec<NameComponent<'a>>,
     /// `bindingType` — `0x01` (`nobject`) or `0x02` (`ncontext`); see the module-level constants.
-    pub binding_type: u8,
+    pub binding_type: BindingType,
     /// IOR of the bound object.
     pub ior: Ior<'a>,
     /// Per-binding `objectInfo` data.
@@ -121,7 +172,7 @@ impl<'a> Binding<'a> {
                 what: "Binding bindingType",
             });
         }
-        let binding_type = bytes[cur];
+        let binding_type = BindingType::from_u8(bytes[cur]);
         cur += BINDING_TYPE_FIELD;
 
         // IOR — parse the remainder using Ior::parse which reads from position 0
@@ -191,7 +242,7 @@ impl<'a> Binding<'a> {
             let written = nc.serialize_8bit(&mut buf[pos..])?;
             pos += written;
         }
-        buf[pos] = self.binding_type;
+        buf[pos] = self.binding_type.to_u8();
         pos += BINDING_TYPE_FIELD;
         let written = self.ior.serialize_into(&mut buf[pos..])?;
         pos += written;
@@ -1880,7 +1931,6 @@ impl<'a> ServiceGatewayInfo<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::carousel::biop::BINDING_NOBJECT;
     use dvb_common::Parse;
 
     /// Build a simple FileMessage around a buffer of bytes.
@@ -1923,7 +1973,7 @@ mod tests {
                     id: b"index.html",
                     kind: b"fil\0",
                 }],
-                binding_type: BINDING_NOBJECT,
+                binding_type: BindingType::NObject,
                 ior,
                 object_info: &[],
             }],
@@ -2449,5 +2499,36 @@ mod tests {
         assert_eq!(&buf[42..46], &[0x11, 0x22, 0x33, 0x44]);
         // second entry: context_data_length = 0
         assert_eq!(&buf[46..48], &[0x00, 0x00]);
+    }
+
+    #[test]
+    fn binding_type_full_range_round_trip() {
+        for v in 0u8..=0xFF {
+            let bt = BindingType::from_u8(v);
+            assert_eq!(bt.to_u8(), v, "BindingType round-trip failed for 0x{v:02X}");
+        }
+    }
+
+    #[test]
+    fn binding_type_known_values() {
+        assert_eq!(BindingType::from_u8(0x01), BindingType::NObject);
+        assert_eq!(BindingType::from_u8(0x02), BindingType::NContext);
+        assert_eq!(BindingType::NObject.name(), "nobject");
+        assert_eq!(BindingType::NContext.name(), "ncontext");
+        assert_eq!(BindingType::Reserved(0x05).name(), "reserved");
+    }
+
+    #[test]
+    fn directory_message_binding_type_round_trip() {
+        let msg = sample_dir_message();
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+        let (parsed, _) = BiopMessage::parse_at(&buf).unwrap();
+        match parsed {
+            BiopMessage::Directory(d) => {
+                assert_eq!(d.bindings[0].binding_type, BindingType::NObject);
+            }
+            other => panic!("expected Directory, got {other:?}"),
+        }
     }
 }

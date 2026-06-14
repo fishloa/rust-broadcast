@@ -362,6 +362,60 @@ pub struct TimeAssociationBody {
 
 // ── Beamhopping Time Plan (Table 11g) ───────────────────────────────────────
 
+/// Time plan mode — ETSI EN 300 468 §5.2.11.5 Table 11g
+/// (`docs/en_300_468.md`, beamhopping_time_plan_info syntax, lines 706 ff.).
+///
+/// 2-bit field. Selects the body structure of a beamhopping plan entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum TimePlanMode {
+    /// `0b00` — simple dwell/on-time plan (mode 0).
+    DwellOnTime,
+    /// `0b01` — bitmap plan (mode 1).
+    Bitmap,
+    /// `0b10` — grid/revisit/sleep plan (mode 2).
+    GridRevisitSleep,
+    /// `0b11` — reserved.
+    Reserved(u8),
+}
+
+impl TimePlanMode {
+    #[must_use]
+    /// Creates a value from a 2-bit wire nibble (upper bits masked off).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x03 {
+            0 => Self::DwellOnTime,
+            1 => Self::Bitmap,
+            2 => Self::GridRevisitSleep,
+            v => Self::Reserved(v),
+        }
+    }
+
+    #[must_use]
+    /// Returns the 2-bit wire nibble for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::DwellOnTime => 0,
+            Self::Bitmap => 1,
+            Self::GridRevisitSleep => 2,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DwellOnTime => "dwell/on-time",
+            Self::Bitmap => "bitmap",
+            Self::GridRevisitSleep => "grid/revisit/sleep",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(TimePlanMode, Reserved);
+
 /// Mode-specific data in a beamhopping plan entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -417,8 +471,8 @@ pub enum BeamhoppingMode {
 pub struct BeamhoppingPlan {
     /// `beamhopping_time_plan_id` (32 bits).
     pub beamhopping_time_plan_id: u32,
-    /// `time_plan_mode` (2 bits).
-    pub time_plan_mode: u8,
+    /// `time_plan_mode` (2 bits) — [`TimePlanMode`].
+    pub time_plan_mode: TimePlanMode,
     /// `time_of_application_base` (33 bits).
     pub time_of_application_base: u64,
     /// `time_of_application_ext` (9 bits).
@@ -809,7 +863,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 let plan_length_bytes = total_bits_after_length / 8;
                 w.write_u(12, plan_length_bytes as u64)?;
                 w.write_zero(6)?;
-                w.write_u(2, plan.time_plan_mode as u64)?;
+                w.write_u(2, plan.time_plan_mode.to_u8() as u64)?;
                 w.write_u(33, plan.time_of_application_base)?;
                 w.write_zero(6)?;
                 w.write_u(9, plan.time_of_application_ext as u64)?;
@@ -1212,7 +1266,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 let plan_length = r.read_u(12)? as usize;
                 let plan_end_bits = r.bits_consumed() + plan_length * 8;
                 r.skip(6)?;
-                let time_plan_mode = r.read_u(2)? as u8;
+                let time_plan_mode = TimePlanMode::from_u8(r.read_u(2)? as u8);
                 let time_of_application_base = r.read_u(33)?;
                 r.skip(6)?;
                 let time_of_application_ext = r.read_u(9)? as u16;
@@ -1220,7 +1274,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 r.skip(6)?;
                 let cycle_duration_ext = r.read_u(9)? as u16;
                 let mode = match time_plan_mode {
-                    0 => {
+                    TimePlanMode::DwellOnTime => {
                         const MODE0_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9;
                         if r.remaining_bits() < MODE0_BITS {
                             return Err(Error::BufferTooShort {
@@ -1242,7 +1296,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             on_time_ext,
                         }
                     }
-                    1 => {
+                    TimePlanMode::Bitmap => {
                         const MODE1_HEADER_BITS: usize = 1 + 15 + 1 + 15;
                         if r.remaining_bits() < MODE1_HEADER_BITS {
                             return Err(Error::BufferTooShort {
@@ -1275,7 +1329,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             slot_transmission_on,
                         }
                     }
-                    2 => {
+                    TimePlanMode::GridRevisitSleep => {
                         const MODE2_BITS: usize = 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9 + 33 + 6 + 9;
                         if r.remaining_bits() < MODE2_BITS {
                             return Err(Error::BufferTooShort {
@@ -1848,7 +1902,7 @@ mod tests {
         let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
             plans: vec![BeamhoppingPlan {
                 beamhopping_time_plan_id: 0xDEADBEEF,
-                time_plan_mode: 0,
+                time_plan_mode: TimePlanMode::DwellOnTime,
                 time_of_application_base: 0x0000_AAAA_AAAA,
                 time_of_application_ext: 0x100,
                 cycle_duration_base: 0x0000_5555_5555,
@@ -1867,7 +1921,7 @@ mod tests {
             SatBody::BeamhoppingTimePlan(bhp) => {
                 assert_eq!(bhp.plans.len(), 1);
                 assert_eq!(bhp.plans[0].beamhopping_time_plan_id, 0xDEADBEEF);
-                assert_eq!(bhp.plans[0].time_plan_mode, 0);
+                assert_eq!(bhp.plans[0].time_plan_mode, TimePlanMode::DwellOnTime);
                 match &bhp.plans[0].mode {
                     BeamhoppingMode::Mode0 {
                         dwell_duration_base,
@@ -1958,7 +2012,7 @@ mod tests {
             plans: vec![
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x11111111,
-                    time_plan_mode: 0,
+                    time_plan_mode: TimePlanMode::DwellOnTime,
                     time_of_application_base: 0x0000_AAAA_AAAA,
                     time_of_application_ext: 0x100,
                     cycle_duration_base: 0x0000_5555_5555,
@@ -1972,7 +2026,7 @@ mod tests {
                 },
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x22222222,
-                    time_plan_mode: 0,
+                    time_plan_mode: TimePlanMode::DwellOnTime,
                     time_of_application_base: 0x0000_BBBB_BBBB,
                     time_of_application_ext: 0x200,
                     cycle_duration_base: 0x0000_6666_6666,
@@ -2104,7 +2158,7 @@ mod tests {
         let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
             plans: vec![BeamhoppingPlan {
                 beamhopping_time_plan_id: 0x12345678,
-                time_plan_mode: 1,
+                time_plan_mode: TimePlanMode::Bitmap,
                 time_of_application_base: 0x0000_AAAA_AAAA,
                 time_of_application_ext: 0x100,
                 cycle_duration_base: 0x0000_5555_5555,
@@ -2121,7 +2175,7 @@ mod tests {
         match &sat.body {
             SatBody::BeamhoppingTimePlan(bhp) => {
                 assert_eq!(bhp.plans.len(), 1);
-                assert_eq!(bhp.plans[0].time_plan_mode, 1);
+                assert_eq!(bhp.plans[0].time_plan_mode, TimePlanMode::Bitmap);
                 match &bhp.plans[0].mode {
                     BeamhoppingMode::Mode1 {
                         bit_map_size,
@@ -2150,7 +2204,7 @@ mod tests {
         let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
             plans: vec![BeamhoppingPlan {
                 beamhopping_time_plan_id: 0x87654321,
-                time_plan_mode: 2,
+                time_plan_mode: TimePlanMode::GridRevisitSleep,
                 time_of_application_base: 0x0000_BBBB_BBBB,
                 time_of_application_ext: 0x200,
                 cycle_duration_base: 0x0000_6666_6666,
@@ -2172,7 +2226,7 @@ mod tests {
         match &sat.body {
             SatBody::BeamhoppingTimePlan(bhp) => {
                 assert_eq!(bhp.plans.len(), 1);
-                assert_eq!(bhp.plans[0].time_plan_mode, 2);
+                assert_eq!(bhp.plans[0].time_plan_mode, TimePlanMode::GridRevisitSleep);
                 match &bhp.plans[0].mode {
                     BeamhoppingMode::Mode2 { grid_size_base, .. } => {
                         assert_eq!(*grid_size_base, 0x0000_1111_1111);
@@ -2193,7 +2247,7 @@ mod tests {
             plans: vec![
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x11111111,
-                    time_plan_mode: 0,
+                    time_plan_mode: TimePlanMode::DwellOnTime,
                     time_of_application_base: 0x0000_AAAA_AAAA,
                     time_of_application_ext: 0x100,
                     cycle_duration_base: 0x0000_5555_5555,
@@ -2207,7 +2261,7 @@ mod tests {
                 },
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x22222222,
-                    time_plan_mode: 3,
+                    time_plan_mode: TimePlanMode::Reserved(3),
                     time_of_application_base: 0x0000_CCCC_CCCC,
                     time_of_application_ext: 0x300,
                     cycle_duration_base: 0x0000_DDDD_DDDD,
@@ -2221,8 +2275,8 @@ mod tests {
         match &sat.body {
             SatBody::BeamhoppingTimePlan(bhp) => {
                 assert_eq!(bhp.plans.len(), 2);
-                assert_eq!(bhp.plans[0].time_plan_mode, 0);
-                assert_eq!(bhp.plans[1].time_plan_mode, 3);
+                assert_eq!(bhp.plans[0].time_plan_mode, TimePlanMode::DwellOnTime);
+                assert_eq!(bhp.plans[1].time_plan_mode, TimePlanMode::Reserved(3));
                 match &bhp.plans[1].mode {
                     BeamhoppingMode::Reserved(v) => {
                         assert_eq!(v, &[0xAA, 0xBB, 0xCC]);
@@ -2308,7 +2362,7 @@ mod tests {
             body: SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
                 plans: vec![BeamhoppingPlan {
                     beamhopping_time_plan_id: 1,
-                    time_plan_mode: 1,
+                    time_plan_mode: TimePlanMode::Bitmap,
                     time_of_application_base: 0,
                     time_of_application_ext: 0,
                     cycle_duration_base: 0,
@@ -2488,7 +2542,7 @@ mod tests {
         let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
             plans: vec![BeamhoppingPlan {
                 beamhopping_time_plan_id: 0xDEADBEEF,
-                time_plan_mode: 0,
+                time_plan_mode: TimePlanMode::DwellOnTime,
                 time_of_application_base: 0,
                 time_of_application_ext: 0,
                 cycle_duration_base: 0,
@@ -2506,7 +2560,7 @@ mod tests {
         match &sat.body {
             SatBody::BeamhoppingTimePlan(bhp) => {
                 assert_eq!(bhp.plans[0].beamhopping_time_plan_id, 0xDEADBEEF);
-                assert_eq!(bhp.plans[0].time_plan_mode, 0);
+                assert_eq!(bhp.plans[0].time_plan_mode, TimePlanMode::DwellOnTime);
             }
             other => panic!("expected BeamhoppingTimePlan, got {other:?}"),
         }
@@ -2678,7 +2732,7 @@ mod tests {
                 assert_eq!(bhp.plans.len(), 1);
                 let p = &bhp.plans[0];
                 assert_eq!(p.beamhopping_time_plan_id, 0xDEADBEEF);
-                assert_eq!(p.time_plan_mode, 0);
+                assert_eq!(p.time_plan_mode, TimePlanMode::DwellOnTime);
                 assert_eq!(p.time_of_application_base, 0);
                 assert_eq!(p.cycle_duration_base, 0);
                 match &p.mode {
@@ -2784,5 +2838,25 @@ mod tests {
         assert_eq!(InterpolationType::from_u8(2).name(), "Lagrange");
         assert_eq!(InterpolationType::from_u8(4).name(), "Hermite");
         assert_eq!(InterpolationType::from_u8(0).name(), "Reserved");
+    }
+
+    #[test]
+    fn time_plan_mode_full_range_round_trip() {
+        for v in 0u8..=0x03 {
+            let tpm = TimePlanMode::from_u8(v);
+            assert_eq!(tpm.to_u8(), v, "TimePlanMode round-trip failed for {v}");
+        }
+    }
+
+    #[test]
+    fn time_plan_mode_known_values() {
+        assert_eq!(TimePlanMode::from_u8(0), TimePlanMode::DwellOnTime);
+        assert_eq!(TimePlanMode::from_u8(1), TimePlanMode::Bitmap);
+        assert_eq!(TimePlanMode::from_u8(2), TimePlanMode::GridRevisitSleep);
+        assert_eq!(TimePlanMode::from_u8(3), TimePlanMode::Reserved(3));
+        assert_eq!(TimePlanMode::DwellOnTime.name(), "dwell/on-time");
+        assert_eq!(TimePlanMode::Bitmap.name(), "bitmap");
+        assert_eq!(TimePlanMode::GridRevisitSleep.name(), "grid/revisit/sleep");
+        assert_eq!(TimePlanMode::Reserved(3).name(), "reserved");
     }
 }

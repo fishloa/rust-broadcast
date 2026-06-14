@@ -9,6 +9,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use crate::tables::ait::ApplicationType;
 use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
@@ -45,8 +46,9 @@ pub fn application_type_name(val: u16) -> Option<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ApplicationSignallingEntry {
-    /// 15-bit application_type (e.g. 0x0001 = DVB-J, 0x0010 = DVB-HTML).
-    pub application_type: u16,
+    /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
+    /// (ETSI TS 102 809 §5.3.5.2.1 / DVB Services registry).
+    pub application_type: ApplicationType,
     /// 5-bit AIT_version_number this entry refers to.
     pub ait_version_number: u8,
 }
@@ -77,7 +79,9 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
             // reserved_future_use(1) ignored on parse.
-            let application_type = u16::from_be_bytes([chunk[0], chunk[1]]) & APPLICATION_TYPE_MAX;
+            let application_type_raw =
+                u16::from_be_bytes([chunk[0], chunk[1]]) & APPLICATION_TYPE_MAX;
+            let application_type = ApplicationType::from_u16(application_type_raw);
             // reserved_future_use(3) ignored on parse.
             let ait_version_number = chunk[2] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
@@ -97,7 +101,7 @@ impl Serialize for ApplicationSignallingDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         for e in &self.entries {
-            if e.application_type > APPLICATION_TYPE_MAX {
+            if e.application_type.to_u16() > APPLICATION_TYPE_MAX {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "application_type exceeds 15 bits",
@@ -128,7 +132,7 @@ impl Serialize for ApplicationSignallingDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             // reserved_future_use(1) emitted as 1.
-            let word = 0x8000 | (e.application_type & APPLICATION_TYPE_MAX);
+            let word = 0x8000 | (e.application_type.to_u16() & APPLICATION_TYPE_MAX);
             buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
             // reserved_future_use(3) emitted as 1s.
             buf[pos + 2] = 0xE0 | (e.ait_version_number & AIT_VERSION_MAX);
@@ -148,11 +152,11 @@ mod tests {
 
     #[test]
     fn parse_single_entry() {
-        // application_type=0x0010 (DVB-HTML), AIT_version=3, reserved bits set.
+        // application_type=0x0010 (HbbTV), AIT_version=3, reserved bits set.
         let bytes = [TAG, 3, 0x80, 0x10, 0xE3];
         let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 1);
-        assert_eq!(d.entries[0].application_type, 0x0010);
+        assert_eq!(d.entries[0].application_type, ApplicationType::HbbTv);
         assert_eq!(d.entries[0].ait_version_number, 3);
     }
 
@@ -161,9 +165,12 @@ mod tests {
         let bytes = [TAG, 6, 0x00, 0x01, 0x05, 0x7F, 0xFF, 0x1F];
         let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.entries.len(), 2);
-        assert_eq!(d.entries[0].application_type, 0x0001);
+        assert_eq!(d.entries[0].application_type, ApplicationType::DvbJ);
         assert_eq!(d.entries[0].ait_version_number, 5);
-        assert_eq!(d.entries[1].application_type, 0x7FFF);
+        assert_eq!(
+            d.entries[1].application_type,
+            ApplicationType::Reserved(0x7FFF)
+        );
         assert_eq!(d.entries[1].ait_version_number, 0x1F);
     }
 
@@ -172,7 +179,10 @@ mod tests {
         // top bit of word + top 3 bits of version byte are reserved → masked out.
         let bytes = [TAG, 3, 0xFF, 0xFF, 0xFF];
         let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.entries[0].application_type, 0x7FFF);
+        assert_eq!(
+            d.entries[0].application_type,
+            ApplicationType::Reserved(0x7FFF)
+        );
         assert_eq!(d.entries[0].ait_version_number, 0x1F);
     }
 
@@ -229,11 +239,11 @@ mod tests {
         let d = ApplicationSignallingDescriptor {
             entries: vec![
                 ApplicationSignallingEntry {
-                    application_type: 0x0001,
+                    application_type: ApplicationType::DvbJ,
                     ait_version_number: 7,
                 },
                 ApplicationSignallingEntry {
-                    application_type: 0x0010,
+                    application_type: ApplicationType::HbbTv,
                     ait_version_number: 0,
                 },
             ],
@@ -247,7 +257,8 @@ mod tests {
     fn serialize_rejects_application_type_over_range() {
         let d = ApplicationSignallingDescriptor {
             entries: vec![ApplicationSignallingEntry {
-                application_type: 0x8000,
+                // UserDefined(0x8000) → to_u16() = 0x8000 > APPLICATION_TYPE_MAX
+                application_type: ApplicationType::UserDefined(0x8000),
                 ait_version_number: 0,
             }],
         };
@@ -262,7 +273,7 @@ mod tests {
     fn serialize_rejects_ait_version_over_range() {
         let d = ApplicationSignallingDescriptor {
             entries: vec![ApplicationSignallingEntry {
-                application_type: 0,
+                application_type: ApplicationType::Reserved(0),
                 ait_version_number: 0x20,
             }],
         };
@@ -278,12 +289,35 @@ mod tests {
     fn serde_round_trip() {
         let d = ApplicationSignallingDescriptor {
             entries: vec![ApplicationSignallingEntry {
-                application_type: 0x0010,
+                application_type: ApplicationType::HbbTv,
                 ait_version_number: 4,
             }],
         };
         let j = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
+    }
+
+    #[test]
+    fn application_type_known_values_round_trip() {
+        // Spot-check that well-known types survive a serialize→parse round-trip.
+        for at in [
+            ApplicationType::DvbJ,
+            ApplicationType::DvbHtml,
+            ApplicationType::HbbTv,
+            ApplicationType::OipfDae,
+            ApplicationType::Reserved(0x0005),
+        ] {
+            let d = ApplicationSignallingDescriptor {
+                entries: vec![ApplicationSignallingEntry {
+                    application_type: at,
+                    ait_version_number: 1,
+                }],
+            };
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            let re = ApplicationSignallingDescriptor::parse(&buf).unwrap();
+            assert_eq!(re, d, "ApplicationType round-trip failed for {at:?}");
+        }
     }
 }

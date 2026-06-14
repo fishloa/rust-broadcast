@@ -214,8 +214,7 @@ mod tests {
     use crate::carousel::biop::ior::NameComponent;
     use crate::carousel::biop::{
         ior::{BiopProfileBody, ConnBinder, Ior, ObjectLocation, TaggedProfile},
-        message::{Binding, BiopMessage, DirectoryMessage, FileMessage},
-        BINDING_NOBJECT,
+        message::{Binding, BindingType, BiopMessage, DirectoryMessage, FileMessage},
     };
     use dvb_common::Serialize;
 
@@ -249,7 +248,7 @@ mod tests {
                     id: b"index.html",
                     kind: b"fil\0",
                 }],
-                binding_type: BINDING_NOBJECT,
+                binding_type: BindingType::NObject,
                 ior: file_ior,
                 object_info: &[],
             }],

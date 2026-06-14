@@ -665,7 +665,7 @@ mod tests {
                 assert_eq!(b.icon_id, 4);
                 match &b.body {
                     ImageIconBody::First(f) => {
-                        assert_eq!(f.icon_transport_mode, 0);
+                        assert_eq!(f.icon_transport_mode, IconTransportMode::InlineData);
                         let p = f.position.as_ref().unwrap();
                         assert_eq!(p.coordinate_system, 2);
                         assert_eq!(p.icon_horizontal_origin, 999);

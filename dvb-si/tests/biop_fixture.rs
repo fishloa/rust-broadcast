@@ -9,10 +9,11 @@
 #![cfg(feature = "ts")]
 
 use dvb_common::{Parse, Serialize};
+use dvb_si::carousel::biop::message::BindingType;
 use dvb_si::carousel::biop::{
     Binding, BiopMessage, BiopProfileBody, CarouselFs, ConnBinder, DirectoryMessage, FileMessage,
     Ior, ModuleInfo, NameComponent, ObjectKind, ObjectLocation, ServiceGatewayInfo, TaggedProfile,
-    Tap, BINDING_NOBJECT, BIOP_DELIVERY_PARA_USE,
+    Tap, BIOP_DELIVERY_PARA_USE,
 };
 use dvb_si::carousel::UnMessage;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -180,7 +181,7 @@ fn synthetic_carousel_fs_file_lookup() {
                 id: b"index.html",
                 kind: b"fil\0",
             }],
-            binding_type: BINDING_NOBJECT,
+            binding_type: BindingType::NObject,
             ior: file_ior,
             object_info: &[],
         }],
@@ -321,7 +322,6 @@ fn sgi_round_trip() {
 /// Byte-anchor test for a hand-built Directory message.
 #[test]
 fn directory_message_byte_anchor() {
-    use dvb_si::carousel::biop::BINDING_NCONTEXT;
     // A ServiceGateway with one ncontext binding "subdir" -> module 3, key [0x03]
     let ior = Ior {
         type_id: b"dir\0",
@@ -347,7 +347,7 @@ fn directory_message_byte_anchor() {
                 id: b"subdir",
                 kind: b"dir\0",
             }],
-            binding_type: BINDING_NCONTEXT,
+            binding_type: BindingType::NContext,
             ior,
             object_info: &[],
         }],

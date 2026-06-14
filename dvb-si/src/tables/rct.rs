@@ -9,6 +9,63 @@
 //! [`DvbBinaryLocator`] (Table 31, §7.3.2.3.3).
 
 use crate::descriptors::DescriptorLoop;
+
+/// Identifier type — ETSI TS 102 323 v1.4.1 §7.3.2.3.3 Table 32
+/// (`docs/ts_102_323_tva.md`, Table 32 — Identifier type).
+///
+/// 2-bit field in the DVB binary locator. Selects what kind of event identifier
+/// field (if any) is present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum IdentifierType {
+    /// `0b00` — no event identifier field is present.
+    None,
+    /// `0b01` — event identifier is an `event_id`.
+    EventId,
+    /// `0b10` — event identifier is a `TVA_id` carried in EIT.
+    TvaIdEit,
+    /// `0b11` — event identifier is a `TVA_id` carried in PES.
+    TvaIdPes,
+}
+
+impl IdentifierType {
+    #[must_use]
+    /// Creates a value from a 2-bit wire nibble (upper bits masked off).
+    pub fn from_u8(v: u8) -> Self {
+        match v & 0x03 {
+            0x00 => Self::None,
+            0x01 => Self::EventId,
+            0x02 => Self::TvaIdEit,
+            0x03 => Self::TvaIdPes,
+            // unreachable after masking to 2 bits, but the compiler requires it
+            _ => unreachable!(),
+        }
+    }
+
+    #[must_use]
+    /// Returns the 2-bit wire nibble for this value.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Self::None => 0x00,
+            Self::EventId => 0x01,
+            Self::TvaIdEit => 0x02,
+            Self::TvaIdPes => 0x03,
+        }
+    }
+
+    #[must_use]
+    /// Returns the spec token for this value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::EventId => "event_id",
+            Self::TvaIdEit => "TVA_id (EIT)",
+            Self::TvaIdPes => "TVA_id (PES)",
+        }
+    }
+}
+dvb_common::impl_spec_display!(IdentifierType);
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -242,8 +299,8 @@ pub struct DvbLocatorWindows {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DvbBinaryLocator {
-    /// `identifier_type` (2 bits, Table 32).
-    pub identifier_type: u8,
+    /// `identifier_type` (2 bits, Table 32) — [`IdentifierType`].
+    pub identifier_type: IdentifierType,
     /// `scheduled_time_reliability`.
     pub scheduled_time_reliability: bool,
     /// `inline_service`.
@@ -360,7 +417,8 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     }
     let b0 = data[0];
     let b1 = data[1];
-    let identifier_type = (b0 & LOCATOR_ID_TYPE_MASK) >> LOCATOR_ID_TYPE_SHIFT;
+    let identifier_type =
+        IdentifierType::from_u8((b0 & LOCATOR_ID_TYPE_MASK) >> LOCATOR_ID_TYPE_SHIFT);
     let scheduled_time_reliability = (b0 & LOCATOR_RELIABILITY_MASK) != 0;
     let inline_service = (b0 & LOCATOR_INLINE_MASK) != 0;
     let start_date = ((b0 & LOCATOR_START_DATE_HI_MASK) as u16) << LOCATOR_START_DATE_HI_SHIFT
@@ -411,8 +469,8 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     pos += 4;
 
     let identifier = match identifier_type {
-        0x00 => DvbLocatorIdentifier::None,
-        0x01 => {
+        IdentifierType::None => DvbLocatorIdentifier::None,
+        IdentifierType::EventId => {
             if pos + 2 > data.len() {
                 return Err(Error::BufferTooShort {
                     need: pos + 2,
@@ -424,7 +482,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             pos += 2;
             DvbLocatorIdentifier::EventId { event_id }
         }
-        0x02 => {
+        IdentifierType::TvaIdEit => {
             if pos + 2 > data.len() {
                 return Err(Error::BufferTooShort {
                     need: pos + 2,
@@ -436,7 +494,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             pos += 2;
             DvbLocatorIdentifier::TvaIdEit { tva_id }
         }
-        0x03 => {
+        IdentifierType::TvaIdPes => {
             if pos + 3 > data.len() {
                 return Err(Error::BufferTooShort {
                     need: pos + 3,
@@ -449,10 +507,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             pos += 3;
             DvbLocatorIdentifier::TvaIdPes { tva_id, component }
         }
-        _ => DvbLocatorIdentifier::None,
     };
 
-    let windows = if identifier_type == 0x00 && scheduled_time_reliability {
+    let windows = if identifier_type == IdentifierType::None && scheduled_time_reliability {
         if pos >= data.len() {
             return Err(Error::BufferTooShort {
                 need: pos + 1,
@@ -487,7 +544,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
 }
 
 fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> usize {
-    let b0 = ((loc.identifier_type & 0x03) << LOCATOR_ID_TYPE_SHIFT)
+    let b0 = (loc.identifier_type.to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service) << 4)
         | LOCATOR_RESERVED_BITS
@@ -964,7 +1021,7 @@ mod tests {
     #[test]
     fn parse_one_link_with_locator_and_items() {
         let loc = DvbBinaryLocator {
-            identifier_type: 0x01,
+            identifier_type: IdentifierType::EventId,
             scheduled_time_reliability: false,
             inline_service: true,
             start_date: 0x0FF,
@@ -1014,7 +1071,7 @@ mod tests {
         assert_eq!(p.links.len(), 1);
         assert_eq!(p.links[0].link_type, LinkType::BinaryLocator);
         let l = p.links[0].dvb_binary_locator.as_ref().unwrap();
-        assert_eq!(l.identifier_type, 0x01);
+        assert_eq!(l.identifier_type, IdentifierType::EventId);
         assert!(l.inline_service);
         assert_eq!(l.start_date, 0x0FF);
         assert_eq!(p.links[0].items.len(), 1);
@@ -1149,5 +1206,28 @@ mod tests {
             let hr = HowRelated::from_u8(v);
             assert_eq!(hr.to_u8(), v, "HowRelated round-trip failed for {v:#04x}");
         }
+    }
+
+    #[test]
+    fn identifier_type_full_range_round_trip() {
+        for v in 0u8..=0x03 {
+            let it = IdentifierType::from_u8(v);
+            assert_eq!(
+                it.to_u8(),
+                v,
+                "IdentifierType round-trip failed for 0x{v:02X}"
+            );
+        }
+    }
+
+    #[test]
+    fn identifier_type_known_values() {
+        assert_eq!(IdentifierType::from_u8(0), IdentifierType::None);
+        assert_eq!(IdentifierType::from_u8(1), IdentifierType::EventId);
+        assert_eq!(IdentifierType::from_u8(2), IdentifierType::TvaIdEit);
+        assert_eq!(IdentifierType::from_u8(3), IdentifierType::TvaIdPes);
+        assert_eq!(IdentifierType::None.name(), "none");
+        assert_eq!(IdentifierType::EventId.name(), "event_id");
+        assert_eq!(IdentifierType::TvaIdEit.name(), "TVA_id (EIT)");
     }
 }
