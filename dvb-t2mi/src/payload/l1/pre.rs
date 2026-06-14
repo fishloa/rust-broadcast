@@ -241,12 +241,12 @@ impl<'a> Parse<'a> for L1Pre {
         let mut r = BitReader::new(&bytes[..L1PRE_BYTES]);
 
         let type_ = TxInputStreamType::from_u8(r.read_bits(TYPE_BITS)? as u8);
-        let bwt_ext = r.read_bool()?;
+        let bwt_ext = r.read_bits(BWT_EXT_BITS)? != 0;
         let s1_raw = r.read_bits(S1_BITS)? as u8;
         // S1Field covers all 8 values; TryFrom never fails on a 3-bit value
         let s1 = S1Field::try_from(s1_raw).unwrap_or(S1Field::V7);
         let s2 = r.read_bits(S2_BITS)? as u8;
-        let l1_repetition_flag = r.read_bool()?;
+        let l1_repetition_flag = r.read_bits(L1_REPETITION_FLAG_BITS)? != 0;
         let guard_interval = GuardInterval::from_u8(r.read_bits(GUARD_INTERVAL_BITS)? as u8);
         let papr = r.read_bits(PAPR_BITS)? as u8;
         let l1_mod = L1Modulation::from_u8(r.read_bits(L1_MOD_BITS)? as u8);
@@ -262,12 +262,12 @@ impl<'a> Parse<'a> for L1Pre {
         let num_t2_frames = r.read_bits(NUM_T2_FRAMES_BITS)? as u8;
         let num_data_symbols = r.read_bits(NUM_DATA_SYMBOLS_BITS)? as u16;
         let regen_flag = r.read_bits(REGEN_FLAG_BITS)? as u8;
-        let l1_post_extension = r.read_bool()?;
+        let l1_post_extension = r.read_bits(L1_POST_EXTENSION_BITS)? != 0;
         let num_rf = r.read_bits(NUM_RF_BITS)? as u8;
         let current_rf_idx = r.read_bits(CURRENT_RF_IDX_BITS)? as u8;
         let t2_version = T2Version::from_u8(r.read_bits(T2_VERSION_BITS)? as u8);
-        let l1_post_scrambled = r.read_bool()?;
-        let t2_base_lite = r.read_bool()?;
+        let l1_post_scrambled = r.read_bits(L1_POST_SCRAMBLED_BITS)? != 0;
+        let t2_base_lite = r.read_bits(T2_BASE_LITE_BITS)? != 0;
         let reserved = r.read_bits(RESERVED_BITS)? as u8;
 
         debug_assert_eq!(r.bits_read(), L1PRE_BITS);
@@ -323,10 +323,10 @@ impl Serialize for L1Pre {
         let mut w = BitWriter::new(&mut buf[..L1PRE_BYTES]);
 
         w.write_bits(u64::from(self.type_.to_u8()), TYPE_BITS)?;
-        w.write_bool(self.bwt_ext)?;
+        w.write_bits(u64::from(self.bwt_ext), BWT_EXT_BITS)?;
         w.write_bits(u64::from(u8::from(self.s1)), S1_BITS)?;
         w.write_bits(u64::from(self.s2), S2_BITS)?;
-        w.write_bool(self.l1_repetition_flag)?;
+        w.write_bits(u64::from(self.l1_repetition_flag), L1_REPETITION_FLAG_BITS)?;
         w.write_bits(u64::from(self.guard_interval.to_u8()), GUARD_INTERVAL_BITS)?;
         w.write_bits(u64::from(self.papr), PAPR_BITS)?;
         w.write_bits(u64::from(self.l1_mod.to_u8()), L1_MOD_BITS)?;
@@ -342,12 +342,12 @@ impl Serialize for L1Pre {
         w.write_bits(u64::from(self.num_t2_frames), NUM_T2_FRAMES_BITS)?;
         w.write_bits(u64::from(self.num_data_symbols), NUM_DATA_SYMBOLS_BITS)?;
         w.write_bits(u64::from(self.regen_flag), REGEN_FLAG_BITS)?;
-        w.write_bool(self.l1_post_extension)?;
+        w.write_bits(u64::from(self.l1_post_extension), L1_POST_EXTENSION_BITS)?;
         w.write_bits(u64::from(self.num_rf), NUM_RF_BITS)?;
         w.write_bits(u64::from(self.current_rf_idx), CURRENT_RF_IDX_BITS)?;
         w.write_bits(u64::from(self.t2_version.to_u8()), T2_VERSION_BITS)?;
-        w.write_bool(self.l1_post_scrambled)?;
-        w.write_bool(self.t2_base_lite)?;
+        w.write_bits(u64::from(self.l1_post_scrambled), L1_POST_SCRAMBLED_BITS)?;
+        w.write_bits(u64::from(self.t2_base_lite), T2_BASE_LITE_BITS)?;
         w.write_bits(u64::from(self.reserved), RESERVED_BITS)?;
 
         debug_assert_eq!(w.bits_written(), L1PRE_BITS);
