@@ -68,6 +68,6 @@ pub use ior::{
     NsapAddress, ObjectKind, ObjectLocation, ServiceLocation, TaggedProfile, Tap,
 };
 pub use message::{
-    Binding, BiopMessage, CompressedModuleDescriptor, DirectoryMessage, FileMessage, ModuleInfo,
-    ServiceGatewayInfo,
+    Binding, BiopMessage, CompressedModuleDescriptor, DirectoryMessage, DsmStreamInfo, FileMessage,
+    ModuleInfo, ServiceGatewayInfo, StreamEventMessage, StreamMessage,
 };
