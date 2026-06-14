@@ -9,3 +9,7 @@ tools/dvb-si-audit/out/
 .worktrees/
 .delegate/
 .worktrees/
+
+# stray cross-compile artifacts (never commit)
+*.rlib
+*.rmeta
