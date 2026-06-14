@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.6.0] — 2026-06-14
+
 ### Added
 - **`bits` module** — `BitReader` / `BitWriter`, an MSB-first (DVB/MPEG bit
   order) reader/writer for dense sub-byte wire fields. Reads/writes 0..=64 bits

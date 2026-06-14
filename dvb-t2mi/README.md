@@ -260,7 +260,8 @@ This crate implements **only the T2-MI protocol** (ETSI TS 102 773). It does **n
 - **BBHeader parsing** — the 10-byte DVB-T2 BBHEADER is defined in EN 302 755, handled by the consuming application's adaptor layer.
 - **HEM (High Efficiency Mode)** detection — an adaptor-layer concern (CRC-8 init-XOR + 187/188-byte user-packet stride), not part of the T2-MI protocol itself.
 - **DVB-T2 physical layer** — LDPC coding, OFDM cell mapping, time interleaving are all outside scope.
-- **L1 signalling parsing** — the raw L1-current/L1-future bytes are passed through uninterpreted; a DVB-T2 modulator consumes them directly.
+
+L1-pre and L1-post signalling (EN 302 755 §7.2) are now parsed via `payload::l1`; the `L1CurrentPayload` and `L1FuturePayload` types expose typed `l1_pre()` / `l1_post()` accessors over the raw `l1_current_data` bytes.
 
 ## References
 

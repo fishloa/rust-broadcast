@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 6.6.0 — 2026-06-14
+
 ### Added
 - **BIOP object-carousel layer** (`carousel::biop`) — ISO/IEC 13818-6 §11 as
   profiled by TR 101 202 (#64). Parses the BIOP messages inside reassembled
