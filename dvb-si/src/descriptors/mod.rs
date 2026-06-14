@@ -17,6 +17,7 @@ pub mod bouquet_name;
 pub mod ca;
 pub mod ca_identifier;
 pub mod cable_delivery_system;
+pub mod carousel_identifier;
 pub mod cell_frequency_link;
 pub mod cell_list;
 pub mod component;

@@ -199,6 +199,7 @@ declare_descriptors! {'a;
     Ca = 0x09 => crate::descriptors::ca::CaDescriptor<'a>,
     Iso639Language = 0x0A => crate::descriptors::iso_639_language::Iso639LanguageDescriptor,
     PrivateDataIndicator = 0x0F => crate::descriptors::private_data_indicator::PrivateDataIndicatorDescriptor,
+    CarouselIdentifier = 0x13 => crate::descriptors::carousel_identifier::CarouselIdentifierDescriptor<'a>,
     // DVB descriptors (ETSI EN 300 468) — contiguous 0x40..=0x7F.
     NetworkName = 0x40 => crate::descriptors::network_name::NetworkNameDescriptor<'a>,
     ServiceList = 0x41 => crate::descriptors::service_list::ServiceListDescriptor,

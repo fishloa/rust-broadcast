@@ -37,6 +37,7 @@ pub enum DescriptorTag {
     SmoothingBuffer            = 0x10,
     Std                        = 0x11,
     Ibp                        = 0x12,
+    CarouselIdentifier         = 0x13,
 
     // ── DVB SI descriptors (0x40..=0x7F) ───────────────────────────────────
     NetworkName                = 0x40,
