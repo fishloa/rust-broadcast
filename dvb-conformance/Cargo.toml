@@ -9,18 +9,19 @@ keywords     = ["dvb", "mpeg-ts", "conformance", "monitoring"]
 categories   = ["multimedia", "parsing"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
-rust-version = "1.75"
+rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "6.7" }
-dvb-si      = { path = "../dvb-si", version = "6.7.0", features = ["ts", "serde"] }
+dvb-common = { path = "../dvb-common", version = "6.7", default-features = false }
+dvb-si      = { path = "../dvb-si", version = "6.7.0", default-features = false, features = ["ts", "serde"] }
 serde       = { version = "1", optional = true, features = ["derive"] }
 
 [features]
-default = ["serde"]
+default = ["std", "serde"]
+std     = ["dvb-common/std", "dvb-si/std"]
 
 serde = ["dep:serde", "dvb-si/serde"]
 

@@ -12,8 +12,10 @@
 //! stream. Long-running consumers should normally log/drop that section and
 //! continue feeding later sections; previous valid collector state is retained.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use alloc::collections::BTreeMap;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
 use crate::section::Section;
@@ -103,7 +105,7 @@ pub enum CollectError {
 ///
 /// The key deliberately excludes `version_number` and `section_number`. Version
 /// changes reset a collection; section numbers index into that collection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub struct SectionSetKey {
     /// Optional PID context supplied by the caller.
@@ -198,14 +200,14 @@ impl PartialSectionSet {
 /// [`with_max_partial_keys`](Self::with_max_partial_keys).
 #[derive(Debug)]
 pub struct SectionSetCollector {
-    partial: HashMap<SectionSetKey, PartialSectionSet>,
+    partial: BTreeMap<SectionSetKey, PartialSectionSet>,
     max_partial_keys: usize,
 }
 
 impl Default for SectionSetCollector {
     fn default() -> Self {
         Self {
-            partial: HashMap::new(),
+            partial: BTreeMap::new(),
             max_partial_keys: DEFAULT_MAX_PARTIAL_KEYS,
         }
     }

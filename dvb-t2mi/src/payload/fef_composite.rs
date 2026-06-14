@@ -3,7 +3,7 @@
 //! Carries composition information for FEF parts. The actual sub-parts
 //! are delivered via type 0x33 packets.
 
-use std::fmt;
+use core::fmt;
 
 use dvb_common::{Parse, Serialize};
 

@@ -13,6 +13,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for data_broadcast_id_descriptor.

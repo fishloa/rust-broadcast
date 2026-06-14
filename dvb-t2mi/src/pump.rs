@@ -34,6 +34,7 @@
 //! `dvb-si` dependency is introduced; the TS header reader is a private
 //! helper below.
 
+use alloc::vec::Vec;
 use bytes::Bytes;
 
 use crate::crc;

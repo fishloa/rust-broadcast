@@ -9,17 +9,17 @@ keywords     = ["dvb", "mpeg", "broadcast", "si", "psi"]
 categories   = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
-rust-version = "1.75"
+rust-version = "1.81"
 exclude      = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]
 all-features = true
 
 [dependencies]
-dvb-common  = { path = "../dvb-common", version = "6.7" }
+dvb-common  = { path = "../dvb-common", version = "6.7", default-features = false }
 thiserror   = "2"
 num_enum    = "0.7"
-chrono      = { version = "0.4", optional = true, default-features = false, features = ["clock"] }
+chrono      = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
 serde         = { version = "1", optional = true, features = ["derive"] }
 erased-serde  = { version = "0.4", optional = true }
 bytes         = { version = "1", optional = true }
@@ -38,7 +38,11 @@ harness  = false
 required-features = ["ts"]
 
 [features]
-default = ["chrono", "ts", "serde"]
+default = ["std", "chrono", "ts", "serde"]
+
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
+std      = ["dvb-common/std", "chrono?/std", "chrono?/clock"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono", "dvb-common/chrono"]
@@ -56,4 +60,5 @@ yoke     = ["dep:yoke"]
 
 # zlib decompression of compressed_module_descriptor (BIOP module carousels).
 # Off by default; without it the compressed module bytes are exposed raw.
-flate2   = ["dep:flate2"]
+# flate2 requires std (it uses std::io internally).
+flate2   = ["dep:flate2", "std"]

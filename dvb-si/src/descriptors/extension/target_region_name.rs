@@ -1,5 +1,6 @@
 //! Target Region Name Descriptor — ETSI EN 300 468 §6.4.13 (tag_extension 0x0A).
 use super::*;
+use alloc::vec::Vec;
 
 impl<'a> ExtensionBodyDef<'a> for TargetRegionName<'a> {
     const TAG_EXTENSION: u8 = 0x0A;

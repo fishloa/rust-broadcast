@@ -23,6 +23,7 @@
 //! 1s on serialize, except spec-mandated zero fields which are emitted 0.
 
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).

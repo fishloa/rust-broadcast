@@ -16,6 +16,7 @@ use super::{
     TAG_OBJECT_LOCATION, TAG_SERVICE_LOCATION,
 };
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 // ── wire-layout byte counts ────────────────────────────────────────────────────

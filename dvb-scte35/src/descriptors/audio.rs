@@ -3,6 +3,8 @@
 //! Dynamically signals the audios in use in the stream: an `audio_count` loop
 //! of per-component language + ATSC A/52 audio attributes.
 
+use alloc::vec::Vec;
+
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;

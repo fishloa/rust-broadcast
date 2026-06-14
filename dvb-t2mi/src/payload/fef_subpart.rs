@@ -8,7 +8,7 @@
 //! - 0x0003: TX-SIG FEF (reserved 32 bits)
 //! - 0x0004..0xFFFF: Reserved for future use
 
-use std::fmt;
+use core::fmt;
 
 use num_enum::TryFromPrimitive;
 

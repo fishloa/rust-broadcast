@@ -65,8 +65,9 @@
 //! }
 //! ```
 
-use std::any::Any;
-use std::collections::HashMap;
+use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
+use core::any::Any;
 
 use crate::descriptors::any::AnyDescriptor;
 
@@ -82,7 +83,7 @@ use crate::descriptors::any::AnyDescriptor;
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(not(feature = "serde"))]
-pub trait DescriptorObject: std::fmt::Debug + Any + Send + Sync {
+pub trait DescriptorObject: core::fmt::Debug + Any + Send + Sync {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -95,7 +96,7 @@ pub trait DescriptorObject: std::fmt::Debug + Any + Send + Sync {
 /// Implemented automatically via the blanket impl for any `T` satisfying the
 /// supertraits; you do not need to write this by hand.
 #[cfg(feature = "serde")]
-pub trait DescriptorObject: std::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
+pub trait DescriptorObject: core::fmt::Debug + Any + Send + Sync + erased_serde::Serialize {
     /// Borrow as `&dyn Any` so the caller can downcast to the concrete type.
     fn as_any(&self) -> &dyn Any;
 }
@@ -104,7 +105,7 @@ pub trait DescriptorObject: std::fmt::Debug + Any + Send + Sync + erased_serde::
 #[cfg(not(feature = "serde"))]
 impl<T> DescriptorObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync,
+    T: core::fmt::Debug + Any + Send + Sync,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -115,7 +116,7 @@ where
 #[cfg(feature = "serde")]
 impl<T> DescriptorObject for T
 where
-    T: std::fmt::Debug + Any + Send + Sync + serde::Serialize,
+    T: core::fmt::Debug + Any + Send + Sync + serde::Serialize,
 {
     fn as_any(&self) -> &dyn Any {
         self
@@ -207,7 +208,7 @@ pub(crate) type CustomParse =
 /// 5. Unknown → [`AnyDescriptor::Unknown`]
 #[derive(Default)]
 pub struct DescriptorRegistry {
-    custom: HashMap<(Option<u32>, u8), CustomParse>,
+    custom: BTreeMap<(Option<u32>, u8), CustomParse>,
     logical_channel: bool,
 }
 
@@ -386,7 +387,7 @@ impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
     }
 }
 
-impl std::iter::FusedIterator for RegistryIter<'_, '_> {}
+impl core::iter::FusedIterator for RegistryIter<'_, '_> {}
 
 // ---------------------------------------------------------------------------
 // ExtIterItem — item type for iter_with_extensions
@@ -496,7 +497,7 @@ impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
     }
 }
 
-impl std::iter::FusedIterator for ExtRegistryIter<'_, '_> {}
+impl core::iter::FusedIterator for ExtRegistryIter<'_, '_> {}
 
 #[cfg(test)]
 mod tests {

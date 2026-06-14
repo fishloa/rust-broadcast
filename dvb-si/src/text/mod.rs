@@ -33,7 +33,9 @@
 //! assert_eq!(LangCode(*b"fre").as_str(), "fre");
 //! ```
 
-use std::borrow::Cow;
+use alloc::borrow::Cow;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 /// Decode a DVB text payload (e.g. short_event_descriptor event_name_char)
 /// into an owned UTF-8 `String`. The first byte may be a charset indicator
@@ -81,7 +83,7 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
 #[must_use]
 pub fn decode(bytes: &[u8]) -> Cow<'_, str> {
     if bytes.iter().all(|&b| b.is_ascii() && b >= 0x20) {
-        return Cow::Borrowed(std::str::from_utf8(bytes).unwrap_or(""));
+        return Cow::Borrowed(core::str::from_utf8(bytes).unwrap_or(""));
     }
     Cow::Owned(decode_dvb_string(bytes))
 }
@@ -113,7 +115,7 @@ impl<'a> DvbText<'a> {
     }
 }
 
-impl std::ops::Deref for DvbText<'_> {
+impl core::ops::Deref for DvbText<'_> {
     /// Derefs to the raw wire bytes (selector included) — `len()`/indexing are
     /// byte counts for serialization, not decoded character counts.
     type Target = [u8];
@@ -122,14 +124,14 @@ impl std::ops::Deref for DvbText<'_> {
     }
 }
 
-impl std::fmt::Display for DvbText<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for DvbText<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.decode())
     }
 }
 
-impl std::fmt::Debug for DvbText<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for DvbText<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "DvbText({:?})", self.decode())
     }
 }
@@ -161,21 +163,21 @@ impl LangCode {
     }
 }
 
-impl std::ops::Deref for LangCode {
+impl core::ops::Deref for LangCode {
     type Target = [u8; 3];
     fn deref(&self) -> &[u8; 3] {
         &self.0
     }
 }
 
-impl std::fmt::Display for LangCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LangCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(&self.as_str())
     }
 }
 
-impl std::fmt::Debug for LangCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for LangCode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "LangCode({})", self.as_str())
     }
 }

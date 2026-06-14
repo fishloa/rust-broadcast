@@ -54,6 +54,8 @@
 //! 4. The disjointness test in `declare_tables_tests` catches any overlapping
 //!    range entries automatically — no manual test edits needed.
 
+use alloc::boxed::Box;
+
 /// Declares [`AnyTableSection`] + its dispatcher from one range list.
 ///
 /// Each dispatch line is `Variant = [lo..=hi, …] => module::Type[<'a>]`.

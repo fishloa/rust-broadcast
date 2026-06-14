@@ -9,6 +9,9 @@
 //! - [`ModuleInfo::parse`] — parse the DII `moduleInfoBytes` (Table 4.14).
 //! - [`ServiceGatewayInfo::parse`] — parse the DSI `privateData` (Table 4.15).
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::{
     ior::{Ior, NameComponent},
     BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR, BYTE_ORDER_BIG_ENDIAN,

@@ -12,6 +12,8 @@
 //! data-field bytes (`df_bytes` = BBHEADER + data field, as
 //! `dvb_t2mi::AnyPayload::Bbframe`'s `bbframe` field yields).
 
+use alloc::vec::Vec;
+
 use crate::header::{Bbheader, Mode, TsGs, BBHEADER_LEN};
 use crate::packet::{CarryOverExtractor, CarryOverStats, NM_UP_SIZE};
 
@@ -74,7 +76,7 @@ impl BbframePump {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            extractors: std::array::from_fn(|_| None),
+            extractors: core::array::from_fn(|_| None),
             out: Vec::new(),
             up_buf: Vec::new(),
             stats: BbframePumpStats::default(),

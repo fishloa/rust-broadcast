@@ -10,6 +10,7 @@
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::tables::RunningStatus;
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
@@ -37,7 +38,7 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTE
 const EVENT_HEADER_LEN: usize = 12;
 
 /// EIT variant distinguished by table_id range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum EitKind {
     /// Present/Following, actual TS.

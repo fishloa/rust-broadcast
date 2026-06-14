@@ -2,7 +2,7 @@
 //!
 //! Null FEF part — modulator generates P1 preamble per S1/S2, zeros for remainder.
 
-use std::fmt;
+use core::fmt;
 
 use num_enum::TryFromPrimitive;
 

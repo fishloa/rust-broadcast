@@ -43,7 +43,7 @@
 //! # Ok::<(), dvb_si::error::Error>(())
 //! ```
 
-use std::sync::Arc;
+use alloc::sync::Arc;
 
 use yoke::trait_hack::YokeTraitHack;
 use yoke::{Yoke, Yokeable};
@@ -117,12 +117,12 @@ where
     }
 }
 
-impl<Y> std::fmt::Debug for Owned<Y>
+impl<Y> core::fmt::Debug for Owned<Y>
 where
     Y: for<'a> Yokeable<'a>,
-    for<'a> <Y as Yokeable<'a>>::Output: std::fmt::Debug,
+    for<'a> <Y as Yokeable<'a>>::Output: core::fmt::Debug,
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Owned").field("view", self.get()).finish()
     }
 }

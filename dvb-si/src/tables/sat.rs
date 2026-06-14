@@ -12,6 +12,8 @@
 //! private bit-level reader/writer handles the extraction and emission.
 
 use crate::error::{Error, Result};
+use alloc::vec;
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.

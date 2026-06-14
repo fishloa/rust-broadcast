@@ -1,5 +1,6 @@
 //! Network Change Notify Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x07).
 use super::*;
+use alloc::vec::Vec;
 
 const CELL_HEADER_LEN: usize = 2; // cell_id(16)
 const LOOP_LENGTH_LEN: usize = 1; // loop_length(8)

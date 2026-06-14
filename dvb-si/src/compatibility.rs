@@ -33,6 +33,7 @@
 //! matching the DSM-CC convention used by existing DVB broadcasts.
 
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;

@@ -85,7 +85,10 @@
 
 use crate::collect::CollectResult;
 use crate::tables::RunningStatus;
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
 
 /// Logical key identifying a service across the DVB network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -300,7 +303,7 @@ pub const DEFAULT_MAX_EVENTS_PER_SERVICE: usize = 8192;
 #[derive(Debug)]
 pub struct EpgStore {
     collector: crate::collect::EitCollector,
-    cache: HashMap<ServiceKey, ServiceEpg>,
+    cache: BTreeMap<ServiceKey, ServiceEpg>,
     max_services: usize,
     max_events_per_service: usize,
 }
@@ -309,7 +312,7 @@ impl Default for EpgStore {
     fn default() -> Self {
         Self {
             collector: crate::collect::EitCollector::default(),
-            cache: HashMap::new(),
+            cache: BTreeMap::new(),
             max_services: DEFAULT_MAX_SERVICES,
             max_events_per_service: DEFAULT_MAX_EVENTS_PER_SERVICE,
         }
@@ -320,7 +323,7 @@ impl Default for EpgStore {
 struct ServiceEpg {
     service_name: Option<String>,
     /// Deduplicated by event_id. Latest version wins (later inserts overwrite).
-    events: HashMap<u16, EpgEvent>,
+    events: BTreeMap<u16, EpgEvent>,
 }
 
 impl EpgStore {
@@ -571,11 +574,11 @@ impl serde::Serialize for EpgStore {
     }
 }
 
-fn cmp_event_by_start(a: &EpgEvent, b: &EpgEvent) -> std::cmp::Ordering {
+fn cmp_event_by_start(a: &EpgEvent, b: &EpgEvent) -> core::cmp::Ordering {
     match (a.start_time, b.start_time) {
         (Some(at), Some(bt)) => at.cmp(&bt).then_with(|| a.event_id.cmp(&b.event_id)),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (Some(_), None) => core::cmp::Ordering::Less,
+        (None, Some(_)) => core::cmp::Ordering::Greater,
         (None, None) => a.event_id.cmp(&b.event_id),
     }
 }

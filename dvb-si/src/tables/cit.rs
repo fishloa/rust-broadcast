@@ -11,6 +11,7 @@
 
 use crate::error::{Error, Result};
 use crate::text::DvbText;
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// `table_id` for Content Identifier Table.

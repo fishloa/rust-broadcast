@@ -1,6 +1,7 @@
 use crate::descriptors::DescriptorRegistry;
 use crate::tables::sdt;
 use crate::tables::RunningStatus;
+use alloc::vec::Vec;
 
 use super::{CompleteSectionSet, ParsedDescriptorLoop};
 

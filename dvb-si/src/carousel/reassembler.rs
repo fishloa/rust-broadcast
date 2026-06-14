@@ -2,7 +2,9 @@
 //! complete modules per the DII's `moduleSize`/`blockSize` announcement
 //! (`docs/iso_13818_6_carousel.md`, "Module reassembly").
 
-use std::collections::HashMap;
+use alloc::collections::BTreeMap;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use super::messages::{Dii, DownloadDataBlock};
 
@@ -92,7 +94,7 @@ pub const DEFAULT_MAX_SLOTS: usize = 16 * 1024;
 /// are version-bumped. This is by design — drop and recreate the reassembler
 /// to recover from a wedged stream.
 pub struct ModuleReassembler {
-    slots: HashMap<SlotKey, Slot>,
+    slots: BTreeMap<SlotKey, Slot>,
     max_module_size: u32,
     max_total_bytes: usize,
     max_slots: usize,
@@ -125,7 +127,7 @@ impl ModuleReassembler {
     #[must_use]
     pub fn with_limits(max_module_size: u32, max_total_bytes: usize) -> Self {
         Self {
-            slots: HashMap::new(),
+            slots: BTreeMap::new(),
             max_module_size,
             max_total_bytes,
             max_slots: DEFAULT_MAX_SLOTS,

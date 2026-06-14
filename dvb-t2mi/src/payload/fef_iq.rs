@@ -1,6 +1,6 @@
 //! T2-MI payload type 0x31: FEF part — I/Q data — §5.2.10.
 
-use std::fmt;
+use core::fmt;
 
 use dvb_common::{Parse, Serialize};
 

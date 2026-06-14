@@ -11,6 +11,7 @@
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// `table_id` for Related Content Table.

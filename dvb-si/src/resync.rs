@@ -22,6 +22,8 @@
 //! let stats = r.stats();
 //! ```
 
+use alloc::vec::Vec;
+
 use crate::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 /// Reed-Solomon-coded TS packet size: 188-byte payload + 16 parity bytes

@@ -13,6 +13,7 @@
 use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Selection Information Table.

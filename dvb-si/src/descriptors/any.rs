@@ -46,6 +46,10 @@
 //! 4. The integration completeness test walks the generated
 //!    [`AnyDescriptor::DISPATCHED_TAGS`] automatically — no test edits needed.
 
+use alloc::boxed::Box;
+#[cfg(feature = "serde")]
+use alloc::string::ToString;
+
 /// Declares [`AnyDescriptor`] + its dispatcher from one tag list.
 ///
 /// Each line is `Variant = 0xTAG => module::Type[<'a>]`. The optional trailing
@@ -353,7 +357,7 @@ impl<'a> Iterator for DescriptorIter<'a> {
     }
 }
 
-impl std::iter::FusedIterator for DescriptorIter<'_> {}
+impl core::iter::FusedIterator for DescriptorIter<'_> {}
 
 /// A raw descriptor loop, borrowed from the section. Zero-copy: walk it
 /// typed via [`DescriptorLoop::iter`]; serde serializes the typed walk.
@@ -495,7 +499,7 @@ impl<'a> DescriptorLoop<'a> {
     }
 }
 
-impl<'a> std::ops::Deref for DescriptorLoop<'a> {
+impl<'a> core::ops::Deref for DescriptorLoop<'a> {
     /// Derefs to the raw wire bytes — `len()`/indexing are **byte counts for
     /// serialization, not entry counts**. To count entries, use
     /// [`DescriptorLoop::iter`].
@@ -511,9 +515,9 @@ impl<'a> From<&'a [u8]> for DescriptorLoop<'a> {
     }
 }
 
-impl std::fmt::Debug for DescriptorLoop<'_> {
+impl core::fmt::Debug for DescriptorLoop<'_> {
     /// Cheap: prints the byte length, not the decoded entries.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "DescriptorLoop(<{} bytes>)", self.0.len())
     }
 }

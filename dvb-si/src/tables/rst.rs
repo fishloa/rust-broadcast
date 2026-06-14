@@ -11,6 +11,7 @@
 
 use super::RunningStatus;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the Running Status Table.

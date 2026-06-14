@@ -39,6 +39,7 @@
 //! zero fields (`font_id_extension`, `reserved_zero_future_use`) are emitted 0.
 
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
