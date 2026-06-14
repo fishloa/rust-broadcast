@@ -69,5 +69,5 @@ pub use ior::{
 };
 pub use message::{
     Binding, BiopMessage, CompressedModuleDescriptor, DirectoryMessage, DsmStreamInfo, FileMessage,
-    ModuleInfo, ServiceGatewayInfo, StreamEventMessage, StreamMessage,
+    ModuleInfo, ServiceContext, ServiceGatewayInfo, StreamEventMessage, StreamMessage,
 };

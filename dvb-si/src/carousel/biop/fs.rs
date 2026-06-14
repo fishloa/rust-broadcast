@@ -241,7 +241,7 @@ mod tests {
             object_kind: *b"srg\0",
             object_key: &[0x01],
             object_info: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             bindings: vec![Binding {
                 name: vec![NameComponent {
                     id: b"index.html",
@@ -257,7 +257,7 @@ mod tests {
             object_key: &[0x02],
             content_size: 11,
             object_info_extra: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             content: b"hello world",
         });
 

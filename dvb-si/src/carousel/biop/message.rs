@@ -206,6 +206,20 @@ impl<'a> Binding<'a> {
     }
 }
 
+// ── ServiceContext ────────────────────────────────────────────────────────────
+
+/// One `serviceContext` entry in a BIOP message's `serviceContextList`.
+/// ISO/IEC 13818-6 / TR 101 202 §4.7.4.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ServiceContext<'a> {
+    /// CDR `context_id` (32-bit).
+    pub context_id: u32,
+    /// `context_data` bytes.
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub data: &'a [u8],
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Parse the common BIOP message header (magic, version, byte_order, message_type,
@@ -299,9 +313,13 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
     Ok((object_key, kind_bytes, message_size, pos))
 }
 
-/// Parse the serviceContextList and return the raw bytes (including count byte)
-/// and the position after it. We preserve as raw bytes for round-trip fidelity.
-fn parse_service_context_list(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize)> {
+/// Parse the `serviceContextList` and return the typed entries plus the
+/// position after the list.
+fn parse_service_context_list<'a>(
+    bytes: &'a [u8],
+    pos: usize,
+    end: usize,
+) -> Result<(Vec<ServiceContext<'a>>, usize)> {
     if pos + SERVICE_CONTEXT_COUNT_FIELD > end {
         return Err(Error::BufferTooShort {
             need: pos + SERVICE_CONTEXT_COUNT_FIELD,
@@ -310,8 +328,8 @@ fn parse_service_context_list(bytes: &[u8], pos: usize, end: usize) -> Result<(&
         });
     }
     let count = bytes[pos] as usize;
-    let list_start = pos;
     let mut cur = pos + SERVICE_CONTEXT_COUNT_FIELD;
+    let mut list = Vec::with_capacity(count.min(16));
     for _ in 0..count {
         if cur + SERVICE_CONTEXT_FIXED > end {
             return Err(Error::BufferTooShort {
@@ -320,6 +338,8 @@ fn parse_service_context_list(bytes: &[u8], pos: usize, end: usize) -> Result<(&
                 what: "serviceContext entry",
             });
         }
+        let context_id =
+            u32::from_be_bytes([bytes[cur], bytes[cur + 1], bytes[cur + 2], bytes[cur + 3]]);
         let ctx_data_len = u16::from_be_bytes([bytes[cur + 4], bytes[cur + 5]]) as usize;
         cur += SERVICE_CONTEXT_FIXED;
         if cur + ctx_data_len > end {
@@ -328,9 +348,46 @@ fn parse_service_context_list(bytes: &[u8], pos: usize, end: usize) -> Result<(&
                 available: end - cur,
             });
         }
+        let data = &bytes[cur..cur + ctx_data_len];
         cur += ctx_data_len;
+        list.push(ServiceContext { context_id, data });
     }
-    Ok((&bytes[list_start..cur], cur))
+    Ok((list, cur))
+}
+
+/// Serialized byte length of a `serviceContextList` (count byte + all entries).
+fn service_context_list_len(list: &[ServiceContext]) -> usize {
+    SERVICE_CONTEXT_COUNT_FIELD
+        + list
+            .iter()
+            .map(|e| SERVICE_CONTEXT_FIXED + e.data.len())
+            .sum::<usize>()
+}
+
+/// Write a `serviceContextList` into `buf` starting at offset 0. Returns bytes written.
+fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result<usize> {
+    if list.len() > u8::MAX as usize {
+        return Err(Error::SectionLengthOverflow {
+            declared: list.len(),
+            available: u8::MAX as usize,
+        });
+    }
+    buf[0] = list.len() as u8;
+    let mut pos = SERVICE_CONTEXT_COUNT_FIELD;
+    for entry in list {
+        if entry.data.len() > u16::MAX as usize {
+            return Err(Error::SectionLengthOverflow {
+                declared: entry.data.len(),
+                available: u16::MAX as usize,
+            });
+        }
+        buf[pos..pos + 4].copy_from_slice(&entry.context_id.to_be_bytes());
+        buf[pos + 4..pos + 6].copy_from_slice(&(entry.data.len() as u16).to_be_bytes());
+        pos += SERVICE_CONTEXT_FIXED;
+        buf[pos..pos + entry.data.len()].copy_from_slice(entry.data);
+        pos += entry.data.len();
+    }
+    Ok(pos)
 }
 
 /// Write the 12-byte BIOP message header to `buf` at position 0.
@@ -358,9 +415,9 @@ pub struct DirectoryMessage<'a> {
     /// `objectInfo_data` (after key and kind but before serviceContextList).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub object_info: &'a [u8],
-    /// Raw `serviceContextList` bytes (count byte + context entries), preserved for round-trip.
+    /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_context: &'a [u8],
+    pub service_context: Vec<ServiceContext<'a>>,
     /// Binding entries.
     pub bindings: Vec<Binding<'a>>,
 }
@@ -462,7 +519,7 @@ impl<'a> DirectoryMessage<'a> {
             + OBJECT_KIND_LEN_FIELD
             + OBJECT_KIND_DATA_LEN;
         let info_part = OBJECT_INFO_LEN_FIELD + self.object_info.len();
-        let svc_ctx_part = self.service_context.len();
+        let svc_ctx_part = service_context_list_len(&self.service_context);
         let body_part = MESSAGE_BODY_LEN_FIELD + self.body_len();
         key_part + info_part + svc_ctx_part + body_part
     }
@@ -520,9 +577,8 @@ impl<'a> DirectoryMessage<'a> {
         buf[pos..pos + self.object_info.len()].copy_from_slice(self.object_info);
         pos += self.object_info.len();
 
-        // serviceContextList (raw, already includes count byte)
-        buf[pos..pos + self.service_context.len()].copy_from_slice(self.service_context);
-        pos += self.service_context.len();
+        // serviceContextList
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody
         let body_len = self.body_len();
@@ -571,9 +627,9 @@ pub struct FileMessage<'a> {
     /// Remaining objectInfo bytes after the 8-byte ContentSize.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub object_info_extra: &'a [u8],
-    /// Raw serviceContextList bytes.
+    /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_context: &'a [u8],
+    pub service_context: Vec<ServiceContext<'a>>,
     /// File content bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub content: &'a [u8],
@@ -679,7 +735,7 @@ impl<'a> FileMessage<'a> {
             + OBJECT_KIND_DATA_LEN
             + OBJECT_INFO_LEN_FIELD
             + obj_info_total
-            + self.service_context.len()
+            + service_context_list_len(&self.service_context)
             + MESSAGE_BODY_LEN_FIELD
             + FILE_CONTENT_LEN_FIELD
             + self.content.len()
@@ -734,9 +790,8 @@ impl<'a> FileMessage<'a> {
         buf[pos..pos + self.object_info_extra.len()].copy_from_slice(self.object_info_extra);
         pos += self.object_info_extra.len();
 
-        // serviceContextList (raw)
-        buf[pos..pos + self.service_context.len()].copy_from_slice(self.service_context);
-        pos += self.service_context.len();
+        // serviceContextList
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody
         let body_len = FILE_CONTENT_LEN_FIELD + self.content.len();
@@ -882,9 +937,9 @@ pub struct StreamMessage<'a> {
     /// Trailing objectInfo bytes after Info_T (may be empty).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub object_info_extra: &'a [u8],
-    /// Raw `serviceContextList` bytes (count byte + context entries).
+    /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_context: &'a [u8],
+    pub service_context: Vec<ServiceContext<'a>>,
     /// Tap entries from the message body.
     pub taps: Vec<super::ior::Tap<'a>>,
 }
@@ -991,7 +1046,7 @@ impl<'a> StreamMessage<'a> {
             + OBJECT_KIND_DATA_LEN
             + OBJECT_INFO_LEN_FIELD
             + self.obj_info_len()
-            + self.service_context.len()
+            + service_context_list_len(&self.service_context)
             + MESSAGE_BODY_LEN_FIELD
             + self.body_len()
     }
@@ -1050,9 +1105,8 @@ impl<'a> StreamMessage<'a> {
         buf[pos..pos + self.object_info_extra.len()].copy_from_slice(self.object_info_extra);
         pos += self.object_info_extra.len();
 
-        // serviceContextList (raw, already includes count byte)
-        buf[pos..pos + self.service_context.len()].copy_from_slice(self.service_context);
-        pos += self.service_context.len();
+        // serviceContextList
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
         let bl = self.body_len();
@@ -1095,9 +1149,9 @@ pub struct StreamEventMessage<'a> {
     /// Trailing objectInfo bytes after Info_T and EventList_T (may be empty).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub object_info_extra: &'a [u8],
-    /// Raw `serviceContextList` bytes (count byte + context entries).
+    /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_context: &'a [u8],
+    pub service_context: Vec<ServiceContext<'a>>,
     /// Tap entries from the message body.
     pub taps: Vec<super::ior::Tap<'a>>,
     /// `eventId` values — one per `event_names` entry.
@@ -1281,7 +1335,7 @@ impl<'a> StreamEventMessage<'a> {
             + OBJECT_KIND_DATA_LEN
             + OBJECT_INFO_LEN_FIELD
             + self.obj_info_len()
-            + self.service_context.len()
+            + service_context_list_len(&self.service_context)
             + MESSAGE_BODY_LEN_FIELD
             + self.body_len()
     }
@@ -1362,9 +1416,8 @@ impl<'a> StreamEventMessage<'a> {
         buf[pos..pos + self.object_info_extra.len()].copy_from_slice(self.object_info_extra);
         pos += self.object_info_extra.len();
 
-        // serviceContextList (raw, already includes count byte)
-        buf[pos..pos + self.service_context.len()].copy_from_slice(self.service_context);
-        pos += self.service_context.len();
+        // serviceContextList
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
         let bl = self.body_len();
@@ -1730,9 +1783,9 @@ pub struct ServiceGatewayInfo<'a> {
     /// In practice `downloadTaps_count` is typically 0, making this `&[0x00]`.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub download_taps: &'a [u8],
-    /// Raw serviceContextList bytes (count byte + context entries).
+    /// Parsed `serviceContextList` entries.
     #[cfg_attr(feature = "serde", serde(borrow))]
-    pub service_context: &'a [u8],
+    pub service_context: Vec<ServiceContext<'a>>,
     /// `userInfo` descriptor loop bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub user_info: &'a [u8],
@@ -1798,7 +1851,7 @@ impl<'a> ServiceGatewayInfo<'a> {
     pub fn to_bytes(&self) -> Vec<u8> {
         let len = self.ior.serialized_len()
             + self.download_taps.len()
-            + self.service_context.len()
+            + service_context_list_len(&self.service_context)
             + SGI_USER_INFO_LEN_FIELD
             + self.user_info.len();
         let mut buf = vec![0u8; len];
@@ -1810,8 +1863,8 @@ impl<'a> ServiceGatewayInfo<'a> {
         pos += written;
         buf[pos..pos + self.download_taps.len()].copy_from_slice(self.download_taps);
         pos += self.download_taps.len();
-        buf[pos..pos + self.service_context.len()].copy_from_slice(self.service_context);
-        pos += self.service_context.len();
+        pos += write_service_context_list(&mut buf[pos..], &self.service_context)
+            .expect("serviceContext fits");
         buf[pos..pos + 2].copy_from_slice(&(self.user_info.len() as u16).to_be_bytes());
         pos += SGI_USER_INFO_LEN_FIELD;
         buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info);
@@ -1833,7 +1886,7 @@ mod tests {
             object_key: key,
             content_size: content.len() as u64,
             object_info_extra: &[],
-            service_context: &[0x00], // count=0
+            service_context: vec![],
             content,
         })
     }
@@ -1861,7 +1914,7 @@ mod tests {
             object_kind: *b"dir\0",
             object_key: &[0x01],
             object_info: &[],
-            service_context: &[0x00], // count=0
+            service_context: vec![],
             bindings: vec![Binding {
                 name: vec![NameComponent {
                     id: b"index.html",
@@ -2058,7 +2111,7 @@ mod tests {
                 data: 0,
             },
             object_info_extra: b"\xDE\xAD",
-            service_context: &[0x00], // count=0
+            service_context: vec![],
             taps: vec![
                 Tap {
                     id: 0,
@@ -2099,7 +2152,7 @@ mod tests {
             },
             event_names: vec![b"play".as_ref(), b"pause".as_ref(), b"stop".as_ref()],
             object_info_extra: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             taps: vec![Tap {
                 id: 0,
                 use_: 0x000C,
@@ -2200,7 +2253,7 @@ mod tests {
                 data: 0,
             },
             object_info_extra: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             taps: vec![Tap {
                 id: 0,
                 use_: 0x0018,
@@ -2319,7 +2372,7 @@ mod tests {
             },
             event_names: vec![b"foo".as_ref(), b"bar".as_ref()],
             object_info_extra: &[],
-            service_context: &[0x00],
+            service_context: vec![],
             taps: vec![],
             event_ids: vec![1, 2],
         });
@@ -2340,5 +2393,58 @@ mod tests {
             parsed, expected_msg,
             "StreamEventMessage parse must match byte anchor struct"
         );
+    }
+
+    #[test]
+    fn service_context_typed_round_trip() {
+        // FileMessage with two non-trivial serviceContext entries.
+        let msg = BiopMessage::File(FileMessage {
+            object_key: &[0x01],
+            content_size: 3,
+            object_info_extra: &[],
+            service_context: vec![
+                ServiceContext {
+                    context_id: 0xDEADBEEF,
+                    data: &[1, 2, 3],
+                },
+                ServiceContext {
+                    context_id: 0x11223344,
+                    data: &[],
+                },
+            ],
+            content: b"abc",
+        });
+
+        // serialize
+        let mut buf = vec![0u8; msg.serialized_len()];
+        msg.serialize_into(&mut buf).unwrap();
+
+        // parse back
+        let (parsed, consumed) = BiopMessage::parse_at(&buf).unwrap();
+        assert_eq!(consumed, buf.len(), "consumed must equal total buf len");
+        assert_eq!(parsed, msg, "parsed must equal original");
+
+        // byte-exact re-serialize
+        let mut buf2 = vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut buf2).unwrap();
+        assert_eq!(
+            buf, buf2,
+            "serviceContext typed round-trip must be byte-exact"
+        );
+
+        // spot-check the wire: count byte should be 2
+        // serviceContextList starts after the BIOP header + key + kind + objectInfo
+        // (12 + 2 + 8 + 2 + 8 = 32 bytes in)
+        assert_eq!(buf[32], 2, "serviceContextList_count must be 2");
+        // first entry: context_id = 0xDEADBEEF
+        assert_eq!(&buf[33..37], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        // first entry: context_data_length = 3
+        assert_eq!(&buf[37..39], &[0x00, 0x03]);
+        // first entry: context_data = [1, 2, 3]
+        assert_eq!(&buf[39..42], &[0x01, 0x02, 0x03]);
+        // second entry: context_id = 0x11223344
+        assert_eq!(&buf[42..46], &[0x11, 0x22, 0x33, 0x44]);
+        // second entry: context_data_length = 0
+        assert_eq!(&buf[46..48], &[0x00, 0x00]);
     }
 }

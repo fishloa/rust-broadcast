@@ -174,7 +174,7 @@ fn synthetic_carousel_fs_file_lookup() {
         object_kind: *b"srg\0",
         object_key: &[0x01],
         object_info: &[],
-        service_context: &[0x00], // serviceContextList_count=0
+        service_context: vec![], // serviceContextList_count=0
         bindings: vec![Binding {
             name: vec![NameComponent {
                 id: b"index.html",
@@ -190,7 +190,7 @@ fn synthetic_carousel_fs_file_lookup() {
         object_key: &[0x02],
         content_size: file_content.len() as u64,
         object_info_extra: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         content: file_content,
     });
 
@@ -341,7 +341,7 @@ fn directory_message_byte_anchor() {
         object_kind: *b"srg\0",
         object_key: &[0x01],
         object_info: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         bindings: vec![Binding {
             name: vec![NameComponent {
                 id: b"subdir",
@@ -369,7 +369,7 @@ fn file_message_byte_anchor() {
         object_key: &[0x04],
         content_size: content.len() as u64,
         object_info_extra: &[],
-        service_context: &[0x00],
+        service_context: vec![],
         content,
     });
     let mut buf = vec![0u8; fm.serialized_len()];
