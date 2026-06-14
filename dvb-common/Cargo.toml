@@ -9,21 +9,31 @@ keywords     = ["dvb", "mpeg", "broadcast", "crc", "parser"]
 categories   = ["parser-implementations", "multimedia"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
-rust-version = "1.75"
+rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
+# the parse/serialize/CRC/BCD/MJD core is fully no_std.
+std = ["chrono?/std", "chrono?/clock"]
 # MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
 # helpers remain available; only the chrono-typed UTC functions are gated.
 chrono = ["dep:chrono"]
 
 [dependencies]
-# Default build stays dependency-free — consumers of dvb_common pay for nothing
-# they aren't already paying for downstream. `chrono` is pulled only when the
-# `chrono` feature is enabled (e.g. by dvb-si's own `chrono` feature).
-chrono = { version = "0.4", optional = true, default-features = false }
+# Default build stays lean — consumers of dvb_common pay for nothing they aren't
+# already paying for downstream. `chrono` is pulled only when the `chrono`
+# feature is enabled (e.g. by dvb-si's own `chrono` feature); it is configured
+# `no_std + alloc` so it composes with the crate's `no_std` build.
+chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
+# Pure-Rust `floor` for the MJD↔calendar codec: `f64::floor` is a std-only
+# intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
+# bit-identical to `f64::floor` and is used uniformly in std and no_std.
+libm = "0.2"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

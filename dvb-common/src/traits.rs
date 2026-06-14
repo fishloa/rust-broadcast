@@ -3,6 +3,8 @@
 //! Each implementer picks its own error type via `type Error`, so
 //! domain-specific error variants stay visible to the caller.
 
+use alloc::vec::Vec;
+
 /// Parse a DVB structure from raw bytes. Borrowing allowed via `<'a>`; the
 /// concrete error type is chosen per implementer.
 pub trait Parse<'a>: Sized {
@@ -44,7 +46,7 @@ pub trait Serialize {
     where
         Self::Error: core::fmt::Debug,
     {
-        let mut v = vec![0u8; self.serialized_len()];
+        let mut v = alloc::vec![0u8; self.serialized_len()];
         self.serialize_into(&mut v)
             .expect("serialize_into must succeed when buffer is exactly serialized_len()");
         v

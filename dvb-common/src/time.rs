@@ -79,11 +79,11 @@ pub fn encode_mjd_bcd(dt: MjdBcdDateTime) -> Option<[u8; 5]> {
 fn mjd_to_ymd_nogate(mjd: u16) -> Option<(u16, u8, u8)> {
     let mjd = i64::from(mjd);
     let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor()) / 30.6001) as i64;
+    let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
     let d = mjd
         - 14_956
-        - (y_prime as f64 * 365.25).floor() as i64
-        - (m_prime as f64 * 30.6001).floor() as i64;
+        - libm::floor(y_prime as f64 * 365.25) as i64
+        - libm::floor(m_prime as f64 * 30.6001) as i64;
     let k = i64::from(m_prime == 14 || m_prime == 15);
     let y = y_prime + k + 1900;
     let m = m_prime - 1 - k * 12;
@@ -109,8 +109,8 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
     let m = f64::from(month);
     let mjd = 14_956.0
         + f64::from(day)
-        + ((y - l) * 365.25).floor()
-        + ((m + 1.0 + l * 12.0) * 30.6001).floor();
+        + libm::floor((y - l) * 365.25)
+        + libm::floor((m + 1.0 + l * 12.0) * 30.6001);
     if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
         Some(mjd as u16)
     } else {
@@ -162,11 +162,11 @@ pub fn encode_bcd_duration(duration: Duration) -> Option<[u8; 3]> {
 pub fn mjd_to_ymd(mjd: u16) -> (i32, u32, u32) {
     let mjd = i64::from(mjd);
     let y_prime = ((mjd as f64 - 15_078.2) / 365.25) as i64;
-    let m_prime = ((mjd as f64 - 14_956.1 - (y_prime as f64 * 365.25).floor()) / 30.6001) as i64;
+    let m_prime = ((mjd as f64 - 14_956.1 - libm::floor(y_prime as f64 * 365.25)) / 30.6001) as i64;
     let d = mjd
         - 14_956
-        - (y_prime as f64 * 365.25).floor() as i64
-        - (m_prime as f64 * 30.6001).floor() as i64;
+        - libm::floor(y_prime as f64 * 365.25) as i64
+        - libm::floor(m_prime as f64 * 30.6001) as i64;
     let k = i64::from(m_prime == 14 || m_prime == 15);
     let y = y_prime + k + 1900;
     let m = m_prime - 1 - k * 12;
@@ -190,8 +190,8 @@ pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
     let m = f64::from(month);
     let mjd = 14_956.0
         + f64::from(day)
-        + ((y - l) * 365.25).floor()
-        + ((m + 1.0 + l * 12.0) * 30.6001).floor();
+        + libm::floor((y - l) * 365.25)
+        + libm::floor((m + 1.0 + l * 12.0) * 30.6001);
     if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
         Some(mjd as u16)
     } else {
