@@ -51,6 +51,28 @@ impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
     }
 }
 
+impl PacketType {
+    /// Human-readable spec label (ETSI TS 102 773 Table 1).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::BasebandFrame => "BBFRAME",
+            Self::AuxiliaryIqData => "Auxiliary stream I/Q data",
+            Self::ArbitraryCellInsertion => "Arbitrary cell insertion",
+            Self::L1Current => "L1-current",
+            Self::L1Future => "L1-future",
+            Self::P2BiasBalancing => "P2 bias balancing cells",
+            Self::Timestamp => "Timestamp",
+            Self::IndividualAddressing => "Individual addressing",
+            Self::FefPartNull => "FEF part: Null",
+            Self::FefPartIqData => "FEF part: I/Q data",
+            Self::FefPartComposite => "FEF part: composite",
+            Self::FefSubPart => "FEF sub-part",
+        }
+    }
+}
+dvb_common::impl_spec_display!(PacketType);
+
 /// T2-MI packet header (6 bytes / 48 bits) per §5.1.
 ///
 /// Layout:

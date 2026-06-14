@@ -75,11 +75,29 @@ impl From<AddressingFunctionTag> for u8 {
     }
 }
 
-impl fmt::Display for AddressingFunctionTag {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{self:?}")
+impl AddressingFunctionTag {
+    /// Human-readable spec label (ETSI TS 102 773 §5.2.8.2 Tables 5 & 6).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TimeOffset => "Transmitter time offset",
+            Self::FrequencyOffset => "Transmitter frequency offset",
+            Self::Power => "Transmitter power",
+            Self::PrivateData => "Private data",
+            Self::CellId => "Cell ID",
+            Self::Enable => "Enable",
+            Self::Bandwidth => "Bandwidth",
+            Self::AcePapr => "ACE-PAPR reduction",
+            Self::MisoGroup => "MISO group",
+            Self::TrPapr => "TR-PAPR reduction",
+            Self::L1AcePapr => "L1-ACE-PAPR",
+            Self::TxSigFefSeqNum => "TX-SIG FEF sequence number",
+            Self::TxSigAuxStreamTxId => "TX-SIG auxiliary stream TX ID",
+            Self::Frequency => "Frequency",
+        }
     }
 }
+dvb_common::impl_spec_display!(AddressingFunctionTag);
 
 // ── Typed function bodies (§5.2.8.2 Tables 7–12b) ──────────────────────────
 
@@ -253,6 +271,24 @@ pub enum FunctionBody<'a> {
     /// `function_length` bytes).
     Raw(&'a [u8]),
 }
+
+impl FunctionBody<'_> {
+    /// Human-readable spec label (ETSI TS 102 773 §5.2.8.2 Tables 7–12b).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AcePapr(_) => "ACE-PAPR",
+            Self::MisoGroup(_) => "MISO group",
+            Self::TrPapr(_) => "TR-PAPR",
+            Self::L1AcePapr(_) => "L1-ACE-PAPR",
+            Self::TxSigFefSeqNum(_) => "TX-SIG FEF sequence numbers",
+            Self::TxSigAuxStreamTxId(_) => "TX-SIG auxiliary stream TX ID",
+            Self::Frequency(_) => "Frequency",
+            Self::Raw(_) => "raw",
+        }
+    }
+}
+dvb_common::impl_spec_display!(FunctionBody<'_>);
 
 // ── TransmitterEntry ───────────────────────────────────────────────────────
 
@@ -821,7 +857,13 @@ mod tests {
 
     #[test]
     fn address_function_tag_display() {
-        assert_eq!(AddressingFunctionTag::AcePapr.to_string(), "AcePapr");
+        // §204 convention: Display is the spec label (was Debug-style before).
+        assert_eq!(
+            AddressingFunctionTag::AcePapr.to_string(),
+            "ACE-PAPR reduction"
+        );
+        assert_eq!(AddressingFunctionTag::AcePapr.name(), "ACE-PAPR reduction");
+        assert_eq!(AddressingFunctionTag::CellId.to_string(), "Cell ID");
     }
 
     #[test]
