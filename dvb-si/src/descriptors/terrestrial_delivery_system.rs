@@ -179,6 +179,7 @@ dvb_common::impl_spec_display!(CodeRate, Reserved);
 /// Guard interval fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum GuardInterval {
     /// 1/32.
     G1_32,

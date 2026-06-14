@@ -40,6 +40,7 @@ const EVENT_HEADER_LEN: usize = 12;
 /// EIT variant distinguished by table_id range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum EitKind {
     /// Present/Following, actual TS.
     PresentFollowingActual,

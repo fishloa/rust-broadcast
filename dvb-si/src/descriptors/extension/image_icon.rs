@@ -33,6 +33,7 @@ pub struct ImageIcon<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub enum ImageIconBody<'a> {
     /// `descriptor_number == 0`: icon metadata + first payload chunk.
     First(ImageIconFirst<'a>),

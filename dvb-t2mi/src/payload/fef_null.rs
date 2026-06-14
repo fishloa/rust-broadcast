@@ -12,6 +12,7 @@ use dvb_common::{Parse, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(u8)]
+#[non_exhaustive]
 pub enum S1Field {
     /// S1 value V0 (000 = T2_SISO).
     V0 = 0,

@@ -119,6 +119,7 @@ pub struct SsuIdSelector<'a> {
 /// non-SSU callers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum IdSelector<'a> {
     /// `data_broadcast_id = 0x000A` — TS 102 006 §7.1 Table 4 SSU selector.
     Ssu(SsuIdSelector<'a>),

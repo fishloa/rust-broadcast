@@ -591,6 +591,7 @@ pub struct ShModulation {
 /// Modulation mode for an SH delivery system entry (Table 121).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShModulationMode {
     /// `modulation_type == 0` — Time-Domain Multiplex.
     Tdm {
@@ -627,6 +628,7 @@ pub enum ShModulationMode {
 /// Interleaver block for an SH modulation entry (Table 122).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ShInterleaver {
     /// `interleaver_type == 0` — full interleaver parameters.
     Type0 {

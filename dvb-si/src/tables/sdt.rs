@@ -30,6 +30,7 @@ const SERVICE_HEADER_LEN: usize = 5;
 /// SDT kind — distinguishes `0x42` (actual) from `0x46` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum SdtKind {
     /// Services on the transport stream the receiver is tuned to.
     Actual,

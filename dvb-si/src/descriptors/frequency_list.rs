@@ -25,6 +25,7 @@ pub const RESERVED_BITS_MASK: u8 = 0xFC;
 /// Coding type selects the interpretation of each 4-byte frequency entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum CodingType {
     /// Not defined (coding_type = 0b00).
     Undefined,

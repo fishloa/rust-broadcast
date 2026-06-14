@@ -29,6 +29,7 @@ pub struct TargetRegionEntry {
 /// The `region_depth` field and its associated region codes (Table 156, §6.4.12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum RegionCodes {
     /// region_depth == 0.
     None,

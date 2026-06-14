@@ -415,6 +415,7 @@ impl EventLinkageInfo {
 /// Target identification — EN 300 468 Table 65 inner conditional fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum TargetId {
     /// `target_id_type == 3` — user_defined_id (16 bits).
     UserDefined {

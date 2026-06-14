@@ -136,6 +136,7 @@ impl Iterator for HemTsIter<'_> {
 /// Selects NM or HEM iteration at runtime without heap allocation or
 /// dynamic dispatch — the mode is baked into the variant.
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub enum UpIter<'a> {
     /// Normal Mode iteration.
     Normal(NmTsIter<'a>),

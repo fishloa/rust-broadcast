@@ -86,6 +86,7 @@ const FORMAT_ID_AGGREGATED: u8 = 0x01;
 /// Use [`FormatSpecifier::format_id`] to retrieve the wire `FormatId` value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum FormatSpecifier<'a> {
     /// `FormatId = 0x00`: no `FormatSpecifier` bytes.
     Absent,
