@@ -57,6 +57,7 @@ const INITIAL_CONTEXT_LEN_FIELD: usize = 4;
 /// BIOP object `objectKind` fields.  TR 101 202 §4.7.3.1, Table 4.4.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ObjectKind {
     /// `"dir\0"` (0x64697200) — DSM::Directory.
     Directory,

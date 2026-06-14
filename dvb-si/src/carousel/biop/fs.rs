@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 /// One object parsed from a carousel module.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CarouselObject {
     /// A Directory or ServiceGateway object.
     Directory(DirectoryObjectData),
