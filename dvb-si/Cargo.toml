@@ -23,10 +23,10 @@ libm = "0.2"
 chrono      = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
 serde         = { version = "1", optional = true, features = ["derive"] }
 erased-serde  = { version = "0.4", optional = true }
-bytes         = { version = "1", optional = true }
+bytes         = { version = "1", optional = true, default-features = false }
 yoke          = { version = "0.7", optional = true, features = ["derive"] }
 flate2        = { version = "1", optional = true }
-encoding_rs = "0.8"
+encoding_rs = { version = "0.8", optional = true }
 
 [dev-dependencies]
 hex       = "0.4"
@@ -43,7 +43,7 @@ default = ["std", "chrono", "ts", "serde"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
-std      = ["dvb-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std"]
+std      = ["dvb-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono", "dvb-common/chrono"]

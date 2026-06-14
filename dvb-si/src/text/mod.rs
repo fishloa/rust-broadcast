@@ -52,9 +52,19 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
         Charset::Iso8859(n) => decode_iso_8859(n, body),
         Charset::Utf8 => String::from_utf8_lossy(body).into_owned(),
         Charset::Ucs2Be => decode_ucs2_be(body),
+        #[cfg(feature = "std")]
         Charset::Ksx1001 => decode_with(encoding_rs::EUC_KR, body),
+        #[cfg(feature = "std")]
         Charset::Gb2312 => decode_with(encoding_rs::GBK, body),
+        #[cfg(feature = "std")]
         Charset::Big5 => decode_with(encoding_rs::BIG5, body),
+        // The CJK codec tables come from `encoding_rs`, which is std-only; under
+        // `no_std` these decode lossily (replacement chars), like an unsupported
+        // charset. The raw bytes remain available via `DvbText`.
+        #[cfg(not(feature = "std"))]
+        Charset::Ksx1001 | Charset::Gb2312 | Charset::Big5 => {
+            body.iter().map(|_| '\u{FFFD}').collect()
+        }
         Charset::Unsupported(_indicator) => body.iter().map(|_| '\u{FFFD}').collect(),
     };
 
@@ -530,33 +540,46 @@ fn combine(prefix: u8, base: u8) -> Option<char> {
 }
 
 fn decode_iso_8859(n: u8, bytes: &[u8]) -> String {
-    use encoding_rs::*;
     // ISO/IEC 8859-1 (Latin-1) is the first 256 Unicode code points exactly, so
-    // a byte→char cast is a correct decode. (encoding_rs has no pure 8859-1;
-    // WINDOWS_1252 differs in 0x80–0x9F, so don't use it here.)
+    // a byte→char cast is a correct decode — and needs no codec tables, so it
+    // works under `no_std` too. (encoding_rs has no pure 8859-1; WINDOWS_1252
+    // differs in 0x80–0x9F, so don't use it here.)
     if n == 1 {
         return bytes.iter().map(|&b| b as char).collect();
     }
-    let encoding: &'static Encoding = match n {
-        2 => ISO_8859_2,
-        3 => ISO_8859_3,
-        4 => ISO_8859_4,
-        5 => ISO_8859_5,
-        6 => ISO_8859_6,
-        7 => ISO_8859_7,
-        8 => ISO_8859_8,
-        9 => WINDOWS_1254,
-        10 => ISO_8859_10,
-        11 => WINDOWS_874,
-        13 => ISO_8859_13,
-        14 => ISO_8859_14,
-        15 => ISO_8859_15,
-        _ => return bytes.iter().map(|_| '\u{FFFD}').collect(),
-    };
-    let (cow, _, _) = encoding.decode(bytes);
-    cow.into_owned()
+    // The other 8859 parts use `encoding_rs`'s codec tables, which are std-only;
+    // under `no_std` they decode lossily (replacement chars). Raw bytes remain
+    // available via `DvbText`.
+    #[cfg(feature = "std")]
+    {
+        use encoding_rs::*;
+        let encoding: &'static Encoding = match n {
+            2 => ISO_8859_2,
+            3 => ISO_8859_3,
+            4 => ISO_8859_4,
+            5 => ISO_8859_5,
+            6 => ISO_8859_6,
+            7 => ISO_8859_7,
+            8 => ISO_8859_8,
+            9 => WINDOWS_1254,
+            10 => ISO_8859_10,
+            11 => WINDOWS_874,
+            13 => ISO_8859_13,
+            14 => ISO_8859_14,
+            15 => ISO_8859_15,
+            _ => return bytes.iter().map(|_| '\u{FFFD}').collect(),
+        };
+        let (cow, _, _) = encoding.decode(bytes);
+        cow.into_owned()
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let _ = n;
+        bytes.iter().map(|_| '\u{FFFD}').collect()
+    }
 }
 
+#[cfg(feature = "std")]
 fn decode_with(encoding: &'static encoding_rs::Encoding, bytes: &[u8]) -> String {
     let (cow, _, _) = encoding.decode(bytes);
     cow.into_owned()
