@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.6.0] — 2026-06-14
+
 ### Added
 - Criterion benchmark suite (`benches/bbframe_hot_paths.rs`) measuring
   `BbframePump::feed` on the TNT real-capture fixture and `up_iter`/`NmTsIter`

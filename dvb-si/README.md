@@ -103,7 +103,11 @@ TS 102 006 SSU, TS 102 809 object carousels):
 | `ModuleReassembler` | — | ✅ DDB → complete modules per DII geometry: version-aware, out-of-order tolerant, per-module + aggregate memory caps |
 
 Validated **byte-exact** against a live French-TNT (M6 HbbTV) capture in the
-test suite. BIOP object-carousel payloads above this layer are out of scope.
+test suite. The BIOP object-carousel layer (`carousel::biop`) is now also
+implemented: `ServiceGatewayInfo`, `BiopMessage` (Directory / File /
+ServiceGateway / Stream / StreamEvent), IOR + tagged profiles, and the
+`CarouselFs` virtual-file-tree walker (`resolve` / `file_bytes`); ISO/IEC
+13818-6 §11 as profiled by TR 101 202.
 
 ## Descriptors
 

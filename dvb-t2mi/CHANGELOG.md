@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [6.6.0] — 2026-06-14
+
 ### Added
 - **L1-pre / L1-post signalling parser** (`payload::l1`) — EN 302 755 §7.2 (#54).
   `L1Pre` (Figure 25), `L1PostConfigurable` (Figure 27), `L1PostDynamic`

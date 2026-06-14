@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [6.6.0] — 2026-06-14
+
+Version-lockstep release with the workspace (dvb-t2mi L1-pre/L1-post signalling parser #54; dvb-si BIOP object-carousel layer #64; criterion benchmark suites #62). No changes to this crate.
+
 ## [6.5.0] — 2026-06-13
 
 Version-lockstep release with the workspace (#47 T2 emission-time accessors; #50 SSU GroupInfoIndication + data_broadcast_id 0x000A selector; #53 S2Xv2 0x24 extension descriptor). No changes to this crate.
