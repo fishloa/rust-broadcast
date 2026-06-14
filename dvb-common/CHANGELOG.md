@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [6.7.0] — 2026-06-14
+
+### Added
+- `impl_spec_display!` — exported declarative macro that generates a `Display`
+  impl for a spec/field enum, delegating to its inherent `name()` and preserving
+  the byte on `Reserved(u8)`-style arms as `"{name}(0x{:02X})"` (#204).
+
 ## [6.6.0] — 2026-06-14
 
 ### Added

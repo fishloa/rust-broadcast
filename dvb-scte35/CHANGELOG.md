@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [6.7.0] — 2026-06-14
+
+### Added
+- `name()` + `Display` on `DeviceRestrictions`, `SegmentationUpidType`
+  (Table 22 UPID names) and `SegmentationTypeId` (Table 23 names) via
+  `impl_spec_display!`; `label_coverage` drift-guard test (#204).
+
 ## [6.6.0] — 2026-06-14
 
 Version-lockstep release with the workspace (dvb-t2mi L1-pre/L1-post signalling parser #54; dvb-si BIOP object-carousel layer #64; criterion benchmark suites #62). No changes to this crate.

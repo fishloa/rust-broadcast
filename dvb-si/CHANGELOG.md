@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 6.7.0 — 2026-06-14
+
+### Added
+- `name()` + `Display` on every public spec/field enum (70 enums) via
+  `impl_spec_display!`; 15 delivery-system / PMT / frequency-list field enums
+  (`Bandwidth`, `Constellation`, `Hierarchy`, `CodeRate`, `GuardInterval`,
+  `TransmissionMode`, `Modulation`, `FecOuter`, `Polarization`, `ModulationType`,
+  `ModulationSystem`, `RollOff`, `ServiceType`, `StreamType`, `CodingType`)
+  gained both. `label_coverage` drift-guard test (#204).
+
 ## 6.6.0 — 2026-06-14
 
 ### Added

@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [6.7.0] — 2026-06-14
+
+### Added
+- `name()` + `Display` on all spec/field enums via `impl_spec_display!`,
+  including the 17 EN 302 755 L1 enums in spec notation (`GuardInterval` `1/32`…,
+  `L1Modulation` `BPSK`…, `PlpCodeRate` `1/2`…); `label_coverage` drift-guard (#204).
+
+### Changed
+- `AddressingFunctionTag`'s `Display` now renders the spec label instead of a
+  `Debug`-style string.
+
 ## [6.6.0] — 2026-06-14
 
 ### Added

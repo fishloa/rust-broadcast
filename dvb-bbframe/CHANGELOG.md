@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [6.7.0] — 2026-06-14
+
+### Added
+- `name()` + `Display` on every public spec/field enum (`Mode`, `TsGs`,
+  `RollOff`, `BufsUnit`, `SignallingKind`, `Issy`) via `impl_spec_display!`, plus
+  a `label_coverage` drift-guard test (#204).
+
+### Changed
+- `RollOff` labels aligned to the `α=` style (`α=0.35`) for cross-crate
+  consistency.
+
 ## [6.6.0] — 2026-06-14
 
 ### Added
