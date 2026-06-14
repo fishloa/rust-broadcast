@@ -204,6 +204,7 @@ impl ServiceType {
         }
     }
 }
+dvb_common::impl_spec_display!(ServiceType, Reserved);
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

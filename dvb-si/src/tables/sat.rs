@@ -324,6 +324,7 @@ impl AssociationType {
         }
     }
 }
+dvb_common::impl_spec_display!(AssociationType, Reserved);
 
 /// Leap-second signalling info (present when `association_type == 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -537,6 +538,7 @@ impl InterpolationType {
         }
     }
 }
+dvb_common::impl_spec_display!(InterpolationType, ReservedOther);
 
 /// Ephemeris acceleration (optional, 3 × 32-bit spfmsbf).
 #[derive(Debug, Clone, PartialEq, Eq)]

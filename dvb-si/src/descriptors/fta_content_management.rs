@@ -85,6 +85,7 @@ impl ControlRemoteAccess {
         }
     }
 }
+dvb_common::impl_spec_display!(ControlRemoteAccess, Reserved);
 
 /// FTA Content Management Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

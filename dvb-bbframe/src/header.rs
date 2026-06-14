@@ -175,9 +175,9 @@ impl RollOff {
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
-            Self::Alpha035 => "α0.35",
-            Self::Alpha025 => "α0.25",
-            Self::Alpha020 => "α0.20",
+            Self::Alpha035 => "α=0.35",
+            Self::Alpha025 => "α=0.25",
+            Self::Alpha020 => "α=0.20",
             Self::Reserved => "reserved/S2X-low",
         }
     }

@@ -98,6 +98,7 @@ impl DescriptorType {
         }
     }
 }
+dvb_common::impl_spec_display!(DescriptorType, IsoReserved, DvbReserved, UserDefined);
 
 /// Compatibility specifier type — TS 102 006 Table 15 / ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,7 @@ impl SpecifierType {
         }
     }
 }
+dvb_common::impl_spec_display!(SpecifierType, Unallocated);
 
 /// Compatibility sub-descriptor type — ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +173,7 @@ impl SubDescriptorType {
         }
     }
 }
+dvb_common::impl_spec_display!(SubDescriptorType, Unallocated);
 
 /// Compatibility Descriptor — ETSI TS 102 006 §9.4.2.2 Table 15 / ISO/IEC
 /// 13818-6 `compatibilityDescriptor()`.

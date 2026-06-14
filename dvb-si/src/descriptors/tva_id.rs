@@ -91,6 +91,7 @@ impl TvaRunningStatus {
         }
     }
 }
+dvb_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]

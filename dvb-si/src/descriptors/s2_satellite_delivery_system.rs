@@ -98,6 +98,7 @@ impl TsGsMode {
         }
     }
 }
+dvb_common::impl_spec_display!(TsGsMode, Reserved);
 
 /// S2 Satellite Delivery System Descriptor (§6.2.13.3, Table 42).
 #[derive(Debug, Clone, PartialEq, Eq)]

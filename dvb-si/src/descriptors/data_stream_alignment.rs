@@ -67,6 +67,7 @@ impl AlignmentType {
         }
     }
 }
+dvb_common::impl_spec_display!(AlignmentType, Reserved);
 
 /// Data Stream Alignment Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

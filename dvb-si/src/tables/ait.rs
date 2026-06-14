@@ -100,6 +100,7 @@ impl ControlCode {
         }
     }
 }
+dvb_common::impl_spec_display!(ControlCode, Unallocated);
 
 /// Application type — ETSI TS 102 809 §5.2.4.2 Tables 2-3 (application_type).
 ///
@@ -162,6 +163,7 @@ impl ApplicationType {
         }
     }
 }
+dvb_common::impl_spec_display!(ApplicationType, Reserved, UserDefined);
 
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]

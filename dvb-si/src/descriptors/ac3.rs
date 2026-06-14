@@ -102,6 +102,7 @@ impl Ac3ServiceType {
         }
     }
 }
+dvb_common::impl_spec_display!(Ac3ServiceType, Unknown);
 
 /// AC-3 / Enhanced AC-3 channel mode — EN 300 468 Annex D Table D.5.
 ///
@@ -180,6 +181,7 @@ impl Ac3ChannelMode {
         }
     }
 }
+dvb_common::impl_spec_display!(Ac3ChannelMode, Unknown);
 
 /// Decoded AC-3 component_type — ETSI EN 300 468 Annex D Table D.1.
 ///

@@ -70,6 +70,7 @@ impl UntActionType {
         }
     }
 }
+dvb_common::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
 
 const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;

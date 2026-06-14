@@ -64,6 +64,7 @@ impl IntActionType {
         }
     }
 }
+dvb_common::impl_spec_display!(IntActionType, DvbReserved);
 
 const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;

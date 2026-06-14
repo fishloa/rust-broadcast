@@ -1,69 +1,17 @@
 //! Drift-guard for the spec/field-enum label convention (issue #204).
 //!
 //! Scans this crate's `src/` for every `pub enum`, subtracts a documented
-//! skip-list, and fails if any remaining enum has neither
-//! `dvb_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
-//!
-//! Because the project-wide `Display` impl delegates to an inherent
-//! `name() -> &'static str`, a present `Display` transitively guarantees
-//! `name()` exists (it would not compile otherwise) — so this single coverage
-//! check enforces the whole convention and catches the one thing the compiler
-//! cannot: a brand-new `pub enum` that nobody labelled.
+//! skip-list (errors + `Any*` dispatch wrappers), and fails if any remaining
+//! enum has neither `dvb_common::impl_spec_display!(Name)` nor a hand-written
+//! `Display` impl. A present `Display` delegates to an inherent `name()`, so it
+//! transitively guarantees `name()` exists — this one check enforces the whole
+//! convention and catches a new `pub enum` that nobody labelled.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-/// Enums that are intentionally **not** spec/field labels. Each is one of:
-/// a structured error; a dispatch/registry wrapper or tag enum (the `declare_*`
-/// system, `Any*`); a section-kind discriminant; or a data-carrying ADT whose
-/// variants hold payloads (a static label would be lossy and add nothing — use
-/// the typed variant instead).
-const SKIP: &[&str] = &[
-    // errors + dispatch wrappers / tag enums
-    "Error",
-    "AnyDescriptor",
-    "AnyTableSection",
-    "DescriptorTag",
-    "TableId",
-    "ExtensionTag",
-    "SatTableId",
-    // data-carrying / wrapper / body ADTs
-    "BiopMessage",
-    "CarouselObject",
-    "TaggedProfile",
-    "ObjectKind",
-    "UnMessage",
-    "CollectError",
-    "CompletedEit",
-    "SatBody",
-    "ProtectionMessageBody",
-    "FontInfo",
-    "DvbLocatorService",
-    "DvbLocatorIdentifier",
-    "ExtIterItem",
-    "RegisteredExtension",
-    "ExtensionBody",
-    "TargetId",
-    "LinkageData",
-    "IdSelector",
-    "CridLocation",
-    "DepthRangeBody",
-    "ImageIconBody",
-    "IconLocation",
-    "RegionCodes",
-    "CellLinkage",
-    "VbiService",
-    "ShModulationMode",
-    "ShInterleaver",
-    "PositionSystem",
-    "BeamhoppingMode",
-    // internal section-kind discriminants + config (not wire-field labels)
-    "EitKind",
-    "NitKind",
-    "SdtKind",
-    "PacketStride",
-];
+const SKIP: &[&str] = &["Error", "AnySpliceDescriptor", "AnyCommand"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {
@@ -76,8 +24,6 @@ fn read_rs(dir: &Path, out: &mut Vec<String>) {
     }
 }
 
-/// True if `name` appears after `prefix` with an identifier boundary, i.e. the
-/// match is the whole enum name and not a longer one sharing the prefix.
 fn has_impl(all: &str, prefix: &str, name: &str) -> bool {
     let needle = format!("{prefix}{name}");
     let mut start = 0;

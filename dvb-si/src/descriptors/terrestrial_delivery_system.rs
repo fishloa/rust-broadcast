@@ -53,6 +53,21 @@ pub enum Bandwidth {
     Reserved(u8),
 }
 
+impl Bandwidth {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mhz8 => "8 MHz",
+            Self::Mhz7 => "7 MHz",
+            Self::Mhz6 => "6 MHz",
+            Self::Mhz5 => "5 MHz",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Bandwidth, Reserved);
+
 /// Constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -67,6 +82,20 @@ pub enum Constellation {
     /// Unspecified / reserved value.
     Reserved(u8),
 }
+
+impl Constellation {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Qpsk => "QPSK",
+            Self::Qam16 => "16-QAM",
+            Self::Qam64 => "64-QAM",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Constellation, Reserved);
 
 /// Hierarchy mode — combines native/in-depth interleaver and α.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +122,25 @@ pub enum Hierarchy {
     Reserved(u8),
 }
 
+impl Hierarchy {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::NonHierarchicalNative => "non-hierarchical, native interleaver",
+            Self::Alpha1Native => "α=1, native interleaver",
+            Self::Alpha2Native => "α=2, native interleaver",
+            Self::Alpha4Native => "α=4, native interleaver",
+            Self::NonHierarchicalInDepth => "non-hierarchical, in-depth interleaver",
+            Self::Alpha1InDepth => "α=1, in-depth interleaver",
+            Self::Alpha2InDepth => "α=2, in-depth interleaver",
+            Self::Alpha4InDepth => "α=4, in-depth interleaver",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Hierarchy, Reserved);
+
 /// Convolutional code rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -112,6 +160,22 @@ pub enum CodeRate {
     Reserved(u8),
 }
 
+impl CodeRate {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rate1_2 => "1/2",
+            Self::Rate2_3 => "2/3",
+            Self::Rate3_4 => "3/4",
+            Self::Rate5_6 => "5/6",
+            Self::Rate7_8 => "7/8",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(CodeRate, Reserved);
+
 /// Guard interval fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -125,6 +189,20 @@ pub enum GuardInterval {
     /// 1/4.
     G1_4,
 }
+
+impl GuardInterval {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::G1_32 => "1/32",
+            Self::G1_16 => "1/16",
+            Self::G1_8 => "1/8",
+            Self::G1_4 => "1/4",
+        }
+    }
+}
+dvb_common::impl_spec_display!(GuardInterval);
 
 /// Transmission mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +218,20 @@ pub enum TransmissionMode {
     /// Unspecified / reserved value.
     Reserved(u8),
 }
+
+impl TransmissionMode {
+    /// Human-readable spec label (ETSI EN 300 468 §6.2.13.4 Table 52).
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Mode2k => "2k mode",
+            Self::Mode8k => "8k mode",
+            Self::Mode4k => "4k mode",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(TransmissionMode, Reserved);
 
 /// Terrestrial Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

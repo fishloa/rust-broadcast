@@ -79,6 +79,7 @@ impl CridAuthorityPolicy {
         }
     }
 }
+dvb_common::impl_spec_display!(CridAuthorityPolicy);
 
 /// Context ID type — ETSI TS 102 323 §5.2.2 Table 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,6 +134,7 @@ impl ContextIdType {
         }
     }
 }
+dvb_common::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
 
 /// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]

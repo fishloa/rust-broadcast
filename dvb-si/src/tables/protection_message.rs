@@ -88,6 +88,7 @@ impl ReferenceType {
         }
     }
 }
+dvb_common::impl_spec_display!(ReferenceType, Unallocated);
 
 /// table_id(1) + section_length hi/lo(2) + extension(2) + version/cni(1)
 /// + section_number(1) + last_section_number(1) = 8-byte common header.

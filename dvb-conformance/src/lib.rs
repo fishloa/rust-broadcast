@@ -162,6 +162,19 @@ pub enum Priority {
     Third,
 }
 
+impl Priority {
+    /// Human-readable spec label (TR 101 290 §5.2, Tables 5.0a/5.0b/5.0c).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::First => "first priority",
+            Self::Second => "second priority",
+            Self::Third => "third priority",
+        }
+    }
+}
+dvb_common::impl_spec_display!(Priority);
+
 /// A TR 101 290 measurement indicator.
 ///
 /// `#[non_exhaustive]` — additional Priority-3 variants may be added later.
@@ -266,6 +279,7 @@ impl Indicator {
         }
     }
 }
+dvb_common::impl_spec_display!(Indicator);
 
 /// One raised conformance error.
 #[derive(Debug, Clone, PartialEq, Eq)]
