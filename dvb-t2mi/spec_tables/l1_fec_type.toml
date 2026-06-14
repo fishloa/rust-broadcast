@@ -1,0 +1,7 @@
+# EN 302 755 §7.2.2 Table 26 — L1-post FEC type (2-bit field L1_FEC_TYPE).
+# L1FecType; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "Ldpc16K"
+spec = "LDPC 16K"

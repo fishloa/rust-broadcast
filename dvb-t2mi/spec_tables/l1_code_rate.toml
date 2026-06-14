@@ -1,0 +1,7 @@
+# EN 302 755 §7.2.2 Table 25 — L1-post code rate (2-bit field L1_COD).
+# L1CodeRate; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "R1_2"
+spec = "1/2"

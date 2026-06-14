@@ -1,0 +1,17 @@
+# EN 302 755 §7.2.3.1 Table 30 — PLP type (3-bit field PLP_TYPE).
+# PlpType; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "Common"
+spec = "Common PLP"
+
+[[entry]]
+value = 0x01
+variant = "DataType1"
+spec = "Data PLP Type 1"
+
+[[entry]]
+value = 0x02
+variant = "DataType2"
+spec = "Data PLP Type 2"

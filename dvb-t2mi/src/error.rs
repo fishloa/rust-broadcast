@@ -67,4 +67,8 @@ pub enum Error {
         /// CRC carried at the end of the packet.
         expected: u32,
     },
+
+    /// A bit-field error from [`dvb_common::bits::BitReader`] / [`dvb_common::bits::BitWriter`].
+    #[error("L1 bit-field error: {0}")]
+    L1Bits(#[from] dvb_common::bits::BitError),
 }

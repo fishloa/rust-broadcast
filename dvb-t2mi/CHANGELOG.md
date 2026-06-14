@@ -3,6 +3,17 @@
 ## [Unreleased]
 
 ### Added
+- **L1-pre / L1-post signalling parser** (`payload::l1`) — EN 302 755 §7.2 (#54).
+  `L1Pre` (Figure 25), `L1PostConfigurable` (Figure 27), `L1PostDynamic`
+  (Figure 28), `L1ExtBlock` (Table 37) and `L1Post`, with symmetric
+  Parse/Serialize and 13 typed coded-field enums (`GuardInterval`,
+  `L1Modulation`, `PlpType`, `PlpModulation`, `T2Version`, …) plus
+  version/profile-dependent `PaprReduction` / `PlpCodeRate` decode accessors.
+  Lazy `L1CurrentPayload::l1_pre()` / `l1_post()` accessors (raw `l1_current_data`
+  retained) and `L1FuturePayload` dynamic-next / in-band accessors; the parse is
+  validated byte-exactly against the real `colombia-capital-t2mi.ts` capture and
+  re-serialises identically. 13 new `spec_tables` TOML drift-guards. Uses the
+  new `dvb_common::bits` reader; adds `Error::L1Bits`.
 - Criterion benchmark suite (`benches/t2mi_hot_paths.rs`) measuring
   `T2miPump::feed_ts` throughput on the Colombia T2-MI real-capture fixture —
   dev-only, no API change (#62).

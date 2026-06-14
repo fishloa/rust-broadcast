@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- **`bits` module** — `BitReader` / `BitWriter`, an MSB-first (DVB/MPEG bit
+  order) reader/writer for dense sub-byte wire fields. Reads/writes 0..=64 bits
+  per call with `BufferTooShort`-style `BitError` context; the writer sets *and*
+  clears each target bit (no pre-zeroing needed). Foundational for the
+  EN 302 755 §7.2 L1 signalling parser (#54).
 - Criterion benchmark suite (`benches/crc32.rs`) measuring `crc32_mpeg2::compute`
   throughput at 188 B / 4096 B / 65536 B payload sizes — dev-only, no API change (#62).
 

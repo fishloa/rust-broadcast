@@ -1,0 +1,7 @@
+# EN 302 755 §7.2.3.1 Table 36 — Auxiliary stream type (4-bit field AUX_STREAM_TYPE).
+# AuxStreamType; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "TxSig"
+spec = "TX-SIG (see ETSI TS 102 992)"

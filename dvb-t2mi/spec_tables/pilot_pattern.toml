@@ -1,0 +1,42 @@
+# EN 302 755 §7.2.2 Table 27 — Pilot pattern (4-bit field PILOT_PATTERN).
+# PilotPattern; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "Pp1"
+spec = "PP1"
+
+[[entry]]
+value = 0x01
+variant = "Pp2"
+spec = "PP2"
+
+[[entry]]
+value = 0x02
+variant = "Pp3"
+spec = "PP3"
+
+[[entry]]
+value = 0x03
+variant = "Pp4"
+spec = "PP4"
+
+[[entry]]
+value = 0x04
+variant = "Pp5"
+spec = "PP5"
+
+[[entry]]
+value = 0x05
+variant = "Pp6"
+spec = "PP6"
+
+[[entry]]
+value = 0x06
+variant = "Pp7"
+spec = "PP7"
+
+[[entry]]
+value = 0x07
+variant = "Pp8"
+spec = "PP8"

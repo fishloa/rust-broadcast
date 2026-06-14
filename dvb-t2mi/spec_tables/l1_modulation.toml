@@ -1,0 +1,22 @@
+# EN 302 755 §7.2.2 Table 24 — L1-post constellation (4-bit field L1_MOD).
+# L1Modulation; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "Bpsk"
+spec = "BPSK"
+
+[[entry]]
+value = 0x01
+variant = "Qpsk"
+spec = "QPSK"
+
+[[entry]]
+value = 0x02
+variant = "Qam16"
+spec = "16-QAM"
+
+[[entry]]
+value = 0x03
+variant = "Qam64"
+spec = "64-QAM"

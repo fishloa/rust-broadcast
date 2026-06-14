@@ -11,6 +11,10 @@ use dvb_t2mi::payload::fef_subpart::SubpartVariety;
 use dvb_t2mi::payload::individual_addressing::AddressingFunctionTag;
 use dvb_t2mi::payload::l1_current::FrequencySource;
 use dvb_t2mi::payload::timestamp::Bandwidth;
+use dvb_t2mi::payload::{
+    AuxStreamType, GuardInterval, L1CodeRate, L1FecType, L1Modulation, PilotPattern, PlpFecType,
+    PlpMode, PlpModulation, PlpPayloadType, PlpType, T2Version, TxInputStreamType,
+};
 use std::collections::BTreeSet;
 
 // ── tiny TOML parser ─────────────────────────────────────────────────────────
@@ -278,3 +282,159 @@ fn subpart_variety_toml_matches_enum() {
         "SubpartVariety drift detected!\n  only in TOML: {only_in_toml:?}\n  only in code: {only_in_code:?}"
     );
 }
+
+// ── L1 signalling enum drift tests ───────────────────────────────────────────
+
+macro_rules! l1_drift_test {
+    ($test_name:ident, $toml_file:literal, $enum_ty:ident, $domain:expr, $expected:expr, $reserved_pat:pat) => {
+        #[test]
+        fn $test_name() {
+            let toml = include_str!(concat!("../spec_tables/", $toml_file));
+            let toml_set: BTreeSet<(u8, String)> = parse_entries(toml)
+                .iter()
+                .map(|(v, var, _)| (*v as u8, var.clone()))
+                .collect();
+
+            let mut code_set: BTreeSet<(u8, String)> = BTreeSet::new();
+            for b in $domain {
+                let e = $enum_ty::from_u8(b);
+                if !matches!(e, $reserved_pat) {
+                    code_set.insert((e.to_u8(), format!("{e:?}")));
+                }
+            }
+
+            assert_eq!(
+                code_set.len(),
+                $expected,
+                "{}: expected {} named variants, got {}",
+                stringify!($enum_ty),
+                $expected,
+                code_set.len()
+            );
+            let only_toml: BTreeSet<_> = toml_set.difference(&code_set).collect();
+            let only_code: BTreeSet<_> = code_set.difference(&toml_set).collect();
+            assert!(
+                only_toml.is_empty() && only_code.is_empty(),
+                "{} drift!\n  only in TOML: {only_toml:?}\n  only in code: {only_code:?}",
+                stringify!($enum_ty)
+            );
+        }
+    };
+}
+
+l1_drift_test!(
+    tx_input_stream_type_drift,
+    "tx_input_stream_type.toml",
+    TxInputStreamType,
+    0u8..=0xFF,
+    3,
+    TxInputStreamType::Reserved(_)
+);
+
+l1_drift_test!(
+    guard_interval_drift,
+    "guard_interval.toml",
+    GuardInterval,
+    0u8..=7,
+    7,
+    GuardInterval::Reserved(_)
+);
+
+l1_drift_test!(
+    l1_modulation_drift,
+    "l1_modulation.toml",
+    L1Modulation,
+    0u8..=0x0F,
+    4,
+    L1Modulation::Reserved(_)
+);
+
+l1_drift_test!(
+    l1_code_rate_drift,
+    "l1_code_rate.toml",
+    L1CodeRate,
+    0u8..=3,
+    1,
+    L1CodeRate::Reserved(_)
+);
+
+l1_drift_test!(
+    l1_fec_type_drift,
+    "l1_fec_type.toml",
+    L1FecType,
+    0u8..=3,
+    1,
+    L1FecType::Reserved(_)
+);
+
+l1_drift_test!(
+    pilot_pattern_drift,
+    "pilot_pattern.toml",
+    PilotPattern,
+    0u8..=0x0F,
+    8,
+    PilotPattern::Reserved(_)
+);
+
+l1_drift_test!(
+    t2_version_drift,
+    "t2_version.toml",
+    T2Version,
+    0u8..=0x0F,
+    3,
+    T2Version::Reserved(_)
+);
+
+l1_drift_test!(
+    plp_type_drift,
+    "plp_type.toml",
+    PlpType,
+    0u8..=7,
+    3,
+    PlpType::Reserved(_)
+);
+
+l1_drift_test!(
+    plp_payload_type_drift,
+    "plp_payload_type.toml",
+    PlpPayloadType,
+    0u8..=0x1F,
+    4,
+    PlpPayloadType::Reserved(_)
+);
+
+l1_drift_test!(
+    plp_modulation_drift,
+    "plp_modulation.toml",
+    PlpModulation,
+    0u8..=7,
+    4,
+    PlpModulation::Reserved(_)
+);
+
+l1_drift_test!(
+    plp_fec_type_drift,
+    "plp_fec_type.toml",
+    PlpFecType,
+    0u8..=3,
+    2,
+    PlpFecType::Reserved(_)
+);
+
+l1_drift_test!(
+    plp_mode_drift,
+    "plp_mode.toml",
+    PlpMode,
+    0u8..=3,
+    3,
+    PlpMode::Reserved(_)
+);
+
+l1_drift_test!(
+    aux_stream_type_drift,
+    "aux_stream_type.toml",
+    AuxStreamType,
+    0u8..=0x0F,
+    1,
+    AuxStreamType::Reserved(_)
+);

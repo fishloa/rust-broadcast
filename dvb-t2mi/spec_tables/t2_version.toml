@@ -1,0 +1,17 @@
+# EN 302 755 §7.2.2 Table 28 — T2 version field (4-bit field T2_VERSION).
+# T2Version; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "V1_1_1"
+spec = "Specification version 1.1.1"
+
+[[entry]]
+value = 0x01
+variant = "V1_2_1"
+spec = "Specification version 1.2.1"
+
+[[entry]]
+value = 0x02
+variant = "V1_3_1"
+spec = "Specification version 1.3.1"

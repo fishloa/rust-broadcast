@@ -1,0 +1,17 @@
+# EN 302 755 §7.2.3.1 Table 35 — PLP mode (2-bit field PLP_MODE).
+# PlpMode; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "NotSpecified"
+spec = "Not specified (valid only if T2_VERSION='0000')"
+
+[[entry]]
+value = 0x01
+variant = "Normal"
+spec = "Normal Mode"
+
+[[entry]]
+value = 0x02
+variant = "HighEfficiency"
+spec = "High Efficiency Mode"

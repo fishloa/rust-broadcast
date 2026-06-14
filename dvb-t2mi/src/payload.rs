@@ -9,6 +9,7 @@ pub mod fef_iq;
 pub mod fef_null;
 pub mod fef_subpart;
 pub mod individual_addressing;
+pub mod l1;
 pub mod l1_current;
 pub mod l1_future;
 pub mod p2_bias;
@@ -28,6 +29,12 @@ pub use individual_addressing::{
     AcePaprBody, AddressingFunctionTag, FrequencyBody, FunctionBody, FunctionEntry,
     IndividualAddressingPayload, L1AcePaprBody, MisoGroupBody, TrPaprBody, TransmitterEntry,
     TxSigAuxStreamTxIdBody, TxSigFefSeqNumBody,
+};
+pub use l1::{
+    AuxConfig, AuxDynamic, AuxStreamType, FefInfo, GuardInterval, L1CodeRate, L1ExtBlock,
+    L1FecType, L1Modulation, L1Post, L1PostConfigurable, L1PostDynamic, L1Pre, PaprReduction,
+    PaprReductionV0, PaprReductionVn, PilotPattern, PlpCodeRate, PlpConfig, PlpDynamic, PlpFecType,
+    PlpMode, PlpModulation, PlpPayloadType, PlpType, RfFrequency, T2Version, TxInputStreamType,
 };
 pub use l1_current::{FrequencySource, L1CurrentPayload};
 pub use l1_future::L1FuturePayload;

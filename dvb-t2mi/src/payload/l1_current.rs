@@ -7,6 +7,10 @@ use num_enum::TryFromPrimitive;
 
 use dvb_common::{Parse, Serialize};
 
+use super::l1::post::parse_l1_post_from_framed;
+use super::l1::pre::L1PRE_BYTES;
+use super::l1::{L1Post, L1Pre};
+
 /// Frequency source per §5.2.4 Table 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -56,6 +60,40 @@ pub struct L1CurrentPayload<'a> {
 }
 
 const L1_CURRENT_HEADER_LEN: usize = 2;
+
+impl<'a> L1CurrentPayload<'a> {
+    /// Parse the L1-pre block from the first 21 bytes of `l1_current_data`.
+    ///
+    /// # Errors
+    /// [`crate::Error::BufferTooShort`] if `l1_current_data` is shorter than 21 bytes.
+    /// [`crate::Error::L1Bits`] on bit-field errors.
+    pub fn l1_pre(&self) -> crate::error::Result<L1Pre> {
+        if self.l1_current_data.len() < L1PRE_BYTES {
+            return Err(crate::Error::BufferTooShort {
+                need: L1PRE_BYTES,
+                have: self.l1_current_data.len(),
+                what: "L1PRE in l1_current_data",
+            });
+        }
+        L1Pre::parse(&self.l1_current_data[..L1PRE_BYTES])
+    }
+
+    /// Parse the full L1-post block from `l1_current_data`.
+    ///
+    /// Internally parses the L1-pre block first to extract `num_rf` and
+    /// `fef_present` (S2 LSB), then parses the framed CONF/DYN/EXT sections.
+    ///
+    /// # Errors
+    /// [`crate::Error::BufferTooShort`] if any framing section is truncated.
+    /// [`crate::Error::L1Bits`] on bit-field errors.
+    pub fn l1_post(&self) -> crate::error::Result<L1Post> {
+        let pre = self.l1_pre()?;
+        let num_rf = pre.num_rf;
+        let fef_present = (pre.s2 & 0x01) == 1;
+        let framed = &self.l1_current_data[L1PRE_BYTES..];
+        parse_l1_post_from_framed(framed, num_rf, fef_present)
+    }
+}
 
 impl<'a> Parse<'a> for L1CurrentPayload<'a> {
     type Error = crate::error::Error;

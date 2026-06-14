@@ -1,0 +1,22 @@
+# EN 302 755 §7.2.3.1 Table 33 — PLP modulation (3-bit field PLP_MOD).
+# PlpModulation; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "Qpsk"
+spec = "QPSK"
+
+[[entry]]
+value = 0x01
+variant = "Qam16"
+spec = "16-QAM"
+
+[[entry]]
+value = 0x02
+variant = "Qam64"
+spec = "64-QAM"
+
+[[entry]]
+value = 0x03
+variant = "Qam256"
+spec = "256-QAM"

@@ -1,0 +1,17 @@
+# EN 302 755 §7.2.2 Table 21 — Tx input stream types (8-bit field TYPE).
+# TxInputStreamType; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "TsOnly"
+spec = "Transport Stream (TS) only"
+
+[[entry]]
+value = 0x01
+variant = "GenericStream"
+spec = "Generic Stream (GSE and/or GFPS and/or GCS) but not TS"
+
+[[entry]]
+value = 0x02
+variant = "Both"
+spec = "Both TS and Generic Stream"

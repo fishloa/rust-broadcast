@@ -1,0 +1,37 @@
+# EN 302 755 §7.2.2 Table 22 — Guard interval (3-bit field GUARD_INTERVAL).
+# GuardInterval; named (non-Reserved) values only.
+
+[[entry]]
+value = 0x00
+variant = "G1_32"
+spec = "1/32"
+
+[[entry]]
+value = 0x01
+variant = "G1_16"
+spec = "1/16"
+
+[[entry]]
+value = 0x02
+variant = "G1_8"
+spec = "1/8"
+
+[[entry]]
+value = 0x03
+variant = "G1_4"
+spec = "1/4"
+
+[[entry]]
+value = 0x04
+variant = "G1_128"
+spec = "1/128"
+
+[[entry]]
+value = 0x05
+variant = "G19_128"
+spec = "19/128"
+
+[[entry]]
+value = 0x06
+variant = "G19_256"
+spec = "19/256"
