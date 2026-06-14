@@ -3,6 +3,19 @@
 ## Unreleased
 
 ### Added
+- **BIOP object-carousel layer** (`carousel::biop`) — ISO/IEC 13818-6 §11 as
+  profiled by TR 101 202 (#64). Parses the BIOP messages inside reassembled
+  carousel modules into a virtual file tree: `Ior` + tagged profiles (BIOP /
+  Lite Options, CORBA-CDR, big-endian, DVB alias type_ids), `ObjectLocation` /
+  `ConnBinder` / `Tap` / `NsapAddress` / `ServiceLocation`; `BiopMessage`
+  (Directory / File / ServiceGateway / Stream / StreamEvent), `ModuleInfo`
+  (with `compressed_module_descriptor` detection), `ServiceGatewayInfo` (the DSI
+  `private_data`, deferred from #50), and a `CarouselFs` walker (`resolve` /
+  `file_bytes`). All with symmetric Parse/Serialize + round-trip tests, a
+  byte-exact live-capture oracle against `m6-single.ts`, and `spec_tables` TOML
+  drift-guards. New optional **`flate2`** feature (off by default) for
+  transparent zlib module decompression — default and `--no-default-features`
+  builds are unaffected.
 - Criterion benchmark suite (`benches/si_hot_paths.rs`) covering `SiDemux::feed`
   on both real fixture streams, `AnyTableSection::parse` dispatch, `parse_loop`
   descriptor-loop walk, and `DvbText::decode` — dev-only, no API change (#62).

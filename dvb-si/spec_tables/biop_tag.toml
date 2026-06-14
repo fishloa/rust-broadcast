@@ -1,0 +1,29 @@
+# BIOP tagged-profile and component tags (32-bit).
+# Source: ETSI TR 101 202 §4.7.3, Tables 4.5/4.7.
+# Pinned against docs/iso_13818_6_biop.md constants.
+# Note: values are u32 but this table stores them as hex strings for the drift test.
+
+[[entry]]
+value = "0x49534F06"
+variant = "TAG_BIOP"
+spec = "BIOP Profile Body — TR 101 202 §4.7.3.2, Table 4.5"
+
+[[entry]]
+value = "0x49534F05"
+variant = "TAG_LITE_OPTIONS"
+spec = "Lite Options Profile Body — TR 101 202 §4.7.3.3, Table 4.7"
+
+[[entry]]
+value = "0x49534F50"
+variant = "TAG_OBJECT_LOCATION"
+spec = "BIOP::ObjectLocation component — TR 101 202 §4.7.3.2, Table 4.5"
+
+[[entry]]
+value = "0x49534F40"
+variant = "TAG_CONN_BINDER"
+spec = "DSM::ConnBinder component — TR 101 202 §4.7.3.2, Table 4.5"
+
+[[entry]]
+value = "0x49534F46"
+variant = "TAG_SERVICE_LOCATION"
+spec = "DSM::ServiceLocation component — TR 101 202 §4.7.3.3, Table 4.7"

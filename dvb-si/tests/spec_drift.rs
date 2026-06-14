@@ -1322,3 +1322,182 @@ fn tva_running_status_toml_matches_enum() {
         "TvaRunningStatus drift detected!\n  only in TOML: {only_in_toml:?}\n  only in code: {only_in_code:?}"
     );
 }
+
+// ── test: BIOP tags (u32 constants) ──────────────────────────────────────────
+
+/// Parse a BIOP tag TOML: entries have a hex string `value = "0xNNNNNNNN"`.
+fn parse_biop_tag_entries(toml: &str) -> Vec<(u32, String, String)> {
+    let mut results = Vec::new();
+    let mut cur_value: Option<u32> = None;
+    let mut cur_variant: Option<String> = None;
+    let mut cur_spec: Option<String> = None;
+
+    let flush = |v: &mut Option<u32>,
+                 var: &mut Option<String>,
+                 sp: &mut Option<String>,
+                 out: &mut Vec<(u32, String, String)>| {
+        if let (Some(value), Some(variant), Some(spec)) = (v.take(), var.take(), sp.take()) {
+            out.push((value, variant, spec));
+        }
+    };
+
+    for raw in toml.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line == "[[entry]]" {
+            flush(
+                &mut cur_value,
+                &mut cur_variant,
+                &mut cur_spec,
+                &mut results,
+            );
+            continue;
+        }
+        if let Some(eq) = line.find('=') {
+            let key = line[..eq].trim();
+            let val = line[eq + 1..].trim().trim_matches('"');
+            match key {
+                "value" => {
+                    let hex = val.trim_start_matches("0x").trim_start_matches("0X");
+                    cur_value = Some(
+                        u32::from_str_radix(hex, 16)
+                            .unwrap_or_else(|_| panic!("bad hex u32 in BIOP tag TOML: {val:?}")),
+                    );
+                }
+                "variant" => {
+                    cur_variant = Some(val.to_string());
+                }
+                "spec" => {
+                    cur_spec = Some(val.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+    flush(
+        &mut cur_value,
+        &mut cur_variant,
+        &mut cur_spec,
+        &mut results,
+    );
+    results
+}
+
+#[test]
+fn biop_tag_toml_matches_consts() {
+    use dvb_si::carousel::biop::{
+        TAG_BIOP, TAG_CONN_BINDER, TAG_LITE_OPTIONS, TAG_OBJECT_LOCATION, TAG_SERVICE_LOCATION,
+    };
+    use std::collections::BTreeMap;
+
+    let toml = include_str!("../spec_tables/biop_tag.toml");
+    let entries = parse_biop_tag_entries(toml);
+
+    // Build TOML map: variant -> value
+    let toml_map: BTreeMap<String, u32> = entries
+        .iter()
+        .map(|(v, var, _)| (var.clone(), *v))
+        .collect();
+
+    // Code set from named consts
+    let code: &[(&str, u32)] = &[
+        ("TAG_BIOP", TAG_BIOP),
+        ("TAG_LITE_OPTIONS", TAG_LITE_OPTIONS),
+        ("TAG_OBJECT_LOCATION", TAG_OBJECT_LOCATION),
+        ("TAG_CONN_BINDER", TAG_CONN_BINDER),
+        ("TAG_SERVICE_LOCATION", TAG_SERVICE_LOCATION),
+    ];
+
+    assert_eq!(
+        toml_map.len(),
+        5,
+        "biop_tag.toml must have exactly 5 entries, found {}",
+        toml_map.len()
+    );
+
+    for (name, value) in code {
+        let toml_val = toml_map
+            .get(*name)
+            .unwrap_or_else(|| panic!("BIOP tag {name} missing from biop_tag.toml"));
+        assert_eq!(
+            *toml_val, *value,
+            "BIOP tag {name}: TOML has 0x{toml_val:08X}, code has 0x{value:08X}"
+        );
+    }
+}
+
+// ── test: BIOP ObjectKind aliases ─────────────────────────────────────────────
+
+#[test]
+fn biop_object_kind_toml_matches_enum() {
+    use dvb_si::carousel::biop::ObjectKind;
+    use std::collections::BTreeSet;
+
+    let toml = include_str!("../spec_tables/biop_object_kind.toml");
+
+    // Parse entries: value is the 3-char alias string (without NUL)
+    let mut toml_set: BTreeSet<(String, String)> = BTreeSet::new();
+    for raw in toml.lines() {
+        let _ = raw; // handled below
+    }
+    // Re-parse with the plain parse_entries (value is a string alias here)
+    let mut cur_value: Option<String> = None;
+    let mut cur_variant: Option<String> = None;
+    let mut cur_spec: Option<String> = None;
+    for raw in toml.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line == "[[entry]]" {
+            if let (Some(v), Some(var), Some(_)) =
+                (cur_value.take(), cur_variant.take(), cur_spec.take())
+            {
+                toml_set.insert((v, var));
+            }
+            continue;
+        }
+        if let Some(eq) = line.find('=') {
+            let key = line[..eq].trim();
+            let val = line[eq + 1..].trim().trim_matches('"').to_string();
+            match key {
+                "value" => cur_value = Some(val),
+                "variant" => cur_variant = Some(val),
+                "spec" => cur_spec = Some(val),
+                _ => {}
+            }
+        }
+    }
+    if let (Some(v), Some(var), Some(_)) = (cur_value, cur_variant, cur_spec) {
+        toml_set.insert((v, var));
+    }
+
+    // Enumerate named ObjectKind variants (exclude Unknown)
+    let named: &[(&str, ObjectKind)] = &[
+        ("dir", ObjectKind::Directory),
+        ("fil", ObjectKind::File),
+        ("str", ObjectKind::Stream),
+        ("srg", ObjectKind::ServiceGateway),
+        ("ste", ObjectKind::StreamEvent),
+    ];
+    let mut code_set: BTreeSet<(String, String)> = BTreeSet::new();
+    for (alias, kind) in named {
+        code_set.insert((alias.to_string(), format!("{kind:?}")));
+    }
+
+    assert_eq!(
+        toml_set.len(),
+        5,
+        "biop_object_kind.toml must have exactly 5 entries, found {}",
+        toml_set.len()
+    );
+
+    let only_in_toml: BTreeSet<_> = toml_set.difference(&code_set).collect();
+    let only_in_code: BTreeSet<_> = code_set.difference(&toml_set).collect();
+    assert!(
+        only_in_toml.is_empty() && only_in_code.is_empty(),
+        "BIOP ObjectKind drift!\n  only in TOML: {only_in_toml:?}\n  only in code: {only_in_code:?}"
+    );
+}

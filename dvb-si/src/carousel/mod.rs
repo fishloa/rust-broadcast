@@ -10,9 +10,16 @@
 //! provenance notes — ISO/IEC 13818-6 itself cannot be vendored) and pinned
 //! against a live capture by the `carousel_fixture` integration test.
 
+pub mod biop;
 pub mod messages;
 pub mod reassembler;
 
+pub use biop::{
+    Binding, BiopMessage, BiopProfileBody, CarouselFs, CarouselObject, CompressedModuleDescriptor,
+    ConnBinder, DirectoryMessage, FileMessage, Ior, LiteComponent, LiteOptionsProfileBody,
+    ModuleInfo, NameComponent, NsapAddress, ObjectKind, ObjectLocation, ServiceGatewayInfo,
+    ServiceLocation, TaggedProfile, Tap,
+};
 pub use messages::{
     Dii, DiiModule, DownloadDataBlock, Dsi, GroupInfo, GroupInfoIndication, UnMessage,
 };
