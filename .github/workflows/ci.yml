@@ -42,8 +42,13 @@ jobs:
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
-      - name: Test (no default features)
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
+      # `--features std`: the library crates are #![no_std] with the default
+      # `std` feature off, and the libtest harness requires std — so tests are
+      # run with std re-enabled but the OTHER optional features (chrono/ts/serde)
+      # still off, to catch feature-gating regressions. The bare-metal `no_std`
+      # job below is what proves the #![no_std] build.
+      - name: Test (no optional features, std on)
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked
 
   lint:
     name: clippy
