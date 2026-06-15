@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [7.1.0] — 2026-06-15
+
+### Changed
+- Lockstep release; rebuilt against the dvb-* parser-hardening pass (#207). No
+  functional changes.
+
 ## [7.0.0] — 2026-06-14
 
 **BREAKING (MSRV 1.75 → 1.81).**
