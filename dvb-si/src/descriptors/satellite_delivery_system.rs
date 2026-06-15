@@ -291,15 +291,22 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
             });
         }
 
+        let (hdr, _) = body
+            .split_first_chunk::<11>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "descriptor_length must equal 11",
+            })?;
+
         // Frequency: 4 bytes BCD (GHz.MMMM)
-        let frequency_bcd = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
+        let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
 
         // Orbital position: 2 bytes BCD (tenths of a degree)
-        let orbital_position_bcd = u16::from_be_bytes([body[4], body[5]]);
+        let orbital_position_bcd = u16::from_be_bytes([hdr[4], hdr[5]]);
 
         // Flags byte 6: bit 7 = west_east_flag, bits 5-6 = polarization,
         // bits 3-4 = roll_off, bit 2 = modulation_system, bits 1-0 = modulation_type
-        let flags = body[6];
+        let flags = hdr[6];
         let east = (flags & 0x80) != 0;
 
         let pol_raw = (flags >> 5) & 0x03;
@@ -333,7 +340,7 @@ impl<'a> Parse<'a> for SatelliteDeliverySystemDescriptor {
         };
 
         // Symbol rate: 28-bit BCD packed into 4 bytes (3.5 bytes + 4-bit FEC)
-        let symbol_rate_and_fec = u32::from_be_bytes([body[7], body[8], body[9], body[10]]);
+        let symbol_rate_and_fec = u32::from_be_bytes([hdr[7], hdr[8], hdr[9], hdr[10]]);
         let symbol_rate_bcd = symbol_rate_and_fec >> 4;
         let fec_inner = FecInner::from_u8((symbol_rate_and_fec & 0x0F) as u8);
 

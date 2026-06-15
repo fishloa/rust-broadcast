@@ -37,15 +37,14 @@ impl<'a> Parse<'a> for EcmRepetitionRateDescriptor<'a> {
             "EcmRepetitionRateDescriptor",
             "unexpected tag for ECM_repetition_rate_descriptor",
         )?;
-        if body.len() < FIXED_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "ECM_repetition_rate_descriptor body shorter than 4 bytes",
-            });
-        }
-        let ca_system_id = u16::from_be_bytes([body[0], body[1]]);
-        let ecm_repetition_rate = u16::from_be_bytes([body[2], body[3]]);
-        let private_data = &body[FIXED_LEN..];
+        let (fixed, private_data) =
+            body.split_first_chunk::<FIXED_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "ECM_repetition_rate_descriptor body shorter than 4 bytes",
+                })?;
+        let ca_system_id = u16::from_be_bytes([fixed[0], fixed[1]]);
+        let ecm_repetition_rate = u16::from_be_bytes([fixed[2], fixed[3]]);
         Ok(Self {
             ca_system_id,
             ecm_repetition_rate,

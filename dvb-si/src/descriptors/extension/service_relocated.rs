@@ -27,10 +27,17 @@ impl<'a> Parse<'a> for ServiceRelocated {
                 what: "service_relocated body",
             });
         }
+        let (hdr, _) =
+            sel.split_first_chunk::<SERVICE_RELOCATED_LEN>()
+                .ok_or(Error::BufferTooShort {
+                    need: SERVICE_RELOCATED_LEN,
+                    have: sel.len(),
+                    what: "service_relocated body",
+                })?;
         Ok(ServiceRelocated {
-            old_original_network_id: u16::from_be_bytes([sel[0], sel[1]]),
-            old_transport_stream_id: u16::from_be_bytes([sel[2], sel[3]]),
-            old_service_id: u16::from_be_bytes([sel[4], sel[5]]),
+            old_original_network_id: u16::from_be_bytes([hdr[0], hdr[1]]),
+            old_transport_stream_id: u16::from_be_bytes([hdr[2], hdr[3]]),
+            old_service_id: u16::from_be_bytes([hdr[4], hdr[5]]),
         })
     }
 }

@@ -215,7 +215,12 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             });
         }
         // Bytes 0–3: delivery_system_id.
-        let delivery_system_id = u32::from_be_bytes([sel[0], sel[1], sel[2], sel[3]]);
+        let (dsid_bytes, _) = sel.split_first_chunk::<4>().ok_or(Error::BufferTooShort {
+            need: S2XV2_CORE_LEN,
+            have: sel.len(),
+            what: "S2Xv2 body",
+        })?;
+        let delivery_system_id = u32::from_be_bytes(*dsid_bytes);
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).
         let b4 = sel[4];
         let s2xv2_mode = S2Xv2Mode::from_u8(b4 >> 4);
@@ -240,9 +245,23 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         // Bytes 7–9: satellite_id (24 bits, big-endian).
         let satellite_id = (u32::from(sel[7]) << 16) | (u32::from(sel[8]) << 8) | u32::from(sel[9]);
         // Bytes 10–13: frequency (32 bits).
-        let frequency = u32::from_be_bytes([sel[10], sel[11], sel[12], sel[13]]);
+        let (freq_bytes, _) = sel[10..]
+            .split_first_chunk::<4>()
+            .ok_or(Error::BufferTooShort {
+                need: S2XV2_CORE_LEN,
+                have: sel.len(),
+                what: "S2Xv2 body",
+            })?;
+        let frequency = u32::from_be_bytes(*freq_bytes);
         // Bytes 14–17: symbol_rate (32 bits).
-        let symbol_rate = u32::from_be_bytes([sel[14], sel[15], sel[16], sel[17]]);
+        let (sr_bytes, _) = sel[14..]
+            .split_first_chunk::<4>()
+            .ok_or(Error::BufferTooShort {
+                need: S2XV2_CORE_LEN,
+                have: sel.len(),
+                what: "S2Xv2 body",
+            })?;
+        let symbol_rate = u32::from_be_bytes(*sr_bytes);
         let mut pos = S2XV2_CORE_LEN;
 
         // Conditional: input_stream_identifier.
@@ -318,7 +337,15 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                         what: "S2Xv2 body (secondary_delivery_system_id)",
                     });
                 }
-                let id = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
+                let (id_bytes, _) =
+                    sel[pos..]
+                        .split_first_chunk::<4>()
+                        .ok_or(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "S2Xv2 body (secondary_delivery_system_id)",
+                        })?;
+                let id = u32::from_be_bytes(*id_bytes);
                 ids.push(id);
                 pos += 4;
             }
@@ -360,7 +387,15 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                         what: "S2Xv2 body (beamhopping_time_plan_id)",
                     });
                 }
-                let id = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
+                let (bh_bytes, _) =
+                    sel[pos..]
+                        .split_first_chunk::<4>()
+                        .ok_or(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "S2Xv2 body (beamhopping_time_plan_id)",
+                        })?;
+                let id = u32::from_be_bytes(*bh_bytes);
                 pos += 4;
                 Some(id)
             } else {

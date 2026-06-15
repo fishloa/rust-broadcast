@@ -433,13 +433,8 @@ impl SiDemux {
                 self.stats.crc_failures += 1;
                 return;
             }
-            let covered = &section[..section.len() - CRC_LEN];
-            let declared = u32::from_be_bytes([
-                section[section.len() - 4],
-                section[section.len() - 3],
-                section[section.len() - 2],
-                section[section.len() - 1],
-            ]);
+            let (covered, crc_bytes) = section.split_last_chunk::<CRC_LEN>().unwrap();
+            let declared = u32::from_be_bytes(*crc_bytes);
             let computed = dvb_common::crc32_mpeg2::compute(covered);
             if computed != declared {
                 self.stats.crc_failures += 1;
@@ -455,12 +450,8 @@ impl SiDemux {
                 let section_number = section[6];
                 // For long-form the trailing CRC already uniquely fingerprints the
                 // payload; reuse it as the change hash.
-                let crc = u32::from_be_bytes([
-                    section[section.len() - 4],
-                    section[section.len() - 3],
-                    section[section.len() - 2],
-                    section[section.len() - 1],
-                ]);
+                let (_, crc_bytes) = section.split_last_chunk::<CRC_LEN>().unwrap();
+                let crc = u32::from_be_bytes(*crc_bytes);
                 (ext, section_number, version, crc)
             } else {
                 // Short-form (incl. TOT and any malformed long-form that slipped

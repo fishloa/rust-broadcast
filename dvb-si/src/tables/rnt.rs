@@ -228,7 +228,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length as usize, MIN_LEN)?;
 
-        let context_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let context_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];

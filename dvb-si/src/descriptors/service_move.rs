@@ -41,10 +41,16 @@ impl<'a> Parse<'a> for ServiceMoveDescriptor {
                 reason: "service_move_descriptor length must equal 6",
             });
         }
+        let (hdr, _) = body
+            .split_first_chunk::<6>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "service_move_descriptor length must equal 6",
+            })?;
         Ok(Self {
-            new_original_network_id: u16::from_be_bytes([body[0], body[1]]),
-            new_transport_stream_id: u16::from_be_bytes([body[2], body[3]]),
-            new_service_id: u16::from_be_bytes([body[4], body[5]]),
+            new_original_network_id: u16::from_be_bytes([hdr[0], hdr[1]]),
+            new_transport_stream_id: u16::from_be_bytes([hdr[2], hdr[3]]),
+            new_service_id: u16::from_be_bytes([hdr[4], hdr[5]]),
         })
     }
 }

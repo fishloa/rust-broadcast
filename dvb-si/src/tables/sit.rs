@@ -100,7 +100,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let table_id_extension = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let table_id_extension = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
@@ -130,7 +130,14 @@ impl<'a> Parse<'a> for SitSection<'a> {
                     what: "SitService header",
                 });
             }
-            let service_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: crc_start,
+                    what: "SitService header",
+                })?;
+            let service_id = u16::from_be_bytes(*b2);
             // byte[pos+2]: reserved_future_use(1) | running_status(3) | len_hi(4)
             let running_status = RunningStatus::from_u8((bytes[pos + 2] >> 4) & 0x07);
             let svc_desc_len = (((bytes[pos + 2] & 0x0F) as usize) << 8) | bytes[pos + 3] as usize;

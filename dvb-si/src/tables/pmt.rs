@@ -470,7 +470,7 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let program_number = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let program_number = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];

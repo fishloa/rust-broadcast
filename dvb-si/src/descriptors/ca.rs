@@ -53,20 +53,15 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
             "CaDescriptor",
             "unexpected tag for CA_descriptor",
         )?;
-        if body.len() < MIN_BODY_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "CA_descriptor length too short for mandatory fields",
-            });
-        }
-        let ca_system_id = u16::from_be_bytes([body[0], body[1]]);
+        let (fixed, private_data) =
+            body.split_first_chunk::<MIN_BODY_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "CA_descriptor length too short for mandatory fields",
+                })?;
+        let ca_system_id = u16::from_be_bytes([fixed[0], fixed[1]]);
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
-        let ca_pid = ((u16::from(body[2]) & 0x1F) << 8) | u16::from(body[3]);
-        let private_data = if body.len() > MIN_BODY_LEN {
-            &body[MIN_BODY_LEN..]
-        } else {
-            &[]
-        };
+        let ca_pid = ((u16::from(fixed[2]) & 0x1F) << 8) | u16::from(fixed[3]);
         Ok(Self {
             ca_system_id,
             ca_pid,

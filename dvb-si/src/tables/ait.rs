@@ -286,7 +286,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 | ((bytes[pos + 1] as u32) << 16)
                 | ((bytes[pos + 2] as u32) << 8)
                 | (bytes[pos + 3] as u32);
-            let application_id = u16::from_be_bytes([bytes[pos + 4], bytes[pos + 5]]);
+            let application_id = u16::from_be_bytes(*bytes[pos + 4..].first_chunk::<2>().unwrap());
             let control_code = ControlCode::from_u8(bytes[pos + 6]);
             let app_desc_length =
                 (((bytes[pos + 7] & 0x0F) as usize) << 8) | bytes[pos + 8] as usize;

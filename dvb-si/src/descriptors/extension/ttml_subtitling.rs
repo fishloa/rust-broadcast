@@ -67,14 +67,14 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
 
         // conditional qualifier
         let qualifier = if qualifier_present_flag != 0 {
-            if sel.len() < pos + 4 {
-                return Err(Error::BufferTooShort {
+            let (b, _) = sel[pos..]
+                .split_first_chunk::<4>()
+                .ok_or(Error::BufferTooShort {
                     need: pos + 4,
                     have: sel.len(),
                     what: "TTML_subtitling body",
-                });
-            }
-            let q = u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
+                })?;
+            let q = u32::from_be_bytes(*b);
             pos += 4;
             Some(q)
         } else {

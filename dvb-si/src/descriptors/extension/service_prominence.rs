@@ -75,14 +75,15 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             let sogi_priority = ((u16::from(byte0) & 0x0F) << 8) | u16::from(byte1);
             k += 2;
             let service_id = if service_flag {
-                if sogi_slice.len() - k < 2 {
-                    return Err(Error::BufferTooShort {
-                        need: 1 + k + 2,
-                        have: sel.len(),
-                        what: "service_prominence body",
-                    });
-                }
-                let id = u16::from_be_bytes([sogi_slice[k], sogi_slice[k + 1]]);
+                let (b, _) =
+                    sogi_slice[k..]
+                        .split_first_chunk::<2>()
+                        .ok_or(Error::BufferTooShort {
+                            need: 1 + k + 2,
+                            have: sel.len(),
+                            what: "service_prominence body",
+                        })?;
+                let id = u16::from_be_bytes(*b);
                 k += 2;
                 Some(id)
             } else {

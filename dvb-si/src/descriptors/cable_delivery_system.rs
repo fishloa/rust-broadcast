@@ -298,17 +298,24 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
             });
         }
 
-        let frequency_bcd = u32::from_be_bytes(body[0..4].try_into().unwrap());
+        let (hdr, _) = body
+            .split_first_chunk::<11>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "body length must equal 11",
+            })?;
 
-        let bytes_4_5 = u16::from_be_bytes([body[4], body[5]]);
+        let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+
+        let bytes_4_5 = u16::from_be_bytes([hdr[4], hdr[5]]);
         let fec_outer_raw = (bytes_4_5 & !RESERVED_FU_MASK) as u8;
 
-        let modulation_byte = body[6];
+        let modulation_byte = hdr[6];
 
-        let spec_value = u32::from_be_bytes([0, body[7], body[8], body[9]]);
-        let symbol_rate_bcd = (spec_value << 4) | ((body[10] >> 4) & 0x0F) as u32;
+        let spec_value = u32::from_be_bytes([0, hdr[7], hdr[8], hdr[9]]);
+        let symbol_rate_bcd = (spec_value << 4) | ((hdr[10] >> 4) & 0x0F) as u32;
 
-        let fec_inner_raw = body[10] & 0x0F;
+        let fec_inner_raw = hdr[10] & 0x0F;
 
         Ok(Self {
             frequency_bcd,

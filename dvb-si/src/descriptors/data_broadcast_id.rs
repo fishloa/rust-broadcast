@@ -370,14 +370,13 @@ impl<'a> Parse<'a> for DataBroadcastIdDescriptor<'a> {
             "DataBroadcastIdDescriptor",
             "unexpected tag for data_broadcast_id_descriptor",
         )?;
-        if body.len() < ID_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "data_broadcast_id_descriptor body shorter than 2 bytes",
-            });
-        }
-        let data_broadcast_id = u16::from_be_bytes([body[0], body[1]]);
-        let id_selector = &body[ID_LEN..];
+        let (id_bytes, id_selector) =
+            body.split_first_chunk::<ID_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "data_broadcast_id_descriptor body shorter than 2 bytes",
+                })?;
+        let data_broadcast_id = u16::from_be_bytes(*id_bytes);
         Ok(Self {
             data_broadcast_id,
             id_selector,

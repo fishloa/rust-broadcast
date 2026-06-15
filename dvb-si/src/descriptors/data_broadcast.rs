@@ -62,9 +62,14 @@ impl<'a> Parse<'a> for DataBroadcastDescriptor<'a> {
                 reason: "data_broadcast_descriptor body shorter than minimum 8 bytes",
             });
         }
-        let mut pos = 0;
-        let data_broadcast_id = u16::from_be_bytes([body[pos], body[pos + 1]]);
-        pos += ID_LEN;
+        let (id_bytes, _) = body
+            .split_first_chunk::<ID_LEN>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "data_broadcast_descriptor body shorter than minimum 8 bytes",
+            })?;
+        let data_broadcast_id = u16::from_be_bytes(*id_bytes);
+        let mut pos = ID_LEN;
         let component_tag = body[pos];
         pos += COMPONENT_TAG_LEN;
 

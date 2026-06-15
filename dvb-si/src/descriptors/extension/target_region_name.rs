@@ -95,7 +95,14 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
                         what: "target_region_name body",
                     });
                 }
-                let val = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
+                let (b, _) = sel[pos..]
+                    .split_first_chunk::<2>()
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + 2,
+                        have: sel.len(),
+                        what: "target_region_name body",
+                    })?;
+                let val = u16::from_be_bytes(*b);
                 pos += 2;
                 Some(val)
             } else {

@@ -287,8 +287,22 @@ fn parse_channel_common(
             what: "S2X body",
         });
     }
-    let frequency = u32::from_be_bytes([sel[*pos], sel[*pos + 1], sel[*pos + 2], sel[*pos + 3]]);
-    let orbital_position = u16::from_be_bytes([sel[*pos + 4], sel[*pos + 5]]);
+    let (freq_bytes, _) = sel[*pos..]
+        .split_first_chunk::<4>()
+        .ok_or(Error::BufferTooShort {
+            need: *pos + BOND_BASE_LEN,
+            have: sel.len(),
+            what: "S2X body",
+        })?;
+    let frequency = u32::from_be_bytes(*freq_bytes);
+    let (orb_bytes, _) = sel[*pos + 4..]
+        .split_first_chunk::<2>()
+        .ok_or(Error::BufferTooShort {
+            need: *pos + BOND_BASE_LEN,
+            have: sel.len(),
+            what: "S2X body",
+        })?;
+    let orbital_position = u16::from_be_bytes(*orb_bytes);
     let pb = sel[*pos + 6];
     let west_east_flag = (pb & 0x80) != 0;
     let polarization = Polarization::from_u8((pb >> 5) & 0x03);

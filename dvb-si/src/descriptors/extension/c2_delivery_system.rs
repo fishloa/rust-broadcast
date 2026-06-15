@@ -180,10 +180,17 @@ impl<'a> Parse<'a> for C2DeliverySystem {
             });
         }
         let packed = sel[6];
+        let (freq_bytes, _) = sel[2..]
+            .split_first_chunk::<4>()
+            .ok_or(Error::BufferTooShort {
+                need: C2_LEN,
+                have: sel.len(),
+                what: "C2_delivery_system body",
+            })?;
         Ok(C2DeliverySystem {
             plp_id: sel[0],
             data_slice_id: sel[1],
-            c2_system_tuning_frequency: u32::from_be_bytes([sel[2], sel[3], sel[4], sel[5]]),
+            c2_system_tuning_frequency: u32::from_be_bytes(*freq_bytes),
             c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
             active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8((packed >> 3) & 0x07),
             guard_interval: C2GuardInterval::from_u8(packed & 0x07),

@@ -433,9 +433,10 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 what: "RctSection dvb_binary_locator full triplet",
             });
         }
-        let tsid = u16::from_be_bytes([data[pos], data[pos + 1]]);
-        let onid = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
-        let sid = u16::from_be_bytes([data[pos + 4], data[pos + 5]]);
+        let triplet = data[pos..pos + 6].first_chunk::<6>().unwrap();
+        let tsid = u16::from_be_bytes(*triplet[0..].first_chunk::<2>().unwrap());
+        let onid = u16::from_be_bytes(*triplet[2..].first_chunk::<2>().unwrap());
+        let sid = u16::from_be_bytes(*triplet[4..].first_chunk::<2>().unwrap());
         pos += 6;
         DvbLocatorService::Full {
             transport_stream_id: tsid,
@@ -464,8 +465,20 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             what: "RctSection dvb_binary_locator start_time/duration",
         });
     }
-    let start_time = u16::from_be_bytes([data[pos], data[pos + 1]]);
-    let duration = u16::from_be_bytes([data[pos + 2], data[pos + 3]]);
+    let (b2, rest) = data[pos..]
+        .split_first_chunk::<2>()
+        .ok_or(Error::BufferTooShort {
+            need: pos + 4,
+            have: data.len(),
+            what: "RctSection dvb_binary_locator start_time/duration",
+        })?;
+    let start_time = u16::from_be_bytes(*b2);
+    let (b2, _) = rest.split_first_chunk::<2>().ok_or(Error::BufferTooShort {
+        need: pos + 4,
+        have: data.len(),
+        what: "RctSection dvb_binary_locator start_time/duration",
+    })?;
+    let duration = u16::from_be_bytes(*b2);
     pos += 4;
 
     let identifier = match identifier_type {
@@ -478,7 +491,14 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator event_id",
                 });
             }
-            let event_id = u16::from_be_bytes([data[pos], data[pos + 1]]);
+            let (b2, _) = data[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: data.len(),
+                    what: "RctSection dvb_binary_locator event_id",
+                })?;
+            let event_id = u16::from_be_bytes(*b2);
             pos += 2;
             DvbLocatorIdentifier::EventId { event_id }
         }
@@ -490,7 +510,14 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator TVA_id (EIT)",
                 });
             }
-            let tva_id = u16::from_be_bytes([data[pos], data[pos + 1]]);
+            let (b2, _) = data[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: data.len(),
+                    what: "RctSection dvb_binary_locator TVA_id (EIT)",
+                })?;
+            let tva_id = u16::from_be_bytes(*b2);
             pos += 2;
             DvbLocatorIdentifier::TvaIdEit { tva_id }
         }
@@ -502,7 +529,14 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator TVA_id (PES)",
                 });
             }
-            let tva_id = u16::from_be_bytes([data[pos], data[pos + 1]]);
+            let (b2, _) = data[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 3,
+                    have: data.len(),
+                    what: "RctSection dvb_binary_locator TVA_id (PES)",
+                })?;
+            let tva_id = u16::from_be_bytes(*b2);
             let component = data[pos + 2];
             pos += 3;
             DvbLocatorIdentifier::TvaIdPes { tva_id, component }
@@ -801,12 +835,12 @@ impl<'a> Parse<'a> for RctSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let year_offset = u16::from_be_bytes([bytes[8], bytes[9]]);
+        let year_offset = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
         let link_count = bytes[10];
 
         let payload_end = total - CRC_LEN;

@@ -180,12 +180,17 @@ impl<'a> Parse<'a> for CellListDescriptor {
                     reason: "cell_list outer entry truncated",
                 });
             }
-            let cell_id = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            let cell_latitude = u16::from_be_bytes([body[pos + 2], body[pos + 3]]);
-            let cell_longitude = u16::from_be_bytes([body[pos + 4], body[pos + 5]]);
-            let (cell_extent_of_latitude, cell_extent_of_longitude) =
-                read_extents(&body[pos + 6..pos + 9]);
-            let subcell_info_loop_length = body[pos + 9] as usize;
+            let (outer, _) = body[pos..].split_first_chunk::<OUTER_FIXED_LEN>().ok_or(
+                Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "cell_list outer entry truncated",
+                },
+            )?;
+            let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
+            let cell_latitude = u16::from_be_bytes([outer[2], outer[3]]);
+            let cell_longitude = u16::from_be_bytes([outer[4], outer[5]]);
+            let (cell_extent_of_latitude, cell_extent_of_longitude) = read_extents(&outer[6..9]);
+            let subcell_info_loop_length = outer[9] as usize;
             pos += OUTER_FIXED_LEN;
             if subcell_info_loop_length % SUBCELL_LEN != 0 {
                 return Err(Error::InvalidDescriptor {
@@ -202,11 +207,17 @@ impl<'a> Parse<'a> for CellListDescriptor {
             let subcell_count = subcell_info_loop_length / SUBCELL_LEN;
             let mut subcells = Vec::with_capacity(subcell_count);
             for _ in 0..subcell_count {
-                let cell_id_extension = body[pos];
-                let subcell_latitude = u16::from_be_bytes([body[pos + 1], body[pos + 2]]);
-                let subcell_longitude = u16::from_be_bytes([body[pos + 3], body[pos + 4]]);
+                let (sub, _) = body[pos..].split_first_chunk::<SUBCELL_LEN>().ok_or(
+                    Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "subcell_info_loop_length exceeds descriptor body",
+                    },
+                )?;
+                let cell_id_extension = sub[0];
+                let subcell_latitude = u16::from_be_bytes([sub[1], sub[2]]);
+                let subcell_longitude = u16::from_be_bytes([sub[3], sub[4]]);
                 let (subcell_extent_of_latitude, subcell_extent_of_longitude) =
-                    read_extents(&body[pos + 5..pos + 8]);
+                    read_extents(&sub[5..8]);
                 subcells.push(CellListSubcell {
                     cell_id_extension,
                     subcell_latitude,

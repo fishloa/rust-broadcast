@@ -48,15 +48,15 @@ impl<'a> Parse<'a> for ServiceListDescriptor {
             });
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
-        let mut offset = 0;
-        while offset < body.len() {
-            let service_id = u16::from_be_bytes([body[offset], body[offset + 1]]);
-            let service_type = ServiceType::from_u8(body[offset + 2]);
+        for chunk in body.chunks_exact(ENTRY_LEN) {
+            // chunks_exact(3) guarantees 3 bytes; unwrap is safe.
+            let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
+            let service_id = u16::from_be_bytes(*sid_bytes);
+            let service_type = ServiceType::from_u8(rest[0]);
             entries.push(ServiceListEntry {
                 service_id,
                 service_type,
             });
-            offset += ENTRY_LEN;
         }
         Ok(Self { entries })
     }

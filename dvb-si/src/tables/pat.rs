@@ -76,7 +76,7 @@ impl<'a> Parse<'a> for PatSection {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let transport_stream_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
@@ -94,7 +94,7 @@ impl<'a> Parse<'a> for PatSection {
                 });
             }
             let chunk = &bytes[pos..pos + ENTRY_LEN];
-            let program_number = u16::from_be_bytes([chunk[0], chunk[1]]);
+            let program_number = u16::from_be_bytes(*chunk.first_chunk::<2>().unwrap());
             let pid = (((chunk[2] & 0x1F) as u16) << 8) | chunk[3] as u16;
             entries.push(PatEntry {
                 program_number,

@@ -41,7 +41,13 @@ impl<'a> Parse<'a> for PrivateDataIndicatorDescriptor {
                 reason: "private_data_indicator_descriptor length must equal 4",
             });
         }
-        let private_data_specifier = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
+        let (hdr, _) = body
+            .split_first_chunk::<4>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "private_data_indicator_descriptor length must equal 4",
+            })?;
+        let private_data_specifier = u32::from_be_bytes(*hdr);
         Ok(Self {
             private_data_specifier,
         })

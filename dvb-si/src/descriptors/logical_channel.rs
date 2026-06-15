@@ -53,18 +53,18 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
             });
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
-        let mut offset = 0;
-        while offset < body.len() {
-            let service_id = u16::from_be_bytes([body[offset], body[offset + 1]]);
-            let flags = body[offset + 2];
+        for chunk in body.chunks_exact(ENTRY_LEN) {
+            // chunks_exact(4) guarantees 4 bytes; unwrap is safe.
+            let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
+            let service_id = u16::from_be_bytes(*sid_bytes);
+            let flags = rest[0];
             let visible_service = flags & VISIBLE_MASK != 0;
-            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(body[offset + 3]);
+            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(rest[1]);
             entries.push(LogicalChannelEntry {
                 service_id,
                 visible_service,
                 logical_channel_number: lcn,
             });
-            offset += ENTRY_LEN;
         }
         Ok(Self { entries })
     }

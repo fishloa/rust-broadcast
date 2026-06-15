@@ -588,7 +588,7 @@ fn decode_with(encoding: &'static encoding_rs::Encoding, bytes: &[u8]) -> String
 fn decode_ucs2_be(bytes: &[u8]) -> String {
     let code_units: Vec<u16> = bytes
         .chunks_exact(2)
-        .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+        .map(|pair| u16::from_be_bytes(*pair.first_chunk::<2>().unwrap()))
         .collect();
     String::from_utf16_lossy(&code_units)
 }

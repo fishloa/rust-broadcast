@@ -205,16 +205,18 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
             });
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
-        let mut offset = 0;
-        while offset < body.len() {
-            let country_code = LangCode([body[offset], body[offset + 1], body[offset + 2]]);
-            let flags = body[offset + 3];
+        for chunk in body.chunks_exact(ENTRY_LEN) {
+            // chunks_exact(13) guarantees 13 bytes; all unwraps are safe.
+            let country_code = LangCode([chunk[0], chunk[1], chunk[2]]);
+            let flags = chunk[3];
             let country_region_id = (flags & REGION_ID_MASK) >> 2;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
-            let local_time_offset_bcd = u16::from_be_bytes([body[offset + 4], body[offset + 5]]);
+            let lto_bytes = chunk[4..6].first_chunk::<2>().unwrap();
+            let local_time_offset_bcd = u16::from_be_bytes(*lto_bytes);
             let mut time_of_change_raw = [0u8; 5];
-            time_of_change_raw.copy_from_slice(&body[offset + 6..offset + 11]);
-            let next_time_offset_bcd = u16::from_be_bytes([body[offset + 11], body[offset + 12]]);
+            time_of_change_raw.copy_from_slice(&chunk[6..11]);
+            let nto_bytes = chunk[11..13].first_chunk::<2>().unwrap();
+            let next_time_offset_bcd = u16::from_be_bytes(*nto_bytes);
             entries.push(LocalTimeOffsetEntry {
                 country_code,
                 country_region_id,
@@ -223,7 +225,6 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
                 time_of_change_raw,
                 next_time_offset_bcd,
             });
-            offset += ENTRY_LEN;
         }
         Ok(Self { entries })
     }

@@ -216,7 +216,14 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     what: "UntSection compatibilityDescriptorLength",
                 });
             }
-            let compat_desc_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
+                    have: payload_end,
+                    what: "UntSection compatibilityDescriptorLength",
+                })?;
+            let compat_desc_len = u16::from_be_bytes(*b2) as usize;
             let compat_total = crate::compatibility::COMPAT_DESC_LEN_FIELD + compat_desc_len;
             if pos + compat_total > payload_end {
                 return Err(Error::SectionLengthOverflow {
@@ -236,7 +243,14 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     what: "UntSection platform_loop_length",
                 });
             }
-            let platform_loop_length = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + PLATFORM_LOOP_LEN_FIELD,
+                    have: payload_end,
+                    what: "UntSection platform_loop_length",
+                })?;
+            let platform_loop_length = u16::from_be_bytes(*b2) as usize;
             pos += PLATFORM_LOOP_LEN_FIELD;
             let platform_end = pos + platform_loop_length;
             if platform_end > payload_end {

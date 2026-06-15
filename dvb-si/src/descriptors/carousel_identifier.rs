@@ -195,62 +195,43 @@ impl<'a> Parse<'a> for CarouselIdentifierDescriptor<'a> {
             "CarouselIdentifierDescriptor",
             "unexpected tag for carousel_identifier_descriptor",
         )?;
-        if body.len() < BODY_PREFIX_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "carousel_identifier_descriptor body shorter than 5 bytes",
-            });
-        }
-        let carousel_id = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
-        let format_id = body[CAROUSEL_ID_LEN];
-        let after_prefix = &body[BODY_PREFIX_LEN..];
+        let (prefix, after_prefix) =
+            body.split_first_chunk::<BODY_PREFIX_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "carousel_identifier_descriptor body shorter than 5 bytes",
+                })?;
+        let carousel_id = u32::from_be_bytes([prefix[0], prefix[1], prefix[2], prefix[3]]);
+        let format_id = prefix[CAROUSEL_ID_LEN];
 
         let (format, private_data) = match format_id {
             FORMAT_ID_NONE => (FormatSpecifier::Absent, after_prefix),
             FORMAT_ID_AGGREGATED => {
-                if after_prefix.len() < FS1_FIXED_LEN {
-                    return Err(Error::InvalidDescriptor {
+                let (fs1, after_fixed) = after_prefix.split_first_chunk::<FS1_FIXED_LEN>().ok_or(
+                    Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "FormatId=0x01 specifier truncated (insufficient fixed fields)",
-                    });
-                }
-                let mut pos = 0usize;
-                let module_version = after_prefix[pos];
-                pos += FS1_MODULE_VERSION_LEN;
-                let module_id = u16::from_be_bytes([after_prefix[pos], after_prefix[pos + 1]]);
-                pos += FS1_MODULE_ID_LEN;
-                let block_size = u16::from_be_bytes([after_prefix[pos], after_prefix[pos + 1]]);
-                pos += FS1_BLOCK_SIZE_LEN;
-                let module_size = u32::from_be_bytes([
-                    after_prefix[pos],
-                    after_prefix[pos + 1],
-                    after_prefix[pos + 2],
-                    after_prefix[pos + 3],
-                ]);
-                pos += FS1_MODULE_SIZE_LEN;
-                let compression_method = after_prefix[pos];
-                pos += FS1_COMPRESSION_METHOD_LEN;
-                let original_size = u32::from_be_bytes([
-                    after_prefix[pos],
-                    after_prefix[pos + 1],
-                    after_prefix[pos + 2],
-                    after_prefix[pos + 3],
-                ]);
-                pos += FS1_ORIGINAL_SIZE_LEN;
-                let timeout = after_prefix[pos];
-                pos += FS1_TIMEOUT_LEN;
-                let object_key_length = after_prefix[pos] as usize;
-                pos += FS1_OBJECT_KEY_LENGTH_LEN;
-                // pos == FS1_FIXED_LEN here
-                let specifier_end = pos + object_key_length;
-                if specifier_end > after_prefix.len() {
+                    },
+                )?;
+                // fs1 layout: [0]=module_version, [1..3]=module_id, [3..5]=block_size,
+                // [5..9]=module_size, [9]=compression_method, [10..14]=original_size,
+                // [14]=timeout, [15]=object_key_length
+                let module_version = fs1[0];
+                let module_id = u16::from_be_bytes([fs1[1], fs1[2]]);
+                let block_size = u16::from_be_bytes([fs1[3], fs1[4]]);
+                let module_size = u32::from_be_bytes([fs1[5], fs1[6], fs1[7], fs1[8]]);
+                let compression_method = fs1[9];
+                let original_size = u32::from_be_bytes([fs1[10], fs1[11], fs1[12], fs1[13]]);
+                let timeout = fs1[14];
+                let object_key_length = fs1[15] as usize;
+                if object_key_length > after_fixed.len() {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "FormatId=0x01 ObjectKeyData exceeds descriptor body",
                     });
                 }
-                let object_key = &after_prefix[pos..specifier_end];
-                let private_data = &after_prefix[specifier_end..];
+                let object_key = &after_fixed[..object_key_length];
+                let private_data = &after_fixed[object_key_length..];
                 (
                     FormatSpecifier::Aggregated {
                         module_version,
