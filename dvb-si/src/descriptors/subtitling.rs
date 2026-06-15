@@ -201,11 +201,14 @@ impl<'a> Parse<'a> for SubtitlingDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
+            // chunks_exact(8) guarantees at least 8 bytes; all unwraps are safe.
+            let comp_bytes = chunk[4..6].first_chunk::<2>().unwrap();
+            let anc_bytes = chunk[6..8].first_chunk::<2>().unwrap();
             entries.push(SubtitlingEntry {
                 language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
                 subtitling_type: SubtitlingType::from_u8(chunk[3]),
-                composition_page_id: u16::from_be_bytes([chunk[4], chunk[5]]),
-                ancillary_page_id: u16::from_be_bytes([chunk[6], chunk[7]]),
+                composition_page_id: u16::from_be_bytes(*comp_bytes),
+                ancillary_page_id: u16::from_be_bytes(*anc_bytes),
             });
         }
         Ok(Self { entries })

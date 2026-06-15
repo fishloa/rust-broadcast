@@ -112,19 +112,26 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let transport_stream_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let original_network_id = u16::from_be_bytes([bytes[8], bytes[9]]);
+        let original_network_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
 
         let services_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let services_end = total - CRC_LEN;
         let mut services = Vec::new();
         let mut pos = services_start;
         while pos + SERVICE_HEADER_LEN <= services_end {
-            let service_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: services_end,
+                    what: "SdtSection service_id",
+                })?;
+            let service_id = u16::from_be_bytes(*b2);
             let flags = bytes[pos + 2];
             let eit_schedule_flag = (flags & 0x02) != 0;
             let eit_present_following_flag = (flags & 0x01) != 0;

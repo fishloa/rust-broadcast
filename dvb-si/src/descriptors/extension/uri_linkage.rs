@@ -112,14 +112,14 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
         let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type.has_polling_interval() {
-            if sel.len() < pos + 2 {
-                return Err(Error::BufferTooShort {
+            let (b, _) = sel[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: sel.len(),
                     what: "URI_linkage body",
-                });
-            }
-            let v = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
+                })?;
+            let v = u16::from_be_bytes(*b);
             pos += 2;
             Some(v)
         } else {

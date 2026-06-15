@@ -104,23 +104,22 @@ impl<'a> dvb_common::Parse<'a> for Header {
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         use super::error::Error;
 
-        let len = bytes.len();
-        if len < HEADER_LEN {
-            return Err(Error::BufferTooShort {
+        let (hdr, _) = bytes
+            .split_first_chunk::<HEADER_LEN>()
+            .ok_or(Error::BufferTooShort {
                 need: HEADER_LEN,
-                have: len,
+                have: bytes.len(),
                 what: "T2MI Header",
-            });
-        }
+            })?;
 
-        let packet_type = PacketType::try_from(bytes[0])?;
-        let packet_count = bytes[1];
+        let packet_type = PacketType::try_from(hdr[0])?;
+        let packet_count = hdr[1];
 
         // byte 2 [7:4] = superframe_idx
-        let superframe_idx = (bytes[2] >> 4) & 0x0F;
+        let superframe_idx = (hdr[2] >> 4) & 0x0F;
 
         // byte 2 [3] = rfu — spec says must be 0
-        if bytes[2] & 0x08 != 0 {
+        if hdr[2] & 0x08 != 0 {
             return Err(Error::ReservedBitsViolation {
                 field: "byte 2 bit 3",
                 reason: "RFU must be zero (ETSI TS 102 773 §5.1)",
@@ -128,17 +127,17 @@ impl<'a> dvb_common::Parse<'a> for Header {
         }
 
         // byte 2 [2:0] = t2mi_stream_id
-        let t2mi_stream_id = bytes[2] & 0x07;
+        let t2mi_stream_id = hdr[2] & 0x07;
 
         // byte 3 = rfu — spec says must be 0
-        if bytes[3] != 0 {
+        if hdr[3] != 0 {
             return Err(Error::ReservedBitsViolation {
                 field: "byte 3",
                 reason: "All 8 RFU bits must be zero (ETSI TS 102 773 §5.1)",
             });
         }
 
-        let payload_len_bits = u16::from_be_bytes([bytes[4], bytes[5]]);
+        let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
 
         Ok(Header {
             packet_type,
@@ -179,14 +178,14 @@ impl Header {
     /// Returns [`Error::PayloadLengthMismatch`](crate::error::Error::PayloadLengthMismatch)
     /// if the buffer is too short for the declared `payload_len_bits`.
     pub fn raw_payload_bytes(packet: &[u8]) -> Result<&[u8], crate::error::Error> {
-        if packet.len() < HEADER_LEN {
-            return Err(crate::error::Error::BufferTooShort {
+        let (hdr, _) = packet.split_first_chunk::<HEADER_LEN>().ok_or(
+            crate::error::Error::BufferTooShort {
                 need: HEADER_LEN,
                 have: packet.len(),
                 what: "T2MI Header",
-            });
-        }
-        let payload_len_bits = u16::from_be_bytes([packet[4], packet[5]]);
+            },
+        )?;
+        let payload_len_bits = u16::from_be_bytes([hdr[4], hdr[5]]);
         let payload_len_bytes = (payload_len_bits as usize).div_ceil(8);
         let end = HEADER_LEN + payload_len_bytes;
         if packet.len() < end {

@@ -117,14 +117,14 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < GII_NUMBER_OF_GROUPS_LEN {
-            return Err(Error::BufferTooShort {
+        let (b, _) = bytes
+            .split_first_chunk::<2>()
+            .ok_or(Error::BufferTooShort {
                 need: GII_NUMBER_OF_GROUPS_LEN,
                 have: bytes.len(),
                 what: "GroupInfoIndication NumberOfGroups",
-            });
-        }
-        let number_of_groups = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+            })?;
+        let number_of_groups = u16::from_be_bytes(*b) as usize;
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
         let end = bytes.len();
         let mut groups = Vec::with_capacity(number_of_groups.min(256));
@@ -132,35 +132,31 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
         for _ in 0..number_of_groups {
             // GroupId (4 bytes) + GroupSize (4 bytes)
             let fixed = GII_GROUP_ID_LEN + GII_GROUP_SIZE_LEN;
-            if pos + fixed > end {
-                return Err(Error::BufferTooShort {
-                    need: pos + fixed,
-                    have: end,
-                    what: "GroupInfo GroupId/GroupSize",
-                });
-            }
-            let group_id =
-                u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
-            let group_size = u32::from_be_bytes([
-                bytes[pos + 4],
-                bytes[pos + 5],
-                bytes[pos + 6],
-                bytes[pos + 7],
-            ]);
+            let (hdr, _) =
+                bytes[pos..end]
+                    .split_first_chunk::<8>()
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + fixed,
+                        have: end,
+                        what: "GroupInfo GroupId/GroupSize",
+                    })?;
+            let group_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+            let group_size = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
             pos += fixed;
 
             // GroupCompatibility — CompatibilityDescriptor (Table 7).
             // CompatibilityDescriptor::parse consumes exactly the declared
             // compatibilityDescriptorLength + 2-byte length prefix.
             use crate::compatibility::COMPAT_DESC_LEN_FIELD;
-            if pos + COMPAT_DESC_LEN_FIELD > end {
-                return Err(Error::BufferTooShort {
-                    need: pos + COMPAT_DESC_LEN_FIELD,
-                    have: end,
-                    what: "GroupCompatibility length field",
-                });
-            }
-            let compat_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let (bc, _) =
+                bytes[pos..end]
+                    .split_first_chunk::<2>()
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + COMPAT_DESC_LEN_FIELD,
+                        have: end,
+                        what: "GroupCompatibility length field",
+                    })?;
+            let compat_len = u16::from_be_bytes(*bc) as usize;
             let compat_total = COMPAT_DESC_LEN_FIELD + compat_len;
             if pos + compat_total > end {
                 return Err(Error::SectionLengthOverflow {
@@ -173,14 +169,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += compat_total;
 
             // GroupInfoLength + GroupInfoByte loop.
-            if pos + GII_GROUP_INFO_LEN_FIELD > end {
-                return Err(Error::BufferTooShort {
-                    need: pos + GII_GROUP_INFO_LEN_FIELD,
-                    have: end,
-                    what: "GroupInfo GroupInfoLength",
-                });
-            }
-            let group_info_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let (bgi, _) =
+                bytes[pos..end]
+                    .split_first_chunk::<2>()
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + GII_GROUP_INFO_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo GroupInfoLength",
+                    })?;
+            let group_info_len = u16::from_be_bytes(*bgi) as usize;
             pos += GII_GROUP_INFO_LEN_FIELD;
             if pos + group_info_len > end {
                 return Err(Error::SectionLengthOverflow {
@@ -192,14 +189,15 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             pos += group_info_len;
 
             // PrivateDataLength + PrivateDataByte loop.
-            if pos + GII_PRIVATE_DATA_LEN_FIELD > end {
-                return Err(Error::BufferTooShort {
-                    need: pos + GII_PRIVATE_DATA_LEN_FIELD,
-                    have: end,
-                    what: "GroupInfo PrivateDataLength",
-                });
-            }
-            let private_data_len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+            let (bpd, _) =
+                bytes[pos..end]
+                    .split_first_chunk::<2>()
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + GII_PRIVATE_DATA_LEN_FIELD,
+                        have: end,
+                        what: "GroupInfo PrivateDataLength",
+                    })?;
+            let private_data_len = u16::from_be_bytes(*bpd) as usize;
             pos += GII_PRIVATE_DATA_LEN_FIELD;
             if pos + private_data_len > end {
                 return Err(Error::SectionLengthOverflow {
@@ -391,29 +389,30 @@ pub struct DownloadDataBlock<'a> {
 /// shape. Returns (messageId, transaction_or_download_id, adaptation,
 /// payload) where `payload` is bounded by `messageLength`.
 fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'a [u8], &'a [u8])> {
-    if bytes.len() < MESSAGE_HEADER_LEN {
-        return Err(Error::BufferTooShort {
-            need: MESSAGE_HEADER_LEN,
-            have: bytes.len(),
-            what,
-        });
-    }
-    if bytes[0] != PROTOCOL_DISCRIMINATOR {
+    let (hdr, _) =
+        bytes
+            .split_first_chunk::<MESSAGE_HEADER_LEN>()
+            .ok_or(Error::BufferTooShort {
+                need: MESSAGE_HEADER_LEN,
+                have: bytes.len(),
+                what,
+            })?;
+    if hdr[0] != PROTOCOL_DISCRIMINATOR {
         return Err(Error::ReservedBitsViolation {
             field: "protocolDiscriminator",
             reason: "must be 0x11 (ISO/IEC 13818-6 §7.2)",
         });
     }
-    if bytes[1] != DSMCC_TYPE_UN_DOWNLOAD {
+    if hdr[1] != DSMCC_TYPE_UN_DOWNLOAD {
         return Err(Error::ReservedBitsViolation {
             field: "dsmccType",
             reason: "must be 0x03 — U-N download (ISO/IEC 13818-6 §7.2)",
         });
     }
-    let message_id = u16::from_be_bytes([bytes[2], bytes[3]]);
-    let id = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-    let adaptation_length = bytes[9] as usize;
-    let message_length = u16::from_be_bytes([bytes[10], bytes[11]]) as usize;
+    let message_id = u16::from_be_bytes([hdr[2], hdr[3]]);
+    let id = u32::from_be_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]);
+    let adaptation_length = hdr[9] as usize;
+    let message_length = u16::from_be_bytes([hdr[10], hdr[11]]) as usize;
     let total = MESSAGE_HEADER_LEN + message_length;
     if bytes.len() < total {
         return Err(Error::SectionLengthOverflow {
@@ -467,14 +466,14 @@ fn serialize_header(
 
 /// Read a 16-bit-length-prefixed slice at `pos`, bounds-checked against `end`.
 fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize)> {
-    if pos + 2 > end {
-        return Err(Error::BufferTooShort {
+    let (b, _) = bytes[pos..end]
+        .split_first_chunk::<2>()
+        .ok_or(Error::BufferTooShort {
             need: pos + 2,
             have: end,
             what: "DSM-CC 16-bit length field",
-        });
-    }
-    let len = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]) as usize;
+        })?;
+    let len = u16::from_be_bytes(*b) as usize;
     let start = pos + 2;
     if start + len > end {
         return Err(Error::SectionLengthOverflow {
@@ -493,14 +492,14 @@ fn parse_compat_block<'a>(
     end: usize,
 ) -> Result<(CompatibilityDescriptor<'a>, usize)> {
     use crate::compatibility::COMPAT_DESC_LEN_FIELD;
-    if offset + COMPAT_DESC_LEN_FIELD > end {
-        return Err(Error::BufferTooShort {
+    let (b, _) = payload[offset..]
+        .split_first_chunk::<2>()
+        .ok_or(Error::BufferTooShort {
             need: offset + COMPAT_DESC_LEN_FIELD,
             have: end,
             what: "compatibilityDescriptor in DSM-CC message",
-        });
-    }
-    let compat_desc_len = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
+        })?;
+    let compat_desc_len = u16::from_be_bytes(*b) as usize;
     let compat_end = offset + COMPAT_DESC_LEN_FIELD + compat_desc_len;
     if compat_end > end {
         return Err(Error::SectionLengthOverflow {
@@ -542,52 +541,48 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                 }))
             }
             MESSAGE_ID_DII => {
-                if end < DII_FIXED_LEN {
-                    return Err(Error::BufferTooShort {
-                        need: DII_FIXED_LEN,
-                        have: end,
-                        what: "Dii body",
-                    });
-                }
+                let (dii_hdr, _) =
+                    payload
+                        .split_first_chunk::<DII_FIXED_LEN>()
+                        .ok_or(Error::BufferTooShort {
+                            need: DII_FIXED_LEN,
+                            have: end,
+                            what: "Dii body",
+                        })?;
                 let download_id =
-                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
-                let block_size = u16::from_be_bytes([payload[4], payload[5]]);
-                let window_size = payload[6];
-                let ack_period = payload[7];
+                    u32::from_be_bytes([dii_hdr[0], dii_hdr[1], dii_hdr[2], dii_hdr[3]]);
+                let block_size = u16::from_be_bytes([dii_hdr[4], dii_hdr[5]]);
+                let window_size = dii_hdr[6];
+                let ack_period = dii_hdr[7];
                 let t_c_download_window =
-                    u32::from_be_bytes([payload[8], payload[9], payload[10], payload[11]]);
+                    u32::from_be_bytes([dii_hdr[8], dii_hdr[9], dii_hdr[10], dii_hdr[11]]);
                 let t_c_download_scenario =
-                    u32::from_be_bytes([payload[12], payload[13], payload[14], payload[15]]);
+                    u32::from_be_bytes([dii_hdr[12], dii_hdr[13], dii_hdr[14], dii_hdr[15]]);
                 let (compatibility_descriptor, mut pos) =
                     parse_compat_block(payload, DII_FIXED_LEN, end)?;
-                if pos + 2 > end {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: end,
-                        what: "Dii numberOfModules",
-                    });
-                }
-                let number_of_modules =
-                    u16::from_be_bytes([payload[pos], payload[pos + 1]]) as usize;
+                let (bnm, _) =
+                    payload[pos..]
+                        .split_first_chunk::<2>()
+                        .ok_or(Error::BufferTooShort {
+                            need: pos + 2,
+                            have: end,
+                            what: "Dii numberOfModules",
+                        })?;
+                let number_of_modules = u16::from_be_bytes(*bnm) as usize;
                 pos += 2;
                 let mut modules = Vec::with_capacity(number_of_modules.min(256));
                 for _ in 0..number_of_modules {
-                    if pos + MODULE_HEADER_LEN > end {
-                        return Err(Error::BufferTooShort {
+                    let (mhdr, _) = payload[pos..]
+                        .split_first_chunk::<MODULE_HEADER_LEN>()
+                        .ok_or(Error::BufferTooShort {
                             need: pos + MODULE_HEADER_LEN,
                             have: end,
                             what: "Dii module entry",
-                        });
-                    }
-                    let module_id = u16::from_be_bytes([payload[pos], payload[pos + 1]]);
-                    let module_size = u32::from_be_bytes([
-                        payload[pos + 2],
-                        payload[pos + 3],
-                        payload[pos + 4],
-                        payload[pos + 5],
-                    ]);
-                    let module_version = payload[pos + 6];
-                    let module_info_length = payload[pos + 7] as usize;
+                        })?;
+                    let module_id = u16::from_be_bytes([mhdr[0], mhdr[1]]);
+                    let module_size = u32::from_be_bytes([mhdr[2], mhdr[3], mhdr[4], mhdr[5]]);
+                    let module_version = mhdr[6];
+                    let module_info_length = mhdr[7] as usize;
                     let info_start = pos + MODULE_HEADER_LEN;
                     if info_start + module_info_length > end {
                         return Err(Error::SectionLengthOverflow {
@@ -758,19 +753,20 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
                 reason: "expected 0x1003 (DDB) on table_id 0x3C (ISO/IEC 13818-6 §7.3.7)",
             });
         }
-        if payload.len() < DDB_FIXED_LEN {
-            return Err(Error::BufferTooShort {
-                need: DDB_FIXED_LEN,
-                have: payload.len(),
-                what: "DownloadDataBlock body",
-            });
-        }
+        let (ddb_hdr, _) =
+            payload
+                .split_first_chunk::<DDB_FIXED_LEN>()
+                .ok_or(Error::BufferTooShort {
+                    need: DDB_FIXED_LEN,
+                    have: payload.len(),
+                    what: "DownloadDataBlock body",
+                })?;
         Ok(DownloadDataBlock {
             download_id,
             adaptation,
-            module_id: u16::from_be_bytes([payload[0], payload[1]]),
-            module_version: payload[2],
-            block_number: u16::from_be_bytes([payload[4], payload[5]]),
+            module_id: u16::from_be_bytes([ddb_hdr[0], ddb_hdr[1]]),
+            module_version: ddb_hdr[2],
+            block_number: u16::from_be_bytes([ddb_hdr[4], ddb_hdr[5]]),
             block_data: &payload[DDB_FIXED_LEN..],
         })
     }

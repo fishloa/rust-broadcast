@@ -406,16 +406,16 @@ fn parse_tr_papr(body: &[u8]) -> Result<TrPaprBody, crate::Error> {
 }
 
 fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
-    if body.len() < L1_ACE_PAPR_BODY_LEN {
-        return Err(crate::Error::BufferTooShort {
-            need: L1_ACE_PAPR_BODY_LEN,
-            have: body.len(),
-            what: "L1-ACE-PAPR function body",
-        });
-    }
+    let (b, _) =
+        body.split_first_chunk::<L1_ACE_PAPR_BODY_LEN>()
+            .ok_or(crate::Error::BufferTooShort {
+                need: L1_ACE_PAPR_BODY_LEN,
+                have: body.len(),
+                what: "L1-ACE-PAPR function body",
+            })?;
     Ok(L1AcePaprBody {
-        l1_ace_max_correction: u16::from_be_bytes([body[0], body[1]]),
-        rfu: u16::from_be_bytes([body[2], body[3]]),
+        l1_ace_max_correction: u16::from_be_bytes([b[0], b[1]]),
+        rfu: u16::from_be_bytes([b[2], b[3]]),
     })
 }
 
@@ -663,7 +663,15 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 });
             }
 
-            let transmitter_id = u16::from_be_bytes([data[pos], data[pos + 1]]);
+            let (tx_id_bytes, _) =
+                data[pos..]
+                    .split_first_chunk::<2>()
+                    .ok_or(crate::Error::BufferTooShort {
+                        need: pos + 2,
+                        have: individual_addressing_length,
+                        what: "transmitter entry header",
+                    })?;
+            let transmitter_id = u16::from_be_bytes(*tx_id_bytes);
             let function_loop_length = data[pos + 2] as usize;
             pos += TX_HEADER_LEN;
 

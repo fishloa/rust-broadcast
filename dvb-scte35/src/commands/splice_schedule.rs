@@ -94,20 +94,15 @@ impl SpliceScheduleEvent {
     }
 
     fn parse_at(bytes: &[u8], pos: &mut usize) -> Result<Self> {
-        if bytes.len() < *pos + 5 {
-            return Err(Error::BufferTooShort {
+        let (hdr, _) = bytes[*pos..]
+            .split_first_chunk::<5>()
+            .ok_or(Error::BufferTooShort {
                 need: *pos + 5,
                 have: bytes.len(),
                 what: "splice_schedule event header",
-            });
-        }
-        let splice_event_id = u32::from_be_bytes([
-            bytes[*pos],
-            bytes[*pos + 1],
-            bytes[*pos + 2],
-            bytes[*pos + 3],
-        ]);
-        let b = bytes[*pos + 4];
+            })?;
+        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+        let b = hdr[4];
         *pos += 5;
         let cancel = b & 0x80 != 0;
         let compliance = b & 0x40 != 0;
@@ -136,19 +131,14 @@ impl SpliceScheduleEvent {
         let duration_flag = flags & 0x20 != 0;
 
         if ev.program_splice_flag {
-            if bytes.len() < *pos + 4 {
-                return Err(Error::BufferTooShort {
+            let (t, _) = bytes[*pos..]
+                .split_first_chunk::<4>()
+                .ok_or(Error::BufferTooShort {
                     need: *pos + 4,
                     have: bytes.len(),
                     what: "splice_schedule utc_splice_time",
-                });
-            }
-            ev.utc_splice_time = Some(u32::from_be_bytes([
-                bytes[*pos],
-                bytes[*pos + 1],
-                bytes[*pos + 2],
-                bytes[*pos + 3],
-            ]));
+                })?;
+            ev.utc_splice_time = Some(u32::from_be_bytes(*t));
             *pos += 4;
         } else {
             if bytes.len() < *pos + 1 {
@@ -161,20 +151,16 @@ impl SpliceScheduleEvent {
             let count = bytes[*pos] as usize;
             *pos += 1;
             for _ in 0..count {
-                if bytes.len() < *pos + 5 {
-                    return Err(Error::BufferTooShort {
-                        need: *pos + 5,
-                        have: bytes.len(),
-                        what: "splice_schedule component",
-                    });
-                }
-                let component_tag = bytes[*pos];
-                let utc_splice_time = u32::from_be_bytes([
-                    bytes[*pos + 1],
-                    bytes[*pos + 2],
-                    bytes[*pos + 3],
-                    bytes[*pos + 4],
-                ]);
+                let (comp, _) =
+                    bytes[*pos..]
+                        .split_first_chunk::<5>()
+                        .ok_or(Error::BufferTooShort {
+                            need: *pos + 5,
+                            have: bytes.len(),
+                            what: "splice_schedule component",
+                        })?;
+                let component_tag = comp[0];
+                let utc_splice_time = u32::from_be_bytes([comp[1], comp[2], comp[3], comp[4]]);
                 *pos += 5;
                 ev.components.push(SpliceScheduleComponent {
                     component_tag,
@@ -188,16 +174,16 @@ impl SpliceScheduleEvent {
             *pos += BreakDuration::LEN;
         }
 
-        if bytes.len() < *pos + 4 {
-            return Err(Error::BufferTooShort {
+        let (trailer, _) = bytes[*pos..]
+            .split_first_chunk::<4>()
+            .ok_or(Error::BufferTooShort {
                 need: *pos + 4,
                 have: bytes.len(),
                 what: "splice_schedule event trailer",
-            });
-        }
-        ev.unique_program_id = u16::from_be_bytes([bytes[*pos], bytes[*pos + 1]]);
-        ev.avail_num = bytes[*pos + 2];
-        ev.avails_expected = bytes[*pos + 3];
+            })?;
+        ev.unique_program_id = u16::from_be_bytes([trailer[0], trailer[1]]);
+        ev.avail_num = trailer[2];
+        ev.avails_expected = trailer[3];
         *pos += 4;
         Ok(ev)
     }

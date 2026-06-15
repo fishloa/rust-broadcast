@@ -49,16 +49,16 @@ impl<'a> Parse<'a> for XaitLocationDescriptor {
             "XaitLocationDescriptor",
             "unexpected tag for xait_location_descriptor",
         )?;
-        if body.len() < BODY_LEN {
-            return Err(Error::InvalidDescriptor {
+        let (hdr, _) = body
+            .split_first_chunk::<BODY_LEN>()
+            .ok_or(Error::InvalidDescriptor {
                 tag: TAG,
                 reason: "xait_location_descriptor body shorter than 5 bytes",
-            });
-        }
-        let xait_original_network_id = u16::from_be_bytes([body[0], body[1]]);
-        let xait_service_id = u16::from_be_bytes([body[2], body[3]]);
-        let xait_version_number = (body[4] >> 3) & VERSION_MAX;
-        let xait_update_policy = body[4] & UPDATE_POLICY_MAX;
+            })?;
+        let xait_original_network_id = u16::from_be_bytes([hdr[0], hdr[1]]);
+        let xait_service_id = u16::from_be_bytes([hdr[2], hdr[3]]);
+        let xait_version_number = (hdr[4] >> 3) & VERSION_MAX;
+        let xait_update_policy = hdr[4] & UPDATE_POLICY_MAX;
         Ok(Self {
             xait_original_network_id,
             xait_service_id,

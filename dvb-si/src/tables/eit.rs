@@ -155,14 +155,14 @@ impl<'a> Parse<'a> for EitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let transport_stream_id = u16::from_be_bytes([bytes[8], bytes[9]]);
-        let original_network_id = u16::from_be_bytes([bytes[10], bytes[11]]);
+        let transport_stream_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
+        let original_network_id = u16::from_be_bytes(*bytes[10..].first_chunk::<2>().unwrap());
         let segment_last_section_number = bytes[12];
         let last_table_id = bytes[13];
 
@@ -171,7 +171,14 @@ impl<'a> Parse<'a> for EitSection<'a> {
         let mut events = Vec::new();
         let mut pos = events_start;
         while pos + EVENT_HEADER_LEN <= events_end {
-            let event_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + 2,
+                    have: events_end,
+                    what: "EitSection event_id",
+                })?;
+            let event_id = u16::from_be_bytes(*b2);
             let start_time_raw = [
                 bytes[pos + 2],
                 bytes[pos + 3],

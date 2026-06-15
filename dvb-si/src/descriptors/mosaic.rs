@@ -139,7 +139,7 @@ pub struct MosaicDescriptor {
 }
 
 fn read_u16(b: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes([b[at], b[at + 1]])
+    u16::from_be_bytes(*b[at..].first_chunk::<2>().unwrap())
 }
 
 impl<'a> Parse<'a> for MosaicDescriptor {

@@ -53,10 +53,14 @@ impl<'a> Parse<'a> for NvodReferenceDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
+            // chunks_exact(6) guarantees 6 bytes; all unwraps are safe.
+            let (tsid, rest) = chunk.split_first_chunk::<2>().unwrap();
+            let (onid, sid_bytes) = rest.split_first_chunk::<2>().unwrap();
+            let sid = sid_bytes.first_chunk::<2>().unwrap();
             entries.push(NvodReferenceEntry {
-                transport_stream_id: u16::from_be_bytes([chunk[0], chunk[1]]),
-                original_network_id: u16::from_be_bytes([chunk[2], chunk[3]]),
-                service_id: u16::from_be_bytes([chunk[4], chunk[5]]),
+                transport_stream_id: u16::from_be_bytes(*tsid),
+                original_network_id: u16::from_be_bytes(*onid),
+                service_id: u16::from_be_bytes(*sid),
             });
         }
         Ok(Self { entries })

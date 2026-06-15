@@ -197,20 +197,19 @@ impl L1Pre {
     /// [`crate::Error::BufferTooShort`] if `bytes` is shorter than 25 bytes.
     /// [`crate::Error::CrcMismatch`] if the CRC does not match.
     pub fn parse_with_crc(bytes: &[u8]) -> crate::error::Result<L1Pre> {
-        if bytes.len() < L1PRE_WITH_CRC_BYTES {
-            return Err(crate::Error::BufferTooShort {
+        // Take exactly the 21-byte info block + 4-byte CRC; the CRC is at the
+        // fixed offset bytes[21..25], independent of any trailing data.
+        let (block, _) = bytes.split_first_chunk::<L1PRE_WITH_CRC_BYTES>().ok_or(
+            crate::Error::BufferTooShort {
                 need: L1PRE_WITH_CRC_BYTES,
                 have: bytes.len(),
                 what: "L1Pre with CRC",
-            });
-        }
-        let pre = L1Pre::parse(&bytes[..L1PRE_BYTES])?;
-        let expected = u32::from_be_bytes([
-            bytes[L1PRE_BYTES],
-            bytes[L1PRE_BYTES + 1],
-            bytes[L1PRE_BYTES + 2],
-            bytes[L1PRE_BYTES + 3],
-        ]);
+            },
+        )?;
+        // block is exactly 25 bytes → its last 4 are bytes[21..25].
+        let (_, crc_bytes) = block.split_last_chunk::<4>().expect("block is 25 bytes");
+        let pre = L1Pre::parse(&block[..L1PRE_BYTES])?;
+        let expected = u32::from_be_bytes(*crc_bytes);
         let computed = pre.crc32();
         if computed != expected {
             return Err(crate::Error::CrcMismatch { computed, expected });
@@ -444,6 +443,19 @@ mod tests {
         bytes[L1PRE_BYTES] ^= 0xFF;
         let err = L1Pre::parse_with_crc(&bytes).unwrap_err();
         assert!(matches!(err, crate::Error::CrcMismatch { .. }));
+    }
+
+    #[test]
+    fn crc_read_from_fixed_offset_ignores_trailing_data() {
+        // The CRC is at the fixed offset bytes[21..25], not the last 4 bytes of
+        // the buffer: parse_with_crc must validate the same CRC regardless of
+        // any trailing data after the 25-byte block.
+        let pre = synthetic_pre();
+        let mut bytes = pre.serialize_with_crc();
+        assert_eq!(bytes.len(), L1PRE_WITH_CRC_BYTES);
+        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]); // trailing junk after byte 25
+        let parsed = L1Pre::parse_with_crc(&bytes).expect("CRC at fixed [21..25] still valid");
+        assert_eq!(pre, parsed);
     }
 
     #[test]

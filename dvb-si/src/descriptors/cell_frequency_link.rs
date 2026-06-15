@@ -96,10 +96,15 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
                     reason: "cell_frequency_link outer entry truncated",
                 });
             }
-            let cell_id = u16::from_be_bytes([body[pos], body[pos + 1]]);
-            let frequency =
-                u32::from_be_bytes([body[pos + 2], body[pos + 3], body[pos + 4], body[pos + 5]]);
-            let subcell_info_loop_length = body[pos + 6] as usize;
+            let (outer, _) = body[pos..].split_first_chunk::<OUTER_FIXED_LEN>().ok_or(
+                Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "cell_frequency_link outer entry truncated",
+                },
+            )?;
+            let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
+            let frequency = u32::from_be_bytes([outer[2], outer[3], outer[4], outer[5]]);
+            let subcell_info_loop_length = outer[6] as usize;
             pos += OUTER_FIXED_LEN;
             if subcell_info_loop_length % SUBCELL_LEN != 0 {
                 return Err(Error::InvalidDescriptor {
@@ -116,13 +121,14 @@ impl<'a> Parse<'a> for CellFrequencyLinkDescriptor {
             let subcell_count = subcell_info_loop_length / SUBCELL_LEN;
             let mut subcells = Vec::with_capacity(subcell_count);
             for _ in 0..subcell_count {
-                let cell_id_extension = body[pos];
-                let transposer_frequency = u32::from_be_bytes([
-                    body[pos + 1],
-                    body[pos + 2],
-                    body[pos + 3],
-                    body[pos + 4],
-                ]);
+                let (sub, _) = body[pos..].split_first_chunk::<SUBCELL_LEN>().ok_or(
+                    Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "subcell_info_loop_length exceeds descriptor body",
+                    },
+                )?;
+                let cell_id_extension = sub[0];
+                let transposer_frequency = u32::from_be_bytes([sub[1], sub[2], sub[3], sub[4]]);
                 subcells.push(CellFrequencyLinkSubcell {
                     cell_id_extension,
                     transposer_frequency,

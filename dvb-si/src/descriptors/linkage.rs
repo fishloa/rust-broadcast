@@ -661,7 +661,14 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
                 reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
             });
         }
-        let nid = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+        let (nid_bytes, _) =
+            bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
+                })?;
+        let nid = u16::from_be_bytes(*nid_bytes);
         pos += 2;
         Some(nid)
     } else {
@@ -674,7 +681,14 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
                 reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
             });
         }
-        Some(u16::from_be_bytes([bytes[pos], bytes[pos + 1]]))
+        let (sid_bytes, _) =
+            bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
+                })?;
+        Some(u16::from_be_bytes(*sid_bytes))
     } else {
         None
     };
@@ -687,15 +701,15 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
 }
 
 fn parse_event_linkage(bytes: &[u8]) -> Result<EventLinkageInfo> {
-    if bytes.len() < 3 {
-        return Err(Error::InvalidDescriptor {
+    let (hdr, _) = bytes
+        .split_first_chunk::<3>()
+        .ok_or(Error::InvalidDescriptor {
             tag: TAG,
             reason: "event linkage info needs 3 bytes",
-        });
-    }
-    let target_event_id = u16::from_be_bytes([bytes[0], bytes[1]]);
-    let target_listed = (bytes[2] & TARGET_LISTED_MASK) != 0;
-    let event_simulcast = (bytes[2] & EVENT_SIMULCAST_MASK) != 0;
+        })?;
+    let target_event_id = u16::from_be_bytes([hdr[0], hdr[1]]);
+    let target_listed = (hdr[2] & TARGET_LISTED_MASK) != 0;
+    let event_simulcast = (hdr[2] & EVENT_SIMULCAST_MASK) != 0;
     Ok(EventLinkageInfo {
         target_event_id,
         target_listed,
@@ -728,7 +742,13 @@ fn parse_extended_event_linkage(bytes: &[u8]) -> Result<ExtendedEventLinkageInfo
                 reason: "extended event linkage entry truncated (need u16)",
             });
         }
-        let v = u16::from_be_bytes([bytes[*p], bytes[*p + 1]]);
+        let (b, _) = bytes[*p..]
+            .split_first_chunk::<2>()
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "extended event linkage entry truncated (need u16)",
+            })?;
+        let v = u16::from_be_bytes(*b);
         *p += 2;
         Ok(v)
     };
@@ -822,18 +842,17 @@ impl<'a> Parse<'a> for LinkageDescriptor<'a> {
             "LinkageDescriptor",
             "unexpected tag for linkage_descriptor",
         )?;
-        if body.len() < FIXED_FIELDS_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "linkage_descriptor body shorter than minimum 7 bytes",
-            });
-        }
-        let transport_stream_id = u16::from_be_bytes([body[0], body[1]]);
-        let original_network_id = u16::from_be_bytes([body[2], body[3]]);
-        let service_id = u16::from_be_bytes([body[4], body[5]]);
-        let linkage_type_raw = body[6];
+        let (fixed, tail) =
+            body.split_first_chunk::<FIXED_FIELDS_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "linkage_descriptor body shorter than minimum 7 bytes",
+                })?;
+        let transport_stream_id = u16::from_be_bytes([fixed[0], fixed[1]]);
+        let original_network_id = u16::from_be_bytes([fixed[2], fixed[3]]);
+        let service_id = u16::from_be_bytes([fixed[4], fixed[5]]);
+        let linkage_type_raw = fixed[6];
         let linkage_type = LinkageType::from_u8(linkage_type_raw);
-        let tail = &body[FIXED_FIELDS_LEN..];
         let tail_len = tail.len();
 
         let (linkage_data, private_data) = match linkage_type_raw {

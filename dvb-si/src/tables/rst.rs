@@ -87,12 +87,13 @@ impl<'a> Parse<'a> for RstSection {
         let mut entries = Vec::with_capacity(section_length / ENTRY_LEN);
         let mut off = HEADER_LEN;
         while off + ENTRY_LEN <= total {
+            let entry = &bytes[off..off + ENTRY_LEN];
             entries.push(RstEntry {
-                transport_stream_id: u16::from_be_bytes([bytes[off], bytes[off + 1]]),
-                original_network_id: u16::from_be_bytes([bytes[off + 2], bytes[off + 3]]),
-                service_id: u16::from_be_bytes([bytes[off + 4], bytes[off + 5]]),
-                event_id: u16::from_be_bytes([bytes[off + 6], bytes[off + 7]]),
-                running_status: RunningStatus::from_u8(bytes[off + 8] & 0x07),
+                transport_stream_id: u16::from_be_bytes(*entry[0..].first_chunk::<2>().unwrap()),
+                original_network_id: u16::from_be_bytes(*entry[2..].first_chunk::<2>().unwrap()),
+                service_id: u16::from_be_bytes(*entry[4..].first_chunk::<2>().unwrap()),
+                event_id: u16::from_be_bytes(*entry[6..].first_chunk::<2>().unwrap()),
+                running_status: RunningStatus::from_u8(entry[8] & 0x07),
             });
             off += ENTRY_LEN;
         }

@@ -240,41 +240,45 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
             "AnnouncementSupportDescriptor",
             "unexpected tag for announcement_support_descriptor",
         )?;
-        if body.len() < INDICATOR_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "body too short (need announcement_support_indicator)",
-            });
-        }
-        let announcement_support_indicator = u16::from_be_bytes([body[0], body[1]]);
+        let (ind_bytes, mut rest) =
+            body.split_first_chunk::<INDICATOR_LEN>()
+                .ok_or(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "body too short (need announcement_support_indicator)",
+                })?;
+        let announcement_support_indicator = u16::from_be_bytes(*ind_bytes);
         let mut entries = Vec::new();
-        let mut pos = INDICATOR_LEN;
-        while pos < body.len() {
-            let flags = body[pos];
-            pos += TYPE_BYTE_LEN;
+        while !rest.is_empty() {
+            let (type_byte, after_type) =
+                rest.split_first_chunk::<TYPE_BYTE_LEN>()
+                    .ok_or(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "announcement reference block truncated",
+                    })?;
+            let flags = type_byte[0];
             // reserved_future_use bit ignored on parse (§5.1).
             let announcement_type = AnnouncementType::from_u8(
                 (flags & ANNOUNCEMENT_TYPE_MASK) >> ANNOUNCEMENT_TYPE_SHIFT,
             );
             let reference_type = ReferenceType::from_u8(flags & REFERENCE_TYPE_MASK);
-            let reference = if reference_present(reference_type.to_u8()) {
-                if pos + REFERENCE_LEN > body.len() {
-                    return Err(Error::InvalidDescriptor {
+            let (reference, after_ref) = if reference_present(reference_type.to_u8()) {
+                let (ref_bytes, tail) = after_type.split_first_chunk::<REFERENCE_LEN>().ok_or(
+                    Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "announcement reference block truncated",
-                    });
-                }
+                    },
+                )?;
                 let r = AnnouncementReference {
-                    original_network_id: u16::from_be_bytes([body[pos], body[pos + 1]]),
-                    transport_stream_id: u16::from_be_bytes([body[pos + 2], body[pos + 3]]),
-                    service_id: u16::from_be_bytes([body[pos + 4], body[pos + 5]]),
-                    component_tag: body[pos + 6],
+                    original_network_id: u16::from_be_bytes([ref_bytes[0], ref_bytes[1]]),
+                    transport_stream_id: u16::from_be_bytes([ref_bytes[2], ref_bytes[3]]),
+                    service_id: u16::from_be_bytes([ref_bytes[4], ref_bytes[5]]),
+                    component_tag: ref_bytes[6],
                 };
-                pos += REFERENCE_LEN;
-                Some(r)
+                (Some(r), tail)
             } else {
-                None
+                (None, after_type)
             };
+            rest = after_ref;
             entries.push(AnnouncementEntry {
                 announcement_type,
                 reference_type,

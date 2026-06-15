@@ -41,9 +41,15 @@ impl<'a> Parse<'a> for AvailDescriptor {
                 what: "avail_descriptor provider_avail_id",
             });
         }
+        let provider_avail_id =
+            u32::from_be_bytes(*body.first_chunk::<4>().ok_or(Error::BufferTooShort {
+                need: HEADER_LEN + 4,
+                have: bytes.len(),
+                what: "avail_descriptor provider_avail_id",
+            })?);
         Ok(Self {
             identifier,
-            provider_avail_id: u32::from_be_bytes([body[0], body[1], body[2], body[3]]),
+            provider_avail_id,
         })
     }
 }

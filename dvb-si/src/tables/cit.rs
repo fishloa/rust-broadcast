@@ -140,13 +140,13 @@ impl<'a> Parse<'a> for CitSection<'a> {
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
         let private_indicator = (bytes[1] & 0x40) != 0;
-        let service_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let transport_stream_id = u16::from_be_bytes([bytes[8], bytes[9]]);
-        let original_network_id = u16::from_be_bytes([bytes[10], bytes[11]]);
+        let transport_stream_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
+        let original_network_id = u16::from_be_bytes(*bytes[10..].first_chunk::<2>().unwrap());
         let prepend_strings_length = bytes[12];
 
         let ps_start = HEADER_LEN + EXTENSION_LEN;
@@ -170,7 +170,14 @@ impl<'a> Parse<'a> for CitSection<'a> {
                     what: "CitSection crid_entry",
                 });
             }
-            let crid_ref = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+            let (b2, _) = bytes[pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: pos + CRID_ENTRY_FIXED_LEN,
+                    have: payload_end,
+                    what: "CitSection crid_entry",
+                })?;
+            let crid_ref = u16::from_be_bytes(*b2);
             let prepend_string_index = bytes[pos + 2];
             let unique_string_length = bytes[pos + 3] as usize;
             pos += CRID_ENTRY_FIXED_LEN;

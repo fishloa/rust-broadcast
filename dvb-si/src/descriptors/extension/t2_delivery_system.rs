@@ -342,7 +342,14 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             });
         }
         let plp_id = sel[0];
-        let t2_system_id = u16::from_be_bytes([sel[1], sel[2]]);
+        let (t2_id_bytes, _) = sel[1..]
+            .split_first_chunk::<2>()
+            .ok_or(Error::BufferTooShort {
+                need: T2_FIXED_PREFIX_LEN,
+                have: sel.len(),
+                what: "T2_delivery_system body",
+            })?;
+        let t2_system_id = u16::from_be_bytes(*t2_id_bytes);
         let mut pos = T2_FIXED_PREFIX_LEN;
         let (
             siso_miso,
@@ -373,20 +380,84 @@ impl<'a> Parse<'a> for T2DeliverySystem {
         } else {
             (None, None, None, None, None, None)
         };
-        let cells = if siso_miso.is_some() {
-            let tfs = tfs_flag.unwrap();
-            let mut cells = Vec::new();
-            while pos < sel.len() {
-                if pos + 2 > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 2,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    });
-                }
-                let cell_id = u16::from_be_bytes([sel[pos], sel[pos + 1]]);
-                pos += 2;
-                let centre_frequencies = if tfs {
+        let cells =
+            if siso_miso.is_some() {
+                let tfs = tfs_flag.unwrap();
+                let mut cells = Vec::new();
+                while pos < sel.len() {
+                    if pos + 2 > sel.len() {
+                        return Err(Error::BufferTooShort {
+                            need: pos + 2,
+                            have: sel.len(),
+                            what: "T2_delivery_system body",
+                        });
+                    }
+                    let (cell_id_bytes, _) =
+                        sel[pos..]
+                            .split_first_chunk::<2>()
+                            .ok_or(Error::BufferTooShort {
+                                need: pos + 2,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            })?;
+                    let cell_id = u16::from_be_bytes(*cell_id_bytes);
+                    pos += 2;
+                    let centre_frequencies = if tfs {
+                        if pos >= sel.len() {
+                            return Err(Error::BufferTooShort {
+                                need: pos + 1,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            });
+                        }
+                        let freq_loop_len = sel[pos] as usize;
+                        pos += 1;
+                        if freq_loop_len % 4 != 0 {
+                            return Err(invalid(
+                                "T2_delivery_system: frequency_loop_length not a multiple of 4",
+                            ));
+                        }
+                        if pos + freq_loop_len > sel.len() {
+                            return Err(Error::BufferTooShort {
+                                need: pos + freq_loop_len,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            });
+                        }
+                        let end = pos + freq_loop_len;
+                        let mut freqs = Vec::with_capacity(freq_loop_len / 4);
+                        while pos < end {
+                            let (fb, _) = sel[pos..].split_first_chunk::<4>().ok_or(
+                                Error::BufferTooShort {
+                                    need: pos + 4,
+                                    have: sel.len(),
+                                    what: "T2_delivery_system body",
+                                },
+                            )?;
+                            freqs.push(u32::from_be_bytes(*fb));
+                            pos += 4;
+                        }
+                        freqs
+                    } else {
+                        if pos + 4 > sel.len() {
+                            return Err(Error::BufferTooShort {
+                                need: pos + 4,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            });
+                        }
+                        let (freq_bytes, _) =
+                            sel[pos..]
+                                .split_first_chunk::<4>()
+                                .ok_or(Error::BufferTooShort {
+                                    need: pos + 4,
+                                    have: sel.len(),
+                                    what: "T2_delivery_system body",
+                                })?;
+                        let freq = u32::from_be_bytes(*freq_bytes);
+                        pos += 4;
+                        vec![freq]
+                    };
                     if pos >= sel.len() {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -394,90 +465,46 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                             what: "T2_delivery_system body",
                         });
                     }
-                    let freq_loop_len = sel[pos] as usize;
+                    let subcell_loop_len = sel[pos] as usize;
                     pos += 1;
-                    if freq_loop_len % 4 != 0 {
+                    if subcell_loop_len % 5 != 0 {
                         return Err(invalid(
-                            "T2_delivery_system: frequency_loop_length not a multiple of 4",
+                            "T2_delivery_system: subcell_info_loop_length not a multiple of 5",
                         ));
                     }
-                    if pos + freq_loop_len > sel.len() {
+                    if pos + subcell_loop_len > sel.len() {
                         return Err(Error::BufferTooShort {
-                            need: pos + freq_loop_len,
+                            need: pos + subcell_loop_len,
                             have: sel.len(),
                             what: "T2_delivery_system body",
                         });
                     }
-                    let end = pos + freq_loop_len;
-                    let mut freqs = Vec::with_capacity(freq_loop_len / 4);
+                    let end = pos + subcell_loop_len;
+                    let mut subcells = Vec::with_capacity(subcell_loop_len / 5);
                     while pos < end {
-                        freqs.push(u32::from_be_bytes([
-                            sel[pos],
-                            sel[pos + 1],
-                            sel[pos + 2],
-                            sel[pos + 3],
-                        ]));
-                        pos += 4;
-                    }
-                    freqs
-                } else {
-                    if pos + 4 > sel.len() {
-                        return Err(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "T2_delivery_system body",
+                        let (tf_bytes, _) = sel[pos + 1..].split_first_chunk::<4>().ok_or(
+                            Error::BufferTooShort {
+                                need: pos + 5,
+                                have: sel.len(),
+                                what: "T2_delivery_system body",
+                            },
+                        )?;
+                        subcells.push(T2Subcell {
+                            cell_id_extension: sel[pos],
+                            transposer_frequency: u32::from_be_bytes(*tf_bytes),
                         });
+                        pos += 5;
                     }
-                    let freq =
-                        u32::from_be_bytes([sel[pos], sel[pos + 1], sel[pos + 2], sel[pos + 3]]);
-                    pos += 4;
-                    vec![freq]
-                };
-                if pos >= sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + 1,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
+                    cells.push(T2Cell {
+                        cell_id,
+                        centre_frequencies,
+                        subcells,
                     });
                 }
-                let subcell_loop_len = sel[pos] as usize;
-                pos += 1;
-                if subcell_loop_len % 5 != 0 {
-                    return Err(invalid(
-                        "T2_delivery_system: subcell_info_loop_length not a multiple of 5",
-                    ));
-                }
-                if pos + subcell_loop_len > sel.len() {
-                    return Err(Error::BufferTooShort {
-                        need: pos + subcell_loop_len,
-                        have: sel.len(),
-                        what: "T2_delivery_system body",
-                    });
-                }
-                let end = pos + subcell_loop_len;
-                let mut subcells = Vec::with_capacity(subcell_loop_len / 5);
-                while pos < end {
-                    subcells.push(T2Subcell {
-                        cell_id_extension: sel[pos],
-                        transposer_frequency: u32::from_be_bytes([
-                            sel[pos + 1],
-                            sel[pos + 2],
-                            sel[pos + 3],
-                            sel[pos + 4],
-                        ]),
-                    });
-                    pos += 5;
-                }
-                cells.push(T2Cell {
-                    cell_id,
-                    centre_frequencies,
-                    subcells,
-                });
-            }
-            cells
-        } else {
-            Vec::new()
-        };
+                cells
+            } else {
+                Vec::new()
+            };
         Ok(T2DeliverySystem {
             plp_id,
             t2_system_id,

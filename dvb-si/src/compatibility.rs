@@ -69,8 +69,8 @@ impl DescriptorType {
             0x00 => Self::Pad,
             0x01 => Self::SystemHardware,
             0x02 => Self::SystemSoftware,
-            v if v < 0x40 => Self::IsoReserved(v),
-            v if v < 0x80 => Self::DvbReserved(v),
+            v @ 0x03..0x40 => Self::IsoReserved(v),
+            v @ 0x40..0x80 => Self::DvbReserved(v),
             v => Self::UserDefined(v),
         }
     }
@@ -246,7 +246,14 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                 what: "CompatibilityDescriptor length field",
             });
         }
-        let compat_desc_len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
+        let (b2, _) = bytes
+            .split_first_chunk::<2>()
+            .ok_or(Error::BufferTooShort {
+                need: COMPAT_DESC_LEN_FIELD,
+                have: bytes.len(),
+                what: "CompatibilityDescriptor length field",
+            })?;
+        let compat_desc_len = u16::from_be_bytes(*b2) as usize;
         let body_end = COMPAT_DESC_LEN_FIELD + compat_desc_len;
         if body_end > bytes.len() {
             return Err(Error::SectionLengthOverflow {
@@ -267,7 +274,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             });
         }
         let body = &bytes[COMPAT_DESC_LEN_FIELD..body_end];
-        let descriptor_count = u16::from_be_bytes([body[0], body[1]]) as usize;
+        let descriptor_count = u16::from_be_bytes(*body.first_chunk::<2>().unwrap()) as usize;
         let mut pos = DESC_COUNT_FIELD;
         let max_entries = (body.len() - DESC_COUNT_FIELD) / (DESC_HEADER_LEN + DESC_FIXED_LEN);
         let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries));
@@ -300,14 +307,16 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                 body[pos + DESC_HEADER_LEN + 2],
                 body[pos + DESC_HEADER_LEN + 3],
             ];
-            let model = u16::from_be_bytes([
-                body[pos + DESC_HEADER_LEN + 4],
-                body[pos + DESC_HEADER_LEN + 5],
-            ]);
-            let version = u16::from_be_bytes([
-                body[pos + DESC_HEADER_LEN + 6],
-                body[pos + DESC_HEADER_LEN + 7],
-            ]);
+            let model = u16::from_be_bytes(
+                *body[pos + DESC_HEADER_LEN + 4..]
+                    .first_chunk::<2>()
+                    .unwrap(),
+            );
+            let version = u16::from_be_bytes(
+                *body[pos + DESC_HEADER_LEN + 6..]
+                    .first_chunk::<2>()
+                    .unwrap(),
+            );
             let sub_descriptor_count = body[pos + DESC_HEADER_LEN + 8] as usize;
             let sub_desc_start = pos + DESC_HEADER_LEN + DESC_FIXED_LEN;
             let sub_desc_end = entry_end;

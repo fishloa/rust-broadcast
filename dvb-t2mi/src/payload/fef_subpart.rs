@@ -127,26 +127,26 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < FEF_SUBPART_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
+        let (hdr, rest) = bytes.split_first_chunk::<FEF_SUBPART_HEADER_LEN>().ok_or(
+            crate::Error::BufferTooShort {
                 need: FEF_SUBPART_HEADER_LEN,
                 have: bytes.len(),
                 what: "FefSubPartPayload header",
-            });
-        }
+            },
+        )?;
 
         // rfu1: bytes 3-6 (32 bits) — must be 0
-        if bytes[3] != 0 || bytes[4] != 0 || bytes[5] != 0 || bytes[6] != 0 {
+        if hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 || hdr[6] != 0 {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "32-bit RFU (rfu1)",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.12)",
             });
         }
 
-        let variety = SubpartVariety::try_from(u16::from_be_bytes([bytes[9], bytes[10]]))?;
+        let variety = SubpartVariety::try_from(u16::from_be_bytes([hdr[9], hdr[10]]))?;
 
         // rfu2: byte 11 (8 bits) + byte 12 [7:6] (2 bits) = 10 bits — must be 0
-        if bytes[11] != 0 || (bytes[12] & 0xC0 != 0) {
+        if hdr[11] != 0 || (hdr[12] & 0xC0 != 0) {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "10-bit RFU (rfu2)",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.12)",
@@ -155,15 +155,15 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
 
         // subpart_length: byte 12 [5:0] (6 bits) + byte 13 (8 bits) + byte 14 (8 bits) = 22 bits
         let subpart_length =
-            ((bytes[12] & 0x3F) as u32) << 16 | (bytes[13] as u32) << 8 | (bytes[14] as u32);
+            ((hdr[12] & 0x3F) as u32) << 16 | (hdr[13] as u32) << 8 | (hdr[14] as u32);
 
         Ok(FefSubPartPayload {
-            fef_idx: bytes[0],
-            tx_identifier: u16::from_be_bytes([bytes[1], bytes[2]]),
-            subpart_idx: u16::from_be_bytes([bytes[7], bytes[8]]),
+            fef_idx: hdr[0],
+            tx_identifier: u16::from_be_bytes([hdr[1], hdr[2]]),
+            subpart_idx: u16::from_be_bytes([hdr[7], hdr[8]]),
             subpart_variety: variety,
             subpart_length,
-            subpart_data: &bytes[FEF_SUBPART_HEADER_LEN..],
+            subpart_data: rest,
         })
     }
 }

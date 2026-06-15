@@ -45,14 +45,14 @@ impl<'a> L1FuturePayload<'a> {
         num_aux: u8,
     ) -> crate::error::Result<Option<L1PostDynamic>> {
         let data = self.l1_future_data;
-        if data.len() < 2 {
-            return Err(crate::Error::BufferTooShort {
+        let (b, _) = data
+            .split_first_chunk::<2>()
+            .ok_or(crate::Error::BufferTooShort {
                 need: 2,
                 have: data.len(),
                 what: "L1DYN_NEXT_LEN",
-            });
-        }
-        let len_bits = u16::from_be_bytes([data[0], data[1]]) as usize;
+            })?;
+        let len_bits = u16::from_be_bytes(*b) as usize;
         if len_bits == 0 {
             return Ok(None);
         }
@@ -88,24 +88,25 @@ impl<'a> L1FuturePayload<'a> {
     ) -> crate::error::Result<Option<L1PostDynamic>> {
         let data = self.l1_future_data;
         // Skip over the first block
-        if data.len() < 2 {
-            return Err(crate::Error::BufferTooShort {
+        let (b, _) = data
+            .split_first_chunk::<2>()
+            .ok_or(crate::Error::BufferTooShort {
                 need: 2,
                 have: data.len(),
                 what: "L1DYN_NEXT_LEN (scanning for NEXT2)",
-            });
-        }
-        let next_len_bits = u16::from_be_bytes([data[0], data[1]]) as usize;
+            })?;
+        let next_len_bits = u16::from_be_bytes(*b) as usize;
         let next_len_bytes = next_len_bits.div_ceil(8);
         let offset = 2 + next_len_bytes;
-        if data.len() < offset + 2 {
-            return Err(crate::Error::BufferTooShort {
-                need: offset + 2,
-                have: data.len(),
-                what: "L1DYN_NEXT2_LEN",
-            });
-        }
-        let len_bits = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
+        let (b2, _) =
+            data[offset..]
+                .split_first_chunk::<2>()
+                .ok_or(crate::Error::BufferTooShort {
+                    need: offset + 2,
+                    have: data.len(),
+                    what: "L1DYN_NEXT2_LEN",
+                })?;
+        let len_bits = u16::from_be_bytes(*b2) as usize;
         if len_bits == 0 {
             return Ok(None);
         }
@@ -133,24 +134,24 @@ impl<'a> L1FuturePayload<'a> {
     pub fn inband_loop(&self) -> crate::error::Result<Vec<(u8, Vec<u8>)>> {
         let data = self.l1_future_data;
         // Skip over DYN_NEXT and DYN_NEXT2
-        if data.len() < 2 {
-            return Err(crate::Error::BufferTooShort {
+        let (b, _) = data
+            .split_first_chunk::<2>()
+            .ok_or(crate::Error::BufferTooShort {
                 need: 2,
                 have: data.len(),
                 what: "L1DYN_NEXT_LEN (scanning for INBAND)",
-            });
-        }
-        let next_len_bits = u16::from_be_bytes([data[0], data[1]]) as usize;
+            })?;
+        let next_len_bits = u16::from_be_bytes(*b) as usize;
         let next_len_bytes = next_len_bits.div_ceil(8);
         let mut pos = 2 + next_len_bytes;
-        if data.len() < pos + 2 {
-            return Err(crate::Error::BufferTooShort {
+        let (b2, _) = data[pos..]
+            .split_first_chunk::<2>()
+            .ok_or(crate::Error::BufferTooShort {
                 need: pos + 2,
                 have: data.len(),
                 what: "L1DYN_NEXT2_LEN (scanning for INBAND)",
-            });
-        }
-        let next2_len_bits = u16::from_be_bytes([data[pos], data[pos + 1]]) as usize;
+            })?;
+        let next2_len_bits = u16::from_be_bytes(*b2) as usize;
         let next2_len_bytes = next2_len_bits.div_ceil(8);
         pos += 2 + next2_len_bytes;
 
@@ -175,7 +176,15 @@ impl<'a> L1FuturePayload<'a> {
                 });
             }
             let plp_id = data[pos];
-            let inband_len_bits = u16::from_be_bytes([data[pos + 1], data[pos + 2]]) as usize;
+            let (inband_b, _) =
+                data[pos + 1..]
+                    .split_first_chunk::<2>()
+                    .ok_or(crate::Error::BufferTooShort {
+                        need: pos + 3,
+                        have: data.len(),
+                        what: "INBAND entry header",
+                    })?;
+            let inband_len_bits = u16::from_be_bytes(*inband_b) as usize;
             let inband_bytes = inband_len_bits.div_ceil(8);
             pos += 3;
             if data.len() < pos + inband_bytes {

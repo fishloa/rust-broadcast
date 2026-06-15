@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+- Internal: byte-readers hardened with bounds-checked `split_first_chunk` /
+  `split_last_chunk` / `first_chunk` (and fixed-size descriptor-entry loops with
+  `chunks_exact`), folding manual length checks into the read. DSM-CC/BIOP
+  windowed reads continue to bound-check against the declared message/object
+  window. No API or behaviour change (#207).
+- Internal: exclusive-range match patterns in coded-field decoders (Rust 1.81
+  idiom cleanup) (#209).
+
 ## 7.0.0 — 2026-06-14
 
 **BREAKING.**

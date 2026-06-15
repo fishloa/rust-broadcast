@@ -57,12 +57,12 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
         let flags = body[0];
         // reserved_future_use (7 bits) ignored on parse (§5.1).
         let availability_flag = flags & AVAILABILITY_FLAG_MASK != 0;
-        let count = (body.len() - FLAGS_LEN) / CELL_ID_LEN;
+        let cell_data = &body[FLAGS_LEN..];
+        let count = cell_data.len() / CELL_ID_LEN;
         let mut cell_ids = Vec::with_capacity(count);
-        let mut pos = FLAGS_LEN;
-        for _ in 0..count {
-            cell_ids.push(u16::from_be_bytes([body[pos], body[pos + 1]]));
-            pos += CELL_ID_LEN;
+        for chunk in cell_data.chunks_exact(CELL_ID_LEN) {
+            // chunks_exact(2) guarantees 2 bytes; unwrap is safe.
+            cell_ids.push(u16::from_be_bytes(*chunk.first_chunk::<2>().unwrap()));
         }
         Ok(Self {
             availability_flag,

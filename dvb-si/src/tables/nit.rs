@@ -116,7 +116,7 @@ impl<'a> Parse<'a> for NitSection<'a> {
         //   bytes[5]    = reserved(2) | version_number(5) | current_next_indicator(1)
         //   bytes[6]    = section_number
         //   bytes[7]    = last_section_number
-        let network_id = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let network_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let version_number = (bytes[5] >> 1) & 0x1F;
         let current_next_indicator = (bytes[5] & 0x01) != 0;
         let section_number = bytes[6];
@@ -175,8 +175,9 @@ impl<'a> Parse<'a> for NitSection<'a> {
                 });
             }
 
-            let transport_stream_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
-            let original_network_id = u16::from_be_bytes([bytes[pos + 2], bytes[pos + 3]]);
+            let hdr = &bytes[pos..pos + TS_HEADER_LEN];
+            let transport_stream_id = u16::from_be_bytes(*hdr[0..].first_chunk::<2>().unwrap());
+            let original_network_id = u16::from_be_bytes(*hdr[2..].first_chunk::<2>().unwrap());
 
             // transport_descriptors_length is 12 bits: high 4 bits reserved, low 12 bits length
             let transport_descriptors_length =

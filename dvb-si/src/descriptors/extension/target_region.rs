@@ -144,7 +144,15 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
                 }
                 let primary = sel[pos];
                 let secondary = sel[pos + 1];
-                let tertiary = u16::from_be_bytes([sel[pos + 2], sel[pos + 3]]);
+                let (tert_bytes, _) =
+                    sel[pos + 2..]
+                        .split_first_chunk::<2>()
+                        .ok_or(Error::BufferTooShort {
+                            need: pos + 4,
+                            have: sel.len(),
+                            what: "target_region body",
+                        })?;
+                let tertiary = u16::from_be_bytes(*tert_bytes);
                 pos += 4;
                 RegionCodes::Full {
                     primary_region_code: primary,

@@ -798,14 +798,14 @@ pub(crate) fn parse_l1_post_from_framed(
     let mut pos = 0usize;
 
     // ── L1CONF ────────────────────────────────────────────────────────────────
-    if framed.len() < pos + 2 {
-        return Err(crate::Error::BufferTooShort {
+    let (b, _) = framed[pos..]
+        .split_first_chunk::<2>()
+        .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),
             what: "L1CONF_LEN",
-        });
-    }
-    let l1conf_len_bits = u16::from_be_bytes([framed[pos], framed[pos + 1]]) as usize;
+        })?;
+    let l1conf_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1conf_bytes = l1conf_len_bits.div_ceil(8);
     if framed.len() < pos + l1conf_bytes {
@@ -823,14 +823,14 @@ pub(crate) fn parse_l1_post_from_framed(
     let num_aux = configurable.num_aux;
 
     // ── L1DYN_CURR ────────────────────────────────────────────────────────────
-    if framed.len() < pos + 2 {
-        return Err(crate::Error::BufferTooShort {
+    let (b, _) = framed[pos..]
+        .split_first_chunk::<2>()
+        .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),
             what: "L1DYN_CURR_LEN",
-        });
-    }
-    let l1dyn_len_bits = u16::from_be_bytes([framed[pos], framed[pos + 1]]) as usize;
+        })?;
+    let l1dyn_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1dyn_bytes = l1dyn_len_bits.div_ceil(8);
     if framed.len() < pos + l1dyn_bytes {
@@ -844,14 +844,14 @@ pub(crate) fn parse_l1_post_from_framed(
     pos += l1dyn_bytes;
 
     // ── L1EXT ─────────────────────────────────────────────────────────────────
-    if framed.len() < pos + 2 {
-        return Err(crate::Error::BufferTooShort {
+    let (b, _) = framed[pos..]
+        .split_first_chunk::<2>()
+        .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),
             what: "L1EXT_LEN",
-        });
-    }
-    let l1ext_len_bits = u16::from_be_bytes([framed[pos], framed[pos + 1]]) as usize;
+        })?;
+    let l1ext_len_bits = u16::from_be_bytes(*b) as usize;
     pos += 2;
     let l1ext_bytes = l1ext_len_bits.div_ceil(8);
     if framed.len() < pos + l1ext_bytes {

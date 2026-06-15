@@ -166,13 +166,16 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         // Verify CRC over the whole section (table_id..=CRC_32), prior to any
         // decryption (§9.6.1).
         let crc_pos = total - CRC_LEN;
-        let expected = u32::from_be_bytes([
-            bytes[crc_pos],
-            bytes[crc_pos + 1],
-            bytes[crc_pos + 2],
-            bytes[crc_pos + 3],
-        ]);
-        let computed = dvb_common::crc32_mpeg2::compute(&bytes[..crc_pos]);
+        let (crc_region, crc_bytes) =
+            bytes[..total]
+                .split_last_chunk::<CRC_LEN>()
+                .ok_or(Error::BufferTooShort {
+                    need: FIXED_HEADER_LEN + CRC_LEN,
+                    have: bytes.len(),
+                    what: "splice_info_section header",
+                })?;
+        let expected = u32::from_be_bytes(*crc_bytes);
+        let computed = dvb_common::crc32_mpeg2::compute(crc_region);
         if computed != expected {
             return Err(Error::CrcMismatch { computed, expected });
         }
@@ -237,8 +240,15 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let command = AnyCommand::dispatch(splice_command_type, command_body)?;
 
         let dll_pos = 1 + scl;
-        let descriptor_loop_length =
-            (usize::from(payload[dll_pos]) << 8) | usize::from(payload[dll_pos + 1]);
+        let (dll_bytes, _) =
+            payload[dll_pos..]
+                .split_first_chunk::<2>()
+                .ok_or(Error::BufferTooShort {
+                    need: 1 + scl + 2,
+                    have: payload.len(),
+                    what: "splice_info_section command + descriptor_loop_length",
+                })?;
+        let descriptor_loop_length = usize::from(u16::from_be_bytes(*dll_bytes));
         let loop_start = dll_pos + 2;
         if payload.len() < loop_start + descriptor_loop_length {
             return Err(Error::LengthOverflow {

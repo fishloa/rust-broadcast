@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>rust-dvb WASM Demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>rust-dvb SI parser</h1>
+    <p class="subtitle">Drop an MPEG-TS capture (.ts) to parse its DVB Service Information tables in-browser.</p>
+  </header>
+
+  <main>
+    <!-- Drop zone -->
+    <div id="dropzone" role="button" tabindex="0" aria-label="Drop zone for .ts files">
+      <span id="dropzone-label">Drop a .ts file here, or click to browse</span>
+      <input type="file" id="file-input" accept=".ts" aria-hidden="true">
+    </div>
+
+    <!-- Loading indicator -->
+    <div id="loading" class="hidden" aria-live="polite">Parsing…</div>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden" role="alert"></div>
+
+    <!-- Stats bar -->
+    <section id="stats-section" class="hidden">
+      <h2>Summary</h2>
+      <dl id="stats-list"></dl>
+    </section>
+
+    <!-- Services panel -->
+    <section id="services-section" class="hidden">
+      <h2>Services (from SDT)</h2>
+      <table id="services-table">
+        <thead>
+          <tr>
+            <th>Service ID</th>
+            <th>Service Name</th>
+            <th>Provider</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody id="services-body"></tbody>
+      </table>
+    </section>
+
+    <!-- Tables panel -->
+    <section id="tables-section" class="hidden">
+      <h2>Table Sections</h2>
+      <table id="tables-table">
+        <thead>
+          <tr>
+            <th>PID</th>
+            <th>Table</th>
+            <th>Raw JSON</th>
+          </tr>
+        </thead>
+        <tbody id="tables-body"></tbody>
+      </table>
+    </section>
+
+    <!-- Raw JSON panel -->
+    <section id="json-section" class="hidden">
+      <h2>
+        Raw JSON output
+        <button id="json-toggle" aria-expanded="false">Show</button>
+      </h2>
+      <pre id="json-pre" class="hidden"></pre>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

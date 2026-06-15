@@ -150,7 +150,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
         )?;
 
         // bytes[3..5] = font_id_extension(9) | font_id(7).
-        let id_word = u16::from_be_bytes([bytes[3], bytes[4]]);
+        let id_word = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
         let font_id_extension = id_word >> 7;
         let font_id = (id_word & 0x7F) as u8;
         let version_number = (bytes[5] >> 1) & 0x1F;
@@ -210,7 +210,13 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                             available: loop_end - pos,
                         });
                     }
-                    let size = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
+                    let (b2, _) = bytes[pos..].split_first_chunk::<2>().ok_or(
+                        Error::SectionLengthOverflow {
+                            declared: 3,
+                            available: loop_end - pos,
+                        },
+                    )?;
+                    let size = u16::from_be_bytes(*b2);
                     let info_length = bytes[pos + 2] as usize;
                     let info_start = pos + 3;
                     let info_end = info_start + info_length;
