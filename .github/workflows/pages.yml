@@ -1,0 +1,69 @@
+name: GitHub Pages — WASM demo
+
+# Deploy the dvb-si browser demo on every push to main.
+# This workflow is independent of CI and non-gating — it does not run on PRs
+# and is not a required status check.
+on:
+  push:
+    branches: [main]
+
+  # Allow manual re-deploy from the Actions tab.
+  workflow_dispatch:
+
+# Required for GitHub Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment runs at a time; cancel in-flight runs on new push.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build WASM demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: demo -> demo/target
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build demo (wasm-pack)
+        run: wasm-pack build demo --target web --out-dir demo/pkg --release
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp demo/index.html _site/index.html
+          cp demo/style.css  _site/style.css
+          cp demo/app.js     _site/app.js
+          cp -r demo/pkg     _site/pkg
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
