@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.1.0] — 2026-06-15
+
 ### Changed
 - Internal: byte-readers hardened with bounds-checked `split_first_chunk` /
   `split_last_chunk` / `first_chunk`, folding manual length checks into the read.
