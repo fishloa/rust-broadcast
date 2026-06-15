@@ -1,0 +1,12 @@
+# Defensive test config: a hung/runaway test is TERMINATED and reported as a
+# failure instead of blocking the run forever. period = warn interval;
+# terminate-after = number of periods before SIGKILL (so a test stuck > ~90s
+# fails fast). Tune per suite if a legitimately long test needs more.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 3 }
+
+# CI: same hard cap, plus retries for flakes and stable machine-readable output.
+[profile.ci]
+slow-timeout = { period = "30s", terminate-after = 3 }
+retries = 1
+failure-output = "immediate-final"
