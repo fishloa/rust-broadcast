@@ -13,3 +13,10 @@ tools/dvb-si-audit/out/
 # stray cross-compile artifacts (never commit)
 *.rlib
 *.rmeta
+
+# fetch-on-demand broadcast captures (tools/fetch-test-streams.sh) — never committed
+/.test-streams/
+
+# wasm-pack build output for the browser demo (generated; not committed)
+/demo/pkg/
+/demo/target/
