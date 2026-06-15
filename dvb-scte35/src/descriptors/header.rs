@@ -53,7 +53,15 @@ pub fn descriptor_body<'a>(
             what,
         });
     }
-    let identifier = u32::from_be_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]);
+    // bytes[0..2] are tag + descriptor_length; bytes[2..6] are the identifier.
+    let (id_bytes, _) = bytes[2..total]
+        .split_first_chunk::<4>()
+        .ok_or(Error::BufferTooShort {
+            need: 6,
+            have: total,
+            what,
+        })?;
+    let identifier = u32::from_be_bytes(*id_bytes);
     Ok((identifier, &bytes[HEADER_LEN..total]))
 }
 

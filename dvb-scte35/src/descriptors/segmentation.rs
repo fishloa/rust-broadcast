@@ -167,8 +167,13 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
                 what: "segmentation_descriptor header",
             });
         }
-        let segmentation_event_id = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
-        let b = body[4];
+        let (eid_bytes, rest) = body.split_first_chunk::<4>().ok_or(Error::BufferTooShort {
+            need: HEADER_LEN + 5,
+            have: bytes.len(),
+            what: "segmentation_descriptor header",
+        })?;
+        let segmentation_event_id = u32::from_be_bytes(*eid_bytes);
+        let b = rest[0];
         let cancel = b & 0x80 != 0;
         let compliance = b & 0x40 != 0;
 
@@ -333,19 +338,19 @@ impl<'a> SegmentationDescriptor<'a> {
             return None;
         }
         let bytes = self.segmentation_upid;
-        if bytes.len() < MPU_FORMAT_IDENTIFIER_LEN {
-            return Some(Err(Error::BufferTooShort {
-                need: MPU_FORMAT_IDENTIFIER_LEN,
-                have: bytes.len(),
-                what: "MPU() format_identifier",
-            }));
-        }
-        let format_identifier = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let private_data = &bytes[MPU_FORMAT_IDENTIFIER_LEN..];
-        Some(Ok(Mpu {
-            format_identifier,
-            private_data,
-        }))
+        Some(
+            bytes
+                .split_first_chunk::<MPU_FORMAT_IDENTIFIER_LEN>()
+                .ok_or(Error::BufferTooShort {
+                    need: MPU_FORMAT_IDENTIFIER_LEN,
+                    have: bytes.len(),
+                    what: "MPU() format_identifier",
+                })
+                .map(|(fi_bytes, private_data)| Mpu {
+                    format_identifier: u32::from_be_bytes(*fi_bytes),
+                    private_data,
+                }),
+        )
     }
 
     /// Decode the `segmentation_upid` as a MID() structure (§10.3.3.4, Table 25).

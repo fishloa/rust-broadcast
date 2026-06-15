@@ -277,19 +277,19 @@ impl<'a> Parse<'a> for Bbheader {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, Self::Error> {
-        if bytes.len() < BBHEADER_LEN {
-            return Err(Error::BufferTooShort {
+        let (hdr, _) = bytes
+            .split_first_chunk::<BBHEADER_LEN>()
+            .ok_or(Error::BufferTooShort {
                 need: BBHEADER_LEN,
                 have: bytes.len(),
                 what: "BBHEADER",
-            });
-        }
+            })?;
 
-        let matype_bytes = [bytes[0], bytes[1]];
+        let matype_bytes = [hdr[0], hdr[1]];
         let matype = Matype::try_from(matype_bytes)?;
-        let dfl = u16::from_be_bytes([bytes[4], bytes[5]]);
-        let syncd = u16::from_be_bytes([bytes[7], bytes[8]]);
-        let crc_stored = bytes[9];
+        let dfl = u16::from_be_bytes([hdr[4], hdr[5]]);
+        let syncd = u16::from_be_bytes([hdr[7], hdr[8]]);
+        let crc_stored = hdr[9];
 
         if dfl > DFL_MAX_BITS {
             return Err(Error::DflOutOfRange {
@@ -304,16 +304,16 @@ impl<'a> Parse<'a> for Bbheader {
         // outside {0, 1} is rejected by `Mode::try_from` as InvalidMode; a
         // residual flip into the other valid mode is undetectable by design
         // of the spec's scheme (there is no separate "HEM CRC init").
-        let computed_crc = crc8(&bytes[..9]);
+        let computed_crc = crc8(&hdr[..9]);
         let mode_val = computed_crc ^ crc_stored;
         let mode = Mode::try_from(mode_val)?;
 
         let (upl, sync, issy_in_header) = match mode {
-            Mode::Normal => (u16::from_be_bytes([bytes[2], bytes[3]]), bytes[6], None),
+            Mode::Normal => (u16::from_be_bytes([hdr[2], hdr[3]]), hdr[6], None),
             Mode::HighEfficiency => {
                 // In HEM, bytes[2..4] are ISSY_2MSB, byte[6] is ISSY_1LSB —
                 // UPL and SYNC are repurposed for ISSY.
-                (0, 0, Some([bytes[2], bytes[3], bytes[6]]))
+                (0, 0, Some([hdr[2], hdr[3], hdr[6]]))
             }
         };
 

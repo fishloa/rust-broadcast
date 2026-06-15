@@ -51,23 +51,24 @@ impl<'a> Parse<'a> for FefCompositePayload {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < FEF_COMPOSITE_LEN {
-            return Err(crate::Error::BufferTooShort {
-                need: FEF_COMPOSITE_LEN,
-                have: bytes.len(),
-                what: "FefCompositePayload header",
-            });
-        }
+        let (hdr, _) =
+            bytes
+                .split_first_chunk::<FEF_COMPOSITE_LEN>()
+                .ok_or(crate::Error::BufferTooShort {
+                    need: FEF_COMPOSITE_LEN,
+                    have: bytes.len(),
+                    what: "FefCompositePayload header",
+                })?;
 
         // byte 1 [7]: rfu1 — must be 0
-        if bytes[1] & 0x80 != 0 {
+        if hdr[1] & 0x80 != 0 {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "byte 1 [7] rfu1",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.11)",
             });
         }
         // bytes 2-5: 32-bit rfu2 — must be 0
-        if bytes[2] != 0 || bytes[3] != 0 || bytes[4] != 0 || bytes[5] != 0 {
+        if hdr[2] != 0 || hdr[3] != 0 || hdr[4] != 0 || hdr[5] != 0 {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "32-bit RFU (rfu2)",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.11)",
@@ -75,10 +76,10 @@ impl<'a> Parse<'a> for FefCompositePayload {
         }
 
         Ok(FefCompositePayload {
-            fef_idx: bytes[0],
-            s1_field: S1Field::try_from((bytes[1] >> 4) & 0x07)?,
-            s2_field: bytes[1] & 0x0F,
-            num_subparts: u16::from_be_bytes([bytes[6], bytes[7]]),
+            fef_idx: hdr[0],
+            s1_field: S1Field::try_from((hdr[1] >> 4) & 0x07)?,
+            s2_field: hdr[1] & 0x0F,
+            num_subparts: u16::from_be_bytes([hdr[6], hdr[7]]),
         })
     }
 }

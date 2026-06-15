@@ -204,13 +204,10 @@ impl L1Pre {
                 what: "L1Pre with CRC",
             });
         }
-        let pre = L1Pre::parse(&bytes[..L1PRE_BYTES])?;
-        let expected = u32::from_be_bytes([
-            bytes[L1PRE_BYTES],
-            bytes[L1PRE_BYTES + 1],
-            bytes[L1PRE_BYTES + 2],
-            bytes[L1PRE_BYTES + 3],
-        ]);
+        // split_last_chunk cannot fail: upfront check guarantees bytes.len() >= 25 > 4.
+        let (body, crc_bytes) = bytes.split_last_chunk::<4>().expect("len >= 25");
+        let pre = L1Pre::parse(&body[..L1PRE_BYTES])?;
+        let expected = u32::from_be_bytes(*crc_bytes);
         let computed = pre.crc32();
         if computed != expected {
             return Err(crate::Error::CrcMismatch { computed, expected });

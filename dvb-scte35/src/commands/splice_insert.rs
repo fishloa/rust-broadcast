@@ -85,15 +85,15 @@ impl<'a> Parse<'a> for SpliceInsert {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         // splice_event_id (4) + flags byte (1).
-        if bytes.len() < 5 {
-            return Err(Error::BufferTooShort {
+        let (hdr, _) = bytes
+            .split_first_chunk::<5>()
+            .ok_or(Error::BufferTooShort {
                 need: 5,
                 have: bytes.len(),
                 what: "splice_insert header",
-            });
-        }
-        let splice_event_id = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-        let cancel = bytes[4] & 0x80 != 0;
+            })?;
+        let splice_event_id = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
+        let cancel = hdr[4] & 0x80 != 0;
         let mut pos = 5;
 
         let mut out = Self {
@@ -170,16 +170,16 @@ impl<'a> Parse<'a> for SpliceInsert {
             out.break_duration = Some(bd);
         }
 
-        if bytes.len() < pos + 4 {
-            return Err(Error::BufferTooShort {
+        let (trailer, _) = bytes[pos..]
+            .split_first_chunk::<4>()
+            .ok_or(Error::BufferTooShort {
                 need: pos + 4,
                 have: bytes.len(),
                 what: "splice_insert trailer",
-            });
-        }
-        out.unique_program_id = u16::from_be_bytes([bytes[pos], bytes[pos + 1]]);
-        out.avail_num = bytes[pos + 2];
-        out.avails_expected = bytes[pos + 3];
+            })?;
+        out.unique_program_id = u16::from_be_bytes([trailer[0], trailer[1]]);
+        out.avail_num = trailer[2];
+        out.avails_expected = trailer[3];
         Ok(out)
     }
 }

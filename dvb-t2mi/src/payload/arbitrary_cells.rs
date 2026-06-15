@@ -32,19 +32,19 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
-        if bytes.len() < ARB_CELLS_HEADER_LEN {
-            return Err(crate::Error::BufferTooShort {
+        let (hdr, rest) = bytes.split_first_chunk::<ARB_CELLS_HEADER_LEN>().ok_or(
+            crate::Error::BufferTooShort {
                 need: ARB_CELLS_HEADER_LEN,
                 have: bytes.len(),
                 what: "ArbitraryCellsPayload header",
-            });
-        }
+            },
+        )?;
 
-        let frame_idx = bytes[0];
-        let tx_identifier = u16::from_be_bytes([bytes[1], bytes[2]]);
+        let frame_idx = hdr[0];
+        let tx_identifier = u16::from_be_bytes([hdr[1], hdr[2]]);
 
         // RFU: bytes 3-4 (16 bits) + byte 5 top 2 bits = 18 bits total, must be 0
-        if bytes[3] != 0 || bytes[4] != 0 || (bytes[5] & 0xC0 != 0) {
+        if hdr[3] != 0 || hdr[4] != 0 || (hdr[5] & 0xC0 != 0) {
             return Err(crate::Error::ReservedBitsViolation {
                 field: "18-bit RFU",
                 reason: "Must be zero (ETSI TS 102 773 §5.2.3)",
@@ -53,13 +53,13 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
 
         // start_cell_address: byte 5 bottom 6 bits + bytes 6-7 = 22 bits
         let start_cell_address =
-            ((bytes[5] as u32 & 0x3F) << 16) | ((bytes[6] as u32) << 8) | (bytes[7] as u32);
+            ((hdr[5] as u32 & 0x3F) << 16) | ((hdr[6] as u32) << 8) | (hdr[7] as u32);
 
         Ok(ArbitraryCellsPayload {
             frame_idx,
             tx_identifier,
             start_cell_address,
-            arbitrary_cell_data: &bytes[ARB_CELLS_HEADER_LEN..],
+            arbitrary_cell_data: rest,
         })
     }
 }

@@ -29,17 +29,18 @@ pub struct PrivateCommand<'a> {
 impl<'a> Parse<'a> for PrivateCommand<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.len() < IDENTIFIER_LEN {
-            return Err(Error::BufferTooShort {
-                need: IDENTIFIER_LEN,
-                have: bytes.len(),
-                what: "private_command identifier",
-            });
-        }
-        let identifier = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let (id_bytes, private_bytes) =
+            bytes
+                .split_first_chunk::<IDENTIFIER_LEN>()
+                .ok_or(Error::BufferTooShort {
+                    need: IDENTIFIER_LEN,
+                    have: bytes.len(),
+                    what: "private_command identifier",
+                })?;
+        let identifier = u32::from_be_bytes(*id_bytes);
         Ok(Self {
             identifier,
-            private_bytes: &bytes[IDENTIFIER_LEN..],
+            private_bytes,
         })
     }
 }

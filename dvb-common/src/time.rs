@@ -38,7 +38,8 @@ pub struct MjdBcdDateTime {
 /// follows ETSI EN 300 468 Annex C.
 #[must_use]
 pub fn decode_mjd_bcd(raw: [u8; 5]) -> Option<MjdBcdDateTime> {
-    let mjd = u16::from_be_bytes([raw[0], raw[1]]);
+    let (mjd_bytes, _) = raw.split_first_chunk::<2>().unwrap();
+    let mjd = u16::from_be_bytes(*mjd_bytes);
     let h = from_bcd_byte(raw[2])?;
     let mi = from_bcd_byte(raw[3])?;
     let s = from_bcd_byte(raw[4])?;
@@ -209,7 +210,8 @@ pub fn ymd_to_mjd(year: i32, month: u32, day: u32) -> Option<u16> {
 #[must_use]
 pub fn decode_mjd_bcd_utc(raw: [u8; 5]) -> Option<chrono::DateTime<chrono::Utc>> {
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
-    let mjd = u16::from_be_bytes([raw[0], raw[1]]);
+    let (mjd_bytes, _) = raw.split_first_chunk::<2>().unwrap();
+    let mjd = u16::from_be_bytes(*mjd_bytes);
     let (y, m, d) = mjd_to_ymd(mjd);
     let h = from_bcd_byte(raw[2])?;
     let mi = from_bcd_byte(raw[3])?;

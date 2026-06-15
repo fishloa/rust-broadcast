@@ -17,15 +17,14 @@ pub const CRC_LEN: usize = 4;
 /// preceding payload. Returns `Error::BufferTooShort` if `bytes.len() < CRC_LEN`.
 /// Returns `Error::CrcMismatch { computed, expected }` on mismatch.
 pub fn validate_crc(bytes: &[u8]) -> Result<()> {
-    if bytes.len() < CRC_LEN {
-        return Err(Error::BufferTooShort {
+    let (payload, trailer) = bytes
+        .split_last_chunk::<CRC_LEN>()
+        .ok_or(Error::BufferTooShort {
             need: CRC_LEN,
             have: bytes.len(),
             what: "T2-MI CRC",
-        });
-    }
-    let (payload, trailer) = bytes.split_at(bytes.len() - CRC_LEN);
-    let expected = u32::from_be_bytes(trailer.try_into().unwrap());
+        })?;
+    let expected = u32::from_be_bytes(*trailer);
     let computed = crc32_mpeg2::compute(payload);
     if computed == expected {
         Ok(())
