@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- Internal: byte-readers hardened with bounds-checked `split_first_chunk` /
+  `split_last_chunk` / `first_chunk`, folding manual length checks into the read.
+  No API or behaviour change (#207).
+
 ## [7.0.0] — 2026-06-14
 
 **BREAKING (MSRV 1.75 → 1.81).**
