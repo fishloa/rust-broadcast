@@ -107,7 +107,7 @@ impl ContextIdType {
             0x00 => Self::BouquetId,
             0x01 => Self::OriginalNetworkId,
             0x02 => Self::NetworkId,
-            v if v < 0x80 => Self::DvbReserved(v),
+            v @ 0x03..0x80 => Self::DvbReserved(v),
             _ => Self::UserDefined(v),
         }
     }

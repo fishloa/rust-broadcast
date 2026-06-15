@@ -69,8 +69,8 @@ impl DescriptorType {
             0x00 => Self::Pad,
             0x01 => Self::SystemHardware,
             0x02 => Self::SystemSoftware,
-            v if v < 0x40 => Self::IsoReserved(v),
-            v if v < 0x80 => Self::DvbReserved(v),
+            v @ 0x03..0x40 => Self::IsoReserved(v),
+            v @ 0x40..0x80 => Self::DvbReserved(v),
             v => Self::UserDefined(v),
         }
     }

@@ -194,7 +194,7 @@ impl HowRelated {
             0x00 => Self::Cs2004,
             0x01 => Self::Cs2005,
             0x02 => Self::Cs2007,
-            v if v < 0x30 => Self::DvbReserved(v),
+            v @ 0x03..0x30 => Self::DvbReserved(v),
             _ => Self::UserPrivate(v),
         }
     }

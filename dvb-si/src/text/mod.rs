@@ -80,9 +80,9 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
             0x86 | 0x87 | 0xE086 | 0xE087 => None,
             0x8A | 0xE08A => Some(' '),
             0x0A => Some(' '),
-            code if code < 0x20 => None,
-            code if (0x80..0xA0).contains(&code) => None,
-            code if (0xE080..0xE0A0).contains(&code) => None,
+            0x00..0x20 => None,
+            0x80..0xA0 => None,
+            0xE080..0xE0A0 => None,
             _ => Some(c),
         })
         .collect()

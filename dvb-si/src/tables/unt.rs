@@ -45,7 +45,7 @@ impl UntActionType {
         match v {
             0x00 => Self::Reserved,
             0x01 => Self::SystemSoftwareUpdate,
-            v if v < 0x80 => Self::DvbReserved(v),
+            v @ 0x02..0x80 => Self::DvbReserved(v),
             _ => Self::UserDefined(v),
         }
     }

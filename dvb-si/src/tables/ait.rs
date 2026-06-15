@@ -134,7 +134,7 @@ impl ApplicationType {
             0x0002 => Self::DvbHtml,
             0x0010 => Self::HbbTv,
             0x0011 => Self::OipfDae,
-            v if v < 0x8000 => Self::Reserved(v),
+            v @ 0x0000..0x8000 => Self::Reserved(v),
             _ => Self::UserDefined(v),
         }
     }
