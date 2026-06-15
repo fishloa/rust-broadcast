@@ -125,6 +125,8 @@ pub use registry::{
     DescriptorObject, DescriptorRegistry, ExtIterItem, ExtRegistryIter, RegistryIter,
 };
 
+pub use private_data_specifier::{PDS_EACEM, PDS_NORDIG};
+
 /// Encode `value` to `nibbles` packed-BCD digits for a `set_*` accessor,
 /// mapping overflow to a [`ValueOutOfRange`](crate::Error::ValueOutOfRange)
 /// error tagged with the descriptor `field`. Shared by the delivery-system

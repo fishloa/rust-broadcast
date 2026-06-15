@@ -3,7 +3,7 @@
 //! AIT carries application metadata for HbbTV / interactive-TV services.
 //! Carried on a per-service PID with table_id 0x74.
 
-use crate::descriptors::DescriptorLoop;
+use crate::descriptors::{AitDescriptorLoop, DescriptorLoop};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use dvb_common::{Parse, Serialize};
@@ -191,6 +191,17 @@ pub struct AitApplication<'a> {
     pub descriptors: DescriptorLoop<'a>,
 }
 
+impl<'a> AitApplication<'a> {
+    /// Walk this application's descriptor loop in the AIT namespace.
+    ///
+    /// Returns an [`AitDescriptorLoop`] that lazily decodes each entry as an
+    /// [`AnyAitDescriptor`](crate::descriptors::ait::AnyAitDescriptor).
+    #[must_use]
+    pub fn ait_descriptors(&self) -> AitDescriptorLoop<'a> {
+        AitDescriptorLoop::new(self.descriptors.raw())
+    }
+}
+
 /// Application Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -214,6 +225,17 @@ pub struct AitSection<'a> {
     pub common_descriptors: DescriptorLoop<'a>,
     /// Applications in wire order.
     pub applications: Vec<AitApplication<'a>>,
+}
+
+impl<'a> AitSection<'a> {
+    /// Walk the common descriptor loop in the AIT namespace.
+    ///
+    /// Returns an [`AitDescriptorLoop`] that lazily decodes each entry as an
+    /// [`AnyAitDescriptor`](crate::descriptors::ait::AnyAitDescriptor).
+    #[must_use]
+    pub fn common_ait_descriptors(&self) -> AitDescriptorLoop<'a> {
+        AitDescriptorLoop::new(self.common_descriptors.raw())
+    }
 }
 
 impl<'a> Parse<'a> for AitSection<'a> {
@@ -644,5 +666,46 @@ mod tests {
                 "ApplicationType round-trip failed for {at:#06x}"
             );
         }
+    }
+
+    #[test]
+    fn ait_descriptors_accessor_decodes_ait_namespace() {
+        // Build an app descriptor loop with an application_name descriptor
+        // (AIT tag 0x01): "eng" + name_len=0x05 + name bytes "HbbTV".
+        let app_desc: Vec<u8> = vec![
+            0x01, 0x09, // tag=application_name, len=9
+            b'e', b'n', b'g', // lang
+            0x05, // name_len
+            b'H', b'b', b'b', b'T', b'V', // name
+        ];
+        let buf = build_ait(
+            0x0010,
+            false,
+            0,
+            &[],
+            &[(0x12345678, 0xABCD, 0x01, app_desc)],
+        );
+        let ait = AitSection::parse(&buf).unwrap();
+        assert_eq!(ait.applications.len(), 1);
+
+        let app = &ait.applications[0];
+        let items: Vec<_> = app.ait_descriptors().iter().collect();
+        assert_eq!(items.len(), 1, "expected one AIT descriptor");
+
+        match items[0].as_ref().unwrap() {
+            crate::descriptors::ait::AnyAitDescriptor::ApplicationName(name) => {
+                assert_eq!(name.entries.len(), 1);
+                assert_eq!(
+                    name.entries[0].language_code,
+                    crate::text::LangCode(*b"eng")
+                );
+                assert_eq!(&*name.entries[0].application_name.decode(), "HbbTV");
+            }
+            other => panic!("expected ApplicationName, got {other:?}"),
+        }
+
+        // common_ait_descriptors on the same section (empty common loop).
+        let common_items: Vec<_> = ait.common_ait_descriptors().iter().collect();
+        assert_eq!(common_items.len(), 0);
     }
 }
