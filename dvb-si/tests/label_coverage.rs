@@ -23,6 +23,7 @@ const SKIP: &[&str] = &[
     // errors + dispatch wrappers / tag enums
     "Error",
     "AnyDescriptor",
+    "AnyAitDescriptor",
     "AnyTableSection",
     "DescriptorTag",
     "TableId",

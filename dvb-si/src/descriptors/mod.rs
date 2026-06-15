@@ -9,6 +9,7 @@
 pub mod aac;
 pub mod ac3;
 pub mod adaptation_field_data;
+pub mod ait;
 pub mod ancillary_data;
 pub mod announcement_support;
 pub mod any;
@@ -117,6 +118,7 @@ pub(crate) fn descriptor_body<'a>(
     Ok(&bytes[HEADER_LEN..end])
 }
 
+pub use ait::{parse_ait_loop, AitDescriptorIter, AitDescriptorLoop, AnyAitDescriptor};
 pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
 pub use extension::registry::{ExtensionObject, ExtensionRegistry, RegisteredExtension};
 pub use registry::{
