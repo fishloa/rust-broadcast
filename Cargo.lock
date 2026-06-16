@@ -267,6 +267,7 @@ version = "7.1.0"
 dependencies = [
  "base64",
  "dvb-common",
+ "dvb-t2mi",
  "hex",
  "serde",
  "serde_json",

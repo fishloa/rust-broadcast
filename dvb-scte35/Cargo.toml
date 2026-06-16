@@ -24,6 +24,7 @@ serde      = { version = "1", optional = true, features = ["derive"] }
 hex        = "0.4"
 base64     = "0.22"
 serde_json = "1.0"
+dvb-t2mi   = { path = "../dvb-t2mi", features = ["ts"] }
 
 [features]
 default = ["std", "serde"]
