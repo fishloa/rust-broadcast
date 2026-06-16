@@ -19,7 +19,8 @@ use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio::io::ReadBuf;
 
-use crate::resync::{aligned_packets, resync, TS_PACKET_SIZE};
+use crate::resync::{resync, TS_PACKET_SIZE, TS_SYNC_BYTE};
+use crate::ResyncStats;
 
 /// Read buffer size: 7 × 188 bytes (matches typical DVB UDP payload size).
 const READ_BUF_SIZE: usize = TS_PACKET_SIZE * 7;
@@ -46,6 +47,8 @@ pub struct T2miEventStream<R> {
     eof: bool,
     /// True once the stream has found an initial 0x47 sync byte.
     synced: bool,
+    /// Resync statistics.
+    resync_stats: ResyncStats,
 }
 
 impl<R: AsyncRead + Unpin> T2miEventStream<R> {
@@ -68,6 +71,7 @@ impl<R: AsyncRead + Unpin> T2miEventStream<R> {
             filled: 0,
             eof: false,
             synced: false,
+            resync_stats: ResyncStats::default(),
         }
     }
 
@@ -75,6 +79,12 @@ impl<R: AsyncRead + Unpin> T2miEventStream<R> {
     #[must_use]
     pub fn stats(&self) -> dvb_t2mi::pump::Stats {
         self.pump.stats()
+    }
+
+    /// Access the resync statistics.
+    #[must_use]
+    pub fn resync_stats(&self) -> ResyncStats {
+        self.resync_stats
     }
 
     /// Feed a completed read into the pump and push events into `queue`.
@@ -85,26 +95,38 @@ impl<R: AsyncRead + Unpin> T2miEventStream<R> {
             match resync(data) {
                 Some(off) => {
                     self.synced = true;
+                    self.resync_stats.resyncs += 1;
+                    self.resync_stats.bytes_discarded += off as u64;
                     off
                 }
-                None => return,
+                None => {
+                    self.resync_stats.bytes_discarded += data.len() as u64;
+                    return;
+                }
             }
         };
 
-        for pkt in aligned_packets(&data[start..]) {
+        // Per-packet loop with mid-stream desync detection.
+        let aligned = &data[start..];
+        let n_packets = aligned.len() / TS_PACKET_SIZE;
+        for i in 0..n_packets {
+            let pkt_start = i * TS_PACKET_SIZE;
+            let pkt = &aligned[pkt_start..pkt_start + TS_PACKET_SIZE];
+            if pkt[0] != TS_SYNC_BYTE {
+                // Mid-stream desync: discard rest of this chunk and re-resync.
+                self.resync_stats.desyncs += 1;
+                let discarded = aligned.len() - pkt_start;
+                self.resync_stats.bytes_discarded += discarded as u64;
+                self.synced = false;
+                self.filled = 0;
+                return;
+            }
             for event in self.pump.feed_ts(pkt) {
                 self.queue.push_back(event);
             }
         }
 
-        let aligned_end = start + (data[start..].len() / TS_PACKET_SIZE) * TS_PACKET_SIZE;
-        let remainder = &data[aligned_end..];
-        if !remainder.is_empty() {
-            self.buf[..remainder.len()].copy_from_slice(remainder);
-            self.filled = remainder.len();
-        } else {
-            self.filled = 0;
-        }
+        self.filled = 0;
     }
 }
 
