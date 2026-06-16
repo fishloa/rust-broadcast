@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use dvb_si::collect::{CompleteSdt, CompleteSdtService, SectionSetCollector};
 use dvb_si::demux::SiDemux;
-use dvb_si::descriptors::AnyDescriptor;
+use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use dvb_si::tables::RunningStatus;
 use dvb_si::TableId;
 
@@ -124,6 +124,12 @@ pub fn run(args: &[String]) -> ExitCode {
     // — used to combine with the SDT-only PMT/NIT picture when no LCN
     // descriptor is present.
     let mut lcn_map: HashMap<u16, u16> = HashMap::new();
+    // logical_channel (0x83) is PDS-scoped: enable it for the common LCN
+    // private_data_specifiers so the NIT walk decodes LCNs instead of Unknown.
+    let mut lcn_registry = DescriptorRegistry::new();
+    lcn_registry
+        .with_logical_channel_for_pds(PDS_EACEM)
+        .with_logical_channel_for_pds(PDS_NORDIG);
     let mut sdt_seen = 0u32;
     let mut nit_seen = 0u32;
 
@@ -143,7 +149,7 @@ pub fn run(args: &[String]) -> ExitCode {
             } else if NIT_TABLE_IDS.contains(&table_id) {
                 if let Some(complete) = collect_event(&mut collector, pid_u16, &bytes) {
                     nit_seen += 1;
-                    if let Ok(nit) = complete.nit() {
+                    if let Ok(nit) = complete.nit_with_registry(&lcn_registry) {
                         absorb_nit(&nit, &mut lcn_map);
                     }
                 }

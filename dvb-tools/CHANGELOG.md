@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `services` now resolves logical channel numbers: the NIT walk uses a
+  `DescriptorRegistry` with PDS-scoped logical_channel enabled for EACEM/NorDig,
+  so 0x83 decodes as `LogicalChannel` instead of `Unknown` (#211).
+
 ## [7.1.0] — 2026-06-15
 
 ### Changed
