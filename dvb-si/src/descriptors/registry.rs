@@ -532,10 +532,22 @@ impl core::iter::FusedIterator for ExtRegistryIter<'_, '_> {}
 mod tests {
     use super::*;
     use crate::descriptors::private_data_specifier;
+    use crate::descriptors::private_data_specifier::{PDS_EACEM, PDS_NORDIG};
     use crate::traits::DescriptorDef;
 
-    const PDS_EACEM: u32 = 0x0000_0028;
-    const PDS_NORDIG: u32 = 0x0000_0031;
+    #[test]
+    fn pds_constants_match_the_register() {
+        // Pin the public consts to the vendored TS 101 162 register
+        // (registries/tsPDS.names) so they can't silently drift.
+        assert_eq!(
+            private_data_specifier::private_data_specifier_name(PDS_EACEM),
+            Some("EACEM/EICTA")
+        );
+        assert_eq!(
+            private_data_specifier::private_data_specifier_name(PDS_NORDIG),
+            Some("NorDig")
+        );
+    }
 
     #[derive(Debug, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
