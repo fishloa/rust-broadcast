@@ -23,6 +23,7 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
       # versions (some newer transitive crates require edition2024 / Cargo 1.85).
       # dvb-stream is excluded from the core matrix: it depends on tokio whose
@@ -32,8 +33,14 @@ jobs:
       # the library crates' bare --no-default-features build.
       - name: Build (all features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
+      # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
+      # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
+      # not run doctests, which get their own bounded lane below.
       - name: Test (all features)
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --profile ci
+      - name: Doctests (all features)
+        timeout-minutes: 15
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio which has a faster-moving
@@ -48,7 +55,10 @@ jobs:
       # still off, to catch feature-gating regressions. The bare-metal `no_std`
       # job below is what proves the #![no_std] build.
       - name: Test (no optional features, std on)
-        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked
+        run: cargo nextest run --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --profile ci
+      - name: Doctests (no optional features, std on)
+        timeout-minutes: 15
+        run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --features std --locked --doc
 
   lint:
     name: clippy
@@ -115,10 +125,14 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
       - name: Build
         run: cargo build -p dvb-stream --all-features --locked
       - name: Test
-        run: cargo test -p dvb-stream --all-features --locked
+        run: cargo nextest run -p dvb-stream --all-features --locked --profile ci
+      - name: Doctests
+        timeout-minutes: 10
+        run: cargo test -p dvb-stream --all-features --locked --doc
       - name: Clippy
         run: cargo clippy -p dvb-stream --all-features --all-targets --locked -- -D warnings
       - name: rustfmt
