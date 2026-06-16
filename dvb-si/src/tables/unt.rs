@@ -216,8 +216,9 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     what: "UntSection compatibilityDescriptorLength",
                 });
             }
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
                     have: payload_end,
@@ -243,8 +244,9 @@ impl<'a> Parse<'a> for UntSection<'a> {
                     what: "UntSection platform_loop_length",
                 });
             }
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + PLATFORM_LOOP_LEN_FIELD,
                     have: payload_end,

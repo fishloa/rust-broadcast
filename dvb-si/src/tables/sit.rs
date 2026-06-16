@@ -130,8 +130,9 @@ impl<'a> Parse<'a> for SitSection<'a> {
                     what: "SitService header",
                 });
             }
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: crc_start,

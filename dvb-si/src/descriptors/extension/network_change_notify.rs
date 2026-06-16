@@ -197,14 +197,14 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                     what: "network_change_notify body",
                 });
             }
-            let (cell_id_bytes, _) =
-                sel[pos..]
-                    .split_first_chunk::<2>()
-                    .ok_or(Error::BufferTooShort {
-                        need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
-                        have: sel.len(),
-                        what: "network_change_notify body",
-                    })?;
+            let (cell_id_bytes, _) = sel
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
+                .ok_or(Error::BufferTooShort {
+                    need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
+                    have: sel.len(),
+                    what: "network_change_notify body",
+                })?;
             let cell_id = u16::from_be_bytes(*cell_id_bytes);
             let loop_length = sel[pos + CELL_HEADER_LEN] as usize;
             pos += CELL_HEADER_LEN + LOOP_LENGTH_LEN;
@@ -254,13 +254,14 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                             what: "network_change_notify body",
                         });
                     }
-                    let (inv_bytes, _) = sel[pos..].split_first_chunk::<INVARIANT_TS_LEN>().ok_or(
-                        Error::BufferTooShort {
+                    let (inv_bytes, _) = sel
+                        .get(pos..)
+                        .and_then(|s| s.split_first_chunk::<INVARIANT_TS_LEN>())
+                        .ok_or(Error::BufferTooShort {
                             need: pos + INVARIANT_TS_LEN,
                             have: sel.len(),
                             what: "network_change_notify body",
-                        },
-                    )?;
+                        })?;
                     let ts = InvariantTs {
                         tsid: u16::from_be_bytes([inv_bytes[0], inv_bytes[1]]),
                         onid: u16::from_be_bytes([inv_bytes[2], inv_bytes[3]]),

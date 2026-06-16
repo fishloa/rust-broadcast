@@ -231,3 +231,13 @@ fn pts_adjustment_33bit_wrap_boundary() {
     assert_eq!(pts_add_wrapping(PTS_MAX, 1), 0);
     assert_eq!(pts_add_wrapping(PTS_MAX, 5), 4);
 }
+
+/// #216: section_length == 0 → total == 3 → crc_pos underflow panic.
+/// Must return Err, not panic.
+#[test]
+fn section_length_zero_no_underflow() {
+    // Construct bytes: table_id=0xFC, section_length=0 (<= bytes 1-2).
+    let data = [0xFC, 0x00, 0x00];
+    let err = SpliceInfoSection::parse(&data).unwrap_err();
+    assert!(matches!(err, dvb_scte35::Error::BufferTooShort { .. }));
+}

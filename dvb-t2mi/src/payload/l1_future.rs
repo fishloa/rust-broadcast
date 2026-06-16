@@ -87,7 +87,8 @@ impl<'a> L1FuturePayload<'a> {
         num_aux: u8,
     ) -> crate::error::Result<Option<L1PostDynamic>> {
         let data = self.l1_future_data;
-        // Skip over the first block
+        // Skip over the first block; use .get(offset..) to avoid OOB
+        // panic when NEXT_LEN declares more bytes than available (#215).
         let (b, _) = data
             .split_first_chunk::<2>()
             .ok_or(crate::Error::BufferTooShort {
@@ -98,14 +99,14 @@ impl<'a> L1FuturePayload<'a> {
         let next_len_bits = u16::from_be_bytes(*b) as usize;
         let next_len_bytes = next_len_bits.div_ceil(8);
         let offset = 2 + next_len_bytes;
-        let (b2, _) =
-            data[offset..]
-                .split_first_chunk::<2>()
-                .ok_or(crate::Error::BufferTooShort {
-                    need: offset + 2,
-                    have: data.len(),
-                    what: "L1DYN_NEXT2_LEN",
-                })?;
+        let (b2, _) = data
+            .get(offset..)
+            .and_then(|s| s.split_first_chunk::<2>())
+            .ok_or(crate::Error::BufferTooShort {
+                need: offset + 2,
+                have: data.len(),
+                what: "L1DYN_NEXT2_LEN",
+            })?;
         let len_bits = u16::from_be_bytes(*b2) as usize;
         if len_bits == 0 {
             return Ok(None);
@@ -143,9 +144,12 @@ impl<'a> L1FuturePayload<'a> {
             })?;
         let next_len_bits = u16::from_be_bytes(*b) as usize;
         let next_len_bytes = next_len_bits.div_ceil(8);
+        // Use .get(pos..) to avoid OOB panic when NEXT_LEN declares
+        // more bytes than available (#215).
         let mut pos = 2 + next_len_bytes;
-        let (b2, _) = data[pos..]
-            .split_first_chunk::<2>()
+        let (b2, _) = data
+            .get(pos..)
+            .and_then(|s| s.split_first_chunk::<2>())
             .ok_or(crate::Error::BufferTooShort {
                 need: pos + 2,
                 have: data.len(),
@@ -176,14 +180,14 @@ impl<'a> L1FuturePayload<'a> {
                 });
             }
             let plp_id = data[pos];
-            let (inband_b, _) =
-                data[pos + 1..]
-                    .split_first_chunk::<2>()
-                    .ok_or(crate::Error::BufferTooShort {
-                        need: pos + 3,
-                        have: data.len(),
-                        what: "INBAND entry header",
-                    })?;
+            let (inband_b, _) = data
+                .get(pos + 1..)
+                .and_then(|s| s.split_first_chunk::<2>())
+                .ok_or(crate::Error::BufferTooShort {
+                    need: pos + 3,
+                    have: data.len(),
+                    what: "INBAND entry header",
+                })?;
             let inband_len_bits = u16::from_be_bytes(*inband_b) as usize;
             let inband_bytes = inband_len_bits.div_ceil(8);
             pos += 3;
@@ -299,5 +303,31 @@ mod tests {
         let buf = [0x05u8, 0x00];
         let result = L1FuturePayload::parse(&buf).unwrap();
         assert!(result.l1_future_data.is_empty());
+    }
+
+    #[test]
+    fn l1_dynamic_next2_oob_panic_regression() {
+        // #215: NEXT_LEN claims a large size exceeding the actual buffer.
+        // NEXT_LEN = 0xFFFF bits → 8192 bytes, but only 2 bytes of data.
+        let buf = [0xFFu8, 0xFF];
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &buf,
+        };
+        let err = pkt.l1_dynamic_next2(0, 0).unwrap_err();
+        assert!(matches!(err, crate::Error::BufferTooShort { .. }));
+    }
+
+    #[test]
+    fn inband_loop_oob_panic_regression() {
+        // #215: NEXT_LEN claims a large size exceeding the actual buffer.
+        // NEXT_LEN = 0xFFFF bits → 8192 bytes, but only 2 bytes of data.
+        let buf = [0xFFu8, 0xFF];
+        let pkt = L1FuturePayload {
+            frame_idx: 0,
+            l1_future_data: &buf,
+        };
+        let err = pkt.inband_loop().unwrap_err();
+        assert!(matches!(err, crate::Error::BufferTooShort { .. }));
     }
 }

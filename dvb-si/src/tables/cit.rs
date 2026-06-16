@@ -170,8 +170,9 @@ impl<'a> Parse<'a> for CitSection<'a> {
                     what: "CitSection crid_entry",
                 });
             }
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + CRID_ENTRY_FIXED_LEN,
                     have: payload_end,

@@ -95,8 +95,9 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
                         what: "target_region_name body",
                     });
                 }
-                let (b, _) = sel[pos..]
-                    .split_first_chunk::<2>()
+                let (b, _) = sel
+                    .get(pos..)
+                    .and_then(|s| s.split_first_chunk::<2>())
                     .ok_or(Error::BufferTooShort {
                         need: pos + 2,
                         have: sel.len(),

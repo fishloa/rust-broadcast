@@ -171,8 +171,9 @@ impl<'a> Parse<'a> for EitSection<'a> {
         let mut events = Vec::new();
         let mut pos = events_start;
         while pos + EVENT_HEADER_LEN <= events_end {
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: events_end,

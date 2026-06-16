@@ -798,8 +798,9 @@ pub(crate) fn parse_l1_post_from_framed(
     let mut pos = 0usize;
 
     // ── L1CONF ────────────────────────────────────────────────────────────────
-    let (b, _) = framed[pos..]
-        .split_first_chunk::<2>()
+    let (b, _) = framed
+        .get(pos..)
+        .and_then(|s| s.split_first_chunk::<2>())
         .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),
@@ -823,8 +824,9 @@ pub(crate) fn parse_l1_post_from_framed(
     let num_aux = configurable.num_aux;
 
     // ── L1DYN_CURR ────────────────────────────────────────────────────────────
-    let (b, _) = framed[pos..]
-        .split_first_chunk::<2>()
+    let (b, _) = framed
+        .get(pos..)
+        .and_then(|s| s.split_first_chunk::<2>())
         .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),
@@ -844,8 +846,9 @@ pub(crate) fn parse_l1_post_from_framed(
     pos += l1dyn_bytes;
 
     // ── L1EXT ─────────────────────────────────────────────────────────────────
-    let (b, _) = framed[pos..]
-        .split_first_chunk::<2>()
+    let (b, _) = framed
+        .get(pos..)
+        .and_then(|s| s.split_first_chunk::<2>())
         .ok_or(crate::Error::BufferTooShort {
             need: pos + 2,
             have: framed.len(),

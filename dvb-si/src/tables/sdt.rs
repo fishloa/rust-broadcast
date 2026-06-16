@@ -124,8 +124,9 @@ impl<'a> Parse<'a> for SdtSection<'a> {
         let mut services = Vec::new();
         let mut pos = services_start;
         while pos + SERVICE_HEADER_LEN <= services_end {
-            let (b2, _) = bytes[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = bytes
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: services_end,

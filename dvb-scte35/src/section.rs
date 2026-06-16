@@ -164,7 +164,15 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             });
         }
         // Verify CRC over the whole section (table_id..=CRC_32), prior to any
-        // decryption (§9.6.1).
+        // decryption (§9.6.1). Guard total >= FIXED_HEADER_LEN + CRC_LEN before
+        // computing crc_pos so that section_length == 0 doesn't underflow (#216).
+        if total < FIXED_HEADER_LEN + CRC_LEN {
+            return Err(Error::BufferTooShort {
+                need: FIXED_HEADER_LEN + CRC_LEN,
+                have: total,
+                what: "splice_info_section body + CRC",
+            });
+        }
         let crc_pos = total - CRC_LEN;
         let (crc_region, crc_bytes) =
             bytes[..total]
@@ -240,14 +248,14 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let command = AnyCommand::dispatch(splice_command_type, command_body)?;
 
         let dll_pos = 1 + scl;
-        let (dll_bytes, _) =
-            payload[dll_pos..]
-                .split_first_chunk::<2>()
-                .ok_or(Error::BufferTooShort {
-                    need: 1 + scl + 2,
-                    have: payload.len(),
-                    what: "splice_info_section command + descriptor_loop_length",
-                })?;
+        let (dll_bytes, _) = payload
+            .get(dll_pos..)
+            .and_then(|s| s.split_first_chunk::<2>())
+            .ok_or(Error::BufferTooShort {
+                need: 1 + scl + 2,
+                have: payload.len(),
+                what: "splice_info_section command + descriptor_loop_length",
+            })?;
         let descriptor_loop_length = usize::from(u16::from_be_bytes(*dll_bytes));
         let loop_start = dll_pos + 2;
         if payload.len() < loop_start + descriptor_loop_length {

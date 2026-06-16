@@ -67,8 +67,9 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
 
         // conditional qualifier
         let qualifier = if qualifier_present_flag != 0 {
-            let (b, _) = sel[pos..]
-                .split_first_chunk::<4>()
+            let (b, _) = sel
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<4>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 4,
                     have: sel.len(),
