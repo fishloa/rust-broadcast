@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-stream"
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2021"
 description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
 license      = "MIT OR Apache-2.0"
