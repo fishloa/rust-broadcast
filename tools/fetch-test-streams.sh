@@ -18,6 +18,9 @@ mkdir -p "$DEST"
 # Add entries here as captures are sourced (see the #67 "wanted" table).
 MANIFEST=(
   "france-tnt-uhf32|https://tsduck.io/streams/france-dttv/tnt-uhf32-562MHz-2019-01-22.ts|-|full real DVB-T mux: SDT/NIT/EIT/PMT + descriptors at scale"
+  "astra-sgt|https://tsduck.io/streams/astra-sgt/astra-12604H-2025-05-02.ts|-|Astra 19.2E SGT private table (LCN) — 129 MB"
+  "russia-t2mi-scte35|https://tsduck.io/streams/russia-t2mi-scte35/20180112_1129_UTC_Russian_mux1_T2MI_3PLPs_incl_SCTE35_in_PLP0.ts|-|T2-MI 3 PLPs, SCTE-35 cues in PLP0 — 4.9 GB (large)"
+  "hotbird-mhp|https://tsduck.io/streams/hotbird-13.0E/hotbird130E-ts6000-2018-05-11.ts|-|Hot Bird 13E, Italy — DVB-MHP object carousels — 336 MB"
 )
 
 list() { printf '%-22s %s\n' "NAME" "UNLOCKS"; for e in "${MANIFEST[@]}"; do IFS='|' read -r n u s d <<<"$e"; printf '%-22s %s\n' "$n" "$d"; done; }
