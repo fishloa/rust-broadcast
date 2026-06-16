@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.2.0] — 2026-06-16
+
 ### Fixed
 - `L1FuturePayload::l1_dynamic_next2` / `inband_loop` no longer panic on a crafted
   L1-Future packet whose NEXT_LEN/NEXT2_LEN exceeds the available data — the

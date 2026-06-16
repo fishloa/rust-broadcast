@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.2.0] — 2026-06-16
+
 ### Fixed
 - `services` now resolves logical channel numbers: the NIT walk uses a
   `DescriptorRegistry` with PDS-scoped logical_channel enabled for EACEM/NorDig,

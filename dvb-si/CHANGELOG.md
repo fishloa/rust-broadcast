@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.2.0 — 2026-06-16
+
 ### Fixed
 - Defensive hardening of cursor byte-readers: open-ended `slice[pos..]` reads
   feeding `split_first_chunk`/`split_last_chunk` are now `slice.get(pos..)`, so a
