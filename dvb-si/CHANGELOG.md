@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+- **Context-aware descriptor decoding (#211).**
+  - **AIT application-descriptor namespace** (ETSI TS 102 809 §5.3): `AnyAitDescriptor`
+    + `parse_ait_loop` + `AitDescriptorLoop` decode the AIT loops, where low tag
+    values mean different things than the EN 300 468 SI namespace. Typed modules:
+    `application` (0x00), `application_name` (0x01), `transport_protocol` (0x02,
+    with typed OC/HTTP `selector()`), `external_application_authorisation` (0x05),
+    `simple_application_location` (0x15), `application_usage` (0x16),
+    `simple_application_boundary` (0x17). New `AitApplication::ait_descriptors()`
+    and `AitSection::common_ait_descriptors()` accessors walk the loops in this
+    namespace. (`dvb_j` 0x03/0x04 deferred — MHP.)
+  - **PDS-scoped logical_channel**: `DescriptorRegistry::with_logical_channel_for_pds(pds)`
+    dispatches the private `logical_channel` (0x83, LCN) to the typed
+    `AnyDescriptor::LogicalChannel` only when the active `private_data_specifier`
+    (0x5F) matches; new `PDS_EACEM` / `PDS_NORDIG` constants.
+
 ## 7.1.0 — 2026-06-15
 
 ### Changed

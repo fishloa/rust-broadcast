@@ -202,14 +202,18 @@ pub(crate) type CustomParse =
 ///    [`AnyDescriptor::Other`]
 /// 2. PDS-agnostic custom-registered parser (tag in the [`custom`][Self::register]
 ///    map) → [`AnyDescriptor::Other`]
-/// 3. Logical-channel opt-in (tag 0x83 + [`with_logical_channel`][Self::with_logical_channel]
+/// 3. PDS-scoped logical-channel opt-in (tag 0x83 + active PDS in
+///    [`with_logical_channel_for_pds`][Self::with_logical_channel_for_pds])
+///    → [`AnyDescriptor::LogicalChannel`]
+/// 4. Logical-channel opt-in (tag 0x83 + [`with_logical_channel`][Self::with_logical_channel]
 ///    enabled) → [`AnyDescriptor::LogicalChannel`]
-/// 4. Built-in dispatch (internal `AnyDescriptor::dispatch`) → typed variant
-/// 5. Unknown → [`AnyDescriptor::Unknown`]
+/// 5. Built-in dispatch (internal `AnyDescriptor::dispatch`) → typed variant
+/// 6. Unknown → [`AnyDescriptor::Unknown`]
 #[derive(Default)]
 pub struct DescriptorRegistry {
     custom: BTreeMap<(Option<u32>, u8), CustomParse>,
     logical_channel: bool,
+    logical_channel_pds: alloc::collections::BTreeSet<u32>,
 }
 
 impl DescriptorRegistry {
@@ -288,6 +292,22 @@ impl DescriptorRegistry {
         self
     }
 
+    /// Enable the 0x83 logical_channel built-in ONLY when the active
+    /// `private_data_specifier` (set by a preceding 0x5F descriptor in the
+    /// same loop) matches `pds`.
+    ///
+    /// This is a safer opt-in than [`with_logical_channel`][Self::with_logical_channel]:
+    /// tag 0x83 under a different (or absent) PDS stays `Unknown`.
+    ///
+    /// Common values are [`crate::descriptors::PDS_EACEM`] and
+    /// [`crate::descriptors::PDS_NORDIG`].  A per-PDS opt-in takes precedence
+    /// over the global [`with_logical_channel`][Self::with_logical_channel]
+    /// opt-in when the matching PDS is active.
+    pub fn with_logical_channel_for_pds(&mut self, pds: u32) -> &mut Self {
+        self.logical_channel_pds.insert(pds);
+        self
+    }
+
     /// Lazily walk a raw descriptor loop using this registry's configuration.
     ///
     /// Semantics mirror [`crate::descriptors::parse_loop`]: per-descriptor
@@ -326,9 +346,9 @@ pub struct RegistryIter<'r, 'a> {
 
 /// Shared precedence ladder for both [`RegistryIter`] and [`ExtRegistryIter`].
 ///
-/// Returns the [`AnyDescriptor`] that results from applying the five-step
-/// precedence: PDS-scoped custom → PDS-agnostic custom → logical-channel
-/// opt-in → built-in dispatch → Unknown.
+/// Returns the [`AnyDescriptor`] that results from applying the six-step
+/// precedence: PDS-scoped custom → PDS-agnostic custom → PDS-scoped
+/// logical-channel → logical-channel opt-in → built-in dispatch → Unknown.
 pub(crate) fn dispatch_entry<'a>(
     registry: &DescriptorRegistry,
     current_pds: Option<u32>,
@@ -342,6 +362,15 @@ pub(crate) fn dispatch_entry<'a>(
     }
     if let Some(parse_fn) = registry.custom.get(&(None, tag)) {
         return parse_fn(full).map(|value| AnyDescriptor::Other { tag, value });
+    }
+    if let Some(pds) = current_pds {
+        if tag == crate::descriptors::logical_channel::TAG
+            && registry.logical_channel_pds.contains(&pds)
+        {
+            use dvb_common::Parse;
+            return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
+                .map(AnyDescriptor::LogicalChannel);
+        }
     }
     if registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
         use dvb_common::Parse;
@@ -503,10 +532,22 @@ impl core::iter::FusedIterator for ExtRegistryIter<'_, '_> {}
 mod tests {
     use super::*;
     use crate::descriptors::private_data_specifier;
+    use crate::descriptors::private_data_specifier::{PDS_EACEM, PDS_NORDIG};
     use crate::traits::DescriptorDef;
 
-    const PDS_EACEM: u32 = 0x0000_0028;
-    const PDS_NORDIG: u32 = 0x0000_0031;
+    #[test]
+    fn pds_constants_match_the_register() {
+        // Pin the public consts to the vendored TS 101 162 register
+        // (registries/tsPDS.names) so they can't silently drift.
+        assert_eq!(
+            private_data_specifier::private_data_specifier_name(PDS_EACEM),
+            Some("EACEM/EICTA")
+        );
+        assert_eq!(
+            private_data_specifier::private_data_specifier_name(PDS_NORDIG),
+            Some("NorDig")
+        );
+    }
 
     #[derive(Debug, PartialEq, Eq)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -721,6 +762,92 @@ mod tests {
             }
             other => panic!("expected Other, got {other:?}"),
         }
+    }
+
+    fn logical_channel_descriptor(service_id: u16, visible: bool, lcn: u16) -> Vec<u8> {
+        // One entry: tag=0x83, len=4, entry(4 bytes)
+        let mut v = vec![crate::descriptors::logical_channel::TAG, 4];
+        v.extend_from_slice(&service_id.to_be_bytes());
+        let flags = (u8::from(visible) << 7) | ((lcn >> 8) as u8 & 0x03);
+        v.push(flags);
+        v.push((lcn & 0xFF) as u8);
+        v
+    }
+
+    #[test]
+    fn logical_channel_pds_scoped_matches_correct_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.with_logical_channel_for_pds(PDS_EACEM);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_EACEM));
+        bytes.extend_from_slice(&logical_channel_descriptor(0x1234, true, 101));
+
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], AnyDescriptor::PrivateDataSpecifier(_)));
+        match &items[1] {
+            AnyDescriptor::LogicalChannel(lc) => {
+                assert_eq!(lc.entries.len(), 1);
+                assert_eq!(lc.entries[0].service_id, 0x1234);
+                assert!(lc.entries[0].visible_service);
+                assert_eq!(lc.entries[0].logical_channel_number, 101);
+            }
+            other => panic!("expected LogicalChannel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn logical_channel_pds_scoped_rejects_no_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.with_logical_channel_for_pds(PDS_EACEM);
+
+        let bytes = logical_channel_descriptor(0x1234, true, 101);
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(matches!(
+            &items[0],
+            AnyDescriptor::Unknown { tag: 0x83, .. }
+        ));
+    }
+
+    #[test]
+    fn logical_channel_pds_scoped_rejects_wrong_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.with_logical_channel_for_pds(PDS_EACEM);
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_NORDIG));
+        bytes.extend_from_slice(&logical_channel_descriptor(0x1234, true, 101));
+
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert_eq!(items.len(), 2);
+        assert!(matches!(items[0], AnyDescriptor::PrivateDataSpecifier(_)));
+        assert!(matches!(
+            &items[1],
+            AnyDescriptor::Unknown { tag: 0x83, .. }
+        ));
+    }
+
+    #[test]
+    fn logical_channel_pds_scoped_multiple_pds() {
+        let mut reg = DescriptorRegistry::new();
+        reg.with_logical_channel_for_pds(PDS_EACEM);
+        reg.with_logical_channel_for_pds(PDS_NORDIG);
+
+        // EACEM → LogicalChannel
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&pds_descriptor(PDS_EACEM));
+        bytes.extend_from_slice(&logical_channel_descriptor(0x0001, true, 1));
+        let items: Vec<_> = reg.parse_loop(&bytes).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(&items[1], AnyDescriptor::LogicalChannel(_)));
+
+        // NorDig → LogicalChannel
+        let mut bytes2 = Vec::new();
+        bytes2.extend_from_slice(&pds_descriptor(PDS_NORDIG));
+        bytes2.extend_from_slice(&logical_channel_descriptor(0x0002, false, 2));
+        let items2: Vec<_> = reg.parse_loop(&bytes2).collect::<Result<_, _>>().unwrap();
+        assert!(matches!(&items2[1], AnyDescriptor::LogicalChannel(_)));
     }
 
     #[test]

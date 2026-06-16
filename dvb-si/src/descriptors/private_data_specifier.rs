@@ -8,6 +8,14 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use dvb_common::{Parse, Serialize};
 
+/// Well-known `private_data_specifier` for EACEM (European Association of
+/// Consumer Electronics Manufacturers) — ETSI TS 101 162 register.
+pub const PDS_EACEM: u32 = 0x0000_0028;
+/// Well-known `private_data_specifier` for NorDig (Nordic Digital TV) —
+/// `0x00000029` per the TS 101 162 register (`registries/tsPDS.names`).
+/// (Note: `0x00000031` is TeleDenmark, not NorDig.)
+pub const PDS_NORDIG: u32 = 0x0000_0029;
+
 /// Descriptor tag for private_data_specifier_descriptor.
 pub const TAG: u8 = 0x5F;
 const HEADER_LEN: usize = 2;
