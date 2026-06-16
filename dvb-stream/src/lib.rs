@@ -50,3 +50,19 @@ pub mod t2mi_stream;
 
 pub use section_stream::SectionStream;
 pub use t2mi_stream::T2miEventStream;
+
+/// Statistics tracking resynchronisation events and discarded bytes in a TS
+/// byte stream.
+///
+/// Returned by [`SectionStream::resync_stats`] and
+/// [`T2miEventStream::resync_stats`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResyncStats {
+    /// Number of times the stream re-aligned on a new sync byte.
+    pub resyncs: u64,
+    /// Total bytes discarded due to resync alignment or mid-stream desync.
+    pub bytes_discarded: u64,
+    /// Number of mid-stream alignment losses detected (a packet whose first
+    /// byte was not `0x47`).
+    pub desyncs: u64,
+}
