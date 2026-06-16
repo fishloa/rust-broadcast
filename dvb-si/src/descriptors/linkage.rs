@@ -661,13 +661,13 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
                 reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
             });
         }
-        let (nid_bytes, _) =
-            bytes[pos..]
-                .split_first_chunk::<2>()
-                .ok_or(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
-                })?;
+        let (nid_bytes, _) = bytes
+            .get(pos..)
+            .and_then(|s| s.split_first_chunk::<2>())
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "mobile hand-over info with gated network_id needs at least 3 bytes",
+            })?;
         let nid = u16::from_be_bytes(*nid_bytes);
         pos += 2;
         Some(nid)
@@ -681,13 +681,13 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
                 reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
             });
         }
-        let (sid_bytes, _) =
-            bytes[pos..]
-                .split_first_chunk::<2>()
-                .ok_or(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
-                })?;
+        let (sid_bytes, _) = bytes
+            .get(pos..)
+            .and_then(|s| s.split_first_chunk::<2>())
+            .ok_or(Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "mobile hand-over info with origin_type=NIT needs initial_service_id",
+            })?;
         Some(u16::from_be_bytes(*sid_bytes))
     } else {
         None

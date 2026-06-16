@@ -210,12 +210,13 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                             available: loop_end - pos,
                         });
                     }
-                    let (b2, _) = bytes[pos..].split_first_chunk::<2>().ok_or(
-                        Error::SectionLengthOverflow {
+                    let (b2, _) = bytes
+                        .get(pos..)
+                        .and_then(|s| s.split_first_chunk::<2>())
+                        .ok_or(Error::SectionLengthOverflow {
                             declared: 3,
                             available: loop_end - pos,
-                        },
-                    )?;
+                        })?;
                     let size = u16::from_be_bytes(*b2);
                     let info_length = bytes[pos + 2] as usize;
                     let info_start = pos + 3;

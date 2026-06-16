@@ -112,8 +112,9 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
         let uri = crate::text::DvbText::new(&sel[pos..pos + uri_length]);
         pos += uri_length;
         let min_polling_interval = if uri_linkage_type.has_polling_interval() {
-            let (b, _) = sel[pos..]
-                .split_first_chunk::<2>()
+            let (b, _) = sel
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: sel.len(),

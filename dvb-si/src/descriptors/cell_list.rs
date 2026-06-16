@@ -180,12 +180,13 @@ impl<'a> Parse<'a> for CellListDescriptor {
                     reason: "cell_list outer entry truncated",
                 });
             }
-            let (outer, _) = body[pos..].split_first_chunk::<OUTER_FIXED_LEN>().ok_or(
-                Error::InvalidDescriptor {
+            let (outer, _) = body
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<OUTER_FIXED_LEN>())
+                .ok_or(Error::InvalidDescriptor {
                     tag: TAG,
                     reason: "cell_list outer entry truncated",
-                },
-            )?;
+                })?;
             let cell_id = u16::from_be_bytes([outer[0], outer[1]]);
             let cell_latitude = u16::from_be_bytes([outer[2], outer[3]]);
             let cell_longitude = u16::from_be_bytes([outer[4], outer[5]]);
@@ -207,12 +208,13 @@ impl<'a> Parse<'a> for CellListDescriptor {
             let subcell_count = subcell_info_loop_length / SUBCELL_LEN;
             let mut subcells = Vec::with_capacity(subcell_count);
             for _ in 0..subcell_count {
-                let (sub, _) = body[pos..].split_first_chunk::<SUBCELL_LEN>().ok_or(
-                    Error::InvalidDescriptor {
+                let (sub, _) = body
+                    .get(pos..)
+                    .and_then(|s| s.split_first_chunk::<SUBCELL_LEN>())
+                    .ok_or(Error::InvalidDescriptor {
                         tag: TAG,
                         reason: "subcell_info_loop_length exceeds descriptor body",
-                    },
-                )?;
+                    })?;
                 let cell_id_extension = sub[0];
                 let subcell_latitude = u16::from_be_bytes([sub[1], sub[2]]);
                 let subcell_longitude = u16::from_be_bytes([sub[3], sub[4]]);

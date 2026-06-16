@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+- `SpliceInfoSection::parse` no longer underflows (`total - CRC_LEN`) / panics on
+  a section with `section_length < 1`; guarded before the subtraction (#216).
+
 ## [7.1.0] — 2026-06-15
 
 ### Changed

@@ -663,14 +663,14 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 });
             }
 
-            let (tx_id_bytes, _) =
-                data[pos..]
-                    .split_first_chunk::<2>()
-                    .ok_or(crate::Error::BufferTooShort {
-                        need: pos + 2,
-                        have: individual_addressing_length,
-                        what: "transmitter entry header",
-                    })?;
+            let (tx_id_bytes, _) = data
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
+                .ok_or(crate::Error::BufferTooShort {
+                    need: pos + 2,
+                    have: individual_addressing_length,
+                    what: "transmitter entry header",
+                })?;
             let transmitter_id = u16::from_be_bytes(*tx_id_bytes);
             let function_loop_length = data[pos + 2] as usize;
             pos += TX_HEADER_LEN;

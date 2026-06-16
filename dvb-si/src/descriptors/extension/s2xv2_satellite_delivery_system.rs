@@ -337,14 +337,14 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                         what: "S2Xv2 body (secondary_delivery_system_id)",
                     });
                 }
-                let (id_bytes, _) =
-                    sel[pos..]
-                        .split_first_chunk::<4>()
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "S2Xv2 body (secondary_delivery_system_id)",
-                        })?;
+                let (id_bytes, _) = sel
+                    .get(pos..)
+                    .and_then(|s| s.split_first_chunk::<4>())
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + 4,
+                        have: sel.len(),
+                        what: "S2Xv2 body (secondary_delivery_system_id)",
+                    })?;
                 let id = u32::from_be_bytes(*id_bytes);
                 ids.push(id);
                 pos += 4;
@@ -387,14 +387,14 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                         what: "S2Xv2 body (beamhopping_time_plan_id)",
                     });
                 }
-                let (bh_bytes, _) =
-                    sel[pos..]
-                        .split_first_chunk::<4>()
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + 4,
-                            have: sel.len(),
-                            what: "S2Xv2 body (beamhopping_time_plan_id)",
-                        })?;
+                let (bh_bytes, _) = sel
+                    .get(pos..)
+                    .and_then(|s| s.split_first_chunk::<4>())
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + 4,
+                        have: sel.len(),
+                        what: "S2Xv2 body (beamhopping_time_plan_id)",
+                    })?;
                 let id = u32::from_be_bytes(*bh_bytes);
                 pos += 4;
                 Some(id)

@@ -560,20 +560,21 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     u32::from_be_bytes([dii_hdr[12], dii_hdr[13], dii_hdr[14], dii_hdr[15]]);
                 let (compatibility_descriptor, mut pos) =
                     parse_compat_block(payload, DII_FIXED_LEN, end)?;
-                let (bnm, _) =
-                    payload[pos..]
-                        .split_first_chunk::<2>()
-                        .ok_or(Error::BufferTooShort {
-                            need: pos + 2,
-                            have: end,
-                            what: "Dii numberOfModules",
-                        })?;
+                let (bnm, _) = payload
+                    .get(pos..)
+                    .and_then(|s| s.split_first_chunk::<2>())
+                    .ok_or(Error::BufferTooShort {
+                        need: pos + 2,
+                        have: end,
+                        what: "Dii numberOfModules",
+                    })?;
                 let number_of_modules = u16::from_be_bytes(*bnm) as usize;
                 pos += 2;
                 let mut modules = Vec::with_capacity(number_of_modules.min(256));
                 for _ in 0..number_of_modules {
-                    let (mhdr, _) = payload[pos..]
-                        .split_first_chunk::<MODULE_HEADER_LEN>()
+                    let (mhdr, _) = payload
+                        .get(pos..)
+                        .and_then(|s| s.split_first_chunk::<MODULE_HEADER_LEN>())
                         .ok_or(Error::BufferTooShort {
                             need: pos + MODULE_HEADER_LEN,
                             have: end,

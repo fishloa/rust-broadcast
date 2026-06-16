@@ -465,8 +465,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
             what: "RctSection dvb_binary_locator start_time/duration",
         });
     }
-    let (b2, rest) = data[pos..]
-        .split_first_chunk::<2>()
+    let (b2, rest) = data
+        .get(pos..)
+        .and_then(|s| s.split_first_chunk::<2>())
         .ok_or(Error::BufferTooShort {
             need: pos + 4,
             have: data.len(),
@@ -491,8 +492,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator event_id",
                 });
             }
-            let (b2, _) = data[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = data
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: data.len(),
@@ -510,8 +512,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator TVA_id (EIT)",
                 });
             }
-            let (b2, _) = data[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = data
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 2,
                     have: data.len(),
@@ -529,8 +532,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                     what: "RctSection dvb_binary_locator TVA_id (PES)",
                 });
             }
-            let (b2, _) = data[pos..]
-                .split_first_chunk::<2>()
+            let (b2, _) = data
+                .get(pos..)
+                .and_then(|s| s.split_first_chunk::<2>())
                 .ok_or(Error::BufferTooShort {
                     need: pos + 3,
                     have: data.len(),

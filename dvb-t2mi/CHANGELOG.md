@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- `L1FuturePayload::l1_dynamic_next2` / `inband_loop` no longer panic on a crafted
+  L1-Future packet whose NEXT_LEN/NEXT2_LEN exceeds the available data — the
+  unbounded `data[offset..]` slice is now `data.get(offset..)`, returning
+  `BufferTooShort` (#215).
+
 ## [7.1.0] — 2026-06-15
 
 ### Changed

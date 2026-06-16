@@ -608,14 +608,14 @@ impl NsapAddress {
 
     fn parse_from(bytes: &[u8], pos: usize) -> Result<Self> {
         let end = pos + NSAP_ADDRESS_LEN;
-        let (nsap, _) =
-            bytes[pos..]
-                .split_first_chunk::<NSAP_ADDRESS_LEN>()
-                .ok_or(Error::BufferTooShort {
-                    need: end,
-                    have: bytes.len(),
-                    what: "NSAP address (20 bytes)",
-                })?;
+        let (nsap, _) = bytes
+            .get(pos..)
+            .and_then(|s| s.split_first_chunk::<NSAP_ADDRESS_LEN>())
+            .ok_or(Error::BufferTooShort {
+                need: end,
+                have: bytes.len(),
+                what: "NSAP address (20 bytes)",
+            })?;
         // AFI and Type are fixed per DVB profile; do not reject if they differ
         // (be tolerant, but documented).
         let carousel_id = u32::from_be_bytes([nsap[2], nsap[3], nsap[4], nsap[5]]);

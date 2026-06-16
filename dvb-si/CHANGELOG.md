@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+- Defensive hardening of cursor byte-readers: open-ended `slice[pos..]` reads
+  feeding `split_first_chunk`/`split_last_chunk` are now `slice.get(pos..)`, so a
+  wire-derived offset past the buffer end returns `BufferTooShort` instead of
+  panicking (#217). No behaviour change for well-formed input.
+
 ### Added
 - **Context-aware descriptor decoding (#211).**
   - **AIT application-descriptor namespace** (ETSI TS 102 809 §5.3): `AnyAitDescriptor`

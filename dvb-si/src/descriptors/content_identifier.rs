@@ -161,13 +161,13 @@ impl<'a> Parse<'a> for ContentIdentifierDescriptor<'a> {
                             reason: "CRID reference truncated",
                         });
                     }
-                    let (ref_bytes, _) =
-                        body[pos..]
-                            .split_first_chunk::<2>()
-                            .ok_or(Error::InvalidDescriptor {
-                                tag: TAG,
-                                reason: "CRID reference truncated",
-                            })?;
+                    let (ref_bytes, _) = body
+                        .get(pos..)
+                        .and_then(|s| s.split_first_chunk::<2>())
+                        .ok_or(Error::InvalidDescriptor {
+                        tag: TAG,
+                        reason: "CRID reference truncated",
+                    })?;
                     let crid_ref = u16::from_be_bytes(*ref_bytes);
                     pos += 2;
                     CridLocation::Reference(crid_ref)
