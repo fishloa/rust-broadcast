@@ -25,6 +25,7 @@ One-table-per-file spec reference, organised as `docs/{tables,descriptors,enums,
 | EN 300 468 | [`descriptors/en_300_468/`](descriptors/en_300_468/) — 72 per-tag descriptor syntax files |
 | EN 301 192 | [`descriptors/en_301_192/`](descriptors/en_301_192/) — MPE, INT, data carousel descriptors |
 | EN 303 560 | [`descriptors/en_303_560/`](descriptors/en_303_560/) — TTML subtitling descriptors |
+| ISO/IEC 13818-1 | [`descriptors/iso_13818_1/`](descriptors/iso_13818_1/) — MPEG-2 systems descriptors (tags 0x02–0x12) |
 | ISO/IEC 13818-6 | [`descriptors/iso_13818_6/`](descriptors/iso_13818_6/) — DSM-CC carousel descriptors |
 | TS 102 006 | [`descriptors/ts_102_006/`](descriptors/ts_102_006/) — SSU descriptors |
 | TS 102 323 | [`descriptors/ts_102_323/`](descriptors/ts_102_323/) — TV-Anytime metadata descriptors |
