@@ -21,7 +21,7 @@ import re
 import sys
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parents[2] / "docs/dvb_si"
+DOCS = Path(__file__).resolve().parents[2] / "dvb-si/docs"
 DUMP = Path("/tmp/dvb-extract/full.txt")
 
 TOC_LINE_RE = re.compile(

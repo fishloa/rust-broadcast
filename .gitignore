@@ -24,3 +24,4 @@ tools/dvb-si-audit/out/
 # wasm-pack build output for the browser demo (generated; not committed)
 /demo/pkg/
 /demo/target/
+.playwright-mcp/

@@ -1,0 +1,35 @@
+## Table 100 — Telephone descriptor
+_§6.2.42, PDF pp. 107-107_
+
+| Syntax | Number of bits | Identifier |
+|---|---|---|
+| telephone_descriptor() { |
+| descriptor_tag | 8 | uimsbf |
+| descriptor_length | 8 | uimsbf |
+| reserved_future_use | 2 | bslbf |
+| foreign_availability | 1 | bslbf |
+| connection_type | 5 | uimsbf |
+| reserved for future use | 1 | bslbf |
+| country_prefix_length | 2 | uimsbf |
+| international_area_code_length | 3 | uimsbf |
+| operator_code_length | 2 | uimsbf |
+| reserved for future use | 1 | bslbf |
+| national_area_code_length | 3 | uimsbf |
+| core_number_length | 4 | uimsbf |
+| for (i=0;i<N;i++) { |
+| country_prefix_char | 8 | uimsbf |
+| } |
+| for (i=0;i<N;i++) { |
+| international_area_code_char | 8 | uimsbf |
+| } |
+| for (i=0;i<N;i++) { |
+| operator_code_char | 8 | uimsbf |
+| } |
+| for (i=0;i<N;i++) { |
+| national_area_code_char | 8 | uimsbf |
+| } |
+| for (i=0;i<N;i++) { |
+| core_number_char | 8 | uimsbf |
+| } |
+| } |
+

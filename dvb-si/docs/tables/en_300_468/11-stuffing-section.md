@@ -1,0 +1,16 @@
+## Table 11 — Stuffing section
+_§5.2.8, PDF pp. 38-38_
+
+| Syntax | Number of bits | Identifier |
+|---|---|---|
+| stuffing_section() { |
+| table_id | 8 | uimsbf |
+| section_syntax_indicator | 1 | bslbf |
+| reserved_future_use | 1 | bslbf |
+| reserved | 2 | bslbf |
+| section_length | 12 | uimsbf |
+| for (i=0;i<N;i++) { |
+| data_byte | 8 | uimsbf |
+| } |
+| } |
+

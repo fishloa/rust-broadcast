@@ -1,0 +1,34 @@
+## Table 5 — Service description section
+_§5.2.3, PDF pp. 32-32_
+
+| Syntax | Number of bits | Identifier |
+|---|---|---|
+| service_description_section() { |
+| table_id | 8 | uimsbf |
+| section_syntax_indicator | 1 | bslbf |
+| reserved_future_use | 1 | bslbf |
+| reserved | 2 | bslbf |
+| section_length | 12 | uimsbf |
+| transport_stream_id | 16 | uimsbf |
+| reserved | 2 | bslbf |
+| version_number | 5 | uimsbf |
+| current_next_indicator | 1 | bslbf |
+| section_number | 8 | uimsbf |
+| last_section_number | 8 | uimsbf |
+| original_network_id | 16 | uimsbf |
+| reserved_future_use | 8 | bslbf |
+| for (i=0;i<N;i++) { |
+| service_id | 16 | uimsbf |
+| reserved_future_use | 6 | bslbf |
+| EIT_schedule_flag | 1 | bslbf |
+| EIT_present_following_flag | 1 | bslbf |
+| running_status | 3 | uimsbf |
+| free_CA_mode | 1 | bslbf |
+| descriptors_length | 12 | uimsbf |
+| for (j=0;j<N;j++) { |
+| descriptor() |
+| } |
+| } |
+| CRC_32 | 32 | rpchof |
+| } |
+

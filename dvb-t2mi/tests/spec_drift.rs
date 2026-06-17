@@ -99,7 +99,7 @@ fn toml_set_u16(toml: &str) -> BTreeSet<(u16, String)> {
 
 #[test]
 fn packet_type_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/packet_type.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/packet_type.toml");
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -130,7 +130,7 @@ fn packet_type_toml_matches_enum() {
 
 #[test]
 fn addressing_function_tag_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/addressing_function_tag.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/addressing_function_tag.toml");
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -161,7 +161,7 @@ fn addressing_function_tag_toml_matches_enum() {
 
 #[test]
 fn bandwidth_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/bandwidth.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/bandwidth.toml");
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -192,7 +192,7 @@ fn bandwidth_toml_matches_enum() {
 
 #[test]
 fn frequency_source_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/frequency_source.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/frequency_source.toml");
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: TryFromPrimitive — skip bytes that don't map to a variant
@@ -223,7 +223,7 @@ fn frequency_source_toml_matches_enum() {
 
 #[test]
 fn s1_field_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/s1_field.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/s1_field.toml");
     let toml_set = toml_set_u8(toml);
 
     // byte sweep: S1Field is exhaustive over 3-bit domain; TryFromPrimitive
@@ -255,7 +255,7 @@ fn s1_field_toml_matches_enum() {
 
 #[test]
 fn subpart_variety_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/subpart_variety.toml");
+    let toml = include_str!("../docs/enums/ts_102_773/subpart_variety.toml");
     let toml_set = toml_set_u16(toml);
 
     // u16 sweep over 0..=255 (all defined values fit in this range);
@@ -289,7 +289,7 @@ macro_rules! l1_drift_test {
     ($test_name:ident, $toml_file:literal, $enum_ty:ident, $domain:expr, $expected:expr, $reserved_pat:pat) => {
         #[test]
         fn $test_name() {
-            let toml = include_str!(concat!("../spec_tables/", $toml_file));
+            let toml = include_str!(concat!("../docs/enums/en_302_755/", $toml_file));
             let toml_set: BTreeSet<(u8, String)> = parse_entries(toml)
                 .iter()
                 .map(|(v, var, _)| (*v as u8, var.clone()))

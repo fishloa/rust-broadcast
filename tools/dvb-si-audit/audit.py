@@ -23,7 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-DOCS = Path(__file__).resolve().parents[2] / "docs/dvb_si"
+DOCS = Path(__file__).resolve().parents[2] / "dvb-si/docs"
 GROUND = Path(__file__).resolve().parent / "out/tables"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
@@ -47,12 +47,9 @@ NAV_FILES: set[str] = {
     "INDEX.md",
     "README.md",
     "overview.md",
-    "glossary.md",
-    "descriptors/INDEX.md",
-    "tables/README.md",
-    "tables/sat/README.md",
-    "descriptors/0x7F-extension/README.md",
-    "text/charsets/README.md",
+    "tables/en_300_468/README.md",
+    "descriptors/en_303_560/README.md",
+    "descriptors/ts_102_727/README.md",
 }
 
 
@@ -112,13 +109,14 @@ def audit_file(md_path: Path, by_section: dict[str, list[dict]]) -> dict:
     if (
         rel in NAV_FILES
         or rel.startswith("annexes/")
-        or rel.startswith("text/")
-        or rel.startswith("crc/")
+        or rel.startswith("text/iso_13818_6/")
+        or rel.startswith("text/tr_101_211/")
+        or rel.startswith("text/tr_101_290/")
         # MPEG-2 descriptors 0x02..0x12 — defined in ISO/IEC 13818-1, not 300 468
-        or re.match(r"^descriptors/0x0[2-9A-Fa-f]-", rel)
-        or re.match(r"^descriptors/0x1[0-2]-", rel)
+        or re.match(r"^descriptors/[^/]+/0x0[2-9A-Fa-f]-", rel)
+        or re.match(r"^descriptors/[^/]+/0x1[0-2]-", rel)
         # MPEG-2 tables PAT/PMT/CAT
-        or rel in {"tables/pat.md", "tables/pmt.md", "tables/cat.md"}
+        or rel in {"tables/iso_13818_1/pat.md", "tables/iso_13818_1/pmt.md", "tables/iso_13818_1/cat.md"
     ):
         entry["section"] = None
         entry["kind"] = "navigation"

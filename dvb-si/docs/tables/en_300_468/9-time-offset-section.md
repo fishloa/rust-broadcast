@@ -1,0 +1,20 @@
+## Table 9 — Time offset section
+_§5.2.7, PDF pp. 37-37_
+
+| Syntax | Number of bits | Identifier |
+|---|---|---|
+| time_offset_section() { |
+| table_id | 8 | uimsbf |
+| section_syntax_indicator | 1 | bslbf |
+| reserved_future_use | 1 | bslbf |
+| reserved | 2 | bslbf |
+| section_length | 12 | uimsbf |
+| UTC_time | 40 | bslbf |
+| reserved | 4 | bslbf |
+| descriptors_length | 12 | uimsbf |
+| for (i=0;i<N;i++) { |
+| descriptor() |
+| } |
+| CRC_32 | 32 | rpchof |
+| } |
+

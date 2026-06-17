@@ -1,0 +1,25 @@
+## Table 24 — Cell list descriptor
+_§6.2.7, PDF pp. 58-58_
+
+| Syntax | Number of bits | Identifier |
+|---|---|---|
+| cell_list_descriptor() { |
+| descriptor_tag | 8 | uimsbf |
+| descriptor_length | 8 | uimsbf |
+| for (i=0;i<N;i++) { |
+| cell_id | 16 | uimsbf |
+| cell_latitude | 16 | uimsbf |
+| cell_longitude | 16 | uimsbf |
+| cell_extent_of_latitude | 12 | uimsbf |
+| cell_extent_of_longitude | 12 | uimsbf |
+| subcell_info_loop_length | 8 | uimsbf |
+| for (j=0;j<N;j++) { |
+| cell_id_extension | 8 | uimsbf |
+| subcell_latitude | 16 | uimsbf |
+| subcell_longitude | 16 | uimsbf |
+| subcell_extent_of_latitude | 12 | uimsbf |
+| subcell_extent_of_longitude | 12 | uimsbf |
+| } |
+| } |
+| } |
+
