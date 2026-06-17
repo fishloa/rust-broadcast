@@ -41,7 +41,9 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build demo (wasm-pack)
-        run: wasm-pack build demo --target web --out-dir demo/pkg --release
+        # --out-dir is resolved relative to the crate path (demo/), so `pkg`
+        # lands at demo/pkg (NOT demo/demo/pkg, which `demo/pkg` would give).
+        run: wasm-pack build demo --target web --out-dir pkg --release
 
       - name: Assemble site
         run: |
