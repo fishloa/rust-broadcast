@@ -6,7 +6,7 @@ DSM-CC data carousel.
 
 **Complete coverage: every allocated `table_id` in EN 300 468 V1.19.1
 Table 2 (29 section types; 28 dispatched by `AnyTableSection` + the type-keyed MPE datagram view), every allocated `descriptor_tag` in Table 12
-(0x40–0x7F, 64 descriptors), and the MPEG-2 systems descriptors (ISO/IEC 13818-1 §2.6, tags 0x02–0x12) are implemented**, each with a symmetric
+(0x40–0x7F, 64 descriptors), and the MPEG-2 systems descriptors (ISO/IEC 13818-1 §2.6, tags 0x02–0x12 plus the codec descriptors AVC/HEVC/AAC/MPEG-4 at 0x1B/0x1C/0x28/0x2A/0x2B/0x38) are implemented**, each with a symmetric
 `Parse` / `Serialize` pair and round-trip tests. Layouts are derived from the
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and
 validated against live broadcast captures.

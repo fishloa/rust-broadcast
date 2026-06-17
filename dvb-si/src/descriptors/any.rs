@@ -216,6 +216,12 @@ declare_descriptors! {'a;
     Std = 0x11 => crate::descriptors::std::StdDescriptor,
     Ibp = 0x12 => crate::descriptors::ibp::IbpDescriptor,
     CarouselIdentifier = 0x13 => crate::descriptors::carousel_identifier::CarouselIdentifierDescriptor<'a>,
+    Mpeg4Video = 0x1B => crate::descriptors::mpeg4_video::Mpeg4VideoDescriptor,
+    Mpeg4Audio = 0x1C => crate::descriptors::mpeg4_audio::Mpeg4AudioDescriptor,
+    AvcVideo = 0x28 => crate::descriptors::avc_video::AvcVideoDescriptor,
+    AvcTimingAndHrd = 0x2A => crate::descriptors::avc_timing_and_hrd::AvcTimingAndHrdDescriptor,
+    Mpeg2AacAudio = 0x2B => crate::descriptors::mpeg2_aac_audio::Mpeg2AacAudioDescriptor,
+    HevcVideo = 0x38 => crate::descriptors::hevc_video::HevcVideoDescriptor,
     // DVB descriptors (ETSI EN 300 468) — contiguous 0x40..=0x7F.
     NetworkName = 0x40 => crate::descriptors::network_name::NetworkNameDescriptor<'a>,
     ServiceList = 0x41 => crate::descriptors::service_list::ServiceListDescriptor,
