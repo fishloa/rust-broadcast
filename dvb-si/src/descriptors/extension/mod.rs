@@ -40,6 +40,7 @@
 //! - `0x09` target_region (Table 156, §6.4.12) — region loop unfolded.
 //! - `0x0A` target_region_name (Table 157, §6.4.13) — region loop unfolded.
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
+//! - `0x0C` XAIT_PID (TS 102 727 §10.17.3) — 13-bit PID.
 //! - `0x0D` C2_delivery_system (Table 115, §6.4.6.1).
 //! - `0x10` video_depth_range (Table 160, §6.4.16.1) — fully typed range loop.
 //! - `0x11` T2MI (Table 158, §6.4.14).
@@ -58,7 +59,6 @@
 //! will be typed once the governing spec is transcribed into `dvb-si/docs/`:
 //! - `0x01` cpcm_delivery_signalling — spec not vendored (ETSI TS 102 825).
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
-//! - `0x0C` XAIT_PID — deferred (TS 102 727 PDF vendored, no extracted syntax table yet).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
 //! - `0x18` protection_message — spec not vendored (ETSI TS 102 809).
@@ -90,6 +90,7 @@ mod ttml_subtitling;
 mod uri_linkage;
 mod video_depth_range;
 mod vvc_subpictures;
+mod xait_pid;
 
 #[cfg(test)]
 mod test_support;
@@ -115,6 +116,7 @@ pub use ttml_subtitling::*;
 pub use uri_linkage::*;
 pub use video_depth_range::*;
 pub use vvc_subpictures::*;
+pub use xait_pid::*;
 
 /// Descriptor tag for extension_descriptor (EN 300 468 Table 54, §6.2.18.1).
 pub const TAG: u8 = 0x7F;
@@ -173,6 +175,8 @@ pub enum ExtensionTag {
     TargetRegionName = 0x0A,
     /// service_relocated_descriptor.
     ServiceRelocated = 0x0B,
+    /// xait_pid_descriptor (TS 102 727 §10.17.3).
+    XaitPid = 0x0C,
     /// C2_delivery_system_descriptor.
     C2DeliverySystem = 0x0D,
     /// video_depth_range_descriptor (Table 160, §6.4.16.1).
@@ -329,6 +333,8 @@ declare_extension_bodies! {'a;
     TargetRegionName = 0x0A => TargetRegionName<'a>,
     /// `0x0B` — service_relocated (Table 152, §6.4.10).
     ServiceRelocated = 0x0B => ServiceRelocated,
+    /// `0x0C` — xait_pid (TS 102 727 §10.17.3).
+    XaitPid = 0x0C => XaitPid,
     /// `0x0D` — C2_delivery_system (Table 115, §6.4.6.1).
     C2DeliverySystem = 0x0D => C2DeliverySystem,
     /// `0x10` — video_depth_range (Table 160, §6.4.16.1).
