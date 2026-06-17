@@ -7,6 +7,7 @@
 //! [`satellite_delivery_system`], [`service`], [`linkage`]).
 
 pub mod aac;
+pub mod aac_additional_info;
 pub mod ac3;
 pub mod adaptation_field_data;
 pub mod ait;
@@ -15,6 +16,8 @@ pub mod announcement_support;
 pub mod any;
 pub mod application_signalling;
 pub mod audio_stream;
+pub mod avc_timing_and_hrd;
+pub mod avc_video;
 pub mod bouquet_name;
 pub mod ca;
 pub mod ca_identifier;
@@ -39,6 +42,8 @@ pub mod extended_event;
 pub mod extension;
 pub mod frequency_list;
 pub mod fta_content_management;
+pub mod hdr_wcg_idc;
+pub mod hevc_video;
 pub mod hierarchy;
 pub mod ibp;
 pub mod iso_639_language;
@@ -47,6 +52,9 @@ pub mod local_time_offset;
 pub mod logical_channel;
 pub mod maximum_bitrate;
 pub mod mosaic;
+pub mod mpeg2_aac_audio;
+pub mod mpeg4_audio;
+pub mod mpeg4_video;
 pub mod multilingual_bouquet_name;
 pub mod multilingual_component;
 pub mod multilingual_network_name;

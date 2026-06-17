@@ -91,6 +91,36 @@ variant = "CarouselIdentifier"
 spec = "carousel_identifier_descriptor"
 
 [[entry]]
+value = 0x1B
+variant = "Mpeg4Video"
+spec = "MPEG-4_video_descriptor"
+
+[[entry]]
+value = 0x1C
+variant = "Mpeg4Audio"
+spec = "MPEG-4_audio_descriptor"
+
+[[entry]]
+value = 0x28
+variant = "AvcVideo"
+spec = "AVC_video_descriptor"
+
+[[entry]]
+value = 0x2A
+variant = "AvcTimingAndHrd"
+spec = "AVC_timing_and_HRD_descriptor"
+
+[[entry]]
+value = 0x2B
+variant = "Mpeg2AacAudio"
+spec = "MPEG-2_AAC_audio_descriptor"
+
+[[entry]]
+value = 0x38
+variant = "HevcVideo"
+spec = "HEVC_video_descriptor"
+
+[[entry]]
 value = 0x40
 variant = "NetworkName"
 spec = "network_name_descriptor"

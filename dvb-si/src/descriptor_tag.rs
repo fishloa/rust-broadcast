@@ -38,6 +38,12 @@ pub enum DescriptorTag {
     Std                        = 0x11,
     Ibp                        = 0x12,
     CarouselIdentifier         = 0x13,
+    Mpeg4Video                 = 0x1B,
+    Mpeg4Audio                 = 0x1C,
+    AvcVideo                   = 0x28,
+    AvcTimingAndHrd            = 0x2A,
+    Mpeg2AacAudio              = 0x2B,
+    HevcVideo                  = 0x38,
 
     // ── DVB SI descriptors (0x40..=0x7F) ───────────────────────────────────
     NetworkName                = 0x40,
