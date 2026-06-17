@@ -198,11 +198,23 @@ macro_rules! declare_descriptors {
 
 declare_descriptors! {'a;
     // MPEG-2 systems descriptors (ISO/IEC 13818-1) used outside table context.
+    VideoStream = 0x02 => crate::descriptors::video_stream::VideoStreamDescriptor,
+    AudioStream = 0x03 => crate::descriptors::audio_stream::AudioStreamDescriptor,
+    Hierarchy = 0x04 => crate::descriptors::hierarchy::HierarchyDescriptor,
     Registration = 0x05 => crate::descriptors::registration::RegistrationDescriptor<'a>,
     DataStreamAlignment = 0x06 => crate::descriptors::data_stream_alignment::DataStreamAlignmentDescriptor,
+    TargetBackgroundGrid = 0x07 => crate::descriptors::target_background_grid::TargetBackgroundGridDescriptor,
+    VideoWindow = 0x08 => crate::descriptors::video_window::VideoWindowDescriptor,
     Ca = 0x09 => crate::descriptors::ca::CaDescriptor<'a>,
     Iso639Language = 0x0A => crate::descriptors::iso_639_language::Iso639LanguageDescriptor,
+    SystemClock = 0x0B => crate::descriptors::system_clock::SystemClockDescriptor,
+    MultiplexBufferUtilization = 0x0C => crate::descriptors::multiplex_buffer_utilization::MultiplexBufferUtilizationDescriptor,
+    Copyright = 0x0D => crate::descriptors::copyright::CopyrightDescriptor<'a>,
+    MaximumBitrate = 0x0E => crate::descriptors::maximum_bitrate::MaximumBitrateDescriptor,
     PrivateDataIndicator = 0x0F => crate::descriptors::private_data_indicator::PrivateDataIndicatorDescriptor,
+    SmoothingBuffer = 0x10 => crate::descriptors::smoothing_buffer::SmoothingBufferDescriptor,
+    Std = 0x11 => crate::descriptors::std::StdDescriptor,
+    Ibp = 0x12 => crate::descriptors::ibp::IbpDescriptor,
     CarouselIdentifier = 0x13 => crate::descriptors::carousel_identifier::CarouselIdentifierDescriptor<'a>,
     // DVB descriptors (ETSI EN 300 468) — contiguous 0x40..=0x7F.
     NetworkName = 0x40 => crate::descriptors::network_name::NetworkNameDescriptor<'a>,
