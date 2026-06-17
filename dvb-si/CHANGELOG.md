@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.3.0 — 2026-06-17
+
 ### Added
 - **Deferred DVB-MHP descriptors (#227)**, transcribed from ETSI TS 102 727 V1.1.1
   (`dvb-si/docs/ts_102_727_mhp.md`):
