@@ -14,7 +14,11 @@ use std::path::Path;
 
 use dvb_common::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
+use dvb_si::demux::SiDemux;
+use dvb_si::descriptors::ait::AnyAitDescriptor;
+use dvb_si::pid::Pid;
 use dvb_si::tables::dsmcc::DsmccSection;
+use dvb_si::tables::AnyTableSection;
 use dvb_si::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
 
 const CAPTURE: &str = "hotbird-mhp";
@@ -121,5 +125,97 @@ fn hotbird_mhp_dsmcc_parse() {
     assert!(
         dsi_count + dii_count + ddb_count > 0,
         "{CAPTURE}: expected at least one DSI/DII/DDB from an MHP object carousel"
+    );
+}
+
+/// AIT PIDs carrying the DVB-J application this capture signals (observed via
+/// `application_signalling_descriptor` in the PMT es_info loop).
+const AIT_PIDS: [u16; 2] = [0x1EC6, 0x1EC7];
+
+/// Exercises the deferred DVB-J descriptors (#227) against real broadcast data:
+/// this Hot Bird MHP mux carries `dvb_j_application` (AIT tag 0x03) and
+/// `dvb_j_application_location` (AIT tag 0x04) in its AIT application loop.
+/// Walking the AIT must decode them as the typed [`AnyAitDescriptor`] variants
+/// (NOT `Unknown`), proving the new parsers bite on a real stream.
+#[test]
+fn hotbird_mhp_dvb_j_descriptors_typed() {
+    let path = capture_path();
+    if !path.exists() {
+        eprintln!(
+            "downloaded_mhp: SKIPPED — {CAPTURE}.ts not in .test-streams/. \
+             Run `tools/fetch-test-streams.sh {CAPTURE}` to enable."
+        );
+        return;
+    }
+
+    let data = fs::read(&path).expect("read capture");
+
+    // The demux follows PAT → PMT well-known PIDs but not AIT PIDs (signalled
+    // via application_signalling_descriptor), so add the observed AIT PIDs.
+    let mut builder = SiDemux::builder();
+    for pid in AIT_PIDS {
+        builder = builder.pid(Pid::new(pid));
+    }
+    let mut demux = builder.build();
+
+    let mut ait_sections = 0usize;
+    let mut dvb_j_app = 0usize;
+    let mut dvb_j_location = 0usize;
+    let mut unknown_dvb_j_tags = 0usize;
+
+    for chunk in data.chunks(TS_PACKET_SIZE) {
+        if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {
+            continue;
+        }
+        for ev in demux.feed(chunk) {
+            let sec = match ev.table_section() {
+                Ok(AnyTableSection::AitSection(ait)) => ait,
+                _ => continue,
+            };
+            ait_sections += 1;
+            for app in &sec.applications {
+                for desc_res in app.ait_descriptors().iter() {
+                    match desc_res.expect("per-app AIT descriptor must parse") {
+                        AnyAitDescriptor::DvbJApplication(d) => {
+                            dvb_j_app += 1;
+                            // Each parameter is a length-prefixed byte string.
+                            let _ = d.parameters.len();
+                        }
+                        AnyAitDescriptor::DvbJApplicationLocation(d) => {
+                            dvb_j_location += 1;
+                            // base_directory shall be non-empty per the spec.
+                            assert!(
+                                !d.base_directory.is_empty(),
+                                "{CAPTURE}: dvb_j_application_location base_directory empty"
+                            );
+                        }
+                        // If the new parsers regressed, 0x03/0x04 would fall
+                        // through to Unknown — catch that explicitly.
+                        AnyAitDescriptor::Unknown {
+                            tag: 0x03 | 0x04, ..
+                        } => {
+                            unknown_dvb_j_tags += 1;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    eprintln!(
+        "downloaded_mhp: {CAPTURE} — {ait_sections} AIT sections, \
+         {dvb_j_app} dvb_j_application, {dvb_j_location} dvb_j_application_location, \
+         {unknown_dvb_j_tags} dvb_j tags left Unknown"
+    );
+
+    assert_eq!(
+        unknown_dvb_j_tags, 0,
+        "{CAPTURE}: dvb_j tags (0x03/0x04) must decode as typed variants, not Unknown"
+    );
+    assert!(
+        dvb_j_app > 0 && dvb_j_location > 0,
+        "{CAPTURE}: expected typed dvb_j_application + dvb_j_application_location \
+         descriptors (found {dvb_j_app} app, {dvb_j_location} location)"
     );
 }

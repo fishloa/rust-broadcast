@@ -269,6 +269,7 @@ preserved byte-exact as `ExtensionBody::Raw` and round-trips losslessly. Private
 | 0x09 | target_region | Table 156, §6.4.12 (region loop unfolded) |
 | 0x0A | target_region_name | Table 157, §6.4.13 (region loop unfolded) |
 | 0x0B | service_relocated | Table 152, §6.4.10 |
+| 0x0C | XAIT_PID | TS 102 727 Table 95, §10.17.3 (16-bit xait_PID) |
 | 0x0D | C2_delivery_system | Table 115, §6.4.6.1 |
 | 0x10 | video_depth_range | Table 160, §6.4.16.1 (range loop typed) |
 | 0x11 | T2MI | Table 158, §6.4.14 |
@@ -282,7 +283,7 @@ preserved byte-exact as `ExtensionBody::Raw` and round-trips losslessly. Private
 | 0x23 | vvc_subpictures | Table 162a, §6.4.17 |
 | 0x24 | S2Xv2_satellite_delivery_system | Tables 144a–144c, §6.4.6.5.3 |
 
-Tags whose governing spec is not vendored (`0x01`–`0x03` CPCM, `0x0C` XAIT_PID,
+Tags whose governing spec is not vendored (`0x01`–`0x03` CPCM,
 `0x0E`/`0x0F`/`0x21` DTS family, `0x14` CI_ancillary, `0x18` protection_message)
 are preserved as `ExtensionBody::Raw` and round-trip byte-exact.
 
@@ -465,7 +466,7 @@ transcription:
 | TS 102 809 v1.3.1 — application signalling | [PDF](https://www.etsi.org/deliver/etsi_ts/102800_102899/102809/01.03.01_60/ts_102809v010301p.pdf) | [ts_102_809_apps.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_809_apps.md) |
 | TS 102 772 v1.1.1 — MPE-IFEC | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102772/01.01.01_60/ts_102772v010101p.pdf) | [ts_102_772_mpe_ifec.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_772_mpe_ifec.md) |
 | EN 303 560 v1.1.1 — TTML subtitling | [PDF](https://www.etsi.org/deliver/etsi_en/303500_303599/303560/01.01.01_60/en_303560v010101p.pdf) | [en_303_560_ttml.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_303_560_ttml.md) |
-| TS 102 727 v1.1.1 — MHP (XAIT) | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102727/01.01.01_60/ts_102727v010101p.pdf) | vendored PDF only (cites give page + table) |
+| TS 102 727 v1.1.1 — MHP (DVB-J, XAIT) | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102727/01.01.01_60/ts_102727v010101p.pdf) | [ts_102_727_mhp.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_727_mhp.md) (descriptor-syntax subset) |
 | TR 101 202 v1.2.1 — data broadcasting guidelines | [PDF](https://www.etsi.org/deliver/etsi_tr/101200_101299/101202/01.02.01_60/tr_101202v010201p.pdf) | profile semantics for `carousel` (no syntax tables) |
 | ISO/IEC 13818-6 — DSM-CC | not freely redistributable | [iso_13818_6_carousel.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/iso_13818_6_carousel.md) (provenance-documented hand transcription) |
 

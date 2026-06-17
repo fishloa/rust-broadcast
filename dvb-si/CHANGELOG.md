@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- **Deferred DVB-MHP descriptors (#227)**, transcribed from ETSI TS 102 727 V1.1.1
+  (`dvb-si/docs/ts_102_727_mhp.md`):
+  - **AIT application-descriptor namespace**: `dvb_j_application` (tag 0x03,
+    Table 84 — length-prefixed parameter strings) and `dvb_j_application_location`
+    (tag 0x04, Table 85 — base directory / classpath extension / initial class),
+    now decoded as the typed `AnyAitDescriptor::DvbJApplication` /
+    `DvbJApplicationLocation` variants (previously `Unknown`).
+  - **Extension descriptor** `xait_pid` (`descriptor_tag_extension` 0x0C,
+    Table 95 — 16-bit `xait_PID`), now `ExtensionBody::XaitPid` /
+    `ExtensionTag::XaitPid` (previously `Raw`).
+  - Verified against a real Hot Bird MHP mux (`hotbird-mhp` capture).
+
 ## 7.2.0 — 2026-06-16
 
 ### Fixed

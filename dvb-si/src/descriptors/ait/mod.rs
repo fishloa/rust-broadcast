@@ -42,6 +42,8 @@
 pub mod application;
 pub mod application_name;
 pub mod application_usage;
+pub mod dvb_j_application;
+pub mod dvb_j_application_location;
 pub mod external_application_authorisation;
 pub mod simple_application_boundary;
 pub mod simple_application_location;
@@ -51,6 +53,8 @@ pub use application::ApplicationDescriptor;
 pub use application::Visibility;
 pub use application_name::ApplicationNameDescriptor;
 pub use application_usage::ApplicationUsageDescriptor;
+pub use dvb_j_application::DvbJApplicationDescriptor;
+pub use dvb_j_application_location::DvbJApplicationLocationDescriptor;
 pub use external_application_authorisation::ExternalApplicationAuthorisationDescriptor;
 pub use simple_application_boundary::SimpleApplicationBoundaryDescriptor;
 pub use simple_application_location::SimpleApplicationLocationDescriptor;
@@ -158,6 +162,8 @@ declare_ait_descriptors! {'a;
     Application              = 0x00 => crate::descriptors::ait::application::ApplicationDescriptor,
     ApplicationName          = 0x01 => crate::descriptors::ait::application_name::ApplicationNameDescriptor<'a>,
     TransportProtocol        = 0x02 => crate::descriptors::ait::transport_protocol::TransportProtocolDescriptor<'a>,
+    DvbJApplication          = 0x03 => crate::descriptors::ait::dvb_j_application::DvbJApplicationDescriptor<'a>,
+    DvbJApplicationLocation  = 0x04 => crate::descriptors::ait::dvb_j_application_location::DvbJApplicationLocationDescriptor<'a>,
     ExternalAppAuthorisation = 0x05 => crate::descriptors::ait::external_application_authorisation::ExternalApplicationAuthorisationDescriptor,
     SimpleAppLocation        = 0x15 => crate::descriptors::ait::simple_application_location::SimpleApplicationLocationDescriptor<'a>,
     ApplicationUsage         = 0x16 => crate::descriptors::ait::application_usage::ApplicationUsageDescriptor,
@@ -304,7 +310,7 @@ mod tests {
     fn dispatched_tags_covers_all_known() {
         assert_eq!(
             AnyAitDescriptor::DISPATCHED_TAGS,
-            &[0x00, 0x01, 0x02, 0x05, 0x15, 0x16, 0x17]
+            &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x15, 0x16, 0x17]
         );
     }
 }
