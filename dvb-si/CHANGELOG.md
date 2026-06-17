@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- **MPEG-2 codec descriptors (#237)**, from Rec. ITU-T H.222.0 (06/2021) §2.6:
+  `MPEG-4_video` (0x1B), `MPEG-4_audio` (0x1C), `AVC_video` (0x28),
+  `AVC_timing_and_HRD` (0x2A), `MPEG-2_AAC_audio` (0x2B) and `HEVC_video` (0x38) —
+  now typed `AnyDescriptor` variants (previously unknown). Adds the
+  `AacAdditionalInfo` (Table 2-95) and `HdrWcgIdc` (Table 2-114) enums. Validated
+  by an interop test that decodes a PMT compiled by TSDuck (`tstabcomp`) — the
+  reference DVB toolkit — confirming byte-exact agreement (incl. the HEVC
+  `copied_44bits` field and the `HDR_WCG_idc` bit position).
 - **MPEG-2 systems descriptors 0x02–0x12 (#236)**, transcribed from Rec. ITU-T
   H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.6 (`dvb-si/docs/descriptors/iso_13818_1/`):
   `video_stream` (0x02), `audio_stream` (0x03), `hierarchy` (0x04),

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PMT version="1" current="true" service_id="0x0001" PCR_PID="0x0100">
+    <component elementary_PID="0x0100" stream_type="0x02">
+      <video_stream_descriptor multiple_frame_rate="true" frame_rate_code="4" MPEG_1_only="false" constrained_parameter="true" still_picture="false" profile_and_level_indication="0x4D" chroma_format="1" frame_rate_extension="false"/>
+    </component>
+    <component elementary_PID="0x0101" stream_type="0x03">
+      <audio_stream_descriptor free_format="false" ID="1" layer="2" variable_rate_audio="false"/>
+    </component>
+    <component elementary_PID="0x0102" stream_type="0x1B">
+      <AVC_video_descriptor profile_idc="0x64" constraint_set0="true" constraint_set1="false" constraint_set2="false" constraint_set3="true" constraint_set4="false" constraint_set5="true" AVC_compatible_flags="0x03" level_idc="0x29" AVC_still_present="false" AVC_24_hour_picture="true" frame_packing_SEI_not_present="false"/>
+    </component>
+    <component elementary_PID="0x0103" stream_type="0x24">
+      <HEVC_video_descriptor profile_space="1" tier_flag="true" profile_idc="2" profile_compatibility_indication="0xDEADBEEF" progressive_source_flag="true" interlaced_source_flag="false" non_packed_constraint_flag="true" frame_only_constraint_flag="false" copied_44bits="0x123456789AB" level_idc="0x99" HEVC_still_present_flag="true" HEVC_24hr_picture_present_flag="false" sub_pic_hrd_params_not_present="true" HDR_WCG_idc="2" temporal_id_min="3" temporal_id_max="6"/>
+    </component>
+  </PMT>
+</tsduck>
