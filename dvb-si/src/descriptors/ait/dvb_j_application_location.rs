@@ -2,10 +2,13 @@
 //! (AIT tag 0x04).
 //!
 //! Carried in the AIT per-application descriptor loop. Contains the base
-//! directory, classpath extension, and initial class name for a DVB-J application.
+//! directory, classpath extension, and initial class name for a DVB-J
+//! application. The three fields are text strings, modelled as [`DvbText`] to
+//! match the sibling `simple_application_location` descriptor (AIT tag 0x15).
 
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
+use crate::text::DvbText;
 use dvb_common::{Parse, Serialize};
 
 /// Descriptor tag for dvb_j_application_location_descriptor (AIT namespace).
@@ -16,15 +19,12 @@ const HEADER_LEN: usize = 2;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DvbJApplicationLocationDescriptor<'a> {
-    /// Base directory bytes (e.g. "/").
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub base_directory: &'a [u8],
-    /// Classpath extension bytes.
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub classpath_extension: &'a [u8],
-    /// Initial class bytes (consumes the remainder of the descriptor).
-    #[cfg_attr(feature = "serde", serde(borrow))]
-    pub initial_class: &'a [u8],
+    /// Base directory string (slash-delimited; "/" for root). Shall be non-empty.
+    pub base_directory: DvbText<'a>,
+    /// Classpath extension string (elements `;`-delimited, dirs `/`-delimited).
+    pub classpath_extension: DvbText<'a>,
+    /// Initial DVB-J class name — consumes the remainder of the descriptor.
+    pub initial_class: DvbText<'a>,
 }
 
 impl<'a> Parse<'a> for DvbJApplicationLocationDescriptor<'a> {
@@ -66,12 +66,10 @@ impl<'a> Parse<'a> for DvbJApplicationLocationDescriptor<'a> {
                 reason: "dvb_j_application_location_descriptor classpath_extension overruns body",
             });
         }
-        let classpath_extension = &rest[1..cp_end];
-        let initial_class = &rest[cp_end..];
         Ok(Self {
-            base_directory,
-            classpath_extension,
-            initial_class,
+            base_directory: DvbText::new(base_directory),
+            classpath_extension: DvbText::new(&rest[1..cp_end]),
+            initial_class: DvbText::new(&rest[cp_end..]),
         })
     }
 }
@@ -120,13 +118,14 @@ impl Serialize for DvbJApplicationLocationDescriptor<'_> {
         let mut pos = HEADER_LEN;
         buf[pos] = self.base_directory.len() as u8;
         pos += 1;
-        buf[pos..pos + self.base_directory.len()].copy_from_slice(self.base_directory);
+        buf[pos..pos + self.base_directory.len()].copy_from_slice(self.base_directory.raw());
         pos += self.base_directory.len();
         buf[pos] = self.classpath_extension.len() as u8;
         pos += 1;
-        buf[pos..pos + self.classpath_extension.len()].copy_from_slice(self.classpath_extension);
+        buf[pos..pos + self.classpath_extension.len()]
+            .copy_from_slice(self.classpath_extension.raw());
         pos += self.classpath_extension.len();
-        buf[pos..pos + self.initial_class.len()].copy_from_slice(self.initial_class);
+        buf[pos..pos + self.initial_class.len()].copy_from_slice(self.initial_class.raw());
         Ok(len)
     }
 }
@@ -149,9 +148,9 @@ mod tests {
             b'A', b'B', // initial_class = "AB" (no length prefix — consumes rest)
         ];
         let d = DvbJApplicationLocationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.base_directory, b"/");
-        assert_eq!(d.classpath_extension, b"lib/;");
-        assert_eq!(d.initial_class, b"AB");
+        assert_eq!(d.base_directory.raw(), b"/");
+        assert_eq!(d.classpath_extension.raw(), b"lib/;");
+        assert_eq!(d.initial_class.raw(), b"AB");
     }
 
     #[test]
@@ -165,17 +164,17 @@ mod tests {
                   // initial_class = empty
         ];
         let d = DvbJApplicationLocationDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.base_directory, b"/");
-        assert_eq!(d.classpath_extension, b";");
-        assert!(d.initial_class.is_empty());
+        assert_eq!(d.base_directory.raw(), b"/");
+        assert_eq!(d.classpath_extension.raw(), b";");
+        assert!(d.initial_class.raw().is_empty());
     }
 
     #[test]
     fn serialize_round_trip() {
         let d = DvbJApplicationLocationDescriptor {
-            base_directory: b"/apps",
-            classpath_extension: b"classes/",
-            initial_class: b"com.example.Main",
+            base_directory: DvbText::new(b"/apps"),
+            classpath_extension: DvbText::new(b"classes/"),
+            initial_class: DvbText::new(b"com.example.Main"),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
