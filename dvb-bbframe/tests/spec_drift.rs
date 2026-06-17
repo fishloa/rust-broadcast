@@ -75,7 +75,7 @@ fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
 
 #[test]
 fn ts_gs_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/ts_gs.toml");
+    let toml = include_str!("../docs/enums/en_302_755/ts_gs.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -111,7 +111,7 @@ fn ts_gs_toml_matches_enum() {
 
 #[test]
 fn bufs_unit_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/bufs_unit.toml");
+    let toml = include_str!("../docs/enums/en_302_755/bufs_unit.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries

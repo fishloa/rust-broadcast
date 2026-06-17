@@ -25,7 +25,7 @@ from pathlib import Path
 import pdfplumber
 
 PDF_PATH = Path(__file__).resolve().parents[2] / "docs/superpowers/specs/etsi_en_300_468_v01.19.01_dvb_si.pdf"
-DOCS = Path(__file__).resolve().parents[2] / "docs/dvb_si"
+DOCS = Path(__file__).resolve().parents[2] / "dvb-si/docs"
 OUT_DIR = Path(__file__).resolve().parent / "out"
 TABLE_DIR = OUT_DIR / "tables"
 SECTIONS_JSON = OUT_DIR / "sections.json"

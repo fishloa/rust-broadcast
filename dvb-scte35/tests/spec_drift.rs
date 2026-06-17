@@ -77,7 +77,7 @@ fn parse_entries(toml: &str) -> Vec<(u8, String, String)> {
 
 #[test]
 fn segmentation_type_id_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/segmentation_type_id.toml");
+    let toml = include_str!("../docs/enums/scte_35/segmentation_type_id.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -115,7 +115,7 @@ fn segmentation_type_id_toml_matches_enum() {
 
 #[test]
 fn device_restrictions_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/device_restrictions.toml");
+    let toml = include_str!("../docs/enums/scte_35/device_restrictions.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -150,7 +150,7 @@ fn device_restrictions_toml_matches_enum() {
 
 #[test]
 fn segmentation_upid_type_toml_matches_enum() {
-    let toml = include_str!("../spec_tables/segmentation_upid_type.toml");
+    let toml = include_str!("../docs/enums/scte_35/segmentation_upid_type.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries
@@ -188,7 +188,7 @@ fn segmentation_upid_type_toml_matches_enum() {
 
 #[test]
 fn splice_command_type_toml_matches_dispatch() {
-    let toml = include_str!("../spec_tables/splice_command_type.toml");
+    let toml = include_str!("../docs/enums/scte_35/splice_command_type.toml");
     let entries = parse_entries(toml);
 
     let toml_set: BTreeSet<(u8, String)> = entries

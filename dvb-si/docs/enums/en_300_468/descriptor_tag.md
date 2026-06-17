@@ -1,0 +1,90 @@
+# descriptor tag
+
+_ETSI EN 300 468 §6.1 Table 12 (+ ISO/IEC 13818-1 for MPEG descriptors 0x02-0x12)_
+
+> Values rendered from the co-located drift-guard [`descriptor_tag.toml`](./descriptor_tag.toml) — the spec defines these inline in a larger syntax table, so there is no standalone table to transcribe. The drift test keeps this list in lockstep with the Rust enum.
+
+| value | variant | spec meaning |
+|---|---|---|
+| 0x02 | `VideoStream` | video_stream_descriptor |
+| 0x03 | `AudioStream` | audio_stream_descriptor |
+| 0x04 | `Hierarchy` | hierarchy_descriptor |
+| 0x05 | `Registration` | registration_descriptor |
+| 0x06 | `DataStreamAlignment` | data_stream_alignment_descriptor |
+| 0x07 | `TargetBackgroundGrid` | target_background_grid_descriptor |
+| 0x08 | `VideoWindow` | video_window_descriptor |
+| 0x09 | `ConditionalAccess` | CA_descriptor |
+| 0x0A | `Iso639Language` | ISO_639_language_descriptor |
+| 0x0B | `SystemClock` | system_clock_descriptor |
+| 0x0C | `MultiplexBufferUtilization` | multiplex_buffer_utilization_descriptor |
+| 0x0D | `Copyright` | copyright_descriptor |
+| 0x0E | `MaximumBitrate` | maximum_bitrate_descriptor |
+| 0x0F | `PrivateDataIndicator` | private_data_indicator_descriptor |
+| 0x10 | `SmoothingBuffer` | smoothing_buffer_descriptor |
+| 0x11 | `Std` | STD_descriptor |
+| 0x12 | `Ibp` | IBP_descriptor |
+| 0x13 | `CarouselIdentifier` | carousel_identifier_descriptor |
+| 0x40 | `NetworkName` | network_name_descriptor |
+| 0x41 | `ServiceList` | service_list_descriptor |
+| 0x42 | `Stuffing` | stuffing_descriptor |
+| 0x43 | `SatelliteDeliverySystem` | satellite_delivery_system_descriptor |
+| 0x44 | `CableDeliverySystem` | cable_delivery_system_descriptor |
+| 0x45 | `VbiData` | VBI_data_descriptor |
+| 0x46 | `VbiTeletext` | VBI_teletext_descriptor |
+| 0x47 | `BouquetName` | bouquet_name_descriptor |
+| 0x48 | `Service` | service_descriptor |
+| 0x49 | `CountryAvailability` | country_availability_descriptor |
+| 0x4A | `Linkage` | linkage_descriptor |
+| 0x4B | `NvodReference` | NVOD_reference_descriptor |
+| 0x4C | `TimeShiftedService` | time_shifted_service_descriptor |
+| 0x4D | `ShortEvent` | short_event_descriptor |
+| 0x4E | `ExtendedEvent` | extended_event_descriptor |
+| 0x4F | `TimeShiftedEvent` | time_shifted_event_descriptor |
+| 0x50 | `Component` | component_descriptor |
+| 0x51 | `Mosaic` | mosaic_descriptor |
+| 0x52 | `StreamIdentifier` | stream_identifier_descriptor |
+| 0x53 | `CaIdentifier` | CA_identifier_descriptor |
+| 0x54 | `Content` | content_descriptor |
+| 0x55 | `ParentalRating` | parental_rating_descriptor |
+| 0x56 | `Teletext` | teletext_descriptor |
+| 0x57 | `Telephone` | telephone_descriptor |
+| 0x58 | `LocalTimeOffset` | local_time_offset_descriptor |
+| 0x59 | `Subtitling` | subtitling_descriptor |
+| 0x5A | `TerrestrialDeliverySystem` | terrestrial_delivery_system_descriptor |
+| 0x5B | `MultilingualNetworkName` | multilingual_network_name_descriptor |
+| 0x5C | `MultilingualBouquetName` | multilingual_bouquet_name_descriptor |
+| 0x5D | `MultilingualServiceName` | multilingual_service_name_descriptor |
+| 0x5E | `MultilingualComponent` | multilingual_component_descriptor |
+| 0x5F | `PrivateDataSpecifier` | private_data_specifier_descriptor |
+| 0x60 | `ServiceMove` | service_move_descriptor |
+| 0x61 | `ShortSmoothingBuffer` | short_smoothing_buffer_descriptor |
+| 0x62 | `FrequencyList` | frequency_list_descriptor |
+| 0x63 | `PartialTransportStream` | partial_transport_stream_descriptor |
+| 0x64 | `DataBroadcast` | data_broadcast_descriptor |
+| 0x65 | `Scrambling` | scrambling_descriptor |
+| 0x66 | `DataBroadcastId` | data_broadcast_id_descriptor |
+| 0x67 | `TransportStream` | transport_stream_descriptor |
+| 0x68 | `Dsng` | DSNG_descriptor |
+| 0x69 | `Pdc` | PDC_descriptor |
+| 0x6A | `Ac3` | AC-3_descriptor |
+| 0x6B | `AncillaryData` | ancillary_data_descriptor |
+| 0x6C | `CellList` | cell_list_descriptor |
+| 0x6D | `CellFrequencyLink` | cell_frequency_link_descriptor |
+| 0x6E | `AnnouncementSupport` | announcement_support_descriptor |
+| 0x6F | `ApplicationSignalling` | application_signalling_descriptor |
+| 0x70 | `AdaptationFieldData` | adaptation_field_data_descriptor |
+| 0x71 | `ServiceIdentifier` | service_identifier_descriptor |
+| 0x72 | `ServiceAvailability` | service_availability_descriptor |
+| 0x73 | `DefaultAuthority` | default_authority_descriptor |
+| 0x74 | `RelatedContent` | related_content_descriptor |
+| 0x75 | `TvaId` | TVA_id_descriptor |
+| 0x76 | `ContentIdentifier` | content_identifier_descriptor |
+| 0x77 | `TimeSliceFecIdentifier` | time_slice_fec_identifier_descriptor |
+| 0x78 | `EcmRepetitionRate` | ECM_repetition_rate_descriptor |
+| 0x79 | `S2SatelliteDeliverySystem` | S2_satellite_delivery_system_descriptor |
+| 0x7A | `EnhancedAc3` | enhanced_AC-3_descriptor |
+| 0x7B | `Dts` | DTS_descriptor |
+| 0x7C | `Aac` | AAC_descriptor |
+| 0x7D | `XaitLocation` | XAIT_location_descriptor |
+| 0x7E | `FtaContentManagement` | FTA_content_management_descriptor |
+| 0x7F | `Extension` | extension_descriptor |

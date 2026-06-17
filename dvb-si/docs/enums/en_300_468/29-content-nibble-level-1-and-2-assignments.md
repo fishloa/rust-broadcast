@@ -1,0 +1,129 @@
+## Table 29 — Content nibble level 1 and 2 assignments
+_§6.2.9, PDF pp. 68-69_
+
+| content_nibble_level_1 | content_nibble_level_2 | Description |
+|---|---|---|
+| 0x0 | 0x0 to 0xF | undefined content |
+|  | Movie/Drama: |
+| 0x1 | 0x0 | movie/drama (general) |
+| 0x1 | 0x1 | detective/thriller |
+| 0x1 | 0x2 | adventure/western/war |
+| 0x1 | 0x3 | science fiction/fantasy/horror |
+| 0x1 | 0x4 | comedy |
+| 0x1 | 0x5 | soap/melodrama/folkloric |
+| 0x1 | 0x6 | romance |
+| 0x1 | 0x7 | serious/classical/religious/historical movie/drama |
+| 0x1 | 0x8 | adult movie/drama |
+| 0x1 | 0x9 to 0xE | reserved for future use |
+| 0x1 | 0xF | user defined |
+|  | News/Current | affairs: |
+| 0x2 | 0x0 | news/current affairs (general) |
+| 0x2 | 0x1 | news/weather report |
+| 0x2 | 0x2 | news magazine |
+| 0x2 | 0x3 | documentary |
+| 0x2 | 0x4 | discussion/interview/debate |
+| 0x2 | 0x5 to 0xE | reserved for future use |
+| 0x2 | 0xF | user defined |
+|  | Show/Game | show: |
+| 0x3 | 0x0 | show/game show (general) |
+| 0x3 | 0x1 | game show/quiz/contest |
+| 0x3 | 0x2 | variety show |
+| 0x3 | 0x3 | talk show |
+| 0x3 | 0x4 to 0xE | reserved for future use |
+| 0x3 | 0xF | user defined |
+|  | Sports: |
+| 0x4 | 0x0 | sports (general) |
+| 0x4 | 0x1 | special events (Olympic Games, World Cup, etc.) |
+| 0x4 | 0x2 | sports magazines |
+| 0x4 | 0x3 | football/soccer |
+| 0x4 | 0x4 | tennis/squash |
+| 0x4 | 0x5 | team sports (excluding football) |
+| 0x4 | 0x6 | athletics |
+| 0x4 | 0x7 | motor sport |
+| 0x4 | 0x8 | water sport |
+| 0x4 | 0x9 | winter sports |
+| 0x4 | 0xA | equestrian |
+| 0x4 | 0xB | martial sports |
+| 0x4 | 0xC to 0xE | reserved for future use |
+| 0x4 | 0xF | user defined |
+|  | Children's/Youth | programmes: |
+| 0x5 | 0x0 | children's/youth programmes (general) |
+| 0x5 | 0x1 | pre-school children's programmes |
+| 0x5 | 0x2 | entertainment programmes for 6 to 14 |
+| 0x5 | 0x3 | entertainment programmes for 10 to 16 |
+| 0x5 | 0x4 | informational/educational/school programmes |
+| 0x5 | 0x5 | cartoons/puppets |
+| 0x5 | 0x6 to 0xE | reserved for future use |
+| 0x5 | 0xF | user defined |
+|  | Music/Ballet/Dance: |
+| 0x6 | 0x0 | music/ballet/dance (general) |
+| 0x6 | 0x1 | rock/pop |
+| 0x6 | 0x2 | serious music/classical music |
+| 0x6 | 0x3 | folk/traditional music |
+| 0x6 | 0x4 | jazz |
+| 0x6 | 0x5 | musical/opera |
+| 0x6 | 0x6 | ballet |
+| 0x6 | 0x7 to 0xE | reserved for future use |
+| 0x6 | 0xF | user defined |
+|  | Arts/Culture (without | music): |
+| 0x7 | 0x0 | arts/culture (without music, general) |
+| 0x7 | 0x1 | performing arts |
+| 0x7 | 0x2 | fine arts |
+| 0x7 | 0x3 | religion |
+| 0x7 | 0x4 | popular culture/traditional arts |
+| 0x7 | 0x5 | literature |
+| 0x7 | 0x6 | film/cinema |
+| 0x7 | 0x7 | experimental film/video |
+| 0x7 | 0x8 | broadcasting/press |
+| 0x7 | 0x9 | new media |
+| 0x7 | 0xA | arts/culture magazines |
+| 0x7 | 0xB | fashion |
+| 0x7 | 0xC to 0xE | reserved for future use |
+| 0x7 | 0xF | user defined |
+|  | Social/Political issues/Economics: |
+| 0x8 | 0x0 | social/political issues/economics (general) |
+| 0x8 | 0x1 | magazines/reports/documentary |
+| 0x8 | 0x2 | economics/social advisory |
+| 0x8 | 0x3 | remarkable people |
+| 0x8 | 0x4 to 0xE | reserved for future use |
+| 0x8 | 0xF | user defined |
+|  | Education/Science/Factual | topics: |
+| 0x9 | 0x0 | education/science/factual topics (general) |
+| 0x9 | 0x1 | nature/animals/environment |
+| 0x9 | 0x2 | technology/natural sciences |
+| 0x9 | 0x3 | medicine/physiology/psychology |
+| 0x9 | 0x4 | foreign countries/expeditions |
+| 0x9 | 0x5 | social/spiritual sciences |
+| 0x9 | 0x6 | further education |
+| 0x9 | 0x7 | languages |
+| 0x9 | 0x8 to 0xE | reserved for future use |
+| 0x9 | 0xF | user defined |
+|  | Leisure hobbies: |
+| 0xA | 0x0 | leisure hobbies (general) |
+| 0xA | 0x1 | tourism/travel |
+| 0xA | 0x2 | handicraft |
+| 0xA | 0x3 | motoring |
+| 0xA | 0x4 | fitness and health |
+| 0xA | 0x5 | cooking |
+| 0xA | 0x6 | advertisement/shopping |
+| 0xA | 0x7 | gardening |
+| 0xA | 0x8 to 0xE | reserved for future use |
+| 0xA | 0xF | user defined |
+|  | Special characteristics: |
+| 0xB | 0x0 | original language |
+| 0xB | 0x1 | black and white |
+| 0xB | 0x2 | unpublished |
+| 0xB | 0x3 | live broadcast |
+| 0xB | 0x4 | plano-stereoscopic |
+| 0xB | 0x5 | local or regional |
+| 0xB | 0x6 to 0xE | reserved for future use |
+| 0xB | 0xF | user defined |
+|  | Adult: |
+| 0xC | 0x0 | adult (general) |
+| 0xC | 0x1 to 0xE | reserved for future use |
+| 0xC | 0xF | user defined |
+|  | Reserved for future use: |
+| 0xD to 0xE | 0x0 to 0xF | reserved for future use |
+|  | User defined: |
+| 0xF | 0x0 to 0xF | user defined |
+

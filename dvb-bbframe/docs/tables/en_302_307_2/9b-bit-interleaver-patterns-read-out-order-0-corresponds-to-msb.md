@@ -1,0 +1,33 @@
+## Table 9b — Bit Interleaver Patterns (read out order - 0 corresponds to MSB,
+_§5.3.3, PDF p. 26_
+
+| Implementation MODCOD Name | Bit Interleaver Pattern |
+|---|---|
+| 4+12APSK 140/180 | 3210 |
+| 4+12APSK 154/180 | 0321 |
+| 4+8+4+16APSK 128/180 | 40312 |
+| 4+8+4+16APSK 132/180 | 40312 |
+| 4+8+4+16APSK 140/180 | 40213 |
+| 16+16+16+16APSK 128/180 | 305214 |
+| 4+12+20+28APSK 132/180 | 520143 |
+| 128APSK 135/180 | 4250316 |
+| 128APSK 140/180 | 4130256 |
+| 256APSK 116/180 | 40372156 |
+| 256APSK 20/30 | 01234567 |
+| 256APSK 124/180 | 46320571 |
+| 256APSK 128/180 | 75642301 |
+| 256APSK 22/30 | 01234567 |
+| 256APSK 135/180 | 50743612 |
+| Implementation MODCOD Name | Bit Interleaver Pattern |
+| 8PSK, 7/15 | 102 |
+| 8PSK, 8/15 | 102 |
+| 8PSK, 26/45 | 102 |
+| 8PSK, 32/45 | 012 |
+| 4+12APSK, 7/15 | 2103 |
+| 4+12APSK, 8/15 | 2103 |
+| 4+12APSK, 26/45 | 2130 |
+| 4+12APSK, 3/5 | 3201 |
+| 4+12APSK, 32/45 | 0123 |
+| 4+12+16rbAPSK APSK, 2/3 | 41230 |
+| 4+12+16rbAPSK APSK, 32/45 | 10423 |
+
