@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- **MPEG-2 systems descriptors 0x02–0x12 (#236)**, transcribed from Rec. ITU-T
+  H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.6 (`dvb-si/docs/descriptors/iso_13818_1/`):
+  `video_stream` (0x02), `audio_stream` (0x03), `hierarchy` (0x04),
+  `target_background_grid` (0x07), `video_window` (0x08), `system_clock` (0x0B),
+  `multiplex_buffer_utilization` (0x0C), `copyright` (0x0D), `maximum_bitrate` (0x0E),
+  `smoothing_buffer` (0x10), `STD` (0x11) and `IBP` (0x12) — each now decoded as a
+  typed `AnyDescriptor` variant (previously fell through to the unknown arm).
+  Adds the `FrameRateCode` (Table 2-47) and `HierarchyType` (Table 2-50) enums
+  with the standard `name()` + `Display` label pair.
+
 ## 7.3.0 — 2026-06-17
 
 ### Added
