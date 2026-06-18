@@ -7,6 +7,16 @@ variant = "ImageIcon"
 spec = "image_icon_descriptor"
 
 [[entry]]
+value = 0x02
+variant = "Cp"
+spec = "CP_descriptor"
+
+[[entry]]
+value = 0x03
+variant = "CpIdentifier"
+spec = "CP_identifier_descriptor"
+
+[[entry]]
 value = 0x04
 variant = "T2DeliverySystem"
 spec = "T2_delivery_system_descriptor"
@@ -65,6 +75,11 @@ spec = "T2-MI_descriptor"
 value = 0x13
 variant = "UriLinkage"
 spec = "URI_linkage_descriptor"
+
+[[entry]]
+value = 0x14
+variant = "CiAncillaryData"
+spec = "CI_ancillary_data_descriptor"
 
 [[entry]]
 value = 0x15

@@ -72,6 +72,9 @@ mod ac4;
 mod audio_preselection;
 mod c2_bundle_delivery_system;
 mod c2_delivery_system;
+mod ci_ancillary_data;
+mod cp;
+mod cp_identifier;
 mod image_icon;
 mod message;
 mod network_change_notify;
@@ -99,6 +102,9 @@ pub use ac4::*;
 pub use audio_preselection::*;
 pub use c2_bundle_delivery_system::*;
 pub use c2_delivery_system::*;
+pub use ci_ancillary_data::*;
+pub use cp::*;
+pub use cp_identifier::*;
 pub use image_icon::*;
 pub use message::*;
 pub use network_change_notify::*;
@@ -159,6 +165,10 @@ pub(crate) const VD_DISPARITY_LEN: usize = 3;
 pub enum ExtensionTag {
     /// image_icon_descriptor (Table 145, §6.4.7).
     ImageIcon = 0x00,
+    /// CP_descriptor (Table 113, §6.4.3).
+    Cp = 0x02,
+    /// CP_identifier_descriptor (Table 114, §6.4.6.1).
+    CpIdentifier = 0x03,
     /// T2_delivery_system_descriptor.
     T2DeliverySystem = 0x04,
     /// SH_delivery_system_descriptor (Table 119, §6.4.6.2).
@@ -185,6 +195,8 @@ pub enum ExtensionTag {
     T2mi = 0x11,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
+    /// CI_ancillary_data_descriptor (Table 112, §6.4.3).
+    CiAncillaryData = 0x14,
     /// AC-4_descriptor (annex D).
     Ac4 = 0x15,
     /// C2_bundle_delivery_system_descriptor.
@@ -317,6 +329,10 @@ declare_extension_bodies! {'a;
     /// `0x00` — image_icon (Table 145, §6.4.7; icon_transport_mode Table 146, §6.4.8;
     /// coordinate_system Table 147, §6.4.8).
     ImageIcon = 0x00 => ImageIcon<'a>,
+    /// `0x02` — CP (Table 113, §6.4.3).
+    Cp = 0x02 => Cp<'a>,
+    /// `0x03` — CP_identifier (Table 114, §6.4.6.1).
+    CpIdentifier = 0x03 => CpIdentifier,
     /// `0x04` — T2_delivery_system (Table 133, §6.4.6.3).
     T2DeliverySystem = 0x04 => T2DeliverySystem,
     /// `0x05` — SH_delivery_system (Table 119, §6.4.6.2).
@@ -343,6 +359,8 @@ declare_extension_bodies! {'a;
     T2mi = 0x11 => T2mi<'a>,
     /// `0x13` — URI_linkage (Table 159, §6.4.16.1).
     UriLinkage = 0x13 => UriLinkage<'a>,
+    /// `0x14` — CI_ancillary_data (Table 112, §6.4.3).
+    CiAncillaryData = 0x14 => CiAncillaryData<'a>,
     /// `0x15` — AC-4 (annex D).
     Ac4 = 0x15 => Ac4<'a>,
     /// `0x16` — C2_bundle_delivery_system (Table 139, §6.4.6.4).
