@@ -19,9 +19,9 @@ feed all the way down to a service name string.
 
 | | |
 |---|---|
-| **Versions** | 7 library crates at **7.0.0** (lockstep); `dvb-stream` independently at **0.1.0** |
+| **Versions** | 7 core crates at **7.4.0** (lockstep); `dvb-stream` (**0.2.0**) and `dvb-pes` (**0.1.0**) independently versioned |
 | **MSRV** | **1.81** across the workspace |
-| **`no_std`** | The 6 library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
+| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-pes`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
 | **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
 
 To build the library crates for an embedded target:
@@ -43,6 +43,7 @@ $ cargo build --workspace --no-default-features --locked \
 | [`dvb-tools`](dvb-tools/) | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | [![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools) | Command-line analyzer over the family: `dump` / `services` / `epg` / `pids` / `t2mi`. |
 | [`dvb-conformance`](dvb-conformance/) | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | [![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance) | ETSI TR 101 290 stream conformance monitor: Priority-1/2 + SI-repetition indicators on a caller-supplied clock. |
 | [`dvb-stream`](dvb-stream/) | [![crates.io](https://img.shields.io/crates/v/dvb-stream.svg)](https://crates.io/crates/dvb-stream) | [![docs.rs](https://img.shields.io/docsrs/dvb-stream)](https://docs.rs/dvb-stream) | Async/tokio stream adapters: `SectionStream` and `T2miEventStream` over any `AsyncRead` source (file, TCP, UDP multicast). **Independently versioned** (tokio MSRV moves faster than the workspace). |
+| [`dvb-pes`](dvb-pes/) | [![crates.io](https://img.shields.io/crates/v/dvb-pes.svg)](https://crates.io/crates/dvb-pes) | [![docs.rs](https://img.shields.io/docsrs/dvb-pes)](https://docs.rs/dvb-pes) | PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3): `PesPacket`, 33-bit `Pts`/`Dts`, per-PID `PesAssembler`. `no_std`, depends only on `dvb-common`. **Independently versioned.** |
 
 For GSE, see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 

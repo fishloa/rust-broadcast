@@ -25,3 +25,4 @@ tools/dvb-si-audit/out/
 /demo/pkg/
 /demo/target/
 .playwright-mcp/
+/target-gate/
