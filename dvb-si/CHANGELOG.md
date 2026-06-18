@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- `examples/`: `build_and_parse_pat` (build → serialize → parse a PAT) and
+  `list_services` (demux a capture, list services + table sections).
+
 ## 7.4.0 — 2026-06-18
 
 ### Added

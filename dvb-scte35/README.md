@@ -130,6 +130,13 @@ The syntax tables and the assignment tables are hand-transcribed in
 35 section, table and tag/command_type it implements. SCTE 35 is published by
 SCTE at no cost.
 
+## Examples
+
+Run with `cargo run -p dvb-scte35 --example <name>`:
+
+- **`parse_splice_insert`** — parse a real `splice_info_section` carrying a `splice_insert()`.
+- **`round_trip_and_descriptors`** — walk the splice descriptor loop and prove the serializer is byte-exact.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0 at your option.

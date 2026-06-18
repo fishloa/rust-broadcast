@@ -490,6 +490,13 @@ section parser renames, `AnyTableSection`, `table_section()`, CamelCase
 [`dvb-tools`](https://crates.io/crates/dvb-tools) — CLI: dump / services / epg / pids / t2mi\
 For GSE see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 
+## Examples
+
+Run with `cargo run -p dvb-si --example <name>`:
+
+- **`build_and_parse_pat`** — build a PAT, serialize it to wire bytes, parse it back (the symmetric contract, no TS source needed).
+- **`list_services`** — demux a real capture, list its services (decoded names) and the table sections seen.
+
 ## License
 
 Licensed under either of MIT or Apache-2.0, at your option.

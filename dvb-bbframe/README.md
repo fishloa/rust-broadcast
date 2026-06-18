@@ -109,6 +109,13 @@ Rust **1.81**.
 The structured spec reference is under [`docs/`](docs/); the canonical PDFs are
 vendored in the workspace `specs/` directory.
 
+## Examples
+
+Run with `cargo run -p dvb-bbframe --example <name>`:
+
+- **`parse_bbheader`** — parse a single DVB-S2 BBHEADER (with a valid Normal-Mode CRC-8).
+- **`walk_capture`** — reassemble BBFrames from a real DVB-S2 capture and parse every header.
+
 ## License
 
 Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `examples/`: `parse_pes_packet` (parse one PES packet from bytes) and
+  `extract_pts` (depacketize a capture, reassemble PES, report the PTS timeline).
+
 ## 0.1.0 — 2026-06-18
 
 ### Added

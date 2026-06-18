@@ -133,6 +133,13 @@ Rust **1.81**.
 - [ETSI TS 102 773 v1.4.1](https://www.etsi.org/deliver/etsi_ts/102700_102799/102773/) — DVB-T2 Modulator Interface (T2-MI)
 - [ETSI EN 302 755 v1.4.1](https://www.etsi.org/deliver/etsi_en/302700_302799/302755/) — DVB-T2 Frame structure, channel coding and modulation
 
+## Examples
+
+Run with `cargo run -p dvb-t2mi --example <name>`:
+
+- **`parse_header`** — parse a T2-MI packet header from raw bytes.
+- **`pump_capture`** — pump T2-MI out of a real MPEG-TS capture and tally BBFrame / L1 / timestamp payloads.
+
 ## License
 
 Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0

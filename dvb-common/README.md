@@ -120,6 +120,13 @@ labels next to variant docs and greppable; removes identical boilerplate.
 - Anything with a non-trivial dependency. If a helper needs `bytes` / `serde`,
   it belongs in a consumer with the matching feature flag.
 
+## Examples
+
+Run with `cargo run -p dvb-common --example <name>`:
+
+- **`crc_and_bcd`** — CRC-32/MPEG-2 over a buffer (plus the "data+CRC ⇒ 0" check) and BCD coding.
+- **`implement_parse_serialize`** — implement the symmetric `Parse`/`Serialize` contract for your own wire type and round-trip it.
+
 ## License
 
 MIT OR Apache-2.0, at your option.
