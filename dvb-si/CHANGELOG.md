@@ -18,6 +18,11 @@
   and `MVC_extension` (0x31). Opaque MPEG-4-systems sub-structures
   (`InitialObjectDescriptor`, `MuxCodeTableEntry`, FlexMux buffer descriptors,
   `si_rbsp`) are preserved as borrowed byte slices.
+- **MPEG-2 systems descriptors — conditional set (#237)**: `content_labeling`
+  (0x24), `metadata_pointer` (0x25), `metadata` (0x26) and `J2K_video` (0x32),
+  with their nested optional blocks modelled as `Option` sub-structs and the
+  `ContentTimeBaseIndicator`, `MetadataFormat`, `MpegCarriageFlags` and
+  `DecoderConfigFlags` enums. Each conditional branch has its own round-trip test.
 - **MPEG-2 systems descriptors 0x02–0x12 (#236)**, transcribed from Rec. ITU-T
   H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.6 (`dvb-si/docs/descriptors/iso_13818_1/`):
   `video_stream` (0x02), `audio_stream` (0x03), `hierarchy` (0x04),

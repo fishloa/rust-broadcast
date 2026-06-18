@@ -225,6 +225,9 @@ declare_descriptors! {'a;
     Muxcode = 0x21 => crate::descriptors::muxcode::MuxcodeDescriptor<'a>,
     FmxBufferSize = 0x22 => crate::descriptors::fmx_buffer_size::FmxBufferSizeDescriptor<'a>,
     MultiplexBuffer = 0x23 => crate::descriptors::multiplex_buffer::MultiplexBufferDescriptor,
+    ContentLabeling = 0x24 => crate::descriptors::content_labeling::ContentLabelingDescriptor<'a>,
+    MetadataPointer = 0x25 => crate::descriptors::metadata_pointer::MetadataPointerDescriptor<'a>,
+    Metadata = 0x26 => crate::descriptors::metadata::MetadataDescriptor<'a>,
     MetadataStd = 0x27 => crate::descriptors::metadata_std::MetadataStdDescriptor,
     AvcVideo = 0x28 => crate::descriptors::avc_video::AvcVideoDescriptor,
     AvcTimingAndHrd = 0x2A => crate::descriptors::avc_timing_and_hrd::AvcTimingAndHrdDescriptor,
@@ -233,6 +236,7 @@ declare_descriptors! {'a;
     AuxiliaryVideoStream = 0x2F => crate::descriptors::auxiliary_video_stream::AuxiliaryVideoStreamDescriptor<'a>,
     SvcExtension = 0x30 => crate::descriptors::svc_extension::SvcExtensionDescriptor,
     MvcExtension = 0x31 => crate::descriptors::mvc_extension::MvcExtensionDescriptor,
+    J2kVideo = 0x32 => crate::descriptors::j2k_video::J2kVideoDescriptor<'a>,
     HevcVideo = 0x38 => crate::descriptors::hevc_video::HevcVideoDescriptor,
     // DVB descriptors (ETSI EN 300 468) — contiguous 0x40..=0x7F.
     NetworkName = 0x40 => crate::descriptors::network_name::NetworkNameDescriptor<'a>,
