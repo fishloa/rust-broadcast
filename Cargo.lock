@@ -262,6 +262,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-pes"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-scte35"
 version = "7.4.0"
 dependencies = [

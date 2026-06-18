@@ -10,7 +10,11 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding, TS packet / section reassembly.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
-- **dvb-scte35** — reserved crate (planned; directory exists but is not yet a workspace member).
+- **dvb-scte35** — ANSI/SCTE 35 splice information (DPI cueing); live.
+- **dvb-conformance** — ETSI TR 101 290 stream conformance monitor.
+- **dvb-tools** — CLI analyzer (`dump`/`services`/`epg`/`pids`/`t2mi`).
+- **dvb-stream** — async/tokio stream adapters; independently versioned.
+- **dvb-pes** — PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 
