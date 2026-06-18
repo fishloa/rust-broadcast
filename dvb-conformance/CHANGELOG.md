@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [7.4.0] — 2026-06-18
+
+Lockstep release; no functional changes.
+
 ## [7.3.0] — 2026-06-17
 
 ### Changed

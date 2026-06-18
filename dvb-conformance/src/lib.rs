@@ -26,6 +26,7 @@
 //! - ISO/IEC 13818-1 (MPEG-2 Systems)
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
 
 use alloc::collections::BTreeMap;

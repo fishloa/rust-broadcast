@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PMT version="1" current="true" service_id="0x0001" PCR_PID="0x0100">
+    <component elementary_PID="0x0200" stream_type="0x02">
+      <hierarchy_descriptor hierarchy_type="3" hierarchy_layer_index="2" tref_present="false" hierarchy_embedded_layer_index="5" hierarchy_channel="7"/>
+      <target_background_grid_descriptor horizontal_size="1920" vertical_size="1080" aspect_ratio_information="3"/>
+      <video_window_descriptor horizontal_offset="10" vertical_offset="20" window_priority="5"/>
+    </component>
+    <component elementary_PID="0x0201" stream_type="0x02">
+      <system_clock_descriptor external_clock_reference="true" clock_accuracy_integer="30" clock_accuracy_exponent="2"/>
+      <maximum_bitrate_descriptor maximum_bitrate="50000"/>
+      <smoothing_buffer_descriptor sb_leak_rate="4000" sb_size="8192"/>
+      <STD_descriptor leak_valid="true"/>
+      <IBP_descriptor closed_gop="true" identical_gop="false" max_gop_length="15"/>
+    </component>
+    <component elementary_PID="0x0202" stream_type="0x1B">
+      <AVC_timing_and_HRD_descriptor hrd_management_valid="true" num_units_in_tick="3000" fixed_frame_rate="true" temporal_poc="false" picture_to_display_conversion="false"/>
+    </component>
+    <component elementary_PID="0x0203" stream_type="0x0F">
+      <MPEG2_AAC_audio_descriptor MPEG2_AAC_profile="0x40" MPEG2_AAC_channel_configuration="2" MPEG2_AAC_additional_information="0"/>
+    </component>
+    <component elementary_PID="0x0204" stream_type="0x1F">
+      <SVC_extension_descriptor width="1920" height="1080" frame_rate="25" average_bitrate="5000" maximum_bitrate="8000" dependency_id="1" quality_id_start="0" quality_id_end="3" temporal_id_start="0" temporal_id_end="2" no_sei_nal_unit_present="true"/>
+    </component>
+    <component elementary_PID="0x0205" stream_type="0x20">
+      <MVC_extension_descriptor average_bitrate="5000" maximum_bitrate="8000" view_association_not_present="false" base_view_is_left_eyeview="true" view_order_index_min="0" view_order_index_max="512" temporal_id_start="0" temporal_id_end="2" no_sei_nal_unit_present="true" no_prefix_nal_unit_present="false"/>
+    </component>
+  </PMT>
+</tsduck>

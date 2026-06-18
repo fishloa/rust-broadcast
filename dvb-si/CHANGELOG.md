@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.4.0 — 2026-06-18
+
 ### Added
 - **NorDig private logical-channel descriptors (#239)**, from NorDig Unified
   Requirements v3.1.1 §12.2.9: `NordigLogicalChannelV1` (tag 0x83, **14-bit** LCN —

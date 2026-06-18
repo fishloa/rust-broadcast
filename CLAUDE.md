@@ -53,7 +53,8 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
    - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
    - doc build with `RUSTDOCFLAGS="-D warnings"`
-5. **Releases are tag-driven and CI-only.** Bump all four crate versions together, merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
+5. **Releases are tag-driven and CI-only.** Bump all **seven** core crate versions together (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-tools`; `dvb-stream` releases independently), merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
+6. **Every release produces documentation** per [`docs/RELEASE-DOCS.md`](docs/RELEASE-DOCS.md) — the authoritative standard for the docs.rs / crates.io / GitHub surfaces. Run its **per-release checklist** each tag (CHANGELOG → release note → README coverage → crate-root `//!` → Cargo.toml + docs.rs metadata sweep → GitHub Release → post-publish verify docs.rs built green). This is enforced like the gate suite.
 
 ## Workflow: the delegated-engineering loop
 

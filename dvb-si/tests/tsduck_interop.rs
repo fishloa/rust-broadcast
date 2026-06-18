@@ -137,3 +137,90 @@ fn decodes_tsduck_compiled_conditional_descriptors() {
     assert!(seen_meta, "metadata_descriptor not decoded");
     assert!(seen_j2k, "J2K_video_descriptor not decoded");
 }
+
+const PMT3: &[u8] = include_bytes!("fixtures/tsduck-mpeg-simple-pmt.bin");
+
+#[test]
+fn decodes_tsduck_compiled_simple_descriptors() {
+    let pmt = PmtSection::parse(PMT3).expect("TSDuck PMT section must parse");
+    let mut seen = std::collections::BTreeSet::new();
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            match desc.expect("descriptor must parse") {
+                AnyDescriptor::Hierarchy(d) => {
+                    seen.insert("hierarchy");
+                    assert_eq!(d.hierarchy_layer_index, 2);
+                }
+                AnyDescriptor::TargetBackgroundGrid(d) => {
+                    seen.insert("tbg");
+                    assert_eq!(d.horizontal_size, 1920);
+                    assert_eq!(d.aspect_ratio_information, 3);
+                }
+                AnyDescriptor::VideoWindow(d) => {
+                    seen.insert("vw");
+                    assert_eq!(d.window_priority, 5);
+                }
+                AnyDescriptor::SystemClock(d) => {
+                    seen.insert("sysclk");
+                    assert!(d.external_clock_reference_indicator);
+                    assert_eq!(d.clock_accuracy_integer, 30);
+                }
+                AnyDescriptor::MaximumBitrate(d) => {
+                    seen.insert("maxbr");
+                    // TSDuck XML "50000" is bits/s; the raw 22-bit field is in
+                    // units of 50 bytes/s = 400 bits/s → 50000/400 = 125.
+                    assert_eq!(d.maximum_bitrate, 125);
+                }
+                AnyDescriptor::SmoothingBuffer(d) => {
+                    seen.insert("smooth");
+                    assert_eq!(d.sb_size, 8192);
+                }
+                AnyDescriptor::Std(d) => {
+                    seen.insert("std");
+                    assert!(d.leak_valid_flag);
+                }
+                AnyDescriptor::Ibp(d) => {
+                    seen.insert("ibp");
+                    assert!(d.closed_gop_flag);
+                    assert_eq!(d.max_gop_length, 15);
+                }
+                AnyDescriptor::AvcTimingAndHrd(d) => {
+                    seen.insert("avctiming");
+                    assert!(d.hrd_management_valid_flag);
+                }
+                AnyDescriptor::Mpeg2AacAudio(d) => {
+                    seen.insert("aac");
+                    assert_eq!(d.mpeg_2_aac_profile, 0x40);
+                }
+                AnyDescriptor::SvcExtension(d) => {
+                    seen.insert("svc");
+                    assert_eq!(d.width, 1920);
+                }
+                AnyDescriptor::MvcExtension(d) => {
+                    seen.insert("mvc");
+                    assert_eq!(d.view_order_index_max, 512);
+                }
+                _ => {}
+            }
+        }
+    }
+    for k in [
+        "hierarchy",
+        "tbg",
+        "vw",
+        "sysclk",
+        "maxbr",
+        "smooth",
+        "std",
+        "ibp",
+        "avctiming",
+        "aac",
+        "svc",
+        "mvc",
+    ] {
+        assert!(
+            seen.contains(k),
+            "{k} descriptor not decoded from TSDuck PMT"
+        );
+    }
+}
