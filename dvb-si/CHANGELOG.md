@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- **NorDig private logical-channel descriptors (#239)**, from NorDig Unified
+  Requirements v3.1.1 §12.2.9: `NordigLogicalChannelV1` (tag 0x83, **14-bit** LCN —
+  distinct from the EACEM/D-Book 10-bit form on the same tag) and
+  `NordigLogicalChannelV2` (tag 0x87, channel-list grouped with Annex-A names +
+  per-list country_code and 10-bit per-service LCN). Register both via
+  `DescriptorRegistry::with_nordig_lcn()` under `private_data_specifier` 0x00000029.
 - **DVB extension-descriptor mop-up (#238)**: `CP` (ext-tag 0x02), `CP_identifier`
   (0x03) and `CI_ancillary_data` (0x14), from ETSI EN 300 468 §6.4 — now typed
   `ExtensionBody` variants. (`cpcm_delivery_signalling` 0x01 and DTS-HD/DTS-Neural

@@ -70,6 +70,7 @@ use alloc::collections::BTreeMap;
 use core::any::Any;
 
 use crate::descriptors::any::AnyDescriptor;
+use crate::descriptors::private_data_specifier::PDS_NORDIG;
 
 // ---------------------------------------------------------------------------
 // DescriptorObject trait
@@ -305,6 +306,15 @@ impl DescriptorRegistry {
     /// opt-in when the matching PDS is active.
     pub fn with_logical_channel_for_pds(&mut self, pds: u32) -> &mut Self {
         self.logical_channel_pds.insert(pds);
+        self
+    }
+
+    /// Register both NorDig logical channel descriptors (v1 tag 0x83 and
+    /// v2 tag 0x87) for PDS_NORDIG (0x00000029). See
+    /// [`register_for_pds`][Self::register_for_pds].
+    pub fn with_nordig_lcn(&mut self) -> &mut Self {
+        self.register_for_pds::<crate::descriptors::nordig::NordigLogicalChannelV1>(PDS_NORDIG);
+        self.register_for_pds::<crate::descriptors::nordig::NordigLogicalChannelV2>(PDS_NORDIG);
         self
     }
 
