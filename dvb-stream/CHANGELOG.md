@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `examples/`: `count_sections` (drive `SectionStream` over an in-memory TS) and
+  `stream_stats` (tally table types + report demux/resync stats).
+
 ## [0.2.0] — 2026-06-16
 
 ### Added

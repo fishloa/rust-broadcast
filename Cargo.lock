@@ -312,6 +312,7 @@ dependencies = [
  "dvb-si",
  "dvb-t2mi",
  "futures-core",
+ "futures-util",
  "tokio",
 ]
 

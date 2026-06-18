@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- `examples/`: `parse_bbheader` (parse one BBHEADER) and `walk_capture`
+  (reassemble BBFrames from a real DVB-S2 capture and parse every header).
+
 ## [7.4.0] — 2026-06-18
 
 Lockstep release; no functional changes.

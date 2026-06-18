@@ -48,6 +48,13 @@ In: PES packet header, `stream_id`, `PES_packet_length` (incl. unbounded video
 elementary-stream codec bitstream parsing (the consumer's job); network transport
 (see `dvb-stream`).
 
+## Examples
+
+Run with `cargo run -p dvb-pes --example <name>`:
+
+- **`parse_pes_packet`** — parse one PES packet from raw bytes (stream_id + PTS + payload).
+- **`extract_pts`** — depacketize a real capture, reassemble PES on a PID, and report the PTS timeline.
+
 ## License
 
 MIT OR Apache-2.0.

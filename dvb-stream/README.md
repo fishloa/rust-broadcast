@@ -64,6 +64,13 @@ tokio's own MSRV moves faster than the workspace pin.
 |---------|---------|-------------|
 | `udp`   | on      | `SectionStream::bind_multicast` / `T2miEventStream::bind_multicast` via `tokio::net::UdpSocket`. |
 
+## Examples
+
+Run with `cargo run -p dvb-stream --example <name>`:
+
+- **`count_sections`** — drive the async `SectionStream` over an in-memory TS and count SI sections.
+- **`stream_stats`** — tally table types and report demux + resync statistics.
+
 ## License
 
 MIT OR Apache-2.0.

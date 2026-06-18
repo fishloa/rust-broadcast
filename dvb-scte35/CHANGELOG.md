@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+- `examples/`: `parse_splice_insert` (parse a real `splice_insert` section) and
+  `round_trip_and_descriptors` (walk the descriptor loop + byte-exact round-trip).
+
 ## [7.4.0] — 2026-06-18
 
 Lockstep release; no functional changes.

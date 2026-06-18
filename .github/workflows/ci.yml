@@ -33,6 +33,11 @@ jobs:
       # the library crates' bare --no-default-features build.
       - name: Build (all features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
+      # Examples are a published docs surface (they show on docs.rs and double as
+      # compile-checked usage docs). Build the whole workspace's examples — no
+      # excludes, so dvb-stream/dvb-conformance examples are covered too.
+      - name: Build examples (all features)
+        run: cargo build --workspace --examples --all-features --locked
       # nextest enforces the per-test terminate-after timeout (.config/nextest.toml
       # [profile.ci]) so a hung/runaway test FAILS instead of blocking CI; it does
       # not run doctests, which get their own bounded lane below.

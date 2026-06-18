@@ -99,6 +99,13 @@ Rust **1.81**.
 - ETSI TR 101 290 v1.4.1 (2023-05) — DVB Measurement Guidelines (§5.2.1 Table 5.0a, §5.2.2 Table 5.0b, §5.2.3 Table 5.0c)
 - ISO/IEC 13818-1 — MPEG-2 Systems
 
+## Examples
+
+Run with `cargo run -p dvb-conformance --example <name>`:
+
+- **`monitor_stream`** — run the TR 101 290 monitor over a capture and print the headline stats.
+- **`priority_breakdown`** — tally findings by measurement priority (1/2/3) and indicator.
+
 ## License
 
 Licensed under either of MIT ([LICENSE-MIT](../LICENSE-MIT)) or Apache-2.0

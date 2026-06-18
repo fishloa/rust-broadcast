@@ -66,7 +66,9 @@ CLAUDE.md → "Releases are tag-driven"). One-time setup was completed in v7.4.0
 - **SECURITY.md** — supported versions, private reporting, hardening posture
   (parser family + cargo-fuzz).
 - **`examples/`** — small per-crate runnable examples double as docs and are
-  CI-compilable; surface on docs.rs.
+  CI-compilable; surface on docs.rs. Every library crate ships two (a basic
+  quickstart + an advanced/real-capture walkthrough) as of #253; the CI
+  `cargo build --workspace --examples --all-features` step keeps them building.
 - **GitHub Pages** — hosts the WASM demo (fishloa.github.io/rust-dvb); optional,
   not per-release.
 - **Blog / r/rust / This Week in Rust** — only for major releases, skipped for
