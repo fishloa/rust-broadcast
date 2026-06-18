@@ -26,6 +26,15 @@
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]
+// Runnable examples, embedded so they render on docs.rs and stay in sync with
+// the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n# Examples\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-pes --example <name>`).\n"]
+#![doc = "\n## `parse_pes_packet`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/parse_pes_packet.rs")]
+#![doc = "```\n\n## `extract_pts`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/extract_pts.rs")]
+#![doc = "```"]
 
 extern crate alloc;
 

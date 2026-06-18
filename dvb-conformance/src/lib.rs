@@ -27,6 +27,15 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+// Runnable examples, embedded so they render on docs.rs and stay in sync with
+// the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n# Examples\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-conformance --example <name>`).\n"]
+#![doc = "\n## `monitor_stream`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/monitor_stream.rs")]
+#![doc = "```\n\n## `priority_breakdown`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/priority_breakdown.rs")]
+#![doc = "```"]
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
