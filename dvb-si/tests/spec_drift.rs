@@ -957,6 +957,9 @@ fn extension_tag_toml_matches_enum() {
     use ExtensionTag::*;
     let all_variants: &[ExtensionTag] = &[
         ImageIcon,
+        Cp,
+        CpIdentifier,
+        CiAncillaryData,
         T2DeliverySystem,
         ShDeliverySystem,
         SupplementaryAudio,
@@ -985,8 +988,8 @@ fn extension_tag_toml_matches_enum() {
 
     assert_eq!(
         code_set.len(),
-        21,
-        "ExtensionTag has {} variants, expected 21",
+        24,
+        "ExtensionTag has {} variants, expected 24",
         code_set.len()
     );
 

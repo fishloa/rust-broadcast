@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- **DVB extension-descriptor mop-up (#238)**: `CP` (ext-tag 0x02), `CP_identifier`
+  (0x03) and `CI_ancillary_data` (0x14), from ETSI EN 300 468 §6.4 — now typed
+  `ExtensionBody` variants. (`cpcm_delivery_signalling` 0x01 and DTS-HD/DTS-Neural
+  0x0E/0x0F are deferred — their syntax is defined outside EN 300 468 and not yet
+  vendored.)
 - **MPEG-2 codec descriptors (#237)**, from Rec. ITU-T H.222.0 (06/2021) §2.6:
   `MPEG-4_video` (0x1B), `MPEG-4_audio` (0x1C), `AVC_video` (0x28),
   `AVC_timing_and_HRD` (0x2A), `MPEG-2_AAC_audio` (0x2B) and `HEVC_video` (0x38) —
