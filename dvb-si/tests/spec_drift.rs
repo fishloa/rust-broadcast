@@ -163,11 +163,11 @@ fn descriptor_tag_toml_matches_enum() {
         }
     }
 
-    // tripwire: 36 MPEG + 64 DVB = 100
+    // tripwire: 40 MPEG + 64 DVB = 104
     assert_eq!(
         code_set.len(),
-        100,
-        "DescriptorTag list has {} entries, expected 100",
+        104,
+        "DescriptorTag list has {} entries, expected 104",
         code_set.len()
     );
 

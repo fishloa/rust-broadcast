@@ -136,6 +136,21 @@ variant = "MultiplexBuffer"
 spec = "MultiplexBuffer_descriptor"
 
 [[entry]]
+value = 0x24
+variant = "ContentLabeling"
+spec = "content_labeling_descriptor"
+
+[[entry]]
+value = 0x25
+variant = "MetadataPointer"
+spec = "metadata_pointer_descriptor"
+
+[[entry]]
+value = 0x26
+variant = "Metadata"
+spec = "metadata_descriptor"
+
+[[entry]]
 value = 0x27
 variant = "MetadataStd"
 spec = "Metadata_STD_descriptor"
@@ -174,6 +189,11 @@ spec = "SVC_extension_descriptor"
 value = 0x31
 variant = "MvcExtension"
 spec = "MVC_extension_descriptor"
+
+[[entry]]
+value = 0x32
+variant = "J2kVideo"
+spec = "J2K_video_descriptor"
 
 [[entry]]
 value = 0x38

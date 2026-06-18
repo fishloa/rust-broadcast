@@ -47,6 +47,9 @@ pub enum DescriptorTag {
     Muxcode                    = 0x21,
     FmxBufferSize              = 0x22,
     MultiplexBuffer            = 0x23,
+    ContentLabeling            = 0x24,
+    MetadataPointer            = 0x25,
+    Metadata                   = 0x26,
     MetadataStd                = 0x27,
     AvcVideo                   = 0x28,
     AvcTimingAndHrd            = 0x2A,
@@ -55,6 +58,7 @@ pub enum DescriptorTag {
     AuxiliaryVideoStream       = 0x2F,
     SvcExtension               = 0x30,
     MvcExtension               = 0x31,
+    J2kVideo                   = 0x32,
     HevcVideo                  = 0x38,
 
     // ── DVB SI descriptors (0x40..=0x7F) ───────────────────────────────────

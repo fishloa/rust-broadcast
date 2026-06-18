@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PMT version="1" current="true" service_id="0x0001" PCR_PID="0x0100">
+    <component elementary_PID="0x0104" stream_type="0x15">
+      <metadata_pointer_descriptor metadata_application_format="0x0010" metadata_format="0x10" metadata_service_id="0x07" MPEG_carriage_flags="0" program_number="0x1234"/>
+    </component>
+    <component elementary_PID="0x0105" stream_type="0x16">
+      <metadata_descriptor metadata_application_format="0x0011" metadata_format="0x3F" metadata_service_id="0x09" decoder_config_flags="4" decoder_config_metadata_service_id="0x2A"/>
+    </component>
+    <component elementary_PID="0x0106" stream_type="0x21">
+      <J2K_video_descriptor profile_and_level="0x0102" horizontal_size="1920" vertical_size="1080" max_bit_rate="100000000" max_buffer_size="1250000" DEN_frame_rate="1" NUM_frame_rate="25" color_specification="0x01" still_mode="false" interlaced_video="true"/>
+    </component>
+  </PMT>
+</tsduck>

@@ -79,3 +79,61 @@ fn decodes_tsduck_compiled_mpeg_descriptors() {
     assert!(seen_avc, "AVC_video_descriptor not decoded");
     assert!(seen_hevc, "HEVC_video_descriptor not decoded");
 }
+
+const PMT2: &[u8] = include_bytes!("fixtures/tsduck-metadata-j2k-pmt.bin");
+
+#[test]
+fn decodes_tsduck_compiled_conditional_descriptors() {
+    use dvb_si::descriptors::decoder_config_flags::DecoderConfigFlags;
+    use dvb_si::descriptors::metadata::DecoderConfig;
+    use dvb_si::descriptors::metadata_format::MetadataFormat;
+    use dvb_si::descriptors::mpeg_carriage_flags::MpegCarriageFlags;
+
+    let pmt = PmtSection::parse(PMT2).expect("TSDuck PMT section must parse");
+    let mut seen_ptr = false;
+    let mut seen_meta = false;
+    let mut seen_j2k = false;
+
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            match desc.expect("descriptor must parse") {
+                AnyDescriptor::MetadataPointer(d) => {
+                    seen_ptr = true;
+                    assert_eq!(d.metadata_application_format, 0x0010);
+                    assert_eq!(d.metadata_format, MetadataFormat::TeM);
+                    assert_eq!(d.metadata_service_id, 0x07);
+                    assert_eq!(d.mpeg_carriage_flags, MpegCarriageFlags::SameTs);
+                    assert_eq!(d.program_number, Some(0x1234));
+                }
+                AnyDescriptor::Metadata(d) => {
+                    seen_meta = true;
+                    assert_eq!(d.metadata_application_format, 0x0011);
+                    assert_eq!(d.metadata_format, MetadataFormat::AppFormat);
+                    assert_eq!(d.metadata_service_id, 0x09);
+                    assert_eq!(d.decoder_config_flags, DecoderConfigFlags::OtherService);
+                    match d.decoder_config {
+                        DecoderConfig::OtherService(ref o) => {
+                            assert_eq!(o.decoder_config_metadata_service_id, 0x2A);
+                        }
+                        _ => panic!("expected OtherService decoder_config"),
+                    }
+                }
+                AnyDescriptor::J2kVideo(d) => {
+                    seen_j2k = true;
+                    assert!(!d.extended_capability_flag);
+                    assert!(d.extended_capability.is_none());
+                    assert_eq!(d.profile_and_level, 0x0102);
+                    assert_eq!(d.horizontal_size, 1920);
+                    assert_eq!(d.vertical_size, 1080);
+                    assert_eq!(d.color_specification, Some(0x01));
+                    assert!(!d.still_mode);
+                    assert!(d.interlaced_video);
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(seen_ptr, "metadata_pointer_descriptor not decoded");
+    assert!(seen_meta, "metadata_descriptor not decoded");
+    assert!(seen_j2k, "J2K_video_descriptor not decoded");
+}
