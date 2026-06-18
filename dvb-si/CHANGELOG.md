@@ -11,6 +11,13 @@
   by an interop test that decodes a PMT compiled by TSDuck (`tstabcomp`) — the
   reference DVB toolkit — confirming byte-exact agreement (incl. the HEVC
   `copied_44bits` field and the `HDR_WCG_idc` bit position).
+- **MPEG-2 systems descriptors — fixed/opaque set (#237)**: `IOD` (0x1D),
+  `SL` (0x1E), `FMC` (0x1F), `External_ES_ID` (0x20), `Muxcode` (0x21),
+  `FmxBufferSize` (0x22), `MultiplexBuffer` (0x23), `metadata_STD` (0x27),
+  `FlexMuxTiming` (0x2C), `auxiliary_video_stream` (0x2F), `SVC_extension` (0x30)
+  and `MVC_extension` (0x31). Opaque MPEG-4-systems sub-structures
+  (`InitialObjectDescriptor`, `MuxCodeTableEntry`, FlexMux buffer descriptors,
+  `si_rbsp`) are preserved as borrowed byte slices.
 - **MPEG-2 systems descriptors 0x02–0x12 (#236)**, transcribed from Rec. ITU-T
   H.222.0 (06/2021) | ISO/IEC 13818-1:2021 §2.6 (`dvb-si/docs/descriptors/iso_13818_1/`):
   `video_stream` (0x02), `audio_stream` (0x03), `hierarchy` (0x04),

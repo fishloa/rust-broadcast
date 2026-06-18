@@ -101,6 +101,46 @@ variant = "Mpeg4Audio"
 spec = "MPEG-4_audio_descriptor"
 
 [[entry]]
+value = 0x1D
+variant = "Iod"
+spec = "IOD_descriptor"
+
+[[entry]]
+value = 0x1E
+variant = "Sl"
+spec = "SL_descriptor"
+
+[[entry]]
+value = 0x1F
+variant = "Fmc"
+spec = "FMC_descriptor"
+
+[[entry]]
+value = 0x20
+variant = "ExternalEsId"
+spec = "External_ES_ID_descriptor"
+
+[[entry]]
+value = 0x21
+variant = "Muxcode"
+spec = "Muxcode_descriptor"
+
+[[entry]]
+value = 0x22
+variant = "FmxBufferSize"
+spec = "FmxBufferSize_descriptor"
+
+[[entry]]
+value = 0x23
+variant = "MultiplexBuffer"
+spec = "MultiplexBuffer_descriptor"
+
+[[entry]]
+value = 0x27
+variant = "MetadataStd"
+spec = "Metadata_STD_descriptor"
+
+[[entry]]
 value = 0x28
 variant = "AvcVideo"
 spec = "AVC_video_descriptor"
@@ -114,6 +154,26 @@ spec = "AVC_timing_and_HRD_descriptor"
 value = 0x2B
 variant = "Mpeg2AacAudio"
 spec = "MPEG-2_AAC_audio_descriptor"
+
+[[entry]]
+value = 0x2C
+variant = "FlexMuxTiming"
+spec = "FlexMuxTiming_descriptor"
+
+[[entry]]
+value = 0x2F
+variant = "AuxiliaryVideoStream"
+spec = "Auxiliary_video_stream_descriptor"
+
+[[entry]]
+value = 0x30
+variant = "SvcExtension"
+spec = "SVC_extension_descriptor"
+
+[[entry]]
+value = 0x31
+variant = "MvcExtension"
+spec = "MVC_extension_descriptor"
 
 [[entry]]
 value = 0x38
