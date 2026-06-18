@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-common"
-version      = "7.3.0"
+version      = "7.4.0"
 edition      = "2021"
 description  = "Shared Parse/Serialize traits and CRC-32 MPEG-2 used by the dvb_si / dvb_t2mi / dvb_bbframe family."
 license      = "MIT OR Apache-2.0"
@@ -13,7 +13,7 @@ rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true
-
+rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
