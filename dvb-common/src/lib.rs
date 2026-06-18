@@ -21,6 +21,15 @@
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
+// The crate's runnable examples, embedded so they render on docs.rs and stay in
+// sync with the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n# Examples\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-common --example <name>`).\n"]
+#![doc = "\n## `crc_and_bcd`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/crc_and_bcd.rs")]
+#![doc = "```\n\n## `implement_parse_serialize`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/implement_parse_serialize.rs")]
+#![doc = "```"]
 
 extern crate alloc;
 

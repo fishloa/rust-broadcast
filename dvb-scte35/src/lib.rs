@@ -86,6 +86,15 @@
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![cfg_attr(not(feature = "std"), no_std)]
+// Runnable examples, embedded so they render on docs.rs and stay in sync with
+// the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n# Examples\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-scte35 --example <name>`).\n"]
+#![doc = "\n## `parse_splice_insert`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/parse_splice_insert.rs")]
+#![doc = "```\n\n## `round_trip_and_descriptors`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/round_trip_and_descriptors.rs")]
+#![doc = "```"]
 
 extern crate alloc;
 

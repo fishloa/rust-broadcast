@@ -44,6 +44,16 @@
 //! released **independently** from the `dvb-si` / `dvb-t2mi` lockstep because
 //! tokio's own MSRV moves faster.
 
+// Runnable examples, embedded so they render on docs.rs and stay in sync with
+// the actual `examples/*.rs` files (shown, not compiled).
+#![doc = "\n# Examples\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-stream --example <name>`).\n"]
+#![doc = "\n## `count_sections`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/count_sections.rs")]
+#![doc = "```\n\n## `stream_stats`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/stream_stats.rs")]
+#![doc = "```"]
+
 pub mod resync;
 pub mod section_stream;
 pub mod t2mi_stream;
