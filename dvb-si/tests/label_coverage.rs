@@ -60,6 +60,7 @@ const SKIP: &[&str] = &[
     "ShInterleaver",
     "PositionSystem",
     "BeamhoppingMode",
+    "DecoderConfig",
     // internal section-kind discriminants + config (not wire-field labels)
     "EitKind",
     "NitKind",
