@@ -308,6 +308,8 @@ declare_descriptors! {'a;
     // via the descriptor registry (Task 4).
     @no_dispatch
     LogicalChannel => crate::descriptors::logical_channel::LogicalChannelDescriptor,
+    NordigLogicalChannelV1 => crate::descriptors::nordig::NordigLogicalChannelV1,
+    NordigLogicalChannelV2 => crate::descriptors::nordig::NordigLogicalChannelV2,
 }
 
 /// Lazily walk a raw descriptor loop. Never panics.
