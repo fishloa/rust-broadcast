@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- **cpcm_delivery_signalling extension descriptor (tag_extension 0x01)** — ETSI
+  TS 102 825-9 §4.1.5 Table 2; `cpcm_version` + version-dependent CPCM USI
+  `selector_bytes` (v1 selector content per TS 102 825-4). Previously `Raw`; now
+  typed (`ExtensionBody::CpcmDeliverySignalling`). TSDuck interop fixture
+  (`tsduck-cpcm-delivery-signalling-pmt.bin`) cross-validates it (#261).
+
 ## 7.5.0 — 2026-06-19
 
 ### Added
