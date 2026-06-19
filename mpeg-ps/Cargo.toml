@@ -1,0 +1,33 @@
+[package]
+name    = "mpeg-ps"
+version = "0.1.0"
+edition = "2021"
+description = "MPEG-1/2 Program Stream parser — pack header, system header, program stream map (ISO/IEC 13818-1 §2.5)."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["mpeg", "program-stream", "mpeg-ps", "vob", "demux"]
+categories = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+rust-version = "1.81"
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dvb-common = { path = "../dvb-common", version = "7.4", default-features = false }
+dvb-pes    = { path = "../dvb-pes",    version = "0.1", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["dvb-common/std", "dvb-pes/std", "thiserror/std"]
+serde = ["dep:serde"]
