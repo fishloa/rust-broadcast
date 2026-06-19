@@ -261,3 +261,38 @@ fn decodes_tsduck_compiled_protection_message() {
         "protection_message_descriptor not decoded from TSDuck PMT"
     );
 }
+
+const PMT5: &[u8] = include_bytes!("fixtures/tsduck-cpcm-delivery-signalling-pmt.bin");
+
+#[test]
+fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
+    use dvb_common::Serialize;
+    use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    let pmt = PmtSection::parse(PMT5).expect("TSDuck PMT section must parse");
+    let mut seen = false;
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse") {
+                if let ExtensionBody::CpcmDeliverySignalling(cpcm) = &ext.body {
+                    seen = true;
+                    assert_eq!(ext.kind(), Some(ExtensionTag::CpcmDeliverySignalling));
+                    assert_eq!(cpcm.cpcm_version, 0x01);
+                    assert!(!cpcm.selector_bytes.is_empty());
+                    let mut buf = vec![0u8; ext.serialized_len()];
+                    ext.serialize_into(&mut buf).unwrap();
+                    let mut round = vec![0u8; ext.serialized_len()];
+                    ExtensionDescriptor::parse(&buf)
+                        .unwrap()
+                        .serialize_into(&mut round)
+                        .unwrap();
+                    assert_eq!(buf, round);
+                }
+            }
+        }
+    }
+    assert!(
+        seen,
+        "cpcm_delivery_signalling_descriptor not decoded from TSDuck PMT"
+    );
+}

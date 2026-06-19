@@ -57,7 +57,7 @@
 //!
 //! Kept [`ExtensionBody::Raw`] (tag value preserved) — spec PDF not vendored;
 //! will be typed once the governing spec is transcribed into `dvb-si/docs/`:
-//! - `0x01` cpcm_delivery_signalling — spec not vendored (ETSI TS 102 825).
+//! - `0x01` cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5).
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
@@ -72,6 +72,7 @@ mod ac4;
 mod audio_preselection;
 mod c2_bundle_delivery_system;
 mod c2_delivery_system;
+mod cpcm_delivery_signalling;
 mod ci_ancillary_data;
 mod cp;
 mod cp_identifier;
@@ -103,6 +104,7 @@ pub use ac4::*;
 pub use audio_preselection::*;
 pub use c2_bundle_delivery_system::*;
 pub use c2_delivery_system::*;
+pub use cpcm_delivery_signalling::*;
 pub use ci_ancillary_data::*;
 pub use cp::*;
 pub use cp_identifier::*;
@@ -167,6 +169,8 @@ pub(crate) const VD_DISPARITY_LEN: usize = 3;
 pub enum ExtensionTag {
     /// image_icon_descriptor (Table 145, §6.4.7).
     ImageIcon = 0x00,
+    /// cpcm_delivery_signalling_descriptor (ETSI TS 102 825-9 Table 2, §4.1.5).
+    CpcmDeliverySignalling = 0x01,
     /// CP_descriptor (Table 113, §6.4.3).
     Cp = 0x02,
     /// CP_identifier_descriptor (Table 114, §6.4.6.1).
@@ -333,6 +337,8 @@ declare_extension_bodies! {'a;
     /// `0x00` — image_icon (Table 145, §6.4.7; icon_transport_mode Table 146, §6.4.8;
     /// coordinate_system Table 147, §6.4.8).
     ImageIcon = 0x00 => ImageIcon<'a>,
+    /// `0x01` — cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5).
+    CpcmDeliverySignalling = 0x01 => CpcmDeliverySignalling<'a>,
     /// `0x02` — CP (Table 113, §6.4.3).
     Cp = 0x02 => Cp<'a>,
     /// `0x03` — CP_identifier (Table 114, §6.4.6.1).
