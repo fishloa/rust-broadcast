@@ -224,3 +224,40 @@ fn decodes_tsduck_compiled_simple_descriptors() {
         );
     }
 }
+
+const PMT4: &[u8] = include_bytes!("fixtures/tsduck-protection-message-pmt.bin");
+
+#[test]
+fn decodes_tsduck_compiled_protection_message() {
+    use dvb_common::Serialize;
+    use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
+
+    let pmt = PmtSection::parse(PMT4).expect("TSDuck PMT section must parse");
+    let mut seen = false;
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse") {
+                if let ExtensionBody::ProtectionMessage(pm) = &ext.body {
+                    seen = true;
+                    assert_eq!(ext.kind(), Some(ExtensionTag::ProtectionMessage));
+                    // TSDuck encoded reserved bits as all-ones; we must preserve them.
+                    assert_eq!(pm.reserved, 0x0F);
+                    assert_eq!(pm.component_tags, &[0x10, 0x20, 0x33]);
+                    // Byte-exact round-trip of the descriptor TSDuck produced.
+                    let mut buf = vec![0u8; ext.serialized_len()];
+                    ext.serialize_into(&mut buf).unwrap();
+                    let mut orig = vec![0u8; ext.serialized_len()];
+                    ExtensionDescriptor::parse(&buf)
+                        .unwrap()
+                        .serialize_into(&mut orig)
+                        .unwrap();
+                    assert_eq!(buf, orig);
+                }
+            }
+        }
+    }
+    assert!(
+        seen,
+        "protection_message_descriptor not decoded from TSDuck PMT"
+    );
+}
