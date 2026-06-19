@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.5.0 — 2026-06-19
+
 ### Added
 - **protection_message extension descriptor (tag_extension 0x18)** — ETSI TS 102 809
   §9.3.3 Table 40; the protected `component_tag` list. Previously preserved as

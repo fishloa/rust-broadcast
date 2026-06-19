@@ -19,7 +19,7 @@ feed all the way down to a service name string.
 
 | | |
 |---|---|
-| **Versions** | 7 core crates at **7.4.0** (lockstep); `dvb-stream` (**0.2.0**), `dvb-pes` (**0.1.0**), `dvb-subtitle` (**0.1.0**) and `mpeg-ps` (**0.1.0**) independently versioned |
+| **Versions** | 7 core crates at **7.5.0** (lockstep); `dvb-stream` (**0.2.1**), `dvb-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**) and `mpeg-ps` (**0.1.0**) independently versioned |
 | **MSRV** | **1.81** across the workspace |
 | **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-pes`, `dvb-subtitle`, `mpeg-ps`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
 | **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
