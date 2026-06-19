@@ -61,7 +61,7 @@
 //! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
 //! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
 //! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
-//! - `0x18` protection_message — spec not vendored (ETSI TS 102 809).
+//! - `0x18` protection_message (ETSI TS 102 809 Table 40, §9.3.3).
 //! - any other value (incl. `0x80`..=`0xFF` user-defined) — unknown; preserved.
 
 use crate::error::{Error, Result};
@@ -78,6 +78,7 @@ mod cp_identifier;
 mod image_icon;
 mod message;
 mod network_change_notify;
+mod protection_message;
 pub mod registry;
 mod s2x_satellite_delivery_system;
 mod s2xv2_satellite_delivery_system;
@@ -108,6 +109,7 @@ pub use cp_identifier::*;
 pub use image_icon::*;
 pub use message::*;
 pub use network_change_notify::*;
+pub use protection_message::*;
 pub use s2x_satellite_delivery_system::*;
 pub use s2xv2_satellite_delivery_system::*;
 pub use service_prominence::*;
@@ -203,6 +205,8 @@ pub enum ExtensionTag {
     C2BundleDeliverySystem = 0x16,
     /// S2X_satellite_delivery_system_descriptor.
     S2XSatelliteDeliverySystem = 0x17,
+    /// protection_message_descriptor (ETSI TS 102 809 Table 40, §9.3.3).
+    ProtectionMessage = 0x18,
     /// audio_preselection_descriptor.
     AudioPreselection = 0x19,
     /// TTML_subtitling_descriptor (ETSI EN 303 560).
@@ -367,6 +371,8 @@ declare_extension_bodies! {'a;
     C2BundleDeliverySystem = 0x16 => C2BundleDeliverySystem,
     /// `0x17` — S2X_satellite_delivery_system (Table 140, §6.4.6.5.2).
     S2XSatelliteDeliverySystem = 0x17 => S2XSatelliteDeliverySystem<'a>,
+    /// `0x18` — protection_message (ETSI TS 102 809 Table 40, §9.3.3).
+    ProtectionMessage = 0x18 => ProtectionMessage<'a>,
     /// `0x19` — audio_preselection (Table 110, §6.4.1).
     AudioPreselection = 0x19 => AudioPreselection<'a>,
     /// `0x20` — TTML_subtitling (EN 303 560 Table 1, §5.2.1.1).

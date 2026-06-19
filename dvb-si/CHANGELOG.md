@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **protection_message extension descriptor (tag_extension 0x18)** — ETSI TS 102 809
+  §9.3.3 Table 40; the protected `component_tag` list. Previously preserved as
+  `Raw`; now typed (`ExtensionBody::ProtectionMessage`) + `ExtensionTag::ProtectionMessage`.
+  TSDuck interop fixture (`tsduck-protection-message-pmt.bin`) cross-validates it (#258).
 - `examples/`: `build_and_parse_pat` (build → serialize → parse a PAT) and
   `list_services` (demux a capture, list services + table sections).
 
