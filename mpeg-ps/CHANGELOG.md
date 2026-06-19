@@ -1,0 +1,36 @@
+# Changelog
+
+All notable changes to `mpeg-ps` will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] — 2026-06-19
+
+### Added
+
+- `PackHeader` — parser+serializer for the MPEG-1/2 Program Stream pack header
+  (ISO/IEC 13818-1 §2.5.3.3, Table 2-39): `pack_start_code` `0x000001BA`,
+  42-bit SCR (33-bit base + 9-bit extension), 22-bit `program_mux_rate`,
+  `pack_stuffing_length` + stuffing bytes, and reserved bits with marker
+  validation.
+- `SystemHeader` — parser+serializer for the optional system header
+  (ISO/IEC 13818-1 §2.5.3.5, Table 2-40): `rate_bound`, `audio_bound`/`video_bound`,
+  constraint flags, and per-stream P-STD buffer bounds with the
+  `stream_id == 0xB7` extension form.
+- `ProgramStreamMap` — parser+serializer for the Program Stream Map
+  (ISO/IEC 13818-1 §2.5.4, Table 2-41): `map_stream_id` `0xBC`,
+  elementary stream descriptor loop with `stream_id_extension` support,
+  and CRC-32 (MPEG-2) validation via `dvb_common::crc32_mpeg2`.
+- `program_stream::parse_pack` / `parse_all_packs` — pack walker that
+  reassembles `PackHeader` → optional `SystemHeader` → PES packets
+  (parsed via `dvb-pes`), respecting pack boundaries.
+- `Scr` — 42-bit System Clock Reference newtype with `ticks()` and `seconds()`
+  accessors (27 MHz units).
+- Two runnable examples: `parse_pack_header` (inline bytes) and `walk_ps`
+  (real `.mpg` fixture).
+- Real-fixture test (`tests/fixture_ps.rs`) over a committed ffmpeg-muxed
+  MPEG-2 Program Stream, validating byte-exact round-trip of every
+  `PackHeader` and the `SystemHeader`.
+- `#![no_std]` + `alloc`; builds with `--no-default-features`.
+- `serde` support behind the `serde` feature.
