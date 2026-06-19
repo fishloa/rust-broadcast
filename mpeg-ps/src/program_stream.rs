@@ -1,0 +1,149 @@
+//! Program Stream walker — ISO/IEC 13818-1 §2.5.3.1–2.5.3.3 (Tables 2-37, 2-38).
+//!
+//! Iterates through a Program Stream, yielding each [`Pack`], which itself
+//! carries a [`PackHeader`], an optional
+//! [`SystemHeader`], and parsed PES packets (via `dvb-pes`).
+//!
+//! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
+
+use alloc::vec::Vec;
+
+use dvb_common::{Parse, Serialize};
+
+use crate::pack_header::{PackHeader, PACK_START_CODE};
+use crate::system_header::{SystemHeader, SYSTEM_HEADER_START_CODE};
+use crate::Result;
+
+/// `MPEG_program_end_code` — `0x000001B9`.
+const PROGRAM_END_CODE: u32 = 0x0000_01B9;
+
+/// A single pack within a Program Stream: a `pack_header()`, optionally a
+/// `system_header()`, followed by zero or more PES packets.
+#[derive(Debug, Clone)]
+pub struct Pack<'a> {
+    /// The pack header (SCR, program_mux_rate, stuffing).
+    pub pack_header: PackHeader<'a>,
+    /// The optional system header (only in the first pack of a compliant stream).
+    pub system_header: Option<SystemHeader>,
+    /// Parsed PES packets within this pack.
+    pub pes_packets: Vec<dvb_pes::PesPacket<'a>>,
+}
+
+/// Scans forward for the next pack_start_code or program_end_code boundary.
+fn find_next_boundary(b: &[u8], from: usize) -> Option<usize> {
+    let mut i = from;
+    while i + 4 <= b.len() {
+        let word = u32::from_be_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
+        if word == PACK_START_CODE || word == PROGRAM_END_CODE {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Parses a single pack from the start of `b`.
+///
+/// Returns `Ok((Some(pack), consumed_bytes))` on success,
+/// or `Ok((None, 4))` when `MPEG_program_end_code` `0x000001B9` is reached.
+pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
+    use crate::error::Error;
+
+    if b.len() < 4 {
+        return Err(Error::BufferTooShort {
+            need: 4,
+            have: b.len(),
+            what: "pack start_code or end_code",
+        });
+    }
+
+    let start = u32::from_be_bytes([b[0], b[1], b[2], b[3]]);
+    if start == PROGRAM_END_CODE {
+        return Ok((None, 4));
+    }
+
+    // Parse pack header
+    let pack_header = PackHeader::parse(b)?;
+    let hdr_len = pack_header.header_len();
+    let rest = &b[hdr_len..];
+
+    // Find the next pack boundary or end_code to limit PES parsing
+    let boundary = find_next_boundary(rest, 0);
+
+    // Check for optional system header (before any PES)
+    let (system_header, pes_start, _sh_len) = if rest.len() >= 4 {
+        let maybe_sh = u32::from_be_bytes([rest[0], rest[1], rest[2], rest[3]]);
+        if maybe_sh == SYSTEM_HEADER_START_CODE {
+            let sh = SystemHeader::parse(rest)?;
+            let slen = sh.serialized_len();
+            (Some(sh), slen, slen)
+        } else {
+            (None, 0, 0)
+        }
+    } else {
+        (None, 0, 0)
+    };
+
+    let pes_data = &rest[pes_start..];
+    let pes_end = boundary.map_or(pes_data.len(), |b| b - pes_start);
+
+    // Parse PES packets up to the boundary
+    let (pes_packets, _pes_consumed) = parse_pes_loop(&pes_data[..pes_end])?;
+
+    let consumed = hdr_len + pes_start + _pes_consumed;
+    Ok((
+        Some(Pack {
+            pack_header,
+            system_header,
+            pes_packets,
+        }),
+        consumed,
+    ))
+}
+
+fn parse_pes_loop<'a>(data: &'a [u8]) -> Result<(Vec<dvb_pes::PesPacket<'a>>, usize)> {
+    use crate::error::Error;
+
+    let mut packets = Vec::new();
+    let mut pos = 0;
+
+    while pos + 6 <= data.len()
+        && data[pos] == 0x00
+        && data[pos + 1] == 0x00
+        && data[pos + 2] == 0x01
+    {
+        match dvb_pes::PesPacket::parse(&data[pos..]) {
+            Ok(pkt) => {
+                let pkt_len = pkt.serialized_len();
+                packets.push(pkt);
+                pos += pkt_len;
+            }
+            Err(e) => return Err(Error::Pes(e)),
+        }
+    }
+
+    Ok((packets, pos))
+}
+
+/// Iterate over all packs in a Program Stream buffer.
+///
+/// Returns all packs and the remaining trailing bytes (if any).
+pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
+    let mut packs = Vec::new();
+    let mut remaining = b;
+    while remaining.len() >= 4 {
+        let (pack_opt, consumed) = parse_pack(remaining)?;
+        match pack_opt {
+            Some(pack) => {
+                remaining = &remaining[consumed..];
+                packs.push(pack);
+            }
+            None => {
+                // End code consumed 4 bytes; finish
+                remaining = &remaining[4..];
+                break;
+            }
+        }
+    }
+    Ok((packs, remaining))
+}
