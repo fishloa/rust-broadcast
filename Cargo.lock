@@ -321,6 +321,7 @@ name = "dvb-subtitle"
 version = "0.1.0"
 dependencies = [
  "dvb-common",
+ "dvb-pes",
  "serde",
  "serde_json",
  "thiserror",

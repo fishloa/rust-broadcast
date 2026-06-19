@@ -26,3 +26,4 @@ tools/dvb-si-audit/out/
 /demo/target/
 .playwright-mcp/
 /target-gate/
+target-ds/
