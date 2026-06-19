@@ -9,7 +9,10 @@ use mpeg_ps::program_stream;
 
 fn main() {
     // Resolve relative to the crate so it runs from any cwd.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffmpeg-mpeg2-ps.mpg");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/ffmpeg-mpeg2-ps.mpg"
+    );
     let data = match fs::read(path) {
         Ok(d) => d,
         Err(e) => {
