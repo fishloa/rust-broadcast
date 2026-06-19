@@ -317,6 +317,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-subtitle"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "dvb-pes",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-t2mi"
 version = "7.4.0"
 dependencies = [

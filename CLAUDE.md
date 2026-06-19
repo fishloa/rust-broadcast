@@ -15,6 +15,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-tools** — CLI analyzer (`dump`/`services`/`epg`/`pids`/`t2mi`).
 - **dvb-stream** — async/tokio stream adapters; independently versioned.
 - **dvb-pes** — PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned.
+- **dvb-subtitle** — ETSI EN 300 743 DVB (bitmap) subtitling segments (page/region/CLUT/object/DDS/disparity + 2/4/8-bit pixel-data sub-blocks), fed the subtitle PES data field; `no_std`, depends only on dvb-common; independently versioned.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 
@@ -70,7 +71,8 @@ Token-heavy authoring is delegated to DeepSeek (via the `delegate` skill → hea
 
 1. **Scope** — read the issue's acceptance criteria and the cited `docs/` transcription. Resolve any design ambiguity *before* delegating (the delegate sees only the brief, none of this context).
 2. **Baseline** — branch `story/<n>-<slug>` off `main`; commit any in-flight working state first, so the delegate's `git diff` is cleanly attributable.
-3. **Delegate** — write a self-contained brief (exact files, decided behaviour/signatures, the project conventions that apply, the exact gate commands, and "fix until all pass before finishing"; boundaries: touch only <scope>, do not commit). Run in the background.
+   - **Prep the gate's inputs BEFORE delegating** (spec/parser work): transcribe the spec syntax tables into the *target crate's own* `docs/`, AND commit a **real fixture** (extract from an existing capture — e.g. scan committed `.ts` for the signature — pull a TSDuck stream, or use spec test vectors). Inline hand-made bytes only test the happy path; real data carries the reserved bits / mixed stream_ids / real layouts that expose bugs. No spec md + no real fixture = do not delegate yet.
+3. **Delegate** — write a self-contained brief (exact files, decided behaviour/signatures, the project conventions that apply, the exact gate commands, and "fix until all pass before finishing"; boundaries: touch only <scope>, do not commit). Run in the background. The brief's exit gate must be **ungameable** and include a **real-fixture run** (parse + byte-exact round-trip the committed fixture) — a plain round-trip test is gameable by raw-passthrough serialize, and a green inline suite is not "done". Pass these gates in round ONE, never bolt them on after burning a round.
 4. **Audit** — judge by `git diff` + running the **full gate suite yourself** (see Commands), never by the delegate's stdout (often empty on success) or its claims. Then check line-by-line against every AC and the hard invariants (symmetric serialize + round-trip test, no magic numbers outside `#[cfg(test)]`, spec citation in the module doc, `--no-default-features` builds, feature-gating). If a delegated test doesn't *bite*, reject or rewrite it — Claude owns verification.
 5. **Drive fixes** — feed concrete findings back via `opencode run --continue` (same session keeps context). After 2 failed fix cycles on the same point, take over and finish it directly.
 6. **Repeat 4–5** until every gate is green *and* every AC is met, on Claude's own run.
