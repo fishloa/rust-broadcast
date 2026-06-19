@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.5.0] — 2026-06-19
+
 ### Added
 - `examples/`: `parse_header` (parse a T2-MI packet header) and `pump_capture`
   (pump T2-MI out of a real capture; tally BBFrame/L1/timestamp payloads).

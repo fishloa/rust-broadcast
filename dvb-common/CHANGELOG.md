@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.5.0] — 2026-06-19
+
 ### Added
 - `examples/`: `crc_and_bcd` (CRC-32/MPEG-2 + BCD coding) and
   `implement_parse_serialize` (implementing the symmetric `Parse`/`Serialize`

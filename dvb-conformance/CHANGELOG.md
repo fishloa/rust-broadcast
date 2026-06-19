@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.5.0] — 2026-06-19
+
 ### Added
 - `examples/`: `monitor_stream` (run the TR 101 290 monitor over a capture) and
   `priority_breakdown` (tally findings by measurement priority + indicator).
