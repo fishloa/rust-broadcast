@@ -1,0 +1,1 @@
+{"rustc":8730184584288912426,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[13548984313718623784,"build_script_build",false,4376164132541386201]],"local":[{"RerunIfChanged":{"output":"debug/build/serde-2aca6dafdea55974/output","paths":["build.rs"]}}],"rustflags":["-L","/opt/homebrew/lib"],"config":0,"compile_kind":0}

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.7.0 — 2026-06-20
+
 ### Added
 - **DTS-HD extension descriptor (tag_extension 0x0E)** — ETSI EN 300 468 Annex G.3
   Tables G.6–G.10; typed `substream_info()` blocks with `SamplingFrequency`,
