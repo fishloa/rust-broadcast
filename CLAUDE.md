@@ -18,6 +18,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-subtitle** — ETSI EN 300 743 DVB (bitmap) subtitling segments (page/region/CLUT/object/DDS/disparity + 2/4/8-bit pixel-data sub-blocks), fed the subtitle PES data field; `no_std`, depends only on dvb-common; independently versioned.
 - **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via dvb-pes; `no_std`; independently versioned.
 - **scte104** — ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + the full operation set; `no_std`, depends only on dvb-common; independently versioned.
+- **dvb-cc** — DVB closed-caption carriage cc_data() (ETSI TS 101 154 Table B.9): typed CEA-608/708 triplets + 608/708 split; `no_std`, depends only on dvb-common; independently versioned.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 

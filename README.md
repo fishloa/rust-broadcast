@@ -19,9 +19,9 @@ feed all the way down to a service name string.
 
 | | |
 |---|---|
-| **Versions** | 7 core crates at **7.6.0** (lockstep); `dvb-stream` (**0.2.1**), `dvb-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**), `mpeg-ps` (**0.1.0**) and `scte104` (**0.1.0**) independently versioned |
+| **Versions** | 7 core crates at **7.6.0** (lockstep); `dvb-stream` (**0.2.1**), `dvb-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**), `mpeg-ps` (**0.1.0**) `scte104` (**0.1.0**) and `dvb-cc` (**0.1.0**) independently versioned |
 | **MSRV** | **1.81** across the workspace |
-| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
+| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`, `dvb-cc`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
 | **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
 
 To build the library crates for an embedded target:
@@ -47,6 +47,7 @@ $ cargo build --workspace --no-default-features --locked \
 | [`dvb-subtitle`](dvb-subtitle/) | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | [![docs.rs](https://img.shields.io/docsrs/dvb-subtitle)](https://docs.rs/dvb-subtitle) | ETSI EN 300 743 DVB (bitmap) subtitling: page/region/CLUT/object/display-definition/disparity segments + 2/4/8-bit pixel-data sub-blocks, fed the PES data field. `no_std`, depends only on `dvb-common`. **Independently versioned.** |
 | [`mpeg-ps`](mpeg-ps/) | [![crates.io](https://img.shields.io/crates/v/mpeg-ps.svg)](https://crates.io/crates/mpeg-ps) | [![docs.rs](https://img.shields.io/docsrs/mpeg-ps)](https://docs.rs/mpeg-ps) | MPEG-1/2 Program Stream (`.mpg`/`.vob`) framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map (PSM), pack walker; PES via `dvb-pes`. `no_std`. **Independently versioned.** |
 | [`scte104`](scte104/) | [![crates.io](https://img.shields.io/crates/v/scte104.svg)](https://crates.io/crates/scte104) | [![docs.rs](https://img.shields.io/docsrs/scte104)](https://docs.rs/scte104) | ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + all ~20 operations (splice/time_signal/insert-descriptor/segmentation/…). `no_std`. **Independently versioned.** |
+| [`dvb-cc`](dvb-cc/) | [![crates.io](https://img.shields.io/crates/v/dvb-cc.svg)](https://crates.io/crates/dvb-cc) | [![docs.rs](https://img.shields.io/docsrs/dvb-cc)](https://docs.rs/dvb-cc) | DVB closed-caption carriage: `cc_data()` (ETSI TS 101 154 Table B.9) → typed CEA-608/708 triplets + 608/708 split. `no_std`. **Independently versioned.** |
 
 For GSE, see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 
