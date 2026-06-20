@@ -1,0 +1,67 @@
+name: Python bindings (dvb-si-py)
+
+# The dvb-si-py PyO3 binding lives outside the Rust workspace (its own MSRV) and
+# consumes the published dvb-si crate by version. This workflow tests it on PRs
+# touching the binding, and builds + publishes wheels on a `dvb-si-py-v*` tag.
+# Wheels are the ONLY published Python artifact and come solely from here.
+
+on:
+  push:
+    tags: ["dvb-si-py-v*"]
+  pull_request:
+    paths: ["bindings/python/**", ".github/workflows/python-bindings.yml"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: build + pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: maturin develop + pytest
+        working-directory: bindings/python
+        run: |
+          python -m pip install --upgrade pip maturin pytest
+          maturin develop
+          pytest -q
+
+  wheels:
+    name: wheels (${{ matrix.os }})
+    if: startsWith(github.ref, 'refs/tags/dvb-si-py-v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: --release --manifest-path bindings/python/Cargo.toml -o dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist
+
+  publish:
+    name: publish to PyPI
+    needs: wheels
+    if: startsWith(github.ref, 'refs/tags/dvb-si-py-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --skip-existing dist/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

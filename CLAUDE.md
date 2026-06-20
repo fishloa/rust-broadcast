@@ -19,6 +19,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via dvb-pes; `no_std`; independently versioned.
 - **scte104** — ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + the full operation set; `no_std`, depends only on dvb-common; independently versioned.
 - **dvb-cc** — DVB closed-caption carriage cc_data() (ETSI TS 101 154 Table B.9): typed CEA-608/708 triplets + 608/708 split; `no_std`, depends only on dvb-common; independently versioned.
+- **dvb-si-py** (`bindings/python/`) — PyO3/maturin Python bindings over dvb-si/dvb-t2mi: `parse_section(bytes)->dict` + `Demux`/`T2miDemux` classes (read-only, parse→serde_json→Python). NOT a workspace member (own MSRV); consumes published crates by version; abi3 wheels to PyPI via its own workflow.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
 

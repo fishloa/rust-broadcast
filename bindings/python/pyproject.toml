@@ -1,0 +1,24 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "dvb-si-py"
+description = "Python bindings for dvb-si — parse DVB SI/PSI sections and demux MPEG-TS into Python dicts."
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Video",
+]
+dynamic = ["version"]
+
+[project.urls]
+Repository = "https://github.com/fishloa/rust-dvb"
+
+[tool.maturin]
+# abi3 wheel: one wheel works across CPython >=3.9.
+features = ["pyo3/abi3-py39"]
+module-name = "dvb_si_py"
+manifest-path = "Cargo.toml"
