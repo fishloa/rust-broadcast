@@ -29,5 +29,10 @@ fn main() {
 
     let back = CcData::parse(&bytes).expect("round-trip parse");
     assert_eq!(back, cc, "round-trip must be lossless");
-    println!("round-trip OK — {} triplets ({} 608, {} 708)", back.triplets.len(), back.cea608().count(), back.cea708().count());
+    println!(
+        "round-trip OK — {} triplets ({} 608, {} 708)",
+        back.triplets.len(),
+        back.cea608().count(),
+        back.cea708().count()
+    );
 }

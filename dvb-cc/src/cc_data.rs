@@ -164,7 +164,8 @@ impl Serialize for CcData {
             });
         }
         // reserved=1, process_cc_data_flag, zero_bit=0, cc_count
-        buf[0] = 0x80 | (u8::from(self.process_cc_data_flag) << 6) | (self.triplets.len() as u8 & 0x1F);
+        let cc_count = self.triplets.len() as u8 & 0x1F;
+        buf[0] = 0x80 | (u8::from(self.process_cc_data_flag) << 6) | cc_count;
         buf[1] = FF;
         let mut pos = 2;
         for t in &self.triplets {
@@ -183,13 +184,22 @@ impl Serialize for CcData {
 mod tests {
     use super::*;
 
+    fn tr(cc_valid: bool, cc_type: CcType, d1: u8, d2: u8) -> CcTriplet {
+        CcTriplet {
+            cc_valid,
+            cc_type,
+            cc_data_1: d1,
+            cc_data_2: d2,
+        }
+    }
+
     fn sample() -> CcData {
         CcData {
             process_cc_data_flag: true,
             triplets: alloc::vec![
-                CcTriplet { cc_valid: true, cc_type: CcType::Dtvcc708Start, cc_data_1: 0xC1, cc_data_2: 0x02 },
-                CcTriplet { cc_valid: true, cc_type: CcType::Ntsc608Field1, cc_data_1: 0x94, cc_data_2: 0x2C },
-                CcTriplet { cc_valid: false, cc_type: CcType::Dtvcc708Data, cc_data_1: 0x00, cc_data_2: 0x00 },
+                tr(true, CcType::Dtvcc708Start, 0xC1, 0x02),
+                tr(true, CcType::Ntsc608Field1, 0x94, 0x2C),
+                tr(false, CcType::Dtvcc708Data, 0x00, 0x00),
             ],
         }
     }
@@ -224,7 +234,10 @@ mod tests {
 
     #[test]
     fn empty_round_trip() {
-        let cc = CcData { process_cc_data_flag: false, triplets: alloc::vec![] };
+        let cc = CcData {
+            process_cc_data_flag: false,
+            triplets: alloc::vec![],
+        };
         let bytes = cc.to_bytes();
         assert_eq!(bytes, [0x80, 0xFF, 0xFF]); // reserved=1, pcdf=0, count=0; 0xFF; marker
         assert_eq!(CcData::parse(&bytes).unwrap(), cc);
@@ -234,9 +247,12 @@ mod tests {
     fn serialize_rejects_over_31_triplets() {
         let cc = CcData {
             process_cc_data_flag: true,
-            triplets: alloc::vec![CcTriplet { cc_valid: true, cc_type: CcType::Ntsc608Field1, cc_data_1: 0, cc_data_2: 0 }; 32],
+            triplets: alloc::vec![tr(true, CcType::Ntsc608Field1, 0, 0); 32],
         };
         let mut buf = [0u8; 200];
-        assert!(matches!(cc.serialize_into(&mut buf), Err(Error::TooManyTriplets(32))));
+        assert!(matches!(
+            cc.serialize_into(&mut buf),
+            Err(Error::TooManyTriplets(32))
+        ));
     }
 }
