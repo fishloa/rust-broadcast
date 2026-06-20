@@ -252,7 +252,7 @@ per the crate's zero-copy convention.
 ### Extension descriptor registry (tag 0x7F)
 
 The first payload byte (`descriptor_tag_extension`) selects a sub-descriptor
-(EN 300 468 §6.4). **21 tag_extensions are fully typed**; everything else is
+(EN 300 468 §6.4). **30 tag_extensions are fully typed**; everything else is
 preserved byte-exact as `ExtensionBody::Raw` and round-trips losslessly. Private
 `descriptor_tag_extension` values are surfaced via
 `DescriptorLoop::iter_with_extensions(&desc_reg, &ext_reg)` as
@@ -261,6 +261,9 @@ preserved byte-exact as `ExtensionBody::Raw` and round-trips losslessly. Private
 | tag_ext | Extension | Spec |
 |---|---|---|
 | 0x00 | image_icon | Table 145, §6.4.7 |
+| 0x01 | CPCM_delivery_signalling | TS 102 825-9 §4.1.5, Table 2 |
+| 0x02 | CP | EN 300 468 §6.4.3, Table 113 |
+| 0x03 | CP_identifier | EN 300 468 §6.4.6.1, Table 114 |
 | 0x04 | T2_delivery_system | Table 133, §6.4.6.3 (cell loop unfolded) |
 | 0x05 | SH_delivery_system | Table 119, §6.4.6.2 |
 | 0x06 | supplementary_audio | Table 153, §6.4.11 |
@@ -271,21 +274,26 @@ preserved byte-exact as `ExtensionBody::Raw` and round-trips losslessly. Private
 | 0x0B | service_relocated | Table 152, §6.4.10 |
 | 0x0C | XAIT_PID | TS 102 727 Table 95, §10.17.3 (16-bit xait_PID) |
 | 0x0D | C2_delivery_system | Table 115, §6.4.6.1 |
+| 0x0E | DTS-HD | EN 300 468 Annex G.3, Tables G.6–G.10 |
+| 0x0F | DTS-Neural | EN 300 468 Annex L.1, Table L.1 |
 | 0x10 | video_depth_range | Table 160, §6.4.16.1 (range loop typed) |
 | 0x11 | T2MI | Table 158, §6.4.14 |
 | 0x13 | URI_linkage | Table 159, §6.4.16.1 |
+| 0x14 | CI_ancillary_data | EN 300 468 §6.4.3, Table 112 |
 | 0x15 | AC-4 | Annex D §D.5 (first level; toc/extra raw) |
 | 0x16 | C2_bundle_delivery_system | Table 139, §6.4.6.4 |
 | 0x17 | S2X_satellite_delivery_system | Table 140, §6.4.6.5.2 (channel-bond entries typed) |
+| 0x18 | protection_message | TS 102 809 §9.3.3, Table 40 |
 | 0x19 | audio_preselection | Table 110, §6.4.1 (preselection loop unfolded) |
 | 0x20 | TTML_subtitling | EN 303 560 Table 1, §5.2.1.1 |
+| 0x21 | DTS-UHD | EN 300 468 Annex G.5, Table G.15 |
 | 0x22 | service_prominence | Table 162c, §6.4.18 (SOGI loop typed; target_region loop raw) |
 | 0x23 | vvc_subpictures | Table 162a, §6.4.17 |
 | 0x24 | S2Xv2_satellite_delivery_system | Tables 144a–144c, §6.4.6.5.3 |
 
-Tags whose governing spec is not vendored (`0x01`–`0x03` CPCM,
-`0x0E`/`0x0F`/`0x21` DTS family, `0x14` CI_ancillary, `0x18` protection_message)
-are preserved as `ExtensionBody::Raw` and round-trip byte-exact.
+Unallocated or not-yet-implemented `descriptor_tag_extension` values (e.g. `0x12`,
+`0x1A`–`0x1F`, `0x25`+) are preserved byte-exact as `ExtensionBody::Raw` and
+round-trip losslessly.
 
 ## DSM-CC data carousel
 
