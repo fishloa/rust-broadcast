@@ -1,0 +1,32 @@
+[package]
+name    = "scte104"
+version = "0.1.0"
+edition = "2021"
+description = "ANSI/SCTE 104 2023 — Automation System to Compression System Communications API (single/multiple operation messages + DPI operations)."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["scte104", "scte35", "dpi", "splice", "broadcast"]
+categories = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+rust-version = "1.81"
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dvb-common = { path = "../dvb-common", version = "7.5", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["dvb-common/std", "thiserror/std"]
+serde = ["dep:serde"]

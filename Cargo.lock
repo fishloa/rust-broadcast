@@ -752,6 +752,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "scte104"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"

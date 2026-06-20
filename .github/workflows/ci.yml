@@ -112,7 +112,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build each library crate for bare-metal (no_std)
         run: |
-          for c in dvb-common dvb-bbframe dvb-scte35 dvb-t2mi dvb-si dvb-conformance dvb-pes dvb-subtitle mpeg-ps; do
+          for c in dvb-common dvb-bbframe dvb-scte35 dvb-t2mi dvb-si dvb-conformance dvb-pes dvb-subtitle mpeg-ps scte104; do
             echo "::group::$c (no_std)"
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"
