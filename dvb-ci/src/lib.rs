@@ -2,9 +2,10 @@
 //!
 //! Parses + builds the EN 50221 protocol objects: resource APDUs (Resource
 //! Manager, Application Information, CA support incl. `ca_pmt`/`ca_pmt_reply`,
-//! Date-Time, MMI close), the session-layer SPDUs and transport-layer TPDUs,
-//! plus a `CA_PMT` builder that turns a `dvb-si` PMT into the object handed to a
-//! CICAM.
+//! Date-Time, Host Control, the full MMI set — low-level/display/keypad/subtitle/
+//! download and high-level menu/list/enq — and Low-Speed Communications), the
+//! session-layer SPDUs and transport-layer TPDUs, plus a `CA_PMT` builder that
+//! turns a `dvb-si` PMT into the object handed to a CICAM.
 //!
 //! Every wire structure implements [`dvb_common::Parse`] / [`dvb_common::Serialize`]
 //! symmetrically (parse → serialize is byte-identical), with all length fields
@@ -24,13 +25,9 @@
 //! - [`tpdu`] — transport-layer framing (C_TPDU/R_TPDU + connection mgmt).
 //! - [`builder`] — the `CA_PMT` projection from a `dvb-si` PMT.
 //!
-//! # Deferred to a follow-up
-//!
-//! The MMI **high-level** objects (text/enq/answ/menu/list, Tables 46-51), the
-//! MMI low-level/display objects, the **Host Control** (tune/replace) and
-//! **Low-Speed Communications** resources are not yet typed. Their `apdu_tag`s
-//! are listed in `docs/en_50221/apdu-tag-values.md`; until implemented they are
-//! produced by [`AnyApdu::parse`] as [`AnyApdu::Unknown`] (lossless round-trip).
+//! All Table 58 `apdu_tag`s are now typed; an unallocated/private tag is produced
+//! by [`AnyApdu::parse`] as [`AnyApdu::Unknown`] (lossless round-trip). The CI+
+//! crypto (CC resource) and the PC-Card hardware transport remain out of scope.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![warn(missing_docs)]

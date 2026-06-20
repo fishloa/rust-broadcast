@@ -15,7 +15,11 @@ pub mod ca_info;
 pub mod ca_pmt;
 pub mod ca_pmt_reply;
 pub mod date_time;
+pub mod host_control;
+pub mod low_speed_comms;
 pub mod mmi_close;
+pub mod mmi_display;
+pub mod mmi_high;
 pub mod resource_manager;
 
 /// Parse an APDU header: verify the 3-byte `apdu_tag` matches `expected`, decode
