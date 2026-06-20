@@ -1,6 +1,6 @@
 [package]
 name    = "mpeg-ps"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "MPEG-1/2 Program Stream parser — pack header, system header, program stream map (ISO/IEC 13818-1 §2.5)."
 license      = "MIT OR Apache-2.0"

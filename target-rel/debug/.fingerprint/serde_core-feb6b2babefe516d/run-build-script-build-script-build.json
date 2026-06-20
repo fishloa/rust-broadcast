@@ -1,0 +1,1 @@
+{"rustc":8730184584288912426,"features":"","declared_features":"","target":0,"profile":0,"path":0,"deps":[[11899261697793765154,"build_script_build",false,4307967193345955936]],"local":[{"RerunIfChanged":{"output":"debug/build/serde_core-feb6b2babefe516d/output","paths":["build.rs"]}}],"rustflags":["-L","/opt/homebrew/lib"],"config":0,"compile_kind":0}
