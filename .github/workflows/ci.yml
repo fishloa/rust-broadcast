@@ -118,6 +118,35 @@ jobs:
             echo "::endgroup::"
           done
 
+  # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
+  # and so are never built by the jobs above — they rot silently when a crate's
+  # parse API changes. This job builds every libfuzzer target on nightly (build
+  # only, no run) so a broken target fails CI. RUSTFLAGS="-D warnings" is unset
+  # here: cargo-fuzz injects sanitizer/coverage codegen flags and we only need a
+  # compile smoke, not a warning gate (the library warning gate is the lint job).
+  fuzz:
+    name: fuzz build (nightly)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - name: Build all fuzz targets
+        working-directory: fuzz
+        # No --locked: fuzz/Cargo.lock is gitignored (the harness is not a
+        # published artifact), so CI resolves fresh against the current crates.
+        # Pin the gnu target: the taiki-e cargo-fuzz binary is musl-static, so
+        # its host triple leaks as the default --target (musl), whose std isn't
+        # installed and whose static libc is incompatible with the sanitizer.
+        run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
+
   # dvb-stream is versioned and released independently from the lockstep
   # v-tag publish (tokio's MSRV moves faster than workspace 1.81). It is
   # tested on stable only in this dedicated job.
