@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <PMT version="1" current="true" service_id="0x0001" PCR_PID="0x0100">
+    <component elementary_PID="0x0200" stream_type="0x06">
+      <DTS_HD_descriptor>
+        <substream_core channel_count="6" LFE="true" sampling_frequency="12" sample_resolution="true">
+          <asset_info asset_construction="1" vbr="false" post_encode_br_scaling="false" bit_rate="755" component_type="0x42" ISO_639_language_code="eng"/>
+        </substream_core>
+      </DTS_HD_descriptor>
+      <DTS_UHD_descriptor DecoderProfileCode="1" FrameDurationCode="2" MaxPayloadCode="2" StreamIndex="3">
+        <codec_selector>ABCD</codec_selector>
+      </DTS_UHD_descriptor>
+      <DTS_neural_descriptor config_id="0x07"><additional_info>FF</additional_info></DTS_neural_descriptor>
+    </component>
+  </PMT>
+</tsduck>

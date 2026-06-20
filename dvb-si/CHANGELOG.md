@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+- **DTS-HD extension descriptor (tag_extension 0x0E)** — ETSI EN 300 468 Annex G.3
+  Tables G.6–G.10; typed `substream_info()` blocks with `SamplingFrequency`,
+  `AssetInfo` (optional `component_type` and `ISO_639_language_code`).
+- **DTS-Neural extension descriptor (tag_extension 0x0F)** — ETSI EN 300 468
+  Annex L.1 Table L.1; `config_id` + `additional_info`.
+- **DTS-UHD extension descriptor (tag_extension 0x21)** — ETSI EN 300 468
+  Annex G.5 Tables G.15–G.17; `DecoderProfileCode`, `FrameDurationCode`,
+  `MaxPayloadCode`, `StreamIndex` + `codec_selector`. New public enums
+  `FrameDurationCode` (Table G.16) and `MaxPayloadCode` (Table G.17).
+  Previously preserved as `Raw`; now typed. TSDuck interop fixture
+  (`tsduck-dts-descriptors-pmt.bin`) cross-validates all three (#263).
+
 ## 7.6.0 — 2026-06-20
 
 ### Added

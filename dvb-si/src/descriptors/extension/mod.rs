@@ -29,9 +29,12 @@
 //! section comments cite the governing table + clause.
 //!
 //! Typed (syntax table vendored in `en_300_468.md`, except TTML in
-//! `en_303_560_ttml.md`):
+//! `en_303_560_ttml.md` and CPCM in `ts_102825.md`):
 //! - `0x00` image_icon (Table 145, §6.4.7) — fully typed; icon TransportMode per
 //!   Table 146, coordinate_system per Table 147.
+//! - `0x01` cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5) — `cpcm_version`
+//!   + version-dependent selector bytes.
+//! - `0x02` CP (Table 113, §6.4.3) / `0x03` CP_identifier (Table 114, §6.4.6.1).
 //! - `0x04` T2_delivery_system (Table 133, §6.4.6.3) — cell loop unfolded.
 //! - `0x05` SH_delivery_system (Table 119, §6.4.6.2) — fully typed modulation loop.
 //! - `0x06` supplementary_audio (Table 153, §6.4.11).
@@ -42,27 +45,27 @@
 //! - `0x0B` service_relocated (Table 152, §6.4.10).
 //! - `0x0C` XAIT_PID (TS 102 727 §10.17.3) — 13-bit PID.
 //! - `0x0D` C2_delivery_system (Table 115, §6.4.6.1).
+//! - `0x0E` DTS-HD (Annex G.3, Tables G.6–G.10) — typed `substream_info()` + `asset_info()` loops.
+//! - `0x0F` DTS_Neural (Annex L.1, Table L.1) — `config_id` + optional info bytes.
 //! - `0x10` video_depth_range (Table 160, §6.4.16.1) — fully typed range loop.
 //! - `0x11` T2MI (Table 158, §6.4.14).
 //! - `0x13` URI_linkage (Table 159, §6.4.16.1) — uri/private split typed.
+//! - `0x14` CI_ancillary_data (Table 112, §6.4.3) — anchor_loop typed.
 //! - `0x15` AC-4 (annex D syntax table, §D.5) — first level; toc/extra raw.
 //! - `0x16` C2_bundle_delivery_system (Table 139, §6.4.6.4) — full fixed loop.
 //! - `0x17` S2X_satellite_delivery_system (Table 140, §6.4.6.5.2) — primary
 //!   channel + channel-bond entries typed; reserved_tail raw.
+//! - `0x18` protection_message (ETSI TS 102 809 Table 40, §9.3.3).
 //! - `0x19` audio_preselection (Table 110, §6.4.1) — preselection loop unfolded.
 //! - `0x20` TTML_subtitling (`en_303_560_ttml.md` Table 1, §5.2.1.1).
+//! - `0x21` DTS-UHD (Annex G.5, Tables G.15–G.17) — `DecoderProfileCode`, `FrameDurationCode`,
+//!   `MaxPayloadCode`, `StreamIndex` + `codec_selector`.
 //! - `0x22` service_prominence (Table 162c, §6.4.18) — SOGI loop typed; target_region loop raw.
 //! - `0x23` vvc_subpictures (Table 162a, §6.4.17) — fully typed.
 //! - `0x24` S2Xv2_satellite_delivery_system (Tables 144a–144c, §6.4.6.5.3) — fully typed.
 //!
-//! Kept [`ExtensionBody::Raw`] (tag value preserved) — spec PDF not vendored;
-//! will be typed once the governing spec is transcribed into `dvb-si/docs/`:
-//! - `0x01` cpcm_delivery_signalling (ETSI TS 102 825-9 Table 2, §4.1.5).
-//! - `0x02` CP / `0x03` CP_identifier — spec not vendored (ETSI TS 102 825).
-//! - `0x0E` DTS-HD / `0x0F` DTS_Neural / `0x21` DTS-UHD — spec not vendored (annex G/L).
-//! - `0x14` CI_ancillary_data — spec not vendored (ETSI TS 103 205).
-//! - `0x18` protection_message (ETSI TS 102 809 Table 40, §9.3.3).
-//! - any other value (incl. `0x80`..=`0xFF` user-defined) — unknown; preserved.
+//! Kept [`ExtensionBody::Raw`] (tag value preserved) — unknown; preserved:
+//! - any unrecognised value (incl. `0x80`..=`0xFF` user-defined).
 
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
@@ -76,6 +79,9 @@ mod ci_ancillary_data;
 mod cp;
 mod cp_identifier;
 mod cpcm_delivery_signalling;
+mod dts_hd;
+mod dts_neural;
+mod dts_uhd;
 mod image_icon;
 mod message;
 mod network_change_notify;
@@ -108,6 +114,9 @@ pub use ci_ancillary_data::*;
 pub use cp::*;
 pub use cp_identifier::*;
 pub use cpcm_delivery_signalling::*;
+pub use dts_hd::*;
+pub use dts_neural::*;
+pub use dts_uhd::*;
 pub use image_icon::*;
 pub use message::*;
 pub use network_change_notify::*;
@@ -201,6 +210,10 @@ pub enum ExtensionTag {
     T2mi = 0x11,
     /// URI_linkage_descriptor.
     UriLinkage = 0x13,
+    /// DTS-HD_descriptor (Annex G.3, Tables G.6–G.10).
+    DtsHd = 0x0E,
+    /// DTS_Neural_descriptor (Annex L.1, Table L.1).
+    DtsNeural = 0x0F,
     /// CI_ancillary_data_descriptor (Table 112, §6.4.3).
     CiAncillaryData = 0x14,
     /// AC-4_descriptor (annex D).
@@ -215,6 +228,8 @@ pub enum ExtensionTag {
     AudioPreselection = 0x19,
     /// TTML_subtitling_descriptor (ETSI EN 303 560).
     TtmlSubtitling = 0x20,
+    /// DTS-UHD_descriptor (Annex G.5, Tables G.15–G.17).
+    DtsUhd = 0x21,
     /// service_prominence_descriptor (Table 162c, §6.4.18).
     ServiceProminence = 0x22,
     /// vvc_subpictures_descriptor (Table 162a, §6.4.17).
@@ -363,6 +378,10 @@ declare_extension_bodies! {'a;
     XaitPid = 0x0C => XaitPid,
     /// `0x0D` — C2_delivery_system (Table 115, §6.4.6.1).
     C2DeliverySystem = 0x0D => C2DeliverySystem,
+    /// `0x0E` — DTS-HD (Annex G.3, Tables G.6–G.10).
+    DtsHd = 0x0E => DtsHd<'a>,
+    /// `0x0F` — DTS-Neural (Annex L.1, Table L.1).
+    DtsNeural = 0x0F => DtsNeural<'a>,
     /// `0x10` — video_depth_range (Table 160, §6.4.16.1).
     VideoDepthRange = 0x10 => VideoDepthRange<'a>,
     /// `0x11` — T2-MI (Table 158, §6.4.14).
@@ -383,6 +402,8 @@ declare_extension_bodies! {'a;
     AudioPreselection = 0x19 => AudioPreselection<'a>,
     /// `0x20` — TTML_subtitling (EN 303 560 Table 1, §5.2.1.1).
     TtmlSubtitling = 0x20 => TtmlSubtitling<'a>,
+    /// `0x21` — DTS-UHD (Annex G.5, Tables G.15–G.17).
+    DtsUhd = 0x21 => DtsUhd<'a>,
     /// `0x22` — service_prominence (Table 162c, §6.4.18).
     ServiceProminence = 0x22 => ServiceProminence<'a>,
     /// `0x23` — vvc_subpictures (Table 162a, §6.4.17).
