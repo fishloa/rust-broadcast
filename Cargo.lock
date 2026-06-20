@@ -244,6 +244,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-cc"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-common"
 version = "7.6.0"
 dependencies = [
