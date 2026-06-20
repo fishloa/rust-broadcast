@@ -6,6 +6,32 @@ versioning.
 
 ## Unreleased
 
+### Added
+
+The remaining EN 50221 application objects, completing every Table 58 `apdu_tag`.
+All are symmetric `Parse`/`Serialize` with biting round-trip + mutation tests and
+PDF worked-example fixtures; serialize rebuilds every byte from typed fields (no
+raw passthrough). The `_last`/`_more` chaining pairs are modeled as a single
+struct with a `more: bool` that selects the tag and dispatches both tags to the
+same `AnyApdu` variant.
+
+- **Host Control** (§8.5.1, Tables 27-30): `Tune`, `Replace`, `ClearReplace`,
+  `AskRelease`.
+- **High-level MMI** (§8.6.5, Tables 46-51): `Text` (last/more), `Enq`, `Answ`
+  (with `AnswId`), `Menu` (last/more), `MenuAnsw`, `List` (last/more); the nested
+  `TEXT()` component is reused across Menu/List.
+- **Low-level / display / scene / download MMI** (§8.6.2-8.6.4, Tables 34-45):
+  `DisplayControl`, `DisplayReply` (graphics-characteristics / character-table
+  list / mmi_mode_ack branches), `KeypadControl`, `Keypress`, `SubtitleSegment`
+  (last/more), `DisplayMessage`, `SceneEndMark`, `SceneDoneMessage`,
+  `SceneControl`, `SubtitleDownload` (last/more), `FlushDownload`, `DownloadReply`
+  — with the `DisplayControlCmd`, `MmiMode`, `DisplayReplyId`, `KeypadControlCmd`,
+  `DisplayMessageId` and `DownloadReplyId` value enums.
+- **Low-Speed Communications** (§8.7.1, Tables 52-56): `CommsCmd` (with nested
+  `ConnectionDescriptor`), `ConnectionDescriptor`, `CommsReply`, `CommsSend`
+  (last/more), `CommsRcv` (last/more) — with the `CommsCommandId`,
+  `ConnectionDescriptorType` and `CommsReplyId` value enums.
+
 ## 0.1.0 — 2026-06-20
 
 ### Added

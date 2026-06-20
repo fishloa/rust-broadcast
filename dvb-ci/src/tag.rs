@@ -58,6 +58,40 @@ impl ApduTag {
             DATE_TIME_ENQ => "date_time_enq",
             DATE_TIME => "date_time",
             CLOSE_MMI => "close_mmi",
+            TUNE => "tune",
+            REPLACE => "replace",
+            CLEAR_REPLACE => "clear_replace",
+            ASK_RELEASE => "ask_release",
+            DISPLAY_CONTROL => "display_control",
+            DISPLAY_REPLY => "display_reply",
+            TEXT_LAST => "text_last",
+            TEXT_MORE => "text_more",
+            KEYPAD_CONTROL => "keypad_control",
+            KEYPRESS => "keypress",
+            ENQ => "enq",
+            ANSW => "answ",
+            MENU_LAST => "menu_last",
+            MENU_MORE => "menu_more",
+            MENU_ANSW => "menu_answ",
+            LIST_LAST => "list_last",
+            LIST_MORE => "list_more",
+            SUBTITLE_SEGMENT_LAST => "subtitle_segment_last",
+            SUBTITLE_SEGMENT_MORE => "subtitle_segment_more",
+            DISPLAY_MESSAGE => "display_message",
+            SCENE_END_MARK => "scene_end_mark",
+            SCENE_DONE => "scene_done",
+            SCENE_CONTROL => "scene_control",
+            SUBTITLE_DOWNLOAD_LAST => "subtitle_download_last",
+            SUBTITLE_DOWNLOAD_MORE => "subtitle_download_more",
+            FLUSH_DOWNLOAD => "flush_download",
+            DOWNLOAD_REPLY => "download_reply",
+            COMMS_CMD => "comms_cmd",
+            CONNECTION_DESCRIPTOR => "connection_descriptor",
+            COMMS_REPLY => "comms_reply",
+            COMMS_SEND_LAST => "comms_send_last",
+            COMMS_SEND_MORE => "comms_send_more",
+            COMMS_RCV_LAST => "comms_rcv_last",
+            COMMS_RCV_MORE => "comms_rcv_more",
             _ => "unknown",
         }
     }
@@ -105,9 +139,81 @@ pub const DATE_TIME_ENQ: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x40);
 /// `Tdate_time` = `9F 84 41`.
 pub const DATE_TIME: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x41);
 
+// --- Host Control (Table 58) ---
+/// `Ttune` = `9F 84 00`.
+pub const TUNE: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x00);
+/// `Treplace` = `9F 84 01`.
+pub const REPLACE: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x01);
+/// `Tclear_replace` = `9F 84 02`.
+pub const CLEAR_REPLACE: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x02);
+/// `Task_release` = `9F 84 03`.
+pub const ASK_RELEASE: ApduTag = ApduTag::from_bytes(0x9F, 0x84, 0x03);
+
 // --- MMI ---
 /// `Tclose_mmi` = `9F 88 00`.
 pub const CLOSE_MMI: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x00);
+/// `Tdisplay_control` = `9F 88 01`.
+pub const DISPLAY_CONTROL: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x01);
+/// `Tdisplay_reply` = `9F 88 02`.
+pub const DISPLAY_REPLY: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x02);
+/// `Ttext-last` = `9F 88 03`.
+pub const TEXT_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x03);
+/// `Ttext-more` = `9F 88 04`.
+pub const TEXT_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x04);
+/// `Tkeypad_control` = `9F 88 05`.
+pub const KEYPAD_CONTROL: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x05);
+/// `Tkeypress` = `9F 88 06`.
+pub const KEYPRESS: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x06);
+/// `Tenq` = `9F 88 07`.
+pub const ENQ: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x07);
+/// `Tansw` = `9F 88 08`.
+pub const ANSW: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x08);
+/// `Tmenu_last` = `9F 88 09`.
+pub const MENU_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x09);
+/// `Tmenu_more` = `9F 88 0A`.
+pub const MENU_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0A);
+/// `Tmenu_answ` = `9F 88 0B`.
+pub const MENU_ANSW: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0B);
+/// `Tlist_last` = `9F 88 0C`.
+pub const LIST_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0C);
+/// `Tlist_more` = `9F 88 0D`.
+pub const LIST_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0D);
+/// `Tsubtitle_segment_last` = `9F 88 0E`.
+pub const SUBTITLE_SEGMENT_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0E);
+/// `Tsubtitle_segment_more` = `9F 88 0F`.
+pub const SUBTITLE_SEGMENT_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x0F);
+/// `Tdisplay_message` = `9F 88 10`.
+pub const DISPLAY_MESSAGE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x10);
+/// `Tscene_end_mark` = `9F 88 11`.
+pub const SCENE_END_MARK: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x11);
+/// `Tscene_done` = `9F 88 12`.
+pub const SCENE_DONE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x12);
+/// `Tscene_control` = `9F 88 13`.
+pub const SCENE_CONTROL: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x13);
+/// `Tsubtitle_download_last` = `9F 88 14`.
+pub const SUBTITLE_DOWNLOAD_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x14);
+/// `Tsubtitle_download_more` = `9F 88 15`.
+pub const SUBTITLE_DOWNLOAD_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x15);
+/// `Tflush_download` = `9F 88 16`.
+pub const FLUSH_DOWNLOAD: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x16);
+/// `Tdownload_reply` = `9F 88 17`.
+pub const DOWNLOAD_REPLY: ApduTag = ApduTag::from_bytes(0x9F, 0x88, 0x17);
+
+// --- Low-Speed Communications (Table 58) ---
+/// `Tcomms_cmd` = `9F 8C 00`.
+pub const COMMS_CMD: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x00);
+/// `Tconnection_descriptor` = `9F 8C 01`.
+pub const CONNECTION_DESCRIPTOR: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x01);
+/// `Tcomms_reply` = `9F 8C 02`.
+pub const COMMS_REPLY: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x02);
+/// `Tcomms_send_last` = `9F 8C 03`.
+pub const COMMS_SEND_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x03);
+/// `Tcomms_send_more` = `9F 8C 04`.
+pub const COMMS_SEND_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x04);
+/// `Tcomms_rcv_last` = `9F 8C 05`.
+pub const COMMS_RCV_LAST: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x05);
+/// `Tcomms_rcv_more` = `9F 8C 06`.
+pub const COMMS_RCV_MORE: ApduTag = ApduTag::from_bytes(0x9F, 0x8C, 0x06);
 
 #[cfg(test)]
 mod tests {

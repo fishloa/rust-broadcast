@@ -20,7 +20,8 @@ use dvb_common::{Parse, Serialize};
 macro_rules! declare_apdus {
     (
         $lt:lifetime;
-        $( $variant:ident = $($path:ident)::+ $(<$plt:lifetime>)? ),+ $(,)?
+        $( $variant:ident = $($path:ident)::+ $(<$plt:lifetime>)?
+            $( [ $( $alt:path ),+ ] )? ),+ $(,)?
     ) => {
         /// Every crate-implemented APDU object, plus an `Unknown` fallthrough
         /// that preserves the raw APDU header + body for lossless round-trips.
@@ -59,7 +60,8 @@ macro_rules! declare_apdus {
             /// Every `apdu_tag` the generated dispatcher routes (excludes
             /// [`AnyApdu::Unknown`]).
             pub const DISPATCHED_TAGS: &'static [ApduTag] = &[
-                $( <$($path)::+ as crate::traits::ApduDef>::TAG ),+
+                $( <$($path)::+ as crate::traits::ApduDef>::TAG
+                   $(, $( $alt ),+ )? ),+
             ];
 
             /// Diagnostic SCREAMING_SNAKE name of the contained object
@@ -92,7 +94,8 @@ macro_rules! declare_apdus {
                 }
                 let tag = ApduTag::from_bytes(bytes[0], bytes[1], bytes[2]);
                 match tag {
-                    $( t if t == <$($path)::+ as crate::traits::ApduDef>::TAG =>
+                    $( t if t == <$($path)::+ as crate::traits::ApduDef>::TAG
+                        $( || $( t == $alt )||+ )? =>
                         <$($path)::+>::parse(bytes).map(Self::$variant), )+
                     _ => {
                         let body = crate::objects::parse_apdu_header(bytes, tag, "unknown apdu")?;
@@ -161,6 +164,37 @@ declare_apdus! {'a;
     DateTimeEnq         = crate::objects::date_time::DateTimeEnq,
     DateTime            = crate::objects::date_time::DateTime,
     CloseMmi            = crate::objects::mmi_close::CloseMmi,
+    // Host Control (§8.5).
+    Tune                = crate::objects::host_control::Tune,
+    Replace             = crate::objects::host_control::Replace,
+    ClearReplace        = crate::objects::host_control::ClearReplace,
+    AskRelease          = crate::objects::host_control::AskRelease,
+    // High-level MMI (§8.6.5).
+    Text                = crate::objects::mmi_high::Text<'a>         [crate::tag::TEXT_MORE],
+    Enq                 = crate::objects::mmi_high::Enq<'a>,
+    Answ                = crate::objects::mmi_high::Answ<'a>,
+    Menu                = crate::objects::mmi_high::Menu<'a>         [crate::tag::MENU_MORE],
+    MenuAnsw            = crate::objects::mmi_high::MenuAnsw,
+    List                = crate::objects::mmi_high::List<'a>         [crate::tag::LIST_MORE],
+    // Low-level / display / scene / download MMI (§8.6.2-8.6.4).
+    DisplayControl      = crate::objects::mmi_display::DisplayControl,
+    DisplayReply        = crate::objects::mmi_display::DisplayReply,
+    KeypadControl       = crate::objects::mmi_display::KeypadControl,
+    Keypress            = crate::objects::mmi_display::Keypress,
+    SubtitleSegment     = crate::objects::mmi_display::SubtitleSegment<'a>  [crate::tag::SUBTITLE_SEGMENT_MORE],
+    DisplayMessage      = crate::objects::mmi_display::DisplayMessage,
+    SceneEndMark        = crate::objects::mmi_display::SceneEndMark,
+    SceneDoneMessage    = crate::objects::mmi_display::SceneDoneMessage,
+    SceneControl        = crate::objects::mmi_display::SceneControl,
+    SubtitleDownload    = crate::objects::mmi_display::SubtitleDownload<'a> [crate::tag::SUBTITLE_DOWNLOAD_MORE],
+    FlushDownload       = crate::objects::mmi_display::FlushDownload,
+    DownloadReply       = crate::objects::mmi_display::DownloadReply,
+    // Low-speed comms (§8.7).
+    CommsCmd            = crate::objects::low_speed_comms::CommsCmd<'a>,
+    ConnectionDescriptor = crate::objects::low_speed_comms::ConnectionDescriptor<'a>,
+    CommsReply          = crate::objects::low_speed_comms::CommsReply,
+    CommsSend           = crate::objects::low_speed_comms::CommsSend<'a>    [crate::tag::COMMS_SEND_MORE],
+    CommsRcv            = crate::objects::low_speed_comms::CommsRcv<'a>     [crate::tag::COMMS_RCV_MORE],
 }
 
 #[cfg(test)]
@@ -189,8 +223,8 @@ mod tests {
 
     #[test]
     fn unknown_tag_round_trips() {
-        // Tenter_menu we DO implement; pick an unimplemented MMI tag (Tenq 9F8807).
-        let bytes = [0x9F, 0x88, 0x07, 0x02, 0xAA, 0xBB];
+        // Pick a private/unallocated tag (not in Table 58).
+        let bytes = [0x9F, 0x90, 0x01, 0x02, 0xAA, 0xBB];
         let any = AnyApdu::parse(&bytes).unwrap();
         assert!(matches!(any, AnyApdu::Unknown { .. }));
         assert_eq!(any.name(), "UNKNOWN");
@@ -198,9 +232,27 @@ mod tests {
     }
 
     #[test]
+    fn dispatches_more_tag_to_same_variant() {
+        use crate::objects::mmi_high::Text;
+        // text_more (9F8804) must dispatch to the Text variant, not Unknown.
+        let t = Text {
+            more: true,
+            text_chars: b"HI",
+        };
+        let bytes = t.to_bytes();
+        assert_eq!(bytes[2], 0x04);
+        let any = AnyApdu::parse(&bytes).unwrap();
+        assert_eq!(any.name(), "TEXT");
+        assert_eq!(any.to_bytes(), bytes);
+    }
+
+    #[test]
     fn dispatched_tags_listed() {
         assert!(AnyApdu::DISPATCHED_TAGS.contains(&crate::tag::CA_PMT));
         assert!(AnyApdu::DISPATCHED_TAGS.contains(&crate::tag::PROFILE_ENQ));
-        assert_eq!(AnyApdu::DISPATCHED_TAGS.len(), 13);
+        assert!(AnyApdu::DISPATCHED_TAGS.contains(&crate::tag::TEXT_MORE));
+        assert!(AnyApdu::DISPATCHED_TAGS.contains(&crate::tag::COMMS_SEND_MORE));
+        // 40 primary tags (one per typed object) + 7 alt (_more) chaining tags.
+        assert_eq!(AnyApdu::DISPATCHED_TAGS.len(), 40 + 7);
     }
 }
