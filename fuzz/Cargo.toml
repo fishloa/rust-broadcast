@@ -11,11 +11,25 @@ cargo-fuzz = true
 
 [workspace]
 
+# Redirect crates.io references (used by dvb-ci) to the local workspace paths,
+# so all crates share the same dvb-common/dvb-si type definitions and the
+# dvb_common::Parse trait is the same instance.
+[patch.crates-io]
+dvb-common = { path = "../dvb-common" }
+dvb-si     = { path = "../dvb-si" }
+
 [dependencies]
-dvb-common  = { path = "../dvb-common" }
-dvb-si      = { path = "../dvb-si", features = ["ts", "serde"] }
-dvb-t2mi    = { path = "../dvb-t2mi", features = ["ts"] }
-dvb-bbframe = { path = "../dvb-bbframe" }
+dvb-common   = { path = "../dvb-common" }
+dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
+dvb-t2mi     = { path = "../dvb-t2mi",     features = ["ts"] }
+dvb-bbframe  = { path = "../dvb-bbframe" }
+dvb-pes      = { path = "../dvb-pes" }
+dvb-subtitle = { path = "../dvb-subtitle" }
+mpeg-ps      = { path = "../mpeg-ps" }
+scte104      = { path = "../scte104" }
+dvb-cc       = { path = "../dvb-cc" }
+dvb-ci       = { path = "../dvb-ci" }
+dvb-scte35   = { path = "../dvb-scte35" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -65,3 +79,51 @@ name = "roundtrip"
 path = "fuzz_targets/roundtrip.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "pes"
+path = "fuzz_targets/pes.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "subtitle"
+path = "fuzz_targets/subtitle.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "mpeg_ps"
+path = "fuzz_targets/mpeg_ps.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "scte104"
+path = "fuzz_targets/scte104.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "cc"
+path = "fuzz_targets/cc.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "ci_apdu"
+path = "fuzz_targets/ci_apdu.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "ci_tpdu"
+path = "fuzz_targets/ci_tpdu.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "scte35"
+path = "fuzz_targets/scte35.rs"
+test = false
+doc  = false
