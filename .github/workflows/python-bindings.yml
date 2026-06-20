@@ -24,11 +24,11 @@ jobs:
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
-      - name: maturin develop + pytest
+      - name: build (pip install via maturin backend) + pytest
         working-directory: bindings/python
         run: |
-          python -m pip install --upgrade pip maturin pytest
-          maturin develop
+          python -m pip install --upgrade pip pytest
+          pip install .          # builds + installs the wheel via the maturin build-backend
           pytest -q
 
   wheels:
