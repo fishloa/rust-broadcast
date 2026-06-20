@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.6.0 — 2026-06-20
+
 ### Added
 - **cpcm_delivery_signalling extension descriptor (tag_extension 0x01)** — ETSI
   TS 102 825-9 §4.1.5 Table 2; `cpcm_version` + version-dependent CPCM USI

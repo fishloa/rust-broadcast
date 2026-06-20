@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "7.5.0"
+version      = "7.6.0"
 edition      = "2021"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ exclude      = ["docs/**", "tests/fixtures/**"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
-dvb-common  = { path = "../dvb-common", version = "7.5", default-features = false }
+dvb-common  = { path = "../dvb-common", version = "7.6", default-features = false }
 thiserror = { version = "2", default-features = false }
 num_enum = { version = "0.7", default-features = false }
 libm = "0.2"
