@@ -296,3 +296,112 @@ fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
         "cpcm_delivery_signalling_descriptor not decoded from TSDuck PMT"
     );
 }
+
+const PMT6: &[u8] = include_bytes!("fixtures/tsduck-dts-descriptors-pmt.bin");
+
+#[test]
+fn decodes_tsduck_compiled_dts_descriptors() {
+    use dvb_common::Serialize;
+    use dvb_si::descriptors::extension::SamplingFrequency;
+    use dvb_si::descriptors::extension::{
+        ExtensionBody, ExtensionDescriptor, ExtensionTag, FrameDurationCode, MaxPayloadCode,
+    };
+    use dvb_si::text::LangCode;
+
+    let pmt = PmtSection::parse(PMT6).expect("TSDuck PMT section must parse");
+    let mut seen_hd = false;
+    let mut seen_uhd = false;
+    let mut seen_neural = false;
+
+    for stream in &pmt.streams {
+        for desc in stream.es_info.iter() {
+            if let AnyDescriptor::Extension(ext) = desc.expect("descriptor must parse") {
+                match &ext.body {
+                    ExtensionBody::DtsHd(hd) => {
+                        seen_hd = true;
+                        assert_eq!(ext.kind(), Some(ExtensionTag::DtsHd));
+                        assert!(hd.substream_core_flag);
+                        assert!(!hd.substream_0_flag);
+                        assert!(!hd.substream_1_flag);
+                        assert!(!hd.substream_2_flag);
+                        assert!(!hd.substream_3_flag);
+                        assert_eq!(hd.reserved, 7);
+                        assert_eq!(hd.substreams.len(), 1);
+                        let s = &hd.substreams[0];
+                        assert_eq!(s.channel_count, 6);
+                        assert!(s.lfe_flag);
+                        assert_eq!(s.sampling_frequency, SamplingFrequency::Khz48);
+                        assert!(s.sample_resolution);
+                        assert_eq!(s.reserved, 3);
+                        assert_eq!(s.assets.len(), 1);
+                        let a = &s.assets[0];
+                        assert_eq!(a.asset_construction, 1);
+                        assert!(!a.vbr_flag);
+                        assert!(!a.post_encode_br_scaling_flag);
+                        assert!(a.component_type_flag);
+                        assert!(a.language_code_flag);
+                        assert_eq!(a.bit_rate_or_scaled, 755);
+                        assert_eq!(a.reserved, 3);
+                        assert_eq!(a.component_type, Some(0x42));
+                        assert_eq!(a.iso_639_language_code, Some(LangCode(*b"eng")));
+                        assert!(hd.additional_info.is_empty());
+
+                        // Byte-exact round-trip
+                        let mut buf = vec![0u8; ext.serialized_len()];
+                        ext.serialize_into(&mut buf).unwrap();
+                        let mut round = vec![0u8; ext.serialized_len()];
+                        ExtensionDescriptor::parse(&buf)
+                            .unwrap()
+                            .serialize_into(&mut round)
+                            .unwrap();
+                        assert_eq!(buf, round);
+                    }
+                    ExtensionBody::DtsUhd(uhd) => {
+                        seen_uhd = true;
+                        assert_eq!(ext.kind(), Some(ExtensionTag::DtsUhd));
+                        assert_eq!(uhd.decoder_profile_code, 1);
+                        assert_eq!(uhd.decoder_profile(), 3);
+                        assert_eq!(uhd.frame_duration_code, FrameDurationCode::Samples2048);
+                        assert_eq!(uhd.max_payload_code, MaxPayloadCode::Byte8192);
+                        assert_eq!(uhd.dts_reserved, 0);
+                        assert_eq!(uhd.stream_index, 3);
+                        assert_eq!(uhd.codec_selector, &[0xAB, 0xCD]);
+
+                        // Byte-exact round-trip
+                        let mut buf = vec![0u8; ext.serialized_len()];
+                        ext.serialize_into(&mut buf).unwrap();
+                        let mut round = vec![0u8; ext.serialized_len()];
+                        ExtensionDescriptor::parse(&buf)
+                            .unwrap()
+                            .serialize_into(&mut round)
+                            .unwrap();
+                        assert_eq!(buf, round);
+                    }
+                    ExtensionBody::DtsNeural(neural) => {
+                        seen_neural = true;
+                        assert_eq!(ext.kind(), Some(ExtensionTag::DtsNeural));
+                        assert_eq!(neural.config_id, 0x07);
+                        assert_eq!(neural.additional_info, &[0xFF]);
+
+                        // Byte-exact round-trip
+                        let mut buf = vec![0u8; ext.serialized_len()];
+                        ext.serialize_into(&mut buf).unwrap();
+                        let mut round = vec![0u8; ext.serialized_len()];
+                        ExtensionDescriptor::parse(&buf)
+                            .unwrap()
+                            .serialize_into(&mut round)
+                            .unwrap();
+                        assert_eq!(buf, round);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(seen_hd, "DTS-HD descriptor not decoded from TSDuck PMT");
+    assert!(seen_uhd, "DTS-UHD descriptor not decoded from TSDuck PMT");
+    assert!(
+        seen_neural,
+        "DTS-Neural descriptor not decoded from TSDuck PMT"
+    );
+}
