@@ -1,6 +1,6 @@
 [workspace]
 members = ["dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "dvb-scte35", "dvb-stream", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "dvb-cc"]
-exclude = ["fuzz", "demo"]
+exclude = ["fuzz", "demo", "bindings/python"]
 resolver = "2"
 
 [workspace.package]
