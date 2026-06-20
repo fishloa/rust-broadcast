@@ -25,5 +25,6 @@ tools/dvb-si-audit/out/
 /demo/pkg/
 /demo/target/
 .playwright-mcp/
-/target-gate/
-target-ds/
+# all scratch cargo target dirs (target/, target-gate/, target-ci/, target-rel/, …)
+/target*/
+target-*/

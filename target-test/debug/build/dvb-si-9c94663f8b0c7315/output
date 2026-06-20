@@ -1,2 +1,0 @@
-cargo:rerun-if-changed=registries/tsCAS.names
-cargo:rerun-if-changed=registries/tsPDS.names
