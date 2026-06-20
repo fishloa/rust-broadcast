@@ -16,6 +16,6 @@ name = "dvb-tools"
 path = "src/main.rs"
 
 [dependencies]
-dvb-si    = { path = "../dvb-si",    version = "7.4.0", features = ["ts", "serde", "chrono"] }
-dvb-t2mi  = { path = "../dvb-t2mi",  version = "7.4.0", features = ["ts"] }
+dvb-si    = { path = "../dvb-si",    version = "7.7", features = ["ts", "serde", "chrono"] }
+dvb-t2mi  = { path = "../dvb-t2mi",  version = "7.7", features = ["ts"] }
 serde_json = "1"
