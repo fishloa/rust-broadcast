@@ -142,7 +142,10 @@ jobs:
         working-directory: fuzz
         # No --locked: fuzz/Cargo.lock is gitignored (the harness is not a
         # published artifact), so CI resolves fresh against the current crates.
-        run: cargo +nightly fuzz build
+        # Pin the gnu target: the taiki-e cargo-fuzz binary is musl-static, so
+        # its host triple leaks as the default --target (musl), whose std isn't
+        # installed and whose static libc is incompatible with the sanitizer.
+        run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
 
   # dvb-stream is versioned and released independently from the lockstep
   # v-tag publish (tokio's MSRV moves faster than workspace 1.81). It is
