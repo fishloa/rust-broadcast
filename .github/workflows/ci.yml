@@ -135,7 +135,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
-      - uses: taiki-e/install-action@cargo-fuzz
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
       - name: Build all fuzz targets
         working-directory: fuzz
         # No --locked: fuzz/Cargo.lock is gitignored (the harness is not a
