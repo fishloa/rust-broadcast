@@ -8,6 +8,72 @@ versioning.
 
 ### Added
 
+DVB CI Extensions (ETSI TS 101 699) foundation — a new `ci_ext` module tree with
+**resource-scoped** APDU dispatch ([`ci_ext::CiExtApdu`]). Unlike EN 50221, the
+TS 101 699 resources reuse the same `0x9F80xx` tag values across resources
+(Table 87), so they cannot join the global `AnyApdu`: `CiExtApdu::parse` keys on
+the `resource_identifier()` first (masking out the 6-bit Module ID for `type = 1*`
+resources via `classify`/`MODULE_ID_MASK`), then dispatches on the leading
+`apdu_tag` within the selected resource. Each object is symmetric
+`Parse`/`Serialize` with biting round-trip + field-mutation tests; serialize
+rebuilds every byte from typed fields (no raw passthrough). Resources in this
+pass:
+
+- **Resource Manager v2** (§4.2.1, Tables 3-7, `0x00010042`): `ProfileEnq`,
+  `ProfileReply`, `ProfileChanged`, `ModuleIdSend`, `ModuleIdCommand` (with
+  `ModuleIdCommandKind`).
+- **Application Information v2** (§5, Table 11, `0x00020042`): `ApplicationInfoEnq`,
+  `ApplicationInfo`, `EnterMenu` — with the extended `ApplicationTypeV2` value set
+  (Software_upgrade / Network_interface / Accessibility_aids / Unclassified) and
+  the §5.1.2 "unrecognized → Unclassified" rule (`effective()`).
+- **Power Manager** (§6.3, Tables 52-55, `0x00220041`): `ActivationStateChangeRequest`,
+  `ActivationStateChangeAck` — with `ActivationState` and `ReplyCode`.
+- **Event Manager** (§6.4, Tables 56-61, `0x00231ii1`): `EventRequest`,
+  `EventRequestAck`, `EventNotification` — with `EventType` and `EventReply`.
+- **Copy Protection** (§6.6, Tables 69-73, `0x00041ii1`): `CpQuery`, `CpReply`,
+  `CpCommand`, `CpResponse` — with `CpStatus`.
+- **StreamInput** (§6.1.2, Tables 12-20, `0x00801ii1`) — Type 'A' (TS-level) input
+  modules: `DeliverySystemInfoReq`/`DeliverySystemInfoAck` (a `SystemIdentifier`
+  list — Abstract / DVB-C / DVB-S / DVB-T), `ScanStartReq`, `ScanNextReq`
+  (`9F8003`), `ScanAck` (`TSState` + 11-byte `TuningInformationMessage` +
+  `ScanProgress`), `TuneTSReq` (optional 11-byte tuning message; absent =
+  disconnect), `TuneTSAck`.
+- **ServiceGateway** (Generic Service Gateway, §6.1.3, Tables 21-31) — Type 'B'
+  service-level access (never instantiated alone; inherited by network-specific
+  gateways): `ServiceListReq`/`ServiceListAck` (a `{OriginalNetworkID, ServiceID}`
+  service-reference list), `ServiceListVersionReq`/`ServiceListVersionAck`,
+  `ServiceListChanged`, `ServiceDescReq`/`ServiceDescAck` (SDT-modelled params —
+  `running_status` resolved to **3 bits** per the byte budget — + verbatim SDT
+  descriptor loop), `GetServiceReq`/`GetServiceAck` (with `EitResponseCode`-style
+  flag bits + `ActualService`).
+- **BroadcastServiceGateway** (§6.1.3.3, Tables 32-34, `0x00811ii1`) — Type 'B' on
+  a broadcast network: `EITSectionReq`, `EITSectionAck` (`EitResponseCode` +
+  EIT-modelled event loop with verbatim event descriptor loops). It **inherits all
+  Generic Service Gateway calls**: `BroadcastServiceGatewayApdu` routes
+  `9F8010`/`9F8011` to the EIT objects and delegates every other `9F80xx` tag to
+  the wrapped `ServiceGatewayApdu`.
+- **Status Query** (§6.2, Tables 35-51, `0x00211ii1`): `StatusQueryReq`, `TrapReq`,
+  `GetNextItemReq`, `GetNextItemAck` (32-bit `StatusItem`s), `StatusAck` (a
+  `StatusItem` + opaque `StatusBytes`) — with the `StatusItem` value enum. Plus the
+  audience-metering item-content structures decoding those `StatusBytes`:
+  `SelectionInformation` (Table 43, the nested input-port → output-port routing
+  loop), `PortProfile` (Table 48), `ViewedService` (Table 49) and
+  `ActivationStatus` (Table 50, with the `ActivationState` enum).
+- **Application MMI** (§6.5, Tables 62-68, `0x00410041`): `RequestStart` (two
+  length-prefixed strings), `RequestStartAck` (with the `AckCode` enum), `FileReq`,
+  `FileAck` (`FileOK` flag + file bytes), `AppAbortReq`, `AppAbortAck`.
+- **Download** (CAM firmware, §6.7, Tables 74-83, `0x00051041`): `DownloadEnquiry`,
+  `DownloadReply` (each encapsulating one opaque DSM-CC U-N message),
+  `UserAuthInitiate`, `UserAuthResult` (the 7-byte `BinaryId` + opaque payload).
+  Plus the DSM-CC U-N Download message structures (ISO/IEC 13818-6, Tables 79-83):
+  `DownloadInfoRequest`, `DownloadInfoResponse` (multi-module loop),
+  `DownloadCancel`, `DownloadDataRequest`, `DownloadDataBlock` — with the firmware
+  payload, compatibility-descriptor bodies, module info and private data carried as
+  opaque borrowed `&[u8]` per §6.7.5.
+- **CA Pipeline** (§6.8, Tables 84-86, `0x00061ii1`): `CaPipelineRequest`,
+  `CaPipelineResponse`, `CaPipelineNotification` — each carrying an opaque
+  `CASpecificData` byte blob (CA-system-specific encoding).
+
 The remaining EN 50221 application objects, completing every Table 58 `apdu_tag`.
 All are symmetric `Parse`/`Serialize` with biting round-trip + mutation tests and
 PDF worked-example fixtures; serialize rebuilds every byte from typed fields (no
