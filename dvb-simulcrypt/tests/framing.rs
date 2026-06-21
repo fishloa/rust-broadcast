@@ -1,0 +1,397 @@
+//! Biting round-trip, multi-parameter boundary, field-mutation, and
+//! enum-value-drift tests for the SimulCrypt generic message framing.
+
+use dvb_common::traits::{Parse, Serialize};
+use dvb_simulcrypt::{
+    DataType, EcmgErrorStatus, EcmgScsMessageType, EcmgScsParameterType, EmmgErrorStatus,
+    EmmgMuxMessageType, EmmgMuxParameterType, Interface, MessageType, Parameter, ParameterType,
+    SectionTspktFlag, SimulcryptMessage,
+};
+
+/// Construct an ECMG channel_setup with Super_CAS_id + ECM_channel_id, assert
+/// the exact hand-computed wire bytes, then reparse to equal.
+#[test]
+fn ecmg_channel_setup_exact_wire_bytes() {
+    let ecm_channel_id = [0x00u8, 0x2A];
+    let super_cas_id = [0x00u8, 0x01, 0x00, 0x02];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::ChannelSetup),
+        vec![
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+                &ecm_channel_id,
+            ),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::SuperCasId),
+                &super_cas_id,
+            ),
+        ],
+    );
+
+    let bytes = msg.to_bytes();
+    // header: 03 | 0001 | message_length
+    // body  : 000E 0002 002A | 0001 0004 00010002
+    // body_len = 6 + 8 = 14 = 0x000E
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        0x03, 0x00, 0x01, 0x00, 0x0E,
+        0x00, 0x0E, 0x00, 0x02, 0x00, 0x2A,
+        0x00, 0x01, 0x00, 0x04, 0x00, 0x01, 0x00, 0x02,
+    ];
+    assert_eq!(bytes, expected, "hand-computed wire bytes");
+
+    let parsed = SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).unwrap();
+    assert_eq!(parsed, msg);
+}
+
+/// CW_provision with opaque CW, exact bytes + reparse.
+#[test]
+fn cw_provision_exact_wire_bytes() {
+    let cp_cw = [0x12u8, 0x34, 0xDE, 0xAD, 0xBE, 0xEF]; // CP(2) + opaque CW(4)
+    let cp_number = [0x12u8, 0x34];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::CwProvision),
+        vec![
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::CpNumber),
+                &cp_number,
+            ),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::CpCwCombination),
+                &cp_cw,
+            ),
+        ],
+    );
+    let bytes = msg.to_bytes();
+    #[rustfmt::skip]
+    let expected: &[u8] = &[
+        0x03, 0x02, 0x01, 0x00, 0x10,            // hdr, body_len = 6+10 = 0x10
+        0x00, 0x12, 0x00, 0x02, 0x12, 0x34,      // CP_number
+        0x00, 0x14, 0x00, 0x06, 0x12, 0x34, 0xDE, 0xAD, 0xBE, 0xEF, // CP_CW_combination
+    ];
+    assert_eq!(bytes, expected);
+    assert_eq!(
+        SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).unwrap(),
+        msg
+    );
+}
+
+/// Field-mutation bite: change one typed field and the wire bytes must change.
+#[test]
+fn field_mutation_changes_wire() {
+    let v = [0x00u8, 0x2A];
+    let base = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::ChannelSetup),
+        vec![Parameter::new(
+            ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+            &v,
+        )],
+    );
+    let mut mutated = base.clone();
+    mutated.message_type = MessageType::EcmgScs(EcmgScsMessageType::ChannelClose);
+    assert_ne!(
+        base.to_bytes(),
+        mutated.to_bytes(),
+        "message_type is rebuilt"
+    );
+
+    let v2 = [0x00u8, 0x2B];
+    let mutated2 = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::ChannelSetup),
+        vec![Parameter::new(
+            ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+            &v2,
+        )],
+    );
+    assert_ne!(base.to_bytes(), mutated2.to_bytes(), "value is rebuilt");
+}
+
+/// Adding a parameter must change message_length and add a TLV — proves the
+/// header length is recomputed, not echoed.
+#[test]
+fn message_length_recomputed() {
+    let a = [0x00u8, 0x2A];
+    let b = [0x00u8, 0x01];
+    let one = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::StreamTest),
+        vec![Parameter::new(
+            ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+            &a,
+        )],
+    );
+    let two = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::StreamTest),
+        vec![
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+                &a,
+            ),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::EcmStreamId),
+                &b,
+            ),
+        ],
+    );
+    assert_eq!(one.body_len(), 6);
+    assert_eq!(two.body_len(), 12);
+    assert_eq!(one.to_bytes()[3..5], [0x00, 0x06]);
+    assert_eq!(two.to_bytes()[3..5], [0x00, 0x0C]);
+}
+
+/// ≥2-parameter boundary: a stream_setup with four TLVs round-trips with order
+/// preserved.
+#[test]
+fn multi_parameter_order_preserved() {
+    let chan = [0x00u8, 0x2A];
+    let stream = [0x00u8, 0x07];
+    let ecm_id = [0xABu8, 0xCD];
+    let cp_dur = [0x00u8, 0x14];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::StreamSetup),
+        vec![
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+                &chan,
+            ),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::EcmStreamId),
+                &stream,
+            ),
+            Parameter::new(ParameterType::EcmgScs(EcmgScsParameterType::EcmId), &ecm_id),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::NominalCpDuration),
+                &cp_dur,
+            ),
+        ],
+    );
+    let bytes = msg.to_bytes();
+    let parsed = SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).unwrap();
+    assert_eq!(parsed.parameters.len(), 4);
+    // Order preserved.
+    let types: Vec<u16> = parsed.parameters.iter().map(|p| p.ptype.to_u16()).collect();
+    assert_eq!(types, vec![0x000E, 0x000F, 0x0019, 0x0010]);
+    assert_eq!(parsed, msg);
+}
+
+/// EMMG/PDG⇔MUX data_provision round-trips with an opaque datagram, and the
+/// SAME numeric message_type decodes differently per interface.
+#[test]
+fn emmg_data_provision_round_trip_and_scoping() {
+    let client_id = [0x00u8, 0x00, 0x00, 0x05];
+    let data_id = [0x00u8, 0x01];
+    let datagram = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00, 0x11];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision),
+        vec![
+            Parameter::new(
+                ParameterType::EmmgPdgMux(EmmgMuxParameterType::ClientId),
+                &client_id,
+            ),
+            Parameter::new(
+                ParameterType::EmmgPdgMux(EmmgMuxParameterType::DataId),
+                &data_id,
+            ),
+            Parameter::new(
+                ParameterType::EmmgPdgMux(EmmgMuxParameterType::Datagram),
+                &datagram,
+            ),
+        ],
+    );
+    let bytes = msg.to_bytes();
+    assert_eq!(
+        SimulcryptMessage::parse_on(Interface::EmmgPdgMux, &bytes).unwrap(),
+        msg
+    );
+
+    // 0x0211 means data_provision on EMMG/PDG⇔MUX but is reserved on ECMG⇔SCS.
+    assert_eq!(
+        MessageType::from_u16(Interface::EmmgPdgMux, 0x0211),
+        MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision)
+    );
+    assert_eq!(
+        MessageType::from_u16(Interface::EcmgScs, 0x0211),
+        MessageType::EcmgScs(EcmgScsMessageType::Reserved(0x0211))
+    );
+    // parameter_type 0x0003 = ECM_channel_id (ECMG) vs data_channel_id (EMMG).
+    assert_eq!(
+        ParameterType::from_u16(Interface::EcmgScs, 0x0003),
+        ParameterType::EcmgScs(EcmgScsParameterType::DelayStart)
+    );
+    assert_eq!(
+        ParameterType::from_u16(Interface::EmmgPdgMux, 0x0003),
+        ParameterType::EmmgPdgMux(EmmgMuxParameterType::DataChannelId)
+    );
+}
+
+/// The default `Parse` impl targets ECMG⇔SCS.
+#[test]
+fn default_parse_targets_ecmg() {
+    let v = [0x00u8, 0x2A];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::EcmgScs(EcmgScsMessageType::ChannelTest),
+        vec![Parameter::new(
+            ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId),
+            &v,
+        )],
+    );
+    let bytes = msg.to_bytes();
+    assert_eq!(SimulcryptMessage::parse(&bytes).unwrap(), msg);
+}
+
+// ---------------------------------------------------------------------------
+// Enum value drift: pin every variant to the doc's numeric value.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ecmg_message_type_values() {
+    use EcmgScsMessageType::*;
+    for (e, v) in [
+        (ChannelSetup, 0x0001u16),
+        (ChannelTest, 0x0002),
+        (ChannelStatus, 0x0003),
+        (ChannelClose, 0x0004),
+        (ChannelError, 0x0005),
+        (StreamSetup, 0x0101),
+        (StreamTest, 0x0102),
+        (StreamStatus, 0x0103),
+        (StreamCloseRequest, 0x0104),
+        (StreamCloseResponse, 0x0105),
+        (StreamError, 0x0106),
+        (CwProvision, 0x0201),
+        (EcmResponse, 0x0202),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EcmgScsMessageType::from_u16(v), e, "0x{v:04X}");
+    }
+    assert_eq!(
+        EcmgScsMessageType::from_u16(0x4242),
+        EcmgScsMessageType::Reserved(0x4242)
+    );
+}
+
+#[test]
+fn emmg_message_type_values() {
+    use EmmgMuxMessageType::*;
+    for (e, v) in [
+        (ChannelSetup, 0x0011u16),
+        (ChannelTest, 0x0012),
+        (ChannelStatus, 0x0013),
+        (ChannelClose, 0x0014),
+        (ChannelError, 0x0015),
+        (StreamSetup, 0x0111),
+        (StreamTest, 0x0112),
+        (StreamStatus, 0x0113),
+        (StreamCloseRequest, 0x0114),
+        (StreamCloseResponse, 0x0115),
+        (StreamError, 0x0116),
+        (StreamBwRequest, 0x0117),
+        (StreamBwAllocation, 0x0118),
+        (DataProvision, 0x0211),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EmmgMuxMessageType::from_u16(v), e, "0x{v:04X}");
+    }
+}
+
+#[test]
+fn ecmg_parameter_type_values() {
+    use EcmgScsParameterType::*;
+    for (e, v) in [
+        (SuperCasId, 0x0001u16),
+        (SectionTspktFlag, 0x0002),
+        (DelayStart, 0x0003),
+        (DelayStop, 0x0004),
+        (TransitionDelayStart, 0x0005),
+        (TransitionDelayStop, 0x0006),
+        (EcmRepPeriod, 0x0007),
+        (MaxStreams, 0x0008),
+        (MinCpDuration, 0x0009),
+        (LeadCw, 0x000A),
+        (CwPerMsg, 0x000B),
+        (MaxCompTime, 0x000C),
+        (AccessCriteria, 0x000D),
+        (EcmChannelId, 0x000E),
+        (EcmStreamId, 0x000F),
+        (NominalCpDuration, 0x0010),
+        (AccessCriteriaTransferMode, 0x0011),
+        (CpNumber, 0x0012),
+        (CpDuration, 0x0013),
+        (CpCwCombination, 0x0014),
+        (EcmDatagram, 0x0015),
+        (AcDelayStart, 0x0016),
+        (AcDelayStop, 0x0017),
+        (CwEncryption, 0x0018),
+        (EcmId, 0x0019),
+        (ErrorStatus, 0x7000),
+        (ErrorInformation, 0x7001),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EcmgScsParameterType::from_u16(v), e, "0x{v:04X}");
+    }
+}
+
+#[test]
+fn emmg_parameter_type_values() {
+    use EmmgMuxParameterType::*;
+    for (e, v) in [
+        (ClientId, 0x0001u16),
+        (SectionTspktFlag, 0x0002),
+        (DataChannelId, 0x0003),
+        (DataStreamId, 0x0004),
+        (Datagram, 0x0005),
+        (Bandwidth, 0x0006),
+        (DataType, 0x0007),
+        (DataId, 0x0008),
+        (ErrorStatus, 0x7000),
+        (ErrorInformation, 0x7001),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EmmgMuxParameterType::from_u16(v), e, "0x{v:04X}");
+    }
+}
+
+#[test]
+fn data_type_and_flag_values() {
+    assert_eq!(DataType::Emm.to_u8(), 0x00);
+    assert_eq!(DataType::PrivateData.to_u8(), 0x01);
+    assert_eq!(DataType::Ecm.to_u8(), 0x02);
+    assert_eq!(DataType::from_u8(0x09), DataType::Reserved(0x09));
+
+    assert_eq!(SectionTspktFlag::SectionFormat.to_u8(), 0x00);
+    assert_eq!(SectionTspktFlag::TsPacketFormat.to_u8(), 0x01);
+    assert_eq!(SectionTspktFlag::ArbitraryLength.to_u8(), 0x02);
+}
+
+#[test]
+fn error_status_values() {
+    assert_eq!(EcmgErrorStatus::InvalidMessage.to_u16(), 0x0001);
+    assert_eq!(EcmgErrorStatus::EcmIdInUse.to_u16(), 0x0015);
+    assert_eq!(EcmgErrorStatus::UnrecoverableError.to_u16(), 0x7001);
+    assert_eq!(
+        EcmgErrorStatus::from_u16(0x0005),
+        EcmgErrorStatus::UnknownSuperCasId
+    );
+
+    assert_eq!(EmmgErrorStatus::InvalidMessage.to_u16(), 0x0001);
+    assert_eq!(EmmgErrorStatus::ClientIdInUse.to_u16(), 0x0014);
+    assert_eq!(EmmgErrorStatus::UnrecoverableError.to_u16(), 0x7001);
+    assert_eq!(
+        EmmgErrorStatus::from_u16(0x000F),
+        EmmgErrorStatus::ExceededBandwidth
+    );
+}
+
+#[test]
+fn protocol_version_is_03() {
+    assert_eq!(Interface::EcmgScs.protocol_version(), 0x03);
+    assert_eq!(Interface::EmmgPdgMux.protocol_version(), 0x03);
+}
