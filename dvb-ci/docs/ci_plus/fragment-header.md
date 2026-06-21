@@ -116,15 +116,17 @@ IV and key-identifier descriptors are allowed only when `first_fragment` = 1.
 - **ciplus_initialization_vector_descriptor()** (tag `0xD0`) — used by the Host
   to provide the IV associated with the following sample. Allowed only when
   `first_fragment` = 1. Its syntax is defined in ETSI TS 103 205 [4] §7.5.5.4.2,
-  Table 46 (NOT printed in TS 103 605). It is an opaque fixed-length byte blob —
-  the IV octets — whose exact width is given by TS 103 205 Table 46.
-  ⚠ Width not in TS 103 605 — see TS 103 205 §7.5.5.4.2 Table 46.
+  Table 46 (NOT printed in TS 103 605). It is a **TLV**: `descriptor_tag`(8)=`0xD0`
+  + `descriptor_length`(8) + `descriptor_length`×`IV_data_byte`(8) — variable-length
+  opaque IV octets (the length is runtime `descriptor_length`, not fixed). Full
+  layout transcribed in [`../ts_103_205/ci-plus-descriptors.md`](../ts_103_205/ci-plus-descriptors.md).
 - **ciplus_key_identifier_descriptor()** (tag `0xD1`) — used by the Host to
   provide the content key identifier for the following sample. Allowed only when
   `first_fragment` = 1. Syntax in ETSI TS 103 205 [4] §7.5.5.4.3, Table 47 (NOT
-  printed in TS 103 605). Opaque fixed-length byte blob — the key-identifier
-  octets.
-  ⚠ Width not in TS 103 605 — see TS 103 205 §7.5.5.4.3 Table 47.
+  printed in TS 103 605). Also a **TLV**: `descriptor_tag`(8)=`0xD1` +
+  `descriptor_length`(8) + `descriptor_length`×`key_id_data_byte`(8) — variable-length
+  opaque key-identifier octets. Full layout in
+  [`../ts_103_205/ci-plus-descriptors.md`](../ts_103_205/ci-plus-descriptors.md).
 
 A generic CI-extension descriptor envelope (used by the host-defined
 `0xF0`–`0xFE` range and by the IV/key-id descriptors) is `descriptor_tag` (8) +
