@@ -32,6 +32,26 @@ pass:
   `EventRequestAck`, `EventNotification` — with `EventType` and `EventReply`.
 - **Copy Protection** (§6.6, Tables 69-73, `0x00041ii1`): `CpQuery`, `CpReply`,
   `CpCommand`, `CpResponse` — with `CpStatus`.
+- **StreamInput** (§6.1.2, Tables 12-20, `0x00801ii1`) — Type 'A' (TS-level) input
+  modules: `DeliverySystemInfoReq`/`DeliverySystemInfoAck` (a `SystemIdentifier`
+  list — Abstract / DVB-C / DVB-S / DVB-T), `ScanStartReq`, `ScanNextReq`
+  (`9F8003`), `ScanAck` (`TSState` + 11-byte `TuningInformationMessage` +
+  `ScanProgress`), `TuneTSReq` (optional 11-byte tuning message; absent =
+  disconnect), `TuneTSAck`.
+- **ServiceGateway** (Generic Service Gateway, §6.1.3, Tables 21-31) — Type 'B'
+  service-level access (never instantiated alone; inherited by network-specific
+  gateways): `ServiceListReq`/`ServiceListAck` (a `{OriginalNetworkID, ServiceID}`
+  service-reference list), `ServiceListVersionReq`/`ServiceListVersionAck`,
+  `ServiceListChanged`, `ServiceDescReq`/`ServiceDescAck` (SDT-modelled params —
+  `running_status` resolved to **3 bits** per the byte budget — + verbatim SDT
+  descriptor loop), `GetServiceReq`/`GetServiceAck` (with `EitResponseCode`-style
+  flag bits + `ActualService`).
+- **BroadcastServiceGateway** (§6.1.3.3, Tables 32-34, `0x00811ii1`) — Type 'B' on
+  a broadcast network: `EITSectionReq`, `EITSectionAck` (`EitResponseCode` +
+  EIT-modelled event loop with verbatim event descriptor loops). It **inherits all
+  Generic Service Gateway calls**: `BroadcastServiceGatewayApdu` routes
+  `9F8010`/`9F8011` to the EIT objects and delegates every other `9F80xx` tag to
+  the wrapped `ServiceGatewayApdu`.
 
 The remaining EN 50221 application objects, completing every Table 58 `apdu_tag`.
 All are symmetric `Parse`/`Serialize` with biting round-trip + mutation tests and

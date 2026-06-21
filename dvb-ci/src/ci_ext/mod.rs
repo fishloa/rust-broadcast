@@ -18,19 +18,23 @@
 //! `docs/ci_plus/resource-ids.md`. The per-resource layouts are cited in their
 //! own module docs.
 //!
-//! Resources implemented in this pass: Resource Manager v2, Application
-//! Information v2, Power Manager, Event Manager, Copy Protection. The remaining
-//! Table 87 resources (StreamInput, ServiceGateway, StatusQuery, Application
-//! MMI, Download, CA Pipeline) are reserved for later passes.
+//! Resources implemented: Resource Manager v2, Application Information v2, Power
+//! Manager, Event Manager, Copy Protection, StreamInput, ServiceGateway (Generic
+//! Service Gateway), BroadcastServiceGateway. The remaining Table 87 resources
+//! (StatusQuery, Application MMI, Download, CA Pipeline) are reserved for later
+//! passes.
 
 use crate::error::{Error, Result};
 use crate::resource::ResourceId;
 
 pub mod application_info_v2;
+pub mod broadcast_service_gateway;
 pub mod copy_protection;
 pub mod event_manager;
 pub mod power_manager;
 pub mod resource_manager_v2;
+pub mod service_gateway;
+pub mod stream_input;
 
 // --- Resource identifiers (TS 101 699 Table 87) ---
 
@@ -180,6 +184,11 @@ pub enum CiExtApdu<'a> {
     EventManager(event_manager::EventManagerApdu<'a>),
     /// Copy Protection object (`0x00041ii1`).
     CopyProtection(copy_protection::CopyProtectionApdu<'a>),
+    /// StreamInput object (`0x00801ii1`).
+    StreamInput(stream_input::StreamInputApdu<'a>),
+    /// Broadcast Service Gateway object (`0x00811ii1`), including the inherited
+    /// Generic Service Gateway calls.
+    BroadcastServiceGateway(broadcast_service_gateway::BroadcastServiceGatewayApdu<'a>),
 }
 
 impl<'a> CiExtApdu<'a> {
@@ -205,6 +214,12 @@ impl<'a> CiExtApdu<'a> {
             )),
             Some(CiExtResource::CopyProtection(_)) => Ok(Self::CopyProtection(
                 copy_protection::CopyProtectionApdu::parse(body)?,
+            )),
+            Some(CiExtResource::StreamInput(_)) => Ok(Self::StreamInput(
+                stream_input::StreamInputApdu::parse(body)?,
+            )),
+            Some(CiExtResource::BroadcastServiceGateway(_)) => Ok(Self::BroadcastServiceGateway(
+                broadcast_service_gateway::BroadcastServiceGatewayApdu::parse(body)?,
             )),
             _ => Err(Error::UnknownResource {
                 resource_id: resource_id.0,
@@ -273,6 +288,78 @@ mod tests {
 
         let em = CiExtApdu::parse(ResourceId(0x0023_1041), &em_body).unwrap();
         assert!(matches!(em, CiExtApdu::EventManager(_)));
+    }
+
+    #[test]
+    fn stream_input_and_bsg_classify_and_mask() {
+        // StreamInput type=1*: module_id 1 -> 0x00801041, module_id 5 -> 0x00801141.
+        assert_eq!(
+            classify(ResourceId(0x0080_1041)),
+            Some(CiExtResource::StreamInput(1))
+        );
+        assert_eq!(
+            classify(ResourceId(0x0080_1141)),
+            Some(CiExtResource::StreamInput(5))
+        );
+        assert_eq!(module_id(ResourceId(0x0080_1141)), 5);
+        // BroadcastServiceGateway module_id 1 -> 0x00811041 (md example).
+        assert_eq!(
+            classify(ResourceId(0x0081_1041)),
+            Some(CiExtResource::BroadcastServiceGateway(1))
+        );
+        // module_id 0 templates still classify.
+        assert_eq!(
+            classify(STREAM_INPUT_TEMPLATE),
+            Some(CiExtResource::StreamInput(0))
+        );
+        assert_eq!(
+            classify(BROADCAST_SERVICE_GATEWAY_TEMPLATE),
+            Some(CiExtResource::BroadcastServiceGateway(0))
+        );
+    }
+
+    #[test]
+    fn stream_input_9f8000_vs_power_manager_9f8000() {
+        // The resource-scoped invariant: 9F8000 means different objects per
+        // resource, even with the new resources added.
+        // StreamInput 9F8000 = DeliverySystemInfoReq (header-only).
+        let si_body = [0x9F, 0x80, 0x00, 0x00];
+        let si = CiExtApdu::parse(ResourceId(0x0080_1041), &si_body).unwrap();
+        assert!(matches!(
+            si,
+            CiExtApdu::StreamInput(stream_input::StreamInputApdu::DeliverySystemInfoReq(_))
+        ));
+        // PowerManager 9F8000 = activation_state_change_request (1-byte body).
+        let pm_body = [0x9F, 0x80, 0x00, 0x01, 0x00];
+        let pm = CiExtApdu::parse(POWER_MANAGER, &pm_body).unwrap();
+        assert!(matches!(pm, CiExtApdu::PowerManager(_)));
+        // Same leading tag, different parsed variant => routes by resource.
+        assert!(!matches!(si, CiExtApdu::PowerManager(_)));
+    }
+
+    #[test]
+    fn bsg_dispatch_routes_eit_and_inherited() {
+        let bsg = ResourceId(0x0081_1041);
+        // 9F8010 EITSectionReq (BSG-specific extension).
+        let eit = [
+            0x9F, 0x80, 0x10, 0x08, 0x00, 0x4E, 0x00, 0x64, 0x00, 0x00, 0x01, 0x00,
+        ];
+        let parsed = CiExtApdu::parse(bsg, &eit).unwrap();
+        assert!(matches!(
+            parsed,
+            CiExtApdu::BroadcastServiceGateway(
+                broadcast_service_gateway::BroadcastServiceGatewayApdu::EitSectionReq(_)
+            )
+        ));
+        // 9F8000 inherited Generic Service Gateway ServiceListReq.
+        let slr = [0x9F, 0x80, 0x00, 0x00];
+        let parsed = CiExtApdu::parse(bsg, &slr).unwrap();
+        assert!(matches!(
+            parsed,
+            CiExtApdu::BroadcastServiceGateway(
+                broadcast_service_gateway::BroadcastServiceGatewayApdu::ServiceGateway(_)
+            )
+        ));
     }
 
     #[test]
