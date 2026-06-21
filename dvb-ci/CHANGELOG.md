@@ -153,6 +153,46 @@ byte from typed fields (no raw passthrough). This pass:
   loop of `DrmMetadataRecord`s); the `drm_metadata_byte` blobs (pssh/sinf/CASD/MPD/
   OSDT per Table 34) are opaque borrowed `&[u8]`. (`CiPlusApdu` gains a lifetime
   parameter to carry the borrowed Host-Control / Sample-decryption bodies.)
+- **CICAM Player** (§8.8, Tables 48-71, `0x00930041`): the full 16-APDU set
+  `9FA000`–`9FA00F` — `PlayerVerifyReq`/`PlayerVerifyReply` (with
+  `PlayerVerifyStatus`), `PlayerCapabilitiesReq`/`PlayerCapabilitiesReply` (a
+  `ComponentType` loop), `PlayerStartReq` (input/output bitrates +
+  `linearChannel` + opaque PMT loop) / `PlayerStartReply` (with `InputStatus`),
+  `PlayerPlayReq`, `PlayerStatusError` (`valid_LTS_id` + `PlayStatus`, Table 59),
+  `PlayerControlReq` (`Command`-selected `ControlCommand::{SetPosition(seek_mode
+  +signed seek_position), SetSpeed(signed speed), Reserved}`), `PlayerInfoReq`/
+  `PlayerInfoReply` (duration/position/signed speed), `PlayerStop`, `PlayerEnd`,
+  `PlayerAssetEnd` (`beginning` flag, reserved `0x7F`), `PlayerUpdateReq` (opaque
+  PMT loop) and `PlayerUpdateReply` (with `UpdateStatus`). The Table 69
+  `CICAM_player_start_reply_tag` copy/paste slip is corrected to the authoritative
+  `0x9FA00F` (`CICAM_player_update_reply`), asserted in a test. `service_location`
+  XML / `PMT_byte` bodies are opaque borrowed `&[u8]`. Wired into `CiPlusApdu`.
+- **Auxiliary File System / CICAM file retrieval** (§9, Tables 72-75,
+  `0x00910041`): `FileSystemOffer` (`9F9400`, opaque `DomainIdentifier`) and
+  `FileSystemAck` (`9F9401`, with `AckCode`, Table 74). `FileRequest` (`9F9402`) /
+  `FileAcknowledge` (`9F9403`) have **only their tags + direction** established in
+  TS 103 205 — bodies defer to CI Plus V1.3 §14.5.1/§14.5.2 (proprietary), so they
+  are modeled as opaque-body APDUs (verbatim borrowed `&[u8]`, layout not
+  invented). Wired into `CiPlusApdu`.
+- **Low-Speed Comms v4 extensions** (§10, Tables 76-89, `low_speed_comms_v4`):
+  `CommsInfoReq` (`9F8C07`, header-only) / `CommsInfoReply` (`9F8C08`, `LTS_id` +
+  `status` + 128-bit source IP + `source_port` + 13-bit `inputDeliveryPID`),
+  `CommsIpConfigReq` (`9F8C09`, header-only) / `CommsIpConfigReply` (`9F8C0A`,
+  `ConnectionState` + 48-bit MAC + optional connected-state `IpConfig` with a
+  DNS-server loop), plus the Comms Cmd `HybridDescriptor` (Table 83, `0x05`) and
+  `MulticastDescriptor` (Table 85, `0x06`, `IpProtocolVersion` + `include_sources`
+  + source-address loop). `ConnectionState` is treated as a strict 2-bit field
+  (Table 80's `0x10-0x11` reserved range is a spec typo; not encoded). The base
+  `comms_cmd`/`reply`/`send`/`rcv` APDUs and the LSC **resource_id** defer to CI
+  Plus V1.3 — these v4 extensions are **standalone** typed structs with an
+  `LscV4Apdu::parse(tag,body)` helper (+ `parse_ip_config_reply` for the
+  allocating reply), **not** wired into `CiPlusApdu` (no invented resource_id).
+- **URI v3** (§11, Tables 90-92, `uri`): `UriMessage` — the fixed 64-bit
+  `uri_message` (`protocol_version` + `aps` + `ict` + an `EmiData` enum carrying
+  the `emi_copy_control_info`-selected fields: `rct` for `0b00`, `dot`+`rl` for
+  `0b11`, `trick_mode_control_info` for `0b10`, Table 92). Carried as a SAC
+  datatype (datatype_id 25), so it is a **standalone** typed struct (full
+  `Parse`/`Serialize`), not a resource — usable from the Content Control SAC layer.
 
 ## 0.1.0 — 2026-06-20
 

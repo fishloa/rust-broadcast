@@ -32,6 +32,11 @@
 //! - **Sample decryption** (`0x00920041`, [`sample_decryption`]) — `sd_info_req` /
 //!   `sd_info_reply` / `sd_start(_reply)` / `sd_update(_reply)`, with opaque DRM
 //!   metadata / UUID payloads.
+//! - **CICAM Player** (`0x00930041`, [`cicam_player`]) — the full 16-APDU set
+//!   `9FA000`–`9FA00F` (`CICAM_player_verify_req` … `CICAM_player_update_reply`).
+//! - **Auxiliary File System / file retrieval** (`0x00910041`, [`file_retrieval`])
+//!   — `FileSystemOffer` / `FileSystemAck`, plus `FileRequest` / `FileAcknowledge`
+//!   whose bodies defer to CI Plus V1.3 (carried opaquely; tags only established).
 //!
 //! ## Not dispatched here
 //!
@@ -39,6 +44,14 @@
 //!   resource_id for the `resource_type = 2` variant (it defers to CI Plus V1.3),
 //!   so its extended `ca_pmt`/`ca_pmt_reply` are standalone typed structs,
 //!   directly constructible/parseable but **not** wired into [`CiPlusApdu`].
+//! - **Low-Speed Comms v4 extensions** ([`low_speed_comms_v4`]) — TS 103 205 §10
+//!   prints no LSC v4 resource_id (the LSC resource_id + base `comms_*` APDUs defer
+//!   to CI Plus V1.3), so the v4 `comms_info` / `comms_IP_config` APDUs and the
+//!   hybrid/multicast descriptors are standalone typed structs (tag-dispatch
+//!   helper), not wired into [`CiPlusApdu`].
+//! - **URI v3** ([`uri`]) — the `uri_message` is a SAC datatype (datatype_id 25),
+//!   not an APDU/resource, so [`uri::UriMessage`] is a standalone typed struct used
+//!   from the Content Control SAC layer.
 //! - **CI Plus descriptors** ([`descriptors`]) — Sample-Mode TLV descriptors, not
 //!   APDUs, so they are standalone too.
 
@@ -46,11 +59,15 @@ use crate::error::{Error, Result};
 use crate::resource::ResourceId;
 
 pub mod ca_support;
+pub mod cicam_player;
 pub mod content_control;
 pub mod descriptors;
+pub mod file_retrieval;
+pub mod low_speed_comms_v4;
 pub mod multistream;
 pub mod multistream_host_control;
 pub mod sample_decryption;
+pub mod uri;
 
 // --- Resource identifiers (TS 103 205 resource-summary tables) ---
 
@@ -71,6 +88,12 @@ pub const HOST_CONTROL_V3: ResourceId = ResourceId(0x0020_0043);
 /// Sample decryption resource — Class 146, Type 1, Version 1 (`0x00920041`).
 /// §7.4, Table 30.
 pub const SAMPLE_DECRYPTION: ResourceId = ResourceId(0x0092_0041);
+/// CICAM Player resource — Class 147, Type 1, Version 1 (`0x00930041`).
+/// §8.8, Table 71.
+pub const CICAM_PLAYER: ResourceId = ResourceId(0x0093_0041);
+/// Auxiliary File System resource (CICAM file retrieval) — Class 145, Type 1,
+/// Version 1 (`0x00910041`). §9, Table 75.
+pub const FILE_RETRIEVAL: ResourceId = ResourceId(0x0091_0041);
 
 /// The CI Plus resource a [`ResourceId`] denotes, for the resources dispatched by
 /// [`CiPlusApdu`]. Returns `None` for any other resource (including the
@@ -91,6 +114,10 @@ pub enum CiPlusResource {
     MultistreamHostControl(multistream_host_control::HostControlMode),
     /// Sample decryption resource (`0x00920041`).
     SampleDecryption,
+    /// CICAM Player resource (`0x00930041`).
+    CicamPlayer,
+    /// Auxiliary File System / file retrieval resource (`0x00910041`).
+    FileRetrieval,
 }
 
 impl CiPlusResource {
@@ -102,6 +129,8 @@ impl CiPlusResource {
             Self::ContentControl => "content_control",
             Self::MultistreamHostControl(_) => "multistream_host_control",
             Self::SampleDecryption => "sample_decryption",
+            Self::CicamPlayer => "cicam_player",
+            Self::FileRetrieval => "file_retrieval",
         }
     }
 }
@@ -122,6 +151,8 @@ pub fn classify(id: ResourceId) -> Option<CiPlusResource> {
             HostControlMode::BaseV3,
         )),
         SAMPLE_DECRYPTION => Some(CiPlusResource::SampleDecryption),
+        CICAM_PLAYER => Some(CiPlusResource::CicamPlayer),
+        FILE_RETRIEVAL => Some(CiPlusResource::FileRetrieval),
         _ => None,
     }
 }
@@ -147,6 +178,12 @@ pub enum CiPlusApdu<'a> {
     SampleDecryption(
         #[cfg_attr(feature = "serde", serde(borrow))] sample_decryption::SampleDecryptionApdu<'a>,
     ),
+    /// CICAM Player object (`0x00930041`).
+    CicamPlayer(#[cfg_attr(feature = "serde", serde(borrow))] cicam_player::CicamPlayerApdu<'a>),
+    /// Auxiliary File System object (`0x00910041`).
+    FileRetrieval(
+        #[cfg_attr(feature = "serde", serde(borrow))] file_retrieval::FileRetrievalApdu<'a>,
+    ),
 }
 
 impl<'a> CiPlusApdu<'a> {
@@ -170,6 +207,12 @@ impl<'a> CiPlusApdu<'a> {
             Some(CiPlusResource::SampleDecryption) => Ok(Self::SampleDecryption(
                 sample_decryption::SampleDecryptionApdu::parse(body)?,
             )),
+            Some(CiPlusResource::CicamPlayer) => Ok(Self::CicamPlayer(
+                cicam_player::CicamPlayerApdu::parse(body)?,
+            )),
+            Some(CiPlusResource::FileRetrieval) => Ok(Self::FileRetrieval(
+                file_retrieval::FileRetrievalApdu::parse(body)?,
+            )),
             None => Err(Error::UnknownResource {
                 resource_id: resource_id.0,
             }),
@@ -185,6 +228,8 @@ impl dvb_common::Serialize for CiPlusApdu<'_> {
             Self::ContentControl(o) => o.serialized_len(),
             Self::MultistreamHostControl(o) => o.serialized_len(),
             Self::SampleDecryption(o) => o.serialized_len(),
+            Self::CicamPlayer(o) => o.serialized_len(),
+            Self::FileRetrieval(o) => o.serialized_len(),
         }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -193,6 +238,8 @@ impl dvb_common::Serialize for CiPlusApdu<'_> {
             Self::ContentControl(o) => o.serialize_into(buf),
             Self::MultistreamHostControl(o) => o.serialize_into(buf),
             Self::SampleDecryption(o) => o.serialize_into(buf),
+            Self::CicamPlayer(o) => o.serialize_into(buf),
+            Self::FileRetrieval(o) => o.serialize_into(buf),
         }
     }
 }
@@ -227,6 +274,11 @@ mod tests {
         assert_eq!(
             classify(SAMPLE_DECRYPTION),
             Some(CiPlusResource::SampleDecryption)
+        );
+        assert_eq!(classify(CICAM_PLAYER), Some(CiPlusResource::CicamPlayer));
+        assert_eq!(
+            classify(FILE_RETRIEVAL),
+            Some(CiPlusResource::FileRetrieval)
         );
         assert_eq!(classify(ResourceId(0xDEAD_BEEF)), None);
         // The deferred CA Support multi-stream type is intentionally not classified.
@@ -308,6 +360,47 @@ mod tests {
             CiPlusApdu::ContentControl(content_control::ContentControlApdu::CcPinReply(_))
         ));
         assert_eq!(cc.to_bytes(), cc_body);
+    }
+
+    #[test]
+    fn dispatch_routes_cicam_player_and_file_retrieval() {
+        // CICAM_player_update_reply (9F A0 0F) under the CICAM Player resource.
+        let upd = [0x9F, 0xA0, 0x0F, 0x02, 0x06, 0x00];
+        let p = CiPlusApdu::parse(CICAM_PLAYER, &upd).unwrap();
+        assert!(matches!(
+            p,
+            CiPlusApdu::CicamPlayer(cicam_player::CicamPlayerApdu::UpdateReply(_))
+        ));
+        assert_eq!(p.to_bytes(), upd);
+
+        // A 9FA0xx player tag is NOT a member of any other resource — it routes
+        // only under the player resource (resource-scoped invariant).
+        assert!(matches!(
+            CiPlusApdu::parse(MULTISTREAM, &upd),
+            Err(Error::UnexpectedApduTag { .. })
+        ));
+        assert!(matches!(
+            CiPlusApdu::parse(SAMPLE_DECRYPTION, &upd),
+            Err(Error::UnexpectedApduTag { .. })
+        ));
+
+        // FileSystemAck (9F 94 01) under the File Retrieval resource.
+        let ack = [0x9F, 0x94, 0x01, 0x01, 0x01];
+        let f = CiPlusApdu::parse(FILE_RETRIEVAL, &ack).unwrap();
+        assert!(matches!(
+            f,
+            CiPlusApdu::FileRetrieval(file_retrieval::FileRetrievalApdu::FileSystemAck(_))
+        ));
+        assert_eq!(f.to_bytes(), ack);
+        // The file-retrieval tag is not a player tag and vice-versa.
+        assert!(matches!(
+            CiPlusApdu::parse(CICAM_PLAYER, &ack),
+            Err(Error::UnexpectedApduTag { .. })
+        ));
+        assert!(matches!(
+            CiPlusApdu::parse(FILE_RETRIEVAL, &upd),
+            Err(Error::UnexpectedApduTag { .. })
+        ));
     }
 
     #[test]
