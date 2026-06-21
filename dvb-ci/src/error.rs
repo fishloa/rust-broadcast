@@ -82,4 +82,11 @@ pub enum Error {
         /// Why it is invalid.
         reason: &'static str,
     },
+    /// A `resource_identifier()` did not map to any CI-extension resource that
+    /// [`crate::ci_ext::CiExtApdu`] can dispatch.
+    #[error("unknown CI-extension resource: {resource_id:#010X}")]
+    UnknownResource {
+        /// The 32-bit `resource_identifier()`.
+        resource_id: u32,
+    },
 }

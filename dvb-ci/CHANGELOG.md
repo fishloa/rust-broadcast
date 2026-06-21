@@ -8,6 +8,31 @@ versioning.
 
 ### Added
 
+DVB CI Extensions (ETSI TS 101 699) foundation — a new `ci_ext` module tree with
+**resource-scoped** APDU dispatch ([`ci_ext::CiExtApdu`]). Unlike EN 50221, the
+TS 101 699 resources reuse the same `0x9F80xx` tag values across resources
+(Table 87), so they cannot join the global `AnyApdu`: `CiExtApdu::parse` keys on
+the `resource_identifier()` first (masking out the 6-bit Module ID for `type = 1*`
+resources via `classify`/`MODULE_ID_MASK`), then dispatches on the leading
+`apdu_tag` within the selected resource. Each object is symmetric
+`Parse`/`Serialize` with biting round-trip + field-mutation tests; serialize
+rebuilds every byte from typed fields (no raw passthrough). Resources in this
+pass:
+
+- **Resource Manager v2** (§4.2.1, Tables 3-7, `0x00010042`): `ProfileEnq`,
+  `ProfileReply`, `ProfileChanged`, `ModuleIdSend`, `ModuleIdCommand` (with
+  `ModuleIdCommandKind`).
+- **Application Information v2** (§5, Table 11, `0x00020042`): `ApplicationInfoEnq`,
+  `ApplicationInfo`, `EnterMenu` — with the extended `ApplicationTypeV2` value set
+  (Software_upgrade / Network_interface / Accessibility_aids / Unclassified) and
+  the §5.1.2 "unrecognized → Unclassified" rule (`effective()`).
+- **Power Manager** (§6.3, Tables 52-55, `0x00220041`): `ActivationStateChangeRequest`,
+  `ActivationStateChangeAck` — with `ActivationState` and `ReplyCode`.
+- **Event Manager** (§6.4, Tables 56-61, `0x00231ii1`): `EventRequest`,
+  `EventRequestAck`, `EventNotification` — with `EventType` and `EventReply`.
+- **Copy Protection** (§6.6, Tables 69-73, `0x00041ii1`): `CpQuery`, `CpReply`,
+  `CpCommand`, `CpResponse` — with `CpStatus`.
+
 The remaining EN 50221 application objects, completing every Table 58 `apdu_tag`.
 All are symmetric `Parse`/`Serialize` with biting round-trip + mutation tests and
 PDF worked-example fixtures; serialize rebuilds every byte from typed fields (no
