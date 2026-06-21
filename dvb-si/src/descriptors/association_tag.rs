@@ -60,6 +60,10 @@ const BODY_PREFIX_LEN: usize = ASSOCIATION_TAG_LEN + USE_LEN + SELECTOR_LENGTH_L
 pub const USE_DSI_IOR: u16 = 0x0000;
 /// `use == 0x0001`: `selector_length` is `0x00` (no selector bytes).
 pub const USE_NO_SELECTOR: u16 = 0x0001;
+/// `use == 0x0100`: the DVB-guideline default value (TR 101 202 §4.7.7.2) — the
+/// associated PID may or may not broadcast a DSI message. DVB reserves
+/// `0x0101`–`0x01FF` for future use.
+pub const USE_DVB_RESERVED_DEFAULT: u16 = 0x0100;
 /// Selector length (bytes) mandated when `use == 0x0000`: `transaction_id` (4)
 /// + `timeout` (4).
 const DSI_SELECTOR_LEN: usize = 8;
