@@ -11,7 +11,15 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Error", "AnySpliceDescriptor", "AnyCommand"];
+const SKIP: &[&str] = &[
+    "Error",
+    "AnySpliceDescriptor",
+    "AnyCommand",
+    // DVB-TA (TS 103 752-1) carriage/dispatch ADTs, not spec/field-label enums:
+    // they select between sub-structures rather than labelling a coded byte.
+    "CompactScte35",
+    "Scte35Carriage",
+];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

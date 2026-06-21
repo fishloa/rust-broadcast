@@ -100,6 +100,7 @@ extern crate alloc;
 
 pub mod commands;
 pub mod descriptors;
+pub mod dvb_ta;
 pub mod error;
 pub mod section;
 pub mod time;

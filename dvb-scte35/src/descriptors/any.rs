@@ -146,6 +146,7 @@ declare_splice_descriptors! {'a;
     Segmentation = 0x02 => crate::descriptors::segmentation::SegmentationDescriptor<'a>,
     Time         = 0x03 => crate::descriptors::time::TimeDescriptor,
     Audio        = 0x04 => crate::descriptors::audio::AudioDescriptor,
+    DvbDas       = 0xF0 => crate::dvb_ta::das_descriptor::DvbDasDescriptor<'a>,
 }
 
 /// Lazily walk a raw splice descriptor loop, yielding one
