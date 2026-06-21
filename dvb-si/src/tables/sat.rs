@@ -308,7 +308,7 @@ impl AssociationType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UtcWithoutLeap => 0,
             Self::UtcWithLeap => 1,
@@ -394,7 +394,7 @@ impl TimePlanMode {
 
     #[must_use]
     /// Returns the 2-bit wire nibble for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::DwellOnTime => 0,
             Self::Bitmap => 1,
@@ -570,7 +570,7 @@ impl InterpolationType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Reserved0 => 0,
             Self::Linear => 1,

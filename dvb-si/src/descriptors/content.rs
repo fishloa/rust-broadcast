@@ -87,7 +87,7 @@ impl ContentGenre {
 
     /// Returns the wire byte for this value (same as the level-1 nibble).
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UndefinedContent => 0x0,
             Self::MovieDrama => 0x1,

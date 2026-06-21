@@ -32,7 +32,7 @@ impl MpegCarriageFlags {
 
     /// Return the raw 2-bit value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::SameTs => 0,
             Self::DifferentTs => 1,

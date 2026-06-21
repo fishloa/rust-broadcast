@@ -140,7 +140,7 @@ impl SamplingFrequency {
 
     /// Inverse of `from_u8`.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         self as u8
     }
 

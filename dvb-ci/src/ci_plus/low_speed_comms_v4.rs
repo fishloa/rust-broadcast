@@ -84,7 +84,7 @@ impl ConnectionState {
     }
     /// The 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Disconnected => 0x00,
             Self::Connected => 0x01,
@@ -129,7 +129,7 @@ impl IpProtocolVersion {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ipv4 => 0x01,
             Self::Ipv6 => 0x02,
@@ -466,7 +466,7 @@ impl IpConnectionType {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::IpDescriptor => 0x03,
             Self::HostnameDescriptor => 0x04,

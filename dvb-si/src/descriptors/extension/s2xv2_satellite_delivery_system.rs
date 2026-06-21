@@ -67,7 +67,7 @@ impl S2Xv2Mode {
 
     /// Inverse of [`from_u8`](Self::from_u8); `Self::Reserved` emits its stored value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Reserved0 => 0,
             Self::S2X => 1,

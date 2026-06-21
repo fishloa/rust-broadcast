@@ -93,7 +93,7 @@ impl AnnouncementType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::EmergencyAlarm => 0x00,
             Self::RoadTrafficFlash => 0x01,
@@ -160,7 +160,7 @@ impl ReferenceType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UsualAudioStream => 0x00,
             Self::SeparateAudioStream => 0x01,

@@ -35,7 +35,7 @@ impl ContentTimeBaseIndicator {
 
     /// Return the raw 4-bit value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::None => 0,
             Self::Stc => 1,

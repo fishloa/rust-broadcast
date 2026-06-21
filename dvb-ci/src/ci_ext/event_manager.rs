@@ -46,7 +46,7 @@ impl EventType {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Timer => 0,
             Self::Reserved(v) => v,
@@ -91,7 +91,7 @@ impl EventReply {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::BookedOk => 0,
             Self::TypeNotSupported => 1,

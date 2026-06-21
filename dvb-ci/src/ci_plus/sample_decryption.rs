@@ -366,7 +366,7 @@ impl TransmissionStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ReadyToReceive => 0x00,
             Self::CicamBusy => 0x01,
@@ -414,7 +414,7 @@ impl DrmStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::DecryptionPossible => 0x00,
             Self::Undetermined => 0x01,

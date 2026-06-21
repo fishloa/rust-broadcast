@@ -135,7 +135,7 @@ impl FecInner {
 
     /// Inverse of `from_u8`; `FecInner::Reserved(v)` emits `v`.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             FecInner::NotDefined => 0x00,
             FecInner::Rate1_2 => 0x01,

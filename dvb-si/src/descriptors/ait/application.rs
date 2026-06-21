@@ -49,7 +49,7 @@ impl Visibility {
 
     /// Encode to the 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NotVisibleAll => 0,
             Self::NotVisibleUsers => 1,

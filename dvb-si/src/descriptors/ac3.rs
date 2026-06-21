@@ -72,7 +72,7 @@ impl Ac3ServiceType {
 
     /// Return the raw 3-bit value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::CompleteMain => 0,
             Self::MusicAndEffects => 1,
@@ -151,7 +151,7 @@ impl Ac3ChannelMode {
 
     /// Return the raw 3-bit value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Mono => 0,
             Self::OnePlusOne => 1,

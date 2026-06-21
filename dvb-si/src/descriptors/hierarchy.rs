@@ -71,7 +71,7 @@ impl HierarchyType {
 
     /// Return the raw byte value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Reserved0 => 0,
             Self::SpatialScalability => 1,

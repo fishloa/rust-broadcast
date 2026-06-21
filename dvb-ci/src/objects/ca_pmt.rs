@@ -56,7 +56,7 @@ impl CaPmtListManagement {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::More => 0x00,
             Self::First => 0x01,
@@ -114,7 +114,7 @@ impl CaPmtCmdId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::OkDescrambling => 0x01,
             Self::OkMmi => 0x02,

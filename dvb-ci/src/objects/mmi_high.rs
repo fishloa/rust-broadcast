@@ -210,7 +210,7 @@ impl AnswId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Cancel => 0x00,
             Self::Answer => 0x01,

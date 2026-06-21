@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [7.7.1] — 2026-06-21
+
+### Changed
+- Value-enum accessors (`to_u8`/`to_u16`/`to_u32`) are now `const fn`, so they can be used in `const` initializers downstream. Non-breaking.
+
 ## [7.7.0] — 2026-06-20
 
 ### Changed

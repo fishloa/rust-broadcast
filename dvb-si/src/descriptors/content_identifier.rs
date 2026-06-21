@@ -50,7 +50,7 @@ impl CridType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NoTypeDefined => 0x00,
             Self::ItemOfContent => 0x01,

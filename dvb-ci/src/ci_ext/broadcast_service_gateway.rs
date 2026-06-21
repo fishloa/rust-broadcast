@@ -60,7 +60,7 @@ impl EitResponseCode {
     }
     /// 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NotOnPresentDocument => 0b00,
             Self::NotAvailable => 0b01,

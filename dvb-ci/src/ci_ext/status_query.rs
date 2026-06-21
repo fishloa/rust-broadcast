@@ -78,7 +78,7 @@ impl StatusItem {
     }
     /// Wire value.
     #[must_use]
-    pub fn to_u32(self) -> u32 {
+    pub const fn to_u32(self) -> u32 {
         match self {
             Self::SelectionInformation => 1,
             Self::PortProfile => 2,
@@ -688,7 +688,7 @@ impl ActivationState {
     }
     /// 3-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::StandbyActive => 1,
             Self::On => 2,

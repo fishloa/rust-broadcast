@@ -69,7 +69,7 @@ impl ControlCode {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Reserved => 0x00,
             Self::Autostart => 0x01,
@@ -141,7 +141,7 @@ impl ApplicationType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u16`.
-    pub fn to_u16(self) -> u16 {
+    pub const fn to_u16(self) -> u16 {
         match self {
             Self::DvbJ => 0x0001,
             Self::DvbHtml => 0x0002,

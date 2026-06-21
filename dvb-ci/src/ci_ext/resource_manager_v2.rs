@@ -86,7 +86,7 @@ impl ModuleIdCommandKind {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Acknowledgement => 0x01,
             Self::SetModuleId => 0x02,

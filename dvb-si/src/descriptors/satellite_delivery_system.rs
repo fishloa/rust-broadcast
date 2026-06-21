@@ -53,7 +53,7 @@ impl Polarization {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Polarization::LinearHorizontal => 0,
             Polarization::LinearVertical => 1,
@@ -147,7 +147,7 @@ impl RollOff {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             RollOff::Alpha035 => 0,
             RollOff::Alpha025 => 1,

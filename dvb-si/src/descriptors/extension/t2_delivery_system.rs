@@ -38,7 +38,7 @@ impl T2SisoMiso {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             T2SisoMiso::Siso => 0,
             T2SisoMiso::Miso => 1,
@@ -96,7 +96,7 @@ impl T2Bandwidth {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             T2Bandwidth::Mhz8 => 0,
             T2Bandwidth::Mhz7 => 1,
@@ -165,7 +165,7 @@ impl T2GuardInterval {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             T2GuardInterval::G1_32 => 0,
             T2GuardInterval::G1_16 => 1,
@@ -233,7 +233,7 @@ impl T2TransmissionMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             T2TransmissionMode::Mode2k => 0,
             T2TransmissionMode::Mode8k => 1,
