@@ -25,8 +25,20 @@ serde      = { version = "1", optional = true, features = ["derive"] }
 serde_json = "1.0"
 
 [features]
-default = ["std"]
+default = ["std", "decode"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
 std = ["dvb-common/std", "thiserror/std"]
 serde = ["dep:serde"]
+# `decode` adds the CEA-608/708 caption-decode layer (Cea608Decoder /
+# Cea708Decoder + the caption screen/window model) on top of the cc_data()
+# carriage. Additive, `no_std` + `alloc`.
+decode = []
+
+[[example]]
+name = "decode_cea608"
+required-features = ["decode"]
+
+[[example]]
+name = "decode_cea708"
+required-features = ["decode"]
