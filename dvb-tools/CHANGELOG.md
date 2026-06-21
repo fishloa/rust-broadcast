@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- `dump` human mode now decodes and prints the descriptor loops of PMT
+  (program-info + per-ES), SDT (per-service), and NIT (network + per-TS).
+  Descriptors resolve through a registry with the PDS-scoped 0x83
+  logical_channel enabled for the EACEM/NorDig `private_data_specifier`s, so
+  LCNs show as `LOGICAL_CHANNEL` instead of `UNKNOWN(0x83)`.
+
 ## [7.7.1] — 2026-06-21
 
 ### Changed
