@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `AncPacket::write_into` (called from `AncDataPacket::serialize_into`) now
+  returns `Error::InconsistentUdwLength { have, need }` when
+  `user_data_words.len()` does not equal `data_count & 0xFF` (§4.2.1). The
+  previous code silently zero-filled missing words, making serialize→parse
+  non-identity on inconsistent structs.
+- `AncDataPacket::parse` now rejects byte 6 values where
+  `PES_scrambling_control != '00'` or `data_alignment_indicator != '1'` with
+  `Error::BadFixedBits`, per SMPTE ST 2038:2021 Table 2 "shall" requirements.
+
+### Added
+
+- `Error::InconsistentUdwLength { have, need }` — new error variant for UDW
+  length/`data_count` mismatch.
+- `tests/label_coverage.rs` — drift-guard for the spec/field-enum label
+  convention (issue #204); `Error` is in the skip list since it carries no spec
+  label.
+
 ## [0.1.0]
 
 ### Added
