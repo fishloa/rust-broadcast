@@ -26,6 +26,12 @@ pub const LCT_VERSION: u8 = 1;
 /// Size in bytes of the fixed first word (V/C/PSI/S/O/H/Res/A/B + HDR_LEN + CP).
 pub const FIXED_HEADER_LEN: usize = 4;
 
+// First-word flag bits for the 16-bit packed field (RFC 5651 §5.1).
+/// Bit mask for the `A` (Close Session) flag in the first header word.
+const FLAG_A: u16 = 0x0002;
+/// Bit mask for the `B` (Close Object) flag in the first header word.
+const FLAG_B: u16 = 0x0001;
+
 /// A decoded LCT header (RFC 5651 §5.1).
 ///
 /// The flag-driven field widths are reconstructed from the typed fields on
@@ -131,8 +137,14 @@ impl<'a> LctHeader<'a> {
         (self.cci.len() / WORD).saturating_sub(1) as u8
     }
     /// The `H` half-word flag, derived from TSI/TOI parity.
+    ///
+    /// RFC 5651 §5.1: TSI and TOI **both** carry the half-word when `H` is set,
+    /// so both must agree (the `flags_from_lengths` validator enforces this on
+    /// serialize). A validly constructed header always has matching parity; we
+    /// use `&&` to reflect the RFC constraint rather than the `||` that would
+    /// mask a corrupted struct.
     pub fn h_flag(&self) -> u8 {
-        u8::from((self.tsi.len() % WORD) != 0 || (self.toi.len() % WORD) != 0)
+        u8::from((self.tsi.len() % WORD) != 0 && (self.toi.len() % WORD) != 0)
     }
     /// The `S` flag (full 32-bit words in TSI).
     pub fn s_flag(&self) -> u8 {
@@ -178,8 +190,8 @@ impl<'a> LctHeader<'a> {
         let o = (w >> 5) as u8 & 0x03;
         let h = (w >> 4) as u8 & 0x01;
         // Res = bits 2..3 (ignored). A = bit 1, B = bit 0.
-        let close_session = (w & 0x0002) != 0;
-        let close_object = (w & 0x0001) != 0;
+        let close_session = (w & FLAG_A) != 0;
+        let close_object = (w & FLAG_B) != 0;
         let hdr_len = data[2];
         let codepoint = data[3];
 
@@ -288,10 +300,10 @@ impl<'a> LctHeader<'a> {
         w |= (h as u16 & 0x01) << 4;
         // Res (bits 2..3) = 0.
         if self.close_session {
-            w |= 0x0002;
+            w |= FLAG_A;
         }
         if self.close_object {
-            w |= 0x0001;
+            w |= FLAG_B;
         }
         out[0..2].copy_from_slice(&w.to_be_bytes());
         out[2] = words as u8;

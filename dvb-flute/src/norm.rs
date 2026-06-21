@@ -243,6 +243,130 @@ impl SenderWord {
     }
 }
 
+/// NORM_INFO fixed header beyond the common header + sender word (RFC 5740
+/// §4.2.2, Figure 8): `flags | fec_id | object_transport_id`.
+///
+/// NORM_INFO is the **atomic** out-of-band context message for one object.
+/// Unlike NORM_DATA it carries **no** `fec_payload_id` field — the fixed part
+/// of the header is exactly 4 words (common 8 + sender 4 + flags-word 4 = 16
+/// bytes = hdr_len 4 when there are no extensions). The payload is the
+/// application-defined info content (≤ NormSegmentSize).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct NormInfo<'a> {
+    /// Common header (message_type = `NormMessageType::Info`).
+    pub common: NormCommonHeader,
+    /// Shared sender word.
+    pub sender: SenderWord,
+    /// Object flags (NORM_FLAG_*). Same set as NORM_DATA.
+    pub flags: u8,
+    /// FEC Encoding ID.
+    pub fec_id: u8,
+    /// NormTransportId of the object this INFO is associated with.
+    pub object_transport_id: u16,
+    /// Header-extension chain (e.g. EXT_FTI per §4.2.1 Figure 6).
+    pub extensions: Vec<HeaderExtension<'a>>,
+    /// Application-defined content (≤ NormSegmentSize). NOT part of `hdr_len`.
+    pub payload: &'a [u8],
+}
+
+/// Fixed header size of NORM_INFO before header extensions:
+/// common(8) + sender(4) + flags-word(4) = 16 bytes.
+pub const NORM_INFO_FIXED_LEN: usize = COMMON_HEADER_LEN + SENDER_WORD_LEN + WORD;
+
+impl<'a> NormInfo<'a> {
+    /// Total header bytes (common + sender + flags-word + extensions).
+    fn header_bytes(&self) -> usize {
+        NORM_INFO_FIXED_LEN + ext::chain_len(&self.extensions)
+    }
+
+    /// Total serialized length in bytes.
+    pub fn serialized_len(&self) -> usize {
+        self.header_bytes() + self.payload.len()
+    }
+
+    /// Parse a NORM_INFO message.
+    pub fn parse(data: &'a [u8]) -> Result<Self> {
+        let (common, hdr_len) = NormCommonHeader::parse(data)?;
+        let sender = SenderWord::parse(&data[COMMON_HEADER_LEN..])?;
+        let off = COMMON_HEADER_LEN + SENDER_WORD_LEN;
+        if data.len() < off + WORD {
+            return Err(Error::BufferTooShort {
+                need: off + WORD,
+                have: data.len(),
+                what: "NORM_INFO flags word",
+            });
+        }
+        let flags = data[off];
+        let fec_id = data[off + 1];
+        let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
+
+        // hdr_len bounds the header (incl. extensions); payload starts after.
+        let header_end = hdr_len as usize * WORD;
+        if header_end < NORM_INFO_FIXED_LEN {
+            return Err(Error::InconsistentLength {
+                length: hdr_len,
+                reason: "hdr_len smaller than the NORM_INFO fixed header",
+            });
+        }
+        if data.len() < header_end {
+            return Err(Error::BufferTooShort {
+                need: header_end,
+                have: data.len(),
+                what: "NORM_INFO header (per hdr_len)",
+            });
+        }
+        let extensions = ext::parse_chain(&data[NORM_INFO_FIXED_LEN..header_end])?;
+        let payload = &data[header_end..];
+
+        Ok(NormInfo {
+            common,
+            sender,
+            flags,
+            fec_id,
+            object_transport_id,
+            extensions,
+            payload,
+        })
+    }
+
+    /// Serialize into `out`, recomputing `hdr_len`. Returns bytes written.
+    pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
+        let total = self.serialized_len();
+        if out.len() < total {
+            return Err(Error::OutputBufferTooSmall {
+                need: total,
+                have: out.len(),
+            });
+        }
+        let header_bytes = self.header_bytes();
+        if header_bytes % WORD != 0 {
+            return Err(Error::InvalidField {
+                what: "hdr_len",
+                reason: "NORM_INFO header length is not a multiple of 4 bytes",
+            });
+        }
+        let words = header_bytes / WORD;
+        if words > u8::MAX as usize {
+            return Err(Error::FieldTooWide {
+                what: "hdr_len",
+                value: words as u64,
+                bits: 8,
+            });
+        }
+        let mut off = self.common.serialize_into(out, words as u8)?;
+        off += self.sender.serialize_into(&mut out[off..])?;
+        out[off] = self.flags;
+        out[off + 1] = self.fec_id;
+        out[off + 2..off + 4].copy_from_slice(&self.object_transport_id.to_be_bytes());
+        off += WORD;
+        off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
+        out[off..off + self.payload.len()].copy_from_slice(self.payload);
+        off += self.payload.len();
+        Ok(off)
+    }
+}
+
 // NORM_DATA `flags` bits (RFC 5740 §4.2.1).
 /// Message is a repair transmission.
 pub const NORM_FLAG_REPAIR: u8 = 0x01;
@@ -944,5 +1068,100 @@ mod tests {
         assert_eq!(NormAckType::from_u8(10), NormAckType::Reserved(10));
         assert_eq!(NormAckType::from_u8(200), NormAckType::Application(200));
         assert_eq!(NormAckType::Reserved(10).to_string(), "reserved(0x0A)");
+    }
+
+    /// NORM_INFO round-trip: construct from typed fields, serialize, parse back,
+    /// verify byte-exact. The NormInfo header has NO fec_payload_id —
+    /// `hdr_len` base is 4 words (16 bytes).
+    #[test]
+    fn norm_info_round_trip() {
+        let payload = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01, 0x02, 0x03u8];
+        let info = NormInfo {
+            common: common(NormMessageType::Info),
+            sender: sender(),
+            flags: NORM_FLAG_FILE,
+            fec_id: 129,
+            object_transport_id: 0x0042,
+            extensions: vec![],
+            payload: &payload,
+        };
+        // hdr_len = (8 + 4 + 4) / 4 = 4 words; no fec_payload_id.
+        assert_eq!(info.header_bytes(), NORM_INFO_FIXED_LEN);
+        let total = info.serialized_len();
+        assert_eq!(total, NORM_INFO_FIXED_LEN + payload.len());
+
+        let mut out = vec![0u8; total];
+        let n = info.serialize_into(&mut out).unwrap();
+        assert_eq!(n, total);
+
+        // Byte-exact checks: version|type=0x11, hdr_len=4.
+        assert_eq!(out[0], 0x11, "version=1 type=1");
+        assert_eq!(out[1], 4, "hdr_len = 4 words");
+        // flags-word: flags | fec_id | oti.
+        assert_eq!(out[12], NORM_FLAG_FILE);
+        assert_eq!(out[13], 129);
+        assert_eq!(u16::from_be_bytes([out[14], out[15]]), 0x0042);
+        // Payload follows immediately (no fec_payload_id).
+        assert_eq!(&out[16..], &payload);
+
+        let re = NormInfo::parse(&out).unwrap();
+        assert_eq!(re, info);
+    }
+
+    /// NORM_INFO round-trip with a mutated field confirms the value is encoded
+    /// and recovered (not silently dropped).
+    #[test]
+    fn norm_info_mutated_field_changes_wire() {
+        let payload = [0u8; 4];
+        let make = |oti: u16| {
+            let i = NormInfo {
+                common: common(NormMessageType::Info),
+                sender: sender(),
+                flags: 0,
+                fec_id: 0,
+                object_transport_id: oti,
+                extensions: vec![],
+                payload: &payload,
+            };
+            let mut out = vec![0u8; i.serialized_len()];
+            i.serialize_into(&mut out).unwrap();
+            out
+        };
+        let a = make(0x0001);
+        let b = make(0x0002);
+        assert_ne!(a, b);
+        // OTI is at bytes 14..16 in the header.
+        assert_eq!(u16::from_be_bytes([a[14], a[15]]), 0x0001);
+        assert_eq!(u16::from_be_bytes([b[14], b[15]]), 0x0002);
+    }
+
+    /// NORM_INFO with an EXT_FTI extension: hdr_len grows by the extension words.
+    #[test]
+    fn norm_info_with_ext_fti() {
+        // EXT_FTI: het=64, hel=4 → 16 bytes.
+        let fti = [
+            0x40u8, 0x04, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x01, 0x02, 0x00, 0x04, 0x00,
+            0x00, 0x10,
+        ];
+        let (ext_fti, _) = HeaderExtension::parse(&fti).unwrap();
+        let payload = [0xAB, 0xCDu8];
+        let info = NormInfo {
+            common: common(NormMessageType::Info),
+            sender: sender(),
+            flags: NORM_FLAG_INFO,
+            fec_id: 129,
+            object_transport_id: 3,
+            extensions: vec![ext_fti],
+            payload: &payload,
+        };
+        // hdr_len = (8 + 4 + 4 + 16) / 4 = 8 words.
+        assert_eq!(info.header_bytes(), 32);
+        let mut out = vec![0u8; info.serialized_len()];
+        info.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 8, "hdr_len with EXT_FTI");
+        let re = NormInfo::parse(&out).unwrap();
+        assert_eq!(re, info);
+        assert_eq!(re.extensions.len(), 1);
+        assert_eq!(re.extensions[0].het, HET_EXT_FTI);
     }
 }
