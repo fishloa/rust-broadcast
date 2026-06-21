@@ -25,17 +25,18 @@ following the standard SCTE 35 private-descriptor framing.
 | &nbsp;&nbsp;break_num | 8 | uimsbf |
 | &nbsp;&nbsp;breaks_expected | 8 | uimsbf |
 | &nbsp;&nbsp;reserved | 4 | uimsbf |
-| &nbsp;&nbsp;equivalent_segmentation_type | 4 | uimsbf |
+| &nbsp;&nbsp;equivalent_segmentation_type | 4 | bslbf |
 | &nbsp;&nbsp;upid | N*8 | uimsbf |
 | `}` | | |
 
 ⚠ The PDF render lists the bit counts in source order as `8, 8, 32, 8, 8, 4, 4,
 N*8`. The `reserved` and `equivalent_segmentation_type` fields are the two 4-bit
 nibbles of one byte (reserved is the high nibble, `equivalent_segmentation_type`
-the low nibble); the table mnemonic for `reserved` is shown as `bslbf` and for
-`equivalent_segmentation_type` as `uimsbf` in the render (the values column places
-them on the `reserved`/`equivalent_segmentation_type` rows). `upid` is the
-trailing variable-length field (`N*8`).
+the low nibble). The spec's Mnemonic column marks `reserved` as `uimsbf` and
+`equivalent_segmentation_type` as `bslbf` — an inversion of the usual convention
+(reserved is normally `bslbf`), but reproduced here verbatim from Table 1; the
+4-bit widths and parse are unaffected either way. `upid` is the trailing
+variable-length field (`N*8`).
 
 ## Semantics (§5.3.5.16)
 

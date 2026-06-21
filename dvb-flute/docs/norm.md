@@ -560,7 +560,7 @@ interoperability testing. No wire layout to transcribe.
 
 ---
 
-## IANA — NORM Header Extension Types registry (§8.5)
+## IANA — NORM Header Extension Types registry (§8.1.1)
 
 8-bit namespace; 0..127 = variable-length, 128..255 = fixed (4-byte) length.
 

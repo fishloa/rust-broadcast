@@ -131,10 +131,11 @@ top-to-bottom, bottom-to-top), **scroll direction**, **word-wrap**, and the
 - Window **fill colour + opacity** and **border type + colour** must be supported.
 - Border types include **none / raised / depressed / uniform / shadow-left /
   shadow-right** (the CEA-708 border-type enumeration).
-- The decoder must implement the **predefined window styles (1–7)** and
-  **predefined pen styles (1–7)** so that a service selecting a preset gets the
-  standard rendering (the preset tables — e.g. NTSC pop-on, roll-up, centered —
-  are defined in CEA-708-E).
+- §79.102 mandates support for a **minimum of predefined window style 1 and
+  predefined pen style 1** (window style 2 is also recommended) — it does *not*
+  require all of styles 1–7. The full set of presets (1–7) is defined in
+  CEA-708-E; implementing them all is what lets any service selecting a preset
+  get the standard rendering (e.g. NTSC pop-on, roll-up, centered).
 
 ---
 
@@ -196,8 +197,9 @@ viewer's choice overrides the provider's specification (see (t)).
 
 ## (p) Character edges
 
-The decoder must support **separate edge colour and edge type** control. The
-CEA-708 edge-type enumeration is:
+§79.102(p) itself mandates only **separate edge colour and edge type** attribute
+control; the specific edge-type names below come from CEA-708-E (Table 5), not
+from the regulation's own text. The CEA-708 edge-type enumeration is:
 
 | Edge type |
 |---|
