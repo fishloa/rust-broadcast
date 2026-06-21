@@ -127,6 +127,11 @@ impl AncPacket {
 
     /// Write this record's bits into `w`, MSB-first, then pad to the byte
     /// boundary with `'1'` bits.
+    ///
+    /// # Errors
+    /// Returns [`Error::InconsistentUdwLength`] if `user_data_words.len()` does
+    /// not equal `data_count & 0xFF`; a mismatch would silently zero-fill missing
+    /// words, making serialize→parse non-identity.
     fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
         fn check(what: &'static str, value: u16, bits: u32) -> Result<u64> {
             if u32::from(value) >= (1u32 << bits) {
@@ -137,6 +142,14 @@ impl AncPacket {
                 });
             }
             Ok(u64::from(value))
+        }
+
+        // Validate coherence: user_data_words.len() must equal data_count & 0xFF
+        // (§4.2.1).  A mismatch would produce extra zero words on re-parse.
+        let need = self.udw_loop_count();
+        let have = self.user_data_words.len();
+        if have != need {
+            return Err(Error::InconsistentUdwLength { have, need });
         }
 
         w.write_bits(0, W_LEADING_ZEROS)?; // '000000'
@@ -159,12 +172,11 @@ impl AncPacket {
             check("data_count", self.data_count, W_DATA_COUNT)?,
             W_DATA_COUNT,
         )?;
-        // §4.2.1: loop runs `data_count & 0xFF` times, NOT user_data_words.len().
-        let n = self.udw_loop_count();
-        for j in 0..n {
-            let udw = self.user_data_words.get(j).copied().unwrap_or(0);
+        // §4.2.1: loop runs exactly `data_count & 0xFF` times; coherence
+        // validated above so user_data_words.len() == need here.
+        for udw in &self.user_data_words {
             w.write_bits(
-                check("user_data_word", udw, W_USER_DATA_WORD)?,
+                check("user_data_word", *udw, W_USER_DATA_WORD)?,
                 W_USER_DATA_WORD,
             )?;
         }
@@ -275,11 +287,27 @@ impl AncDataPacket {
         }
         let pes_packet_length = usize::from(u16::from_be_bytes([b[4], b[5]]));
 
-        // Byte 6: '10' marker + scrambling(2)=00 + priority + alignment(=1) +
-        // copyright + original_or_copy.
+        // Byte 6: '10'(2) + PES_scrambling_control(2)='00' + PES_priority(1) +
+        // data_alignment_indicator(1)='1' + copyright(1) + original_or_copy(1).
+        // ST 2038 Table 2: scrambling shall be '00', alignment shall be '1'.
+        // Mask: bits[7:6]='10' (0x80), bits[5:4]=scrambling (0x30),
+        //       bit[2]=data_alignment_indicator (0x04).
+        // Expected fixed pattern: bits[7:6]=0b10, bits[5:4]=0b00, bit[2]=1
+        //   → (f1 & 0xB4) == 0x84 checks '10'(marker) + '00'(scrambling) + '1'(align).
         let f1 = b[6];
-        if (f1 >> 6) != 0b10 {
-            return Err(Error::BadFixedBits("PES '10' marker"));
+        if (f1 & 0xB4) != 0x84 {
+            if (f1 >> 6) != 0b10 {
+                return Err(Error::BadFixedBits("PES '10' marker"));
+            }
+            if (f1 & 0x30) != 0x00 {
+                return Err(Error::BadFixedBits(
+                    "PES_scrambling_control shall be '00' (ST 2038 Table 2)",
+                ));
+            }
+            // data_alignment_indicator bit[2] must be '1'.
+            return Err(Error::BadFixedBits(
+                "data_alignment_indicator shall be '1' (ST 2038 Table 2)",
+            ));
         }
         let pes_priority = f1 & 0x08 != 0;
         let copyright = f1 & 0x02 != 0;
@@ -366,7 +394,9 @@ impl AncDataPacket {
     /// # Errors
     /// [`Error::BufferTooShort`] if `buf` is too small;
     /// [`Error::PesLengthTooLarge`] if `PES_packet_length` overflows 16 bits;
-    /// [`Error::FieldTooWide`] if any field exceeds its wire width.
+    /// [`Error::FieldTooWide`] if any field exceeds its wire width;
+    /// [`Error::InconsistentUdwLength`] if any [`AncPacket`]'s
+    /// `user_data_words.len()` does not equal `data_count & 0xFF`.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         if buf.len() < len {
@@ -599,6 +629,81 @@ mod tests {
         let mut oc = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut oc).unwrap();
         assert_ne!(oa, oc, "changing line_number must change the wire bytes");
+
+        // DID must be reflected in the wire bytes.
+        let mut d = a.clone();
+        d.anc_packets[0].did = 0x001; // was 0x161
+        let mut od = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut od).unwrap();
+        assert_ne!(oa, od, "changing DID must change the wire bytes");
+
+        // checksum must be reflected in the wire bytes.
+        let mut e = a.clone();
+        e.anc_packets[0].checksum = 0x001; // was 0x233
+        let mut oe = vec![0u8; e.serialized_len()];
+        e.serialize_into(&mut oe).unwrap();
+        assert_ne!(oa, oe, "changing checksum must change the wire bytes");
+    }
+
+    /// Regression: serialize_into must return Err when user_data_words.len()
+    /// is shorter than data_count & 0xFF (the old code silently zero-filled,
+    /// making serialize→parse non-identity).
+    #[test]
+    fn serialize_rejects_inconsistent_udw_length() {
+        let p = AncDataPacket {
+            pes_priority: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: 0,
+            anc_packets: vec![AncPacket {
+                c_not_y_channel_flag: false,
+                line_number: 1,
+                horizontal_offset: 0,
+                did: 0x161,
+                sdid: 0x101,
+                data_count: 0x003,            // expects 3 UDWs
+                user_data_words: vec![0x100], // only 1 — mismatch!
+                checksum: 0x001,
+            }],
+            stuffing_bytes: 0,
+        };
+        // serialized_len uses udw_loop_count() (3), so the buffer is sized for 3.
+        let mut buf = vec![0u8; p.serialized_len()];
+        assert!(
+            matches!(
+                p.serialize_into(&mut buf),
+                Err(Error::InconsistentUdwLength { have: 1, need: 3 })
+            ),
+            "expected InconsistentUdwLength {{ have: 1, need: 3 }}"
+        );
+    }
+
+    /// Parser must reject PES_scrambling_control != '00' (ST 2038 Table 2).
+    #[test]
+    fn rejects_nonzero_scrambling_control() {
+        let p = sample_2packet();
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap();
+        // bits[5:4] of byte 6 = PES_scrambling_control; set to '01'.
+        out[6] = (out[6] & !0x30) | 0x10;
+        assert!(
+            matches!(AncDataPacket::parse(&out), Err(Error::BadFixedBits(_))),
+            "expected BadFixedBits for non-zero scrambling_control"
+        );
+    }
+
+    /// Parser must reject data_alignment_indicator != '1' (ST 2038 Table 2).
+    #[test]
+    fn rejects_zero_data_alignment_indicator() {
+        let p = sample_2packet();
+        let mut out = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut out).unwrap();
+        // bit[2] of byte 6 = data_alignment_indicator; clear it.
+        out[6] &= !0x04;
+        assert!(
+            matches!(AncDataPacket::parse(&out), Err(Error::BadFixedBits(_))),
+            "expected BadFixedBits for data_alignment_indicator=0"
+        );
     }
 
     #[test]

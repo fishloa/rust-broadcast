@@ -58,6 +58,15 @@ pub enum Error {
         /// The field width on the wire.
         bits: u32,
     },
+    /// `user_data_words.len()` does not equal the expected UDW count
+    /// (`data_count & 0xFF`); serializing would zero-fill or truncate.
+    #[error("inconsistent user_data_words length: have {have}, need {need} (data_count & 0xFF)")]
+    InconsistentUdwLength {
+        /// Actual `user_data_words.len()`.
+        have: usize,
+        /// Expected count: `data_count & 0xFF`.
+        need: usize,
+    },
     /// Underlying bit reader/writer error.
     #[error("bit stream error: {0}")]
     Bits(BitError),
