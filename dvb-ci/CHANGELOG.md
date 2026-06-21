@@ -131,6 +131,28 @@ byte from typed fields (no raw passthrough). This pass:
   `CiplusInitializationVectorDescriptor` (`0xD0`) and
   `CiplusKeyIdentifierDescriptor` (`0xD1`) — TLV descriptors (`descriptor_tag` +
   `descriptor_length` + opaque body).
+- **Multi-stream Host Control** (§6.4.5, Tables 17-22; base DVB Host Control v3
+  §13.2, Tables 97-102; `0x00200081` / base v3 `0x00200043`): the implemented tune
+  APDUs `TuneTripletReq` (`9F8409`), `TuneLcnReq` (`9F8407`), `TuneIpReq`
+  (`9F8408`), `TunerStatusReq` (`9F840A`, header-only) and `TunerStatusReply`
+  (`9F840B`, `num_dsd` loop) — each adding the §6.4.5 `background_tune_flag` to the
+  base-v3 layout. The **two resource ids** both route to the
+  `CiPlusResource::MultistreamHostControl` kind, carrying a `HostControlMode`
+  (`MultiStream` vs `BaseV3`) that selects the **`tune_ip_req` reserved-bit
+  divergence** (Table 21 = `reserved(1)` + `background_tune_flag`; Table 100 =
+  `reserved(2)`, no `background_tune_flag`) — both layouts are modeled by the one
+  `TuneIpReq` carrying its `mode`, serializing to distinct byte patterns.
+  `tune_broadcast_req` / `tune_reply` / `ask_release(_reply)` are **deferred to CI
+  Plus V1.3** (tags not printed in TS 103 205) and intentionally not encoded.
+- **Sample decryption** (§7.4, Tables 30-39, `0x00920041`): `SdInfoReq`
+  (`9F9800`, header-only) / `SdInfoReply` (`9F9801`, `drm_system_id` + 128-bit
+  `drm_uuid` lists) / `SdStart` (`9F9802`) / `SdStartReply` (`9F9803`, with the
+  `TransmissionStatus` and `DrmStatus` value enums) / `SdUpdate` (`9F9804`) /
+  `SdUpdateReply` (`9F9805`). `SdStart`/`SdUpdate` share the `ts_flag`-selected
+  `SamplePayload` (TS-level metadata-record loop vs per-`track_PID` Sample-Track
+  loop of `DrmMetadataRecord`s); the `drm_metadata_byte` blobs (pssh/sinf/CASD/MPD/
+  OSDT per Table 34) are opaque borrowed `&[u8]`. (`CiPlusApdu` gains a lifetime
+  parameter to carry the borrowed Host-Control / Sample-decryption bodies.)
 
 ## 0.1.0 — 2026-06-20
 
