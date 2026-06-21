@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `NormInfo` — NORM_INFO (type = 1) parser+serializer (RFC 5740 §4.2.2, Figure 8):
+  common header + sender word + `flags | fec_id | object_transport_id` + optional
+  header extensions + payload. Unlike NORM_DATA there is **no** `fec_payload_id`
+  field; base `hdr_len` is 4 words (16 bytes). `NORM_INFO_FIXED_LEN` constant
+  exported. Three round-trip tests: basic construct-from-fields + byte-exact
+  check, mutated-field bite test, and EXT_FTI extension chain test.
+- `tests/label_coverage.rs` — drift-guard for the `name()`+`Display` label
+  convention (#204): scans `src/` for `pub enum`s and fails CI if any lacks a
+  `Display` impl.
+
+### Changed
+
+- `lct.rs`: flag-bit literals `0x0002` (A = close_session) and `0x0001`
+  (B = close_object) replaced with named private constants `FLAG_A` / `FLAG_B`.
+- `lct.rs`: `h_flag()` corrected from `||` to `&&` — the RFC 5651 §5.1 H-bit
+  constraint requires TSI **and** TOI to agree on half-word parity.
+- `lct_ext.rs`: bare Use-field sub-masks `0x00FF` and `0x0F00` replaced with
+  named private constants `USE_PI_SPECIFIC_MASK` / `USE_RESERVED_MASK`.
+
 ## [0.1.0]
 
 ### Added

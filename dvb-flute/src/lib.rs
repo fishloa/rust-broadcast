@@ -22,9 +22,9 @@
 //!   extensions `EXT_FDT` (HET 192) and `EXT_CENC` (HET 193), plus the TOI = 0
 //!   FDT-Instance convention. The FDT Instance body is XML and is **out of
 //!   scope** of this binary crate — it rides as the packet payload.
-//! - [`NormCommonHeader`] + [`NormData`] / [`NormCmd`] / [`NormFeedback`] — the
-//!   **NORM** (RFC 5740) common header and message types (NORM_DATA / INFO /
-//!   CMD / NACK / ACK / REPORT).
+//! - [`NormCommonHeader`] + [`NormData`] / [`NormInfo`] / [`NormCmd`] / [`NormFeedback`] — the
+//!   **NORM** (RFC 5740) common header and message types (NORM_INFO / NORM_DATA /
+//!   NORM_CMD / NORM_NACK / NORM_ACK / NORM_REPORT).
 //!
 //! ⚠ **FEC Payload ID** bit layouts are FEC-scheme dependent (RFC 5052 / the FEC
 //! Scheme document) and are **not** defined by ALC/NORM themselves; this crate
@@ -99,9 +99,10 @@ pub use lct_ext::{
     USE_SCT_HIGH, USE_SCT_LOW, USE_SLC,
 };
 pub use norm::{
-    NormAckType, NormCmd, NormCmdType, NormCommonHeader, NormData, NormFeedback, NormMessageType,
-    SenderWord, COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN, HET_EXT_AUTH as NORM_HET_EXT_AUTH,
-    HET_EXT_CC, HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE, NORM_FLAG_EXPLICIT, NORM_FLAG_FILE,
-    NORM_FLAG_INFO, NORM_FLAG_REPAIR, NORM_FLAG_STREAM, NORM_FLAG_UNRELIABLE, NORM_NODE_ANY,
-    NORM_NODE_NONE, NORM_VERSION, SENDER_WORD_LEN,
+    NormAckType, NormCmd, NormCmdType, NormCommonHeader, NormData, NormFeedback, NormInfo,
+    NormMessageType, SenderWord, COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN,
+    HET_EXT_AUTH as NORM_HET_EXT_AUTH, HET_EXT_CC, HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE,
+    NORM_FLAG_EXPLICIT, NORM_FLAG_FILE, NORM_FLAG_INFO, NORM_FLAG_REPAIR, NORM_FLAG_STREAM,
+    NORM_FLAG_UNRELIABLE, NORM_INFO_FIXED_LEN, NORM_NODE_ANY, NORM_NODE_NONE, NORM_VERSION,
+    SENDER_WORD_LEN,
 };

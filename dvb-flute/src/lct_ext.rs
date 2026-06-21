@@ -77,6 +77,12 @@ pub const USE_ERT: u16 = 0x2000;
 /// Use-field bit: Session Last Changed time present.
 pub const USE_SLC: u16 = 0x1000;
 
+// EXT_TIME Use-field sub-masks (RFC 5651 §5.2.2).
+/// Mask for the PI-specific (protocol-instantiation) low 8 bits of the Use field.
+const USE_PI_SPECIFIC_MASK: u16 = 0x00FF;
+/// Mask for the reserved-by-LCT bits in the Use field (bits 8..=11).
+const USE_RESERVED_MASK: u16 = 0x0F00;
+
 /// A decoded EXT_TIME header extension (RFC 5651 §5.2.2, HET = 2).
 ///
 /// Carries 0..4 32-bit time values selected by the 16-bit `Use` bit field. When
@@ -143,9 +149,9 @@ impl ExtTime {
             });
         }
         let use_field = u16::from_be_bytes([content[0], content[1]]);
-        let pi_specific = (use_field & 0x00FF) as u8;
-        // Reserved-by-LCT bits (Use & 0x0F00) MUST be 0.
-        if use_field & 0x0F00 != 0 {
+        let pi_specific = (use_field & USE_PI_SPECIFIC_MASK) as u8;
+        // Reserved-by-LCT bits (Use & USE_RESERVED_MASK) MUST be 0.
+        if use_field & USE_RESERVED_MASK != 0 {
             return Err(Error::InvalidField {
                 what: "EXT_TIME Use reserved",
                 reason: "reserved-by-LCT Use bits must be zero",
