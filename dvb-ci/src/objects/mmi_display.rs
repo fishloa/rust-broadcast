@@ -54,7 +54,7 @@ impl DisplayControlCmd {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::SetMmiMode => 0x01,
             Self::GetDisplayCharacterTableList => 0x02,
@@ -109,7 +109,7 @@ impl MmiMode {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::HighLevel => 0x01,
             Self::LowLevelOverlayGraphics => 0x02,
@@ -232,7 +232,7 @@ impl DisplayReplyId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::MmiModeAck => 0x01,
             Self::ListDisplayCharacterTables => 0x02,
@@ -512,7 +512,7 @@ impl KeypadControlCmd {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::InterceptAllKeypresses => 0x01,
             Self::IgnoreAllKeypresses => 0x02,
@@ -758,7 +758,7 @@ impl DisplayMessageId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::DisplayOk => 0x00,
             Self::DisplayError => 0x01,
@@ -1118,7 +1118,7 @@ impl DownloadReplyId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::DownloadOk => 0x00,
             Self::NotAnObjectDataSegment => 0x01,

@@ -49,7 +49,7 @@ impl CommsCommandId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ConnectOnChannel => 0x01,
             Self::DisconnectOnChannel => 0x02,
@@ -99,7 +99,7 @@ impl ConnectionDescriptorType {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::SiTelephoneDescriptor => 0x01,
             Self::CableReturnChannelDescriptor => 0x02,
@@ -416,7 +416,7 @@ impl CommsReplyId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ConnectAck => 0x01,
             Self::DisconnectAck => 0x02,

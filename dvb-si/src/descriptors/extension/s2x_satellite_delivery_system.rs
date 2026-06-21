@@ -47,7 +47,7 @@ impl S2XMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             S2XMode::Reserved0 => 0,
             S2XMode::S2X => 1,
@@ -103,7 +103,7 @@ impl TsGsS2XMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             TsGsS2XMode::GenericPacketized => 0,
             TsGsS2XMode::Gse => 1,

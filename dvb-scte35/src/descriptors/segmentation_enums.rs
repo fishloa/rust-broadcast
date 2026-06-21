@@ -36,7 +36,7 @@ impl DeviceRestrictions {
 
     /// The 2-bit wire value.
     #[must_use]
-    pub fn bits(self) -> u8 {
+    pub const fn bits(self) -> u8 {
         self as u8
     }
 
@@ -115,7 +115,7 @@ impl SegmentationUpidType {
 
     /// The 8-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NotUsed => 0x00,
             Self::UserDefinedDeprecated => 0x01,
@@ -290,7 +290,7 @@ impl SegmentationTypeId {
 
     /// The 8-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NotIndicated => 0x00,
             Self::ContentIdentification => 0x01,

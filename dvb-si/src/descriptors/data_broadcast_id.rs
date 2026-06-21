@@ -55,7 +55,7 @@ impl UpdateType {
 
     #[must_use]
     /// Returns the 4-bit wire nibble for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ProprietaryUpdateSolution => 0x0,
             Self::StandardUpdateCarousel => 0x1,

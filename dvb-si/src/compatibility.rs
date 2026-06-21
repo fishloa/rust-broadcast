@@ -77,7 +77,7 @@ impl DescriptorType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Pad => 0x00,
             Self::SystemHardware => 0x01,
@@ -124,7 +124,7 @@ impl SpecifierType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::IeeeOui => 0x01,
             Self::Unallocated(v) => v,
@@ -160,7 +160,7 @@ impl SubDescriptorType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Unallocated(v) => v,
         }

@@ -105,7 +105,7 @@ impl PlayerVerifyStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ok => 0x00,
             Self::Error => 0x01,
@@ -156,7 +156,7 @@ impl InputStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ok => 0x00,
             Self::RequestRefused => 0x01,
@@ -208,7 +208,7 @@ impl PlayStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::PlayNotPossible => 0x01,
             Self::Unrecoverable => 0x02,
@@ -255,7 +255,7 @@ impl SeekMode {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Absolute => 0x00,
             Self::Relative => 0x01,
@@ -300,7 +300,7 @@ impl UpdateStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ok => 0x00,
             Self::RequestRefused => 0x01,

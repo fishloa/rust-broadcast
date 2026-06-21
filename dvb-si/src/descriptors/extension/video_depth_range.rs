@@ -32,7 +32,7 @@ impl RangeType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ProductionDisparityHint => 0x00,
             Self::MultiRegionSei => 0x01,

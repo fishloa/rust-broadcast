@@ -64,7 +64,7 @@ impl FrameDurationCode {
 
     /// Inverse of `from_u8`.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             FrameDurationCode::Samples512 => 0,
             FrameDurationCode::Samples1024 => 1,
@@ -127,7 +127,7 @@ impl MaxPayloadCode {
 
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             MaxPayloadCode::Byte2048 => 0,
             MaxPayloadCode::Byte4096 => 1,

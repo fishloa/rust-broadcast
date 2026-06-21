@@ -32,7 +32,7 @@ impl IconTransportMode {
 
     #[must_use]
     /// Returns the 2-bit wire nibble for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::InlineData => 0,
             Self::Url => 1,

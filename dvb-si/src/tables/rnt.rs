@@ -60,7 +60,7 @@ impl CridAuthorityPolicy {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Permanent => 0,
             Self::Transient => 1,
@@ -114,7 +114,7 @@ impl ContextIdType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::BouquetId => 0x00,
             Self::OriginalNetworkId => 0x01,

@@ -6,6 +6,11 @@ versioning.
 
 ## Unreleased
 
+## 0.4.1 — 2026-06-21
+
+### Changed
+- Value-enum accessors (`to_u8`/`to_u32`) are now `const fn` (const-init friendly). Non-breaking.
+
 ## 0.4.0 — 2026-06-21
 
 Bundles three additive expansion phases (0.2.0/0.3.0 were never separately

@@ -107,7 +107,7 @@ impl LinkageType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::InformationService => 0x01,
             Self::EpgService => 0x02,
@@ -185,7 +185,7 @@ impl HandOverType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::DvbIdenticalNeighbouringCountry => 0x1,
             Self::DvbLocalVariation => 0x2,
@@ -243,7 +243,7 @@ impl LinkType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::SdOrUhd => 0,
             Self::HdOrServiceFrameCompatible => 1,
@@ -306,7 +306,7 @@ impl TargetIdType {
 
     #[must_use]
     /// Returns the wire byte for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UseTransportStreamId => 0,
             Self::UseTargetTransportStreamId => 1,

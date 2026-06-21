@@ -46,7 +46,7 @@ impl ShDiversityMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             ShDiversityMode::NoDiversity => 0x00,
             ShDiversityMode::PaTsOnly => 0x08,
@@ -104,7 +104,7 @@ impl ShPolarization {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::LinearHorizontal => 0,
             Self::LinearVertical => 1,
@@ -157,7 +157,7 @@ impl ShRollOff {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Alpha035 => 0,
             Self::Alpha025 => 1,
@@ -208,7 +208,7 @@ impl ShModulationModeType {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Qpsk => 0,
             Self::Psk8 => 1,
@@ -286,7 +286,7 @@ impl ShCodeRate {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             ShCodeRate::Rate1_5Standard => 0x00,
             ShCodeRate::Rate2_9Standard => 0x01,
@@ -361,7 +361,7 @@ impl ShBandwidth {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Mhz8 => 0,
             Self::Mhz7 => 1,
@@ -422,7 +422,7 @@ impl ShConstellationAndHierarchy {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Qpsk => 0,
             Self::Qam16NonHierarchical => 1,
@@ -480,7 +480,7 @@ impl ShGuardInterval {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::G1_32 => 0,
             Self::G1_16 => 1,
@@ -536,7 +536,7 @@ impl ShTransmissionMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Mode1k => 0,
             Self::Mode2k => 1,

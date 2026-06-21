@@ -28,7 +28,7 @@ impl AacAdditionalInfo {
 
     /// Return the raw byte value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::AacData => 0x00,
             Self::AacWithBandwidthExtension => 0x01,

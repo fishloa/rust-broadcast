@@ -45,7 +45,7 @@ impl IdentifierType {
 
     #[must_use]
     /// Returns the 2-bit wire nibble for this value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::None => 0x00,
             Self::EventId => 0x01,
@@ -145,7 +145,7 @@ impl LinkType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UriString => 0x0,
             Self::BinaryLocator => 0x1,
@@ -201,7 +201,7 @@ impl HowRelated {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Cs2004 => 0x00,
             Self::Cs2005 => 0x01,

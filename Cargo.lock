@@ -232,10 +232,10 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dvb-bbframe"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
  "criterion",
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "num_enum",
  "serde",
  "serde_json",
@@ -247,7 +247,7 @@ dependencies = [
 name = "dvb-cc"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "serde",
  "serde_json",
  "thiserror",
@@ -255,7 +255,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "dvb-common 7.6.0",
  "dvb-si 7.6.0",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
  "chrono",
  "criterion",
@@ -285,10 +285,10 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
- "dvb-common 7.7.0",
- "dvb-si 7.7.0",
+ "dvb-common 7.7.1",
+ "dvb-si 7.7.1",
  "serde",
 ]
 
@@ -296,7 +296,7 @@ dependencies = [
 name = "dvb-pes"
 version = "0.1.1"
 dependencies = [
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "serde",
  "serde_json",
  "thiserror",
@@ -304,10 +304,10 @@ dependencies = [
 
 [[package]]
 name = "dvb-scte35"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
  "base64",
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "dvb-t2mi",
  "hex",
  "serde",
@@ -332,12 +332,12 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "encoding_rs",
  "erased-serde",
  "flate2",
@@ -354,8 +354,8 @@ dependencies = [
 name = "dvb-stream"
 version = "0.2.1"
 dependencies = [
- "dvb-common 7.7.0",
- "dvb-si 7.7.0",
+ "dvb-common 7.7.1",
+ "dvb-si 7.7.1",
  "dvb-t2mi",
  "futures-core",
  "futures-util",
@@ -366,7 +366,7 @@ dependencies = [
 name = "dvb-subtitle"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "dvb-pes",
  "serde",
  "serde_json",
@@ -375,14 +375,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
  "bytes",
  "chrono",
  "criterion",
  "dvb-bbframe",
- "dvb-common 7.7.0",
- "dvb-si 7.7.0",
+ "dvb-common 7.7.1",
+ "dvb-si 7.7.1",
  "erased-serde",
  "num_enum",
  "serde",
@@ -393,9 +393,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "7.7.0"
+version = "7.7.1"
 dependencies = [
- "dvb-si 7.7.0",
+ "dvb-si 7.7.1",
  "dvb-t2mi",
  "serde_json",
 ]
@@ -621,7 +621,7 @@ dependencies = [
 name = "mpeg-ps"
 version = "0.1.1"
 dependencies = [
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "dvb-pes",
  "serde",
  "serde_json",
@@ -801,7 +801,7 @@ dependencies = [
 name = "scte104"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.0",
+ "dvb-common 7.7.1",
  "serde",
  "serde_json",
  "thiserror",

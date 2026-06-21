@@ -52,7 +52,7 @@ impl UntActionType {
 
     #[must_use]
     /// Encode to the wire value.  Inverse of `from_u8` / `from_u16`.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Reserved => 0x00,
             Self::SystemSoftwareUpdate => 0x01,

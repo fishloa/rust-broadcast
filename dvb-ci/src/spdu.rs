@@ -69,7 +69,7 @@ impl SessionStatus {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ok => 0x00,
             Self::ResourceNonExistent => 0xF0,

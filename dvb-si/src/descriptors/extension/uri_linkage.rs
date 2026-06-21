@@ -41,7 +41,7 @@ impl UriLinkageType {
 
     /// Inverse of `from_u8`; `Self::Other` emits its stored value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             UriLinkageType::OnlineSdt => 0x00,
             UriLinkageType::DvbIptvSds => 0x01,

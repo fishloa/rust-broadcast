@@ -44,7 +44,7 @@ impl ActivationState {
     }
     /// 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::StandbyPassive => 0,
             Self::Reserved(v) => v & 0x0F,
@@ -86,7 +86,7 @@ impl ReplyCode {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ok => 0,
             Self::Busy => 1,

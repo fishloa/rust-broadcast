@@ -35,7 +35,7 @@ impl C2TuningFrequencyType {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             C2TuningFrequencyType::DataSliceTuningFrequency => 0,
             C2TuningFrequencyType::C2SystemCentreFrequency => 1,
@@ -85,7 +85,7 @@ impl ActiveOfdmSymbolDuration {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             ActiveOfdmSymbolDuration::Us448 => 0,
             ActiveOfdmSymbolDuration::Us597_33 => 1,
@@ -131,7 +131,7 @@ impl C2GuardInterval {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             C2GuardInterval::G1_128 => 0,
             C2GuardInterval::G1_64 => 1,

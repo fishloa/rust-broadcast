@@ -35,7 +35,7 @@ impl Ac4ChannelMode {
 
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Ac4ChannelMode::Mono => 0,
             Ac4ChannelMode::Stereo => 1,

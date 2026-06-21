@@ -46,7 +46,7 @@ impl CaEnable {
     }
     /// The 7-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Possible => 0x01,
             Self::PossiblePurchaseDialogue => 0x02,

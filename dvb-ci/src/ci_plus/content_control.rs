@@ -238,7 +238,7 @@ impl DatatypeId {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::UriMessage => 25,
             Self::ProgramNumber => 26,
@@ -303,7 +303,7 @@ impl OperatingMode {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Timeshift => 0x01,
             Self::UnattendedRecording => 0x02,

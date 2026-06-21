@@ -31,7 +31,7 @@ impl HdrWcgIdc {
 
     /// Return the raw 2-bit value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Sdr => 0,
             Self::WcgOnly => 1,

@@ -34,7 +34,7 @@ impl TxInputStreamType {
 
     /// Encode to the 8-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::TsOnly => 0x00,
             Self::GenericStream => 0x01,
@@ -85,7 +85,7 @@ impl GuardInterval {
 
     /// Encode to the 3-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::G1_32 => 0,
             Self::G1_16 => 1,
@@ -131,7 +131,7 @@ impl L1Modulation {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Bpsk => 0,
             Self::Qpsk => 1,
@@ -165,7 +165,7 @@ impl L1CodeRate {
 
     /// Encode to the 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::R1_2 => 0,
             Self::Reserved(v) => v,
@@ -196,7 +196,7 @@ impl L1FecType {
 
     /// Encode to the 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ldpc16K => 0,
             Self::Reserved(v) => v,
@@ -248,7 +248,7 @@ impl PilotPattern {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Pp1 => 0,
             Self::Pp2 => 1,
@@ -292,7 +292,7 @@ impl T2Version {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::V1_1_1 => 0,
             Self::V1_2_1 => 1,
@@ -331,7 +331,7 @@ impl PlpType {
 
     /// Encode to the 3-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Common => 0,
             Self::DataType1 => 1,
@@ -373,7 +373,7 @@ impl PlpPayloadType {
 
     /// Encode to the 5-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Gfps => 0,
             Self::Gcs => 1,
@@ -416,7 +416,7 @@ impl PlpModulation {
 
     /// Encode to the 3-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Qpsk => 0,
             Self::Qam16 => 1,
@@ -453,7 +453,7 @@ impl PlpFecType {
 
     /// Encode to the 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Ldpc16K => 0,
             Self::Ldpc64K => 1,
@@ -491,7 +491,7 @@ impl PlpMode {
 
     /// Encode to the 2-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NotSpecified => 0,
             Self::Normal => 1,
@@ -524,7 +524,7 @@ impl AuxStreamType {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::TxSig => 0,
             Self::Reserved(v) => v,
@@ -564,7 +564,7 @@ impl PaprReductionV0 {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::NoReduction => 0,
             Self::AceOnly => 1,
@@ -607,7 +607,7 @@ impl PaprReductionVn {
 
     /// Encode to the 4-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::L1AceTrOnP2 => 0,
             Self::L1AceAndAce => 1,
@@ -669,7 +669,7 @@ impl PlpCodeRate {
 
     /// Encode to the 3-bit wire value.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::R1_2 => 0,
             Self::R3_5 => 1,

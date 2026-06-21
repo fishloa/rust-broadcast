@@ -65,7 +65,7 @@ impl ApplicationTypeV2 {
     }
     /// Wire byte.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::ConditionalAccess => 0x01,
             Self::ElectronicProgrammeGuide => 0x02,

@@ -116,7 +116,7 @@ impl S2Field1 {
     /// Encode to 3-bit value.
     /// Encode to the wire byte.  Inverse of `from_u8`.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Fft1k => 0,
             Self::Fft2k => 1,

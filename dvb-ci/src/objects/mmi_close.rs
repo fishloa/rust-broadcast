@@ -33,7 +33,7 @@ impl CloseMmiCmdId {
     }
     /// Wire byte for this command id.
     #[must_use]
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Immediate => 0x00,
             Self::Delay => 0x01,

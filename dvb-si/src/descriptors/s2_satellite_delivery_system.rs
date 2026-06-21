@@ -78,7 +78,7 @@ impl TsGsMode {
 
     #[must_use]
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             TsGsMode::GenericPacketized => 0,
             TsGsMode::Gse => 1,

@@ -62,7 +62,7 @@ impl BufsUnit {
 
     #[must_use]
     /// Return the wire byte for this unit.
-    pub fn to_u8(self) -> u8 {
+    pub const fn to_u8(self) -> u8 {
         match self {
             Self::Bits => 0,
             Self::Kbits => 1,
