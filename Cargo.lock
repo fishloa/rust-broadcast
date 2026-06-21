@@ -351,6 +351,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-simulcrypt"
+version = "0.1.0"
+dependencies = [
+ "dvb-common 7.7.1",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-smpte2038"
 version = "0.1.0"
 dependencies = [
