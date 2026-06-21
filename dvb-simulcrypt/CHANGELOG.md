@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Added `tests/label_coverage.rs` drift-guard (issue #204 convention): scans
+  every `pub enum` in `src/` and fails if any lacks a `Display` / `name()` impl.
+  SKIP = `["Error"]`. Enforces the convention for all 11 public spec enums
+  (`Interface`, `EcmgScsMessageType`, `EmmgMuxMessageType`, `MessageType`,
+  `EcmgScsParameterType`, `EmmgMuxParameterType`, `ParameterType`, `DataType`,
+  `SectionTspktFlag`, `EcmgErrorStatus`, `EmmgErrorStatus`).
+- Expanded `error_status_values` test in `tests/framing.rs` into exhaustive
+  loop-tables (`ecmg_error_status_values` / `emmg_error_status_values`) covering
+  all 23 `EcmgErrorStatus` and 22 `EmmgErrorStatus` named variants with
+  `to_u16`/`from_u16` round-trips and `Reserved(v)` pass-through assertions.
+- Added `emmg_message_type_reserved_passthrough` test for `EmmgMuxMessageType`
+  (mirrors the existing `EcmgScsMessageType` reserved pass-through check).
+- Guarded `cpcw.value[0..2]` in `examples/parse_cw_provision.rs` against short
+  values — uses `get(0..2)` and prints a graceful message instead of panicking.
+- Added `#[cfg(feature = "serde")]` `serde_cw_provision_smoke` test serialising
+  a `CW_provision` message to JSON and asserting the expected field names
+  (`message_type`, `parameters`, `CwProvision`) are present; puts the existing
+  `serde_json` dev-dependency to use.
+
 ## [0.1.0]
 
 ### Added
