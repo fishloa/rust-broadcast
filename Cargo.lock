@@ -411,6 +411,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-ule"
+version = "0.1.0"
+dependencies = [
+ "dvb-common 7.7.1",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "either"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
