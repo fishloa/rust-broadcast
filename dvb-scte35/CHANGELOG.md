@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+### Added
+- **DVB Targeted Advertising — binary SCTE 35 profile (ETSI TS 103 752-1 V1.2.1)**
+  in a new `dvb_ta` module (DVB-TA folded into this crate, not a new crate, since
+  it is a DVB profile over ANSI/SCTE 35):
+  - `dvb_ta::das_descriptor::DvbDasDescriptor` — the `DVB_DAS_descriptor()`
+    (§5.3.5.16, tag `0xF0`, identifier `"DVB_"`): a DVB-private splice descriptor
+    carried in the base `splice_info_section()` descriptor loop, with
+    `EquivalentSegmentationType` (Table 2). Integrated into
+    `AnySpliceDescriptor` (dispatched on tag `0xF0`).
+  - `dvb_ta::compact` — the Compact SCTE 35 Encoding Format (§8.3.3):
+    `CompactScte35` / `CompactTimeSignal` / `CompactSpliceInsert` (+ inline
+    `CompactDas`) for low-capacity watermark carriage. Implements the
+    reconstructed ("likely") bit widths the transcription cross-checks against
+    §5.3.5.11 and Table 1 (the PDF render of Tables 6/8 is mis-registered).
+  - `dvb_ta::stream_event::StreamEventPayload` — the
+    `DSM-CC_stream_event_payload_binary()` (§6.3.1) wrapping an inline
+    `SpliceInfoSection` (`event_type 0`) or a carousel-object DVB URI reference
+    (`event_type 1`), with `TimelineType` (Table 4) and a TEMI option; plus a
+    `no_std` RFC 4648 `base64_encode` helper for the carriage recipe.
+  - `dvb_ta::profiling` — typed helpers over the existing
+    `SegmentationDescriptor` for the PPO/DPO profiling constraints (§5.3.4–5.3.5,
+    no new wire syntax): `PlacementOpportunity` (classifies the 0x34–0x37 PO
+    type-IDs) and `validate_po_segmentation` → `ProfileViolation`.
+  - The base SCTE 35 structures the profile references
+    (`splice_info_section()`, `splice_insert()`, `time_signal()`,
+    `segmentation_descriptor()`, the CRC-32 and the `segmentation_type_id` /
+    `segmentation_upid_type` tables) are reused, not reimplemented.
+
 ## [7.7.1] — 2026-06-21
 
 ### Changed
