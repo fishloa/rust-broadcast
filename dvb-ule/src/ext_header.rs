@@ -36,6 +36,111 @@ pub const H_TYPE_TIMESTAMP: u8 = 0x01;
 /// IANA value `0x100` → `H-Type` byte `0x00`, `H-LEN` 1..=5.
 pub const H_TYPE_EXT_PADDING: u8 = 0x00;
 
+/// Typed H-Type for a Mandatory extension header (`H-LEN = 0`, RFC 4326 §5).
+///
+/// Mandatory H-Types and Optional H-Types are separate IANA registries; value
+/// `0x00` means "Test SNDU" in the mandatory space and "Extension-Padding" in
+/// the optional space.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum MandatoryHType {
+    /// Test SNDU — H-Type `0x00` (RFC 4326 §5.1).
+    TestSndu,
+    /// Bridged Frame — H-Type `0x01` (RFC 4326 §5.2).
+    BridgedFrame,
+    /// MPEG-2 TS Concatenation — H-Type `0x02` (RFC 5163 §3.1).
+    TsConcat,
+    /// PDU Concatenation — H-Type `0x03` (RFC 5163 §3.2).
+    PduConcat,
+    /// An unrecognised mandatory H-Type.
+    Other(u8),
+}
+
+impl MandatoryHType {
+    /// Decode from the raw 8-bit H-Type byte.
+    pub fn from_u8(raw: u8) -> Self {
+        match raw {
+            H_TYPE_TEST_SNDU => MandatoryHType::TestSndu,
+            H_TYPE_BRIDGED_FRAME => MandatoryHType::BridgedFrame,
+            H_TYPE_TS_CONCAT => MandatoryHType::TsConcat,
+            H_TYPE_PDU_CONCAT => MandatoryHType::PduConcat,
+            other => MandatoryHType::Other(other),
+        }
+    }
+
+    /// Encode back to the raw 8-bit H-Type byte.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            MandatoryHType::TestSndu => H_TYPE_TEST_SNDU,
+            MandatoryHType::BridgedFrame => H_TYPE_BRIDGED_FRAME,
+            MandatoryHType::TsConcat => H_TYPE_TS_CONCAT,
+            MandatoryHType::PduConcat => H_TYPE_PDU_CONCAT,
+            MandatoryHType::Other(v) => v,
+        }
+    }
+
+    /// Spec label for this mandatory H-Type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            MandatoryHType::TestSndu => "test-sndu",
+            MandatoryHType::BridgedFrame => "bridged-frame",
+            MandatoryHType::TsConcat => "ts-concat",
+            MandatoryHType::PduConcat => "pdu-concat",
+            MandatoryHType::Other(_) => "mandatory",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(MandatoryHType, Other);
+
+/// Typed H-Type for an Optional extension header (`H-LEN = 1..=5`, RFC 4326 §5).
+///
+/// Optional H-Types share the `H-Type` byte namespace with Mandatory H-Types
+/// but are distinguished by a non-zero `H-LEN`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum OptionalHType {
+    /// Extension-Padding — H-Type `0x00`, `H-LEN` 1..=5 (RFC 4326 §5.3).
+    ExtPadding,
+    /// TimeStamp — H-Type `0x01`, `H-LEN = 3` (RFC 5163 §3.3).
+    TimeStamp,
+    /// An unrecognised optional H-Type.
+    Other(u8),
+}
+
+impl OptionalHType {
+    /// Decode from the raw 8-bit H-Type byte.
+    pub fn from_u8(raw: u8) -> Self {
+        match raw {
+            H_TYPE_EXT_PADDING => OptionalHType::ExtPadding,
+            H_TYPE_TIMESTAMP => OptionalHType::TimeStamp,
+            other => OptionalHType::Other(other),
+        }
+    }
+
+    /// Encode back to the raw 8-bit H-Type byte.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            OptionalHType::ExtPadding => H_TYPE_EXT_PADDING,
+            OptionalHType::TimeStamp => H_TYPE_TIMESTAMP,
+            OptionalHType::Other(v) => v,
+        }
+    }
+
+    /// Spec label for this optional H-Type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            OptionalHType::ExtPadding => "extension-padding",
+            OptionalHType::TimeStamp => "timestamp",
+            OptionalHType::Other(_) => "optional",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(OptionalHType, Other);
+
 /// A single ULE extension header in a chain (RFC 4326 §5).
 ///
 /// Each variant carries the `H-Type`/`H-LEN` implicitly; the body bytes that
@@ -43,6 +148,7 @@ pub const H_TYPE_EXT_PADDING: u8 = 0x00;
 /// layout, else as opaque bytes for forward compatibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ExtensionHeader {
     /// Optional header (`H-LEN = 1..=5`), opaque body of `2 * h_len - 2` bytes.
     ///
@@ -100,21 +206,29 @@ impl ExtensionHeader {
         matches!(self, ExtensionHeader::Mandatory { .. })
     }
 
+    /// The typed [`MandatoryHType`] for a Mandatory header, or `None` if this
+    /// is an Optional header.
+    pub fn mandatory_h_type(&self) -> Option<MandatoryHType> {
+        match self {
+            ExtensionHeader::Mandatory { h_type, .. } => Some(MandatoryHType::from_u8(*h_type)),
+            ExtensionHeader::Optional { .. } => None,
+        }
+    }
+
+    /// The typed [`OptionalHType`] for an Optional header, or `None` if this
+    /// is a Mandatory header.
+    pub fn optional_h_type(&self) -> Option<OptionalHType> {
+        match self {
+            ExtensionHeader::Optional { h_type, .. } => Some(OptionalHType::from_u8(*h_type)),
+            ExtensionHeader::Mandatory { .. } => None,
+        }
+    }
+
     /// Spec label for this header kind.
     pub fn name(&self) -> &'static str {
         match self {
-            ExtensionHeader::Optional { h_type, .. } => match *h_type {
-                H_TYPE_EXT_PADDING => "extension-padding",
-                H_TYPE_TIMESTAMP => "timestamp",
-                _ => "optional",
-            },
-            ExtensionHeader::Mandatory { h_type, .. } => match *h_type {
-                H_TYPE_TEST_SNDU => "test-sndu",
-                H_TYPE_BRIDGED_FRAME => "bridged-frame",
-                H_TYPE_TS_CONCAT => "ts-concat",
-                H_TYPE_PDU_CONCAT => "pdu-concat",
-                _ => "mandatory",
-            },
+            ExtensionHeader::Optional { h_type, .. } => OptionalHType::from_u8(*h_type).name(),
+            ExtensionHeader::Mandatory { h_type, .. } => MandatoryHType::from_u8(*h_type).name(),
         }
     }
 
@@ -305,7 +419,6 @@ mod tests {
 
         let sndu = Sndu {
             dest_address: None,
-            type_field: chain.base_type(),
             payload: chain.clone(),
         };
         let mut buf = alloc::vec![0u8; sndu.serialized_len()];
@@ -338,7 +451,6 @@ mod tests {
 
         let sndu = Sndu {
             dest_address: Some([1, 2, 3, 4, 5, 6]),
-            type_field: chain.base_type(),
             payload: chain,
         };
         let mut buf = alloc::vec![0u8; sndu.serialized_len()];
@@ -379,7 +491,6 @@ mod tests {
         };
         let sndu = Sndu {
             dest_address: None,
-            type_field: chain.base_type(),
             payload: chain,
         };
         let mut buf = alloc::vec![0u8; sndu.serialized_len()];
@@ -389,5 +500,83 @@ mod tests {
         assert_eq!(parsed.payload.final_type, TypeField::EtherType(0x86DD));
         assert_eq!(parsed.payload.pdu, &pdu);
         assert_eq!(parsed, sndu);
+    }
+
+    // typed H-Type accessors return the expected variants.
+    #[test]
+    fn typed_h_type_accessors() {
+        let ts = ExtensionHeader::Optional {
+            h_len: 3,
+            h_type: H_TYPE_TIMESTAMP,
+            body: alloc::vec![0, 0, 0, 0],
+        };
+        assert_eq!(ts.optional_h_type(), Some(OptionalHType::TimeStamp));
+        assert_eq!(ts.mandatory_h_type(), None);
+
+        let mand = ExtensionHeader::Mandatory {
+            h_type: H_TYPE_BRIDGED_FRAME,
+            body: alloc::vec![],
+        };
+        assert_eq!(mand.mandatory_h_type(), Some(MandatoryHType::BridgedFrame));
+        assert_eq!(mand.optional_h_type(), None);
+
+        // Other arms
+        let unk_m = ExtensionHeader::Mandatory {
+            h_type: 0xF0,
+            body: alloc::vec![],
+        };
+        assert_eq!(unk_m.mandatory_h_type(), Some(MandatoryHType::Other(0xF0)));
+
+        let unk_o = ExtensionHeader::Optional {
+            h_len: 2,
+            h_type: 0xF0,
+            body: alloc::vec![0, 0],
+        };
+        assert_eq!(unk_o.optional_h_type(), Some(OptionalHType::Other(0xF0)));
+    }
+
+    // Every H_TYPE_* constant must map to a non-default name() — so a new
+    // registered H-Type without a label arm fails CI.
+    #[test]
+    fn all_h_type_constants_have_non_default_mandatory_label() {
+        let mandatory_constants: &[(u8, &str)] = &[
+            (H_TYPE_TEST_SNDU, "test-sndu"),
+            (H_TYPE_BRIDGED_FRAME, "bridged-frame"),
+            (H_TYPE_TS_CONCAT, "ts-concat"),
+            (H_TYPE_PDU_CONCAT, "pdu-concat"),
+        ];
+        for &(raw, expected_label) in mandatory_constants {
+            let t = MandatoryHType::from_u8(raw);
+            assert_ne!(
+                t.name(),
+                "mandatory",
+                "H_TYPE constant 0x{raw:02X} maps to the default fallback label — add a named arm"
+            );
+            assert_eq!(
+                t.name(),
+                expected_label,
+                "H_TYPE constant 0x{raw:02X} label mismatch"
+            );
+        }
+    }
+
+    #[test]
+    fn all_h_type_constants_have_non_default_optional_label() {
+        let optional_constants: &[(u8, &str)] = &[
+            (H_TYPE_EXT_PADDING, "extension-padding"),
+            (H_TYPE_TIMESTAMP, "timestamp"),
+        ];
+        for &(raw, expected_label) in optional_constants {
+            let t = OptionalHType::from_u8(raw);
+            assert_ne!(
+                t.name(), "optional",
+                "optional H_TYPE constant 0x{raw:02X} maps to the default fallback label — add a named arm"
+            );
+            assert_eq!(
+                t.name(),
+                expected_label,
+                "optional H_TYPE constant 0x{raw:02X} label mismatch"
+            );
+        }
     }
 }

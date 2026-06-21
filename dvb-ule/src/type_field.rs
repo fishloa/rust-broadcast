@@ -24,6 +24,7 @@ pub const ETHERTYPE_IPV6: u16 = 0x86DD;
 /// directly follows the Type field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum TypeField {
     /// A Next-Header: `H-LEN` (3 bits) + `H-Type` (8 bits), with the 5-bit
     /// zero prefix that keeps the raw value `< 0x0600`.

@@ -28,7 +28,7 @@ fn parses_appendix_b_fields() {
     );
 
     // Type 0x86DD (IPv6 EtherType).
-    assert_eq!(sndu.type_field, TypeField::EtherType(0x86DD));
+    assert_eq!(sndu.type_field(), TypeField::EtherType(0x86DD));
 
     // Length field = 0x003F = 63 (NPA 6 + PDU 53 + CRC 4).
     assert_eq!(sndu.length_field(), 0x3F);
