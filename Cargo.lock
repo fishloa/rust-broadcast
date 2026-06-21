@@ -293,6 +293,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-emsg"
+version = "0.1.0"
+dependencies = [
+ "dvb-common 7.7.1",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-pes"
 version = "0.1.1"
 dependencies = [
@@ -348,6 +358,16 @@ dependencies = [
  "serde_json",
  "thiserror",
  "yoke",
+]
+
+[[package]]
+name = "dvb-simulcrypt"
+version = "0.1.0"
+dependencies = [
+ "dvb-common 7.7.1",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
