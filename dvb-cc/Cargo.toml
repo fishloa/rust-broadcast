@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-cc"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "DVB closed-caption carriage — cc_data() from picture user_data (ETSI TS 101 154 Table B.9), CEA-608/708 triplet demux."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.6", default-features = false }
+dvb-common = { path = "../dvb-common", version = "7.8", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-21
+
 ### Fixed
 
 - **Reassembly PP consistency check (RFC 4326 §7.2.1):** `UleReceiver` now
@@ -40,7 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `is_end_indicator` rewritten to use the existing `PADDING_BYTE` constant
   instead of bare `0xFF` literals.
 
-## [0.1.0]
 
 ### Added
 

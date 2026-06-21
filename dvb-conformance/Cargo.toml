@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-conformance"
-version      = "7.7.1"
+version      = "7.8.0"
 edition      = "2021"
 description  = "ETSI TR 101 290 transport-stream conformance monitor (DVB measurement guidelines)."
 license      = "MIT OR Apache-2.0"
@@ -15,8 +15,8 @@ rust-version = "1.81"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.7", default-features = false }
-dvb-si      = { path = "../dvb-si", version = "7.7", default-features = false, features = ["ts"] }
+dvb-common = { path = "../dvb-common", version = "7.8", default-features = false }
+dvb-si      = { path = "../dvb-si", version = "7.8", default-features = false, features = ["ts"] }
 serde       = { version = "1", optional = true, features = ["derive"] }
 
 [features]
@@ -26,4 +26,4 @@ std     = ["dvb-common/std", "dvb-si/std"]
 serde = ["dep:serde", "dvb-si/serde"]
 
 [dev-dependencies]
-dvb-common = { path = "../dvb-common", version = "7.7" }
+dvb-common = { path = "../dvb-common", version = "7.8" }

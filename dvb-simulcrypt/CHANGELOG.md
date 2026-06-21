@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-21
+
 ### Fixed
 
 - Added `tests/label_coverage.rs` drift-guard (issue #204 convention): scans
@@ -28,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`message_type`, `parameters`, `CwProvision`) are present; puts the existing
   `serde_json` dev-dependency to use.
 
-## [0.1.0]
 
 ### Added
 

@@ -232,10 +232,10 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dvb-bbframe"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
  "criterion",
- "dvb-common 7.7.1",
+ "dvb-common",
  "num_enum",
  "serde",
  "serde_json",
@@ -245,9 +245,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-cc"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -257,8 +257,8 @@ dependencies = [
 name = "dvb-ci"
 version = "0.4.1"
 dependencies = [
- "dvb-common 7.6.0",
- "dvb-si 7.6.0",
+ "dvb-common",
+ "dvb-si",
  "serde",
  "serde_json",
  "thiserror",
@@ -266,17 +266,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c56eaf1538271a40c8920bfea81d18008717b4d7b75e95b4a4a43d360fdbce"
-dependencies = [
- "chrono",
- "libm",
-]
-
-[[package]]
-name = "dvb-common"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -285,10 +275,10 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
- "dvb-common 7.7.1",
- "dvb-si 7.7.1",
+ "dvb-common",
+ "dvb-si",
  "serde",
 ]
 
@@ -296,7 +286,7 @@ dependencies = [
 name = "dvb-emsg"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -306,7 +296,7 @@ dependencies = [
 name = "dvb-flute"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -316,7 +306,7 @@ dependencies = [
 name = "dvb-pes"
 version = "0.1.1"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -324,10 +314,10 @@ dependencies = [
 
 [[package]]
 name = "dvb-scte35"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
  "base64",
- "dvb-common 7.7.1",
+ "dvb-common",
  "dvb-t2mi",
  "hex",
  "serde",
@@ -337,27 +327,12 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278cedbf8152497ed426af84c19ef9fc27bb1f02c7ea4bbfda5a65a880963615"
-dependencies = [
- "bytes",
- "chrono",
- "dvb-common 7.6.0",
- "encoding_rs",
- "libm",
- "num_enum",
- "thiserror",
-]
-
-[[package]]
-name = "dvb-si"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
  "bytes",
  "chrono",
  "criterion",
- "dvb-common 7.7.1",
+ "dvb-common",
  "encoding_rs",
  "erased-serde",
  "flate2",
@@ -374,7 +349,7 @@ dependencies = [
 name = "dvb-simulcrypt"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -384,7 +359,7 @@ dependencies = [
 name = "dvb-smpte2038"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -394,8 +369,8 @@ dependencies = [
 name = "dvb-stream"
 version = "0.2.1"
 dependencies = [
- "dvb-common 7.7.1",
- "dvb-si 7.7.1",
+ "dvb-common",
+ "dvb-si",
  "dvb-t2mi",
  "futures-core",
  "futures-util",
@@ -406,7 +381,7 @@ dependencies = [
 name = "dvb-subtitle"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "dvb-pes",
  "serde",
  "serde_json",
@@ -415,14 +390,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
  "bytes",
  "chrono",
  "criterion",
  "dvb-bbframe",
- "dvb-common 7.7.1",
- "dvb-si 7.7.1",
+ "dvb-common",
+ "dvb-si",
  "erased-serde",
  "num_enum",
  "serde",
@@ -433,9 +408,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "7.7.1"
+version = "7.8.0"
 dependencies = [
- "dvb-si 7.7.1",
+ "dvb-si",
  "dvb-t2mi",
  "serde_json",
 ]
@@ -444,7 +419,7 @@ dependencies = [
 name = "dvb-ule"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -454,7 +429,7 @@ dependencies = [
 name = "dvb-vbi"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -681,7 +656,7 @@ dependencies = [
 name = "mpeg-ps"
 version = "0.1.1"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "dvb-pes",
  "serde",
  "serde_json",
@@ -861,7 +836,7 @@ dependencies = [
 name = "scte104"
 version = "0.1.0"
 dependencies = [
- "dvb-common 7.7.1",
+ "dvb-common",
  "serde",
  "serde_json",
  "thiserror",

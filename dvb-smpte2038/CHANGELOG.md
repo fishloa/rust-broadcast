@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-21
+
 ### Fixed
 
 - `AncPacket::write_into` (called from `AncDataPacket::serialize_into`) now
@@ -26,7 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convention (issue #204); `Error` is in the skip list since it carries no spec
   label.
 
-## [0.1.0]
 
 ### Added
 

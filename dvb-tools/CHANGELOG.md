@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.8.0] — 2026-06-21
+
 ### Added
 - `dump` human mode now decodes and prints the descriptor loops of PMT
   (program-info + per-ES), SDT (per-service), and NIT (network + per-TS).
