@@ -52,6 +52,27 @@ pass:
   Generic Service Gateway calls**: `BroadcastServiceGatewayApdu` routes
   `9F8010`/`9F8011` to the EIT objects and delegates every other `9F80xx` tag to
   the wrapped `ServiceGatewayApdu`.
+- **Status Query** (§6.2, Tables 35-51, `0x00211ii1`): `StatusQueryReq`, `TrapReq`,
+  `GetNextItemReq`, `GetNextItemAck` (32-bit `StatusItem`s), `StatusAck` (a
+  `StatusItem` + opaque `StatusBytes`) — with the `StatusItem` value enum. Plus the
+  audience-metering item-content structures decoding those `StatusBytes`:
+  `SelectionInformation` (Table 43, the nested input-port → output-port routing
+  loop), `PortProfile` (Table 48), `ViewedService` (Table 49) and
+  `ActivationStatus` (Table 50, with the `ActivationState` enum).
+- **Application MMI** (§6.5, Tables 62-68, `0x00410041`): `RequestStart` (two
+  length-prefixed strings), `RequestStartAck` (with the `AckCode` enum), `FileReq`,
+  `FileAck` (`FileOK` flag + file bytes), `AppAbortReq`, `AppAbortAck`.
+- **Download** (CAM firmware, §6.7, Tables 74-83, `0x00051041`): `DownloadEnquiry`,
+  `DownloadReply` (each encapsulating one opaque DSM-CC U-N message),
+  `UserAuthInitiate`, `UserAuthResult` (the 7-byte `BinaryId` + opaque payload).
+  Plus the DSM-CC U-N Download message structures (ISO/IEC 13818-6, Tables 79-83):
+  `DownloadInfoRequest`, `DownloadInfoResponse` (multi-module loop),
+  `DownloadCancel`, `DownloadDataRequest`, `DownloadDataBlock` — with the firmware
+  payload, compatibility-descriptor bodies, module info and private data carried as
+  opaque borrowed `&[u8]` per §6.7.5.
+- **CA Pipeline** (§6.8, Tables 84-86, `0x00061ii1`): `CaPipelineRequest`,
+  `CaPipelineResponse`, `CaPipelineNotification` — each carrying an opaque
+  `CASpecificData` byte blob (CA-system-specific encoding).
 
 The remaining EN 50221 application objects, completing every Table 58 `apdu_tag`.
 All are symmetric `Parse`/`Serialize` with biting round-trip + mutation tests and

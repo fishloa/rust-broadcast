@@ -20,20 +20,24 @@
 //!
 //! Resources implemented: Resource Manager v2, Application Information v2, Power
 //! Manager, Event Manager, Copy Protection, StreamInput, ServiceGateway (Generic
-//! Service Gateway), BroadcastServiceGateway. The remaining Table 87 resources
-//! (StatusQuery, Application MMI, Download, CA Pipeline) are reserved for later
-//! passes.
+//! Service Gateway), BroadcastServiceGateway, Status Query (+ audience metering),
+//! Application MMI, Download (CAM firmware, + DSM-CC U-N messages), CA Pipeline —
+//! the full TS 101 699 §6 resource set.
 
 use crate::error::{Error, Result};
 use crate::resource::ResourceId;
 
 pub mod application_info_v2;
+pub mod application_mmi;
 pub mod broadcast_service_gateway;
+pub mod ca_pipeline;
 pub mod copy_protection;
 pub mod event_manager;
 pub mod power_manager;
 pub mod resource_manager_v2;
 pub mod service_gateway;
+pub mod software_download;
+pub mod status_query;
 pub mod stream_input;
 
 // --- Resource identifiers (TS 101 699 Table 87) ---
@@ -189,6 +193,14 @@ pub enum CiExtApdu<'a> {
     /// Broadcast Service Gateway object (`0x00811ii1`), including the inherited
     /// Generic Service Gateway calls.
     BroadcastServiceGateway(broadcast_service_gateway::BroadcastServiceGatewayApdu<'a>),
+    /// Status Query object (`0x00211ii1`).
+    StatusQuery(status_query::StatusQueryApdu<'a>),
+    /// Application MMI object (`0x00410041`).
+    ApplicationMmi(application_mmi::ApplicationMmiApdu<'a>),
+    /// Download (CAM firmware) object (`0x00051041`).
+    Download(software_download::DownloadApdu<'a>),
+    /// CA Pipeline object (`0x00061ii1`).
+    CaPipeline(ca_pipeline::CaPipelineApdu<'a>),
 }
 
 impl<'a> CiExtApdu<'a> {
@@ -221,6 +233,18 @@ impl<'a> CiExtApdu<'a> {
             Some(CiExtResource::BroadcastServiceGateway(_)) => Ok(Self::BroadcastServiceGateway(
                 broadcast_service_gateway::BroadcastServiceGatewayApdu::parse(body)?,
             )),
+            Some(CiExtResource::StatusQuery(_)) => Ok(Self::StatusQuery(
+                status_query::StatusQueryApdu::parse(body)?,
+            )),
+            Some(CiExtResource::ApplicationMmi) => Ok(Self::ApplicationMmi(
+                application_mmi::ApplicationMmiApdu::parse(body)?,
+            )),
+            Some(CiExtResource::Download) => Ok(Self::Download(
+                software_download::DownloadApdu::parse(body)?,
+            )),
+            Some(CiExtResource::CaPipeline(_)) => {
+                Ok(Self::CaPipeline(ca_pipeline::CaPipelineApdu::parse(body)?))
+            }
             _ => Err(Error::UnknownResource {
                 resource_id: resource_id.0,
             }),
@@ -360,6 +384,93 @@ mod tests {
                 broadcast_service_gateway::BroadcastServiceGatewayApdu::ServiceGateway(_)
             )
         ));
+    }
+
+    #[test]
+    fn new_type1_ids_classify_and_mask() {
+        // StatusQuery type=1*: module_id 1 -> 0x00211041, module_id 2 -> 0x00211081.
+        assert_eq!(
+            classify(ResourceId(0x0021_1041)),
+            Some(CiExtResource::StatusQuery(1))
+        );
+        assert_eq!(
+            classify(ResourceId(0x0021_1081)),
+            Some(CiExtResource::StatusQuery(2))
+        );
+        assert_eq!(module_id(ResourceId(0x0021_1081)), 2);
+        // CA Pipeline type=1*: 0x00061041 (module 1), 0x00061081 (module 2) — md examples.
+        assert_eq!(
+            classify(ResourceId(0x0006_1041)),
+            Some(CiExtResource::CaPipeline(1))
+        );
+        assert_eq!(
+            classify(ResourceId(0x0006_1081)),
+            Some(CiExtResource::CaPipeline(2))
+        );
+        // module_id 0 templates still classify.
+        assert_eq!(
+            classify(STATUS_QUERY_TEMPLATE),
+            Some(CiExtResource::StatusQuery(0))
+        );
+        assert_eq!(
+            classify(CA_PIPELINE_TEMPLATE),
+            Some(CiExtResource::CaPipeline(0))
+        );
+        // ApplicationMMI / Download are fixed IDs.
+        assert_eq!(
+            classify(APPLICATION_MMI),
+            Some(CiExtResource::ApplicationMmi)
+        );
+        assert_eq!(classify(DOWNLOAD), Some(CiExtResource::Download));
+    }
+
+    #[test]
+    fn tag_9f8000_routes_per_resource_across_all_resources() {
+        // The resource-scoped invariant with the full resource set present:
+        // 9F8000 means a different object under each resource.
+        let body = [0x9F, 0x80, 0x00, 0x00]; // header-only / empty body
+
+        // StatusQuery 9F8000 = StatusQueryReq (needs a 4-byte StatusItem body).
+        let sq_body = [0x9F, 0x80, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01];
+        let sq = CiExtApdu::parse(ResourceId(0x0021_1041), &sq_body).unwrap();
+        assert!(matches!(
+            sq,
+            CiExtApdu::StatusQuery(status_query::StatusQueryApdu::StatusQueryReq(_))
+        ));
+
+        // ApplicationMMI 9F8000 = RequestStart (2-byte minimum body).
+        let mmi_body = [0x9F, 0x80, 0x00, 0x02, 0x00, 0x00];
+        let mmi = CiExtApdu::parse(APPLICATION_MMI, &mmi_body).unwrap();
+        assert!(matches!(
+            mmi,
+            CiExtApdu::ApplicationMmi(application_mmi::ApplicationMmiApdu::RequestStart(_))
+        ));
+
+        // Download 9F8000 = download_enq (opaque body).
+        let dl = CiExtApdu::parse(DOWNLOAD, &body).unwrap();
+        assert!(matches!(
+            dl,
+            CiExtApdu::Download(software_download::DownloadApdu::DownloadEnquiry(_))
+        ));
+
+        // CA Pipeline 9F8000 = CAPipelineRequest (opaque body).
+        let cap = CiExtApdu::parse(ResourceId(0x0006_1041), &body).unwrap();
+        assert!(matches!(
+            cap,
+            CiExtApdu::CaPipeline(ca_pipeline::CaPipelineApdu::Request(_))
+        ));
+
+        // StreamInput 9F8000 = DeliverySystemInfoReq — an *earlier* resource's 9F8000.
+        let si = CiExtApdu::parse(ResourceId(0x0080_1041), &body).unwrap();
+        assert!(matches!(
+            si,
+            CiExtApdu::StreamInput(stream_input::StreamInputApdu::DeliverySystemInfoReq(_))
+        ));
+
+        // All four new + the earlier one are distinct CiExtApdu variants.
+        assert!(!matches!(sq, CiExtApdu::ApplicationMmi(_)));
+        assert!(!matches!(dl, CiExtApdu::CaPipeline(_)));
+        assert!(!matches!(cap, CiExtApdu::Download(_)));
     }
 
     #[test]
