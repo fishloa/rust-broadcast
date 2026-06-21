@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+### Fixed
+- **`DvbDasDescriptor::serialize_into` — `descriptor_length` overflow guard
+  (dvb_ta audit P1):** a `upid` of ≥ 252 bytes would make `4 + body_len ≥ 256`,
+  silently wrapping the 8-bit `descriptor_length` field and producing corrupt
+  wire bytes with no error. `serialize_into` now returns
+  `Err(Error::InvalidValue { field: "DVB_DAS_descriptor.descriptor_length", … })`
+  when `FIXED_BODY_LEN + upid.len() > 251` (the largest value where
+  `descriptor_length = 4 + body_len` still fits in a `u8`). Mirrors the guard
+  already present in `CompactTimeSignal::serialize_into` and
+  `CompactSpliceInsert::serialize_into`.
+
+### Added
+- **TOML spec-mirror + drift tests for `EquivalentSegmentationType` (Table 2) and
+  `TimelineType` (Table 4)** (dvb_ta audit C): `docs/enums/dvb_ta/
+  equivalent_segmentation_type.toml` and `docs/enums/dvb_ta/timeline_type.toml`
+  record every named variant/value/spec-label from ETSI TS 103 752-1 Tables 2 and
+  4; `tests/dvb_ta_spec_drift.rs` byte-sweeps each enum and cross-checks the TOML,
+  mirroring the existing SCTE-35 enum drift tests.
+- **`CompactTimeSignal` upid-overflow regression test** (dvb_ta audit 2A): a new
+  in-module test `time_signal_upid_overflow_guard_fires` confirms the existing
+  guard at `compact.rs` fires when `segmentation_upid.len() > 255`.
+
 ### Added
 - **DVB Targeted Advertising — binary SCTE 35 profile (ETSI TS 103 752-1 V1.2.1)**
   in a new `dvb_ta` module (DVB-TA folded into this crate, not a new crate, since

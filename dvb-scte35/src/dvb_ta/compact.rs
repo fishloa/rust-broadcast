@@ -679,4 +679,26 @@ mod tests {
             Error::InvalidValue { .. }
         ));
     }
+
+    /// The overflow guard in `CompactTimeSignal::serialize_into` rejects a
+    /// `segmentation_upid` longer than 255 bytes (the 8-bit
+    /// `segmentation_upid_length` field). Verify the guard actually fires.
+    #[test]
+    fn time_signal_upid_overflow_guard_fires() {
+        let mut ts = sample_time_signal();
+        ts.segmentation_upid = vec![0u8; 256]; // 256 > u8::MAX — must be rejected
+        let err = ts
+            .serialize_into(&mut vec![0u8; ts.serialized_len()])
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "compact_time_signal.segmentation_upid",
+                    ..
+                }
+            ),
+            "expected InvalidValue for segmentation_upid overflow, got {err:?}"
+        );
+    }
 }
