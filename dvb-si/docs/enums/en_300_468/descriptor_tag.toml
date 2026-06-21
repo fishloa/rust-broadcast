@@ -91,6 +91,11 @@ variant = "CarouselIdentifier"
 spec = "carousel_identifier_descriptor"
 
 [[entry]]
+value = 0x14
+variant = "AssociationTag"
+spec = "association_tag_descriptor"
+
+[[entry]]
 value = 0x1B
 variant = "Mpeg4Video"
 spec = "MPEG-4_video_descriptor"

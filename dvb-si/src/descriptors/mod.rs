@@ -15,6 +15,7 @@ pub mod ancillary_data;
 pub mod announcement_support;
 pub mod any;
 pub mod application_signalling;
+pub mod association_tag;
 pub mod audio_stream;
 pub mod auxiliary_video_stream;
 pub mod avc_timing_and_hrd;

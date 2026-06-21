@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **association_tag_descriptor (tag 0x14)** — ISO/IEC 13818-6 §11.4.1 / ETSI
+  TR 101 202 §4.7.7.2 Table 4.18. Carried in the PMT `ES_info` loop to bind a
+  16-bit `association_tag` to an elementary stream (the DSM-CC cousin of the
+  8-bit `stream_identifier_descriptor`). Typed `transaction_id()` / `timeout()`
+  accessors decode the `use == 0x0000` (DSI-with-IOR) selector. Verified against
+  a real ETSI Hot Bird MHP capture. Previously fell through to
+  `AnyDescriptor::Unknown`.
+
 ## 7.7.1 — 2026-06-21
 
 ### Changed
