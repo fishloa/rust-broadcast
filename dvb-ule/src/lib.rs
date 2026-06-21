@@ -70,8 +70,8 @@ mod type_field;
 
 pub use error::{Error, Result};
 pub use ext_header::{
-    ExtensionHeader, PayloadChain, H_TYPE_BRIDGED_FRAME, H_TYPE_EXT_PADDING, H_TYPE_PDU_CONCAT,
-    H_TYPE_TEST_SNDU, H_TYPE_TIMESTAMP, H_TYPE_TS_CONCAT,
+    ExtensionHeader, MandatoryHType, OptionalHType, PayloadChain, H_TYPE_BRIDGED_FRAME,
+    H_TYPE_EXT_PADDING, H_TYPE_PDU_CONCAT, H_TYPE_TEST_SNDU, H_TYPE_TIMESTAMP, H_TYPE_TS_CONCAT,
 };
 pub use sndu::{
     is_end_indicator, Sndu, BASE_HEADER_LEN, CRC_LEN, END_INDICATOR, END_INDICATOR_LENGTH, NPA_LEN,

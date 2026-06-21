@@ -24,8 +24,8 @@ fn main() {
     println!("Appendix B SNDU: {} bytes", sndu_bytes.len());
     println!(
         "Type: {} (0x{:04X})",
-        sndu.type_field,
-        sndu.type_field.to_u16()
+        sndu.type_field(),
+        sndu.type_field().to_u16()
     );
     println!("PDU: {} bytes", sndu.pdu().len());
 

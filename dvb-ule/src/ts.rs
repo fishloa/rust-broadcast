@@ -17,7 +17,9 @@
 
 use alloc::vec::Vec;
 
-use crate::sndu::{is_end_indicator, BASE_HEADER_LEN, END_INDICATOR_LENGTH, PADDING_BYTE};
+use crate::sndu::{
+    is_end_indicator, BASE_HEADER_LEN, D_BIT_MASK, END_INDICATOR_LENGTH, LENGTH_MASK, PADDING_BYTE,
+};
 
 /// The number of TS-packet payload bytes when AFC = `01` (payload only): the
 /// 188-byte packet minus its 4-byte header (RFC 4326 §3).
@@ -81,9 +83,26 @@ impl UleReceiver {
                 self.reset();
                 return out;
             }
-            // The first `pp` bytes complete a continuing SNDU (if any).
+            // RFC 4326 §7.2.1 payload-pointer consistency check: when we are
+            // mid-reassembly and a PUSI=1 packet arrives, the PP must equal
+            // exactly the number of bytes remaining in the partial SNDU. If we
+            // already know `expected`, compute `remaining`; if we don't (header
+            // is still partial), accept any PP so the first bytes can complete
+            // the header and let `maybe_finish` sort it out. A mismatch means
+            // the stream is corrupt — discard the partial and start fresh.
             if self.in_reassembly() {
-                self.feed_continuation(&pp_region[..pp], &mut out);
+                if self.expected != 0 {
+                    let remaining = self.expected.saturating_sub(self.partial.len());
+                    if remaining != 0 && pp != remaining {
+                        // PP inconsistency: corrupt stream. Discard partial (§7.2.1).
+                        self.reset();
+                        // Fall through: still process the new SNDUs after pp_region[pp..].
+                    } else {
+                        self.feed_continuation(&pp_region[..pp], &mut out);
+                    }
+                } else {
+                    self.feed_continuation(&pp_region[..pp], &mut out);
+                }
             } else {
                 // Idle: bytes before the pointer belong to no SNDU; skip them.
                 self.partial.clear();
@@ -135,8 +154,8 @@ impl UleReceiver {
                 return;
             }
             let first = u16::from_be_bytes([region[0], region[1]]);
-            let length = (first & 0x7FFF) as usize;
-            if (first & 0x7FFF) == END_INDICATOR_LENGTH && (first & 0x8000) != 0 {
+            let length = (first & LENGTH_MASK) as usize;
+            if (first & LENGTH_MASK) == END_INDICATOR_LENGTH && (first & D_BIT_MASK) != 0 {
                 // Explicit End Indicator caught even if not 0xFF-leading.
                 return;
             }
@@ -160,7 +179,7 @@ impl UleReceiver {
         if self.expected == 0 && self.partial.len() >= BASE_HEADER_LEN {
             // We had buffered only a fragment of the header; now compute length.
             let first = u16::from_be_bytes([self.partial[0], self.partial[1]]);
-            let length = (first & 0x7FFF) as usize;
+            let length = (first & LENGTH_MASK) as usize;
             self.expected = BASE_HEADER_LEN + length;
         }
         if self.expected != 0 && self.partial.len() >= self.expected {
@@ -273,5 +292,78 @@ mod tests {
         let done = rx.push(&[200u8, 0x00, 0x10, 0x08, 0x00], true);
         assert!(done.is_empty());
         assert!(!rx.in_reassembly());
+    }
+
+    // RFC 4326 §7.2.1 payload-pointer consistency check: a PUSI=1 packet that
+    // arrives mid-reassembly with a PP that does NOT equal the remaining bytes
+    // in the partial SNDU must discard the partial and NOT emit garbage.
+    //
+    // Regression: without the PP consistency check the old code fed
+    // `pp_region[..wrong_pp]` into `feed_continuation` regardless of mismatch,
+    // silently contaminating the partial buffer with bytes from the wrong offset.
+    // A subsequent continuation then "completed" the SNDU from the corrupted
+    // partial, yielding a CRC-invalid blob.
+    #[test]
+    fn pusi_mid_reassembly_wrong_pp_discards_partial() {
+        // Build a 54-byte SNDU (4-byte header + 46-byte PDU + 4-byte CRC).
+        let pdu: Vec<u8> = (0u8..46).collect();
+        let sndu = make_sndu(&pdu);
+        assert_eq!(
+            sndu.len(),
+            54,
+            "expected 54 bytes: 4 header + 46 PDU + 4 CRC"
+        );
+
+        let mut rx = UleReceiver::new();
+
+        // Packet 1: PUSI=1, PP=0, start the SNDU (first 20 bytes).
+        // After this: partial=sndu[..20], expected=54, remaining=34.
+        let mut p1 = alloc::vec![0x00u8]; // PP=0
+        p1.extend_from_slice(&sndu[..20]);
+        let done = rx.push(&p1, true);
+        assert!(done.is_empty());
+        assert!(rx.in_reassembly(), "should be mid-reassembly after p1");
+
+        // Packet 2: PUSI=1 with WRONG PP=5 (real remaining is 34).
+        // Before the fix: feed_continuation appends 5 bytes of junk to partial
+        // (partial now = sndu[..20] + [0xDE;5], len=25), leaving expected=54.
+        // After the fix: the receiver detects PP≠remaining, resets, and walks
+        // fresh SNDUs from pp_region[WRONG_PP..].
+        const WRONG_PP: usize = 5;
+        let mut p2 = alloc::vec![WRONG_PP as u8];
+        // Junk in the pre-pointer region; p2 then ends with an End Indicator,
+        // so no fresh SNDU should complete from this packet.
+        p2.extend_from_slice(&[0xDEu8; WRONG_PP]);
+        p2.extend_from_slice(&[0xFF, 0xFF]);
+
+        let done2 = rx.push(&p2, true);
+        assert!(done2.is_empty(), "no SNDUs should complete in p2");
+
+        // Packet 3: PUSI=0 continuation.
+        // Pre-fix: receiver still has the corrupted partial (len=25, expected=54);
+        //   it feeds the correct tail bytes and "completes" a 54-byte blob whose
+        //   content is garbage — sndu[..20] + 0xDE*5 + sndu[20..49] — and the
+        //   CRC will NOT match.
+        // Post-fix: receiver reset after p2, so this continuation is idle-discarded.
+        let tail = &sndu[20..]; // correct continuation
+        let done3 = rx.push(tail, false);
+
+        for emitted in &done3 {
+            // Any blob emitted from a corrupted partial will have a bad CRC.
+            assert!(
+                crate::sndu::Sndu::parse(emitted).is_ok(),
+                "emitted SNDU has invalid CRC — corrupt partial was not discarded"
+            );
+        }
+
+        // Post-fix: receiver reset after WRONG_PP mismatch; partial is gone.
+        // The continuation (p3) was discarded because receiver is idle.
+        // So done3 must be empty — if it's non-empty AND any item parses, that
+        // means we got lucky with a coincidental valid CRC, which is astronomically
+        // unlikely.  Assert it's empty for clarity.
+        assert!(
+            done3.is_empty(),
+            "post-fix: idle receiver must discard the continuation (partial was reset)"
+        );
     }
 }

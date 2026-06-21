@@ -25,8 +25,8 @@ fn main() {
     println!("D-bit: {}", u8::from(sndu.d_bit()));
     println!(
         "Type: {} (0x{:04X})",
-        sndu.type_field,
-        sndu.type_field.to_u16()
+        sndu.type_field(),
+        sndu.type_field().to_u16()
     );
     println!("Length field: {}", sndu.length_field());
     if let Some(npa) = sndu.dest_address {

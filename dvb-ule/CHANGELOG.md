@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reassembly PP consistency check (RFC 4326 §7.2.1):** `UleReceiver` now
+  validates the Payload Pointer on a PUSI=1 packet arriving mid-reassembly. If
+  `PP ≠ remaining_bytes` the partial SNDU is discarded per §7.2.1 instead of
+  being silently contaminated with bytes from the wrong offset. A regression
+  test (`pusi_mid_reassembly_wrong_pp_discards_partial`) verifies this bites
+  against the pre-fix code and passes after the fix.
+- **`Sndu::type_field` field removed:** the former `pub type_field: TypeField`
+  field was ignored by `serialize_into` (which always derived the type from the
+  `payload` chain), meaning a manually-constructed `Sndu` with a divergent
+  `type_field` serialized incorrectly. The field is replaced by a
+  `type_field()` accessor method that delegates to `payload.base_type()`,
+  eliminating the divergence entirely.
+
+### Added
+
+- `MandatoryHType` and `OptionalHType` enums — typed H-Type values for the two
+  separate IANA H-Type registries (RFC 4326 §5 / RFC 5163 §3). Both carry
+  `name()` + `impl_spec_display!` and `#[non_exhaustive]`, and are accessible
+  via `ExtensionHeader::mandatory_h_type()` / `ExtensionHeader::optional_h_type()`.
+- `tests/label_coverage.rs` drift-guard: fails CI if any `pub enum` in `src/`
+  is missing a `Display` impl (issue #204 convention).
+
+### Changed
+
+- `TypeField` and `ExtensionHeader` are now `#[non_exhaustive]`.
+- Private named constants `D_BIT_MASK` (`0x8000`) and `LENGTH_MASK` (`0x7FFF`)
+  replace all raw hex literals for the D-bit and Length field masks across
+  `sndu.rs` and `ts.rs`.
+- `is_end_indicator` rewritten to use the existing `PADDING_BYTE` constant
+  instead of bare `0xFF` literals.
+
 ## [0.1.0]
 
 ### Added

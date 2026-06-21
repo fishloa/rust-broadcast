@@ -26,20 +26,30 @@ pub const END_INDICATOR: u16 = 0xFFFF;
 /// The 0xFF byte used for TS-payload padding / stuffing (§4.3, §6).
 pub const PADDING_BYTE: u8 = 0xFF;
 
+/// Mask for the `D` bit (MSB of the first 16-bit word): `1` = no Destination
+/// NPA address present (RFC 4326 §4.2).
+pub(crate) const D_BIT_MASK: u16 = 0x8000;
+/// Mask for the 15-bit `Length` field in the first 16-bit word (RFC 4326 §4.2).
+pub(crate) const LENGTH_MASK: u16 = 0x7FFF;
+
 /// A parsed/owned SubNetwork Data Unit (RFC 4326 §4).
 ///
 /// Holds typed header fields plus a borrowed view of the PDU. `Length` and the
 /// CRC are *not* stored: both are recomputed on serialize, so the round-trip is
 /// driven entirely from the typed fields (no raw passthrough).
+///
+/// The base-header `Type` field is derived from the `payload` chain (via
+/// [`PayloadChain::base_type`]) and is **not** stored as a separate field — the
+/// chain is the single source of truth so the two can never diverge. Use
+/// [`Sndu::type_field`] to read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Sndu<'a> {
     /// The 6-byte Receiver Destination NPA address (§4.5), present iff `D = 0`.
     /// `D` is derived from `Some`/`None`: `D = 0` ⇔ `Some`.
     pub dest_address: Option<[u8; NPA_LEN]>,
-    /// The base-header Type field (§4.4): an EtherType or a Next-Header.
-    pub type_field: TypeField,
-    /// Decoded extension-header chain + PDU (§5).
+    /// Decoded extension-header chain + PDU (§5). The base-header Type field is
+    /// derived from the chain's `base_type()` on serialize.
     pub payload: PayloadChain<'a>,
 }
 
@@ -49,13 +59,19 @@ impl<'a> Sndu<'a> {
     pub fn new(type_field: TypeField, dest_address: Option<[u8; NPA_LEN]>, pdu: &'a [u8]) -> Self {
         Sndu {
             dest_address,
-            type_field,
             payload: PayloadChain {
                 headers: Vec::new(),
                 final_type: type_field,
                 pdu,
             },
         }
+    }
+
+    /// The base-header Type field (§4.4): derived from the payload chain's
+    /// [`PayloadChain::base_type`]. This is the value that appears on the wire
+    /// at bytes `[2..4]` of the SNDU.
+    pub fn type_field(&self) -> TypeField {
+        self.payload.base_type()
     }
 
     /// The `D` bit value: `1` when no Destination Address is present.
@@ -98,8 +114,8 @@ impl<'a> Sndu<'a> {
             });
         }
         let first = u16::from_be_bytes([data[0], data[1]]);
-        let d_bit = (first & 0x8000) != 0;
-        let length = first & 0x7FFF;
+        let d_bit = (first & D_BIT_MASK) != 0;
+        let length = first & LENGTH_MASK;
         let raw_type = u16::from_be_bytes([data[2], data[3]]);
         let type_field = TypeField::from_u16(raw_type);
 
@@ -157,7 +173,6 @@ impl<'a> Sndu<'a> {
 
         Ok(Sndu {
             dest_address,
-            type_field,
             payload,
         })
     }
@@ -182,14 +197,13 @@ impl<'a> Sndu<'a> {
             });
         }
 
-        // The base Type field must agree with the chain (first header's Type or
-        // the final EtherType/Mandatory Type).
+        // Base Type field is always derived from the payload chain.
         let base_type = self.payload.base_type();
 
         // Byte 0..2: D | Length(15).
-        let mut first = length as u16 & 0x7FFF;
+        let mut first = length as u16 & LENGTH_MASK;
         if self.d_bit() {
-            first |= 0x8000;
+            first |= D_BIT_MASK;
         }
         out[0..2].copy_from_slice(&first.to_be_bytes());
         // Byte 2..4: Type.
@@ -217,7 +231,7 @@ impl<'a> Sndu<'a> {
 /// (`0xFFFF`: `D = 1`, `Length = 0x7FFF`) — no further SNDUs in this TS packet
 /// (RFC 4326 §4.3).
 pub fn is_end_indicator(data: &[u8]) -> bool {
-    data.len() >= 2 && data[0] == 0xFF && data[1] == 0xFF
+    data.len() >= 2 && data[0] == PADDING_BYTE && data[1] == PADDING_BYTE
 }
 
 #[cfg(test)]
@@ -331,5 +345,19 @@ mod tests {
     fn end_indicator_detected() {
         assert!(is_end_indicator(&[0xFF, 0xFF, 0xFF]));
         assert!(!is_end_indicator(&[0x00, 0x10]));
+    }
+
+    // type_field() accessor returns the chain's base type, which is the value
+    // that will be serialized to the wire — no divergence possible.
+    #[test]
+    fn type_field_accessor_matches_serialized_wire() {
+        let pdu = [0xAAu8; 4];
+        let sndu = Sndu::new(TypeField::EtherType(0x0800), None, &pdu);
+        assert_eq!(sndu.type_field(), TypeField::EtherType(0x0800));
+        // Confirm it's what's on the wire.
+        let mut buf = vec![0u8; sndu.serialized_len()];
+        sndu.serialize_into(&mut buf).unwrap();
+        let wire_type = u16::from_be_bytes([buf[2], buf[3]]);
+        assert_eq!(sndu.type_field().to_u16(), wire_type);
     }
 }
