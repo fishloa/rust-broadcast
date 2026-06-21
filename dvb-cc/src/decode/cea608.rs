@@ -20,6 +20,63 @@ use crate::cc_data::{CcTriplet, CcType};
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Foreground colour of a line-21 caption cell (CTA-608-E Tables 51/53).
+///
+/// Returned by [`Cea608StyledChar::color`]; corresponds to the 3-bit colour
+/// index in PAC / mid-row code tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum Cea608Color {
+    /// White (default).
+    #[default]
+    White,
+    /// Green.
+    Green,
+    /// Blue.
+    Blue,
+    /// Cyan.
+    Cyan,
+    /// Red.
+    Red,
+    /// Yellow.
+    Yellow,
+    /// Magenta.
+    Magenta,
+}
+
+impl Cea608Color {
+    /// Label per the project's `name()` convention.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::White => "white",
+            Self::Green => "green",
+            Self::Blue => "blue",
+            Self::Cyan => "cyan",
+            Self::Red => "red",
+            Self::Yellow => "yellow",
+            Self::Magenta => "magenta",
+        }
+    }
+
+    /// From the 3-bit colour index used in PAC and mid-row tables (Tables 51/53).
+    #[must_use]
+    pub(super) fn from_idx(idx: u8) -> Self {
+        match idx & 0x07 {
+            0 => Self::White,
+            1 => Self::Green,
+            2 => Self::Blue,
+            3 => Self::Cyan,
+            4 => Self::Red,
+            5 => Self::Yellow,
+            6 => Self::Magenta,
+            _ => Self::White,
+        }
+    }
+}
+dvb_common::impl_spec_display!(Cea608Color);
+
 /// Number of caption rows on a line-21 screen (§3.2.2).
 const SCREEN_ROWS: usize = 15;
 /// Number of caption columns on a line-21 screen.
@@ -130,8 +187,8 @@ pub struct Cea608StyledChar {
     pub underline: bool,
     /// Italics attribute.
     pub italics: bool,
-    /// Foreground colour name ("white","green","blue","cyan","red","yellow","magenta").
-    pub color: &'static str,
+    /// Foreground colour (CTA-608-E Tables 51/53).
+    pub color: Cea608Color,
 }
 
 impl Default for Cea608StyledChar {
@@ -140,7 +197,7 @@ impl Default for Cea608StyledChar {
             ch: ' ',
             underline: false,
             italics: false,
-            color: "white",
+            color: Cea608Color::White,
         }
     }
 }
@@ -231,7 +288,7 @@ impl Cea608Screen {
 struct Pen {
     underline: bool,
     italics: bool,
-    color: &'static str,
+    color: Cea608Color,
 }
 
 impl Default for Pen {
@@ -239,7 +296,7 @@ impl Default for Pen {
         Pen {
             underline: false,
             italics: false,
-            color: "white",
+            color: Cea608Color::White,
         }
     }
 }
@@ -277,11 +334,12 @@ impl ChannelState {
 /// use dvb_cc::decode::{Cea608Decoder, Cea608Channel};
 /// let mut dec = Cea608Decoder::new();
 /// // RCL, PAC row 15, "HI", EOC — a pop-on caption on CC1 (field 1).
-/// dec.push_pair(true, 0x14, 0x20); // RCL
-/// dec.push_pair(true, 0x14, 0x20); // doubled control — ignored
-/// dec.push_pair(true, 0x14, 0x70); // PAC row 15 indent 0 (DataCh1)... see tests
-/// dec.push_pair(true, b'H', b'I');
-/// dec.push_pair(true, 0x14, 0x2F); // EOC → flip
+/// dec.push_pair(false, 0x14, 0x20); // RCL (field 1 → CC1)
+/// dec.push_pair(false, 0x14, 0x20); // doubled control — ignored
+/// dec.push_pair(false, 0x14, 0x70); // PAC row 15 indent 0 (field 1)
+/// dec.push_pair(false, b'H', b'I');
+/// dec.push_pair(false, 0x14, 0x2F); // EOC → flip
+/// assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cea608Decoder {
@@ -524,15 +582,11 @@ impl Cea608Decoder {
     fn mid_row(&mut self, ch: Cea608Channel, b2: u8) {
         let idx = (b2 - 0x20) as usize; // 0x20..0x2F → 0..15
         let underline = idx & 0x01 != 0;
-        let (color, italics) = match idx >> 1 {
-            0 => ("white", false),
-            1 => ("green", false),
-            2 => ("blue", false),
-            3 => ("cyan", false),
-            4 => ("red", false),
-            5 => ("yellow", false),
-            6 => ("magenta", false),
-            _ => ("white", true), // 0x2E/0x2F = italics
+        let color_idx = (idx >> 1) as u8;
+        let (color, italics) = if color_idx <= 6 {
+            (Cea608Color::from_idx(color_idx), false)
+        } else {
+            (Cea608Color::White, true) // 0x2E/0x2F = italics
         };
         let st = &mut self.channels[ch.index()];
         st.pen = Pen {
@@ -577,18 +631,14 @@ impl Cea608Decoder {
         let (color, italics, indent) = if attr >= 0x10 {
             // Indent codes 0x10..0x1F → indent 0..28 in steps of 4, colour white.
             let indent = ((attr - 0x10) >> 1) as usize * 4;
-            ("white", false, indent)
+            (Cea608Color::White, false, indent)
         } else {
             // Colour/italics codes 0x00..0x0F.
-            let (c, it) = match attr >> 1 {
-                0 => ("white", false),
-                1 => ("green", false),
-                2 => ("blue", false),
-                3 => ("cyan", false),
-                4 => ("red", false),
-                5 => ("yellow", false),
-                6 => ("magenta", false),
-                _ => ("white", true),
+            let color_idx = attr >> 1;
+            let (c, it) = if color_idx <= 6 {
+                (Cea608Color::from_idx(color_idx), false)
+            } else {
+                (Cea608Color::White, true)
             };
             (c, it, 0)
         };
@@ -872,7 +922,7 @@ mod tests {
         for row in screen.rows() {
             for (_, c) in row.styled_cells() {
                 if c.ch == 'B' {
-                    assert_eq!(c.color, "green");
+                    assert_eq!(c.color, Cea608Color::Green);
                     found_green_b = true;
                 }
             }
