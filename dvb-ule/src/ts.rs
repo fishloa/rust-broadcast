@@ -331,8 +331,9 @@ mod tests {
         // fresh SNDUs from pp_region[WRONG_PP..].
         const WRONG_PP: usize = 5;
         let mut p2 = alloc::vec![WRONG_PP as u8];
-        p2.extend_from_slice(&[0xDEu8; WRONG_PP]); // junk in the pre-pointer region
-        // No fresh SNDU here — p2 ends with End Indicator.
+        // Junk in the pre-pointer region; p2 then ends with an End Indicator,
+        // so no fresh SNDU should complete from this packet.
+        p2.extend_from_slice(&[0xDEu8; WRONG_PP]);
         p2.extend_from_slice(&[0xFF, 0xFF]);
 
         let done2 = rx.push(&p2, true);
