@@ -54,14 +54,22 @@ fn main() {
     }
 
     // The CP_CW_combination's CW is opaque — we only locate the parameter.
+    // Guard: the parameter must carry at least 2 bytes for the CP number.
     if let Some(cpcw) = msg.find(ParameterType::EcmgScs(
         EcmgScsParameterType::CpCwCombination,
     )) {
-        let cp = u16::from_be_bytes([cpcw.value[0], cpcw.value[1]]);
-        println!(
-            "CP_CW_combination: CP={cp}, CW={} opaque bytes",
-            cpcw.value.len() - 2
-        );
+        if let Some(cp_bytes) = cpcw.value.get(0..2) {
+            let cp = u16::from_be_bytes([cp_bytes[0], cp_bytes[1]]);
+            println!(
+                "CP_CW_combination: CP={cp}, CW={} opaque bytes",
+                cpcw.value.len() - 2
+            );
+        } else {
+            println!(
+                "CP_CW_combination: value too short ({} bytes, need ≥2)",
+                cpcw.value.len()
+            );
+        }
     }
 
     // Byte-exact round-trip.

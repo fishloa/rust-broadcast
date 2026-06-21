@@ -372,26 +372,128 @@ fn data_type_and_flag_values() {
 }
 
 #[test]
-fn error_status_values() {
-    assert_eq!(EcmgErrorStatus::InvalidMessage.to_u16(), 0x0001);
-    assert_eq!(EcmgErrorStatus::EcmIdInUse.to_u16(), 0x0015);
-    assert_eq!(EcmgErrorStatus::UnrecoverableError.to_u16(), 0x7001);
+fn ecmg_error_status_values() {
+    use EcmgErrorStatus::*;
+    for (e, v) in [
+        (InvalidMessage, 0x0001u16),
+        (UnsupportedProtocolVersion, 0x0002),
+        (UnknownMessageType, 0x0003),
+        (MessageTooLong, 0x0004),
+        (UnknownSuperCasId, 0x0005),
+        (UnknownEcmChannelId, 0x0006),
+        (UnknownEcmStreamId, 0x0007),
+        (TooManyChannels, 0x0008),
+        (TooManyStreamsOnChannel, 0x0009),
+        (TooManyStreamsOnEcmg, 0x000A),
+        (NotEnoughControlWords, 0x000B),
+        (OutOfStorage, 0x000C),
+        (OutOfResources, 0x000D),
+        (UnknownParameterType, 0x000E),
+        (InconsistentLength, 0x000F),
+        (MissingMandatoryParameter, 0x0010),
+        (InvalidParameterValue, 0x0011),
+        (UnknownEcmId, 0x0012),
+        (EcmChannelIdInUse, 0x0013),
+        (EcmStreamIdInUse, 0x0014),
+        (EcmIdInUse, 0x0015),
+        (UnknownError, 0x7000),
+        (UnrecoverableError, 0x7001),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EcmgErrorStatus::from_u16(v), e, "0x{v:04X}");
+    }
     assert_eq!(
-        EcmgErrorStatus::from_u16(0x0005),
-        EcmgErrorStatus::UnknownSuperCasId
+        EcmgErrorStatus::from_u16(0x4242),
+        EcmgErrorStatus::Reserved(0x4242)
     );
+}
 
-    assert_eq!(EmmgErrorStatus::InvalidMessage.to_u16(), 0x0001);
-    assert_eq!(EmmgErrorStatus::ClientIdInUse.to_u16(), 0x0014);
-    assert_eq!(EmmgErrorStatus::UnrecoverableError.to_u16(), 0x7001);
+#[test]
+fn emmg_error_status_values() {
+    use EmmgErrorStatus::*;
+    for (e, v) in [
+        (InvalidMessage, 0x0001u16),
+        (UnsupportedProtocolVersion, 0x0002),
+        (UnknownMessageType, 0x0003),
+        (MessageTooLong, 0x0004),
+        (UnknownDataStreamId, 0x0005),
+        (UnknownDataChannelId, 0x0006),
+        (TooManyChannels, 0x0007),
+        (TooManyStreamsOnChannel, 0x0008),
+        (TooManyStreamsOnMux, 0x0009),
+        (UnknownParameterType, 0x000A),
+        (InconsistentLength, 0x000B),
+        (MissingMandatoryParameter, 0x000C),
+        (InvalidParameterValue, 0x000D),
+        (UnknownClientId, 0x000E),
+        (ExceededBandwidth, 0x000F),
+        (UnknownDataId, 0x0010),
+        (DataChannelIdInUse, 0x0011),
+        (DataStreamIdInUse, 0x0012),
+        (DataIdInUse, 0x0013),
+        (ClientIdInUse, 0x0014),
+        (UnknownError, 0x7000),
+        (UnrecoverableError, 0x7001),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(EmmgErrorStatus::from_u16(v), e, "0x{v:04X}");
+    }
     assert_eq!(
-        EmmgErrorStatus::from_u16(0x000F),
-        EmmgErrorStatus::ExceededBandwidth
+        EmmgErrorStatus::from_u16(0x4242),
+        EmmgErrorStatus::Reserved(0x4242)
     );
+}
+
+#[test]
+fn emmg_message_type_reserved_passthrough() {
+    assert_eq!(
+        EmmgMuxMessageType::from_u16(0x4242),
+        EmmgMuxMessageType::Reserved(0x4242)
+    );
+    assert_eq!(EmmgMuxMessageType::Reserved(0x4242).to_u16(), 0x4242);
 }
 
 #[test]
 fn protocol_version_is_03() {
     assert_eq!(Interface::EcmgScs.protocol_version(), 0x03);
     assert_eq!(Interface::EmmgPdgMux.protocol_version(), 0x03);
+}
+
+/// Smoke-test: a `CW_provision` message serialises to JSON and the expected
+/// field names are present (requires the `serde` feature).
+#[cfg(feature = "serde")]
+#[test]
+fn serde_cw_provision_smoke() {
+    use dvb_simulcrypt::{EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType};
+
+    let cp_number = [0x00u8, 0x07];
+    let cp_cw = [0x00u8, 0x07, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+    let msg = SimulcryptMessage::new(
+        Interface::EcmgScs.protocol_version(),
+        MessageType::EcmgScs(EcmgScsMessageType::CwProvision),
+        vec![
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::CpNumber),
+                &cp_number,
+            ),
+            Parameter::new(
+                ParameterType::EcmgScs(EcmgScsParameterType::CpCwCombination),
+                &cp_cw,
+            ),
+        ],
+    );
+
+    let json = serde_json::to_string(&msg).expect("serde_json::to_string");
+    assert!(
+        json.contains("\"message_type\""),
+        "JSON missing 'message_type': {json}"
+    );
+    assert!(
+        json.contains("\"parameters\""),
+        "JSON missing 'parameters': {json}"
+    );
+    assert!(
+        json.contains("CwProvision"),
+        "JSON missing 'CwProvision' variant: {json}"
+    );
 }
