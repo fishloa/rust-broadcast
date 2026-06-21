@@ -14,6 +14,7 @@
 /// The `version` byte of the `'emsg'` `FullBox` (DASH-IF Part 10 Table 6-2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum EmsgVersion {
     /// Version 0 — segment-relative timing; carries `presentation_time_delta`
     /// (u32). Strings precede the integer fields on the wire.
