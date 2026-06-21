@@ -28,3 +28,5 @@ tools/dvb-si-audit/out/
 # all scratch cargo target dirs (target/, target-gate/, target-ci/, target-rel/, …)
 /target*/
 target-*/
+# CTA standards: free to download but copyright CTA — consulted locally, only transcriptions committed (like ci_plus/nordig).
+specs/cta_*.pdf
