@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-21
+
 ### Added
 
 - `NormInfo` — NORM_INFO (type = 1) parser+serializer (RFC 5740 §4.2.2, Figure 8):
@@ -28,7 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `lct_ext.rs`: bare Use-field sub-masks `0x00FF` and `0x0F00` replaced with
   named private constants `USE_PI_SPECIFIC_MASK` / `USE_RESERVED_MASK`.
 
-## [0.1.0]
 
 ### Added
 

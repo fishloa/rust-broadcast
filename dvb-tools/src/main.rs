@@ -26,7 +26,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 usage: dvb-tools <subcommand> [args...]
 
-  dump     <file.ts> [--json]                         SI section dump
+  dump     <file.ts> [--json]                         SI section dump (decodes PMT/SDT/NIT descriptor loops, incl. NorDig/EACEM LCN)
   services <file.ts>                                 SDT + NIT/LCN service tree
   epg      <file.ts> [--json]                        EIT schedule
   pids     <file.ts>                                 PID table + bitrate

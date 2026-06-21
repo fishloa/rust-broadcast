@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.8.0 — 2026-06-21
+
 ### Added
 - **association_tag_descriptor (tag 0x14)** — ISO/IEC 13818-6 §11.4.1 / ETSI
   TR 101 202 §4.7.7.2 Table 4.18. Carried in the PMT `ES_info` loop to bind a

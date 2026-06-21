@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-06-21
+
 ### Fixed
 
 - `MonochromeDataField::parse` now rejects `n_pixels == 0` with
@@ -38,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (not `Opaque`), so a future variant added to `DataUnitId` without a dispatch
   arm fails CI.
 
-## [0.1.0]
 
 ### Added
 

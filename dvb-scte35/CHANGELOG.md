@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [7.8.0] — 2026-06-21
+
 ### Fixed
 - **`DvbDasDescriptor::serialize_into` — `descriptor_length` overflow guard
   (dvb_ta audit P1):** a `upid` of ≥ 252 bytes would make `4 + body_len ≥ 256`,

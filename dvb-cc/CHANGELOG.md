@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-21
+
 ### Changed (decode module — audit fixes, part of 0.2.0)
 - `Cea608StyledChar::color` is now `Cea608Color` (new typed enum, CTA-608-E
   Tables 51/53) instead of `&'static str`. Variants: `White`, `Green`, `Blue`,
