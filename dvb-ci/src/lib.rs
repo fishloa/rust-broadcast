@@ -46,6 +46,7 @@ extern crate alloc;
 pub mod any;
 pub mod builder;
 pub mod ci_ext;
+pub mod ci_plus;
 pub mod error;
 pub mod length;
 pub mod objects;
