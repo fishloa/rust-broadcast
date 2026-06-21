@@ -33,11 +33,10 @@ fn main() {
     println!("  message_data:  {} bytes", b.message_data.len());
     println!("  is_scte35:     {}", b.is_scte35());
     if b.is_scte35() {
-        // The SCTE 35 splice_info_section starts with table_id 0xFC.
-        println!(
-            "  message_data[0] = 0x{:02X} (SCTE 35 table_id)",
-            b.message_data[0]
-        );
+        if let Some(&first) = b.message_data.first() {
+            // The SCTE 35 splice_info_section starts with table_id 0xFC.
+            println!("  message_data[0] = 0x{first:02X} (SCTE 35 table_id)");
+        }
     }
 
     // Byte-exact round-trip: serialize recomputes the size field.

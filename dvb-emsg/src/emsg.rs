@@ -61,6 +61,7 @@ const U64_LEN: usize = 8;
 /// (representation-relative).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum PresentationTime {
     /// **version 0**: `presentation_time_delta` (u32), relative to the
     /// segment's earliest presentation time, in units of `timescale`.
@@ -78,7 +79,17 @@ impl PresentationTime {
             PresentationTime::Absolute(_) => EmsgVersion::RepresentationRelative,
         }
     }
+
+    /// Spec label for this presentation-time variant.
+    pub fn name(&self) -> &'static str {
+        match self {
+            PresentationTime::Delta(_) => "presentation_time_delta",
+            PresentationTime::Absolute(_) => "presentation_time",
+        }
+    }
 }
+
+dvb_common::impl_spec_display!(PresentationTime, Delta, Absolute);
 
 /// A parsed/owned MPEG-DASH Event Message Box (`emsg`).
 ///

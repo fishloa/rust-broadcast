@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `EmsgVersion` and `PresentationTime` are now `#[non_exhaustive]` — forward-compat signal for downstream matchers if new spec versions are ever defined.
+- `PresentationTime` now implements `name()` + `Display` via `dvb_common::impl_spec_display!` (issue #204 label convention): `Delta` renders as `"presentation_time_delta(0x…)"` and `Absolute` as `"presentation_time(0x…)"`.
+- `examples/parse_emsg.rs`: guard `message_data[0]` access with `.first()` to avoid a panic when `is_scte35()` is true but `message_data` is empty (legal per spec).
+- Added `tests/label_coverage.rs` drift-guard: fails CI if any public spec/field enum in `dvb-emsg` lacks a `Display` impl (SKIP: `Error`).
+
 ## [0.1.0]
 
 ### Added
