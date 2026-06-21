@@ -168,6 +168,7 @@ the raw payload is preserved and round-trips losslessly.
 | 0x0A | ISO_639_language |
 | 0x0F | private_data_indicator |
 | 0x13 | carousel_identifier (ISO/IEC 13818-6) |
+| 0x14 | association_tag (ISO/IEC 13818-6) |
 
 ### DVB descriptors (EN 300 468, and companion specs)
 
