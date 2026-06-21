@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (decode module — audit fixes, part of 0.2.0)
+- `Cea608StyledChar::color` is now `Cea608Color` (new typed enum, CTA-608-E
+  Tables 51/53) instead of `&'static str`. Variants: `White`, `Green`, `Blue`,
+  `Cyan`, `Red`, `Yellow`, `Magenta`. Has `name()` + `impl_spec_display!`.
+- `Window::border_type` is now `EdgeType` (reusing the existing screen enum;
+  values 0–5 map exactly) instead of `u8`. `apply_window_style` initialises it
+  to `EdgeType::None`; `set_window_attributes` decodes via `EdgeType::from_bits`.
+- `Window::anchor_point` is now `AnchorPoint` (new typed enum, CTA-708-E §8.4.6,
+  values 0–8) instead of `u8`. Variants: `TopLeft`/`TopCenter`/`TopRight`,
+  `MiddleLeft`/`MiddleCenter`/`MiddleRight`, `BottomLeft`/`BottomCenter`/
+  `BottomRight`. Has `name()` + `impl_spec_display!`.
+- Fixed `Cea608Decoder` struct doctest: was passing `field2=true` (routes to CC3)
+  while the comment claimed CC1; corrected to `field2=false` and added an
+  `assert_eq!` assertion so the doctest now verifies decoded text.
+
+### Added (decode module — audit fixes, part of 0.2.0)
+- `tests/label_coverage.rs` drift-guard (issue #204 convention): scans `src/`
+  for all `pub enum`s and fails if any lack a `Display` impl. Covers all 14
+  public enums in dvb-cc; SKIP list documents `Error` and `WindowMapOp`.
+
 ### Added
 - **Caption decode layer** (`decode` feature, default-on; additive → 0.2.0) — the
   CEA-608/708 character/control decode that interprets the demuxed caption byte

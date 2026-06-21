@@ -17,6 +17,68 @@ use crate::decode::screen::{
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Anchor point of a CEA-708 window — which corner / edge / centre the anchor
+/// coordinates refer to (CTA-708-E §8.4.6, 4-bit `ap` field, values 0–8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum AnchorPoint {
+    /// Top-left corner (ap = 0).
+    #[default]
+    TopLeft,
+    /// Top centre (ap = 1).
+    TopCenter,
+    /// Top-right corner (ap = 2).
+    TopRight,
+    /// Middle-left edge (ap = 3).
+    MiddleLeft,
+    /// Middle centre (ap = 4).
+    MiddleCenter,
+    /// Middle-right edge (ap = 5).
+    MiddleRight,
+    /// Bottom-left corner (ap = 6).
+    BottomLeft,
+    /// Bottom centre (ap = 7).
+    BottomCenter,
+    /// Bottom-right corner (ap = 8).
+    BottomRight,
+}
+
+impl AnchorPoint {
+    /// From the 4-bit `ap` wire value (§8.4.6; values 9–15 fold to `TopLeft`).
+    #[must_use]
+    pub fn from_bits(v: u8) -> Self {
+        match v & 0x0F {
+            0 => Self::TopLeft,
+            1 => Self::TopCenter,
+            2 => Self::TopRight,
+            3 => Self::MiddleLeft,
+            4 => Self::MiddleCenter,
+            5 => Self::MiddleRight,
+            6 => Self::BottomLeft,
+            7 => Self::BottomCenter,
+            8 => Self::BottomRight,
+            _ => Self::TopLeft,
+        }
+    }
+    /// Label per the project's `name()` convention.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TopLeft => "top_left",
+            Self::TopCenter => "top_center",
+            Self::TopRight => "top_right",
+            Self::MiddleLeft => "middle_left",
+            Self::MiddleCenter => "middle_center",
+            Self::MiddleRight => "middle_right",
+            Self::BottomLeft => "bottom_left",
+            Self::BottomCenter => "bottom_center",
+            Self::BottomRight => "bottom_right",
+        }
+    }
+}
+dvb_common::impl_spec_display!(AnchorPoint);
+
 // ── Service / window counts (§6.1, §8) ──────────────────────────────────────
 /// Number of standard services tracked (47 CFR §79.102 (c): Caption Service #1–#6).
 const NUM_SERVICES: usize = 6;
@@ -110,8 +172,8 @@ pub struct Window {
     pub state: WindowState,
     /// Window priority, 0 (highest) – 7.
     pub priority: u8,
-    /// Anchor point (0–8).
-    pub anchor_point: u8,
+    /// Anchor point (which corner/edge/centre the anchor coordinates refer to).
+    pub anchor_point: AnchorPoint,
     /// Anchor vertical coordinate.
     pub anchor_vertical: u8,
     /// Anchor horizontal coordinate.
@@ -144,8 +206,8 @@ pub struct Window {
     pub fill_opacity: Opacity,
     /// Border colour.
     pub border_color: Color,
-    /// Border type (0=none … 5=shadow-right).
-    pub border_type: u8,
+    /// Border type (none / raised / depressed / uniform / shadow).
+    pub border_type: EdgeType,
     /// Pen size.
     pub pen_size: PenSize,
     /// Pen offset (subscript/normal/superscript).
@@ -179,7 +241,7 @@ impl Window {
         Window {
             state: WindowState::Hidden,
             priority: 0,
-            anchor_point: 0,
+            anchor_point: AnchorPoint::TopLeft,
             anchor_vertical: 0,
             anchor_horizontal: 0,
             relative_position: false,
@@ -196,7 +258,7 @@ impl Window {
             fill_color: Color::BLACK,
             fill_opacity: Opacity::Solid,
             border_color: Color::BLACK,
-            border_type: 0,
+            border_type: EdgeType::None,
             pen_size: PenSize::Standard,
             pen_offset: PenOffset::Normal,
             font_style: FontStyle::Default,
@@ -688,7 +750,7 @@ impl Cea708Decoder {
         w.relative_position = (p2 >> 7) & 0x01 != 0;
         w.anchor_vertical = p2 & 0x7F;
         w.anchor_horizontal = p3;
-        w.anchor_point = (p4 >> 4) & 0x0F;
+        w.anchor_point = AnchorPoint::from_bits((p4 >> 4) & 0x0F);
         w.row_count = (p4 & 0x0F) + 1;
         w.column_count = (p5 & 0x3F) + 1;
         w.window_style = (p6 >> 3) & 0x07;
@@ -737,7 +799,7 @@ impl Cea708Decoder {
             let bt_lo = (p2 >> 6) & 0x03;
             w.border_color = Color::new((p2 >> 4) & 0x03, (p2 >> 2) & 0x03, p2 & 0x03);
             let bt_hi = (p3 >> 7) & 0x01;
-            w.border_type = (bt_hi << 2) | bt_lo;
+            w.border_type = EdgeType::from_bits((bt_hi << 2) | bt_lo);
             w.word_wrap = (p3 >> 6) & 0x01 != 0;
             w.print_direction = PrintDirection::from_bits((p3 >> 4) & 0x03);
             w.scroll_direction = ScrollDirection::from_bits((p3 >> 2) & 0x03);
@@ -914,7 +976,7 @@ enum WindowMapOp {
 fn apply_window_style(w: &mut Window, id: u8) {
     // All presets: print dir L→R (except 7), scroll BOTTOM→TOP (except 7),
     // border NONE, display effect SNAP. justify + wordwrap + fill vary.
-    w.border_type = 0;
+    w.border_type = EdgeType::None;
     match id {
         1 => style(w, Justify::Left, false, Some(Color::BLACK), Opacity::Solid),
         2 => style(w, Justify::Left, false, None, Opacity::Transparent),
@@ -1052,7 +1114,7 @@ mod tests {
         assert!(!w.relative_position);
         assert_eq!(w.anchor_vertical, 74);
         assert_eq!(w.anchor_horizontal, 209);
-        assert_eq!(w.anchor_point, 8);
+        assert_eq!(w.anchor_point, AnchorPoint::BottomRight);
         assert_eq!(w.row_count, 12);
         assert_eq!(w.column_count, 16);
         assert_eq!(w.window_style, 2);
@@ -1074,7 +1136,7 @@ mod tests {
         );
         dec.push_packet(&packet);
         let w = dec.windows(1)[0].as_ref().expect("window 0");
-        assert_eq!(w.border_type, 5);
+        assert_eq!(w.border_type, EdgeType::RightDropShadow);
     }
 
     /// A simple caption: define a window (visible), write "Hi", read service text.
