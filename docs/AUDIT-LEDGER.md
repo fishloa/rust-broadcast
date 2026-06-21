@@ -44,6 +44,39 @@ Notes:
 
 ---
 
+## Extensibility / code-quality audits
+
+Distinct from the PDF→md fidelity audits above: these are adversarial **code**
+audits per `docs/RELEASE-AUDIT.md` §3 (round-trip symmetry / no `self.raw`
+passthrough, no raw-byte public API, decode-completeness, spec-fidelity / no
+magic numbers, the #204 `name()`+`impl_spec_display!` label convention + per-crate
+`label_coverage` drift-guard, `#[non_exhaustive]`, panic-class safety,
+`declare_*` dispatch). One adversarial auditor per crate/module.
+
+### Session 2026-06-21 — new crates + new modules (audited at `f715ee07`, fixed in #313–#321)
+
+8 targets audited. Found **6 real bugs** + a systematic missing-`label_coverage`
+gap on every new crate, all fixed:
+
+| Target | Key findings (all fixed) | Fix PR |
+|---|---|---|
+| dvb-scte35 `dvb_ta` | 🔴 `DvbDasDescriptor::serialize_into` u8 `descriptor_length` overflow (upid>248) → silent corruption; + TOML drift for `EquivalentSegmentationType`/`TimelineType` | #318 |
+| dvb-ule | 🔴 reassembly missing RFC §7.2.1 PP check (corrupt partial); 🔴 `Sndu.type_field` ignored by serialize; +non_exhaustive, label_coverage, typed H-Type, magic-number consts | #321 |
+| dvb-vbi | 🔴 `MonochromeDataField` accepted `n_pixels=0`; +label_coverage, 5 mutation bites, named masks, dispatch drift test | #314 |
+| dvb-smpte2038 | 🔴 serialize silently zero-filled short `user_data_words`; +label_coverage, fixed-bit checks, more mutation bites | #319 |
+| dvb-cc decode | 🔴 non-biting CC1 doctest (field2 routed CC3); +typed `Cea608Color`/`EdgeType`/`AnchorPoint`, label_coverage (was absent) | #317 |
+| dvb-emsg | `EmsgVersion`/`PresentationTime` missing `#[non_exhaustive]`; `PresentationTime` missing `name()`; label_coverage; example panic | #313 |
+| dvb-flute | NORM_INFO struct added (was unimplemented vs doc claim); label_coverage; named flag consts; `h_flag` `||`→`&&` | #315 |
+| dvb-simulcrypt | label_coverage; exhaustive error-status drift tables; example index guard; serde smoke test | #316 |
+| dvb-si `association_tag` | clean except missing `USE_DVB_RESERVED_DEFAULT` const | #320 |
+
+Systematic gap: **7 crates lacked `tests/label_coverage.rs`** (enums had
+name()+Display but no drift-guard) — now all have one. Every correctness bug got a
+regression test **verified by revert** (fails pre-fix, passes post-fix). Re-audit a
+crate only if its `src/` changed after the fix PR above.
+
+---
+
 ## Pre-2026-06-21 (prior sessions)
 
 The core dvb-si / dvb-t2mi / dvb-bbframe doc sets and ~48 enum↔TOML drift-guards
