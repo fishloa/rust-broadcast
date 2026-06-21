@@ -28,7 +28,7 @@ TS 101 699).
 | &nbsp;&nbsp;flush | 1 | bslbf |
 | &nbsp;&nbsp;first_fragment | 1 | bslbf |
 | &nbsp;&nbsp;last_fragment | 1 | bslbf |
-| &nbsp;&nbsp;reserved_future_use | 5 | |
+| &nbsp;&nbsp;reserved_future_use | 5 | bslbf |
 | &nbsp;&nbsp;number_subsamples | 32 | uimsbf |
 | &nbsp;&nbsp;`for (i=0;i<N;i++) {` | | |
 | &nbsp;&nbsp;&nbsp;&nbsp;clear_bytes | 16 | uimsbf |

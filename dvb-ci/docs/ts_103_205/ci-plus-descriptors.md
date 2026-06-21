@@ -1,6 +1,7 @@
 # CI Plus Sample-Mode descriptors (IV / key-identifier)
 
-_Source: ETSI TS 103 205 v1.4.1 §7.5.5.4, Tables 44-47 (PDF pp. 79-80), render-verified_
+_Source: ETSI TS 103 205 v1.4.1 §7.5.5.4, Tables 45-47 (PDF pp. 79-80), render-verified.
+(Table 44 is the §7.5.5.3.3 SEP message frame, not a descriptor — not transcribed here.)_
 
 These are the descriptors that may be carried in CI Plus Sample-Mode messages
 (Sample Start TS Packet, Sample End TS Packet, Flush Table) and in the

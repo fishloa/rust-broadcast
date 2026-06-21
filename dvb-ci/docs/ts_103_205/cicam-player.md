@@ -31,8 +31,8 @@ Resource Identifier `0x00930041` — Class 147, Type 1, Version 1.
 | CICAM_player_update_reply     | `9F A0 0F` | → |   |
 
 (Direction per Table 48 / Table 71: `verify_req`, `capabilities_reply`,
-`play_req`, `control_req`, `info_req`, `stop`, `update_reply` are Host→CICAM;
-the rest are CICAM→Host.)
+`start_reply`, `play_req`, `control_req`, `info_req`, `stop`, `update_reply` are
+Host→CICAM; the rest are CICAM→Host.)
 
 ## §8.8.3 — CICAM_player_verify_req APDU — Table 49 (PDF p. 87)
 
