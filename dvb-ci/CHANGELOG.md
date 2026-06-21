@@ -6,6 +6,12 @@ versioning.
 
 ## Unreleased
 
+## 0.4.0 — 2026-06-21
+
+Bundles three additive expansion phases (0.2.0/0.3.0 were never separately
+published): EN 50221 completion, ETSI TS 101 699 DVB CI Extensions, and ETSI
+TS 103 205 CI Plus extensions. No breaking changes to the 0.1.0 API.
+
 ### Added
 
 DVB CI Extensions (ETSI TS 101 699) foundation — a new `ci_ext` module tree with
