@@ -48,15 +48,18 @@ pub const VPS_FIELD_LEN: usize = LINE_HEADER_LEN + VPS_DATA_BLOCK_LEN;
 
 /// Size in bytes of a WSS data field (header + 14 wss bits + 2-bit RFU = 3
 /// bytes, §4.7).
-pub const WSS_FIELD_LEN: usize = 3;
+pub const WSS_FIELD_LEN: usize = LINE_HEADER_LEN + 2;
 /// Mask for the 14-bit `wss_data_block` (§4.7).
 pub const WSS_DATA_BLOCK_MASK: u16 = 0x3FFF;
+/// Mask for the lower 6 bits of `wss_data_block` packed into byte 2 of the WSS
+/// field (bits `[5:0]` after the 2-bit RFU tail, §4.7.1).
+const WSS_BYTE2_DATA_MASK: u8 = 0x3F;
 /// The trailing 2-bit `reserved_future_use` (`11`) of a WSS data field (§4.7.1).
 pub const WSS_RESERVED_TAIL: u8 = 0b11;
 
 /// Size in bytes of a Closed Captioning data field (header + 16 CC bits = 3
 /// bytes, §4.8).
-pub const CC_FIELD_LEN: usize = 3;
+pub const CC_FIELD_LEN: usize = LINE_HEADER_LEN + 2;
 
 /// Size in bytes of the monochrome fixed header preceding the `Y_value` samples:
 /// first byte (flags + parity + line_offset) + 16-bit first_pixel_position +
@@ -255,7 +258,7 @@ impl WssDataField {
         }
         out[0] = self.header.to_byte()?;
         out[1] = (self.wss_data_block >> 6) as u8;
-        out[2] = (((self.wss_data_block & 0x3F) as u8) << 2) | WSS_RESERVED_TAIL;
+        out[2] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK) << 2) | WSS_RESERVED_TAIL;
         Ok(WSS_FIELD_LEN)
     }
 }
@@ -359,6 +362,13 @@ impl<'a> MonochromeDataField<'a> {
         let line_offset = b0 & MONO_LINE_OFFSET;
         let first_pixel_position = u16::from_be_bytes([data[1], data[2]]);
         let n_pixels = data[3] as usize;
+        // §4.9.2 mandates n_pixels > 0; a zero-n_pixels unit is non-conformant.
+        if n_pixels == 0 {
+            return Err(Error::InvalidField {
+                what: "n_pixels",
+                reason: "n_pixels shall be > 0 (ETSI EN 301 775 §4.9.2)",
+            });
+        }
         if data.len() < MONO_HEADER_LEN + n_pixels {
             return Err(Error::BufferTooShort {
                 need: MONO_HEADER_LEN + n_pixels,
@@ -967,6 +977,259 @@ mod tests {
             assert_eq!(re.wss_data_block, v, "wss value {v:#06X}");
             // RFU tail must be 11.
             assert_eq!(out[2] & 0b11, WSS_RESERVED_TAIL);
+        }
+    }
+
+    // Finding 1: n_pixels=0 must be rejected (ETSI EN 301 775 §4.9.2).
+    #[test]
+    fn monochrome_rejects_zero_n_pixels() {
+        // b0 = 1 1 1 00111 (first+last segment, field_parity=1, line_offset=7).
+        // first_pixel_position = 0x0000. n_pixels = 0x00 (invalid).
+        let data = [0b1110_0111u8, 0x00, 0x00, 0x00];
+        let result = MonochromeDataField::parse(&data);
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::Error::InvalidField {
+                    what: "n_pixels",
+                    ..
+                })
+            ),
+            "n_pixels=0 must be rejected with InvalidField, got: {result:?}"
+        );
+    }
+
+    // Finding 3: mutation-bite tests for each remaining typed payload.
+
+    #[test]
+    fn mutating_teletext_framing_code_changes_wire_bytes() {
+        let block = [0xBBu8; TXT_DATA_BLOCK_LEN];
+        let a = DataUnit::teletext(
+            DataUnitId::EbuTeletextNonSubtitle,
+            TeletextDataField {
+                header: LineHeader::new(true, 7),
+                framing_code: FRAMING_CODE_EBU,
+                txt_data_block: block,
+            },
+        );
+        let b = DataUnit::teletext(
+            DataUnitId::EbuTeletextNonSubtitle,
+            TeletextDataField {
+                header: LineHeader::new(true, 7),
+                framing_code: FRAMING_CODE_INVERTED,
+                txt_data_block: block,
+            },
+        );
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(
+            out_a, out_b,
+            "different framing_code must change wire bytes"
+        );
+    }
+
+    #[test]
+    fn mutating_teletext_txt_data_block_changes_wire_bytes() {
+        let block_a = [0x00u8; TXT_DATA_BLOCK_LEN];
+        let mut block_b = block_a;
+        block_b[0] = 0xFF;
+        let a = DataUnit::teletext(
+            DataUnitId::EbuTeletextNonSubtitle,
+            TeletextDataField {
+                header: LineHeader::new(true, 7),
+                framing_code: FRAMING_CODE_EBU,
+                txt_data_block: block_a,
+            },
+        );
+        let b = DataUnit::teletext(
+            DataUnitId::EbuTeletextNonSubtitle,
+            TeletextDataField {
+                header: LineHeader::new(true, 7),
+                framing_code: FRAMING_CODE_EBU,
+                txt_data_block: block_b,
+            },
+        );
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(
+            out_a, out_b,
+            "different txt_data_block must change wire bytes"
+        );
+    }
+
+    #[test]
+    fn mutating_wss_data_block_changes_wire_bytes() {
+        let a = DataUnit::wss(WssDataField {
+            header: LineHeader::new(true, 23),
+            wss_data_block: 0x0000,
+        });
+        let b = DataUnit::wss(WssDataField {
+            header: LineHeader::new(true, 23),
+            wss_data_block: 0x3FFF,
+        });
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(
+            out_a, out_b,
+            "different wss_data_block must change wire bytes"
+        );
+    }
+
+    #[test]
+    fn mutating_cc_data_block_changes_wire_bytes() {
+        let a = DataUnit::closed_captioning(ClosedCaptioningDataField {
+            header: LineHeader::new(false, 21),
+            closed_captioning_data_block: 0x0000,
+        });
+        let b = DataUnit::closed_captioning(ClosedCaptioningDataField {
+            header: LineHeader::new(false, 21),
+            closed_captioning_data_block: 0xFFFF,
+        });
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(
+            out_a, out_b,
+            "different closed_captioning_data_block must change wire bytes"
+        );
+    }
+
+    #[test]
+    fn mutating_monochrome_first_segment_flag_changes_wire_bytes() {
+        let samples = [0x10u8, 0x80];
+        let a = DataUnit::monochrome(MonochromeDataField {
+            first_segment: true,
+            last_segment: false,
+            field_parity: true,
+            line_offset: 10,
+            first_pixel_position: 0,
+            samples: &samples,
+        });
+        let b = DataUnit::monochrome(MonochromeDataField {
+            first_segment: false,
+            last_segment: false,
+            field_parity: true,
+            line_offset: 10,
+            first_pixel_position: 0,
+            samples: &samples,
+        });
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(
+            out_a, out_b,
+            "different first_segment flag must change the first wire byte"
+        );
+    }
+
+    #[test]
+    fn mutating_monochrome_y_sample_changes_wire_bytes() {
+        let samples_a = [0x10u8, 0x80];
+        let mut samples_b = samples_a;
+        samples_b[0] = 0xFF;
+        let a = DataUnit::monochrome(MonochromeDataField {
+            first_segment: true,
+            last_segment: true,
+            field_parity: true,
+            line_offset: 10,
+            first_pixel_position: 0,
+            samples: &samples_a,
+        });
+        let b = DataUnit::monochrome(MonochromeDataField {
+            first_segment: true,
+            last_segment: true,
+            field_parity: true,
+            line_offset: 10,
+            first_pixel_position: 0,
+            samples: &samples_b,
+        });
+        let mut out_a = vec![0u8; a.serialized_len()];
+        a.serialize_into(&mut out_a).unwrap();
+        let mut out_b = vec![0u8; b.serialized_len()];
+        b.serialize_into(&mut out_b).unwrap();
+        assert_ne!(out_a, out_b, "different Y sample must change wire bytes");
+    }
+
+    // Finding 5: exhaustiveness cross-check that every non-opaque DataUnitId
+    // variant maps to a typed DataUnitPayload arm. This is intentionally NOT a
+    // declarative macro dispatch (the dispatch is a hand-written match in
+    // DataUnitPayload::parse); this test ensures a future variant added to
+    // DataUnitId without a matching payload branch fails CI rather than silently
+    // falling to Opaque.
+    #[test]
+    fn every_non_opaque_data_unit_id_has_a_typed_payload() {
+        use crate::data_unit_id::{
+            ID_CLOSED_CAPTIONING, ID_EBU_TELETEXT_NON_SUBTITLE, ID_EBU_TELETEXT_SUBTITLE,
+            ID_INVERTED_TELETEXT, ID_MONOCHROME_422_SAMPLES, ID_STUFFING, ID_VPS, ID_WSS,
+        };
+        // Every ID that must produce a typed (non-Opaque) payload.
+        let typed_ids: &[u8] = &[
+            ID_EBU_TELETEXT_NON_SUBTITLE,
+            ID_EBU_TELETEXT_SUBTITLE,
+            ID_INVERTED_TELETEXT,
+            ID_VPS,
+            ID_WSS,
+            ID_CLOSED_CAPTIONING,
+            // Monochrome needs n_pixels > 0; supply a minimal 1-pixel body.
+            ID_MONOCHROME_422_SAMPLES,
+            ID_STUFFING,
+        ];
+
+        // Minimal valid bodies for each (body = data_unit_length bytes).
+        let teletext_body = {
+            let mut b = vec![0u8; TELETEXT_FIELD_LEN];
+            // header = canonical RFU=11, parity=1, line_offset=7.
+            b[0] = 0xE7;
+            b[1] = FRAMING_CODE_EBU;
+            b
+        };
+        let vps_body = {
+            let mut b = vec![0u8; VPS_FIELD_LEN];
+            b[0] = 0xF0; // header
+            b
+        };
+        let wss_body = {
+            let mut b = vec![0u8; WSS_FIELD_LEN];
+            b[0] = 0xF7; // header
+            b
+        };
+        let cc_body = {
+            let mut b = vec![0u8; CC_FIELD_LEN];
+            b[0] = 0xD5; // header
+            b
+        };
+        // Monochrome: 4-byte header + 1 Y sample (n_pixels=1).
+        let mono_body = vec![0b1110_0111u8, 0x00, 0x00, 0x01, 0x80];
+        let stuffing_body = vec![0xFFu8; 3];
+
+        let bodies: &[&[u8]] = &[
+            &teletext_body,
+            &teletext_body,
+            &teletext_body,
+            &vps_body,
+            &wss_body,
+            &cc_body,
+            &mono_body,
+            &stuffing_body,
+        ];
+
+        for (&id, &body) in typed_ids.iter().zip(bodies.iter()) {
+            let du_id = DataUnitId::from_u8(id);
+            let payload = DataUnitPayload::parse(du_id, body)
+                .unwrap_or_else(|e| panic!("id={id:#04X} parse failed: {e}"));
+            assert!(
+                !matches!(payload, DataUnitPayload::Opaque(_)),
+                "id={id:#04X} ({}) fell to Opaque — add a typed dispatch arm",
+                DataUnitId::from_u8(id).name()
+            );
         }
     }
 }

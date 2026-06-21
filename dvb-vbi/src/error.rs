@@ -47,4 +47,13 @@ pub enum Error {
         /// The field width on the wire.
         bits: u32,
     },
+    /// A field value violated a spec constraint (e.g. `n_pixels` must be > 0,
+    /// ETSI EN 301 775 §4.9.2).
+    #[error("invalid field {what}: {reason}")]
+    InvalidField {
+        /// The field name.
+        what: &'static str,
+        /// Why it is invalid.
+        reason: &'static str,
+    },
 }

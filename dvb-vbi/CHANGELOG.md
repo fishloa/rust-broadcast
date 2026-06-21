@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `MonochromeDataField::parse` now rejects `n_pixels == 0` with
+  `Error::InvalidField` (ETSI EN 301 775 §4.9.2: "n_pixels shall be > 0");
+  previously a zero-n_pixels unit was silently accepted and re-serialized as
+  non-conformant.
+
+### Changed
+
+- `WSS_FIELD_LEN` and `CC_FIELD_LEN` now derive from `LINE_HEADER_LEN + 2`
+  instead of bare `3`, matching the self-documenting style of the other
+  field-length constants.
+- Named `WSS_BYTE2_DATA_MASK: u8 = 0x3F` replaces the bare `0x3F` literal in
+  `WssDataField::serialize_into`.
+- New `Error::InvalidField { what, reason }` variant for spec-constraint
+  violations (e.g. `n_pixels > 0`).
+
+### Tests
+
+- `tests/label_coverage.rs` added: drift-guard that fails CI if any `pub enum`
+  in `src/` lacks a `Display` impl (issue #204 convention). `Error` and
+  `DataUnitPayload` are documented SKIP entries.
+- Mutation-bite tests added for `TeletextDataField` (framing_code, txt_data_block),
+  `WssDataField` (wss_data_block), `ClosedCaptioningDataField`
+  (closed_captioning_data_block), and `MonochromeDataField` (first_segment flag,
+  Y sample), so a raw-passthrough serializer cannot fake the suite.
+- `every_non_opaque_data_unit_id_has_a_typed_payload` cross-check: asserts
+  every non-opaque `DataUnitId` variant produces a typed `DataUnitPayload` arm
+  (not `Opaque`), so a future variant added to `DataUnitId` without a dispatch
+  arm fails CI.
+
 ## [0.1.0]
 
 ### Added
