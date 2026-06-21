@@ -1,0 +1,17 @@
+# ETSI TS 103 752-1 V1.2.1 §6.3.1, Table 4 — timeline_type
+# Reserved(u8) catch-all is excluded; only named variants are listed.
+
+[[entry]]
+value = 0x00
+variant = "None"
+spec = "no timeline used"
+
+[[entry]]
+value = 0x01
+variant = "VideoPts"
+spec = "PTS in SCTE 35 message references video PTS"
+
+[[entry]]
+value = 0x02
+variant = "Temi"
+spec = "PTS in SCTE 35 message references the time in a TEMI timeline associated with the service"

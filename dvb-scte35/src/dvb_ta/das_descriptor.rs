@@ -179,6 +179,15 @@ impl Serialize for DvbDasDescriptor<'_> {
             });
         }
         let body_len = FIXED_BODY_LEN + self.upid.len();
+        // `descriptor_length` is a u8 covering `identifier(4) + body_len`.
+        // Max allowed body_len = 255 − 4 = 251; a longer upid would make
+        // `4 + body_len ≥ 256`, silently truncating the length byte.
+        if body_len > 251 {
+            return Err(Error::InvalidValue {
+                field: "DVB_DAS_descriptor.descriptor_length",
+                reason: "upid too long: descriptor_length would overflow u8",
+            });
+        }
         header::write_header(buf, TAG, self.identifier, body_len);
         buf[HEADER_LEN] = self.break_num;
         buf[HEADER_LEN + 1] = self.breaks_expected;
@@ -273,5 +282,40 @@ mod tests {
             DvbDasDescriptor::parse(&bytes).unwrap_err(),
             Error::UnexpectedDescriptorTag { tag: 0x01, .. }
         ));
+    }
+
+    /// A UPID of 252 bytes would make `descriptor_length = 4 + 3 + 252 = 259`,
+    /// overflowing a u8. The serializer must reject this.
+    ///
+    /// Regression test for P1 overflow guard: verify this returns `Err` before
+    /// the fix is applied, and `Err` (with the correct variant) after.
+    #[test]
+    fn serialize_rejects_upid_too_long() {
+        let long_upid = vec![0u8; 252];
+        let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, &long_upid);
+        let err = d
+            .serialize_into(&mut vec![0u8; d.serialized_len()])
+            .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "DVB_DAS_descriptor.descriptor_length",
+                    ..
+                }
+            ),
+            "expected InvalidValue for descriptor_length overflow, got {err:?}"
+        );
+    }
+
+    /// 248-byte upid is the largest valid size: `descriptor_length = 4 + 3 + 248 = 255 = u8::MAX`.
+    #[test]
+    fn serialize_accepts_max_valid_upid() {
+        let max_upid = vec![b'x'; 248];
+        let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, &max_upid);
+        let bytes = d.to_bytes();
+        assert_eq!(bytes[1], 255u8); // descriptor_length = 4 (identifier) + 3 (fixed) + 248 (upid)
+        let back = DvbDasDescriptor::parse(&bytes).unwrap();
+        assert_eq!(back.upid, max_upid.as_slice());
     }
 }
