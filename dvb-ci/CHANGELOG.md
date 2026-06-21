@@ -98,6 +98,40 @@ same `AnyApdu` variant.
   (last/more), `CommsRcv` (last/more) — with the `CommsCommandId`,
   `ConnectionDescriptorType` and `CommsReplyId` value enums.
 
+CI Plus extensions (ETSI TS 103 205) foundation — a new `ci_plus` module tree with
+its own **resource-scoped** APDU dispatch ([`ci_plus::CiPlusApdu`]). CI Plus
+resources have their own apdu_tag namespace that collides with EN 50221 / TS 101 699
+(e.g. Multi-stream `0x9F92xx`, Content Control `0x9F90xx`, and the extended CA
+Support `ca_pmt`/`ca_pmt_reply` reuse `0x9F8032`/`0x9F8033`), so they cannot join
+the global `AnyApdu`: `CiPlusApdu::parse` keys on the `resource_identifier()` first
+(`classify`/`CiPlusResource`), then dispatches on the leading `apdu_tag` within the
+selected resource. Every object is symmetric `Parse`/`Serialize` with biting
+round-trip + field-mutation + ≥2-element boundary tests; serialize rebuilds every
+byte from typed fields (no raw passthrough). This pass:
+
+- **Multi-stream resource** (§6.4.2, Tables 2-5, `0x00900041`):
+  `CicamMultistreamCapability` (`9F9200`), `PidSelectReq` (`9F9201`, multi-PID loop
+  with `critical_for_descrambling_flag`), `PidSelectReply` (`9F9202`, multi-PID loop
+  with `PID_selection_flag` + per-PID `PID_selected_flag`).
+- **Content Control multi-stream** (§6.4.3, Tables 6-13, `0x008C1041`): the
+  printed-syntax extended APDUs `CcPinReply` (`9F9014`, optional `LTS_id` via
+  `LTS_bound_flag`) and `CcPinEvent` (`9F9015`); plus the SAC protocol datatype
+  model (`SacMessage`/`SacDatatype` with the `DatatypeId` enum — `LTS_id`=50,
+  `cicam_license`=33, `PINcode`=39, `uri_message`=25, … — and the `OperatingMode`
+  enum). Crypto/license/PIN payloads carried as opaque borrowed `&[u8]`. The
+  remaining Table 6 APDUs defer to CI Plus V1.3 and are not encoded.
+- **CA Support multi-stream** `ca_pmt`/`ca_pmt_reply` (§6.4.4, Tables 14/16):
+  `MsCaPmt` (leading `LTS_id` + added `PMT_PID`) and `MsCaPmtReply` (leading
+  `LTS_id`), as **standalone** directly-constructible/parseable typed structs with a
+  `CaSupportApdu::parse(tag, body)` helper. TS 103 205 does **not** print a
+  resource_id for the `resource_type = 2` variant (defers to CI Plus V1.3), so these
+  are intentionally not wired into `CiPlusApdu`'s resource dispatch — no resource_id
+  is invented.
+- **CI Plus Sample-Mode descriptors** (§7.5.5.4, Tables 46/47):
+  `CiplusInitializationVectorDescriptor` (`0xD0`) and
+  `CiplusKeyIdentifierDescriptor` (`0xD1`) — TLV descriptors (`descriptor_tag` +
+  `descriptor_length` + opaque body).
+
 ## 0.1.0 — 2026-06-20
 
 ### Added
