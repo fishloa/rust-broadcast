@@ -9,6 +9,9 @@
 
 use std::time::Duration;
 
+use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
+use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
+use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
 use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
 use dvb_ci::resource::{
     ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI, RESOURCE_MANAGER,
@@ -143,6 +146,90 @@ impl Resource for ResourceManager {
     }
 }
 
+/// Application Information (§8.4.2) — module-provided. On open, enquires the
+/// module's application info; surfaces it as [`Notification::ApplicationInfo`].
+#[derive(Debug, Default)]
+pub struct ApplicationInformation;
+
+impl Resource for ApplicationInformation {
+    fn id(&self) -> ResourceId {
+        APPLICATION_INFORMATION
+    }
+
+    fn on_open(&mut self) -> ResourceOut {
+        ResourceOut {
+            apdus: vec![ser(&ApplicationInfoEnq)],
+            ..ResourceOut::default()
+        }
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        if peek_tag(apdu) == Some(tag::APPLICATION_INFO) {
+            if let Ok(ai) = ApplicationInfo::parse(apdu) {
+                out.notify.push(Notification::ApplicationInfo {
+                    application_type: ai.application_type.to_u8(),
+                    manufacturer: ai.application_manufacturer,
+                    code: ai.manufacturer_code,
+                    menu: String::from_utf8_lossy(ai.menu_string).into_owned(),
+                });
+            }
+        }
+        out
+    }
+}
+
+/// Conditional Access Support (§8.4.3) — module-provided. On open, enquires the
+/// module's supported `CA_system_id`s ([`Notification::CaInfo`]); decodes
+/// `ca_pmt_reply` ([`Notification::CaPmtReply`]). The host sends `ca_pmt` via
+/// [`HostRequest::SendCaPmt`](crate::event::HostRequest::SendCaPmt).
+#[derive(Debug, Default)]
+pub struct ConditionalAccess;
+
+impl Resource for ConditionalAccess {
+    fn id(&self) -> ResourceId {
+        CONDITIONAL_ACCESS_SUPPORT
+    }
+
+    fn on_open(&mut self) -> ResourceOut {
+        ResourceOut {
+            apdus: vec![ser(&CaInfoEnq)],
+            ..ResourceOut::default()
+        }
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        match peek_tag(apdu) {
+            Some(t) if t == tag::CA_INFO => {
+                if let Ok(ci) = CaInfo::parse(apdu) {
+                    out.notify.push(Notification::CaInfo {
+                        ca_system_ids: ci.ca_system_ids,
+                    });
+                }
+            }
+            Some(t) if t == tag::CA_PMT_REPLY => {
+                if let Ok(r) = CaPmtReply::parse(apdu) {
+                    let descrambling_ok = r.ca_enable.is_some_and(|e| {
+                        matches!(
+                            e,
+                            CaEnable::Possible
+                                | CaEnable::PossiblePurchaseDialogue
+                                | CaEnable::PossibleTechnicalDialogue
+                        )
+                    });
+                    out.notify.push(Notification::CaPmtReply {
+                        program_number: r.program_number,
+                        descrambling_ok,
+                    });
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +272,59 @@ mod tests {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         let out = rm.on_apdu(&ser(&dvb_ci::objects::resource_manager::ProfileChange));
         assert_eq!(out.apdus, vec![ser(&ProfileEnq)]);
+    }
+
+    #[test]
+    fn application_information_surfaces_notification() {
+        use dvb_ci::objects::application_info::ApplicationType;
+        let mut h = ApplicationInformation;
+        assert_eq!(h.on_open().apdus, vec![ser(&ApplicationInfoEnq)]);
+        let ai = ser(&ApplicationInfo {
+            application_type: ApplicationType::ConditionalAccess,
+            application_manufacturer: 0x1234,
+            manufacturer_code: 0x5678,
+            menu_string: b"Acme CAM",
+        });
+        let out = h.on_apdu(&ai);
+        assert_eq!(
+            out.notify,
+            vec![Notification::ApplicationInfo {
+                application_type: 0x01,
+                manufacturer: 0x1234,
+                code: 0x5678,
+                menu: "Acme CAM".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn conditional_access_surfaces_ca_info_and_pmt_reply() {
+        let mut h = ConditionalAccess;
+        assert_eq!(h.on_open().apdus, vec![ser(&CaInfoEnq)]);
+        // ca_info -> CaInfo notification
+        let ci = ser(&CaInfo {
+            ca_system_ids: vec![0x0B00, 0x1800],
+        });
+        assert_eq!(
+            h.on_apdu(&ci).notify,
+            vec![Notification::CaInfo {
+                ca_system_ids: vec![0x0B00, 0x1800],
+            }]
+        );
+        // ca_pmt_reply (descrambling possible) -> CaPmtReply notification
+        let reply = ser(&CaPmtReply {
+            program_number: 0x0042,
+            version_number: 0,
+            current_next_indicator: true,
+            ca_enable: Some(CaEnable::Possible),
+            streams: vec![],
+        });
+        assert_eq!(
+            h.on_apdu(&reply).notify,
+            vec![Notification::CaPmtReply {
+                program_number: 0x0042,
+                descrambling_ok: true,
+            }]
+        );
     }
 }

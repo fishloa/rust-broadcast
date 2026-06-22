@@ -5,7 +5,9 @@
 //! the [`Action`]s the driver must perform. No I/O, threads, or clock here.
 
 use crate::event::{Action, Event, HostRequest, Notification};
-use crate::resource::{Resource, ResourceManager, ResourceOut};
+use crate::resource::{
+    ApplicationInformation, ConditionalAccess, Resource, ResourceManager, ResourceOut,
+};
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
@@ -37,7 +39,11 @@ impl CiStack {
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),
-            resources: vec![Box::new(ResourceManager::new(provided.clone()))],
+            resources: vec![
+                Box::new(ResourceManager::new(provided.clone())),
+                Box::new(ApplicationInformation),
+                Box::new(ConditionalAccess),
+            ],
             provided,
         }
     }
