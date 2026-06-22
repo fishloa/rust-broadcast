@@ -3,9 +3,9 @@
 
 use dvb_common::traits::{Parse, Serialize};
 use dvb_simulcrypt::{
-    DataType, EcmgErrorStatus, EcmgScsMessageType, EcmgScsParameterType, EmmgErrorStatus,
-    EmmgMuxMessageType, EmmgMuxParameterType, Interface, MessageType, Parameter, ParameterType,
-    SectionTspktFlag, SimulcryptMessage,
+    CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
+    EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,
+    MessageType, Parameter, ParameterType, SectionTspktFlag, SimulcryptMessage,
 };
 
 /// Construct an ECMG channel_setup with Super_CAS_id + ECM_channel_id, assert
@@ -495,5 +495,150 @@ fn serde_cw_provision_smoke() {
     assert!(
         json.contains("CwProvision"),
         "JSON missing 'CwProvision' variant: {json}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C(P)SIG ⇔ (P)SIG message_type drift: pin every variant.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cpsig_message_type_values() {
+    use CpSigMessageType::*;
+    for (e, v) in [
+        (ChannelSetup, 0x0301u16),
+        (ChannelStatus, 0x0302),
+        (ChannelTest, 0x0303),
+        (ChannelClose, 0x0304),
+        (ChannelError, 0x0305),
+        (StreamSetup, 0x0311),
+        (StreamStatus, 0x0312),
+        (StreamTest, 0x0313),
+        (StreamClose, 0x0314),
+        (StreamCloseRequest, 0x0315),
+        (StreamCloseResponse, 0x0316),
+        (StreamError, 0x0317),
+        (StreamServiceChange, 0x0318),
+        (StreamTriggerEnableRequest, 0x0319),
+        (StreamTriggerEnableResponse, 0x031A),
+        (Trigger, 0x031B),
+        (TableRequest, 0x031C),
+        (TableResponse, 0x031D),
+        (DescriptorInsertRequest, 0x031E),
+        (DescriptorInsertResponse, 0x031F),
+        (PidProvisionRequest, 0x0320),
+        (PidProvisionResponse, 0x0321),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(CpSigMessageType::from_u16(v), e, "0x{v:04X}");
+    }
+    assert_eq!(
+        CpSigMessageType::from_u16(0x4242),
+        CpSigMessageType::Reserved(0x4242)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C(P)SIG ⇔ (P)SIG parameter_type drift: pin every variant (Table 36).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cpsig_parameter_type_values() {
+    use CpSigParameterType::*;
+    for (e, v) in [
+        (AccessCriteria, 0x000Du16),
+        (BouquetId, 0x0100),
+        (CaDescriptorInsertionMode, 0x0101),
+        (CustomCaSystemId, 0x0102),
+        (CustomChannelId, 0x0103),
+        (CustomStreamId, 0x0104),
+        (Descriptor, 0x0105),
+        (DescriptorInsertStatus, 0x0106),
+        (Duration, 0x0107),
+        (EcmRelatedData, 0x0108),
+        (EsId, 0x010B),
+        (EventId, 0x010C),
+        (EventRelatedData, 0x010D),
+        (FlowId, 0x010E),
+        (FlowPid, 0x010F),
+        (FlowPidChangeRelatedData, 0x0110),
+        (FlowSuperCasId, 0x0111),
+        (FlowType, 0x0112),
+        (InsertionDelay, 0x0113),
+        (InsertionDelayType, 0x0114),
+        (LastSectionIndicator, 0x0115),
+        (LocationId, 0x0116),
+        (MaxCompTime, 0x0117),
+        (MaxStreams, 0x0118),
+        (MpegSection, 0x0119),
+        (NetworkId, 0x011A),
+        (OriginalNetworkId, 0x011B),
+        (PrivateData, 0x011C),
+        (PrivateDataSpecifier, 0x011D),
+        (PSigType, 0x011E),
+        (SegmentNumber, 0x011F),
+        (ServiceId, 0x0120),
+        (ServiceParameters, 0x0121),
+        (StartTime, 0x0122),
+        (StreamChangeTimestamp, 0x0123),
+        (StreamChangeType, 0x0124),
+        (TableId, 0x0125),
+        (TransactionId, 0x0126),
+        (TransportStreamId, 0x0127),
+        (TriggerId, 0x0128),
+        (TriggerList, 0x0129),
+        (TriggerType, 0x012A),
+        (PdRelatedData, 0x012B),
+        (FlowStreamType, 0x012C),
+        (ErrorStatus, 0x7000),
+        (ErrorInformation, 0x7001),
+    ] {
+        assert_eq!(e.to_u16(), v, "{e:?}");
+        assert_eq!(CpSigParameterType::from_u16(v), e, "0x{v:04X}");
+    }
+    assert_eq!(
+        CpSigParameterType::from_u16(0x4242),
+        CpSigParameterType::Reserved(0x4242)
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C(P)SIG ⇔ (P)SIG message round-trip: channel_setup with ≥2 parameters.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cpsig_channel_setup_round_trip() {
+    let custom_cas_id = [0x00u8, 0x01, 0x00, 0x02];
+    let bouquet_id = [0x00u8, 0x2A];
+    let msg = SimulcryptMessage::new(
+        0x03,
+        MessageType::CpSigPSig(CpSigMessageType::ChannelSetup),
+        vec![
+            Parameter::new(
+                ParameterType::CpSigPSig(CpSigParameterType::CustomCaSystemId),
+                &custom_cas_id,
+            ),
+            Parameter::new(
+                ParameterType::CpSigPSig(CpSigParameterType::BouquetId),
+                &bouquet_id,
+            ),
+        ],
+    );
+    let bytes = msg.to_bytes();
+    let parsed = SimulcryptMessage::parse_on(Interface::CpSigPSig, &bytes).unwrap();
+    assert_eq!(parsed, msg, "byte-exact round-trip");
+    assert_eq!(parsed.parameters.len(), 2);
+
+    // Mutate one parameter and assert bytes change.
+    let mut mutated = msg.clone();
+    let other_bouquet = [0x00u8, 0x2B];
+    mutated.parameters[1] = Parameter::new(
+        ParameterType::CpSigPSig(CpSigParameterType::BouquetId),
+        &other_bouquet,
+    );
+    assert_ne!(
+        msg.to_bytes(),
+        mutated.to_bytes(),
+        "mutating a parameter changes the wire bytes"
     );
 }

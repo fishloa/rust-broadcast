@@ -4,7 +4,7 @@
 //! ETSI TS 103 197 V1.5.1 — Table 2 (protocol_version, §4.4.1 p. 27),
 //! Table 3 (message_type, §4.4.1 pp. 27-28), Table 5/6 (ECMG⇔SCS parameter /
 //! error, §5.2/§5.6) and Table 7/8 (EMMG/PDG⇔MUX parameter / error,
-//! §6.2.2/§6.2.6).
+//! §6.2.2/§6.2.6), and Table 36 (C(P)SIG⇔(P)SIG parameter / §8).
 //!
 //! The `message_type` numeric space is **interface-scoped**: the same 16-bit
 //! value means different things on different interfaces (and on the wire the
@@ -13,8 +13,8 @@
 
 /// The SimulCrypt connection-oriented interface a message belongs to.
 ///
-/// Only the two head-end CA interfaces are implemented; the remaining
-/// TS 103 197 interfaces (C(P)SIG⇔(P)SIG, EIS⇔SCS, (P)SIG⇔MUX, ACG⇔EIS,
+/// Only the two head-end CA interfaces + C(P)SIG⇔(P)SIG are implemented; the
+/// remaining TS 103 197 interfaces (EIS⇔SCS, (P)SIG⇔MUX, ACG⇔EIS,
 /// SIMCOMP⇔MUXCONFIG) share the same framing but are not modelled here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -24,6 +24,8 @@ pub enum Interface {
     EcmgScs,
     /// EMMG/PDG ⇔ MUX (TS 103 197 clause 6).
     EmmgPdgMux,
+    /// C(P)SIG ⇔ (P)SIG (TS 103 197 clause 8).
+    CpSigPSig,
 }
 
 impl Interface {
@@ -37,7 +39,7 @@ impl Interface {
     #[must_use]
     pub const fn protocol_version(self) -> u8 {
         match self {
-            Self::EcmgScs | Self::EmmgPdgMux => Self::PROTOCOL_VERSION,
+            Self::EcmgScs | Self::EmmgPdgMux | Self::CpSigPSig => Self::PROTOCOL_VERSION,
         }
     }
 
@@ -47,6 +49,7 @@ impl Interface {
         match self {
             Self::EcmgScs => "ECMG<->SCS",
             Self::EmmgPdgMux => "EMMG/PDG<->MUX",
+            Self::CpSigPSig => "C(P)SIG<->(P)SIG",
         }
     }
 }
@@ -271,6 +274,160 @@ impl EmmgMuxMessageType {
 }
 dvb_common::impl_spec_display!(EmmgMuxMessageType, Reserved);
 
+// ===========================================================================
+// message_type — C(P)SIG ⇔ (P)SIG (Table 3 subset, §8)
+// ===========================================================================
+
+/// C(P)SIG⇔(P)SIG `message_type` values (TS 103 197 Table 3, §4.4.1 / §8).
+///
+/// `Reserved(u16)` is the catch-all for any value outside the registry
+/// (DVB-reserved or user-defined); it preserves the raw 16-bit value so
+/// `Display`/serialize stay lossless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum CpSigMessageType {
+    /// `0x0301` channel_setup.
+    ChannelSetup,
+    /// `0x0302` channel_status.
+    ChannelStatus,
+    /// `0x0303` channel_test.
+    ChannelTest,
+    /// `0x0304` channel_close.
+    ChannelClose,
+    /// `0x0305` channel_error.
+    ChannelError,
+    /// `0x0311` stream_setup.
+    StreamSetup,
+    /// `0x0312` stream_status.
+    StreamStatus,
+    /// `0x0313` stream_test.
+    StreamTest,
+    /// `0x0314` stream_close.
+    StreamClose,
+    /// `0x0315` stream_close_request.
+    StreamCloseRequest,
+    /// `0x0316` stream_close_response.
+    StreamCloseResponse,
+    /// `0x0317` stream_error.
+    StreamError,
+    /// `0x0318` stream_service_change.
+    StreamServiceChange,
+    /// `0x0319` stream_trigger_enable_request.
+    StreamTriggerEnableRequest,
+    /// `0x031A` stream_trigger_enable_response.
+    StreamTriggerEnableResponse,
+    /// `0x031B` trigger.
+    Trigger,
+    /// `0x031C` table_request.
+    TableRequest,
+    /// `0x031D` table_response.
+    TableResponse,
+    /// `0x031E` descriptor_insert_request.
+    DescriptorInsertRequest,
+    /// `0x031F` descriptor_insert_response.
+    DescriptorInsertResponse,
+    /// `0x0320` PID_provision_request.
+    PidProvisionRequest,
+    /// `0x0321` PID_provision_response.
+    PidProvisionResponse,
+    /// Any value not in the C(P)SIG⇔(P)SIG registry (DVB-reserved / user-defined).
+    Reserved(u16),
+}
+
+impl CpSigMessageType {
+    /// Decode a 16-bit `message_type` for the C(P)SIG⇔(P)SIG interface.
+    #[must_use]
+    pub const fn from_u16(v: u16) -> Self {
+        match v {
+            0x0301 => Self::ChannelSetup,
+            0x0302 => Self::ChannelStatus,
+            0x0303 => Self::ChannelTest,
+            0x0304 => Self::ChannelClose,
+            0x0305 => Self::ChannelError,
+            0x0311 => Self::StreamSetup,
+            0x0312 => Self::StreamStatus,
+            0x0313 => Self::StreamTest,
+            0x0314 => Self::StreamClose,
+            0x0315 => Self::StreamCloseRequest,
+            0x0316 => Self::StreamCloseResponse,
+            0x0317 => Self::StreamError,
+            0x0318 => Self::StreamServiceChange,
+            0x0319 => Self::StreamTriggerEnableRequest,
+            0x031A => Self::StreamTriggerEnableResponse,
+            0x031B => Self::Trigger,
+            0x031C => Self::TableRequest,
+            0x031D => Self::TableResponse,
+            0x031E => Self::DescriptorInsertRequest,
+            0x031F => Self::DescriptorInsertResponse,
+            0x0320 => Self::PidProvisionRequest,
+            0x0321 => Self::PidProvisionResponse,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The 16-bit wire value.
+    #[must_use]
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::ChannelSetup => 0x0301,
+            Self::ChannelStatus => 0x0302,
+            Self::ChannelTest => 0x0303,
+            Self::ChannelClose => 0x0304,
+            Self::ChannelError => 0x0305,
+            Self::StreamSetup => 0x0311,
+            Self::StreamStatus => 0x0312,
+            Self::StreamTest => 0x0313,
+            Self::StreamClose => 0x0314,
+            Self::StreamCloseRequest => 0x0315,
+            Self::StreamCloseResponse => 0x0316,
+            Self::StreamError => 0x0317,
+            Self::StreamServiceChange => 0x0318,
+            Self::StreamTriggerEnableRequest => 0x0319,
+            Self::StreamTriggerEnableResponse => 0x031A,
+            Self::Trigger => 0x031B,
+            Self::TableRequest => 0x031C,
+            Self::TableResponse => 0x031D,
+            Self::DescriptorInsertRequest => 0x031E,
+            Self::DescriptorInsertResponse => 0x031F,
+            Self::PidProvisionRequest => 0x0320,
+            Self::PidProvisionResponse => 0x0321,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    /// Label per the project's `name()` convention.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ChannelSetup => "channel_setup",
+            Self::ChannelStatus => "channel_status",
+            Self::ChannelTest => "channel_test",
+            Self::ChannelClose => "channel_close",
+            Self::ChannelError => "channel_error",
+            Self::StreamSetup => "stream_setup",
+            Self::StreamStatus => "stream_status",
+            Self::StreamTest => "stream_test",
+            Self::StreamClose => "stream_close",
+            Self::StreamCloseRequest => "stream_close_request",
+            Self::StreamCloseResponse => "stream_close_response",
+            Self::StreamError => "stream_error",
+            Self::StreamServiceChange => "stream_service_change",
+            Self::StreamTriggerEnableRequest => "stream_trigger_enable_request",
+            Self::StreamTriggerEnableResponse => "stream_trigger_enable_response",
+            Self::Trigger => "trigger",
+            Self::TableRequest => "table_request",
+            Self::TableResponse => "table_response",
+            Self::DescriptorInsertRequest => "descriptor_insert_request",
+            Self::DescriptorInsertResponse => "descriptor_insert_response",
+            Self::PidProvisionRequest => "PID_provision_request",
+            Self::PidProvisionResponse => "PID_provision_response",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(CpSigMessageType, Reserved);
+
 /// Interface-tagged `message_type`: decode a raw value once the [`Interface`]
 /// is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -281,6 +438,8 @@ pub enum MessageType {
     EcmgScs(EcmgScsMessageType),
     /// An EMMG/PDG⇔MUX message_type.
     EmmgPdgMux(EmmgMuxMessageType),
+    /// A C(P)SIG⇔(P)SIG message_type.
+    CpSigPSig(CpSigMessageType),
 }
 
 impl MessageType {
@@ -290,6 +449,7 @@ impl MessageType {
         match iface {
             Interface::EcmgScs => Self::EcmgScs(EcmgScsMessageType::from_u16(v)),
             Interface::EmmgPdgMux => Self::EmmgPdgMux(EmmgMuxMessageType::from_u16(v)),
+            Interface::CpSigPSig => Self::CpSigPSig(CpSigMessageType::from_u16(v)),
         }
     }
 
@@ -299,6 +459,7 @@ impl MessageType {
         match self {
             Self::EcmgScs(m) => m.to_u16(),
             Self::EmmgPdgMux(m) => m.to_u16(),
+            Self::CpSigPSig(m) => m.to_u16(),
         }
     }
 
@@ -308,6 +469,7 @@ impl MessageType {
         match self {
             Self::EcmgScs(_) => Interface::EcmgScs,
             Self::EmmgPdgMux(_) => Interface::EmmgPdgMux,
+            Self::CpSigPSig(_) => Interface::CpSigPSig,
         }
     }
 
@@ -317,6 +479,7 @@ impl MessageType {
         match self {
             Self::EcmgScs(m) => m.name(),
             Self::EmmgPdgMux(m) => m.name(),
+            Self::CpSigPSig(m) => m.name(),
         }
     }
 }
@@ -587,6 +750,280 @@ impl EmmgMuxParameterType {
 }
 dvb_common::impl_spec_display!(EmmgMuxParameterType, Reserved);
 
+// ===========================================================================
+// parameter_type — C(P)SIG ⇔ (P)SIG (Table 36, §8)
+// ===========================================================================
+
+/// C(P)SIG⇔(P)SIG `parameter_type` values (TS 103 197 Table 36, §8).
+///
+/// `Reserved(u16)` is the catch-all for any value outside the registry
+/// (DVB-reserved or user-defined); it preserves the raw 16-bit value so
+/// `Display`/serialize stay lossless.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum CpSigParameterType {
+    /// `0x000D` access_criteria (user defined, variable).
+    AccessCriteria,
+    /// `0x0100` bouquet_id (uimsbf, 2 bytes).
+    BouquetId,
+    /// `0x0101` CA_descriptor_insertion_mode (uimsbf, 1 byte).
+    CaDescriptorInsertionMode,
+    /// `0x0102` custom_CA_system_id (uimsbf, 4 bytes).
+    CustomCaSystemId,
+    /// `0x0103` custom_channel_id (uimsbf, 2 bytes).
+    CustomChannelId,
+    /// `0x0104` custom_stream_id (uimsbf, 2 bytes).
+    CustomStreamId,
+    /// `0x0105` descriptor (per MPEG/DVB, variable).
+    Descriptor,
+    /// `0x0106` descriptor_insert_status (uimsbf, 1 byte).
+    DescriptorInsertStatus,
+    /// `0x0107` duration (uimsbf, 3 bytes).
+    Duration,
+    /// `0x0108` ECM_related_data (—, variable).
+    EcmRelatedData,
+    /// `0x010B` ES_id (uimsbf, 2 bytes).
+    EsId,
+    /// `0x010C` event_id (uimsbf, 2 bytes).
+    EventId,
+    /// `0x010D` event_related_data (—, variable).
+    EventRelatedData,
+    /// `0x010E` flow_id (uimsbf, 2 bytes).
+    FlowId,
+    /// `0x010F` flow_PID (uimsbf, 2 bytes).
+    FlowPid,
+    /// `0x0110` flow_PID_change_related_data (—, 9 bytes).
+    FlowPidChangeRelatedData,
+    /// `0x0111` flow_super_CAS_id (uimsbf, 4 bytes).
+    FlowSuperCasId,
+    /// `0x0112` flow_type (uimsbf, 1 byte).
+    FlowType,
+    /// `0x0113` insertion_delay (tcimsbf/ms, 2 bytes).
+    InsertionDelay,
+    /// `0x0114` insertion_delay_type (uimsbf, 1 byte).
+    InsertionDelayType,
+    /// `0x0115` last_section_indicator (boolean, 1 byte).
+    LastSectionIndicator,
+    /// `0x0116` location_id (uimsbf, 1 byte).
+    LocationId,
+    /// `0x0117` max_comp_time (uimsbf/s, 2 bytes).
+    MaxCompTime,
+    /// `0x0118` max_streams (uimsbf, 2 bytes).
+    MaxStreams,
+    /// `0x0119` MPEG_section (per MPEG/DVB, variable).
+    MpegSection,
+    /// `0x011A` network_id (uimsbf, 2 bytes).
+    NetworkId,
+    /// `0x011B` original_network_id (uimsbf, 2 bytes).
+    OriginalNetworkId,
+    /// `0x011C` private_data (user-defined, variable).
+    PrivateData,
+    /// `0x011D` private_data_specifier (uimsbf, 4 bytes).
+    PrivateDataSpecifier,
+    /// `0x011E` (P)SIG_type (uimsbf, 1 byte).
+    PSigType,
+    /// `0x011F` segment_number (uimsbf, 1 byte).
+    SegmentNumber,
+    /// `0x0120` service_id (uimsbf, 2 bytes).
+    ServiceId,
+    /// `0x0121` service_parameters (—, 8 bytes).
+    ServiceParameters,
+    /// `0x0122` start_time (bslbf, 5 bytes).
+    StartTime,
+    /// `0x0123` stream_change_timestamp (bslbf, 5 bytes).
+    StreamChangeTimestamp,
+    /// `0x0124` stream_change_type (uimsbf, 1 byte).
+    StreamChangeType,
+    /// `0x0125` table_id (uimsbf, 1 byte).
+    TableId,
+    /// `0x0126` transaction_id (uimsbf, 2 bytes).
+    TransactionId,
+    /// `0x0127` transport_stream_id (uimsbf, 2 bytes).
+    TransportStreamId,
+    /// `0x0128` trigger_id (uimsbf, 2 bytes).
+    TriggerId,
+    /// `0x0129` trigger_list (bslbf, 4 bytes).
+    TriggerList,
+    /// `0x012A` trigger_type (uimsbf, 4 bytes).
+    TriggerType,
+    /// `0x012B` PD_related_data (—, variable).
+    PdRelatedData,
+    /// `0x012C` flow_stream_type (uimsbf, 1 byte).
+    FlowStreamType,
+    /// `0x7000` error_status (2 bytes).
+    ErrorStatus,
+    /// `0x7001` error_information (user defined, variable).
+    ErrorInformation,
+    /// Any value not in the C(P)SIG⇔(P)SIG registry (DVB-reserved / user-defined).
+    Reserved(u16),
+}
+
+impl CpSigParameterType {
+    /// Decode a 16-bit `parameter_type` for the C(P)SIG⇔(P)SIG interface.
+    #[must_use]
+    pub const fn from_u16(v: u16) -> Self {
+        match v {
+            0x000D => Self::AccessCriteria,
+            0x0100 => Self::BouquetId,
+            0x0101 => Self::CaDescriptorInsertionMode,
+            0x0102 => Self::CustomCaSystemId,
+            0x0103 => Self::CustomChannelId,
+            0x0104 => Self::CustomStreamId,
+            0x0105 => Self::Descriptor,
+            0x0106 => Self::DescriptorInsertStatus,
+            0x0107 => Self::Duration,
+            0x0108 => Self::EcmRelatedData,
+            0x010B => Self::EsId,
+            0x010C => Self::EventId,
+            0x010D => Self::EventRelatedData,
+            0x010E => Self::FlowId,
+            0x010F => Self::FlowPid,
+            0x0110 => Self::FlowPidChangeRelatedData,
+            0x0111 => Self::FlowSuperCasId,
+            0x0112 => Self::FlowType,
+            0x0113 => Self::InsertionDelay,
+            0x0114 => Self::InsertionDelayType,
+            0x0115 => Self::LastSectionIndicator,
+            0x0116 => Self::LocationId,
+            0x0117 => Self::MaxCompTime,
+            0x0118 => Self::MaxStreams,
+            0x0119 => Self::MpegSection,
+            0x011A => Self::NetworkId,
+            0x011B => Self::OriginalNetworkId,
+            0x011C => Self::PrivateData,
+            0x011D => Self::PrivateDataSpecifier,
+            0x011E => Self::PSigType,
+            0x011F => Self::SegmentNumber,
+            0x0120 => Self::ServiceId,
+            0x0121 => Self::ServiceParameters,
+            0x0122 => Self::StartTime,
+            0x0123 => Self::StreamChangeTimestamp,
+            0x0124 => Self::StreamChangeType,
+            0x0125 => Self::TableId,
+            0x0126 => Self::TransactionId,
+            0x0127 => Self::TransportStreamId,
+            0x0128 => Self::TriggerId,
+            0x0129 => Self::TriggerList,
+            0x012A => Self::TriggerType,
+            0x012B => Self::PdRelatedData,
+            0x012C => Self::FlowStreamType,
+            0x7000 => Self::ErrorStatus,
+            0x7001 => Self::ErrorInformation,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The 16-bit wire value.
+    #[must_use]
+    pub const fn to_u16(self) -> u16 {
+        match self {
+            Self::AccessCriteria => 0x000D,
+            Self::BouquetId => 0x0100,
+            Self::CaDescriptorInsertionMode => 0x0101,
+            Self::CustomCaSystemId => 0x0102,
+            Self::CustomChannelId => 0x0103,
+            Self::CustomStreamId => 0x0104,
+            Self::Descriptor => 0x0105,
+            Self::DescriptorInsertStatus => 0x0106,
+            Self::Duration => 0x0107,
+            Self::EcmRelatedData => 0x0108,
+            Self::EsId => 0x010B,
+            Self::EventId => 0x010C,
+            Self::EventRelatedData => 0x010D,
+            Self::FlowId => 0x010E,
+            Self::FlowPid => 0x010F,
+            Self::FlowPidChangeRelatedData => 0x0110,
+            Self::FlowSuperCasId => 0x0111,
+            Self::FlowType => 0x0112,
+            Self::InsertionDelay => 0x0113,
+            Self::InsertionDelayType => 0x0114,
+            Self::LastSectionIndicator => 0x0115,
+            Self::LocationId => 0x0116,
+            Self::MaxCompTime => 0x0117,
+            Self::MaxStreams => 0x0118,
+            Self::MpegSection => 0x0119,
+            Self::NetworkId => 0x011A,
+            Self::OriginalNetworkId => 0x011B,
+            Self::PrivateData => 0x011C,
+            Self::PrivateDataSpecifier => 0x011D,
+            Self::PSigType => 0x011E,
+            Self::SegmentNumber => 0x011F,
+            Self::ServiceId => 0x0120,
+            Self::ServiceParameters => 0x0121,
+            Self::StartTime => 0x0122,
+            Self::StreamChangeTimestamp => 0x0123,
+            Self::StreamChangeType => 0x0124,
+            Self::TableId => 0x0125,
+            Self::TransactionId => 0x0126,
+            Self::TransportStreamId => 0x0127,
+            Self::TriggerId => 0x0128,
+            Self::TriggerList => 0x0129,
+            Self::TriggerType => 0x012A,
+            Self::PdRelatedData => 0x012B,
+            Self::FlowStreamType => 0x012C,
+            Self::ErrorStatus => 0x7000,
+            Self::ErrorInformation => 0x7001,
+            Self::Reserved(v) => v,
+        }
+    }
+
+    /// Label per the project's `name()` convention (the spec token).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AccessCriteria => "access_criteria",
+            Self::BouquetId => "bouquet_id",
+            Self::CaDescriptorInsertionMode => "CA_descriptor_insertion_mode",
+            Self::CustomCaSystemId => "custom_CA_system_id",
+            Self::CustomChannelId => "custom_channel_id",
+            Self::CustomStreamId => "custom_stream_id",
+            Self::Descriptor => "descriptor",
+            Self::DescriptorInsertStatus => "descriptor_insert_status",
+            Self::Duration => "duration",
+            Self::EcmRelatedData => "ECM_related_data",
+            Self::EsId => "ES_id",
+            Self::EventId => "event_id",
+            Self::EventRelatedData => "event_related_data",
+            Self::FlowId => "flow_id",
+            Self::FlowPid => "flow_PID",
+            Self::FlowPidChangeRelatedData => "flow_PID_change_related_data",
+            Self::FlowSuperCasId => "flow_super_CAS_id",
+            Self::FlowType => "flow_type",
+            Self::InsertionDelay => "insertion_delay",
+            Self::InsertionDelayType => "insertion_delay_type",
+            Self::LastSectionIndicator => "last_section_indicator",
+            Self::LocationId => "location_id",
+            Self::MaxCompTime => "max_comp_time",
+            Self::MaxStreams => "max_streams",
+            Self::MpegSection => "MPEG_section",
+            Self::NetworkId => "network_id",
+            Self::OriginalNetworkId => "original_network_id",
+            Self::PrivateData => "private_data",
+            Self::PrivateDataSpecifier => "private_data_specifier",
+            Self::PSigType => "(P)SIG_type",
+            Self::SegmentNumber => "segment_number",
+            Self::ServiceId => "service_id",
+            Self::ServiceParameters => "service_parameters",
+            Self::StartTime => "start_time",
+            Self::StreamChangeTimestamp => "stream_change_timestamp",
+            Self::StreamChangeType => "stream_change_type",
+            Self::TableId => "table_id",
+            Self::TransactionId => "transaction_id",
+            Self::TransportStreamId => "transport_stream_id",
+            Self::TriggerId => "trigger_id",
+            Self::TriggerList => "trigger_list",
+            Self::TriggerType => "trigger_type",
+            Self::PdRelatedData => "PD_related_data",
+            Self::FlowStreamType => "flow_stream_type",
+            Self::ErrorStatus => "error_status",
+            Self::ErrorInformation => "error_information",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+dvb_common::impl_spec_display!(CpSigParameterType, Reserved);
+
 /// Interface-tagged `parameter_type`: decode a raw value once the [`Interface`]
 /// is known.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -597,6 +1034,8 @@ pub enum ParameterType {
     EcmgScs(EcmgScsParameterType),
     /// An EMMG/PDG⇔MUX parameter_type.
     EmmgPdgMux(EmmgMuxParameterType),
+    /// A C(P)SIG⇔(P)SIG parameter_type.
+    CpSigPSig(CpSigParameterType),
 }
 
 impl ParameterType {
@@ -606,6 +1045,7 @@ impl ParameterType {
         match iface {
             Interface::EcmgScs => Self::EcmgScs(EcmgScsParameterType::from_u16(v)),
             Interface::EmmgPdgMux => Self::EmmgPdgMux(EmmgMuxParameterType::from_u16(v)),
+            Interface::CpSigPSig => Self::CpSigPSig(CpSigParameterType::from_u16(v)),
         }
     }
 
@@ -615,6 +1055,7 @@ impl ParameterType {
         match self {
             Self::EcmgScs(p) => p.to_u16(),
             Self::EmmgPdgMux(p) => p.to_u16(),
+            Self::CpSigPSig(p) => p.to_u16(),
         }
     }
 
@@ -624,6 +1065,7 @@ impl ParameterType {
         match self {
             Self::EcmgScs(_) => Interface::EcmgScs,
             Self::EmmgPdgMux(_) => Interface::EmmgPdgMux,
+            Self::CpSigPSig(_) => Interface::CpSigPSig,
         }
     }
 
@@ -633,6 +1075,7 @@ impl ParameterType {
         match self {
             Self::EcmgScs(p) => p.name(),
             Self::EmmgPdgMux(p) => p.name(),
+            Self::CpSigPSig(p) => p.name(),
         }
     }
 }
