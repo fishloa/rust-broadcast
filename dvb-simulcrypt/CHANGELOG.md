@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-22
+
 ### Added
 
 - C(P)SIG ⇔ (P)SIG interface (TS 103 197 clause 8): `Interface::CpSigPSig`,
