@@ -21,6 +21,11 @@
 //!   the Table 7 [`EmmgMuxParameterType`] registry + [`EmmgErrorStatus`]
 //!   (Table 8), plus the [`DataType`] (§6.2.3) and [`SectionTspktFlag`] value
 //!   tables.
+//! - **C(P)SIG ⇔ (P)SIG** (clause 8): [`CpSigMessageType`] (channel/stream
+//!   messages, trigger/table/descriptor/PID‑provision messages `0x0301`–`0x0321`)
+//!   and the Table 36 [`CpSigParameterType`] registry (`bouquet_id` `0x0100` …
+//!   `flow_stream_type` `0x012C`, `error_status` `0x7000`, `error_information`
+//!   `0x7001`).
 //!
 //! # Interface scoping
 //!
@@ -97,7 +102,7 @@ mod registry;
 pub use error::{Error, Result};
 pub use message::{Parameter, SimulcryptMessage, HEADER_LEN, PARAMETER_HEADER_LEN};
 pub use registry::{
-    DataType, EcmgErrorStatus, EcmgScsMessageType, EcmgScsParameterType, EmmgErrorStatus,
-    EmmgMuxMessageType, EmmgMuxParameterType, Interface, MessageType, ParameterType,
-    SectionTspktFlag,
+    CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
+    EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,
+    MessageType, ParameterType, SectionTspktFlag,
 };

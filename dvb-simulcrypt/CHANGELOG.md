@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- C(P)SIG ⇔ (P)SIG interface (TS 103 197 clause 8): `Interface::CpSigPSig`,
+  `CpSigMessageType` (22 channel/stream/trigger/table/descriptor/PID-provision
+  message types `0x0301`–`0x0321`), and `CpSigParameterType` (46 parameter
+  types from Table 36, `0x000D`/`0x0100`–`0x012C`/`0x7000`–`0x7001`), all in
+  `registry.rs`. Wired into the unified `MessageType`/`ParameterType` dispatch
+  enums. Round-trip drift and message-round-trip tests in `tests/framing.rs`.
+
 ## [0.1.0] — 2026-06-21
 
 ### Fixed
