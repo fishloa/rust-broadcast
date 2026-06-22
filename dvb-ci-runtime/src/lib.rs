@@ -28,6 +28,7 @@
 #![warn(missing_docs)]
 
 pub mod device;
+pub mod driver;
 pub mod event;
 pub mod resource;
 pub mod session;
@@ -35,6 +36,9 @@ pub mod stack;
 pub mod transport;
 
 pub use device::{CaDevice, DeviceOp, MockCaDevice, SlotInfo};
+pub use driver::Driver;
+pub use event::{Action, Event, HostRequest, Notification};
+pub use stack::CiStack;
 
 /// Re-export of the wire-codec crate this runtime drives.
 pub use dvb_ci;
