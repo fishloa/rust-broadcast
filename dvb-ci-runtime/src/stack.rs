@@ -11,7 +11,7 @@ use crate::resource::{
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
-use dvb_ci::resource::{ResourceId, DATE_TIME, HOST_CONTROL, RESOURCE_MANAGER};
+use dvb_ci::resource::{ResourceId, RESOURCE_MANAGER};
 
 /// The composed EN 50221 protocol core.
 pub struct CiStack {
@@ -30,12 +30,15 @@ impl Default for CiStack {
 }
 
 impl CiStack {
-    /// New stack on transport connection `t_c_id = 1`. The host provides the
-    /// standard host-side resources (Resource Manager, Date-Time, Host Control)
-    /// and registers the mandatory Resource Manager handler.
+    /// New stack on transport connection `t_c_id = 1`. The host advertises the
+    /// Resource Manager and registers the RM + application_information +
+    /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        let provided = vec![RESOURCE_MANAGER, DATE_TIME, HOST_CONTROL];
+        // v0.1.0 advertises only the Resource Manager (host-provided); the host
+        // opens the module-provided application_information + conditional_access.
+        // date_time / host_control / mmi land in a later release.
+        let provided = vec![RESOURCE_MANAGER];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),

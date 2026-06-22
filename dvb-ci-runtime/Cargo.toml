@@ -22,8 +22,4 @@ dvb-common = { path = "../dvb-common", version = "7.9", default-features = false
 thiserror  = { version = "2" }
 
 [features]
-default = ["linux"]
-# `linux` enables the /dev/dvb/adapterN/caM `CaDevice` implementation (Linux only).
-# Without it the crate is portable: the state machines + `CaDevice` trait + the
-# in-memory mock, with no OS device dependency.
-linux = []
+default = []
