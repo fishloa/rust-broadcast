@@ -13,6 +13,7 @@ use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
 use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
 use dvb_ci::objects::date_time::{DateTime as CiDateTime, DateTimeEnq, UTC_TIME_LEN};
+use dvb_ci::objects::mmi_high::{Enq, Menu};
 use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
 use dvb_ci::resource::{
     ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
@@ -21,7 +22,13 @@ use dvb_ci::resource::{
 use dvb_ci::tag::{self, ApduTag};
 use dvb_common::{Parse, Serialize};
 
-use crate::event::Notification;
+use crate::event::{MmiEvent, Notification};
+
+/// Decode MMI `text_char` bytes to a `String` (lossy; full EN 300 468 Annex A
+/// decoding is the application's concern).
+fn text(chars: &[u8]) -> String {
+    String::from_utf8_lossy(chars).into_owned()
+}
 
 pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
     let mut b = vec![0u8; s.serialized_len()];
@@ -336,6 +343,47 @@ impl Resource for DateTime {
     }
 }
 
+/// MMI (§8.6) — module-provided. Surfaces the module's menus/enquiries and the
+/// close as [`Notification::Mmi`] events for the application to display. (The
+/// module drives the dialog; answering — `menu_answ`/`answ` — is a later
+/// addition.)
+#[derive(Debug, Default)]
+pub struct Mmi;
+
+impl Resource for Mmi {
+    fn id(&self) -> ResourceId {
+        MMI
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        match peek_tag(apdu) {
+            Some(t) if t == tag::ENQ => {
+                if let Ok(e) = Enq::parse(apdu) {
+                    out.notify.push(Notification::Mmi(MmiEvent::Enquiry {
+                        prompt: text(e.text_chars),
+                        blind: e.blind_answer,
+                        answer_len: e.answer_text_length,
+                    }));
+                }
+            }
+            Some(t) if t == tag::MENU_LAST => {
+                if let Ok(m) = Menu::parse(apdu) {
+                    out.notify.push(Notification::Mmi(MmiEvent::Menu {
+                        title: text(m.title.text_chars),
+                        items: m.choices.iter().map(|c| text(c.text_chars)).collect(),
+                    }));
+                }
+            }
+            Some(t) if t == tag::CLOSE_MMI => {
+                out.notify.push(Notification::Mmi(MmiEvent::Close));
+            }
+            _ => {}
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +419,31 @@ mod tests {
         assert!(o2.open.contains(&APPLICATION_INFORMATION));
         assert!(o2.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
         assert!(!o2.open.contains(&MMI), "module didn't advertise MMI");
+    }
+
+    #[test]
+    fn mmi_surfaces_enquiry_and_close() {
+        let mut h = Mmi;
+        // enquiry
+        let enq = ser(&Enq {
+            blind_answer: true,
+            answer_text_length: 4,
+            text_chars: b"PIN?",
+        });
+        assert_eq!(
+            h.on_apdu(&enq).notify,
+            vec![Notification::Mmi(MmiEvent::Enquiry {
+                prompt: "PIN?".to_string(),
+                blind: true,
+                answer_len: 4,
+            })]
+        );
+        // close_mmi (tag 9F 88 00) — surfaced as Close
+        let close = [0x9F, 0x88, 0x00, 0x01, 0x00];
+        assert_eq!(
+            h.on_apdu(&close).notify,
+            vec![Notification::Mmi(MmiEvent::Close)]
+        );
     }
 
     #[test]

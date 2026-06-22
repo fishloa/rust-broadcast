@@ -6,7 +6,8 @@
 
 use crate::event::{Action, Event, HostRequest, Notification};
 use crate::resource::{
-    ApplicationInformation, ConditionalAccess, DateTime, Resource, ResourceManager, ResourceOut,
+    ApplicationInformation, ConditionalAccess, DateTime, Mmi, Resource, ResourceManager,
+    ResourceOut,
 };
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
@@ -46,6 +47,7 @@ impl CiStack {
                 Box::new(ApplicationInformation),
                 Box::new(ConditionalAccess),
                 Box::new(DateTime::new()),
+                Box::new(Mmi),
             ],
             provided,
         }
