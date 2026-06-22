@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 7.9.0 — 2026-06-22
+
 ### Added
 - **Typed CPCM USI decode** — `CpcmDeliverySignalling::usi()` returns
   `Option<Result<CpcmUsi>>` for `cpcm_version == 1`, decoding the 3-byte
