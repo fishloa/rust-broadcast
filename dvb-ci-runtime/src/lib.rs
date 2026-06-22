@@ -24,7 +24,10 @@
 //! Foundation: the [`CaDevice`] abstraction + mock. The TPDU/SPDU/resource state
 //! machines and the Linux device implementation land incrementally.
 
-#![forbid(unsafe_code)]
+// The portable core is unsafe-free; only the optional Linux device leaf
+// (`#[allow(unsafe_code)]` in `linux`) uses ioctls, so this is `deny`, not
+// `forbid`.
+#![deny(unsafe_code)]
 #![warn(missing_docs)]
 
 pub mod device;
@@ -35,9 +38,14 @@ pub mod session;
 pub mod stack;
 pub mod transport;
 
+#[cfg(all(feature = "linux", target_os = "linux"))]
+pub mod linux;
+
 pub use device::{CaDevice, DeviceOp, MockCaDevice, SlotInfo};
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, Notification};
+#[cfg(all(feature = "linux", target_os = "linux"))]
+pub use linux::LinuxCaDevice;
 pub use stack::CiStack;
 
 /// Re-export of the wire-codec crate this runtime drives.

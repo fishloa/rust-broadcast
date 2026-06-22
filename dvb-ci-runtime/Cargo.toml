@@ -20,6 +20,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 dvb-ci     = { path = "../dvb-ci", version = "0.4" }
 dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
 thiserror  = { version = "2" }
+libc       = { version = "0.2", optional = true }
 
 [features]
 default = []
+# `linux` adds the `/dev/dvb/adapterN/caM` CaDevice (Linux-only; pulls `libc`
+# for the DVB CA ioctls). The portable sans-IO core needs none of it.
+linux = ["dep:libc"]
