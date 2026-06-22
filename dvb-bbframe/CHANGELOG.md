@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [7.9.0] — 2026-06-22
+
+### Changed
+
+- Lockstep release; no functional changes to this crate.
+
 ## [7.8.0] — 2026-06-21
 
 ### Changed
