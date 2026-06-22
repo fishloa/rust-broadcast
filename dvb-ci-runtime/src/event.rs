@@ -97,6 +97,16 @@ pub enum Notification {
         /// The resource the session serves.
         resource: ResourceId,
     },
+    /// A session closed.
+    SessionClosed {
+        /// The `session_nb` that closed.
+        session_nb: u16,
+    },
+    /// A protocol error surfaced by the stack (non-fatal; informational).
+    Error {
+        /// Human-readable detail.
+        detail: String,
+    },
 }
 
 /// MMI (man-machine interface) host events.
