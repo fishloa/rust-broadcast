@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+- **Typed CPCM USI decode** — `CpcmDeliverySignalling::usi()` returns
+  `Option<Result<CpcmUsi>>` for `cpcm_version == 1`, decoding the 3-byte
+  flag prefix and all conditional fields (view window, view period, simultaneous
+  view count, remote access date, CPS vector) per ETSI TS 102 825-4 §5.4
+  Table 8.  New public types: `CpcmUsi`, `CopyControl` (Table 9),
+  `MoveCopyPropagation` (Table 10), `ViewPropagation` (Table 11),
+  `CpsVectorEntry`.  Symmetric `Parse`/`Serialize` with byte-exact round-trip.
+  The existing `selector_bytes` raw field and TSDuck interop test are
+  unchanged.
+
 ## 7.8.0 — 2026-06-21
 
 ### Added
