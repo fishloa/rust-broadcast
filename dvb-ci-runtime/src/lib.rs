@@ -29,6 +29,7 @@
 
 pub mod device;
 pub mod event;
+pub mod resource;
 pub mod session;
 pub mod stack;
 pub mod transport;

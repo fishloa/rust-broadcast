@@ -5,21 +5,20 @@
 //! the [`Action`]s the driver must perform. No I/O, threads, or clock here.
 
 use crate::event::{Action, Event, HostRequest, Notification};
+use crate::resource::{Resource, ResourceManager, ResourceOut};
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
-use dvb_ci::resource::ResourceId;
+use dvb_ci::resource::{ResourceId, DATE_TIME, HOST_CONTROL, RESOURCE_MANAGER};
 
 /// The composed EN 50221 protocol core.
-#[derive(Debug)]
 pub struct CiStack {
     transport: Transport,
     session: SessionLayer,
     /// Resources the host provides (answers incoming `open_session_request`).
     provided: Vec<ResourceId>,
-    /// Raw `(session_nb, apdu)` pairs received, awaiting the resource layer.
-    /// (Surfaced for now; consumed by resources once they land.)
-    pending_apdus: Vec<(u16, Vec<u8>)>,
+    /// Application-layer resource handlers, dispatched by `ResourceId`.
+    resources: Vec<Box<dyn Resource>>,
 }
 
 impl Default for CiStack {
@@ -29,30 +28,29 @@ impl Default for CiStack {
 }
 
 impl CiStack {
-    /// New stack on transport connection `t_c_id = 1`, providing no resources
-    /// yet (the resource layer registers them).
+    /// New stack on transport connection `t_c_id = 1`. The host provides the
+    /// standard host-side resources (Resource Manager, Date-Time, Host Control)
+    /// and registers the mandatory Resource Manager handler.
     #[must_use]
     pub fn new() -> Self {
+        let provided = vec![RESOURCE_MANAGER, DATE_TIME, HOST_CONTROL];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),
-            provided: Vec::new(),
-            pending_apdus: Vec::new(),
+            resources: vec![Box::new(ResourceManager::new(provided.clone()))],
+            provided,
         }
     }
 
-    /// Advertise a host-provided resource (answered for `open_session_request`).
-    pub fn provide(&mut self, resource: ResourceId) -> &mut Self {
-        if !self.provided.contains(&resource) {
-            self.provided.push(resource);
-        }
+    /// Register an additional resource handler.
+    pub fn register(&mut self, resource: Box<dyn Resource>) -> &mut Self {
+        self.resources.push(resource);
         self
     }
 
-    /// `(session_nb, apdu)` pairs received since the last drain (placeholder
-    /// until the resource layer consumes them).
-    pub fn take_apdus(&mut self) -> Vec<(u16, Vec<u8>)> {
-        core::mem::take(&mut self.pending_apdus)
+    /// Index of the registered handler for `resource`, if any.
+    fn handler_index(&self, resource: ResourceId) -> Option<usize> {
+        self.resources.iter().position(|r| r.id() == resource)
     }
 
     /// The pure sans-IO entry point.
@@ -129,22 +127,59 @@ impl CiStack {
         let mut actions = Vec::new();
         // Session-layer SPDUs (e.g. open_session_response) go down the transport.
         for s in spdus {
-            let t = self.transport.send_spdu(&s);
-            for w in t.writes {
-                actions.push(Action::Write(w));
-            }
-            if let Some(after) = t.timer {
-                actions.push(Action::SetTimer { after });
-            }
+            actions.extend(self.send_spdu_actions(&s));
         }
-        for (_, resource) in opened {
+        for (session_nb, resource) in opened {
             actions.push(Action::Notify(Notification::SessionOpened { resource }));
+            // Drive the resource handler's on_open (e.g. RM sends profile_enq).
+            if let Some(i) = self.handler_index(resource) {
+                let out = self.resources[i].on_open();
+                actions.extend(self.process_resource_out(session_nb, out));
+            }
         }
         for session_nb in closed {
             actions.push(Action::Notify(Notification::SessionClosed { session_nb }));
         }
-        // APDUs await the resource layer.
-        self.pending_apdus.extend(apdus);
+        // Route each APDU to the resource handler bound to its session.
+        for (session_nb, apdu) in apdus {
+            if let Some(resource) = self.session.resource_of(session_nb) {
+                if let Some(i) = self.handler_index(resource) {
+                    let out = self.resources[i].on_apdu(&apdu);
+                    actions.extend(self.process_resource_out(session_nb, out));
+                }
+            }
+        }
+        actions
+    }
+
+    /// Wrap an SPDU as a `T_Data_Last` and collect the resulting actions.
+    fn send_spdu_actions(&mut self, spdu: &[u8]) -> Vec<Action> {
+        let t = self.transport.send_spdu(spdu);
+        let mut actions = Vec::new();
+        for w in t.writes {
+            actions.push(Action::Write(w));
+        }
+        if let Some(after) = t.timer {
+            actions.push(Action::SetTimer { after });
+        }
+        actions
+    }
+
+    /// Convert a [`ResourceOut`] into actions: send its APDUs on `session_nb`,
+    /// surface its notifications, and open any module resources it requested.
+    fn process_resource_out(&mut self, session_nb: u16, out: ResourceOut) -> Vec<Action> {
+        let mut actions = Vec::new();
+        for apdu in out.apdus {
+            let spdu = self.session.send_apdu(session_nb, &apdu);
+            actions.extend(self.send_spdu_actions(&spdu));
+        }
+        for note in out.notify {
+            actions.push(Action::Notify(note));
+        }
+        for resource in out.open {
+            let spdu = self.session.create_session(resource);
+            actions.extend(self.send_spdu_actions(&spdu));
+        }
         actions
     }
 }
@@ -187,7 +222,6 @@ mod tests {
     #[test]
     fn full_pipeline_opens_a_session_for_a_provided_resource() {
         let mut s = CiStack::new();
-        s.provide(RESOURCE_MANAGER);
         s.handle(Event::Host(HostRequest::Init));
         // module accepts the transport connection
         s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
