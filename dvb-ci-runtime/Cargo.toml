@@ -1,0 +1,25 @@
+[package]
+name    = "dvb-ci-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, and resource state machines over the dvb-ci codecs."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["dvb", "common-interface", "en50221", "cam", "conditional-access"]
+categories = ["multimedia", "hardware-support", "api-bindings"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+rust-version = "1.81"
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dvb-ci     = { path = "../dvb-ci", version = "0.4" }
+dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
+thiserror  = { version = "2" }
+
+[features]
+default = []

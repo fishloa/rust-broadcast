@@ -265,6 +265,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-ci-runtime"
+version = "0.1.0"
+dependencies = [
+ "dvb-ci",
+ "dvb-common",
+ "thiserror",
+]
+
+[[package]]
 name = "dvb-common"
 version = "7.9.0"
 dependencies = [
