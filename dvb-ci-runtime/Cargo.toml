@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci-runtime"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 description = "Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, and resource state machines over the dvb-ci codecs."
 license      = "MIT OR Apache-2.0"
@@ -26,9 +26,11 @@ dvb-si     = { path = "../dvb-si", version = "7.9", default-features = false }
 dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2", optional = true }
+clap       = { version = "4.5", optional = true, features = ["derive"] }
 
 [features]
 default = []
-# `linux` adds the `/dev/dvb/adapterN/caM` CaDevice (Linux-only; pulls `libc`
-# for the DVB CA ioctls). The portable sans-IO core needs none of it.
-linux = ["dep:libc"]
+# `linux` adds the `/dev/dvb/adapterN/caM` CaDevice + the `ci-probe` CLI
+# (Linux-only; pulls `libc` for the DVB CA ioctls and `clap` for the CLI). The
+# portable sans-IO core needs none of it.
+linux = ["dep:libc", "dep:clap"]

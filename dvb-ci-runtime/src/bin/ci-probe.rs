@@ -1,16 +1,16 @@
 //! `ci-probe` — discover and engage an installed CAM over a Linux DVB CI device.
 //!
-//! Built only with the `linux` feature on Linux (`required-features`). Wires the
-//! `dvb-ci-runtime` `Driver` + `LinuxCaDevice` + `trace` decoder to argv — no
-//! extra dependencies.
+//! Built only with the `linux` feature on Linux. Wires the `dvb-ci-runtime`
+//! `Driver` + `LinuxCaDevice` + `trace` decoder to a `clap` CLI (the workspace
+//! CLI standard — see `docs/CLI-STANDARD.md`).
 //!
 //! ```text
-//! ci-probe list                              # enumerate /dev/dvb/adapterN/caM + slot status
-//! ci-probe info       [adapter] [ca]         # run the handshake; print app-info + CAIDs
-//! ci-probe descramble <adapter> <ca> <pmt>   # query->reply->ok for a PMT section file
-//! ci-probe mmi        [adapter] [ca]         # interactive MMI menus/enquiries
+//! ci-probe list
+//! ci-probe info       --adapter 3 --ca 0
+//! ci-probe descramble --adapter 3 --ca 0 --pmt service.bin
+//! ci-probe mmi        --adapter 3 --ca 0
 //! ```
-//! Append `--trace` to any command to dump an annotated link trace on exit.
+//! `--trace` (any subcommand) dumps an annotated link trace on exit.
 
 #[cfg(all(feature = "linux", target_os = "linux"))]
 fn main() -> std::process::ExitCode {
@@ -30,6 +30,7 @@ mod imp {
     use std::process::ExitCode;
     use std::time::{Duration, Instant};
 
+    use clap::{Args, Parser, Subcommand};
     use dvb_ci_runtime::device::RecordingCaDevice;
     use dvb_ci_runtime::event::MmiEvent;
     use dvb_ci_runtime::linux::LinuxCaDevice;
@@ -40,35 +41,55 @@ mod imp {
 
     type Dev = RecordingCaDevice<LinuxCaDevice>;
 
+    /// Discover and engage a CAM over a Linux DVB CI device.
+    #[derive(Parser)]
+    #[command(name = "ci-probe", version, about, long_about = None)]
+    struct Cli {
+        #[command(subcommand)]
+        command: Command,
+        /// Dump an annotated link trace (TPDU → SPDU → APDU) to stderr on exit.
+        #[arg(long, global = true)]
+        trace: bool,
+    }
+
+    #[derive(Subcommand)]
+    enum Command {
+        /// List the CA devices present and each slot's status.
+        List,
+        /// Run the EN 50221 handshake; print application-info + the CAM's CAIDs.
+        Info(DevArgs),
+        /// Send a PMT to the CAM: query → reply → ok_descrambling.
+        Descramble {
+            #[command(flatten)]
+            dev: DevArgs,
+            /// Path to a raw PMT-section file (the service to descramble).
+            #[arg(long)]
+            pmt: String,
+        },
+        /// Interactive MMI: show the module's menus / enquiries and answer them.
+        Mmi(DevArgs),
+    }
+
+    /// Which DVB CA device to talk to.
+    #[derive(Args)]
+    struct DevArgs {
+        /// DVB adapter number (`/dev/dvb/adapterN`).
+        #[arg(short, long, default_value_t = 0)]
+        adapter: u32,
+        /// CA slot device number (`caM`).
+        #[arg(short, long, default_value_t = 0)]
+        ca: u32,
+    }
+
     pub fn run() -> ExitCode {
-        let args: Vec<String> = std::env::args().collect();
-        let trace = args.iter().any(|a| a == "--trace");
-        let pos: Vec<&str> = args[1..]
-            .iter()
-            .map(String::as_str)
-            .filter(|a| !a.starts_with("--"))
-            .collect();
-
-        let result = match pos.first().copied() {
-            Some("list") => list(),
-            Some("info") | None => info(arg_u32(&pos, 1, 0), arg_u32(&pos, 2, 0), trace),
-            Some("descramble") => match (pos.get(1), pos.get(2), pos.get(3)) {
-                (Some(a), Some(c), Some(file)) => {
-                    descramble(parse_u32(a), parse_u32(c), file, trace)
-                }
-                _ => {
-                    usage();
-                    Ok(())
-                }
-            },
-            Some("mmi") => mmi(arg_u32(&pos, 1, 0), arg_u32(&pos, 2, 0), trace),
-            Some(other) => {
-                eprintln!("unknown command: {other}");
-                usage();
-                Ok(())
-            }
+        let cli = Cli::parse();
+        let trace = cli.trace;
+        let result = match cli.command {
+            Command::List => list(),
+            Command::Info(d) => info(d.adapter, d.ca, trace),
+            Command::Descramble { dev, pmt } => descramble(dev.adapter, dev.ca, &pmt, trace),
+            Command::Mmi(d) => mmi(d.adapter, d.ca, trace),
         };
-
         match result {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
@@ -76,21 +97,6 @@ mod imp {
                 ExitCode::FAILURE
             }
         }
-    }
-
-    fn usage() {
-        eprintln!(
-            "usage:\n  ci-probe list\n  ci-probe info [adapter] [ca]\n  \
-             ci-probe descramble <adapter> <ca> <pmt-file>\n  ci-probe mmi [adapter] [ca]\n  \
-             (append --trace to dump an annotated link trace)"
-        );
-    }
-
-    fn parse_u32(s: &str) -> u32 {
-        s.parse().unwrap_or(0)
-    }
-    fn arg_u32(pos: &[&str], i: usize, default: u32) -> u32 {
-        pos.get(i).map(|s| parse_u32(s)).unwrap_or(default)
     }
 
     /// Enumerate `/dev/dvb/adapterN/caM` and report each slot's status.

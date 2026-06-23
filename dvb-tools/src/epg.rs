@@ -25,30 +25,8 @@ const SDT_TABLE_IDS: [u8; 2] = [
     TableId::ServiceDescriptionOther as u8,
 ];
 
-pub fn run(args: &[String]) -> ExitCode {
-    let mut path: Option<String> = None;
-    let mut json = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json = true,
-            "-h" | "--help" => {
-                eprintln!("usage: dvb-tools epg <file.ts> [--json]");
-                return ExitCode::SUCCESS;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("dvb-tools epg: unknown option {other}");
-                return ExitCode::FAILURE;
-            }
-            other => path = Some(other.to_string()),
-        }
-    }
-
-    let Some(path) = path else {
-        eprintln!("usage: dvb-tools epg <file.ts> [--json]");
-        return ExitCode::FAILURE;
-    };
-
-    let data = match read_file(&path, "dvb-tools epg") {
+pub fn run(path: &str, json: bool) -> ExitCode {
+    let data = match read_file(path, "dvb-tools epg") {
         Ok(d) => d,
         Err(code) => return code,
     };
