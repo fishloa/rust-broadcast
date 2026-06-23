@@ -38,6 +38,96 @@ Implemented from the EN 50221 specification.
 - **Diagnostics**: `RecordingCaDevice` captures the link both ways;
   `trace::decode_frame` / `decode_log` annotate a capture (TPDU → SPDU → APDU)
   for live-CAM debugging.
+- **MMI answering**: `Driver::mmi_menu_answer` / `mmi_enquiry_answer` /
+  `mmi_cancel` send `menu_answ` / `answ` back to the module.
+
+## `ci-probe` — discover and engage an installed CAM
+
+A command-line tool that drives a real Common Interface module end-to-end over a
+Linux DVB CA device. It is the reference consumer of this crate: it wires
+`Driver` + `LinuxCaDevice` + `RecordingCaDevice` + `trace` together with nothing
+but `std::env::args`.
+
+### Build / install
+
+Linux only; gated behind the `linux` feature (it opens `/dev/dvb/...` and uses
+`libc` ioctls):
+
+```bash
+cargo build  -p dvb-ci-runtime --features linux --release   # target/release/ci-probe
+cargo install dvb-ci-runtime   --features linux             # ~/.cargo/bin/ci-probe
+```
+
+Device access usually needs membership of the `video` group (or root).
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `ci-probe list` | Enumerate `/dev/dvb/adapterN/caM` and print each slot's number + `module_ready`. |
+| `ci-probe info [adapter] [ca]` | Run the EN 50221 handshake and print `application_info` + the CAM's `CA_system_id`s. Defaults to adapter `0`, ca `0`. |
+| `ci-probe descramble <adapter> <ca> <pmt-file>` | Read a PMT section (raw bytes), then run the `ca_pmt` query → reply → `ok_descrambling` sequence and report the result. |
+| `ci-probe mmi [adapter] [ca]` | Interactive MMI: display the module's menus / enquiries and send your answers back (`menu_answ` / `answ`). |
+
+Append `--trace` to **any** command to dump an annotated link trace on exit
+(every TPDU/SPDU/APDU both directions) — invaluable for diagnosing a CAM that
+won't complete a handshake.
+
+### Examples
+
+Discover what's installed:
+
+```console
+$ ci-probe list
+/dev/dvb/adapter0/ca0  slot 0  module_ready=true
+```
+
+Identify the module and its CA systems:
+
+```console
+$ ci-probe info 0 0
+CAM ready (resource-manager handshake complete)
+application_info: type=0x01 manufacturer=0x1234 code=0x5678 menu="Irdeto CAM"
+ca_info: 18 CA_system_id(s): 0x0604, 0x0606, 0x0608, ...
+```
+
+Diagnose a stuck handshake (annotated trace):
+
+```console
+$ ci-probe info 0 0 --trace
+...
+--- link trace ---
+  reset()
+  slot_info() -> ready=true
+W Create_T_C tcid=1
+R C_T_C_Reply tcid=1
+R T_Data_Last tcid=1 · open_session_request
+W T_Data_Last tcid=1 · open_session_response
+W T_Data_Last tcid=1 · session 1 · profile_enq (9F8010)
+R T_Data_Last tcid=1 · session 1 · profile (9F8011)
+...
+```
+
+Request descrambling for a service (PMT extracted with e.g. `dvbsnoop` or the
+`dvb-si` tools):
+
+```console
+$ ci-probe descramble 0 0 service.pmt
+CAM ready (resource-manager handshake complete)
+ca_info: 18 CA_system_id(s): ...
+ca_info received → sending descramble request
+ca_pmt_reply: program 1019 descrambling_ok=true
+```
+
+### Hardware notes
+
+- The device `read`/`write` exchange one whole kernel link frame
+  `[slot, connection_id, <TPDU + T_SB>]`; the `LinuxCaDevice` handles that framing.
+- EN 50221's link is **polled half-duplex** — one `T_Data_Last` per module `T_SB`.
+  The transport enforces this (a real CAM drops a second block sent before it
+  answers the first — see #337).
+- If `info` times out before `ca_info`, re-run with `--trace` and read the last
+  few lines — they show exactly which step the module stopped responding at.
 
 The EN 50221 link is polled half-duplex — the host sends one `T_Data_Last` per
 module `T_SB`. The transport queues outbound SPDUs and releases one per turn (a

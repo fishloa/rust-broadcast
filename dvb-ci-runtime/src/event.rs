@@ -37,6 +37,14 @@ pub enum HostRequest<'a> {
     /// Send a serialized `ca_pmt` APDU body to the CAM's conditional-access
     /// resource (descrambling request).
     SendCaPmt(&'a [u8]),
+    /// Answer an MMI `menu`/`list` by 1-based `choice_ref` (0 = "back"/cancel),
+    /// sent as `menu_answ` to the module.
+    MmiMenuAnswer(u8),
+    /// Answer an MMI `enquiry` with the user's input text (EN 300 468 Annex A
+    /// bytes), sent as `answ` (`answ_id = answer`).
+    MmiEnquiryAnswer(&'a [u8]),
+    /// Abort the current MMI enquiry (`answ` with `answ_id = cancel`).
+    MmiCancel,
     /// Descramble the services in a PMT section (raw `dvb-si` PMT bytes). The
     /// stack filters the PMT's `CA_descriptor`s to the CAM's advertised CAIDs
     /// (from its `ca_info`), sends a `ca_pmt` with `cmd_id = query`, and — when

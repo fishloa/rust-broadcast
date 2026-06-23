@@ -77,6 +77,28 @@ impl<D: CaDevice> Driver<D> {
         self.run(actions)
     }
 
+    /// Answer an MMI menu/list by 1-based `choice_ref` (0 = back/cancel).
+    pub fn mmi_menu_answer(&mut self, choice_ref: u8) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::MmiMenuAnswer(choice_ref)));
+        self.run(actions)
+    }
+
+    /// Answer an MMI enquiry with the user's input (EN 300 468 Annex A bytes).
+    pub fn mmi_enquiry_answer(&mut self, text: &[u8]) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::MmiEnquiryAnswer(text)));
+        self.run(actions)
+    }
+
+    /// Abort the current MMI dialogue (`answ` with `answ_id = cancel`).
+    pub fn mmi_cancel(&mut self) -> io::Result<()> {
+        let actions = self.stack.handle(Event::Host(HostRequest::MmiCancel));
+        self.run(actions)
+    }
+
     /// One pump step: if the device is readable within `timeout`, read a frame
     /// and feed it; otherwise advance the stack's timers by `timeout` (driving
     /// the poll cadence). Returns whether a frame was processed.

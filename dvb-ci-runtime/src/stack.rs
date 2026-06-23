@@ -14,9 +14,20 @@ use crate::transport::{Out as TransportOut, Transport};
 
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
-use dvb_ci::resource::{ResourceId, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, RESOURCE_MANAGER};
-use dvb_common::Parse;
+use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
+use dvb_ci::resource::{ResourceId, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI, RESOURCE_MANAGER};
+use dvb_common::{Parse, Serialize};
 use dvb_si::tables::pmt::PmtSection;
+
+/// Serialize an APDU object to owned bytes (buffer is sized exactly).
+fn ser_apdu<S: Serialize>(s: &S) -> Vec<u8> {
+    let mut b = vec![0u8; s.serialized_len()];
+    match s.serialize_into(&mut b) {
+        Ok(n) => b.truncate(n),
+        Err(_) => b.clear(),
+    }
+    b
+}
 
 /// The composed EN 50221 protocol core.
 pub struct CiStack {
@@ -105,6 +116,24 @@ impl CiStack {
                 self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, apdu)
             }
             Event::Host(HostRequest::Descramble(pmt)) => self.descramble(pmt),
+            Event::Host(HostRequest::MmiMenuAnswer(choice_ref)) => {
+                let apdu = ser_apdu(&MenuAnsw { choice_ref });
+                self.send_to_resource(MMI, &apdu)
+            }
+            Event::Host(HostRequest::MmiEnquiryAnswer(text)) => {
+                let apdu = ser_apdu(&Answ {
+                    answ_id: AnswId::Answer,
+                    text_chars: text,
+                });
+                self.send_to_resource(MMI, &apdu)
+            }
+            Event::Host(HostRequest::MmiCancel) => {
+                let apdu = ser_apdu(&Answ {
+                    answ_id: AnswId::Cancel,
+                    text_chars: &[],
+                });
+                self.send_to_resource(MMI, &apdu)
+            }
             Event::Host(HostRequest::Shutdown) => Vec::new(),
         }
     }
@@ -441,7 +470,7 @@ mod tests {
                 resource: RESOURCE_MANAGER,
             }),
         )));
-        // module enquires host profile (host_profiled) and sends its own profile
+        // module enquires our profile (we answer) and sends its own profile
         s.handle(Event::Readable(&r_apdu(1, &ser(&ProfileEnq))));
         s.handle(Event::Readable(&r_apdu(
             1,
@@ -578,6 +607,31 @@ mod tests {
                 .all(|c| c.cmd_id != CaPmtCmdId::OkDescrambling),
             "no ok_descrambling without a positive reply"
         );
+    }
+
+    /// Whether any written frame carries the 3-byte APDU tag `want`.
+    fn wrote_apdu(actions: &[Action], want: [u8; 3]) -> bool {
+        actions
+            .iter()
+            .any(|a| matches!(a, Action::Write(w) if w.windows(3).any(|x| x == want)))
+    }
+
+    #[test]
+    fn mmi_menu_answer_sends_menu_answ() {
+        let mut s = stack_with_ca_session();
+        let mut acts = s.handle(Event::Host(HostRequest::MmiMenuAnswer(2)));
+        acts.extend(pump_sbs(&mut s));
+        // menu_answ APDU (9F 88 0B) reaches the wire.
+        assert!(wrote_apdu(&acts, [0x9F, 0x88, 0x0B]));
+    }
+
+    #[test]
+    fn mmi_enquiry_answer_sends_answ() {
+        let mut s = stack_with_ca_session();
+        let mut acts = s.handle(Event::Host(HostRequest::MmiEnquiryAnswer(b"1234")));
+        acts.extend(pump_sbs(&mut s));
+        // answ APDU (9F 88 08) reaches the wire.
+        assert!(wrote_apdu(&acts, [0x9F, 0x88, 0x08]));
     }
 
     /// Parse every `ca_pmt` (tag `9F 80 32`) found in the written frames,
