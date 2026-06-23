@@ -64,6 +64,12 @@ impl SessionLayer {
         self.sessions.get(&session_nb).copied()
     }
 
+    /// All open `(session_nb, resource)` pairs, ascending by `session_nb`.
+    #[must_use]
+    pub fn sessions(&self) -> Vec<(u16, ResourceId)> {
+        self.sessions.iter().map(|(&n, &r)| (n, r)).collect()
+    }
+
     /// Number of open sessions.
     #[must_use]
     pub fn len(&self) -> usize {

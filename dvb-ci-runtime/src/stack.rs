@@ -6,12 +6,13 @@
 
 use crate::event::{Action, Event, HostRequest, Notification};
 use crate::resource::{
-    ApplicationInformation, ConditionalAccess, Resource, ResourceManager, ResourceOut,
+    ApplicationInformation, ConditionalAccess, DateTime, Mmi, Resource, ResourceManager,
+    ResourceOut,
 };
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
-use dvb_ci::resource::{ResourceId, RESOURCE_MANAGER};
+use dvb_ci::resource::{ResourceId, DATE_TIME, RESOURCE_MANAGER};
 
 /// The composed EN 50221 protocol core.
 pub struct CiStack {
@@ -35,10 +36,9 @@ impl CiStack {
     /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        // v0.1.0 advertises only the Resource Manager (host-provided); the host
-        // opens the module-provided application_information + conditional_access.
-        // date_time / host_control / mmi land in a later release.
-        let provided = vec![RESOURCE_MANAGER];
+        // The host provides Resource Manager + Date-Time; it opens the
+        // module-provided application_information + conditional_access.
+        let provided = vec![RESOURCE_MANAGER, DATE_TIME];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),
@@ -46,6 +46,8 @@ impl CiStack {
                 Box::new(ResourceManager::new(provided.clone())),
                 Box::new(ApplicationInformation),
                 Box::new(ConditionalAccess),
+                Box::new(DateTime::new()),
+                Box::new(Mmi),
             ],
             provided,
         }
@@ -73,7 +75,15 @@ impl CiStack {
             }
             Event::Tick { elapsed } => {
                 let out = self.transport.tick(elapsed);
-                self.emit_transport(out)
+                let mut actions = self.emit_transport(out);
+                // Advance each open resource's timers (e.g. date_time resend).
+                for (session_nb, resource) in self.session.sessions() {
+                    if let Some(i) = self.handler_index(resource) {
+                        let out = self.resources[i].tick(elapsed);
+                        actions.extend(self.process_resource_out(session_nb, out));
+                    }
+                }
+                actions
             }
             Event::Readable(frame) => {
                 let out = self.transport.on_frame(frame);

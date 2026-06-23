@@ -12,14 +12,23 @@ use std::time::Duration;
 use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
 use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
+use dvb_ci::objects::date_time::{DateTime as CiDateTime, DateTimeEnq, UTC_TIME_LEN};
+use dvb_ci::objects::mmi_high::{Enq, Menu};
 use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
 use dvb_ci::resource::{
-    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI, RESOURCE_MANAGER,
+    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
+    RESOURCE_MANAGER,
 };
 use dvb_ci::tag::{self, ApduTag};
 use dvb_common::{Parse, Serialize};
 
-use crate::event::Notification;
+use crate::event::{MmiEvent, Notification};
+
+/// Decode MMI `text_char` bytes to a `String` (lossy; full EN 300 468 Annex A
+/// decoding is the application's concern).
+fn text(chars: &[u8]) -> String {
+    String::from_utf8_lossy(chars).into_owned()
+}
 
 pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
     let mut b = vec![0u8; s.serialized_len()];
@@ -230,6 +239,151 @@ impl Resource for ConditionalAccess {
     }
 }
 
+const SECS_PER_DAY: u64 = 86_400;
+/// Modified Julian Date of the Unix epoch (1970-01-01).
+const MJD_UNIX_EPOCH: u64 = 40_587;
+
+fn bcd(v: u64) -> u8 {
+    (((v / 10) << 4) | (v % 10)) as u8
+}
+
+/// Encode a Unix timestamp as the 5-byte DVB `UTC_time` (MJD `[15:0]` + BCD
+/// HH:MM:SS), per EN 300 468 Annex C.
+fn unix_to_mjd_bcd(unix_secs: u64) -> [u8; UTC_TIME_LEN] {
+    let mjd = (MJD_UNIX_EPOCH + unix_secs / SECS_PER_DAY) as u16;
+    let sod = unix_secs % SECS_PER_DAY;
+    [
+        (mjd >> 8) as u8,
+        mjd as u8,
+        bcd(sod / 3600),
+        bcd((sod % 3600) / 60),
+        bcd(sod % 60),
+    ]
+}
+
+fn system_utc() -> [u8; UTC_TIME_LEN] {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    unix_to_mjd_bcd(secs)
+}
+
+/// Date-Time (§8.5.2) — host-provided. On `date_time_enq` replies with the
+/// current UTC; if the enquiry's `response_interval` is non-zero, re-sends every
+/// `response_interval` seconds (driven by [`tick`](Resource::tick)).
+pub struct DateTime {
+    clock: fn() -> [u8; UTC_TIME_LEN],
+    interval: u8,
+    since: Duration,
+}
+
+impl Default for DateTime {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DateTime {
+    /// New handler using the system clock.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            clock: system_utc,
+            interval: 0,
+            since: Duration::ZERO,
+        }
+    }
+
+    /// New handler with an injected clock (for tests / a host-supplied source).
+    #[must_use]
+    pub fn with_clock(clock: fn() -> [u8; UTC_TIME_LEN]) -> Self {
+        Self {
+            clock,
+            interval: 0,
+            since: Duration::ZERO,
+        }
+    }
+
+    fn reply(&self) -> Vec<u8> {
+        ser(&CiDateTime {
+            utc_time: (self.clock)(),
+            local_offset: None,
+        })
+    }
+}
+
+impl Resource for DateTime {
+    fn id(&self) -> ResourceId {
+        DATE_TIME
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ) {
+            if let Ok(enq) = DateTimeEnq::parse(apdu) {
+                self.interval = enq.response_interval;
+                self.since = Duration::ZERO;
+                out.apdus.push(self.reply());
+            }
+        }
+        out
+    }
+
+    fn tick(&mut self, elapsed: Duration) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        if self.interval > 0 {
+            self.since += elapsed;
+            if self.since >= Duration::from_secs(u64::from(self.interval)) {
+                self.since = Duration::ZERO;
+                out.apdus.push(self.reply());
+            }
+        }
+        out
+    }
+}
+
+/// MMI (§8.6) — module-provided. Surfaces the module's menus/enquiries and the
+/// close as [`Notification::Mmi`] events for the application to display. (The
+/// module drives the dialog; answering — `menu_answ`/`answ` — is a later
+/// addition.)
+#[derive(Debug, Default)]
+pub struct Mmi;
+
+impl Resource for Mmi {
+    fn id(&self) -> ResourceId {
+        MMI
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        match peek_tag(apdu) {
+            Some(t) if t == tag::ENQ => {
+                if let Ok(e) = Enq::parse(apdu) {
+                    out.notify.push(Notification::Mmi(MmiEvent::Enquiry {
+                        prompt: text(e.text_chars),
+                        blind: e.blind_answer,
+                        answer_len: e.answer_text_length,
+                    }));
+                }
+            }
+            Some(t) if t == tag::MENU_LAST => {
+                if let Ok(m) = Menu::parse(apdu) {
+                    out.notify.push(Notification::Mmi(MmiEvent::Menu {
+                        title: text(m.title.text_chars),
+                        items: m.choices.iter().map(|c| text(c.text_chars)).collect(),
+                    }));
+                }
+            }
+            Some(t) if t == tag::CLOSE_MMI => {
+                out.notify.push(Notification::Mmi(MmiEvent::Close));
+            }
+            _ => {}
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +422,31 @@ mod tests {
     }
 
     #[test]
+    fn mmi_surfaces_enquiry_and_close() {
+        let mut h = Mmi;
+        // enquiry
+        let enq = ser(&Enq {
+            blind_answer: true,
+            answer_text_length: 4,
+            text_chars: b"PIN?",
+        });
+        assert_eq!(
+            h.on_apdu(&enq).notify,
+            vec![Notification::Mmi(MmiEvent::Enquiry {
+                prompt: "PIN?".to_string(),
+                blind: true,
+                answer_len: 4,
+            })]
+        );
+        // close_mmi (tag 9F 88 00) — surfaced as Close
+        let close = [0x9F, 0x88, 0x00, 0x01, 0x00];
+        assert_eq!(
+            h.on_apdu(&close).notify,
+            vec![Notification::Mmi(MmiEvent::Close)]
+        );
+    }
+
+    #[test]
     fn profile_change_re_enquires() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         let out = rm.on_apdu(&ser(&dvb_ci::objects::resource_manager::ProfileChange));
@@ -295,6 +474,41 @@ mod tests {
                 menu: "Acme CAM".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn mjd_bcd_encoding_is_correct() {
+        // Unix epoch 1970-01-01 00:00:00 → MJD 40587 (0x9E8B), 00:00:00.
+        assert_eq!(unix_to_mjd_bcd(0), [0x9E, 0x8B, 0x00, 0x00, 0x00]);
+        // 1970-01-02 13:45:09 → MJD 40588 (0x9E8C), BCD 13 45 09.
+        let secs = SECS_PER_DAY + 13 * 3600 + 45 * 60 + 9;
+        assert_eq!(unix_to_mjd_bcd(secs), [0x9E, 0x8C, 0x13, 0x45, 0x09]);
+    }
+
+    #[test]
+    fn date_time_replies_to_enq_and_resends_on_interval() {
+        let fixed = || [0x9E, 0x7B, 0x00, 0x00, 0x00];
+        let mut h = DateTime::with_clock(fixed);
+        // enquiry with a 5s response interval → immediate reply
+        let enq = ser(&DateTimeEnq {
+            response_interval: 5,
+        });
+        let out = h.on_apdu(&enq);
+        assert_eq!(out.apdus.len(), 1);
+        assert_eq!(peek_tag(&out.apdus[0]), Some(tag::DATE_TIME));
+        // before the interval: no resend
+        assert!(h.tick(Duration::from_secs(3)).apdus.is_empty());
+        // crossing the interval: resend
+        assert_eq!(h.tick(Duration::from_secs(3)).apdus.len(), 1);
+    }
+
+    #[test]
+    fn date_time_interval_zero_does_not_resend() {
+        let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
+        h.on_apdu(&ser(&DateTimeEnq {
+            response_interval: 0,
+        }));
+        assert!(h.tick(Duration::from_secs(60)).apdus.is_empty());
     }
 
     #[test]

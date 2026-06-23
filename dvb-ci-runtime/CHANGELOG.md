@@ -29,14 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   handshake (profile exchange → `CamReady`, then opens the module-provided
   resources); **application_information** (→ `ApplicationInfo`); **conditional
   access** (`ca_info` → `CaInfo`; host `ca_pmt` via `send_ca_pmt`; decodes
-  `ca_pmt_reply`).
+  `ca_pmt_reply`); **date_time** (host-provided; answers `date_time_enquiry`,
+  resends on the module's requested interval; DVB UTC = MJD + BCD encoding);
+  **mmi** (decodes module `Menu`/`Enquiry`/`Close` → `Notification::Mmi`).
 - **`Driver<D: CaDevice>`**: pumps the device against the stack
   (`init`/`send_ca_pmt`/`pump`/`take_notifications`).
+- **Linux `CaDevice`** (`linux` feature, Linux-only): a `/dev/dvb/adapterN/caM`
+  device via `libc` (read/write/poll + `CA_RESET`/`CA_GET_SLOT_INFO` ioctls,
+  request numbers computed from the standard `_IOC` encoding). The one place the
+  crate uses `unsafe`; the portable core stays unsafe-free.
 - Spec mds: `docs/en50221-{transport,session,resources}.md` (clean-room).
-- `#![forbid(unsafe_code)]`; 23 tests, no hardware required.
+- `#![deny(unsafe_code)]` (the Linux device leaf is the sole `#[allow]`);
+  27 tests, no hardware required (the Linux device is compile-checked).
 
 ### Not yet (roadmap)
 
-- `date_time` / `host_control` / `mmi` resource handlers.
-- A Linux `/dev/dvb/adapterN/caM` `CaDevice` implementation.
+- `host_control` resource; MMI answering (`menu_answ`/`answ`).
 - A differential test harness against an external C reference.
