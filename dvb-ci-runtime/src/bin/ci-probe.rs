@@ -32,7 +32,7 @@ mod imp {
 
     use clap::{Args, Parser, Subcommand};
     use dvb_ci_runtime::device::RecordingCaDevice;
-    use dvb_ci_runtime::event::MmiEvent;
+    use dvb_ci_runtime::event::{MmiEvent, MmiMenu};
     use dvb_ci_runtime::linux::LinuxCaDevice;
     use dvb_ci_runtime::{trace, CaDevice, Driver, Notification};
 
@@ -212,14 +212,23 @@ mod imp {
             driver.pump(PUMP)?;
             for note in driver.take_notifications() {
                 match note {
-                    Notification::Mmi(MmiEvent::Menu { title, items }) => {
-                        println!("\n== {title} ==");
-                        for (i, item) in items.iter().enumerate() {
-                            println!("  {}) {item}", i + 1);
+                    Notification::Mmi(MmiEvent::Menu(m)) => {
+                        print_menu_header(&m);
+                        for (i, choice) in m.choices.iter().enumerate() {
+                            println!("  {}) {choice}", i + 1);
                         }
                         println!("  0) back");
                         let choice = prompt("select> ")?;
                         driver.mmi_menu_answer(choice.trim().parse().unwrap_or(0))?;
+                    }
+                    Notification::Mmi(MmiEvent::List(m)) => {
+                        // A list is informational — show it, then dismiss.
+                        print_menu_header(&m);
+                        for item in &m.choices {
+                            println!("  - {item}");
+                        }
+                        prompt("(press Enter)")?;
+                        driver.mmi_menu_answer(0)?;
                     }
                     Notification::Mmi(MmiEvent::Enquiry {
                         prompt: p, blind, ..
@@ -238,6 +247,16 @@ mod imp {
         }
         dump_trace(&driver, trace);
         Ok(())
+    }
+
+    /// Print a menu/list's three header lines (skipping any that are blank).
+    fn print_menu_header(m: &MmiMenu) {
+        println!("\n== {} ==", m.title);
+        for line in [&m.subtitle, &m.bottom] {
+            if !line.trim().is_empty() {
+                println!("{line}");
+            }
+        }
     }
 
     fn prompt(p: &str) -> io::Result<String> {

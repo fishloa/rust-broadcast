@@ -99,6 +99,13 @@ impl<D: CaDevice> Driver<D> {
         self.run(actions)
     }
 
+    /// Ask the module to open its MMI menu (`enter_menu`) — e.g. to read card /
+    /// entitlement info from the module's own menus.
+    pub fn enter_menu(&mut self) -> io::Result<()> {
+        let actions = self.stack.handle(Event::Host(HostRequest::EnterMenu));
+        self.run(actions)
+    }
+
     /// One pump step: if the device is readable within `timeout`, read a frame
     /// and feed it; otherwise advance the stack's timers by `timeout` (driving
     /// the poll cadence). Returns whether a frame was processed.

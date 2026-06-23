@@ -45,6 +45,9 @@ pub enum HostRequest<'a> {
     MmiEnquiryAnswer(&'a [u8]),
     /// Abort the current MMI enquiry (`answ` with `answ_id = cancel`).
     MmiCancel,
+    /// Ask the module to open its MMI menu (`enter_menu` on the
+    /// application_information session) — e.g. to read card / entitlement info.
+    EnterMenu,
     /// Descramble the services in a PMT section (raw `dvb-si` PMT bytes). The
     /// stack filters the PMT's `CA_descriptor`s to the CAM's advertised CAIDs
     /// (from its `ca_info`), sends a `ca_pmt` with `cmd_id = query`, and — when
@@ -124,18 +127,38 @@ pub enum Notification {
     },
 }
 
+/// A decoded high-level MMI `menu()` / `list()` ready for display (§8.6.5,
+/// Tables 49/51). The three header lines and the choice list are kept separate
+/// so a UI can render them directly — a title bar, two sub-lines, and a list of
+/// selectable rows — without re-parsing.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MmiMenu {
+    /// Title line.
+    pub title: String,
+    /// Sub-title line (often a section heading).
+    pub subtitle: String,
+    /// Bottom line (often a hint such as "Select item and press OK").
+    pub bottom: String,
+    /// The selectable choices, in wire order. Answer the Nth (1-based) with
+    /// [`Driver::mmi_menu_answer`](crate::Driver::mmi_menu_answer)`(N)`; `0`
+    /// cancels / goes back.
+    pub choices: Vec<String>,
+}
+
 /// MMI (man-machine interface) host events.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum MmiEvent {
-    /// A `menu`/`list` to display: title + items.
-    Menu {
-        /// Menu title text.
-        title: String,
-        /// Selectable item texts.
-        items: Vec<String>,
-    },
-    /// An `enquiry` (text prompt) expecting an answer.
+    /// A `menu()` to display — the user picks one choice. Answer via
+    /// [`Driver::mmi_menu_answer`](crate::Driver::mmi_menu_answer).
+    Menu(MmiMenu),
+    /// A `list()` to display — informational (e.g. an entitlement listing); the
+    /// host typically dismisses it with
+    /// [`Driver::mmi_menu_answer`](crate::Driver::mmi_menu_answer)`(0)`.
+    List(MmiMenu),
+    /// An `enquiry` (text prompt) expecting an answer. Reply via
+    /// [`Driver::mmi_enquiry_answer`](crate::Driver::mmi_enquiry_answer) or
+    /// [`Driver::mmi_cancel`](crate::Driver::mmi_cancel).
     Enquiry {
         /// Prompt text.
         prompt: String,

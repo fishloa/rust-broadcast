@@ -13,7 +13,10 @@ use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
 use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
 use dvb_ci::objects::date_time::{DateTime as CiDateTime, DateTimeEnq, UTC_TIME_LEN};
-use dvb_ci::objects::mmi_high::{Enq, Menu};
+use dvb_ci::objects::mmi_display::{
+    DisplayControl, DisplayControlCmd, DisplayReply, DisplayReplyBody, DisplayReplyId, MmiMode,
+};
+use dvb_ci::objects::mmi_high::{Enq, List, Menu};
 use dvb_ci::objects::resource_manager::{Profile, ProfileChange, ProfileEnq};
 use dvb_ci::resource::{
     ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
@@ -22,12 +25,24 @@ use dvb_ci::resource::{
 use dvb_ci::tag::{self, ApduTag};
 use dvb_common::{Parse, Serialize};
 
-use crate::event::{MmiEvent, Notification};
+use crate::event::{MmiEvent, MmiMenu, Notification};
 
 /// Decode MMI `text_char` bytes to a `String` (lossy; full EN 300 468 Annex A
 /// decoding is the application's concern).
 fn text(chars: &[u8]) -> String {
     String::from_utf8_lossy(chars).into_owned()
+}
+
+/// Project a parsed high-level [`Menu`] (also the body of a `list()`) onto the
+/// host-facing [`MmiMenu`] — the three header lines and the choice list kept
+/// distinct for display.
+fn to_menu(m: &Menu<'_>) -> MmiMenu {
+    MmiMenu {
+        title: text(m.title.text_chars),
+        subtitle: text(m.subtitle.text_chars),
+        bottom: text(m.bottom.text_chars),
+        choices: m.choices.iter().map(|c| text(c.text_chars)).collect(),
+    }
 }
 
 pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
@@ -349,9 +364,12 @@ impl Resource for DateTime {
 }
 
 /// MMI (§8.6) — module-provided. Surfaces the module's menus/enquiries and the
-/// close as [`Notification::Mmi`] events for the application to display. (The
-/// module drives the dialog; answering — `menu_answ`/`answ` — is a later
-/// addition.)
+/// close as [`Notification::Mmi`] events for the application to display, and
+/// answers the module's `display_control` mode negotiation. The host drives the
+/// dialog back through [`Driver::mmi_menu_answer`](crate::Driver::mmi_menu_answer)
+/// / [`mmi_enquiry_answer`](crate::Driver::mmi_enquiry_answer) /
+/// [`mmi_cancel`](crate::Driver::mmi_cancel) (sent by [`CiStack`](crate::CiStack)
+/// on the open MMI session).
 #[derive(Debug, Default)]
 pub struct Mmi;
 
@@ -374,14 +392,43 @@ impl Resource for Mmi {
             }
             Some(t) if t == tag::MENU_LAST => {
                 if let Ok(m) = Menu::parse(apdu) {
-                    out.notify.push(Notification::Mmi(MmiEvent::Menu {
-                        title: text(m.title.text_chars),
-                        items: m.choices.iter().map(|c| text(c.text_chars)).collect(),
-                    }));
+                    out.notify
+                        .push(Notification::Mmi(MmiEvent::Menu(to_menu(&m))));
+                }
+            }
+            Some(t) if t == tag::LIST_LAST => {
+                if let Ok(l) = List::parse(apdu) {
+                    out.notify
+                        .push(Notification::Mmi(MmiEvent::List(to_menu(&l.0))));
                 }
             }
             Some(t) if t == tag::CLOSE_MMI => {
                 out.notify.push(Notification::Mmi(MmiEvent::Close));
+            }
+            // High-level MMI mode negotiation (§8.6.1): the module opens an MMI
+            // session and sends `display_control`. The host MUST answer
+            // `display_reply` or the module aborts the MMI — verified live: a
+            // real AlphaCrypt opens MMI after `ca_pmt` and, with no reply, closes
+            // the session and never descrambles (an Enigma2 box answers it).
+            Some(t) if t == tag::DISPLAY_CONTROL => {
+                if let Ok(dc) = DisplayControl::parse(apdu) {
+                    let reply = match dc.cmd {
+                        // Acknowledge the requested MMI mode (echo it back).
+                        DisplayControlCmd::SetMmiMode => DisplayReply {
+                            reply_id: DisplayReplyId::MmiModeAck,
+                            body: DisplayReplyBody::MmiModeAck(
+                                dc.mmi_mode.unwrap_or(MmiMode::HighLevel),
+                            ),
+                        },
+                        // We don't implement the character-table / graphics
+                        // queries; tell the module so per Table 35.
+                        _ => DisplayReply {
+                            reply_id: DisplayReplyId::UnknownDisplayControlCmd,
+                            body: DisplayReplyBody::None,
+                        },
+                    };
+                    out.apdus.push(ser(&reply));
+                }
             }
             _ => {}
         }
@@ -455,6 +502,66 @@ mod tests {
             h.on_apdu(&close).notify,
             vec![Notification::Mmi(MmiEvent::Close)]
         );
+    }
+
+    #[test]
+    fn mmi_surfaces_structured_menu_and_list() {
+        use dvb_ci::objects::mmi_high::{List, Menu, Text};
+        let txt = |s: &'static [u8]| Text {
+            more: false,
+            text_chars: s,
+        };
+        let mut h = Mmi;
+        // A `menu()` → MmiEvent::Menu with header lines and choices kept distinct.
+        let menu = ser(&Menu {
+            more: false,
+            choice_nb: 2,
+            title: txt(b"AlphaCrypt"),
+            subtitle: txt(b"Module Mainmenu"),
+            bottom: txt(b"Select item and press OK"),
+            choices: vec![txt(b"Smartcard"), txt(b"Quit")],
+        });
+        assert_eq!(
+            h.on_apdu(&menu).notify,
+            vec![Notification::Mmi(MmiEvent::Menu(MmiMenu {
+                title: "AlphaCrypt".to_string(),
+                subtitle: "Module Mainmenu".to_string(),
+                bottom: "Select item and press OK".to_string(),
+                choices: vec!["Smartcard".to_string(), "Quit".to_string()],
+            }))]
+        );
+        // A `list()` (same body) → MmiEvent::List.
+        let list = ser(&List(Menu {
+            more: false,
+            choice_nb: 0xFF,
+            title: txt(b"Entitlements"),
+            subtitle: txt(b""),
+            bottom: txt(b""),
+            choices: vec![txt(b"ORF AUT")],
+        }));
+        assert_eq!(
+            h.on_apdu(&list).notify,
+            vec![Notification::Mmi(MmiEvent::List(MmiMenu {
+                title: "Entitlements".to_string(),
+                subtitle: String::new(),
+                bottom: String::new(),
+                choices: vec!["ORF AUT".to_string()],
+            }))]
+        );
+    }
+
+    #[test]
+    fn mmi_answers_display_control_set_mmi_mode() {
+        use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
+        let mut h = Mmi;
+        let dc = ser(&DisplayControl {
+            cmd: DisplayControlCmd::SetMmiMode,
+            mmi_mode: Some(MmiMode::HighLevel),
+        });
+        let out = h.on_apdu(&dc);
+        // mmi_mode_ack(high_level): 9F 88 02 02 01 01.
+        assert_eq!(out.apdus, vec![vec![0x9F, 0x88, 0x02, 0x02, 0x01, 0x01]]);
+        assert!(out.notify.is_empty());
     }
 
     #[test]

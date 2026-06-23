@@ -46,9 +46,6 @@ pub struct CiStack {
     /// `CA_system_id`s the CAM advertised in its `ca_info` (the descramble
     /// filter set; empty until `ca_info` arrives).
     cam_caids: Vec<u16>,
-    /// PMT section bytes of an in-flight [`HostRequest::Descramble`], awaiting
-    /// the `ca_pmt_reply` that triggers the `ok_descrambling` follow-up.
-    pending_descramble: Option<Vec<u8>>,
 }
 
 impl Default for CiStack {
@@ -91,7 +88,6 @@ impl CiStack {
             ],
             host_provided,
             cam_caids: Vec::new(),
-            pending_descramble: None,
         }
     }
 
@@ -135,6 +131,10 @@ impl CiStack {
                 self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, apdu)
             }
             Event::Host(HostRequest::Descramble(pmt)) => self.descramble(pmt),
+            Event::Host(HostRequest::EnterMenu) => {
+                let apdu = ser_apdu(&dvb_ci::objects::application_info::EnterMenu);
+                self.send_to_resource(APPLICATION_INFORMATION, &apdu)
+            }
             Event::Host(HostRequest::MmiMenuAnswer(choice_ref)) => {
                 let apdu = ser_apdu(&MenuAnsw { choice_ref });
                 self.send_to_resource(MMI, &apdu)
@@ -161,35 +161,30 @@ impl CiStack {
     /// `ca_info`, and complete a pending [`HostRequest::Descramble`] by sending
     /// `ok_descrambling` when the `ca_pmt_reply` says descrambling is possible.
     fn on_ca_notification(&mut self, note: &Notification) -> Vec<Action> {
-        match note {
-            Notification::CaInfo { ca_system_ids } => {
-                self.cam_caids = ca_system_ids.clone();
-                Vec::new()
-            }
-            Notification::CaPmtReply {
-                descrambling_ok, ..
-            } => match self.pending_descramble.take() {
-                Some(pmt) if *descrambling_ok => {
-                    match self.build_ca_pmt_bytes(&pmt, CaPmtCmdId::OkDescrambling) {
-                        Ok(bytes) => self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes),
-                        Err(detail) => vec![Action::Notify(Notification::Error { detail })],
-                    }
-                }
-                _ => Vec::new(),
-            },
-            _ => Vec::new(),
+        // Cache the CAM's advertised CAIDs so a later `descramble` can filter the
+        // `ca_pmt` to them. (The `ca_pmt_reply` outcome is surfaced to the host as
+        // `Notification::CaPmtReply`; no follow-up SPDU is needed — we send
+        // `ok_descrambling` up front.)
+        if let Notification::CaInfo { ca_system_ids } = note {
+            self.cam_caids = ca_system_ids.clone();
         }
+        Vec::new()
     }
 
     /// Begin a [`HostRequest::Descramble`]: build a CAID-filtered `ca_pmt` with
-    /// `cmd_id = query` and send it, recording the PMT so the `ok_descrambling`
-    /// follow-up can be built when the reply arrives.
+    /// `cmd_id = ok_descrambling` and send it.
+    ///
+    /// We do NOT send a `query` first: a real AlphaCrypt/Irdeto module does not
+    /// reply to a `ca_pmt` query (verified live — the query was sent and the
+    /// module stayed silent, so a query→reply→ok flow stalls forever). The
+    /// module descrambles directly on `ok_descrambling` and reports the outcome
+    /// via `ca_pmt_reply` (surfaced as `Notification::CaPmtReply`). This matches
+    /// what oscam / libdvben50221 do in practice.
     fn descramble(&mut self, pmt: &[u8]) -> Vec<Action> {
-        let bytes = match self.build_ca_pmt_bytes(pmt, CaPmtCmdId::Query) {
+        let bytes = match self.build_ca_pmt_bytes(pmt, CaPmtCmdId::OkDescrambling) {
             Ok(b) => b,
             Err(detail) => return vec![Action::Notify(Notification::Error { detail })],
         };
-        self.pending_descramble = Some(pmt.to_vec());
         self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes)
     }
 
@@ -540,7 +535,7 @@ mod tests {
     }
 
     #[test]
-    fn descramble_filters_then_queries_then_oks() {
+    fn descramble_sends_ok_descrambling_filtered() {
         use dvb_ci::objects::ca_pmt::CaPmtCmdId;
         use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
         use dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT;
@@ -554,21 +549,23 @@ mod tests {
             .map(|(n, _)| n)
             .unwrap();
 
+        // descramble() sends ca_pmt with cmd_id = ok_descrambling directly (no
+        // query first — a real CAM doesn't reply to a query; verified live).
         let pmt = build_pmt();
-        let mut query_actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
-        // The query is queued behind the in-flight link; the module's SB flushes
-        // it (one block per turn — #337).
-        query_actions.extend(pump_sbs(&mut s));
-        // A ca_pmt with cmd_id = query was sent, filtered to the CAM's CAIDs.
-        let q = first_ca_pmt(&query_actions).expect("ca_pmt query sent");
-        assert_eq!(q.cmd_id, CaPmtCmdId::Query);
+        let mut actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        // Queued behind the in-flight link; the module's SB flushes it (one block
+        // per turn — #337).
+        actions.extend(pump_sbs(&mut s));
+        let c = first_ca_pmt(&actions).expect("ca_pmt sent");
+        assert_eq!(c.cmd_id, CaPmtCmdId::OkDescrambling);
+        // CA descriptors filtered to the CAM's advertised CAIDs.
         assert_eq!(
-            q.program_ca_descriptors.as_slice(),
+            c.program_ca_descriptors.as_slice(),
             &[0x09, 0x04, 0x0B, 0x00, 0xE1, 0x00]
         );
 
-        // Module replies that descrambling is possible → stack auto-sends OK.
-        let mut ok_actions = s.handle(Event::Readable(&r_apdu(
+        // The module's ca_pmt_reply is surfaced to the host (no follow-up SPDU).
+        let reply = s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaPmtReply {
                 program_number: 1,
@@ -578,57 +575,13 @@ mod tests {
                 streams: vec![],
             }),
         )));
-        assert!(ok_actions.iter().any(|a| matches!(
+        assert!(reply.iter().any(|a| matches!(
             a,
             Action::Notify(Notification::CaPmtReply {
                 descrambling_ok: true,
                 ..
             })
         )));
-        ok_actions.extend(pump_sbs(&mut s));
-        assert!(
-            all_ca_pmts(&ok_actions)
-                .iter()
-                .any(|c| c.cmd_id == CaPmtCmdId::OkDescrambling),
-            "ca_pmt ok_descrambling sent after a positive reply"
-        );
-    }
-
-    #[test]
-    fn descramble_reply_not_possible_sends_no_ok() {
-        use dvb_ci::objects::ca_pmt::CaPmtCmdId;
-        use dvb_ci::objects::ca_pmt_reply::CaPmtReply;
-        use dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT;
-
-        let mut s = stack_with_ca_session();
-        let ca_nb = s
-            .session
-            .sessions()
-            .into_iter()
-            .find(|&(_, r)| r == CONDITIONAL_ACCESS_SUPPORT)
-            .map(|(n, _)| n)
-            .unwrap();
-        let pmt = build_pmt();
-        let mut actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
-        // ca_enable = None → descrambling not possible → no OK follow-up.
-        actions.extend(s.handle(Event::Readable(&r_apdu(
-            ca_nb,
-            &ser(&CaPmtReply {
-                program_number: 1,
-                version_number: 1,
-                current_next_indicator: true,
-                ca_enable: None,
-                streams: vec![],
-            }),
-        ))));
-        actions.extend(pump_sbs(&mut s));
-        // The query may be flushed, but no ok_descrambling is ever sent.
-        assert!(
-            all_ca_pmts(&actions)
-                .iter()
-                .all(|c| c.cmd_id != CaPmtCmdId::OkDescrambling),
-            "no ok_descrambling without a positive reply"
-        );
     }
 
     /// Whether any written frame carries the 3-byte APDU tag `want`.

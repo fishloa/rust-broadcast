@@ -72,8 +72,10 @@ struct CaSlotInfo {
 
 /// Settle time after `CA_RESET` before the module is usable. The DD/cxd2099
 /// (and others) only (re)initialise the slot a couple of seconds after reset;
-/// `Create_T_C` sent too early is ignored.
-const RESET_SETTLE: Duration = Duration::from_millis(2000);
+/// `Create_T_C` sent too early is ignored. 3s is the value validated live
+/// against a DD Octopus cxd2099 + AlphaCrypt module (2s intermittently raced the
+/// module's resource-manager open).
+const RESET_SETTLE: Duration = Duration::from_millis(3000);
 
 /// A [`CaDevice`] backed by a Linux DVB CA character device.
 ///
