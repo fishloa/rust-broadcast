@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.0]
+## [0.9.0]
 
-### Fixed (#340 — fifth live-CAM run; `ca_info` finally lands)
+### Added
+- **UI-friendly MMI menu API.** `MmiEvent::Menu`/`List` now carry a typed
+  `MmiMenu` { `title`, `subtitle`, `bottom`, `choices` } (the three header lines
+  + selectable choices kept separate for direct rendering); `Menu` (selectable)
+  and `List` (informational) are distinct variants. Answer via the existing
+  `Driver::mmi_menu_answer` / `mmi_enquiry_answer` / `mmi_cancel`.
+- **`Driver::enter_menu` / `HostRequest::EnterMenu`** — ask the module to open its
+  MMI menu (`enter_menu` on the application_information session).
+- Typed **`DisplayReply`** for the high-level MMI `display_control` handshake
+  (no hand-rolled magic-byte APDU).
+
+### Changed
+- **`descramble` sends `ca_pmt` `cmd_id = ok_descrambling` directly** (no `query`
+  first): a real AlphaCrypt/Irdeto module stays silent on a query, stalling the
+  prior query→reply→ok flow. The reply still surfaces as
+  `Notification::CaPmtReply`. Matches oscam / libdvben50221.
+
+### Fixed (#340 — `ca_info` finally lands on live hardware)
 - **app_info / conditional_access / mmi are HOST-provided, not module-provided.**
   Every prior round had the session direction wrong for these resources: the host
   tried to open them itself (0.6.0 `create_session`, then `open_session_request`),
