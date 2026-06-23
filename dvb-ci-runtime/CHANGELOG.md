@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0]
+
+### Fixed (#340 — fifth live-CAM run; `ca_info` finally lands)
+- **app_info / conditional_access / mmi are HOST-provided, not module-provided.**
+  Every prior round had the session direction wrong for these resources: the host
+  tried to open them itself (0.6.0 `create_session`, then `open_session_request`),
+  but a real AlphaCrypt/Irdeto module **rejects `create_session` (status 0xF0)**
+  and **ignores a host `open_session_request`** for them. They are host-provided:
+  the host advertises all five resources it implements (resource_manager,
+  application_information, conditional_access, date_time, mmi) in its RM `profile`
+  reply, and the **module** opens a session to each (module → host
+  `open_session_request`) — exactly as it already did for resource_manager and
+  date_time. The host just accepts; each session's `on_open` drives its enquiry.
+  - `CiStack::host_provided` now lists all five.
+  - The RM no longer `create_session`s anything after `profile_change`.
+  - `SessionLayer::on_spdu` binds a host-opened session on `open_session_response`.
+- **`trace::decode_frame`** now annotates session SPDUs with the resource_id
+  (+ status/session_nb), so a capture shows *which* resource each open targets.
+
+Verified live: resource_manager → application_information ("AlphaCrypt") →
+conditional_access → `ca_info` with 18 CA_system_ids (incl 0x0648/0x0650 ORF).
+
 ## [0.7.0]
 
 ### Changed
