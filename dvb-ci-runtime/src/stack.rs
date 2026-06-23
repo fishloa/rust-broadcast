@@ -353,6 +353,27 @@ mod tests {
 
     // --- #334: the auto-descramble (query -> reply -> ok) sequence ---
 
+    /// Feed standalone `T_SB`s (data_available = 0) — the module acking each host
+    /// block — until the stack stops writing, collecting every action. This
+    /// drains the transport's one-block-per-turn outbound queue (#337).
+    fn pump_sbs(s: &mut CiStack) -> Vec<Action> {
+        let mut all = Vec::new();
+        for _ in 0..16 {
+            let a = s.handle(Event::Readable(&[
+                tpdu_tags::SB,
+                0x02,
+                0x01,
+                SbValue::new(false).0,
+            ]));
+            let wrote = a.iter().any(|x| matches!(x, Action::Write(_)));
+            all.extend(a);
+            if !wrote {
+                break;
+            }
+        }
+        all
+    }
+
     /// Wrap an APDU for delivery on `session_nb` (session_number prefix), then as
     /// a module→host R_TPDU.
     fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
@@ -483,7 +504,10 @@ mod tests {
             .unwrap();
 
         let pmt = build_pmt();
-        let query_actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        let mut query_actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        // The query is queued behind the in-flight link; the module's SB flushes
+        // it (one block per turn — #337).
+        query_actions.extend(pump_sbs(&mut s));
         // A ca_pmt with cmd_id = query was sent, filtered to the CAM's CAIDs.
         let q = first_ca_pmt(&query_actions).expect("ca_pmt query sent");
         assert_eq!(q.cmd_id, CaPmtCmdId::Query);
@@ -493,7 +517,7 @@ mod tests {
         );
 
         // Module replies that descrambling is possible → stack auto-sends OK.
-        let ok_actions = s.handle(Event::Readable(&r_apdu(
+        let mut ok_actions = s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaPmtReply {
                 program_number: 1,
@@ -510,12 +534,18 @@ mod tests {
                 ..
             })
         )));
-        let ok = first_ca_pmt(&ok_actions).expect("ca_pmt ok_descrambling sent");
-        assert_eq!(ok.cmd_id, CaPmtCmdId::OkDescrambling);
+        ok_actions.extend(pump_sbs(&mut s));
+        assert!(
+            all_ca_pmts(&ok_actions)
+                .iter()
+                .any(|c| c.cmd_id == CaPmtCmdId::OkDescrambling),
+            "ca_pmt ok_descrambling sent after a positive reply"
+        );
     }
 
     #[test]
     fn descramble_reply_not_possible_sends_no_ok() {
+        use dvb_ci::objects::ca_pmt::CaPmtCmdId;
         use dvb_ci::objects::ca_pmt_reply::CaPmtReply;
         use dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT;
 
@@ -528,9 +558,9 @@ mod tests {
             .map(|(n, _)| n)
             .unwrap();
         let pmt = build_pmt();
-        s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        let mut actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
         // ca_enable = None → descrambling not possible → no OK follow-up.
-        let actions = s.handle(Event::Readable(&r_apdu(
+        actions.extend(s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaPmtReply {
                 program_number: 1,
@@ -539,21 +569,29 @@ mod tests {
                 ca_enable: None,
                 streams: vec![],
             }),
-        )));
-        assert!(first_ca_pmt(&actions).is_none(), "no ca_pmt should be sent");
+        ))));
+        actions.extend(pump_sbs(&mut s));
+        // The query may be flushed, but no ok_descrambling is ever sent.
+        assert!(
+            all_ca_pmts(&actions)
+                .iter()
+                .all(|c| c.cmd_id != CaPmtCmdId::OkDescrambling),
+            "no ok_descrambling without a positive reply"
+        );
     }
 
-    /// Parse the first `ca_pmt` (tag `9F 80 32`) found in the written frames,
-    /// returning its `cmd_id` + programme CA-descriptor bytes (owned).
-    fn first_ca_pmt(actions: &[Action]) -> Option<CaPmtSummary> {
+    /// Parse every `ca_pmt` (tag `9F 80 32`) found in the written frames,
+    /// returning each one's `cmd_id` + programme CA-descriptor bytes (owned).
+    fn all_ca_pmts(actions: &[Action]) -> Vec<CaPmtSummary> {
         use dvb_ci::objects::ca_pmt::CaPmt;
         use dvb_common::Parse;
         let tag = [0x9F, 0x80, 0x32];
+        let mut out = Vec::new();
         for a in actions {
             if let Action::Write(w) = a {
                 if let Some(pos) = w.windows(3).position(|x| x == tag) {
                     if let Ok(p) = CaPmt::parse(&w[pos..]) {
-                        return Some(CaPmtSummary {
+                        out.push(CaPmtSummary {
                             cmd_id: p.cmd_id.expect("programme cmd_id present"),
                             program_ca_descriptors: p.program_ca_descriptors.to_vec(),
                         });
@@ -561,7 +599,12 @@ mod tests {
                 }
             }
         }
-        None
+        out
+    }
+
+    /// The first `ca_pmt` in the written frames.
+    fn first_ca_pmt(actions: &[Action]) -> Option<CaPmtSummary> {
+        all_ca_pmts(actions).into_iter().next()
     }
 
     struct CaPmtSummary {

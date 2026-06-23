@@ -35,6 +35,13 @@ Implemented from the EN 50221 specification.
   `/dev/dvb/adapterN/caM` (control plane) and `ciM` (TS data plane, `CiDataDevice`
   — scrambled-in / descrambled-out for separate-CI hardware) behind the `linux`
   feature (`libc`).
+- **Diagnostics**: `RecordingCaDevice` captures the link both ways;
+  `trace::decode_frame` / `decode_log` annotate a capture (TPDU → SPDU → APDU)
+  for live-CAM debugging.
+
+The EN 50221 link is polled half-duplex — the host sends one `T_Data_Last` per
+module `T_SB`. The transport queues outbound SPDUs and releases one per turn (a
+real CAM drops a second block sent before it answers the first — #337).
 
 `#![deny(unsafe_code)]` — the Linux device leaf is the sole `#[allow]`; the
 sans-IO core is unsafe-free. 27 tests, no hardware required.

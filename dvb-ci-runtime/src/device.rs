@@ -133,9 +133,114 @@ impl CaDevice for MockCaDevice {
     }
 }
 
+/// One link-layer event for diagnostics, captured in both directions by
+/// [`RecordingCaDevice`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkEvent {
+    /// Host → module: a frame the host wrote.
+    Tx(Vec<u8>),
+    /// Module → host: a frame the host read.
+    Rx(Vec<u8>),
+    /// A `reset()` ioctl.
+    Reset,
+    /// A `slot_info()` ioctl and the status it returned.
+    SlotInfo(SlotInfo),
+}
+
+/// A [`CaDevice`] decorator that records every frame in **both** directions
+/// (plus ioctls) for live-CAM diagnostics. Wrap a real device, run, then dump
+/// the [`log`](Self::log) — or decode it with
+/// [`trace::decode_log`](crate::trace::decode_log) — to get an annotated byte
+/// trace without hand-instrumenting the device:
+///
+/// ```no_run
+/// # use dvb_ci_runtime::{Driver, device::RecordingCaDevice, trace};
+/// # fn real_device() -> dvb_ci_runtime::MockCaDevice { dvb_ci_runtime::MockCaDevice::new([]) }
+/// let mut driver = Driver::new(RecordingCaDevice::new(real_device()));
+/// driver.init().unwrap();
+/// // ... pump ...
+/// println!("{}", trace::decode_log(driver.device().log()));
+/// ```
+#[derive(Debug, Default)]
+pub struct RecordingCaDevice<D> {
+    inner: D,
+    /// The captured link events, in order.
+    pub log: Vec<LinkEvent>,
+}
+
+impl<D: CaDevice> RecordingCaDevice<D> {
+    /// Wrap `inner`, recording all I/O.
+    pub fn new(inner: D) -> Self {
+        Self {
+            inner,
+            log: Vec::new(),
+        }
+    }
+
+    /// The recorded link events, in order.
+    #[must_use]
+    pub fn log(&self) -> &[LinkEvent] {
+        &self.log
+    }
+
+    /// Borrow the wrapped device.
+    pub fn inner(&self) -> &D {
+        &self.inner
+    }
+}
+
+impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        if n > 0 {
+            self.log.push(LinkEvent::Rx(buf[..n].to_vec()));
+        }
+        Ok(n)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.log.push(LinkEvent::Tx(buf.to_vec()));
+        self.inner.write(buf)
+    }
+
+    fn reset(&mut self) -> io::Result<()> {
+        self.log.push(LinkEvent::Reset);
+        self.inner.reset()
+    }
+
+    fn slot_info(&mut self) -> io::Result<SlotInfo> {
+        let si = self.inner.slot_info()?;
+        self.log.push(LinkEvent::SlotInfo(si));
+        Ok(si)
+    }
+
+    fn poll(&mut self, timeout: std::time::Duration) -> io::Result<bool> {
+        // Polls are not recorded (they would swamp the trace).
+        self.inner.poll(timeout)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recording_device_captures_both_directions() {
+        let inner = MockCaDevice::new([vec![0x83, 0x01, 0x01]]);
+        let mut dev = RecordingCaDevice::new(inner);
+        dev.reset().unwrap();
+        dev.write(&[0x82, 0x01, 0x01]).unwrap();
+        let mut buf = [0u8; 16];
+        dev.read(&mut buf).unwrap();
+        assert_eq!(
+            dev.log(),
+            &[
+                LinkEvent::Reset,
+                LinkEvent::Tx(vec![0x82, 0x01, 0x01]),
+                LinkEvent::Rx(vec![0x83, 0x01, 0x01]),
+            ]
+        );
+    }
 
     #[test]
     fn mock_records_writes_and_replays_inbound() {

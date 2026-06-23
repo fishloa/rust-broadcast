@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### Fixed
+- **Resource-manager exchange stalled against a real CAM** (#337). The stack
+  emitted two `T_Data_Last` blocks back-to-back in one turn (e.g.
+  `open_session_response` + `profile_enquiry`), but EN 50221's link is polled
+  half-duplex — one data block per module turn. A real module (AlphaCrypt/Irdeto)
+  consumed the first and dropped the second, so RM never completed. The transport
+  now queues outbound SPDUs and sends one per module `T_SB`.
+
+### Added
+- **`RecordingCaDevice<D>`** — a `CaDevice` decorator that captures every frame
+  in both directions (+ ioctls) as `LinkEvent`s, for live-CAM diagnostics.
+- **`trace::decode_frame` / `trace::decode_log`** — decode raw link frames into
+  one-line annotations (TPDU → SPDU → APDU tag names), so a capture reads like a
+  bug-report trace without hand-decoding.
+
 ## [0.2.0]
 
 ### Added

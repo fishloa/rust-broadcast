@@ -15,6 +15,7 @@
 //! [`Tick`](crate::event::Event::Tick)/timer model so it is deterministic and
 //! testable without a clock.
 
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use dvb_ci::tpdu::{create_t_c, tags, CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject};
@@ -97,8 +98,15 @@ pub struct Transport {
     /// Time accumulated since the last poll (drives the poll cadence).
     since_poll: Duration,
     /// Time accumulated since a command that expects a reply (drives the
-    /// reply timeout); `None` when not awaiting a reply.
+    /// reply timeout); `None` when not awaiting a reply. While `Some`, a host
+    /// C_TPDU is *in flight* (sent, module not yet answered) — the link is
+    /// half-duplex, so no further data block may be sent until it clears.
     awaiting: Option<Duration>,
+    /// SPDUs queued to send, one `T_Data_Last` per module turn. EN 50221's link
+    /// is polled half-duplex: the host sends a single data block, then must wait
+    /// for the module's `T_SB` before sending the next. Sending two back-to-back
+    /// makes a real CAM drop the second (issue #337).
+    outbound: VecDeque<Vec<u8>>,
 }
 
 impl Default for Transport {
@@ -119,6 +127,7 @@ impl Transport {
             reply_timeout: DEFAULT_REPLY_TIMEOUT,
             since_poll: Duration::ZERO,
             awaiting: None,
+            outbound: VecDeque::new(),
         }
     }
 
@@ -166,17 +175,34 @@ impl Transport {
         }
     }
 
-    /// Queue an upper-layer SPDU to send (wrapped in a `T_Data_Last`).
+    /// Queue an upper-layer SPDU to send (wrapped in a `T_Data_Last`). The block
+    /// is transmitted now if the link is free, else held until the in-flight
+    /// C_TPDU is answered — one data block per module turn (§A.4 half-duplex).
     pub fn send_spdu(&mut self, spdu: &[u8]) -> Out {
         if self.state != TcState::Active {
             return Out::default();
         }
-        self.awaiting = Some(Duration::ZERO);
-        self.since_poll = Duration::ZERO;
-        Out {
-            writes: vec![self.cmd(tags::DATA_LAST, spdu)],
-            timer: Some(self.poll_interval),
-            ..Out::default()
+        self.outbound.push_back(spdu.to_vec());
+        self.flush()
+    }
+
+    /// Emit the next queued data block if the link is free (Active and no
+    /// C_TPDU in flight); otherwise nothing (it waits for the module's `T_SB`).
+    fn flush(&mut self) -> Out {
+        if self.state != TcState::Active || self.awaiting.is_some() {
+            return Out::default();
+        }
+        match self.outbound.pop_front() {
+            Some(spdu) => {
+                self.awaiting = Some(Duration::ZERO);
+                self.since_poll = Duration::ZERO;
+                Out {
+                    writes: vec![self.cmd(tags::DATA_LAST, &spdu)],
+                    timer: Some(self.poll_interval),
+                    ..Out::default()
+                }
+            }
+            None => Out::default(),
         }
     }
 
@@ -206,6 +232,11 @@ impl Transport {
                 self.since_poll += elapsed;
                 if self.since_poll >= self.poll_interval {
                     self.since_poll = Duration::ZERO;
+                    // A queued data block goes out in preference to an empty
+                    // poll, but only when no C_TPDU is in flight.
+                    if self.awaiting.is_none() && !self.outbound.is_empty() {
+                        return self.flush();
+                    }
                     self.awaiting = Some(Duration::ZERO);
                     Out {
                         writes: vec![self.poll_frame()],
@@ -284,6 +315,11 @@ impl Transport {
                 ..Out::default()
             }
         } else {
+            // Module idle: its `T_SB` freed the link, so send the next queued
+            // data block if any (the #337 fix); otherwise resume polling.
+            if !self.outbound.is_empty() {
+                return self.flush();
+            }
             self.since_poll = Duration::ZERO;
             Out {
                 timer: Some(self.poll_interval),
@@ -406,6 +442,40 @@ mod tests {
         let o = t.on_frame(&r_tpdu(tags::DATA_LAST, 1, &[0x01], true));
         assert_eq!(o.spdus, vec![vec![0x01]]);
         assert_eq!(o.writes, vec![vec![tags::RCV, 0x01, 0x01]]);
+    }
+
+    #[test]
+    fn two_sends_serialize_one_block_per_module_turn() {
+        // #337: a real CAM drops a second T_Data_Last sent before it answers the
+        // first. Two send_spdu in one turn must emit only ONE write; the second
+        // goes out after the module's T_SB.
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+
+        let first = t.send_spdu(&[0x92, 0x07]); // e.g. open_session_response
+        assert_eq!(first.writes.len(), 1);
+        assert_eq!(first.writes[0][0], tags::DATA_LAST);
+
+        // Queued while the first is in flight → no write yet.
+        let second = t.send_spdu(&[0x9F, 0x80, 0x10, 0x00]); // profile_enq
+        assert!(
+            second.writes.is_empty(),
+            "second block must wait for the SB"
+        );
+
+        // Module acknowledges with a standalone T_SB (data_available = 0).
+        let after_sb = t.on_frame(&[tags::SB, 0x02, 0x01, SbValue::new(false).0]);
+        assert_eq!(
+            after_sb.writes.len(),
+            1,
+            "second block flushes after the SB"
+        );
+        assert_eq!(after_sb.writes[0][0], tags::DATA_LAST);
+        // It carries the profile_enq payload.
+        assert!(after_sb.writes[0]
+            .windows(4)
+            .any(|w| w == [0x9F, 0x80, 0x10, 0x00]));
     }
 
     #[test]
