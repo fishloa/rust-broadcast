@@ -131,6 +131,9 @@ impl CiStack {
                 self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, apdu)
             }
             Event::Host(HostRequest::Descramble(pmt)) => self.descramble(pmt),
+            Event::Host(HostRequest::DescramblePrograms(pmts)) => self.descramble_programs(pmts),
+            Event::Host(HostRequest::AddProgram(pmt)) => self.add_program(pmt),
+            Event::Host(HostRequest::RemoveProgram(pmt)) => self.remove_program(pmt),
             Event::Host(HostRequest::EnterMenu) => {
                 let apdu = ser_apdu(&dvb_ci::objects::application_info::EnterMenu);
                 self.send_to_resource(APPLICATION_INFORMATION, &apdu)
@@ -181,23 +184,70 @@ impl CiStack {
     /// via `ca_pmt_reply` (surfaced as `Notification::CaPmtReply`). This matches
     /// what oscam / libdvben50221 do in practice.
     fn descramble(&mut self, pmt: &[u8]) -> Vec<Action> {
-        let bytes = match self.build_ca_pmt_bytes(pmt, CaPmtCmdId::OkDescrambling) {
-            Ok(b) => b,
-            Err(detail) => return vec![Action::Notify(Notification::Error { detail })],
-        };
-        self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes)
+        self.send_ca_pmt_for(pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
     }
 
-    /// Build a CAID-filtered `ca_pmt` APDU (`list_management = only`) for `pmt`
-    /// with the given command id. Filters to the CAM's advertised CAIDs once
+    /// Descramble a **set** of programmes in one CA-PMT list (§8.4.3.4): the
+    /// first programme is sent `list_management = first` (or `only` if it is the
+    /// sole programme), the interior ones `more`, the last `last`; all with
+    /// `cmd_id = ok_descrambling`. Replaces any previously selected set. The
+    /// per-programme `ca_pmt`s are serialised one-per-module-turn by the
+    /// transport queue.
+    fn descramble_programs(&mut self, pmts: &[&[u8]]) -> Vec<Action> {
+        let mut actions = Vec::new();
+        let n = pmts.len();
+        for (i, pmt) in pmts.iter().enumerate() {
+            let lm = match (n, i) {
+                (1, _) => CaPmtListManagement::Only,
+                (_, 0) => CaPmtListManagement::First,
+                (_, i) if i == n - 1 => CaPmtListManagement::Last,
+                _ => CaPmtListManagement::More,
+            };
+            actions.extend(self.send_ca_pmt_for(pmt, lm, CaPmtCmdId::OkDescrambling));
+        }
+        actions
+    }
+
+    /// Add one programme to the descrambled set without re-listing the rest
+    /// (`list_management = add`, `cmd_id = ok_descrambling`).
+    fn add_program(&mut self, pmt: &[u8]) -> Vec<Action> {
+        self.send_ca_pmt_for(pmt, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling)
+    }
+
+    /// Remove one programme from the descrambled set (`list_management = update`,
+    /// `cmd_id = not_selected` — tells the CAM to stop descrambling it).
+    fn remove_program(&mut self, pmt: &[u8]) -> Vec<Action> {
+        self.send_ca_pmt_for(pmt, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+    }
+
+    /// Build a CAID-filtered `ca_pmt` for `pmt` with the given list-management +
+    /// command id and send it on the conditional-access session.
+    fn send_ca_pmt_for(
+        &mut self,
+        pmt: &[u8],
+        list_management: CaPmtListManagement,
+        cmd_id: CaPmtCmdId,
+    ) -> Vec<Action> {
+        match self.build_ca_pmt_bytes(pmt, list_management, cmd_id) {
+            Ok(bytes) => self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes),
+            Err(detail) => vec![Action::Notify(Notification::Error { detail })],
+        }
+    }
+
+    /// Build a CAID-filtered `ca_pmt` APDU for `pmt` with the given
+    /// list-management + command id. Filters to the CAM's advertised CAIDs once
     /// `ca_info` is known; falls back to all `CA_descriptor`s before then.
-    fn build_ca_pmt_bytes(&self, pmt: &[u8], cmd_id: CaPmtCmdId) -> Result<Vec<u8>, String> {
+    fn build_ca_pmt_bytes(
+        &self,
+        pmt: &[u8],
+        list_management: CaPmtListManagement,
+        cmd_id: CaPmtCmdId,
+    ) -> Result<Vec<u8>, String> {
         let parsed = PmtSection::parse(pmt).map_err(|e| format!("invalid PMT: {e}"))?;
-        let lm = CaPmtListManagement::Only;
         let built = if self.cam_caids.is_empty() {
-            build_ca_pmt(&parsed, lm, cmd_id)
+            build_ca_pmt(&parsed, list_management, cmd_id)
         } else {
-            build_ca_pmt_for_caids(&parsed, &self.cam_caids, lm, cmd_id)
+            build_ca_pmt_for_caids(&parsed, &self.cam_caids, list_management, cmd_id)
         };
         Ok(built.to_bytes())
     }
@@ -621,6 +671,7 @@ mod tests {
                 if let Some(pos) = w.windows(3).position(|x| x == tag) {
                     if let Ok(p) = CaPmt::parse(&w[pos..]) {
                         out.push(CaPmtSummary {
+                            list_management: p.list_management,
                             cmd_id: p.cmd_id.expect("programme cmd_id present"),
                             program_ca_descriptors: p.program_ca_descriptors.to_vec(),
                         });
@@ -637,7 +688,56 @@ mod tests {
     }
 
     struct CaPmtSummary {
+        list_management: dvb_ci::objects::ca_pmt::CaPmtListManagement,
         cmd_id: dvb_ci::objects::ca_pmt::CaPmtCmdId,
         program_ca_descriptors: Vec<u8>,
+    }
+
+    #[test]
+    fn descramble_programs_emits_first_more_last() {
+        use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
+
+        let mut s = stack_with_ca_session();
+        let pmt = build_pmt();
+        // Three programmes → first / more / last, all ok_descrambling.
+        let mut acts = s.handle(Event::Host(HostRequest::DescramblePrograms(&[
+            &pmt, &pmt, &pmt,
+        ])));
+        acts.extend(pump_sbs(&mut s));
+        let lms: Vec<_> = all_ca_pmts(&acts)
+            .iter()
+            .map(|c| c.list_management)
+            .collect();
+        assert_eq!(
+            lms,
+            vec![
+                CaPmtListManagement::First,
+                CaPmtListManagement::More,
+                CaPmtListManagement::Last,
+            ]
+        );
+        assert!(all_ca_pmts(&acts)
+            .iter()
+            .all(|c| c.cmd_id == CaPmtCmdId::OkDescrambling));
+    }
+
+    #[test]
+    fn add_and_remove_program_use_add_update() {
+        use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
+
+        let mut s = stack_with_ca_session();
+        let pmt = build_pmt();
+
+        let mut add = s.handle(Event::Host(HostRequest::AddProgram(&pmt)));
+        add.extend(pump_sbs(&mut s));
+        let a = first_ca_pmt(&add).expect("add ca_pmt");
+        assert_eq!(a.list_management, CaPmtListManagement::Add);
+        assert_eq!(a.cmd_id, CaPmtCmdId::OkDescrambling);
+
+        let mut rm = s.handle(Event::Host(HostRequest::RemoveProgram(&pmt)));
+        rm.extend(pump_sbs(&mut s));
+        let r = first_ca_pmt(&rm).expect("remove ca_pmt");
+        assert_eq!(r.list_management, CaPmtListManagement::Update);
+        assert_eq!(r.cmd_id, CaPmtCmdId::NotSelected);
     }
 }
