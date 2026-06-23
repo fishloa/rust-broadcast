@@ -19,10 +19,46 @@ sequences match.
 
 Implemented from the EN 50221 specification.
 
-## Status
+## What's implemented
 
-Foundation: the `CaDevice` abstraction + mock. TPDU/SPDU/resource state machines
-and the Linux device implementation land incrementally.
+- **Transport** (TPDU, §A.4): `Create_T_C` handshake, poll cadence, `T_SB`
+  data-available → `T_RCV`, `T_Data_More/Last` reassembly, reply timeout.
+- **Session** (SPDU, §7.2): session table; `open_session`/`create_session`/
+  `close`; `session_number` + APDU routing.
+- **Resources** (§8): Resource Manager handshake → `CamReady`,
+  application_information, conditional_access (`ca_pmt`/`ca_pmt_reply`),
+  date_time (MJD + BCD), mmi (surfaces module menus/enquiries).
+- **Devices**: in-memory `MockCaDevice`, and a Linux `/dev/dvb/adapterN/caM`
+  device behind the `linux` feature (`libc` ioctls).
+
+`#![deny(unsafe_code)]` — the Linux device leaf is the sole `#[allow]`; the
+sans-IO core is unsafe-free. 27 tests, no hardware required.
+
+Roadmap: the `host_control` resource, MMI answering (`menu_answ`/`answ`), and a
+differential test harness against an external reference.
+
+## Example
+
+```rust
+use std::time::Duration;
+use dvb_ci_runtime::{Driver, MockCaDevice, Notification};
+use dvb_ci_runtime::dvb_ci::tpdu::tags;
+
+// Script a module that accepts the transport connection.
+let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
+let mut driver = Driver::new(dev);
+
+driver.init()?;                       // reset + open the transport connection
+for _ in 0..4 {
+    driver.pump(Duration::from_millis(100))?;   // read frames / advance poll cadence
+}
+for note in driver.take_notifications() {
+    if let Notification::CamReady = note { /* now safe to send a ca_pmt */ }
+}
+# Ok::<(), std::io::Error>(())
+```
+
+See `examples/` for a runnable version.
 
 ## License
 

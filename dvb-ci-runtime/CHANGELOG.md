@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1]
+
+### Documentation
+
+- Refresh the crate-root and README **status** to reflect the shipped surface
+  (transport / session / resources incl. date_time + mmi / Linux device) — the
+  0.1.0 text still described it as an incremental foundation.
+- Add a crate-level doctest and two runnable examples (`mock_cam_session`,
+  `sans_io_core`) showing the `Driver` loop and the pure sans-IO core.
+
 ## [0.1.0]
 
 ### Added
