@@ -28,8 +28,13 @@ Implemented from the EN 50221 specification.
 - **Resources** (§8): Resource Manager handshake → `CamReady`,
   application_information, conditional_access (`ca_pmt`/`ca_pmt_reply`),
   date_time (MJD + BCD), mmi (surfaces module menus/enquiries).
-- **Devices**: in-memory `MockCaDevice`, and a Linux `/dev/dvb/adapterN/caM`
-  device behind the `linux` feature (`libc` ioctls).
+- **Descramble helper**: `Driver::descramble(pmt)` / `HostRequest::Descramble`
+  runs the full `ca_pmt` query → reply → `ok_descrambling` sequence, filtered to
+  the CAM's advertised CAIDs (from `ca_info`).
+- **Devices**: in-memory `MockCaDevice` + `MockCiDataDevice`; Linux
+  `/dev/dvb/adapterN/caM` (control plane) and `ciM` (TS data plane, `CiDataDevice`
+  — scrambled-in / descrambled-out for separate-CI hardware) behind the `linux`
+  feature (`libc`).
 
 `#![deny(unsafe_code)]` — the Linux device leaf is the sole `#[allow]`; the
 sans-IO core is unsafe-free. 27 tests, no hardware required.

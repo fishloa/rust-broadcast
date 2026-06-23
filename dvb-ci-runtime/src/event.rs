@@ -37,6 +37,13 @@ pub enum HostRequest<'a> {
     /// Send a serialized `ca_pmt` APDU body to the CAM's conditional-access
     /// resource (descrambling request).
     SendCaPmt(&'a [u8]),
+    /// Descramble the services in a PMT section (raw `dvb-si` PMT bytes). The
+    /// stack filters the PMT's `CA_descriptor`s to the CAM's advertised CAIDs
+    /// (from its `ca_info`), sends a `ca_pmt` with `cmd_id = query`, and — when
+    /// the `ca_pmt_reply` reports descrambling is possible — automatically sends
+    /// `cmd_id = ok_descrambling`. The reply outcome surfaces as
+    /// [`Notification::CaPmtReply`].
+    Descramble(&'a [u8]),
     /// Tear the interface down (close sessions + transport connection).
     Shutdown,
 }
