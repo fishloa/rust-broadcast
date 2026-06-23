@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
-    tags, CloseSessionRequest, CloseSessionResponse, CreateSessionResponse,
-    OpenSessionRequest, OpenSessionResponse, SessionNumber, SessionStatus,
+    tags, CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,
+    OpenSessionResponse, SessionNumber, SessionStatus,
 };
 use dvb_common::{Parse, Serialize};
 
