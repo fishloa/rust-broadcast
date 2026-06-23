@@ -40,6 +40,10 @@
 //!   behind the `linux` feature. The data plane ([`CiDataDevice`]) carries the
 //!   scrambled-in / descrambled-out TS for separate-CI hardware.
 //!
+//! - **Diagnostics**: [`RecordingCaDevice`] captures the link in both directions;
+//!   [`trace::decode_frame`]/[`decode_log`](crate::trace::decode_log) annotate a
+//!   capture (TPDU → SPDU → APDU) for live-CAM debugging.
+//!
 //! Roadmap: the `host_control` resource, MMI answering (`menu_answ`/`answ`), and
 //! a differential test harness against an external reference.
 //!
@@ -90,13 +94,14 @@ pub mod event;
 pub mod resource;
 pub mod session;
 pub mod stack;
+pub mod trace;
 pub mod transport;
 
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub mod linux;
 
 pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
-pub use device::{CaDevice, DeviceOp, MockCaDevice, SlotInfo};
+pub use device::{CaDevice, DeviceOp, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo};
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, Notification};
 #[cfg(all(feature = "linux", target_os = "linux"))]
