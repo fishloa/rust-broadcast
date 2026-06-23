@@ -70,55 +70,88 @@ struct CaSlotInfo {
     flags: u32,
 }
 
+/// Settle time after `CA_RESET` before the module is usable. The DD/cxd2099
+/// (and others) only (re)initialise the slot a couple of seconds after reset;
+/// `Create_T_C` sent too early is ignored.
+const RESET_SETTLE: Duration = Duration::from_millis(2000);
+
 /// A [`CaDevice`] backed by a Linux DVB CA character device.
+///
+/// The kernel `dvb_ca_en50221` character device carries a 2-byte link header on
+/// every read/write — `[slot_id, connection_id, <TPDU>]`. This type adds/strips
+/// that header, so the sans-IO transport deals in bare TPDUs. (Writing a raw
+/// TPDU without the header is rejected `EINVAL` by the driver.)
 #[derive(Debug)]
 pub struct LinuxCaDevice {
     file: File,
+    slot: u8,
 }
 
 impl LinuxCaDevice {
-    /// Open `/dev/dvb/adapter{adapter}/ca{ca}`.
+    /// Open `/dev/dvb/adapter{adapter}/ca{ca}` (slot 0).
     pub fn open(adapter: u32, ca: u32) -> io::Result<Self> {
         let path = format!("/dev/dvb/adapter{adapter}/ca{ca}");
         let file = OpenOptions::new().read(true).write(true).open(path)?;
-        Ok(Self { file })
+        Ok(Self { file, slot: 0 })
     }
 
-    /// Wrap an already-open CA device file.
+    /// Wrap an already-open CA device file for `slot`.
     #[must_use]
-    pub fn from_file(file: File) -> Self {
-        Self { file }
+    pub fn from_file(file: File, slot: u8) -> Self {
+        Self { file, slot }
+    }
+
+    /// The `connection_id` for a TPDU = its `t_c_id`, which follows the tag +
+    /// `length_field`. Falls back to 1 (the single connection) if unparseable.
+    fn connection_id(tpdu: &[u8]) -> u8 {
+        dvb_ci::length::decode(tpdu.get(1..).unwrap_or(&[]))
+            .ok()
+            .and_then(|(_, hdr)| tpdu.get(1 + hdr).copied())
+            .unwrap_or(1)
     }
 }
 
 impl CaDevice for LinuxCaDevice {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // Driver calls this only after `poll` reports readable, so it will not
-        // block. A `WouldBlock` is reported as "no data".
-        match self.file.read(buf) {
-            Ok(n) => Ok(n),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(0),
-            Err(e) => Err(e),
-        }
+        // Read one kernel frame `[slot, connection_id, <TPDU>]` into a scratch
+        // buffer and hand the bare TPDU up. `poll` gates this, so it won't block;
+        // `WouldBlock` is reported as "no data".
+        let mut frame = [0u8; 4096];
+        let n = match self.file.read(&mut frame) {
+            Ok(n) => n,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
+            Err(e) => return Err(e),
+        };
+        // Strip the 2-byte link header; anything shorter has no TPDU.
+        let tpdu = frame.get(2..n).unwrap_or(&[]);
+        let copy = tpdu.len().min(buf.len());
+        buf[..copy].copy_from_slice(&tpdu[..copy]);
+        Ok(copy)
     }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<()> {
-        self.file.write_all(buf)
+        // Prepend the `[slot, connection_id]` link header the driver expects.
+        let mut frame = Vec::with_capacity(buf.len() + 2);
+        frame.push(self.slot);
+        frame.push(Self::connection_id(buf));
+        frame.extend_from_slice(buf);
+        self.file.write_all(&frame)
     }
 
     fn reset(&mut self) -> io::Result<()> {
         // SAFETY: CA_RESET takes no argument; fd is a valid open CA device.
         let r = unsafe { libc::ioctl(self.file.as_raw_fd(), CA_RESET as libc::c_ulong) };
         if r < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+            return Err(io::Error::last_os_error());
         }
+        // The module needs a moment to re-initialise before Create_T_C.
+        std::thread::sleep(RESET_SETTLE);
+        Ok(())
     }
 
     fn slot_info(&mut self) -> io::Result<SlotInfo> {
         let mut si = CaSlotInfo {
-            num: 0,
+            num: i32::from(self.slot),
             typ: 0,
             flags: 0,
         };
@@ -132,7 +165,12 @@ impl CaDevice for LinuxCaDevice {
             )
         };
         if r < 0 {
-            return Err(io::Error::last_os_error());
+            // Some drivers (DD/cxd2099) return EINVAL for CA_GET_SLOT_INFO;
+            // presence shows via the TPDU handshake, so assume ready.
+            return Ok(SlotInfo {
+                num: self.slot,
+                module_ready: true,
+            });
         }
         Ok(SlotInfo {
             num: si.num as u8,

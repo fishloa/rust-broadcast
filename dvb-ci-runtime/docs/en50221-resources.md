@@ -22,24 +22,33 @@ the module provides them.
 
 ## Resource Manager protocol (§8.4.1.1)
 
-The RM is host-provided and has no session limit (always granted). On a Resource
-Manager session:
+The RM is host-provided and has no session limit (always granted). The exact
+sequence, transcribed from EN 50221 §8.4.1.1 (the **`profile_change` gate** is the
+crux — without it the module never proceeds):
 
-1. The RM (host) sends **`profile_enq`** (`9F 80 10`) to the module.
-2. The module replies **`profile`** (`9F 80 11`) — the list of resources **it**
-   provides.
-3. The module sends the host a **`profile_enq`**; the host replies **`profile`**
-   with the host's resource list.
-4. Once profiles are exchanged the handshake is complete (**CamReady**); the host
-   then opens sessions to the module-provided resources it understands.
-5. **`profile_change`** (`9F 80 12`) on an active RM session signals a resource set
-   changed → re-enquire.
+1. The module (application/resource-provider) requests a session to the Resource
+   Manager. It is always granted (no session limit).
+2. The RM (host) sends **`profile_enq`** (`9F 80 10`); the module replies
+   **`profile`** (`9F 80 11`) listing the resources **it** provides.
+3. **The module must now wait for a `profile_change` object. While waiting it can
+   neither create sessions to other resources nor accept sessions** — it answers
+   `resource non-existent` / `resource exists but unavailable`. *(verbatim sense
+   of §8.4.1.1 ¶1)*
+4. When the host has all profile replies it builds its resource list and **sends a
+   `profile_change` (`9F 80 12`) on all active RM sessions.**
+5. On receiving `profile_change` for the first time, the module **may interrogate
+   the host** (`profile_enq` → host replies `profile` with the host's list) and is
+   **now free to create or accept other sessions** — i.e. it opens sessions to
+   `application_information`, `conditional_access`, `mmi`, etc.
+6. The RM session persists for later `profile_change` notifications.
 
-> **Implementation note (#337).** In practice many real CAMs (e.g.
-> AlphaCrypt/Irdeto) send only their `profile` reply (step 2) and then idle — they
-> never perform step 3 (enquiring the host's profile). The runtime therefore
-> treats the handshake as complete on the **module's profile alone** (step 2),
-> and still answers a host `profile_enq` independently if one ever arrives.
+> **Implementation note (#337/#340).** The host MUST send `profile_change` after
+> the module's `profile` reply — that is what unblocks the module to open its
+> resource sessions. A real AlphaCrypt/Irdeto CAM sends its `profile` then idles
+> until it gets `profile_change`; it does **not** enquire the host first, and it
+> does **not** wait for the host to open anything (per §7.2.3 the module opens its
+> own sessions; the host's `create_session` is only for routing to a *second*
+> module — see `en50221-session.md`).
 
 ## Application Information (§8.4.2)
 

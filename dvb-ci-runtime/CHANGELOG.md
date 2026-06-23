@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Fixed (#340 — second live-CAM run)
+- **Post-`CamReady` stall: the module idled and no CA path opened.** Per
+  EN 50221 §8.4.1.1 the module, after sending its `profile` reply, **waits for a
+  `profile_change` object** before it may open or accept any session. The host
+  never sent one, so the module sat idle. The Resource Manager now sends
+  `profile_change` once it has the module's profile — the gate that lets the
+  module open its `application_information` / `conditional_access` / `mmi`
+  sessions.
+- **Module session opens were rejected.** The module opens those sessions itself
+  (§7.2.3 — `create_session` is host→module routing for a *second* module only,
+  not how a host uses a module's resource). The session layer now accepts an
+  `open_session_request` for **any resource the host has a handler for**, not just
+  host-provided ones; the host no longer issues `create_session` for them.
+- **`LinuxCaDevice` link framing.** The kernel `dvb_ca_en50221` device carries a
+  `[slot, connection_id, …]` header on every read/write; the device now adds it on
+  write and strips it on read (a raw TPDU write was rejected `EINVAL`). It also
+  tolerates `CA_GET_SLOT_INFO` returning `EINVAL` (assume the slot is ready — e.g.
+  DD/cxd2099) and settles ~2 s after `CA_RESET` before the handshake.
+
+### Changed
+- *(breaking, `linux` feature)* `LinuxCaDevice::from_file` now takes a `slot: u8`.
+
 ## [0.4.0]
 
 ### Fixed

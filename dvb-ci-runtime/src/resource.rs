@@ -14,7 +14,7 @@ use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
 use dvb_ci::objects::date_time::{DateTime as CiDateTime, DateTimeEnq, UTC_TIME_LEN};
 use dvb_ci::objects::mmi_high::{Enq, Menu};
-use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
+use dvb_ci::objects::resource_manager::{Profile, ProfileChange, ProfileEnq};
 use dvb_ci::resource::{
     ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
     RESOURCE_MANAGER,
@@ -138,21 +138,17 @@ impl Resource for ResourceManager {
             }
             _ => {}
         }
-        // The handshake completes once we have the module's profile — that
-        // alone tells us which module resources to open. Real CAMs
-        // (AlphaCrypt/Irdeto, #337) send their `profile` reply and then idle;
-        // they do not enquire the host's profile, so gating on `host_profiled`
-        // hung RM forever. We still answer a module `profile_enq` if one comes
-        // (so it can later open host-provided resources like date_time).
+        // Once we have the module's profile, the host builds its resource list
+        // and sends `profile_change` (§8.4.1.1). That is the gate the module is
+        // waiting on: until it arrives the module can neither open nor accept
+        // sessions, so it idles after its `profile` reply (#340). After it, the
+        // module opens its own sessions (application_information, conditional_
+        // access, mmi) — the host does NOT `create_session` for them (§7.2.3;
+        // create_session is inter-module routing only).
         if self.module_profiled && !self.ready {
             self.ready = true;
+            out.apdus.push(ser(&ProfileChange));
             out.notify.push(Notification::CamReady);
-            // Open the module-provided resources we understand.
-            for r in [APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI] {
-                if self.module_resources.contains(&r) {
-                    out.open.push(r);
-                }
-            }
         }
         out
     }
@@ -400,21 +396,23 @@ mod tests {
     }
 
     #[test]
-    fn handshake_completes_on_module_profile_alone() {
-        // #337: a real CAM sends its `profile` reply then idles — it never
-        // enquires the host. The handshake must complete on the module's profile
-        // alone (gating on a module `profile_enq` hung RM forever).
+    fn module_profile_triggers_profile_change_and_camready() {
+        // #340: after the module's `profile`, the host fires CamReady and sends
+        // `profile_change` — the gate that unblocks the module to open its own
+        // resource sessions (§8.4.1.1). The host does NOT open them itself.
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open();
         let module_profile = ser(&Profile {
             resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT],
         });
         let o = rm.on_apdu(&module_profile);
-        // CamReady fires + opens the module resources we understand.
         assert!(o.notify.contains(&Notification::CamReady));
-        assert!(o.open.contains(&APPLICATION_INFORMATION));
-        assert!(o.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
-        assert!(!o.open.contains(&MMI), "module didn't advertise MMI");
+        assert_eq!(o.apdus.len(), 1, "host sends profile_change");
+        assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE_CHANGE));
+        assert!(
+            o.open.is_empty(),
+            "the module opens its own sessions, not the host"
+        );
     }
 
     #[test]

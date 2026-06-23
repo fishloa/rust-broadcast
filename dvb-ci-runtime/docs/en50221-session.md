@@ -32,22 +32,35 @@ value = `resource_identifier` (4 bytes). `*_response` value = `session_status` (
 | `0xF2` | resource exists, version lower than requested |
 | `0xF3` | resource busy |
 
-## Flow (§7.2)
+## Flow (§7.2.3)
 
-- **Module → host (open):** the module sends `open_session_request(resource)`; the
-  host, if it provides that resource, allocates a `session_nb` and replies
-  `open_session_response(0x00, resource, nb)`; otherwise `0xF0`/`0xF1`/…
-- **Host → module (create):** to use a module-provided resource the host sends
-  `create_session(resource, nb)`; the module replies `create_session_response`.
+**`open_session_request` is always issued by the module** (the "application"),
+never by the host (§7.2.2 ¶1). Two cases (figures 9 & 10):
+
+- **Resource the host handles (figure 9 — the normal CI case):** the module sends
+  `open_session_request(resource)`; the host allocates a `session_nb` and replies
+  `open_session_response(0x00, resource, nb)` directly (or `0xF0`/`0xF1`/… to
+  refuse). This is how **every** session in a single-CAM setup is opened —
+  resource_manager, application_information, conditional_access, date_time, mmi.
+  The host then drives each per its resource protocol (e.g. it sends
+  `application_info_enq` on the app-info session).
+- **Resource provided by a *second* module (figure 10):** the host extends the
+  requester's session onto the provider module's transport connection with a
+  **`create_session(resource, nb)`**; that module replies
+  `create_session_response`. **`create_session` is host→module routing *only* for
+  this inter-module case** — it is **not** how a host uses a module's own
+  resource. A single-connection host (this crate's model) never issues it.
 - **Data:** once open, each side sends `session_number(nb)` immediately followed by
   one or more APDUs.
 - **Close:** either side sends `close_session_request(nb)`; the peer replies
-  `close_session_response(nb)`. A session may be extended over a second transport
-  connection (the `create_session` mechanism); this crate models a single
-  connection.
+  `close_session_response(nb)`.
 
 The session layer is **mechanism, not policy**: it allocates/tracks `session_nb`s,
-answers `open_session_request` for resources the host advertises, opens
-`create_session` on demand, and routes `session_number`+APDU to/from the resource
-bound to that session. *Which* resources the host provides vs. requests is decided
-by the resource layer.
+**accepts `open_session_request` for any resource the host has a handler for**
+(replying `open_session_response`), and routes `session_number`+APDU to/from the
+bound resource. *Which* resources are handled is decided by the resource layer.
+
+> **Note (#340).** Earlier wording here said the host opens module-provided
+> resources with `create_session`; that is wrong per §7.2.3 — the module opens
+> them itself once the RM `profile_change` gate is passed (see
+> `en50221-resources.md`). The host only accepts.
