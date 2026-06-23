@@ -44,20 +44,54 @@ struct BuiltStream {
     ca_descriptors: Vec<u8>,
 }
 
-/// Filter a descriptor loop to only its `CA_descriptor()` entries (tag `0x09`),
-/// concatenating the surviving entries' verbatim TLV wire bytes.
-fn ca_descriptors_only(loop_: &DescriptorLoop<'_>) -> Vec<u8> {
+/// The `CA_system_id` is the first two bytes of a `CA_descriptor` body
+/// (ISO/IEC 13818-1 §2.6.16), big-endian.
+fn ca_system_id(body: &[u8]) -> Option<u16> {
+    body.first_chunk::<2>().map(|b| u16::from_be_bytes(*b))
+}
+
+/// Filter a descriptor loop to its `CA_descriptor()` entries (tag `0x09`),
+/// concatenating the surviving entries' verbatim TLV wire bytes. When `allowed`
+/// is `Some`, a `CA_descriptor` is kept only if its `CA_system_id` is in the
+/// list (a descriptor with no readable `CA_system_id` is dropped); `None` keeps
+/// every `CA_descriptor`.
+fn ca_descriptors_filtered(loop_: &DescriptorLoop<'_>, allowed: Option<&[u16]>) -> Vec<u8> {
     let mut out = Vec::new();
     for (tag, body) in loop_.raw_tags() {
-        if tag == CA_DESCRIPTOR_TAG {
-            // Re-emit the full TLV: tag, length, body. raw_tags has already
-            // validated `body.len()` fits in the declared length byte.
-            out.push(tag);
-            out.push(body.len() as u8);
-            out.extend_from_slice(body);
+        if tag != CA_DESCRIPTOR_TAG {
+            continue;
         }
+        if let Some(allow) = allowed {
+            match ca_system_id(body) {
+                Some(id) if allow.contains(&id) => {}
+                _ => continue,
+            }
+        }
+        // Re-emit the full TLV: tag, length, body. raw_tags has already
+        // validated `body.len()` fits in the declared length byte.
+        out.push(tag);
+        out.push(body.len() as u8);
+        out.extend_from_slice(body);
     }
     out
+}
+
+/// Drop every `CA_descriptor` TLV in `buf` whose `CA_system_id` is not in
+/// `allowed`. `buf` holds only tag-`0x09` TLVs (a built CA-descriptor loop).
+fn retain_loop(buf: &mut Vec<u8>, allowed: &[u16]) {
+    let mut out = Vec::new();
+    let mut pos = 0;
+    while pos + 2 <= buf.len() {
+        let end = pos + 2 + buf[pos + 1] as usize;
+        if end > buf.len() {
+            break;
+        }
+        if ca_system_id(&buf[pos + 2..end]).is_some_and(|id| allowed.contains(&id)) {
+            out.extend_from_slice(&buf[pos..end]);
+        }
+        pos = end;
+    }
+    *buf = out;
 }
 
 /// Build the `ca_pmt` projection of `pmt` for the given list-management and
@@ -74,14 +108,41 @@ pub fn build_ca_pmt(
     list_management: CaPmtListManagement,
     cmd_id: CaPmtCmdId,
 ) -> CaPmtBuilt {
-    let program_ca_descriptors = ca_descriptors_only(&pmt.program_info);
+    build(pmt, None, list_management, cmd_id)
+}
+
+/// Build the `ca_pmt` projection of `pmt`, keeping only `CA_descriptor`s whose
+/// `CA_system_id` is in `allowed` (the intersection of the PMT's CAIDs and the
+/// CAM's advertised CAIDs, from its `ca_info`).
+///
+/// A CICAM rejects a `ca_pmt` carrying a `CA_descriptor` for a `CA_system_id` it
+/// does not support, declining even the streams it could descramble — so the
+/// host should transmit only the CAIDs the module advertised. `allowed` empty
+/// drops every `CA_descriptor`. [`build_ca_pmt`] is this with "allow all".
+#[must_use]
+pub fn build_ca_pmt_for_caids(
+    pmt: &PmtSection<'_>,
+    allowed: &[u16],
+    list_management: CaPmtListManagement,
+    cmd_id: CaPmtCmdId,
+) -> CaPmtBuilt {
+    build(pmt, Some(allowed), list_management, cmd_id)
+}
+
+fn build(
+    pmt: &PmtSection<'_>,
+    allowed: Option<&[u16]>,
+    list_management: CaPmtListManagement,
+    cmd_id: CaPmtCmdId,
+) -> CaPmtBuilt {
+    let program_ca_descriptors = ca_descriptors_filtered(&pmt.program_info, allowed);
     let streams = pmt
         .streams
         .iter()
         .map(|s| BuiltStream {
             stream_type: s.stream_type.to_u8(),
             elementary_pid: s.elementary_pid,
-            ca_descriptors: ca_descriptors_only(&s.es_info),
+            ca_descriptors: ca_descriptors_filtered(&s.es_info, allowed),
         })
         .collect();
     CaPmtBuilt {
@@ -121,6 +182,17 @@ impl CaPmtBuilt {
         }
     }
 
+    /// Drop every `CA_descriptor` (programme- and ES-level) whose `CA_system_id`
+    /// is not in `allowed`. Use this to post-filter a `ca_pmt` to the CAM's
+    /// advertised CAIDs once its `ca_info` is known (equivalent to having built
+    /// it with [`build_ca_pmt_for_caids`]).
+    pub fn retain_caids(&mut self, allowed: &[u16]) {
+        retain_loop(&mut self.program_ca_descriptors, allowed);
+        for s in &mut self.streams {
+            retain_loop(&mut s.ca_descriptors, allowed);
+        }
+    }
+
     /// Serialize the finished `ca_pmt` APDU (tag `9F 80 32` + length + body).
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -142,6 +214,7 @@ fn cmd_for(cmd_id: CaPmtCmdId, descriptors: &[u8]) -> Option<CaPmtCmdId> {
 mod tests {
     use super::*;
     use crate::objects::ca_pmt::CaPmt;
+    use alloc::vec;
     use dvb_common::Parse;
 
     #[test]
@@ -189,6 +262,71 @@ mod tests {
         }
     }
 
+    /// Collect the `CA_system_id`s present in a built CA-descriptor loop.
+    fn caids(buf: &[u8]) -> Vec<u16> {
+        let mut ids = Vec::new();
+        let mut pos = 0;
+        while pos + 2 <= buf.len() {
+            let end = pos + 2 + buf[pos + 1] as usize;
+            ids.push(u16::from_be_bytes([buf[pos + 2], buf[pos + 3]]));
+            pos = end;
+        }
+        ids
+    }
+
+    #[test]
+    fn for_caids_keeps_only_allowed_system_ids() {
+        let pmt_bytes = build_test_pmt();
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        // Programme loop has CAIDs {0x0500, 0x1800}; allow only 0x0500.
+        let built = build_ca_pmt_for_caids(
+            &pmt,
+            &[0x0500],
+            CaPmtListManagement::Only,
+            CaPmtCmdId::OkDescrambling,
+        );
+        assert_eq!(caids(&built.program_ca_descriptors), vec![0x0500]);
+
+        // ES0's CA_descriptor (0x0500) survives; ES1 had none.
+        let view = built.as_ca_pmt();
+        assert!(!view.streams[0].ca_descriptors.is_empty());
+        assert!(view.streams[1].ca_descriptors.is_empty());
+        // Round-trips.
+        assert_eq!(CaPmt::parse(&built.to_bytes()).unwrap(), view);
+    }
+
+    #[test]
+    fn for_caids_empty_allowlist_drops_all_ca() {
+        let pmt_bytes = build_test_pmt();
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let built = build_ca_pmt_for_caids(&pmt, &[], CaPmtListManagement::Only, CaPmtCmdId::Query);
+        assert!(built.program_ca_descriptors.is_empty());
+        // With no CA descriptors anywhere, no cmd_id byte is emitted.
+        let view = built.as_ca_pmt();
+        assert_eq!(view.cmd_id, None);
+        assert!(view.streams.iter().all(|s| s.cmd_id.is_none()));
+    }
+
+    #[test]
+    fn retain_caids_matches_the_filtering_constructor() {
+        let pmt_bytes = build_test_pmt();
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let allow = [0x1800u16];
+
+        let mut post = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling);
+        post.retain_caids(&allow);
+        let pre = build_ca_pmt_for_caids(
+            &pmt,
+            &allow,
+            CaPmtListManagement::Only,
+            CaPmtCmdId::OkDescrambling,
+        );
+        assert_eq!(post, pre);
+        // 0x1800 only existed at programme level → ES loops emptied.
+        assert_eq!(caids(&post.program_ca_descriptors), vec![0x1800]);
+    }
+
     // --- helper: assemble a small but realistic PMT with CA descriptors ---
 
     fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
@@ -203,11 +341,14 @@ mod tests {
     }
 
     fn build_test_pmt() -> Vec<u8> {
-        // program_info: a CA_descriptor + a (non-CA) registration descriptor(0x05).
+        // program_info: two CA_descriptors (CAIDs 0x0500 and 0x1800) + a (non-CA)
+        // registration descriptor(0x05).
         let prog_ca = ca_descriptor(0x0500, 0x0100);
+        let prog_ca2 = ca_descriptor(0x1800, 0x0110);
         let reg = [0x05u8, 0x04, b'H', b'D', b'M', b'V'];
         let mut program_info = Vec::new();
         program_info.extend_from_slice(&prog_ca);
+        program_info.extend_from_slice(&prog_ca2);
         program_info.extend_from_slice(&reg);
 
         // ES0: scrambled video, stream_type 0x02, pid 0x0200, with ES CA_descriptor.

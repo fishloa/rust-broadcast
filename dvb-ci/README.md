@@ -42,7 +42,7 @@ assert_eq!(any.to_bytes(), wire);          // round-trips byte-for-byte
 |---|---|
 | **APDU framework** | 3-byte `ApduTag` + Table 58 constants; ASN.1 `length_field` codec; `AnyApdu` tag dispatch (Def-trait + `declare_apdus!` macro + drift test); 4-octet `ResourceId` |
 | **CA support** | `ca_info_enq` / `ca_info`, `ca_pmt`, `ca_pmt_reply` |
-| **CA_PMT builder** | `build_ca_pmt(PmtSection, list_management, cmd_id)` — strips all non-CA descriptors, keeps `CA_descriptor`s at programme + ES level |
+| **CA_PMT builder** | `build_ca_pmt(PmtSection, list_management, cmd_id)` — strips all non-CA descriptors, keeps `CA_descriptor`s at programme + ES level; `build_ca_pmt_for_caids(…, allowed)` / `CaPmtBuilt::retain_caids(&[u16])` filter to the CAM's advertised `CA_system_id`s |
 | **Application Information** | `application_info_enq` / `application_info` / `enter_menu` |
 | **Resource Manager** | `profile_enq` / `profile` (reply) / `profile_change` |
 | **Date-Time** | `date_time_enq` / `date_time` (optional `local_offset`) |
