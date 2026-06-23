@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci-runtime"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, and resource state machines over the dvb-ci codecs."
 license      = "MIT OR Apache-2.0"

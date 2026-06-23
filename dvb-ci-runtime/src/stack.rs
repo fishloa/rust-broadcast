@@ -33,8 +33,6 @@ fn ser_apdu<S: Serialize>(s: &S) -> Vec<u8> {
 pub struct CiStack {
     transport: Transport,
     session: SessionLayer,
-    /// Resources the host provides (answers incoming `open_session_request`).
-    provided: Vec<ResourceId>,
     /// Application-layer resource handlers, dispatched by `ResourceId`.
     resources: Vec<Box<dyn Resource>>,
     /// `CA_system_id`s the CAM advertised in its `ca_info` (the descramble
@@ -57,20 +55,21 @@ impl CiStack {
     /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        // The host provides Resource Manager + Date-Time; it opens the
-        // module-provided application_information + conditional_access.
-        let provided = vec![RESOURCE_MANAGER, DATE_TIME];
+        // The host genuinely *provides* Resource Manager + Date-Time; that is the
+        // list the RM advertises in its `profile` reply. The module opens the
+        // sessions; the host accepts any resource it has a handler for (see
+        // `drive_session`).
+        let host_resources = vec![RESOURCE_MANAGER, DATE_TIME];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),
             resources: vec![
-                Box::new(ResourceManager::new(provided.clone())),
+                Box::new(ResourceManager::new(host_resources)),
                 Box::new(ApplicationInformation),
                 Box::new(ConditionalAccess),
                 Box::new(DateTime::new()),
                 Box::new(Mmi),
             ],
-            provided,
             cam_caids: Vec::new(),
             pending_descramble: None,
         }
@@ -227,13 +226,19 @@ impl CiStack {
 
     /// Feed one SPDU to the session layer and convert its output to actions.
     fn drive_session(&mut self, spdu: &[u8]) -> Vec<Action> {
-        let provided = self.provided.clone();
+        // The module opens every session (§7.2.3); the host accepts an
+        // `open_session_request` for any resource it has a handler for — both
+        // host-provided (resource_manager, date_time) and the module-provided
+        // ones the host engages (application_information, conditional_access,
+        // mmi). #340: the old code only accepted `provided`, so it rejected the
+        // module's app-info/ca opens with `resource_non_existent`.
+        let handled: Vec<ResourceId> = self.resources.iter().map(|r| r.id()).collect();
         let SessionOut {
             spdus,
             apdus,
             opened,
             closed,
-        } = self.session.on_spdu(spdu, |r| provided.contains(&r));
+        } = self.session.on_spdu(spdu, |r| handled.contains(&r));
 
         let mut actions = Vec::new();
         // Session-layer SPDUs (e.g. open_session_response) go down the transport.
@@ -452,13 +457,14 @@ mod tests {
         body
     }
 
-    /// Drive the full handshake to an open conditional-access session with the
-    /// CAM's CAIDs learned. Returns the stack with CA on session 2.
+    /// Drive the full handshake to open conditional-access + mmi sessions with
+    /// the CAM's CAIDs learned, following the real flow: module opens RM → host
+    /// `profile_change` → module opens its resource sessions (#340).
     fn stack_with_ca_session() -> CiStack {
         use dvb_ci::objects::ca_info::CaInfo;
-        use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
+        use dvb_ci::objects::resource_manager::Profile;
         use dvb_ci::resource::{APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI};
-        use dvb_ci::spdu::{CreateSessionResponse, OpenSessionRequest, SessionStatus};
+        use dvb_ci::spdu::OpenSessionRequest;
 
         let mut s = CiStack::new();
         s.handle(Event::Host(HostRequest::Init));
@@ -470,35 +476,21 @@ mod tests {
                 resource: RESOURCE_MANAGER,
             }),
         )));
-        // module enquires our profile (we answer) and sends its own profile
-        s.handle(Event::Readable(&r_apdu(1, &ser(&ProfileEnq))));
+        // module sends its profile → host fires CamReady + sends profile_change
         s.handle(Event::Readable(&r_apdu(
             1,
             &ser(&Profile {
-                resources: vec![
-                    RESOURCE_MANAGER,
-                    APPLICATION_INFORMATION,
-                    CONDITIONAL_ACCESS_SUPPORT,
-                    MMI,
-                ],
+                resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI],
             }),
         )));
-        // RM is ready → it opened the module resources via create_session.
-        // application_information got session 2, conditional_access session 3
-        // (alloc order matches the open list). Accept both.
-        for (nb, res) in [
-            (2u16, APPLICATION_INFORMATION),
-            (3, CONDITIONAL_ACCESS_SUPPORT),
-            (4, MMI),
-        ] {
+        pump_sbs(&mut s); // flush the profile_change
+                          // unblocked, the module now opens its own resource sessions
+        for res in [APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI] {
             s.handle(Event::Readable(&r_data(
                 1,
-                &ser(&CreateSessionResponse {
-                    status: SessionStatus::Ok,
-                    resource: res,
-                    session_nb: nb,
-                }),
+                &ser(&OpenSessionRequest { resource: res }),
             )));
+            pump_sbs(&mut s); // flush open_session_response + the on_open enq
         }
         // module advertises its CAIDs on the CA session
         let ca_nb = s
