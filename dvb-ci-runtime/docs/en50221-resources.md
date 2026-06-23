@@ -35,6 +35,12 @@ Manager session:
 5. **`profile_change`** (`9F 80 12`) on an active RM session signals a resource set
    changed → re-enquire.
 
+> **Implementation note (#337).** In practice many real CAMs (e.g.
+> AlphaCrypt/Irdeto) send only their `profile` reply (step 2) and then idle — they
+> never perform step 3 (enquiring the host's profile). The runtime therefore
+> treats the handshake as complete on the **module's profile alone** (step 2),
+> and still answers a host `profile_enq` independently if one ever arrives.
+
 ## Application Information (§8.4.2)
 
 `application_info_enq` (`9F 80 20`) → `application_info` (`9F 80 21`):

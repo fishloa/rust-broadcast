@@ -96,12 +96,17 @@ pub fn decode_frame(frame: &[u8]) -> String {
             )
         }
         tpdu_tags::DATA_LAST | tpdu_tags::DATA_MORE => {
-            // tag · length · t_c_id · data(=SPDU) · [appended T_SB]
-            let len = frame.get(1).copied().unwrap_or(0) as usize;
-            let tcid = frame.get(2).copied().unwrap_or(0);
-            // `length` counts t_c_id + data; data is the SPDU.
-            let data_end = (2 + len).min(frame.len());
-            let spdu = frame.get(3..data_end).unwrap_or(&[]);
+            // tag · length_field · t_c_id · data(=SPDU) · [appended T_SB].
+            // length_field uses the Table-1 codec (long-form for >127 bytes), so
+            // decode it rather than assuming a single byte.
+            let Ok((len, hdr)) = dvb_ci::length::decode(&frame[1..]) else {
+                return format!("{} (bad length_field)", tpdu_name(tag));
+            };
+            let start = 1 + hdr; // t_c_id offset
+            let tcid = frame.get(start).copied().unwrap_or(0);
+            // `length` counts t_c_id + data; the SPDU is the data after t_c_id.
+            let data_end = (start + len).min(frame.len());
+            let spdu = frame.get(start + 1..data_end).unwrap_or(&[]);
             if spdu.is_empty() {
                 format!("{} tcid={} (poll)", tpdu_name(tag), tcid)
             } else {
@@ -156,6 +161,21 @@ mod tests {
         assert_eq!(
             decode_frame(&enq),
             "T_Data_Last tcid=1 · session 1 · profile_enq (9F8010)"
+        );
+    }
+
+    #[test]
+    fn decodes_long_form_length_profile_reply() {
+        // The module's profile_reply, captured raw on hardware (#337): the
+        // length_field is long-form `82 00 09`. A short-form decoder mis-reads
+        // tcid as 0x00 and garbles the SPDU.
+        let f = [
+            0xA0, 0x82, 0x00, 0x09, 0x01, 0x90, 0x02, 0x00, 0x01, 0x9F, 0x80, 0x11, 0x00, 0x80,
+            0x02, 0x01, 0x00,
+        ];
+        assert_eq!(
+            decode_frame(&f),
+            "T_Data_Last tcid=1 · session 1 · profile (9F8011)"
         );
     }
 

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### Fixed
+- **RM handshake stalled one step past the #337 fix on a real CAM.** The stack
+  required the module to enquire the host's profile (`host_profiled`) before
+  declaring `CamReady`, but a real AlphaCrypt/Irdeto module sends its `profile`
+  reply and then idles — it never enquires. `CamReady` now fires on the module's
+  profile alone (the host still answers a module `profile_enq` if one arrives).
+- **`trace::decode_frame` mis-decoded long-form `length_field`s.** It assumed a
+  single length byte, so a `T_Data_Last` with a long-form length (e.g. the
+  module's `profile` reply, `A0 82 00 09 …`) read the wrong `t_c_id` and a
+  garbled SPDU. It now uses the Table-1 length codec.
+
+### Added
+- **`ci-probe` binary** (`linux` feature, Linux-only) — discover and engage an
+  installed CAM from the command line: `list` (enumerate `/dev/dvb/adapterN/caM`
+  + slot status), `info` (run the handshake, print application-info + CAIDs),
+  `descramble <pmt-file>` (query → reply → ok), `mmi` (interactive menus /
+  enquiries). `--trace` dumps an annotated link trace on exit.
+- **Host MMI answering**: `HostRequest::MmiMenuAnswer(choice_ref)` /
+  `MmiEnquiryAnswer(text)` / `MmiCancel`, and the matching
+  `Driver::mmi_menu_answer` / `mmi_enquiry_answer` / `mmi_cancel` — send
+  `menu_answ` / `answ` back to the module (completes the MMI dialogue, previously
+  receive-only).
+
 ## [0.3.0]
 
 ### Fixed

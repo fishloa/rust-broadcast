@@ -44,8 +44,14 @@
 //!   [`trace::decode_frame`]/[`decode_log`](crate::trace::decode_log) annotate a
 //!   capture (TPDU → SPDU → APDU) for live-CAM debugging.
 //!
-//! Roadmap: the `host_control` resource, MMI answering (`menu_answ`/`answ`), and
-//! a differential test harness against an external reference.
+//! # `ci-probe`
+//!
+//! With the `linux` feature this crate also builds a **`ci-probe`** binary that
+//! discovers and engages an installed CAM: `ci-probe list` / `info` /
+//! `descramble <pmt>` / `mmi`, with `--trace` for an annotated link dump.
+//!
+//! Roadmap: the `host_control` resource and a differential test harness against
+//! an external reference.
 //!
 //! # Example
 //!

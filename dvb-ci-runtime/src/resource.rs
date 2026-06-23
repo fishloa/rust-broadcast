@@ -78,7 +78,6 @@ pub trait Resource {
 pub struct ResourceManager {
     host_resources: Vec<ResourceId>,
     module_resources: Vec<ResourceId>,
-    host_profiled: bool,
     module_profiled: bool,
     ready: bool,
 }
@@ -90,7 +89,6 @@ impl ResourceManager {
         Self {
             host_resources,
             module_resources: Vec::new(),
-            host_profiled: false,
             module_profiled: false,
             ready: false,
         }
@@ -124,7 +122,6 @@ impl Resource for ResourceManager {
                 out.apdus.push(ser(&Profile {
                     resources: self.host_resources.clone(),
                 }));
-                self.host_profiled = true;
             }
             // Module's profile → record its resources.
             Some(t) if t == tag::PROFILE => {
@@ -141,7 +138,13 @@ impl Resource for ResourceManager {
             }
             _ => {}
         }
-        if self.module_profiled && self.host_profiled && !self.ready {
+        // The handshake completes once we have the module's profile — that
+        // alone tells us which module resources to open. Real CAMs
+        // (AlphaCrypt/Irdeto, #337) send their `profile` reply and then idle;
+        // they do not enquire the host's profile, so gating on `host_profiled`
+        // hung RM forever. We still answer a module `profile_enq` if one comes
+        // (so it can later open host-provided resources like date_time).
+        if self.module_profiled && !self.ready {
             self.ready = true;
             out.notify.push(Notification::CamReady);
             // Open the module-provided resources we understand.
@@ -397,28 +400,35 @@ mod tests {
     }
 
     #[test]
-    fn handshake_completes_and_opens_module_resources() {
+    fn handshake_completes_on_module_profile_alone() {
+        // #337: a real CAM sends its `profile` reply then idles — it never
+        // enquires the host. The handshake must complete on the module's profile
+        // alone (gating on a module `profile_enq` hung RM forever).
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open();
-        // module sends its profile (it provides app_info + ca)
         let module_profile = ser(&Profile {
             resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT],
         });
-        let o1 = rm.on_apdu(&module_profile);
-        assert!(
-            o1.notify.is_empty(),
-            "not ready until host profile sent too"
-        );
-        // module enquires our profile → we reply + handshake completes
-        let o2 = rm.on_apdu(&ser(&ProfileEnq));
-        // replied with a profile
-        assert_eq!(o2.apdus.len(), 1);
-        assert_eq!(peek_tag(&o2.apdus[0]), Some(tag::PROFILE));
-        // CamReady + open the module resources we understand
-        assert!(o2.notify.contains(&Notification::CamReady));
-        assert!(o2.open.contains(&APPLICATION_INFORMATION));
-        assert!(o2.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
-        assert!(!o2.open.contains(&MMI), "module didn't advertise MMI");
+        let o = rm.on_apdu(&module_profile);
+        // CamReady fires + opens the module resources we understand.
+        assert!(o.notify.contains(&Notification::CamReady));
+        assert!(o.open.contains(&APPLICATION_INFORMATION));
+        assert!(o.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
+        assert!(!o.open.contains(&MMI), "module didn't advertise MMI");
+    }
+
+    #[test]
+    fn answers_a_module_profile_enquiry_without_re_readying() {
+        let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
+        rm.on_open();
+        rm.on_apdu(&ser(&Profile {
+            resources: vec![APPLICATION_INFORMATION],
+        }));
+        // A later module profile_enq → reply with our profile, no second CamReady.
+        let o = rm.on_apdu(&ser(&ProfileEnq));
+        assert_eq!(o.apdus.len(), 1);
+        assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE));
+        assert!(!o.notify.contains(&Notification::CamReady));
     }
 
     #[test]
