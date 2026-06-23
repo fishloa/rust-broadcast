@@ -266,10 +266,11 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci-runtime"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "dvb-ci",
  "dvb-common",
+ "dvb-si",
  "libc",
  "thiserror",
 ]

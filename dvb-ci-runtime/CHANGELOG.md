@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### Added
+- **`HostRequest::Descramble(pmt_section)`** + **`Driver::descramble(pmt)`** — a
+  high-level descramble helper (#334). The stack remembers the CAM's CAIDs from
+  `ca_info`, filters the PMT's `CA_descriptor`s to them, sends a `ca_pmt` with
+  `cmd_id = query`, and — when the `ca_pmt_reply` reports descrambling is
+  possible — automatically sends `cmd_id = ok_descrambling`. The outcome surfaces
+  as `Notification::CaPmtReply`.
+- **`CiDataDevice`** trait + **`MockCiDataDevice`** + Linux **`LinuxCiDataDevice`**
+  (`linux` feature) — the CI **TS data-plane** device (`/dev/dvb/adapterN/ciM`)
+  for separate-CI (host-fed) hardware: the host writes scrambled TS and reads the
+  descrambled TS back, in whole 188-byte packets (#333). Parallels `CaDevice`
+  (the control plane); the mock supports scripted-descramble differential tests.
+
+### Changed
+- New dependency on `dvb-si` (to parse a `PmtSection` for `descramble`) and
+  `dvb-ci` ≥ 0.5 (the CAID-filtered `ca_pmt` builder).
+
 ## [0.1.1]
 
 ### Documentation

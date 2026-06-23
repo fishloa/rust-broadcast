@@ -32,8 +32,13 @@
 //!   application_information, conditional_access (`ca_pmt`/`ca_pmt_reply`),
 //!   date_time (MJD + BCD), and mmi (surfaces module menus/enquiries as
 //!   [`Notification::Mmi`]).
-//! - **Devices**: the in-memory [`MockCaDevice`], and a Linux
-//!   `/dev/dvb/adapterN/caM` `CaDevice` behind the `linux` feature.
+//! - **Descramble helper**: [`Driver::descramble`](crate::driver::Driver::descramble)
+//!   / [`HostRequest::Descramble`] runs the full `ca_pmt` query → reply →
+//!   ok_descrambling sequence, CAID-filtered to the CAM's `ca_info`.
+//! - **Devices**: the in-memory [`MockCaDevice`] + [`MockCiDataDevice`], and the
+//!   Linux `/dev/dvb/adapterN/caM` (control) + `ciM` (TS data-plane) devices
+//!   behind the `linux` feature. The data plane ([`CiDataDevice`]) carries the
+//!   scrambled-in / descrambled-out TS for separate-CI hardware.
 //!
 //! Roadmap: the `host_control` resource, MMI answering (`menu_answ`/`answ`), and
 //! a differential test harness against an external reference.
@@ -78,6 +83,7 @@
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod dataplane;
 pub mod device;
 pub mod driver;
 pub mod event;
@@ -89,11 +95,12 @@ pub mod transport;
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub mod linux;
 
+pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
 pub use device::{CaDevice, DeviceOp, MockCaDevice, SlotInfo};
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, Notification};
 #[cfg(all(feature = "linux", target_os = "linux"))]
-pub use linux::LinuxCaDevice;
+pub use linux::{LinuxCaDevice, LinuxCiDataDevice};
 pub use stack::CiStack;
 
 /// Re-export of the wire-codec crate this runtime drives.

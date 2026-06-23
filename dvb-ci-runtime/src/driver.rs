@@ -64,6 +64,19 @@ impl<D: CaDevice> Driver<D> {
         self.run(actions)
     }
 
+    /// Descramble the services in a PMT section: the stack filters the PMT's
+    /// `CA_descriptor`s to the CAM's advertised CAIDs, sends a `ca_pmt` query,
+    /// and auto-sends `ok_descrambling` once the `ca_pmt_reply` confirms it.
+    /// Drive [`pump`](Self::pump) afterwards to exchange the reply; the outcome
+    /// surfaces as [`Notification::CaPmtReply`]. Call after the CAM is ready and
+    /// its `ca_info` has been received (otherwise no CAID filter is applied).
+    pub fn descramble(&mut self, pmt_section: &[u8]) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::Descramble(pmt_section)));
+        self.run(actions)
+    }
+
     /// One pump step: if the device is readable within `timeout`, read a frame
     /// and feed it; otherwise advance the stack's timers by `timeout` (driving
     /// the poll cadence). Returns whether a frame was processed.

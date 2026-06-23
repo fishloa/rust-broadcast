@@ -12,7 +12,11 @@ use crate::resource::{
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
-use dvb_ci::resource::{ResourceId, DATE_TIME, RESOURCE_MANAGER};
+use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
+use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
+use dvb_ci::resource::{ResourceId, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, RESOURCE_MANAGER};
+use dvb_common::Parse;
+use dvb_si::tables::pmt::PmtSection;
 
 /// The composed EN 50221 protocol core.
 pub struct CiStack {
@@ -22,6 +26,12 @@ pub struct CiStack {
     provided: Vec<ResourceId>,
     /// Application-layer resource handlers, dispatched by `ResourceId`.
     resources: Vec<Box<dyn Resource>>,
+    /// `CA_system_id`s the CAM advertised in its `ca_info` (the descramble
+    /// filter set; empty until `ca_info` arrives).
+    cam_caids: Vec<u16>,
+    /// PMT section bytes of an in-flight [`HostRequest::Descramble`], awaiting
+    /// the `ca_pmt_reply` that triggers the `ok_descrambling` follow-up.
+    pending_descramble: Option<Vec<u8>>,
 }
 
 impl Default for CiStack {
@@ -50,6 +60,8 @@ impl CiStack {
                 Box::new(Mmi),
             ],
             provided,
+            cam_caids: Vec::new(),
+            pending_descramble: None,
         }
     }
 
@@ -90,10 +102,61 @@ impl CiStack {
                 self.emit_transport(out)
             }
             Event::Host(HostRequest::SendCaPmt(apdu)) => {
-                self.send_to_resource(dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT, apdu)
+                self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, apdu)
             }
+            Event::Host(HostRequest::Descramble(pmt)) => self.descramble(pmt),
             Event::Host(HostRequest::Shutdown) => Vec::new(),
         }
+    }
+
+    /// React to a CA notification as it is surfaced: cache the CAM's CAIDs from
+    /// `ca_info`, and complete a pending [`HostRequest::Descramble`] by sending
+    /// `ok_descrambling` when the `ca_pmt_reply` says descrambling is possible.
+    fn on_ca_notification(&mut self, note: &Notification) -> Vec<Action> {
+        match note {
+            Notification::CaInfo { ca_system_ids } => {
+                self.cam_caids = ca_system_ids.clone();
+                Vec::new()
+            }
+            Notification::CaPmtReply {
+                descrambling_ok, ..
+            } => match self.pending_descramble.take() {
+                Some(pmt) if *descrambling_ok => {
+                    match self.build_ca_pmt_bytes(&pmt, CaPmtCmdId::OkDescrambling) {
+                        Ok(bytes) => self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes),
+                        Err(detail) => vec![Action::Notify(Notification::Error { detail })],
+                    }
+                }
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
+    /// Begin a [`HostRequest::Descramble`]: build a CAID-filtered `ca_pmt` with
+    /// `cmd_id = query` and send it, recording the PMT so the `ok_descrambling`
+    /// follow-up can be built when the reply arrives.
+    fn descramble(&mut self, pmt: &[u8]) -> Vec<Action> {
+        let bytes = match self.build_ca_pmt_bytes(pmt, CaPmtCmdId::Query) {
+            Ok(b) => b,
+            Err(detail) => return vec![Action::Notify(Notification::Error { detail })],
+        };
+        self.pending_descramble = Some(pmt.to_vec());
+        self.send_to_resource(CONDITIONAL_ACCESS_SUPPORT, &bytes)
+    }
+
+    /// Build a CAID-filtered `ca_pmt` APDU (`list_management = only`) for `pmt`
+    /// with the given command id. Filters to the CAM's advertised CAIDs once
+    /// `ca_info` is known; falls back to all `CA_descriptor`s before then.
+    fn build_ca_pmt_bytes(&self, pmt: &[u8], cmd_id: CaPmtCmdId) -> Result<Vec<u8>, String> {
+        let parsed = PmtSection::parse(pmt).map_err(|e| format!("invalid PMT: {e}"))?;
+        let lm = CaPmtListManagement::Only;
+        let built = if self.cam_caids.is_empty() {
+            build_ca_pmt(&parsed, lm, cmd_id)
+        } else {
+            build_ca_pmt_for_caids(&parsed, &self.cam_caids, lm, cmd_id)
+        };
+        Ok(built.to_bytes())
     }
 
     /// Send an APDU to the open session bound to `resource` (if any).
@@ -193,7 +256,10 @@ impl CiStack {
             actions.extend(self.send_spdu_actions(&spdu));
         }
         for note in out.notify {
+            // Drive the auto-descramble sequence off the CA notifications.
+            let follow = self.on_ca_notification(&note);
             actions.push(Action::Notify(note));
+            actions.extend(follow);
         }
         for resource in out.open {
             let spdu = self.session.create_session(resource);
@@ -283,5 +349,223 @@ mod tests {
         assert!(a
             .iter()
             .any(|x| matches!(x, Action::Write(w) if w.first() == Some(&tpdu_tags::DATA_LAST))));
+    }
+
+    // --- #334: the auto-descramble (query -> reply -> ok) sequence ---
+
+    /// Wrap an APDU for delivery on `session_nb` (session_number prefix), then as
+    /// a module→host R_TPDU.
+    fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
+        use dvb_ci::spdu::SessionNumber;
+        let mut spdu = ser(&SessionNumber { session_nb });
+        spdu.extend_from_slice(apdu);
+        r_data(1, &spdu)
+    }
+
+    /// Minimal PMT: program_info has one CA_descriptor (CAID 0x0B00) + a non-CA
+    /// descriptor; one clear ES. Mirrors the dvb-ci builder fixture.
+    fn build_pmt() -> Vec<u8> {
+        let prog_ca = [0x09u8, 0x04, 0x0B, 0x00, 0xE1, 0x00];
+        let reg = [0x05u8, 0x04, b'H', b'D', b'M', b'V'];
+        let mut program_info = Vec::new();
+        program_info.extend_from_slice(&prog_ca);
+        program_info.extend_from_slice(&reg);
+        let lang = [0x0Au8, 0x04, b'e', b'n', b'g', 0x00];
+
+        let mut body = Vec::new();
+        body.push(0x02); // table_id
+        body.push(0);
+        body.push(0); // section_length placeholder
+        body.extend_from_slice(&[0x00, 0x01]); // program_number 1
+        body.push(0xC3); // version 1, current_next 1
+        body.push(0x00);
+        body.push(0x00);
+        body.push(0xE0 | 0x02); // PCR_PID 0x0200
+        body.push(0x00);
+        let pil = program_info.len();
+        body.push(0xF0 | ((pil >> 8) as u8 & 0x0F));
+        body.push(pil as u8);
+        body.extend_from_slice(&program_info);
+        // one clear ES
+        body.push(0x03);
+        body.push(0xE0 | 0x02);
+        body.push(0x01);
+        body.push(0xF0 | ((lang.len() >> 8) as u8 & 0x0F));
+        body.push(lang.len() as u8);
+        body.extend_from_slice(&lang);
+
+        let section_length = body.len() - 3 + 4;
+        body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        body[2] = section_length as u8;
+        let crc = dvb_common::crc32_mpeg2::compute(&body);
+        body.extend_from_slice(&crc.to_be_bytes());
+        body
+    }
+
+    /// Drive the full handshake to an open conditional-access session with the
+    /// CAM's CAIDs learned. Returns the stack with CA on session 2.
+    fn stack_with_ca_session() -> CiStack {
+        use dvb_ci::objects::ca_info::CaInfo;
+        use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
+        use dvb_ci::resource::{APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI};
+        use dvb_ci::spdu::{CreateSessionResponse, OpenSessionRequest, SessionStatus};
+
+        let mut s = CiStack::new();
+        s.handle(Event::Host(HostRequest::Init));
+        s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
+        // module opens the host's resource_manager → RM session 1
+        s.handle(Event::Readable(&r_data(
+            1,
+            &ser(&OpenSessionRequest {
+                resource: RESOURCE_MANAGER,
+            }),
+        )));
+        // module enquires host profile (host_profiled) and sends its own profile
+        s.handle(Event::Readable(&r_apdu(1, &ser(&ProfileEnq))));
+        s.handle(Event::Readable(&r_apdu(
+            1,
+            &ser(&Profile {
+                resources: vec![
+                    RESOURCE_MANAGER,
+                    APPLICATION_INFORMATION,
+                    CONDITIONAL_ACCESS_SUPPORT,
+                    MMI,
+                ],
+            }),
+        )));
+        // RM is ready → it opened the module resources via create_session.
+        // application_information got session 2, conditional_access session 3
+        // (alloc order matches the open list). Accept both.
+        for (nb, res) in [
+            (2u16, APPLICATION_INFORMATION),
+            (3, CONDITIONAL_ACCESS_SUPPORT),
+            (4, MMI),
+        ] {
+            s.handle(Event::Readable(&r_data(
+                1,
+                &ser(&CreateSessionResponse {
+                    status: SessionStatus::Ok,
+                    resource: res,
+                    session_nb: nb,
+                }),
+            )));
+        }
+        // module advertises its CAIDs on the CA session
+        let ca_nb = s
+            .session
+            .sessions()
+            .into_iter()
+            .find(|&(_, r)| r == CONDITIONAL_ACCESS_SUPPORT)
+            .map(|(n, _)| n)
+            .expect("CA session open");
+        s.handle(Event::Readable(&r_apdu(
+            ca_nb,
+            &ser(&CaInfo {
+                ca_system_ids: vec![0x0B00, 0x1800],
+            }),
+        )));
+        s
+    }
+
+    #[test]
+    fn descramble_filters_then_queries_then_oks() {
+        use dvb_ci::objects::ca_pmt::CaPmtCmdId;
+        use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
+        use dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT;
+
+        let mut s = stack_with_ca_session();
+        let ca_nb = s
+            .session
+            .sessions()
+            .into_iter()
+            .find(|&(_, r)| r == CONDITIONAL_ACCESS_SUPPORT)
+            .map(|(n, _)| n)
+            .unwrap();
+
+        let pmt = build_pmt();
+        let query_actions = s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        // A ca_pmt with cmd_id = query was sent, filtered to the CAM's CAIDs.
+        let q = first_ca_pmt(&query_actions).expect("ca_pmt query sent");
+        assert_eq!(q.cmd_id, CaPmtCmdId::Query);
+        assert_eq!(
+            q.program_ca_descriptors.as_slice(),
+            &[0x09, 0x04, 0x0B, 0x00, 0xE1, 0x00]
+        );
+
+        // Module replies that descrambling is possible → stack auto-sends OK.
+        let ok_actions = s.handle(Event::Readable(&r_apdu(
+            ca_nb,
+            &ser(&CaPmtReply {
+                program_number: 1,
+                version_number: 1,
+                current_next_indicator: true,
+                ca_enable: Some(CaEnable::Possible),
+                streams: vec![],
+            }),
+        )));
+        assert!(ok_actions.iter().any(|a| matches!(
+            a,
+            Action::Notify(Notification::CaPmtReply {
+                descrambling_ok: true,
+                ..
+            })
+        )));
+        let ok = first_ca_pmt(&ok_actions).expect("ca_pmt ok_descrambling sent");
+        assert_eq!(ok.cmd_id, CaPmtCmdId::OkDescrambling);
+    }
+
+    #[test]
+    fn descramble_reply_not_possible_sends_no_ok() {
+        use dvb_ci::objects::ca_pmt_reply::CaPmtReply;
+        use dvb_ci::resource::CONDITIONAL_ACCESS_SUPPORT;
+
+        let mut s = stack_with_ca_session();
+        let ca_nb = s
+            .session
+            .sessions()
+            .into_iter()
+            .find(|&(_, r)| r == CONDITIONAL_ACCESS_SUPPORT)
+            .map(|(n, _)| n)
+            .unwrap();
+        let pmt = build_pmt();
+        s.handle(Event::Host(HostRequest::Descramble(&pmt)));
+        // ca_enable = None → descrambling not possible → no OK follow-up.
+        let actions = s.handle(Event::Readable(&r_apdu(
+            ca_nb,
+            &ser(&CaPmtReply {
+                program_number: 1,
+                version_number: 1,
+                current_next_indicator: true,
+                ca_enable: None,
+                streams: vec![],
+            }),
+        )));
+        assert!(first_ca_pmt(&actions).is_none(), "no ca_pmt should be sent");
+    }
+
+    /// Parse the first `ca_pmt` (tag `9F 80 32`) found in the written frames,
+    /// returning its `cmd_id` + programme CA-descriptor bytes (owned).
+    fn first_ca_pmt(actions: &[Action]) -> Option<CaPmtSummary> {
+        use dvb_ci::objects::ca_pmt::CaPmt;
+        use dvb_common::Parse;
+        let tag = [0x9F, 0x80, 0x32];
+        for a in actions {
+            if let Action::Write(w) = a {
+                if let Some(pos) = w.windows(3).position(|x| x == tag) {
+                    if let Ok(p) = CaPmt::parse(&w[pos..]) {
+                        return Some(CaPmtSummary {
+                            cmd_id: p.cmd_id.expect("programme cmd_id present"),
+                            program_ca_descriptors: p.program_ca_descriptors.to_vec(),
+                        });
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    struct CaPmtSummary {
+        cmd_id: dvb_ci::objects::ca_pmt::CaPmtCmdId,
+        program_ca_descriptors: Vec<u8>,
     }
 }

@@ -15,7 +15,25 @@ use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::time::Duration;
 
+use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
 use crate::device::{CaDevice, SlotInfo};
+
+/// Poll a file descriptor for readability up to `timeout`.
+fn poll_readable(fd: libc::c_int, timeout: Duration) -> io::Result<bool> {
+    let mut pfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
+    // SAFETY: `pfd` points at one valid pollfd for the duration of the call.
+    let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, ms) };
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(pfd.revents & libc::POLLIN != 0)
+    }
+}
 
 // --- Linux _IOC ioctl encoding (uapi/asm-generic/ioctl.h) ------------------
 const IOC_NRBITS: u32 = 8;
@@ -123,18 +141,59 @@ impl CaDevice for LinuxCaDevice {
     }
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        let mut pfd = libc::pollfd {
-            fd: self.file.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-        // SAFETY: `pfd` points at one valid pollfd for the duration of the call.
-        let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, ms) };
-        if r < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(pfd.revents & libc::POLLIN != 0)
+        poll_readable(self.file.as_raw_fd(), timeout)
+    }
+}
+
+/// A [`CiDataDevice`] backed by a Linux DVB CI TS data-plane device
+/// (`/dev/dvb/adapterN/ciM`). The host writes scrambled TS and reads the
+/// descrambled TS back; I/O is in whole 188-byte packets.
+#[derive(Debug)]
+pub struct LinuxCiDataDevice {
+    file: File,
+}
+
+impl LinuxCiDataDevice {
+    /// Open `/dev/dvb/adapter{adapter}/ci{ci}`.
+    pub fn open(adapter: u32, ci: u32) -> io::Result<Self> {
+        let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        Ok(Self { file })
+    }
+
+    /// Wrap an already-open CI data-plane device file.
+    #[must_use]
+    pub fn from_file(file: File) -> Self {
+        Self { file }
+    }
+}
+
+impl CiDataDevice for LinuxCiDataDevice {
+    fn write(&mut self, ts: &[u8]) -> io::Result<()> {
+        if ts.len() % TS_PACKET_LEN != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "write not a multiple of 188 bytes",
+            ));
         }
+        self.file.write_all(ts)
+    }
+
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.len() % TS_PACKET_LEN != 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "read buffer not a multiple of 188 bytes",
+            ));
+        }
+        match self.file.read(buf) {
+            Ok(n) => Ok(n),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(0),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+        poll_readable(self.file.as_raw_fd(), timeout)
     }
 }
