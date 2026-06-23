@@ -152,11 +152,16 @@ impl Resource for ResourceManager {
             self.ready = true;
             out.apdus.push(ser(&ProfileChange));
             out.notify.push(Notification::CamReady);
-            for r in [APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI] {
-                if self.module_resources.contains(&r) {
-                    out.open.push(r);
-                }
-            }
+            // Open the standard module-provided resources **unconditionally**.
+            // A real AlphaCrypt/Irdeto CAM returns an *empty* `profile` (no
+            // resource_identifiers — raw `9F 80 11 00`), so gating on its
+            // enumeration opens nothing (#340 round 4). The module accepts a
+            // `create_session` for the resources it actually provides and refuses
+            // the rest (`create_session_response` status != ok, which the session
+            // layer ignores) — matching libdvben50221.
+            out.open.push(APPLICATION_INFORMATION);
+            out.open.push(CONDITIONAL_ACCESS_SUPPORT);
+            out.open.push(MMI);
         }
         out
     }
@@ -406,21 +411,20 @@ mod tests {
     #[test]
     fn module_profile_triggers_profile_change_camready_and_opens() {
         // #340: after the module's `profile`, the host (1) fires CamReady, (2)
-        // sends `profile_change` — the gate that unblocks the module (§8.4.1.1) —
-        // and (3) opens (`create_session`, via ResourceOut::open) the
-        // module-provided resources it engages.
+        // sends `profile_change` (the §8.4.1.1 gate), and (3) opens the standard
+        // module-provided resources via create_session — **unconditionally**,
+        // even when the module's profile is empty (a real AlphaCrypt returns no
+        // resource_identifiers).
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open();
-        let module_profile = ser(&Profile {
-            resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT],
-        });
-        let o = rm.on_apdu(&module_profile);
+        let empty_profile = ser(&Profile { resources: vec![] });
+        let o = rm.on_apdu(&empty_profile);
         assert!(o.notify.contains(&Notification::CamReady));
         assert_eq!(o.apdus.len(), 1, "host sends profile_change");
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE_CHANGE));
         assert!(o.open.contains(&APPLICATION_INFORMATION));
         assert!(o.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
-        assert!(!o.open.contains(&MMI), "module didn't advertise MMI");
+        assert!(o.open.contains(&MMI));
     }
 
     #[test]
