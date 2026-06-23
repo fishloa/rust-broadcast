@@ -6,7 +6,7 @@
 
 ## Goal
 
-Clients (zenith's debug endpoint; a tvheadend-class system watching ~30 tuned
+Clients (a debug endpoint; a tvheadend-class system watching ~30 tuned
 services) should feed TS bytes in and get typed, ready-to-use SI data out —
 no hand-rolled section loops, no `match tag {…}` walls, no per-field text
 decoding. Dispatch must be *discovered from the table/descriptor
