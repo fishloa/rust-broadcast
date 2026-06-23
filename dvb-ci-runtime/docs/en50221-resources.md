@@ -42,13 +42,19 @@ crux — without it the module never proceeds):
    `application_information`, `conditional_access`, `mmi`, etc.
 6. The RM session persists for later `profile_change` notifications.
 
-> **Implementation note (#337/#340).** The host MUST send `profile_change` after
-> the module's `profile` reply — that is what unblocks the module to open its
-> resource sessions. A real AlphaCrypt/Irdeto CAM sends its `profile` then idles
-> until it gets `profile_change`; it does **not** enquire the host first, and it
-> does **not** wait for the host to open anything (per §7.2.3 the module opens its
-> own sessions; the host's `create_session` is only for routing to a *second*
-> module — see `en50221-session.md`).
+> **Implementation note (#337/#340), confirmed on hardware.** Two things the host
+> must do after the module's `profile` reply:
+> 1. **Send `profile_change`** — the gate that unblocks the module (without it a
+>    real AlphaCrypt/Irdeto CAM just idles).
+> 2. **Open (`create_session`) a session to each module-provided resource** it
+>    engages (`application_information`, `conditional_access`, `mmi`). The
+>    **direction rule** (observed live): the *module* opens sessions to
+>    *host*-provided resources (`resource_manager`, `date_time`); the *host* opens
+>    sessions to *module*-provided resources. The module will **not** open
+>    app_info/ca itself — if the host waits for it, nothing happens.
+>
+> The module does not enquire the host's profile first (it may never), so do not
+> gate on that.
 
 ## Application Information (§8.4.2)
 
