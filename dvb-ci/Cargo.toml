@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 description = "DVB Common Interface (EN 50221) — APDU/resource objects, session/transport PDUs, and a CA_PMT builder from a dvb-si PMT."
 license      = "MIT OR Apache-2.0"

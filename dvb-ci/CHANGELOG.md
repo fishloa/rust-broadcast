@@ -6,6 +6,18 @@ versioning.
 
 ## Unreleased
 
+## 0.5.0 — 2026-06-23
+
+### Added
+- `builder::build_ca_pmt_for_caids(pmt, allowed, list_management, cmd_id)` —
+  build a `ca_pmt` keeping only `CA_descriptor`s whose `CA_system_id` is in
+  `allowed` (the intersection of the PMT's CAIDs and the CAM's advertised CAIDs).
+  A CICAM rejects a `ca_pmt` carrying a CAID it does not support, so the host
+  must transmit only the module's advertised CAIDs (#332).
+- `CaPmtBuilt::retain_caids(&[u16])` — post-filter an already-built `ca_pmt` to a
+  CAID allow-list (e.g. once the CAM's `ca_info` is known). `build_ca_pmt` is
+  unchanged ("allow all").
+
 ## 0.4.1 — 2026-06-21
 
 ### Changed

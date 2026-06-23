@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-ci     = { path = "../dvb-ci", version = "0.4" }
+dvb-ci     = { path = "../dvb-ci", version = "0.5" }
 dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2", optional = true }
