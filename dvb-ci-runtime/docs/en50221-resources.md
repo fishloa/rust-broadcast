@@ -47,11 +47,16 @@ crux — without it the module never proceeds):
 > 1. **Send `profile_change`** — the gate that unblocks the module (without it a
 >    real AlphaCrypt/Irdeto CAM just idles).
 > 2. **Open (`create_session`) a session to each module-provided resource** it
->    engages (`application_information`, `conditional_access`, `mmi`). The
->    **direction rule** (observed live): the *module* opens sessions to
->    *host*-provided resources (`resource_manager`, `date_time`); the *host* opens
->    sessions to *module*-provided resources. The module will **not** open
->    app_info/ca itself — if the host waits for it, nothing happens.
+>    engages (`application_information`, `conditional_access`, `mmi`) —
+>    **unconditionally**, not gated on the module's `profile` enumeration. A real
+>    AlphaCrypt returns an *empty* profile (`9F 80 11 00`, no
+>    resource_identifiers), yet still provides those resources; gating on the
+>    enumeration opens nothing. The module accepts the `create_session` for what
+>    it provides and refuses the rest (`create_session_response` status ≠ ok,
+>    ignored). The **direction rule** (observed live): the *module* opens sessions
+>    to *host*-provided resources (`resource_manager`, `date_time`); the *host*
+>    opens sessions to *module*-provided resources. The module will **not** open
+>    app_info/ca itself.
 >
 > The module does not enquire the host's profile first (it may never), so do not
 > gate on that.

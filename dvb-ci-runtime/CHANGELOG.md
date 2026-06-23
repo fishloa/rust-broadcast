@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### Fixed (#340 — fourth live-CAM run)
+- **CA session still never opened: the module's `profile` is empty.** A real
+  AlphaCrypt returns `profile` with **no** `resource_identifier`s (`9F 80 11 00`),
+  so opening only the resources it *enumerates* (0.6.0) opened nothing. The
+  Resource Manager now `create_session`s the standard module-provided resources
+  (`application_information`, `conditional_access`, `mmi`) **unconditionally**
+  after `profile_change`; the module accepts those it provides and refuses the
+  rest (ignored). Matches libdvben50221.
+
 ## [0.6.0]
 
 ### Fixed (#340 — third live-CAM run)
