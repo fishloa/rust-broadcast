@@ -9,6 +9,7 @@
 //! [`RecordingCaDevice`]: crate::device::RecordingCaDevice
 
 use crate::device::LinkEvent;
+use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::tags as spdu_tags;
 use dvb_ci::tag::ApduTag;
 use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
@@ -64,6 +65,25 @@ fn spdu_label(spdu: &[u8]) -> String {
             } else {
                 format!("session {nb} · {}", apdu_label(rest))
             }
+        }
+        // Session-management SPDUs: surface the resource_id (+ status/nb) so a
+        // live trace shows *which* resource each create/open targets.
+        Some(spdu_tags::OPEN_SESSION_REQUEST) if spdu.len() >= 6 => {
+            let r = ResourceId(u32::from_be_bytes([spdu[2], spdu[3], spdu[4], spdu[5]]));
+            format!("open_session_request {}", r.name())
+        }
+        Some(spdu_tags::CREATE_SESSION) if spdu.len() >= 8 => {
+            let r = ResourceId(u32::from_be_bytes([spdu[2], spdu[3], spdu[4], spdu[5]]));
+            let nb = u16::from_be_bytes([spdu[6], spdu[7]]);
+            format!("create_session {} (nb {nb})", r.name())
+        }
+        Some(t @ (spdu_tags::CREATE_SESSION_RESPONSE | spdu_tags::OPEN_SESSION_RESPONSE))
+            if spdu.len() >= 9 =>
+        {
+            let status = spdu[2];
+            let r = ResourceId(u32::from_be_bytes([spdu[3], spdu[4], spdu[5], spdu[6]]));
+            let nb = u16::from_be_bytes([spdu[7], spdu[8]]);
+            format!("{} {} status={status:#04x} nb={nb}", spdu_name(t), r.name())
         }
         Some(t) => spdu_name(t).to_string(),
         None => "empty".to_string(),

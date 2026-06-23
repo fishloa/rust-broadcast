@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
-    tags, CloseSessionRequest, CloseSessionResponse, CreateSession, CreateSessionResponse,
+    tags, CloseSessionRequest, CloseSessionResponse, CreateSessionResponse,
     OpenSessionRequest, OpenSessionResponse, SessionNumber, SessionStatus,
 };
 use dvb_common::{Parse, Serialize};
@@ -89,14 +89,15 @@ impl SessionLayer {
     }
 
     /// Open a session to a **module-provided** resource (host-initiated):
-    /// returns the `create_session` SPDU to send. The session is recorded once
-    /// the module's `create_session_response(ok)` arrives.
+    /// returns the `open_session_request` SPDU to send. Sessions are opened the
+    /// same way in both directions (§8.4.1) — the host sends
+    /// `open_session_request`, and the module (the resource provider) assigns the
+    /// `session_nb` in its `open_session_response`. (`create_session`/0x93 is a
+    /// resource-manager-internal primitive; a real CAM rejects it with
+    /// `status=0xF0` — verified live against an AlphaCrypt.) The session is
+    /// recorded once the module's `open_session_response(ok)` arrives.
     pub fn create_session(&mut self, resource: ResourceId) -> Vec<u8> {
-        let session_nb = self.alloc();
-        ser(&CreateSession {
-            resource,
-            session_nb,
-        })
+        ser(&OpenSessionRequest { resource })
     }
 
     /// Wrap an APDU for sending on `session_nb` (`session_number` + body).
@@ -139,7 +140,17 @@ impl SessionLayer {
                     }
                 }
             }
-            // Module's reply to our create_session.
+            // Module's reply to our open_session_request (host opened a
+            // module-provided resource); the module assigns the session_nb.
+            Some(tags::OPEN_SESSION_RESPONSE) => {
+                if let Ok(resp) = OpenSessionResponse::parse(spdu) {
+                    if resp.status == SessionStatus::Ok {
+                        self.sessions.insert(resp.session_nb, resp.resource);
+                        out.opened.push((resp.session_nb, resp.resource));
+                    }
+                }
+            }
+            // (Legacy) module's reply to a create_session, if any module uses it.
             Some(tags::CREATE_SESSION_RESPONSE) => {
                 if let Ok(resp) = CreateSessionResponse::parse(spdu) {
                     if resp.status == SessionStatus::Ok {

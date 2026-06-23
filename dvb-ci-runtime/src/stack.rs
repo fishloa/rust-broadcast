@@ -15,7 +15,10 @@ use crate::transport::{Out as TransportOut, Transport};
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
-use dvb_ci::resource::{ResourceId, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI, RESOURCE_MANAGER};
+use dvb_ci::resource::{
+    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
+    RESOURCE_MANAGER,
+};
 use dvb_common::{Parse, Serialize};
 use dvb_si::tables::pmt::PmtSection;
 
@@ -60,12 +63,22 @@ impl CiStack {
     /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        // The host *provides* Resource Manager + Date-Time: the module opens
-        // sessions to these (the host accepts), and they are the list the RM
-        // advertises in its `profile` reply. The module-provided resources
-        // (app_info, conditional_access, mmi) are opened by the host via
-        // `create_session` instead (#340).
-        let host_provided = vec![RESOURCE_MANAGER, DATE_TIME];
+        // The host *provides* all five resources it implements; the module opens
+        // a session to each (module → host `open_session_request`, host accepts),
+        // and this is the list the RM advertises in its `profile` reply. Verified
+        // on hardware (#340, live AlphaCrypt): the module opens sessions only to
+        // resources the host advertises here — so application_information,
+        // conditional_access and mmi MUST be advertised, or the module never
+        // opens them and `ca_info` never arrives. (The earlier host-initiated
+        // `create_session`/`open_session_request` for these was wrong: the module
+        // rejects/ignores it.)
+        let host_provided = vec![
+            RESOURCE_MANAGER,
+            APPLICATION_INFORMATION,
+            CONDITIONAL_ACCESS_SUPPORT,
+            DATE_TIME,
+            MMI,
+        ];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),

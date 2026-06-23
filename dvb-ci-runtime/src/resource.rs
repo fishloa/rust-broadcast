@@ -138,30 +138,23 @@ impl Resource for ResourceManager {
             }
             _ => {}
         }
-        // Once we have the module's profile, the host:
-        //   1. sends `profile_change` (§8.4.1.1) — the gate the module waits on;
-        //      until it arrives the module can neither open nor accept sessions
-        //      (it idles after its `profile` reply — #340 round 1), and
-        //   2. opens a session to each **module-provided** resource it engages
-        //      (application_information, conditional_access, mmi) with
-        //      `create_session`. The direction rule (confirmed on hardware,
-        //      #340 round 2): the module opens sessions to *host*-provided
-        //      resources (resource_manager, date_time); the *host* opens sessions
-        //      to *module*-provided resources.
+        // Once we have the module's profile, the host sends `profile_change`
+        // (§8.4.1.1) — the gate the module waits on; until it arrives the module
+        // idles after its `profile` reply (#340 round 1).
+        //
+        // The host does NOT open application_information / conditional_access /
+        // mmi itself. Confirmed on hardware (#340, live AlphaCrypt): the module
+        // ignores a host `open_session_request` for them and rejects a
+        // `create_session` (`status=0xF0`). Those resources are **host-provided**
+        // — the host advertises them in its `profile` reply (see
+        // `CiStack::host_provided`), and the *module* opens sessions to them
+        // (module → host `open_session_request`), exactly as it does for
+        // resource_manager / date_time. The host just accepts. Each session's
+        // `on_open` then drives its enquiry (app_info_enq, ca_info_enq).
         if self.module_profiled && !self.ready {
             self.ready = true;
             out.apdus.push(ser(&ProfileChange));
             out.notify.push(Notification::CamReady);
-            // Open the standard module-provided resources **unconditionally**.
-            // A real AlphaCrypt/Irdeto CAM returns an *empty* `profile` (no
-            // resource_identifiers — raw `9F 80 11 00`), so gating on its
-            // enumeration opens nothing (#340 round 4). The module accepts a
-            // `create_session` for the resources it actually provides and refuses
-            // the rest (`create_session_response` status != ok, which the session
-            // layer ignores) — matching libdvben50221.
-            out.open.push(APPLICATION_INFORMATION);
-            out.open.push(CONDITIONAL_ACCESS_SUPPORT);
-            out.open.push(MMI);
         }
         out
     }
