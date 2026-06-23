@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0]
+
+### Added
+- **Multi-programme descrambling** (for a capacity manager driving several
+  services at once):
+  - `Driver::descramble_programs(&[&[u8]])` / `HostRequest::DescramblePrograms`
+    — send a CA-PMT list (`list_management` `first`/`more`/`last`, or `only` for
+    one), replacing the selected set; each `ca_pmt` is `ok_descrambling`.
+  - `Driver::add_program(&[u8])` / `HostRequest::AddProgram` — add one programme
+    (`list_management = add`) without re-listing the rest.
+  - `Driver::remove_program(&[u8])` / `HostRequest::RemoveProgram` — drop one
+    (`list_management = update`, `cmd_id = not_selected`).
+  - Per-programme `ca_pmt`s are serialised one-per-module-turn by the transport
+    queue. CAID-filtered to the CAM's `ca_info` like single `descramble`.
+
 ## [0.9.0]
 
 ### Added

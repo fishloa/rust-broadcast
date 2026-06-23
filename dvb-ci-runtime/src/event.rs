@@ -50,11 +50,19 @@ pub enum HostRequest<'a> {
     EnterMenu,
     /// Descramble the services in a PMT section (raw `dvb-si` PMT bytes). The
     /// stack filters the PMT's `CA_descriptor`s to the CAM's advertised CAIDs
-    /// (from its `ca_info`), sends a `ca_pmt` with `cmd_id = query`, and — when
-    /// the `ca_pmt_reply` reports descrambling is possible — automatically sends
+    /// (from its `ca_info`) and sends a `ca_pmt` with `list_management = only`,
     /// `cmd_id = ok_descrambling`. The reply outcome surfaces as
     /// [`Notification::CaPmtReply`].
     Descramble(&'a [u8]),
+    /// Descramble a **set** of programmes in one CA-PMT list (`first`/`more`/
+    /// `last`, all `ok_descrambling`), replacing any prior set. Each element is a
+    /// raw PMT section.
+    DescramblePrograms(&'a [&'a [u8]]),
+    /// Add one programme to the descrambled set (`list_management = add`).
+    AddProgram(&'a [u8]),
+    /// Remove one programme from the descrambled set (`list_management = update`,
+    /// `cmd_id = not_selected`).
+    RemoveProgram(&'a [u8]),
     /// Tear the interface down (close sessions + transport connection).
     Shutdown,
 }

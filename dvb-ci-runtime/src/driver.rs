@@ -65,15 +65,41 @@ impl<D: CaDevice> Driver<D> {
     }
 
     /// Descramble the services in a PMT section: the stack filters the PMT's
-    /// `CA_descriptor`s to the CAM's advertised CAIDs, sends a `ca_pmt` query,
-    /// and auto-sends `ok_descrambling` once the `ca_pmt_reply` confirms it.
-    /// Drive [`pump`](Self::pump) afterwards to exchange the reply; the outcome
+    /// `CA_descriptor`s to the CAM's advertised CAIDs and sends a `ca_pmt`
+    /// (`list_management = only`, `cmd_id = ok_descrambling`). The outcome
     /// surfaces as [`Notification::CaPmtReply`]. Call after the CAM is ready and
     /// its `ca_info` has been received (otherwise no CAID filter is applied).
     pub fn descramble(&mut self, pmt_section: &[u8]) -> io::Result<()> {
         let actions = self
             .stack
             .handle(Event::Host(HostRequest::Descramble(pmt_section)));
+        self.run(actions)
+    }
+
+    /// Descramble a set of programmes in one CA-PMT list (`first`/`more`/`last`),
+    /// replacing any previously selected set. Each element is a raw PMT section.
+    pub fn descramble_programs(&mut self, pmt_sections: &[&[u8]]) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::DescramblePrograms(pmt_sections)));
+        self.run(actions)
+    }
+
+    /// Add one programme to the descrambled set (`list_management = add`) without
+    /// re-listing the others — for a capacity manager adding a viewer's service.
+    pub fn add_program(&mut self, pmt_section: &[u8]) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::AddProgram(pmt_section)));
+        self.run(actions)
+    }
+
+    /// Remove one programme from the descrambled set (`list_management = update`,
+    /// `cmd_id = not_selected`) — tells the CAM to stop descrambling it.
+    pub fn remove_program(&mut self, pmt_section: &[u8]) -> io::Result<()> {
+        let actions = self
+            .stack
+            .handle(Event::Host(HostRequest::RemoveProgram(pmt_section)));
         self.run(actions)
     }
 
