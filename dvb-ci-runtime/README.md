@@ -45,8 +45,8 @@ Implemented from the EN 50221 specification.
 
 A command-line tool that drives a real Common Interface module end-to-end over a
 Linux DVB CA device. It is the reference consumer of this crate: it wires
-`Driver` + `LinuxCaDevice` + `RecordingCaDevice` + `trace` together with nothing
-but `std::env::args`.
+`Driver` + `LinuxCaDevice` + `RecordingCaDevice` + `trace` together behind a
+`clap` CLI (the workspace CLI standard — `docs/CLI-STANDARD.md`).
 
 ### Build / install
 
@@ -62,12 +62,16 @@ Device access usually needs membership of the `video` group (or root).
 
 ### Commands
 
+All device-addressed commands take `-a/--adapter <N>` and `-c/--ca <N>` (both
+default `0`). `--help` and `--version` are auto-generated; `<command> --help`
+lists that command's flags.
+
 | Command | What it does |
 |---|---|
 | `ci-probe list` | Enumerate `/dev/dvb/adapterN/caM` and print each slot's number + `module_ready`. |
-| `ci-probe info [adapter] [ca]` | Run the EN 50221 handshake and print `application_info` + the CAM's `CA_system_id`s. Defaults to adapter `0`, ca `0`. |
-| `ci-probe descramble <adapter> <ca> <pmt-file>` | Read a PMT section (raw bytes), then run the `ca_pmt` query → reply → `ok_descrambling` sequence and report the result. |
-| `ci-probe mmi [adapter] [ca]` | Interactive MMI: display the module's menus / enquiries and send your answers back (`menu_answ` / `answ`). |
+| `ci-probe info [--adapter N] [--ca N]` | Run the EN 50221 handshake and print `application_info` + the CAM's `CA_system_id`s. |
+| `ci-probe descramble [--adapter N] [--ca N] --pmt <FILE>` | Read a PMT section (raw bytes), then run the `ca_pmt` query → reply → `ok_descrambling` sequence and report the result. |
+| `ci-probe mmi [--adapter N] [--ca N]` | Interactive MMI: display the module's menus / enquiries and send your answers back (`menu_answ` / `answ`). |
 
 Append `--trace` to **any** command to dump an annotated link trace on exit
 (every TPDU/SPDU/APDU both directions) — invaluable for diagnosing a CAM that
@@ -85,7 +89,7 @@ $ ci-probe list
 Identify the module and its CA systems:
 
 ```console
-$ ci-probe info 0 0
+$ ci-probe info --adapter 0 --ca 0
 CAM ready (resource-manager handshake complete)
 application_info: type=0x01 manufacturer=0x1234 code=0x5678 menu="Irdeto CAM"
 ca_info: 18 CA_system_id(s): 0x0604, 0x0606, 0x0608, ...
@@ -94,7 +98,7 @@ ca_info: 18 CA_system_id(s): 0x0604, 0x0606, 0x0608, ...
 Diagnose a stuck handshake (annotated trace):
 
 ```console
-$ ci-probe info 0 0 --trace
+$ ci-probe info --adapter 0 --ca 0 --trace
 ...
 --- link trace ---
   reset()
@@ -112,7 +116,7 @@ Request descrambling for a service (PMT extracted with e.g. `dvbsnoop` or the
 `dvb-si` tools):
 
 ```console
-$ ci-probe descramble 0 0 service.pmt
+$ ci-probe descramble --adapter 0 --ca 0 --pmt service.pmt
 CAM ready (resource-manager handshake complete)
 ca_info: 18 CA_system_id(s): ...
 ca_info received → sending descramble request

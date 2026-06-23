@@ -52,28 +52,8 @@ fn estimate_bitrate_mbps(first: Option<(u64, u64)>, last: Option<(u64, u64)>) ->
     }
 }
 
-pub fn run(args: &[String]) -> ExitCode {
-    let mut path: Option<String> = None;
-    for arg in args {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                eprintln!("usage: dvb-tools pids <file.ts>");
-                return ExitCode::SUCCESS;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("dvb-tools pids: unknown option {other}");
-                return ExitCode::FAILURE;
-            }
-            other => path = Some(other.to_string()),
-        }
-    }
-
-    let Some(path) = path else {
-        eprintln!("usage: dvb-tools pids <file.ts>");
-        return ExitCode::FAILURE;
-    };
-
-    let data = match read_file(&path, "dvb-tools pids") {
+pub fn run(path: &str) -> ExitCode {
+    let data = match read_file(path, "dvb-tools pids") {
         Ok(d) => d,
         Err(code) => return code,
     };

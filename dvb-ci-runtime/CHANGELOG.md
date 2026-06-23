@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.1]
+## [0.7.0]
+
+### Changed
+- **`ci-probe` now uses a proper CLI** (the workspace standard — `clap` derive;
+  see `docs/CLI-STANDARD.md`). Device addressing is via named flags instead of
+  bare positionals, and `--help`/`--version` are auto-generated:
+  `ci-probe info --adapter 3 --ca 0`, `ci-probe descramble --adapter 3 --ca 0
+  --pmt service.bin`, `--trace` on any subcommand. (`linux` feature now also pulls
+  `clap`.)
 
 ### Fixed (#340 — fourth live-CAM run)
 - **CA session still never opened: the module's `profile` is empty.** A real

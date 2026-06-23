@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+- CLI rebuilt on `clap` (derive) per the workspace CLI standard
+  (`docs/CLI-STANDARD.md`): auto-generated `--help`/`--version`, per-subcommand
+  `--help`, and proper argument validation. Subcommands take a positional
+  `<FILE>` plus named flags (`--json`, `--pid`, `--inner`, `--plp`).
+
 ## [7.9.0] — 2026-06-22
 
 ### Changed

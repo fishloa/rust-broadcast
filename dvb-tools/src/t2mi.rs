@@ -38,51 +38,17 @@ fn parse_pid(s: &str) -> Option<PidArg> {
     Some(PidArg::Ts(value))
 }
 
-pub fn run(args: &[String]) -> ExitCode {
-    let mut path: Option<String> = None;
-    let mut pid: PidArg = PidArg::Ts(DEFAULT_T2MI_PID);
-    let mut plp: Option<u8> = None;
-    let mut inner = false;
-
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--pid" => {
-                i += 1;
-                match args.get(i).and_then(|s| parse_pid(s)) {
-                    Some(p) => pid = p,
-                    None => {
-                        eprintln!("dvb-tools t2mi: --pid expects a number or 'raw'");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
-            "--plp" => {
-                i += 1;
-                match args.get(i).and_then(|s| s.parse::<u8>().ok()) {
-                    Some(n) => plp = Some(n),
-                    None => {
-                        eprintln!("dvb-tools t2mi: --plp expects a u8");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
-            "--inner" => inner = true,
-            "-h" | "--help" => {
-                eprintln!(
-                    "usage: dvb-tools t2mi <file.t2mi|file.ts> \
-                     [--pid 0xNNN|raw] [--inner] [--plp N]"
-                );
-                return ExitCode::SUCCESS;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("dvb-tools t2mi: unknown option {other}");
+pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> ExitCode {
+    let pid = match pid_arg {
+        None => PidArg::Ts(DEFAULT_T2MI_PID),
+        Some(s) => match parse_pid(s) {
+            Some(p) => p,
+            None => {
+                eprintln!("dvb-tools t2mi: --pid expects a number (0xNNN or decimal) or 'raw'");
                 return ExitCode::FAILURE;
             }
-            other => path = Some(other.to_string()),
-        }
-        i += 1;
-    }
+        },
+    };
 
     if plp.is_some() && !inner {
         eprintln!("dvb-tools t2mi: --plp requires --inner");
@@ -94,15 +60,7 @@ pub fn run(args: &[String]) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let Some(path) = path else {
-        eprintln!(
-            "usage: dvb-tools t2mi <file.t2mi|file.ts> \
-             [--pid 0xNNN|raw] [--inner] [--plp N]"
-        );
-        return ExitCode::FAILURE;
-    };
-
-    let data = match read_file(&path, "dvb-tools t2mi") {
+    let data = match read_file(path, "dvb-tools t2mi") {
         Ok(d) => d,
         Err(code) => return code,
     };

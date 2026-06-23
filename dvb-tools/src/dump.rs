@@ -44,31 +44,9 @@ fn print_descriptors(loop_: &DescriptorLoop<'_>, reg: &DescriptorRegistry, inden
     }
 }
 
-/// `dvb-tools dump <file.ts> [--json]` — returns success on a clean run.
-pub fn run(args: &[String]) -> ExitCode {
-    let mut path: Option<String> = None;
-    let mut json = false;
-    for arg in args {
-        match arg.as_str() {
-            "--json" => json = true,
-            "-h" | "--help" => {
-                eprintln!("usage: dvb-tools dump <file.ts> [--json]");
-                return ExitCode::SUCCESS;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("dvb-tools dump: unknown option {other}");
-                return ExitCode::FAILURE;
-            }
-            other => path = Some(other.to_string()),
-        }
-    }
-
-    let Some(path) = path else {
-        eprintln!("usage: dvb-tools dump <file.ts> [--json]");
-        return ExitCode::FAILURE;
-    };
-
-    let data = match read_file(&path, "dvb-tools dump") {
+/// `dvb-tools dump <FILE> [--json]` — returns success on a clean run.
+pub fn run(path: &str, json: bool) -> ExitCode {
+    let data = match read_file(path, "dvb-tools dump") {
         Ok(d) => d,
         Err(code) => return code,
     };

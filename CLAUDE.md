@@ -121,7 +121,10 @@ automatically.
 
 The runnable analyzer CLI (the `dvb-tools` binary crate — `dump` / `services` /
 `epg` / `pids` / `t2mi` subcommands) wires the pump → dispatch → decode story
-together with no new dependencies (plain `std::env::args`).
+together. All CLIs follow the workspace **CLI standard** ([`docs/CLI-STANDARD.md`](docs/CLI-STANDARD.md)):
+`clap` derive, named flags (no bare positional magic numbers), auto
+`--help`/`--version`. `ci-probe` (the `dvb-ci-runtime` CAM tool) follows the same
+standard.
 
 ### Spec grounding (the project's defining discipline)
 

@@ -91,28 +91,8 @@ fn print_row(row: &ServiceRow, lcn: Option<u16>) {
     );
 }
 
-pub fn run(args: &[String]) -> ExitCode {
-    let mut path: Option<String> = None;
-    for arg in args {
-        match arg.as_str() {
-            "-h" | "--help" => {
-                eprintln!("usage: dvb-tools services <file.ts>");
-                return ExitCode::SUCCESS;
-            }
-            other if other.starts_with('-') => {
-                eprintln!("dvb-tools services: unknown option {other}");
-                return ExitCode::FAILURE;
-            }
-            other => path = Some(other.to_string()),
-        }
-    }
-
-    let Some(path) = path else {
-        eprintln!("usage: dvb-tools services <file.ts>");
-        return ExitCode::FAILURE;
-    };
-
-    let data = match read_file(&path, "dvb-tools services") {
+pub fn run(path: &str) -> ExitCode {
+    let data = match read_file(path, "dvb-tools services") {
         Ok(d) => d,
         Err(code) => return code,
     };

@@ -21,7 +21,8 @@ dvb-tools t2mi     <file> [--pid 0xNNN|raw] [--inner] [--plp N]
                                                            T2-MI dump / inner-TS extraction
 ```
 
-Pass `-h` / `--help` (or no subcommand) to print the full usage block.
+`-h`/`--help`, `<command> --help`, and `-V`/`--version` are auto-generated
+(`clap`, per the workspace CLI standard — `docs/CLI-STANDARD.md`).
 
 ## Usage
 
