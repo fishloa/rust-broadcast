@@ -138,17 +138,25 @@ impl Resource for ResourceManager {
             }
             _ => {}
         }
-        // Once we have the module's profile, the host builds its resource list
-        // and sends `profile_change` (§8.4.1.1). That is the gate the module is
-        // waiting on: until it arrives the module can neither open nor accept
-        // sessions, so it idles after its `profile` reply (#340). After it, the
-        // module opens its own sessions (application_information, conditional_
-        // access, mmi) — the host does NOT `create_session` for them (§7.2.3;
-        // create_session is inter-module routing only).
+        // Once we have the module's profile, the host:
+        //   1. sends `profile_change` (§8.4.1.1) — the gate the module waits on;
+        //      until it arrives the module can neither open nor accept sessions
+        //      (it idles after its `profile` reply — #340 round 1), and
+        //   2. opens a session to each **module-provided** resource it engages
+        //      (application_information, conditional_access, mmi) with
+        //      `create_session`. The direction rule (confirmed on hardware,
+        //      #340 round 2): the module opens sessions to *host*-provided
+        //      resources (resource_manager, date_time); the *host* opens sessions
+        //      to *module*-provided resources.
         if self.module_profiled && !self.ready {
             self.ready = true;
             out.apdus.push(ser(&ProfileChange));
             out.notify.push(Notification::CamReady);
+            for r in [APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI] {
+                if self.module_resources.contains(&r) {
+                    out.open.push(r);
+                }
+            }
         }
         out
     }
@@ -396,10 +404,11 @@ mod tests {
     }
 
     #[test]
-    fn module_profile_triggers_profile_change_and_camready() {
-        // #340: after the module's `profile`, the host fires CamReady and sends
-        // `profile_change` — the gate that unblocks the module to open its own
-        // resource sessions (§8.4.1.1). The host does NOT open them itself.
+    fn module_profile_triggers_profile_change_camready_and_opens() {
+        // #340: after the module's `profile`, the host (1) fires CamReady, (2)
+        // sends `profile_change` — the gate that unblocks the module (§8.4.1.1) —
+        // and (3) opens (`create_session`, via ResourceOut::open) the
+        // module-provided resources it engages.
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open();
         let module_profile = ser(&Profile {
@@ -409,10 +418,9 @@ mod tests {
         assert!(o.notify.contains(&Notification::CamReady));
         assert_eq!(o.apdus.len(), 1, "host sends profile_change");
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE_CHANGE));
-        assert!(
-            o.open.is_empty(),
-            "the module opens its own sessions, not the host"
-        );
+        assert!(o.open.contains(&APPLICATION_INFORMATION));
+        assert!(o.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
+        assert!(!o.open.contains(&MMI), "module didn't advertise MMI");
     }
 
     #[test]

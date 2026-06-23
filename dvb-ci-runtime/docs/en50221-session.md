@@ -32,35 +32,27 @@ value = `resource_identifier` (4 bytes). `*_response` value = `session_status` (
 | `0xF2` | resource exists, version lower than requested |
 | `0xF3` | resource busy |
 
-## Flow (§7.2.3)
+## Flow (§7.2.3) — the direction rule
 
-**`open_session_request` is always issued by the module** (the "application"),
-never by the host (§7.2.2 ¶1). Two cases (figures 9 & 10):
+Who opens a session depends on **who provides the resource** (confirmed on
+hardware, #340):
 
-- **Resource the host handles (figure 9 — the normal CI case):** the module sends
+- **Host-provided resource (figure 9):** the **module** sends
   `open_session_request(resource)`; the host allocates a `session_nb` and replies
-  `open_session_response(0x00, resource, nb)` directly (or `0xF0`/`0xF1`/… to
-  refuse). This is how **every** session in a single-CAM setup is opened —
-  resource_manager, application_information, conditional_access, date_time, mmi.
-  The host then drives each per its resource protocol (e.g. it sends
-  `application_info_enq` on the app-info session).
-- **Resource provided by a *second* module (figure 10):** the host extends the
-  requester's session onto the provider module's transport connection with a
-  **`create_session(resource, nb)`**; that module replies
-  `create_session_response`. **`create_session` is host→module routing *only* for
-  this inter-module case** — it is **not** how a host uses a module's own
-  resource. A single-connection host (this crate's model) never issues it.
-- **Data:** once open, each side sends `session_number(nb)` immediately followed by
-  one or more APDUs.
+  `open_session_response(0x00, resource, nb)` (or `0xF0`/`0xF1`/… to refuse). This
+  is how `resource_manager` and `date_time` sessions open — the module opens them.
+- **Module-provided resource (figure 10, generalised to one connection):** the
+  **host** opens the session with **`create_session(resource, nb)`**; the module
+  replies `create_session_response`. This is how the host opens
+  `application_information`, `conditional_access`, and `mmi` — the resources the
+  module advertised in its `profile` reply. The module will **not** open these
+  itself.
+- **Data:** once open, each side sends `session_number(nb)` then one or more APDUs.
 - **Close:** either side sends `close_session_request(nb)`; the peer replies
   `close_session_response(nb)`.
 
-The session layer is **mechanism, not policy**: it allocates/tracks `session_nb`s,
-**accepts `open_session_request` for any resource the host has a handler for**
-(replying `open_session_response`), and routes `session_number`+APDU to/from the
-bound resource. *Which* resources are handled is decided by the resource layer.
-
-> **Note (#340).** Earlier wording here said the host opens module-provided
-> resources with `create_session`; that is wrong per §7.2.3 — the module opens
-> them itself once the RM `profile_change` gate is passed (see
-> `en50221-resources.md`). The host only accepts.
+So the host **accepts** `open_session_request` for the resources it *provides*
+(`resource_manager`, `date_time`) and **issues** `create_session` for the
+module-provided resources it *uses* (`application_information`,
+`conditional_access`, `mmi`), after the RM `profile_change` gate
+(see `en50221-resources.md`).

@@ -35,6 +35,11 @@ pub struct CiStack {
     session: SessionLayer,
     /// Application-layer resource handlers, dispatched by `ResourceId`.
     resources: Vec<Box<dyn Resource>>,
+    /// Resources the host **provides** — the module opens sessions to these, so
+    /// the host accepts an incoming `open_session_request` for them
+    /// (resource_manager, date_time). Module-provided resources are opened the
+    /// other way, by the host's `create_session` (#340).
+    host_provided: Vec<ResourceId>,
     /// `CA_system_id`s the CAM advertised in its `ca_info` (the descramble
     /// filter set; empty until `ca_info` arrives).
     cam_caids: Vec<u16>,
@@ -55,21 +60,23 @@ impl CiStack {
     /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        // The host genuinely *provides* Resource Manager + Date-Time; that is the
-        // list the RM advertises in its `profile` reply. The module opens the
-        // sessions; the host accepts any resource it has a handler for (see
-        // `drive_session`).
-        let host_resources = vec![RESOURCE_MANAGER, DATE_TIME];
+        // The host *provides* Resource Manager + Date-Time: the module opens
+        // sessions to these (the host accepts), and they are the list the RM
+        // advertises in its `profile` reply. The module-provided resources
+        // (app_info, conditional_access, mmi) are opened by the host via
+        // `create_session` instead (#340).
+        let host_provided = vec![RESOURCE_MANAGER, DATE_TIME];
         Self {
             transport: Transport::new(1),
             session: SessionLayer::new(),
             resources: vec![
-                Box::new(ResourceManager::new(host_resources)),
+                Box::new(ResourceManager::new(host_provided.clone())),
                 Box::new(ApplicationInformation),
                 Box::new(ConditionalAccess),
                 Box::new(DateTime::new()),
                 Box::new(Mmi),
             ],
+            host_provided,
             cam_caids: Vec::new(),
             pending_descramble: None,
         }
@@ -226,19 +233,18 @@ impl CiStack {
 
     /// Feed one SPDU to the session layer and convert its output to actions.
     fn drive_session(&mut self, spdu: &[u8]) -> Vec<Action> {
-        // The module opens every session (§7.2.3); the host accepts an
-        // `open_session_request` for any resource it has a handler for — both
-        // host-provided (resource_manager, date_time) and the module-provided
-        // ones the host engages (application_information, conditional_access,
-        // mmi). #340: the old code only accepted `provided`, so it rejected the
-        // module's app-info/ca opens with `resource_non_existent`.
-        let handled: Vec<ResourceId> = self.resources.iter().map(|r| r.id()).collect();
+        // The module opens sessions to **host-provided** resources
+        // (resource_manager, date_time); the host accepts those. Module-provided
+        // resources (application_information, conditional_access, mmi) are opened
+        // the other way — by the host's `create_session` (#340) — so an incoming
+        // `open_session_request` for them is *not* accepted here.
+        let host_provided = self.host_provided.clone();
         let SessionOut {
             spdus,
             apdus,
             opened,
             closed,
-        } = self.session.on_spdu(spdu, |r| handled.contains(&r));
+        } = self.session.on_spdu(spdu, |r| host_provided.contains(&r));
 
         let mut actions = Vec::new();
         // Session-layer SPDUs (e.g. open_session_response) go down the transport.
@@ -458,13 +464,14 @@ mod tests {
     }
 
     /// Drive the full handshake to open conditional-access + mmi sessions with
-    /// the CAM's CAIDs learned, following the real flow: module opens RM → host
-    /// `profile_change` → module opens its resource sessions (#340).
+    /// the CAM's CAIDs learned, following the real flow (#340): module opens RM →
+    /// host sends `profile_change` and `create_session`s the module-provided
+    /// resources → module accepts each with `create_session_response`.
     fn stack_with_ca_session() -> CiStack {
         use dvb_ci::objects::ca_info::CaInfo;
         use dvb_ci::objects::resource_manager::Profile;
         use dvb_ci::resource::{APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI};
-        use dvb_ci::spdu::OpenSessionRequest;
+        use dvb_ci::spdu::{CreateSessionResponse, OpenSessionRequest, SessionStatus};
 
         let mut s = CiStack::new();
         s.handle(Event::Host(HostRequest::Init));
@@ -476,21 +483,31 @@ mod tests {
                 resource: RESOURCE_MANAGER,
             }),
         )));
-        // module sends its profile → host fires CamReady + sends profile_change
+        // module sends its profile → host: CamReady + profile_change +
+        // create_session for each module-provided resource (alloc nb 2,3,4).
         s.handle(Event::Readable(&r_apdu(
             1,
             &ser(&Profile {
                 resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI],
             }),
         )));
-        pump_sbs(&mut s); // flush the profile_change
-                          // unblocked, the module now opens its own resource sessions
-        for res in [APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI] {
+        pump_sbs(&mut s); // flush profile_change + the first create_session
+                          // The module accepts each create_session → its session opens (+ on_open
+                          // enq); each acceptance frees the link so the next create_session flushes.
+        for (nb, res) in [
+            (2u16, APPLICATION_INFORMATION),
+            (3, CONDITIONAL_ACCESS_SUPPORT),
+            (4, MMI),
+        ] {
             s.handle(Event::Readable(&r_data(
                 1,
-                &ser(&OpenSessionRequest { resource: res }),
+                &ser(&CreateSessionResponse {
+                    status: SessionStatus::Ok,
+                    resource: res,
+                    session_nb: nb,
+                }),
             )));
-            pump_sbs(&mut s); // flush open_session_response + the on_open enq
+            pump_sbs(&mut s);
         }
         // module advertises its CAIDs on the CA session
         let ca_nb = s

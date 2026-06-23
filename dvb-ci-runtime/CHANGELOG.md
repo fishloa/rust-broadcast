@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Fixed (#340 — third live-CAM run)
+- **CA sessions never opened → no descrambling.** 0.5.0 added the
+  `profile_change` gate (correct) but also wrongly stopped the host opening the
+  module-provided resource sessions. Hardware confirmed the **direction rule**:
+  the *module* opens sessions to *host*-provided resources (`resource_manager`,
+  `date_time`); the *host* opens sessions to *module*-provided resources
+  (`application_information`, `conditional_access`, `mmi`) with `create_session`.
+  The Resource Manager again opens those (alongside `profile_change`), and the
+  session layer once more accepts module opens only for host-provided resources.
+  The spec mds (`en50221-resources.md`, `en50221-session.md`) are corrected to
+  this rule.
+
 ## [0.5.0]
 
 ### Fixed (#340 — second live-CAM run)
