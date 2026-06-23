@@ -402,12 +402,12 @@ mod tests {
     }
 
     #[test]
-    fn module_profile_triggers_profile_change_camready_and_opens() {
-        // #340: after the module's `profile`, the host (1) fires CamReady, (2)
-        // sends `profile_change` (the §8.4.1.1 gate), and (3) opens the standard
-        // module-provided resources via create_session — **unconditionally**,
-        // even when the module's profile is empty (a real AlphaCrypt returns no
-        // resource_identifiers).
+    fn module_profile_triggers_profile_change_and_camready() {
+        // #340: after the module's `profile`, the host fires CamReady and sends
+        // `profile_change` (the §8.4.1.1 gate) — and nothing else. It does NOT
+        // open application_information / conditional_access / mmi itself: those
+        // are host-provided resources the module opens sessions to (verified on
+        // a live AlphaCrypt, which rejects/ignores host-initiated opens).
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open();
         let empty_profile = ser(&Profile { resources: vec![] });
@@ -415,9 +415,7 @@ mod tests {
         assert!(o.notify.contains(&Notification::CamReady));
         assert_eq!(o.apdus.len(), 1, "host sends profile_change");
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE_CHANGE));
-        assert!(o.open.contains(&APPLICATION_INFORMATION));
-        assert!(o.open.contains(&CONDITIONAL_ACCESS_SUPPORT));
-        assert!(o.open.contains(&MMI));
+        assert!(o.open.is_empty(), "host opens no sessions itself");
     }
 
     #[test]

@@ -171,7 +171,7 @@ mod tests {
         ];
         assert_eq!(
             decode_frame(&osr),
-            "T_Data_Last tcid=1 · open_session_request"
+            "T_Data_Last tcid=1 · open_session_request resource_manager"
         );
 
         // profile_enq (host): a0 09 01 | 90 02 00 01 | 9f 80 10 00
