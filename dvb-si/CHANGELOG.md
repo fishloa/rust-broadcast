@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## [8.0.0] — 2026-06-27
+
+### Removed (BREAKING)
+- The MPEG-2 TS framing layer has moved to the new `mpeg-ts` crate.
+  Replace `dvb_si::ts::*`, `dvb_si::section::*`, `dvb_si::resync::*`,
+  `dvb_si::mux::*`, and `dvb_si::pid::*` with the equivalent items from
+  `mpeg_ts`. All PSI tables (PAT/PMT/CAT/TSDT, NIT/SDT/EIT/TDT/TOT/UNT/…)
+  and all descriptors remain in `dvb-si`. The `SiDemux` now depends on
+  `mpeg-ts` internally via the `ts` feature.
 
 ## 7.9.0 — 2026-06-22
 

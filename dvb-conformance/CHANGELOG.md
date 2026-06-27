@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [8.0.0] — 2026-06-27
+
+### Changed
+- Lockstep major release; parity bump. Now depends on `mpeg-ts` transitively
+  via `dvb-si` for TS framing. No API changes.
 
 ## [7.9.0] — 2026-06-22
 

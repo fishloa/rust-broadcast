@@ -11,7 +11,7 @@ categories   = ["parser-implementations", "multimedia::video", "no-std"]
 exclude      = ["docs/**"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
+dvb-common = { path = "../dvb-common", version = "8", default-features = false }
 thiserror  = { version = "2", default-features = false }
 bytes      = { version = "1", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
