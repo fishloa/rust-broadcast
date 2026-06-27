@@ -621,9 +621,8 @@ pub struct DateRange {
     pub scte35: Option<Scte35Attr>,
 }
 
-// DateRange holds f64 -> derive Eq manually-safe via PartialEq only; tests compare
-// with exact values produced by the crate so equality is deterministic.
-impl Eq for DateRange {}
+// DateRange carries f64 fields, so it is `PartialEq` only (no `Eq`). Tests
+// compare values the crate produced, so equality is deterministic in practice.
 
 const TAG: &str = "#EXT-X-DATERANGE:";
 
@@ -803,12 +802,6 @@ mod tests {
         // message_data must equal the splice verbatim:
         let extracted = emsg_to_scte35(&emsg).unwrap();
         assert_eq!(extracted, splice);
-    }
-
-    #[test]
-    fn emsg_to_scte35_rejects_non_scte_scheme() {
-        // a minimal emsg with a different scheme should error UnsupportedScheme;
-        // built by hand in the integration test (see tests/emsg_interop.rs).
     }
 }
 ```
