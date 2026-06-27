@@ -1,0 +1,16 @@
+[package]
+name         = "dvb-scte35"
+version      = "7.9.1"
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-dvb"
+rust-version = "1.81"
+description  = "DEPRECATED: renamed to `scte35-splice`. This crate re-exports it."
+
+[dependencies]
+scte35-splice = { path = "../scte35-splice", version = "1.0" }
+
+[features]
+default = ["std", "serde"]
+std   = ["scte35-splice/std"]
+serde = ["scte35-splice/serde"]
