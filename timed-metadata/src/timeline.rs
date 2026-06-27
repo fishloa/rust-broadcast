@@ -81,7 +81,6 @@ pub(crate) fn unroll_pts(last_pts: &mut Option<u64>, epoch: &mut u64, pts33: u64
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::MediaTime;
 
     fn splice_2002() -> alloc::vec::Vec<u8> {
         let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";

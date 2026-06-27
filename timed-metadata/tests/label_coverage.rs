@@ -8,10 +8,9 @@
 //! and catches a new `pub enum` that nobody labelled.
 //!
 //! SKIP list rationale:
-//! - `Error`        — thiserror error enum, not a spec/field label enum.
+//! - `Error` — thiserror error enum, not a spec/field label enum.
 //! - `SourcePayload` — data-carrying ADT (holds typed payload values, not a
-//!                    spec field code), analogous to `Any*` enums in other
-//!                    crates.
+//!   spec field code), analogous to `Any*` enums in other crates.
 
 use std::collections::BTreeSet;
 use std::fs;

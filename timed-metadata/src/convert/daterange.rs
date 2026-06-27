@@ -47,7 +47,7 @@ mod tests {
     use crate::anchor::TimeAnchor;
     use crate::daterange::Scte35Cue;
     use crate::event::{EventKind, MediaDuration, SourcePayload, TimedEvent};
-    use alloc::{string::ToString, vec};
+    use alloc::vec;
 
     #[test]
     fn break_start_maps_to_scte35_out_with_duration() {
