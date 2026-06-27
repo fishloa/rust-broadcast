@@ -1,0 +1,29 @@
+[package]
+name         = "timed-metadata"
+version      = "0.1.0"
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-dvb"
+rust-version = "1.81"
+description  = "Convert DPI / timed-metadata signalling between SCTE-35, HLS EXT-X-DATERANGE and DASH emsg. no_std."
+keywords     = ["scte35", "hls", "dash", "emsg", "ssai"]
+categories   = ["multimedia::video", "no-std"]
+readme       = "README.md"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+scte35-splice = { path = "../scte35-splice", version = "1.0", default-features = false }
+mp4-emsg      = { path = "../mp4-emsg",      version = "0.1", default-features = false }
+dvb-common    = { path = "../dvb-common",    version = "7.9", default-features = false }
+thiserror     = { version = "2", default-features = false }
+chrono        = { version = "0.4", default-features = false, optional = true }
+serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[features]
+default = ["std", "serde", "chrono"]
+std    = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std"]
+serde  = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde"]
+chrono = ["dep:chrono", "chrono/alloc"]
