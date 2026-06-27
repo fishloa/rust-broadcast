@@ -4,7 +4,15 @@
 **Date:** 2026-06-27
 **Crate:** `mpeg-ts` (name free on crates.io)
 **Version:** new crate, start **0.1.0** (owned-packet API is new and may refine as zenith adopts it; graduate to 1.0 once validated).
-**Posture:** `#![no_std]` + `alloc`; `serde` feature-gated; ISO/IEC 13818-1 cited (already the cited source for these layouts in dvb-si — no new spec exposure).
+**Posture:** `#![no_std]` + `alloc`; `serde` feature-gated.
+**Spec grounding (UPGRADED):** cite **ITU-T H.222.0 (08/2023) = ISO/IEC 13818-1** —
+MPEG-2 Systems is a joint ITU-T|ISO/IEC text and the free ITU-T twin (08/23 edition)
+is now **vendored** at `specs/itu_t_h222_0_202308_mpeg2_systems.pdf`. So mpeg-ts cites
+a free, in-repo **primary source** rather than the paid "consult-locally, never-vendor"
+ISO posture used until now. (The TS/PES/PSI/section syntax is stable across editions, so
+the superseded 08/23 free edition is authoritative for these layouts. Bonus: dvb-si /
+mpeg-ps / dvb-pes — which currently cite bare "ISO/IEC 13818-1" — can retroactively point
+at this vendored H.222.0 too.)
 
 ## Purpose
 
