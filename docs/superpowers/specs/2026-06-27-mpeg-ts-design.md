@@ -135,3 +135,23 @@ at the boundary) so SiDemux/section paths propagate cleanly.
 PSI tables (mpeg-ts 0.2), the codec crate (h264/hevc/nal from zenith), `ci_device`
 (→ dvb-ci-runtime), and the `rust-broadcast` repo rename (this epic is its
 trigger, handled separately).
+
+---
+
+## REVISED DECISIONS (2026-06-27, supersedes the scope-A / re-export sections above)
+
+After discussion, the design is revised:
+
+1. **Scope B (not A): move the 4 generic PSI *tables* now.** `pat.rs` (335), `pmt.rs` (856), `cat.rs` (360), `tsdt.rs` (245) move from `dvb-si/src/tables/` to `mpeg-ts` — they are ISO/IEC 13818-1 (= ITU-T H.222.0 §2.4.4), not DVB. Rationale: "now or never" — deferring means a *second* breaking dvb-si major later.
+
+2. **Clean break, NOT re-export.** Remove `dvb_si::{ts,section,resync,mux,pid}` entirely (no `pub use mpeg_ts::…` shims). Consumers (incl. our dvb-tools/dvb-stream/dvb-conformance) use `mpeg_ts::…` directly + add the `mpeg-ts` dep. Reason: the re-export *looked* compatible but the error type changed — a footgun. A clean break gives clear `cannot find module ts in dvb_si` errors that guide migration. (The committed re-export state `efb4c039` is the green checkpoint to rework from.)
+
+3. **mpeg-ts tables hold RAW descriptor-loop bytes.** A minimal `mpeg_ts::DescriptorLoop(&[u8])` newtype (serialize-verbatim). mpeg-ts has **zero descriptor typing** — no `AnyDescriptor`, no extension trait. `mpeg_ts::PmtSection.es_info`/`program_info` are raw bytes; the caller types them with `dvb_si::descriptors::parse_loop` if wanted.
+
+4. **Descriptors stay in dvb-si PERMANENTLY — decided, not deferred.** The 48 MPEG-range (0x02–0x3F) descriptor modules do NOT move (that was option C — ~15–20k lines + a risky cross-crate dispatch, for the thin benefit of typed descriptors on bare TS; most TS-only consumers want table *structure*, which scope-B types). Principled layering: **mpeg-ts = transport + program structure; dvb-si = descriptor + SI semantics.** Each crate fully types its own spec layer; the raw-descriptor-bytes field is the honest seam, not a gap. Consequence (accepted): a client wanting *typed descriptors* uses dvb-si.
+
+5. **`AnyTableSection` stays in dvb-si** (unified dispatch over all table_ids), now sourcing the 4 generic table *types* from `mpeg_ts::{Pat,Pmt,Cat,Tsdt}Section` in its `declare_tables!` list (cross-crate type paths; drift-test pins tag→type `TABLE_ID` across both crates). mpeg-ts MAY expose a small standalone dispatch for its 4 tables (optional).
+
+6. **Version: lockstep 8.0.0** (breaking — error type + module relocation). All 6 lockstep crates → 8.0.0; bundles the dvb-tools clap CLI (#344). mpeg-ts ships 0.1.0 (independent), published before the lockstep (dvb-si depends on it).
+
+7. **Do NOT publish.** Build → full gate → audit → PR → STOP. Owner reviews the code before any tag.
