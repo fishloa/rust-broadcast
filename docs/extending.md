@@ -1,6 +1,6 @@
 # Adding a parser crate to the workspace
 
-This guide is for authoring a **new sibling crate** (e.g. a future `dvb-scte35`)
+This guide is for authoring a **new sibling crate** (e.g. one like `scte35-splice`)
 that plugs its own wire types into the existing `dvb-si` / `dvb-t2mi` dispatch
 without forking or patching them.
 
@@ -77,8 +77,8 @@ pattern above is validated, not aspirational.
 
 When the new crate is ready to become a workspace member:
 
-1. Add its path to `members` in the root `Cargo.toml` (the `dvb-scte35/`
-   directory is already reserved for this).
+1. Add its path to `members` in the root `Cargo.toml` (each crate lives in its
+   own top-level directory).
 2. Depend on `dvb-common` (and `dvb-si`/`dvb-t2mi` if it extends their dispatch)
    with a workspace-pinned version.
 3. Follow the same release discipline as the rest of the workspace — see the
