@@ -11,8 +11,8 @@
 #![cfg(feature = "ts")]
 
 use dvb_si::demux::SiDemux;
-use dvb_si::mux::SectionPacketizer;
-use dvb_si::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
+use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 fn read_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);

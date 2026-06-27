@@ -9,7 +9,7 @@
 
 use dvb_si::demux::SiDemux;
 use dvb_si::epg::EpgStore;
-use dvb_si::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 const EIT_PID: u16 = 0x0012;
 const TS_SYNC: u8 = 0x47;

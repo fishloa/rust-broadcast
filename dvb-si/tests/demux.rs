@@ -3,9 +3,9 @@
 #![cfg(feature = "ts")]
 
 use dvb_si::demux::SiDemux;
-use dvb_si::pid::Pid;
 use dvb_si::tables::AnyTableSection;
-use dvb_si::ts::{TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
 
 const LONG_FORM_EXTRA: usize = 5;
 const CRC_LEN: usize = 4;

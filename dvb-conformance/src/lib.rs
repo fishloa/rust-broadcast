@@ -45,10 +45,10 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use dvb_common::Parse;
-use dvb_si::section::Section;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
-use dvb_si::ts::{SectionReassembler, TsPacket};
+use mpeg_ts::section::Section;
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 // ── Named PID constants ─────────────────────────────────────────────────────
 

@@ -19,6 +19,7 @@ all-features = true
 [dependencies]
 dvb-si       = { path = "../dvb-si",   version = "7.9", default-features = false, features = ["ts", "std"] }
 dvb-t2mi     = { path = "../dvb-t2mi", version = "7.9", default-features = false, features = ["ts", "std"] }
+mpeg-ts      = { path = "../mpeg-ts",  version = "0.1", default-features = false, features = ["std"] }
 futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
 

@@ -8,7 +8,7 @@
 use dvb_common::Serialize;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
-use dvb_si::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), filename);
@@ -218,7 +218,7 @@ fn serialize_into_of(table: &AnyTableSection<'_>, buf: &mut [u8]) {
 // ── m6-single.ts ─────────────────────────────────────────────────────────
 
 fn m6_demux() -> SiDemux {
-    use dvb_si::pid::Pid;
+    use mpeg_ts::pid::Pid;
     SiDemux::builder()
         .pid(Pid::new(0x00AA)) // AIT
         .pid(Pid::new(0x00AB)) // DSM-CC HbbTV carousel

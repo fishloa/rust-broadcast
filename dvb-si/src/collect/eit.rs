@@ -4,10 +4,10 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::descriptors::DescriptorRegistry;
-use crate::section::Section;
 use crate::tables::eit;
 use crate::tables::RunningStatus;
 use dvb_common::Parse;
+use mpeg_ts::section::Section;
 
 use super::{
     CollectError, CollectResult, CompleteSectionSet, ParsedDescriptorLoop, SectionSetKey,

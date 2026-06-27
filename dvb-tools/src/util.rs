@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use dvb_si::resync::TsResync;
+use mpeg_ts::resync::TsResync;
 
 /// Read a file into memory. On `Err`, prints to stderr and returns `Err`.
 pub(crate) fn read_file(path: &str, tool: &str) -> Result<Vec<u8>, ExitCode> {
@@ -23,7 +23,7 @@ pub(crate) fn read_file(path: &str, tool: &str) -> Result<Vec<u8>, ExitCode> {
 /// rather than the TS framing loop.
 pub(crate) fn for_each_packet(
     data: &[u8],
-) -> impl Iterator<Item = [u8; dvb_si::ts::TS_PACKET_SIZE]> {
+) -> impl Iterator<Item = [u8; mpeg_ts::ts::TS_PACKET_SIZE]> {
     let mut r = TsResync::new();
     r.feed(data).into_iter()
 }

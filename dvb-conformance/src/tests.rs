@@ -2,14 +2,14 @@ use core::time::Duration;
 
 use dvb_common::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
-use dvb_si::mux::SectionPacketizer;
 use dvb_si::tables::eit::{EitKind, EitSection};
 use dvb_si::tables::nit::{NitKind, NitSection};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream};
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::tdt::TdtSection;
-use dvb_si::ts::{TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
 
 use crate::{Config, ConformanceMonitor, Indicator};
 

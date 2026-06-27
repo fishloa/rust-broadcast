@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::process::ExitCode;
 
-use dvb_si::ts::{TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
 
 use crate::util::{for_each_packet, read_file};
 

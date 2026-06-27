@@ -178,15 +178,7 @@ pub mod descriptors;
 #[cfg(feature = "chrono")]
 pub mod epg;
 pub mod error;
-pub mod pid {
-    //! PID constants and utilities — re-exported from [`mpeg_ts::pid`].
-    pub use mpeg_ts::pid::*;
-}
 mod registry_names;
-pub mod section {
-    //! Section reassembly — re-exported from [`mpeg_ts::section`].
-    pub use mpeg_ts::section::*;
-}
 pub mod table_id;
 pub mod tables;
 pub mod text;
@@ -197,21 +189,6 @@ pub mod owned;
 
 #[cfg(feature = "ts")]
 pub mod demux;
-#[cfg(feature = "ts")]
-pub mod mux {
-    //! Section packetizer / SI mux — re-exported from [`mpeg_ts::mux`].
-    pub use mpeg_ts::mux::*;
-}
-#[cfg(feature = "ts")]
-pub mod resync {
-    //! TS stream resync — re-exported from [`mpeg_ts::resync`].
-    pub use mpeg_ts::resync::*;
-}
-#[cfg(feature = "ts")]
-pub mod ts {
-    //! MPEG-TS packet framing — re-exported from [`mpeg_ts::ts`].
-    pub use mpeg_ts::ts::*;
-}
 
 pub use descriptor_tag::DescriptorTag;
 pub use error::{Error, Result};

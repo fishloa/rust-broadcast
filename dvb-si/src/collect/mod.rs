@@ -18,8 +18,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
-use crate::section::Section;
 use dvb_common::Parse;
+use mpeg_ts::section::Section;
 
 mod bat;
 mod eit;
