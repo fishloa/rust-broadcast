@@ -378,9 +378,9 @@ fn split_sections(data: &[u8]) -> Vec<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ts::{SectionReassembler, TsPacket};
     use alloc::vec;
     use alloc::vec::Vec;
-    use crate::ts::{SectionReassembler, TsPacket};
 
     // ── helpers ──────────────────────────────────────────────────────────────
 

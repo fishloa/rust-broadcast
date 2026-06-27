@@ -17,11 +17,12 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
 dvb-si      = { path = "../dvb-si", version = "7.9", default-features = false, features = ["ts"] }
+mpeg-ts     = { path = "../mpeg-ts", version = "0.1", default-features = false }
 serde       = { version = "1", optional = true, features = ["derive"] }
 
 [features]
 default = ["std", "serde"]
-std     = ["dvb-common/std", "dvb-si/std"]
+std     = ["dvb-common/std", "dvb-si/std", "mpeg-ts/std"]
 
 serde = ["dep:serde", "dvb-si/serde"]
 

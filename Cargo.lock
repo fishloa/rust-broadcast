@@ -363,6 +363,7 @@ version = "7.9.0"
 dependencies = [
  "dvb-common",
  "dvb-si",
+ "mpeg-ts",
  "serde",
 ]
 
