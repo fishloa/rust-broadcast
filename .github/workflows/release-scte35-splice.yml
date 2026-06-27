@@ -1,0 +1,58 @@
+name: Release scte35-splice
+
+# Publishes the scte35-splice crate to crates.io on a `scte35-splice-v*` tag.
+# scte35-splice is versioned and released INDEPENDENTLY of the lockstep `v*`
+# tag (it is a standalone reusable crate with its own cadence), so it has its
+# own publish workflow. CI is the only source of published artifacts — never
+# `cargo publish` from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+
+on:
+  push:
+    tags: ["scte35-splice-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish scte35-splice to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — scte35-splice tests
+        run: cargo test -p scte35-splice --all-features --locked
+
+      - name: Gate — scte35-splice clippy
+        run: cargo clippy -p scte35-splice --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — scte35-splice no_std build
+        run: cargo build -p scte35-splice --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — tag matches scte35-splice version
+        run: |
+          TAG="${GITHUB_REF_NAME#scte35-splice-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['scte35-splice'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::scte35-splice is $V but tag is $TAG"; exit 1
+          fi
+
+      # scte35-splice's dvb-common dependency must already be on crates.io.
+      # Idempotent: an "already uploaded" error is treated as success.
+      - name: Publish scte35-splice
+        run: |
+          if out=$(cargo publish -p scte35-splice --locked 2>&1); then
+            echo "$out"; echo "::notice::published scte35-splice"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::scte35-splice already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish scte35-splice"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
