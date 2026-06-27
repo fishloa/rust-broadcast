@@ -117,7 +117,7 @@
 //! | Feature | Default | Enables |
 //! |---|---|---|
 //! | `chrono` | on | MJD + BCD time fields decode to `chrono::DateTime<Utc>` (EIT `start_time()`, TDT/TOT). Off → raw bytes. |
-//! | `ts` | on | [`demux::SiDemux`], [`ts::SectionReassembler`], TS packet parsing. Off → bring your own complete section bytes. |
+//! | `ts` | on | [`demux::SiDemux`], `mpeg_ts::ts::SectionReassembler`, TS packet parsing (framing now in the `mpeg-ts` crate). Off → bring your own complete section bytes. |
 //! | `serde` | on | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
 //! | `yoke` | off | `yoke::Yokeable` on every zero-copy view type + the `owned::Owned` wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
 //!
@@ -148,7 +148,7 @@
 //! - [`descriptors`] — every DVB descriptor (tags 0x40..0x7F) plus MPEG-2 descriptors.
 //! - [`carousel`] — DSM-CC data-carousel messages (DSI/DII/DDB) + module
 //!   reassembly on top of the [`tables::dsmcc`] section framing.
-//! - [`pid::well_known`] — reserved DVB/MPEG-2 PIDs.
+//! - `mpeg_ts::pid::well_known` — reserved DVB/MPEG-2 PIDs (now in the `mpeg-ts` crate).
 //! - [`table_id::TableId`] — typed table_id enum.
 //! - [`descriptor_tag::DescriptorTag`] — typed descriptor_tag enum.
 //!
