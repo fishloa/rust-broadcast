@@ -15,10 +15,10 @@ re-define the SCTE 35 wire format; instead it:
    watermark carriage.
 
 This directory transcribes **only the new/profiled binary (wire) syntax**, which
-extends the existing `dvb-scte35` crate. XML / MPD profiling and architectural
+extends the existing `scte35-splice` crate. XML / MPD profiling and architectural
 prose are explicitly out of scope (see "Out of scope" below).
 
-## NEW binary syntax defined here (transcribable in `dvb-scte35`)
+## NEW binary syntax defined here (transcribable in `scte35-splice`)
 
 | Doc | Spec | New structure |
 |-----|------|---------------|
@@ -26,14 +26,14 @@ prose are explicitly out of scope (see "Out of scope" below).
 | [`dsmcc-stream-event.md`](dsmcc-stream-event.md) | §6.3.1, Tables 3–4 (pp.18–20) | `DSM-CC_stream_event_payload_binary()` — binary payload wrapping (or referencing) a full SCTE 35 section, base-64 encoded into a DSM-CC stream event |
 | [`compact-scte35.md`](compact-scte35.md) | §8.3.3, Tables 5–10 (pp.26–28) | `compact_SCTE_35()` / `compact_time_signal()` / `compact_splice_insert()` — a compact binary alternative for low-capacity watermark carriage |
 
-## PROFILING of base SCTE 35 (already typed in `dvb-scte35`; constraints only)
+## PROFILING of base SCTE 35 (already typed in `scte35-splice`; constraints only)
 
 | Doc | Spec | What it constrains |
 |-----|------|--------------------|
 | [`scte35-profiling.md`](scte35-profiling.md) | §5.3.4–5.3.5 (pp.14–17) | Section structure + `splice_insert()` / `time_signal()` / `segmentation_descriptor()` field constraints, PPO/DPO `segmentation_type_id` usage, `segmentation_upid_type`/UPID format, segment/sub-segment numbering rules |
 
 No NEW wire structure is introduced by the profiling clauses — they pin the
-values/usage of fields that base SCTE 35 already defines and that `dvb-scte35`
+values/usage of fields that base SCTE 35 already defines and that `scte35-splice`
 already parses. Each constraint is cited so the typed layer can enforce it.
 
 ## Out of scope (NOT transcribed)
@@ -51,7 +51,7 @@ already parses. Each constraint is cited so the typed layer can enforce it.
   separate `scte104` crate, not new here.
 - The base **SCTE 35** structures themselves (`splice_info_section()`,
   `splice_insert()`, `time_signal()`, `segmentation_descriptor()`, CRC_32) —
-  defined in ANSI/SCTE 35 and already implemented in `dvb-scte35`. This profile
+  defined in ANSI/SCTE 35 and already implemented in `scte35-splice`. This profile
   only references and constrains them.
 
 ## Normative cross-references used by this profile

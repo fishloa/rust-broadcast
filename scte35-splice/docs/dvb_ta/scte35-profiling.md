@@ -3,7 +3,7 @@
 _Source: ETSI TS 103 752-1 V1.2.1 §5.3.4–5.3.5 (PDF pp.14–17), render-verified_
 
 This clause does **not define new wire structures**. It pins the values / usage
-of fields that base ANSI/SCTE 35 [1] already defines and that `dvb-scte35`
+of fields that base ANSI/SCTE 35 [1] already defines and that `scte35-splice`
 already parses (`splice_info_section()`, `splice_insert()`, `time_signal()`,
 `segmentation_descriptor()`). Each item below is a constraint the typed DVB-TA
 layer can enforce; the citation is included so an implementation can assert it.
@@ -67,7 +67,7 @@ mandates their use:
 Distributor label of each individually; the labels above are the standard SCTE 35
 assignments for that contiguous block (Provider PO Start/End = 0x34/0x35,
 Distributor PO Start/End = 0x36/0x37). Confirm against SCTE 35 [1] Table 22 (which
-`dvb-scte35` already encodes) rather than treating these labels as set by
+`scte35-splice` already encodes) rather than treating these labels as set by
 TS 103 752-1.
 
 ## Partial replacement (§5.3.3) — signalling pattern, not new syntax

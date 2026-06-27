@@ -1,4 +1,4 @@
-//! SCTE 104 dispatch traits, mirroring dvb-scte35's `CommandDef`.
+//! SCTE 104 dispatch traits, mirroring scte35-splice's `CommandDef`.
 //!
 //! Each typed operation implements `OperationDef`, supplying its `op_id`
 //! discriminant and diagnostic `NAME`. The `declare_operations!` macro in

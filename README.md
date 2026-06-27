@@ -21,7 +21,7 @@ feed all the way down to a service name string.
 |---|---|
 | **Versions** | 7 core crates at **7.7.1** (lockstep); `dvb-stream` (**0.2.1**), `dvb-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**), `mpeg-ps` (**0.1.1**), `scte104` (**0.1.0**), `dvb-cc` (**0.1.0**) and `dvb-ci` (**0.4.1**) independently versioned |
 | **MSRV** | **1.81** across the workspace |
-| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`, `dvb-cc`, `dvb-ci`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
+| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `scte35-splice`, `dvb-conformance`, `dvb-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`, `dvb-cc`, `dvb-ci`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
 | **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
 
 To build the library crates for an embedded target:
@@ -38,7 +38,7 @@ $ cargo build --workspace --no-default-features --locked \
 | [`dvb-si`](dvb-si/) | [![crates.io](https://img.shields.io/crates/v/dvb-si.svg)](https://crates.io/crates/dvb-si) | [![docs.rs](https://img.shields.io/docsrs/dvb-si)](https://docs.rs/dvb-si) | ETSI EN 300 468 Service Information + MPEG-2 PSI: every table_id and descriptor, DSM-CC carousel, Annex A text, a version-gated demux. |
 | [`dvb-t2mi`](dvb-t2mi/) | [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi) | [![docs.rs](https://img.shields.io/docsrs/dvb-t2mi)](https://docs.rs/dvb-t2mi) | ETSI TS 102 773 DVB-T2 Modulator Interface (T2-MI): all 12 packet types + a feed-and-iterate pump. |
 | [`dvb-bbframe`](dvb-bbframe/) | [![crates.io](https://img.shields.io/crates/v/dvb-bbframe.svg)](https://crates.io/crates/dvb-bbframe) | [![docs.rs](https://img.shields.io/docsrs/dvb-bbframe)](https://docs.rs/dvb-bbframe) | DVB-S2 / S2X / T2 BBFRAME headers (MATYPE/UPL/DFL/SYNCD) + user-packet extraction. |
-| [`dvb-scte35`](dvb-scte35/) | [![crates.io](https://img.shields.io/crates/v/dvb-scte35.svg)](https://crates.io/crates/dvb-scte35) | [![docs.rs](https://img.shields.io/docsrs/dvb-scte35)](https://docs.rs/dvb-scte35) | ANSI/SCTE 35 2023r1 splice information (DPI cueing): every command + splice descriptor, the segmentation assignment tables, round-trip builders. |
+| [`scte35-splice`](scte35-splice/) | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | [![docs.rs](https://img.shields.io/docsrs/scte35-splice)](https://docs.rs/scte35-splice) | ANSI/SCTE 35 2023r1 splice information (DPI cueing): every command + splice descriptor, the segmentation assignment tables, round-trip builders. |
 | [`dvb-common`](dvb-common/) | [![crates.io](https://img.shields.io/crates/v/dvb-common.svg)](https://crates.io/crates/dvb-common) | [![docs.rs](https://img.shields.io/docsrs/dvb-common)](https://docs.rs/dvb-common) | The shared `Parse` / `Serialize` traits and CRC-32/MPEG-2 that everything builds on. |
 | [`dvb-tools`](dvb-tools/) | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | [![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools) | Command-line analyzer over the family: `dump` / `services` / `epg` / `pids` / `t2mi`. |
 | [`dvb-conformance`](dvb-conformance/) | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | [![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance) | ETSI TR 101 290 stream conformance monitor: Priority-1/2 + SI-repetition indicators on a caller-supplied clock. |
@@ -49,6 +49,7 @@ $ cargo build --workspace --no-default-features --locked \
 | [`scte104`](scte104/) | [![crates.io](https://img.shields.io/crates/v/scte104.svg)](https://crates.io/crates/scte104) | [![docs.rs](https://img.shields.io/docsrs/scte104)](https://docs.rs/scte104) | ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + all ~20 operations (splice/time_signal/insert-descriptor/segmentation/…). `no_std`. **Independently versioned.** |
 | [`dvb-cc`](dvb-cc/) | [![crates.io](https://img.shields.io/crates/v/dvb-cc.svg)](https://crates.io/crates/dvb-cc) | [![docs.rs](https://img.shields.io/docsrs/dvb-cc)](https://docs.rs/dvb-cc) | DVB closed-caption carriage: `cc_data()` (ETSI TS 101 154 Table B.9) → typed CEA-608/708 triplets + 608/708 split. `no_std`. **Independently versioned.** |
 | [`dvb-ci`](dvb-ci/) | [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci) | [![docs.rs](https://img.shields.io/docsrs/dvb-ci)](https://docs.rs/dvb-ci) | DVB Common Interface (ETSI EN 50221): APDU/resource objects (ca_info, ca_pmt, ca_pmt_reply, application_info, …), ASN.1 length codec, SPDU/TPDU framing, and a `build_ca_pmt` builder from a dvb-si PMT. `no_std`. **Independently versioned.** |
+| [`mp4-emsg`](mp4-emsg/) | [![crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg) | [![docs.rs](https://img.shields.io/docsrs/mp4-emsg)](https://docs.rs/mp4-emsg) | ISO BMFF / DASH Event Message Box (`emsg`): parse and build `emsg` boxes (v0 and v1) for in-band event signalling (DASH-IF, SCTE-35 inband, ID3). `no_std`. **Independently versioned.** |
 
 For GSE, see the existing [`dvb-gse`](https://crates.io/crates/dvb-gse) crate.
 
@@ -159,7 +160,7 @@ discipline is spec fidelity, verified several ways over:
 ## Documentation
 
 - Per-crate front pages: [dvb-si](dvb-si/README.md) · [dvb-t2mi](dvb-t2mi/README.md) · [dvb-bbframe](dvb-bbframe/README.md) · [dvb-common](dvb-common/README.md) · [dvb-tools](dvb-tools/README.md) · [dvb-conformance](dvb-conformance/README.md)
-- [Adding a parser crate](docs/extending.md) — how a new sibling crate (e.g. `dvb-scte35`) plugs its own wire types into the existing dispatch via the runtime registries and open `*Def` traits, with zero breaking change.
+- [Adding a parser crate](docs/extending.md) — how a new sibling crate (e.g. `scte35-splice`) plugs its own wire types into the existing dispatch via the runtime registries and open `*Def` traits, with zero breaking change.
 - [`dvb-si` 4.0 migration guide](dvb-si/MIGRATION-4.0.md) — 3.x → 4.0 breaking changes: section parser names (`NitSection`, `SitSection`, …), `AnyTableSection`, CamelCase `TableId`, and complete multi-section table collection.
 - [`dvb-si` 3.1 migration guide](dvb-si/MIGRATION-3.1.md) — 1.x / 2.x → 3.1 breaking changes (typed `DescriptorLoop`, Serialize-only serde, typed SIT, optional `yoke`) with before/after code.
 - [`dvb-si` 2.0 migration guide](dvb-si/MIGRATION-2.0.md) — 1.x → 2.0 breaking changes with before/after code.

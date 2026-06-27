@@ -1,4 +1,4 @@
-# dvb-scte35 — spec table reference
+# scte35-splice — spec table reference
 
 ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message (syntax reference).
 Excluded from the published crate.
