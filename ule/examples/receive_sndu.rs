@@ -3,11 +3,11 @@
 /// PUSI + Payload-Pointer de-fragmentation.
 ///
 /// ```sh
-/// cargo run -p dvb-ule --example receive_sndu
+/// cargo run -p ule --example receive_sndu
 /// ```
 use std::fs;
 
-use dvb_ule::{Sndu, UleReceiver};
+use ule::{Sndu, UleReceiver};
 
 fn main() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/appendix_b.bin");

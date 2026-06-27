@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use dvb_smpte2038::{AncDataPacket, AncPacket};
+use smpte2038::{AncDataPacket, AncPacket};
 
 fn fixture() -> Vec<u8> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/anc.bin");

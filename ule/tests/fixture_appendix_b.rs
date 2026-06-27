@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use dvb_ule::{Sndu, TypeField};
+use ule::{Sndu, TypeField};
 
 fn fixture() -> Vec<u8> {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/appendix_b.bin");
@@ -73,7 +73,7 @@ fn corrupted_crc_is_rejected() {
     let last = data.len() - 1;
     data[last] ^= 0xFF; // flip the low CRC byte
     assert!(
-        matches!(Sndu::parse(&data), Err(dvb_ule::Error::CrcMismatch { .. })),
+        matches!(Sndu::parse(&data), Err(ule::Error::CrcMismatch { .. })),
         "a bad CRC must be rejected"
     );
 }

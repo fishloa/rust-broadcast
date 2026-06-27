@@ -2,9 +2,9 @@
 /// CRC-32), and dump the wire bytes.
 ///
 /// ```sh
-/// cargo run -p dvb-ule --example build_sndu
+/// cargo run -p ule --example build_sndu
 /// ```
-use dvb_ule::{Sndu, TypeField};
+use ule::{Sndu, TypeField};
 
 fn main() {
     // An IPv6 SNDU with an NPA destination address (D=0), carrying a short
