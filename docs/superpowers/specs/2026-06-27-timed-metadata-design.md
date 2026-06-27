@@ -173,6 +173,39 @@ impl DateRange {
 - Every conversion module cites its mapping spec in the `//!` doc:
   HLS bis §4.4.5.1 (DATERANGE SCTE-35 attrs), SCTE 214-3 (SCTE-35-in-DASH scheme).
 
+## Fixtures (gathered + verified 2026-06-27)
+
+No new fixtures needed for the emsg edges; one real paired fixture gathered for DATERANGE.
+
+**emsg edges — reuse existing real bins (copy into `timed-metadata/tests/fixtures/`):**
+- `dvb-emsg/tests/fixtures/scte35_emsg_v0.bin` (real v0 SCTE-35-scheme emsg)
+- `dvb-emsg/tests/fixtures/emsg_v1_scte35_livesim.bin` (real v1, DASH-IF livesim2)
+- Enables real interop round-trip: emsg → SCTE-35 → emsg, byte-identical.
+
+**SCTE-35 input — reuse existing real vectors:** `dvb-scte35/tests/` (threefive corpus,
+real Russian mux).
+
+**DATERANGE edge — real paired fixtures (verified against the repo's own parser):**
+Source: Unified Streaming docs (a real packager). Each line's `SCTE35-OUT` hex IS the splice
+input; `START-DATE`/`PLANNED-DURATION` are the golden output.
+
+```
+#EXT-X-DATERANGE:ID="2002",START-DATE="2018-10-29T10:38:00Z",PLANNED-DURATION=24,SCTE35-OUT=0xFC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D
+#EXT-X-DATERANGE:ID="2004",START-DATE="2018-10-29T10:42:00Z",PLANNED-DURATION=24,SCTE35-OUT=0xFC302100000000000000FFF01005000007D47FEF7F7E0020F580C000000000004F1B1A5F
+```
+Both parse clean: `SpliceInsert`, `out_of_network_indicator=true`, `break_duration=2160000`
+(90 kHz) = **24.0 s**, matching `PLANNED-DURATION=24`. This is the real-world assertion the
+duration edge must reproduce (`2160000 / 90000 == 24.0`).
+
+> A third docs example (`ID="72617"`) was **discarded** — `CrcMismatch` (bad transcription).
+> The CRC check is exactly why fixtures are parser-verified before use.
+
+**Conversion-model note exposed by the fixtures:** these splices have `splice_time.pts_time =
+None` (program/immediate splice). So `START-DATE` does **not** come from the splice PTS — it
+comes from the insertion point (segment boundary / `EXT-X-PROGRAM-DATE-TIME`). Confirms the
+model: `TimedEvent.at = None` ⇒ caller/anchor supplies the wall-clock position; the crate must
+not try to derive `START-DATE` from a missing `pts_time`.
+
 ## Specs to vendor
 - **draft-pantos-hls-rfc8216bis** + **RFC 8216** — IETF, redistributable; vendor text into `specs/`.
 - **SCTE 214-3** — SCTE register-wall; transcribe the mapping tables into the crate's `docs/`
