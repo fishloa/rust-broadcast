@@ -154,9 +154,10 @@ impl DateRange {
 - `dvb-common` — shared traits / error idioms
 - `chrono` (optional, default-on), `serde` (optional, default-on)
 
-> **Sequencing note:** v0.1 depends on the renamed crates. Either land the Wave-1 renames first,
-> or temporarily depend on `dvb-scte35`/`dvb-emsg` and switch the dep names when the rename ships.
-> Resolve in the implementation plan.
+> **Sequencing (decided):** land the two dependency renames **before** releasing timed-metadata —
+> `dvb-scte35`→`scte35-splice` and `dvb-emsg`→`mp4-emsg` ship first (a partial Wave-1: publish the
+> new-named crates + re-export shims on the old names, don't yank). timed-metadata then depends on
+> `scte35-splice`/`mp4-emsg` from day one — no dep-name churn after release.
 
 ## Testing (the gate — must bite)
 - Pure-conversion unit tests for each edge.
