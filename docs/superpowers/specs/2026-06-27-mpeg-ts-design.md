@@ -155,3 +155,29 @@ After discussion, the design is revised:
 6. **Version: lockstep 8.0.0** (breaking — error type + module relocation). All 6 lockstep crates → 8.0.0; bundles the dvb-tools clap CLI (#344). mpeg-ts ships 0.1.0 (independent), published before the lockstep (dvb-si depends on it).
 
 7. **Do NOT publish.** Build → full gate → audit → PR → STOP. Owner reviews the code before any tag.
+
+---
+
+## FINAL DECISION (2026-06-27, supersedes the scope-B revision above)
+
+**Scope A — framing/reassembly only. NO table move.** Consistency argument settled it:
+scope B (move PAT/PMT but not their MPEG-range descriptors, which are equally
+ISO 13818-1 §2.6) is logically inconsistent. The two *consistent* boundaries are:
+**A — transport vs semantics** (mpeg-ts = the wire: packet/AF/PCR + section
+reassembly + packetization + resync + mux; dvb-si = everything *inside* a section:
+ALL tables PAT/PMT/CAT/TSDT + NIT/SDT/EIT AND all descriptors), or **C — full
+MPEG/DVB spec split** (mpeg-ts = all 13818-1 incl. tables + 48 MPEG descriptors).
+C is a multi-crown-jewel, ~15–20k-line, high-risk epic (and `TableDef` is welded to
+`dvb_si::Error`, so `AnyTableSection`/SiDemux can't take cross-crate table types
+without reworking `TableDef`→dvb-common across 30 impls). **Chosen: A.**
+
+- mpeg-ts = framing + section reassembly/packetization (already moved, Tasks 1–4).
+- dvb-si = ALL PSI content (every table + every descriptor) — consistently, because
+  that is the *semantics* layer. PAT/PMT staying is no longer arbitrary.
+- **Clean break** (per the earlier revision): drop the `dvb_si::{ts,section,resync,mux,pid}`
+  re-exports; consumers use `mpeg_ts::…` directly.
+- Version: lockstep **8.0.0** (breaking: those modules leave dvb-si's public API).
+- Trade-off accepted: typed PMT (even structure) requires dvb-si; mpeg-ts gives
+  reassembled section bytes + PID/table_id, not parsed table content.
+- Remaining work = ONLY the clean-break (rework plan R1) + 8.0.0 docs (R4) + gate (R5).
+  Plan tasks **R2 and R3 (table move) are DROPPED.**
