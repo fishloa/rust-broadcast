@@ -18,6 +18,19 @@ use std::path::Path;
 /// Enums that are intentionally **not** spec/field labels.
 ///
 /// - `Error` — structured error enum, not a spec/field label.
+///
+/// # Coded `u8` fields vs. public enums
+///
+/// This guard checks that every `pub enum` in `src/` has a `Display` impl
+/// (via `dvb_common::impl_spec_display!`). It does **not** check raw `u8`
+/// fields that encode spec values without a typed enum accessor — those
+/// require manual review.
+///
+/// Audited coded-u8 fields in `mpeg-ts`:
+/// - `TsHeader::scrambling` (2-bit) → typed accessor `scrambling_control()` →
+///   `ScramblingControl` (covered by guard above)
+/// - `TsHeader::continuity_counter` (4-bit) → counter, not a spec label, no enum needed
+/// - `TsHeader::pid` (13-bit) → see `pid::Pid`; raw u16 on `TsHeader` by design
 const SKIP: &[&str] = &["Error"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

@@ -1,6 +1,6 @@
 //! Owned 188-byte TS packet with pre-parsed header fields.
 //!
-//! [`TsPacketBuf`] complements the zero-copy [`crate::ts::TsPacket`] (which holds
+//! [`OwnedTsPacket`] complements the zero-copy [`crate::ts::TsPacket`] (which holds
 //! a borrowed `&[u8; 188]`) with an **owned** `[u8; 188]` suitable for queuing,
 //! cloning, and in-place mutation — e.g. for mux pipelines that must rewrite the
 //! continuity counter or splice in a new payload.
@@ -9,7 +9,9 @@
 //! is duplicated here.
 
 use crate::error::{Error, Result};
-use crate::ts::{TsHeader, TS_PACKET_SIZE, TS_SYNC_BYTE};
+use crate::ts::{
+    AdaptationFieldControl, ScramblingControl, TsHeader, TS_PACKET_SIZE, TS_SYNC_BYTE,
+};
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
@@ -27,7 +29,7 @@ use crate::ts::{TsHeader, TS_PACKET_SIZE, TS_SYNC_BYTE};
 /// payload-only packet (no adaptation field) filled with 0xFF stuffing.
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct TsPacketBuf {
+pub struct OwnedTsPacket {
     /// The raw 188 bytes (serialized as a byte sequence).
     #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_raw_bytes"))]
     pub raw: [u8; TS_PACKET_SIZE],
@@ -45,6 +47,10 @@ pub struct TsPacketBuf {
     pub scrambling: u8,
     /// 4-bit continuity_counter (byte 3 bits 3–0).
     pub continuity_counter: u8,
+    /// Discontinuity flag: `true` if the adaptation-field `discontinuity_indicator`
+    /// was set in the source packet, or if the caller marks this as a
+    /// continuity-counter discontinuity boundary. Defaults to `false` on parse.
+    pub discontinuity: bool,
 }
 
 /// Serialize a `[u8; N]` as a variable-length byte sequence so serde's
@@ -62,11 +68,12 @@ fn serialize_raw_bytes<S: serde::Serializer>(
     seq.end()
 }
 
-impl TsPacketBuf {
+impl OwnedTsPacket {
     /// Parse a 188-byte owned TS packet.
     ///
     /// Returns [`Error::InvalidSyncByte`] if `raw[0] != 0x47`.
     /// Header bit-parsing is delegated to [`TsHeader::parse`].
+    /// The `discontinuity` field defaults to `false`; set it manually if needed.
     pub fn parse(raw: [u8; TS_PACKET_SIZE]) -> Result<Self> {
         if raw[0] != TS_SYNC_BYTE {
             return Err(Error::InvalidSyncByte { found: raw[0] });
@@ -81,7 +88,24 @@ impl TsPacketBuf {
             tei: hdr.tei,
             scrambling: hdr.scrambling,
             continuity_counter: hdr.continuity_counter,
+            discontinuity: false,
         })
+    }
+
+    /// Typed view of the 2-bit `transport_scrambling_control` field.
+    ///
+    /// See [`ScramblingControl`] for the spec citation (H.222.0 Table 2-4 +
+    /// ETSI TS 100 289 §5.1 Table 1).
+    pub fn scrambling_control(&self) -> ScramblingControl {
+        ScramblingControl::from_bits(self.scrambling)
+    }
+
+    /// Typed view of the `adaptation_field_control` 2-bit field, derived from the
+    /// stored `has_adaptation`/`has_payload` booleans.
+    ///
+    /// See [`AdaptationFieldControl`] for the spec citation (H.222.0 Table 2-5).
+    pub fn adaptation_field_control(&self) -> AdaptationFieldControl {
+        AdaptationFieldControl::from_flags(self.has_adaptation, self.has_payload)
     }
 
     /// Return the payload bytes (after the 4-byte header and any adaptation field).
@@ -174,7 +198,7 @@ mod tests {
     #[test]
     fn owned_round_trip_and_payload_mut() {
         let payload = [0xAAu8; 184];
-        let mut pkt = TsPacketBuf::parse(TsPacketBuf::serialize_with_payload(
+        let mut pkt = OwnedTsPacket::parse(OwnedTsPacket::serialize_with_payload(
             0x0100, true, 7, &payload,
         ))
         .unwrap();
@@ -184,5 +208,55 @@ mod tests {
         assert_eq!(pkt.payload().unwrap()[..184], payload[..]);
         pkt.payload_mut().unwrap()[0] = 0x55;
         assert_eq!(pkt.payload().unwrap()[0], 0x55);
+        // discontinuity defaults to false
+        assert!(!pkt.discontinuity);
+    }
+
+    #[test]
+    fn owned_scrambling_control_accessor() {
+        let make = |scrambling_bits: u8| -> OwnedTsPacket {
+            let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+            // byte 3 bits [7:6] = scrambling
+            raw[3] = (raw[3] & 0x3F) | (scrambling_bits << 6);
+            OwnedTsPacket::parse(raw).unwrap()
+        };
+        assert_eq!(
+            make(0b00).scrambling_control(),
+            ScramblingControl::NotScrambled
+        );
+        assert_eq!(make(0b01).scrambling_control(), ScramblingControl::Reserved);
+        assert_eq!(make(0b10).scrambling_control(), ScramblingControl::EvenKey);
+        assert_eq!(make(0b11).scrambling_control(), ScramblingControl::OddKey);
+    }
+
+    #[test]
+    fn owned_adaptation_field_control_accessor() {
+        let make = |afc_bits: u8| -> OwnedTsPacket {
+            let mut raw = [0xFFu8; TS_PACKET_SIZE];
+            raw[0] = TS_SYNC_BYTE;
+            raw[1] = 0x00;
+            raw[2] = 0x00;
+            raw[3] = (afc_bits << 4) & 0x30;
+            if afc_bits & 0b10 != 0 {
+                raw[4] = 0; // adaptation_field_length = 0
+            }
+            OwnedTsPacket::parse(raw).unwrap()
+        };
+        assert_eq!(
+            make(0b00).adaptation_field_control(),
+            AdaptationFieldControl::Reserved
+        );
+        assert_eq!(
+            make(0b01).adaptation_field_control(),
+            AdaptationFieldControl::PayloadOnly
+        );
+        assert_eq!(
+            make(0b10).adaptation_field_control(),
+            AdaptationFieldControl::AdaptationOnly
+        );
+        assert_eq!(
+            make(0b11).adaptation_field_control(),
+            AdaptationFieldControl::AdaptationAndPayload
+        );
     }
 }

@@ -9,7 +9,7 @@
 //! | Module | Type | Description |
 //! |---|---|---|
 //! | [`ts`] | [`ts::TsPacket`] | Zero-copy borrowed view of a 188-byte TS packet (ITU-T H.222.0 §2.4.3.2) |
-//! | [`packet_buf`] | [`packet_buf::TsPacketBuf`] | Owned 188-byte TS packet — for queuing, cloning, and in-place mutation |
+//! | [`owned`] | [`owned::OwnedTsPacket`] | Owned 188-byte TS packet — for queuing, cloning, and in-place mutation |
 //! | [`ts`] | [`ts::SectionReassembler`] | Per-PID PSI section assembly from TS payloads (§2.4.4) |
 //! | [`mux`] | [`mux::SectionPacketizer`] | Packetize PSI sections back into TS packets with correct CC and padding |
 //! | [`mux`] | [`mux::SiMux`] | Rate-scheduled SI table mux: upsert per-PID section sets, poll for TS packets |
@@ -41,10 +41,11 @@ extern crate alloc;
 
 pub mod error;
 pub mod mux;
-pub mod packet_buf;
+pub mod owned;
 pub mod pid;
 pub mod resync;
 pub mod section;
 pub mod ts;
 
 pub use error::{Error, Result};
+pub use owned::OwnedTsPacket;

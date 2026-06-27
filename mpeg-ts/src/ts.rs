@@ -20,6 +20,98 @@ const SECTION_HEADER_LEN: usize = 3;
 /// the packetizer in `mux.rs`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
+/// 2-bit `transport_scrambling_control` field — ITU-T H.222.0 (08/2023) Table 2-4
+/// (defines only `00` = not scrambled); DVB assigns `01`/`10`/`11` in ETSI TS 100 289
+/// V1.1.1 §5.1 Table 1 (reserved, even CW, odd CW).
+///
+/// MPEG-2 leaves `01`/`10`/`11` as user-defined; DVB's common-scrambling convention
+/// assigns `10` = even control word, `11` = odd control word, `01` = reserved for future
+/// DVB use. The field lives in the TS header and is never applied to the header itself —
+/// only to the packet payload.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum ScramblingControl {
+    /// `00` — not scrambled. The only MPEG-2-defined value (H.222.0 Table 2-4).
+    NotScrambled,
+    /// `01` — reserved for future DVB use (ETSI TS 100 289 V1.1.1 §5.1 Table 1).
+    Reserved,
+    /// `10` — TS packet payload scrambled with the **even** control word
+    /// (DVB common scrambling, ETSI TS 100 289 V1.1.1 §5.1 Table 1).
+    EvenKey,
+    /// `11` — TS packet payload scrambled with the **odd** control word
+    /// (DVB common scrambling, ETSI TS 100 289 V1.1.1 §5.1 Table 1).
+    OddKey,
+}
+
+impl ScramblingControl {
+    /// Decode from the 2-bit `transport_scrambling_control` value (masked to `[1:0]`).
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0b00 => Self::NotScrambled,
+            0b01 => Self::Reserved,
+            0b10 => Self::EvenKey,
+            0b11 => Self::OddKey,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Short label for this value, per the #204 convention.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotScrambled => "not_scrambled",
+            Self::Reserved => "reserved",
+            Self::EvenKey => "even_key",
+            Self::OddKey => "odd_key",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(ScramblingControl);
+
+/// 2-bit `adaptation_field_control` field — ITU-T H.222.0 (08/2023) Table 2-5.
+///
+/// Decoders shall discard packets with value `00` (`Reserved`). Null packets use `01`
+/// (`PayloadOnly`). The two flags `has_adaptation`/`has_payload` on [`TsHeader`] carry
+/// the decoded booleans; this enum provides the typed composite view.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum AdaptationFieldControl {
+    /// `00` — reserved for future use; decoders shall discard (H.222.0 Table 2-5).
+    Reserved,
+    /// `01` — no adaptation_field, payload only (H.222.0 Table 2-5).
+    PayloadOnly,
+    /// `10` — adaptation_field only, no payload (H.222.0 Table 2-5).
+    AdaptationOnly,
+    /// `11` — adaptation_field followed by payload (H.222.0 Table 2-5).
+    AdaptationAndPayload,
+}
+
+impl AdaptationFieldControl {
+    /// Derive from the two decoded boolean flags stored on [`TsHeader`].
+    pub fn from_flags(has_adaptation: bool, has_payload: bool) -> Self {
+        match (has_adaptation, has_payload) {
+            (false, false) => Self::Reserved,
+            (false, true) => Self::PayloadOnly,
+            (true, false) => Self::AdaptationOnly,
+            (true, true) => Self::AdaptationAndPayload,
+        }
+    }
+
+    /// Short label for this value, per the #204 convention.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::PayloadOnly => "payload_only",
+            Self::AdaptationOnly => "adaptation_only",
+            Self::AdaptationAndPayload => "adaptation_and_payload",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(AdaptationFieldControl);
+
 /// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
 /// ISO/IEC 13818-1 §2.4.3.3: byte 1 bit 6 = pusi (Payload Unit Start Indicator).
@@ -144,6 +236,22 @@ impl TsHeader {
         }
         buf[3] |= self.continuity_counter & CC_MASK;
         Ok(4)
+    }
+
+    /// Typed view of the 2-bit `transport_scrambling_control` field.
+    ///
+    /// See [`ScramblingControl`] for the spec citation (H.222.0 Table 2-4 +
+    /// ETSI TS 100 289 §5.1 Table 1).
+    pub fn scrambling_control(&self) -> ScramblingControl {
+        ScramblingControl::from_bits(self.scrambling)
+    }
+
+    /// Typed view of the `adaptation_field_control` 2-bit field, derived from the
+    /// `has_adaptation`/`has_payload` flags.
+    ///
+    /// See [`AdaptationFieldControl`] for the spec citation (H.222.0 Table 2-5).
+    pub fn adaptation_field_control(&self) -> AdaptationFieldControl {
+        AdaptationFieldControl::from_flags(self.has_adaptation, self.has_payload)
     }
 }
 
@@ -492,9 +600,72 @@ impl SectionReassembler {
     }
 }
 
+/// Iterate over all valid TS packets in a byte buffer.
+///
+/// Slices `buf` into 188-byte chunks (using [`slice::chunks_exact`]) and yields
+/// each chunk for which [`TsPacket::parse`] succeeds. Chunks with a bad sync byte
+/// (`!= 0x47`) or insufficient length are silently skipped — use
+/// [`crate::resync::TsResync`] for byte-stream resynchronisation before calling
+/// this when byte alignment is not guaranteed.
+///
+/// # Example
+///
+/// ```no_run
+/// # use mpeg_ts::ts::iter_packets;
+/// # let data: &[u8] = &[];
+/// for pkt in iter_packets(data) {
+///     println!("PID: 0x{:04X}", pkt.header.pid);
+/// }
+/// ```
+pub fn iter_packets(buf: &[u8]) -> impl Iterator<Item = TsPacket<'_>> {
+    buf.chunks_exact(TS_PACKET_SIZE)
+        .filter_map(|chunk| TsPacket::parse(chunk).ok())
+}
+
+/// Extract the payload bytes from a raw 188-byte TS packet slice.
+///
+/// Returns `None` when:
+/// - `pkt` is fewer than 4 bytes,
+/// - `adaptation_field_control` is `00` (reserved) or `10` (adaptation only), or
+/// - the adaptation field length would place the payload start past the packet end.
+///
+/// No sync-byte check is performed — the caller is responsible for ensuring the
+/// slice is properly aligned. Spec: ITU-T H.222.0 (08/2023) §2.4.3.3 Table 2-5.
+pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
+    if pkt.len() < 4 {
+        return None;
+    }
+    let afc = (pkt[3] >> 4) & 0x3;
+    match afc {
+        0x1 => {
+            // payload only: payload starts at byte 4
+            if pkt.len() > 4 {
+                Some(&pkt[4..])
+            } else {
+                None
+            }
+        }
+        0x3 => {
+            // adaptation field + payload
+            if pkt.len() < 5 {
+                return None;
+            }
+            let af_len = pkt[4] as usize;
+            let start = 5 + af_len;
+            if start < pkt.len() {
+                Some(&pkt[start..])
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
     use alloc::vec::Vec;
 
@@ -1056,5 +1227,156 @@ mod tests {
         let af = pkt.adaptation_field().unwrap().unwrap();
         assert_eq!(af.splice_countdown, Some(-5));
         assert!(af.pcr.is_none());
+    }
+
+    // ── ScramblingControl / AdaptationFieldControl enums ──
+
+    #[test]
+    fn scrambling_control_all_values() {
+        assert_eq!(
+            ScramblingControl::from_bits(0b00),
+            ScramblingControl::NotScrambled
+        );
+        assert_eq!(
+            ScramblingControl::from_bits(0b01),
+            ScramblingControl::Reserved
+        );
+        assert_eq!(
+            ScramblingControl::from_bits(0b10),
+            ScramblingControl::EvenKey
+        );
+        assert_eq!(
+            ScramblingControl::from_bits(0b11),
+            ScramblingControl::OddKey
+        );
+        // name() labels
+        assert_eq!(ScramblingControl::NotScrambled.name(), "not_scrambled");
+        assert_eq!(ScramblingControl::Reserved.name(), "reserved");
+        assert_eq!(ScramblingControl::EvenKey.name(), "even_key");
+        assert_eq!(ScramblingControl::OddKey.name(), "odd_key");
+        // Display delegates to name()
+        assert_eq!(ScramblingControl::NotScrambled.to_string(), "not_scrambled");
+        assert_eq!(ScramblingControl::OddKey.to_string(), "odd_key");
+        // Masking: only low 2 bits matter
+        assert_eq!(
+            ScramblingControl::from_bits(0xFF),
+            ScramblingControl::OddKey
+        );
+    }
+
+    #[test]
+    fn adaptation_field_control_all_values() {
+        assert_eq!(
+            AdaptationFieldControl::from_flags(false, false),
+            AdaptationFieldControl::Reserved
+        );
+        assert_eq!(
+            AdaptationFieldControl::from_flags(false, true),
+            AdaptationFieldControl::PayloadOnly
+        );
+        assert_eq!(
+            AdaptationFieldControl::from_flags(true, false),
+            AdaptationFieldControl::AdaptationOnly
+        );
+        assert_eq!(
+            AdaptationFieldControl::from_flags(true, true),
+            AdaptationFieldControl::AdaptationAndPayload
+        );
+        // name()
+        assert_eq!(AdaptationFieldControl::Reserved.name(), "reserved");
+        assert_eq!(AdaptationFieldControl::PayloadOnly.name(), "payload_only");
+        assert_eq!(
+            AdaptationFieldControl::AdaptationOnly.name(),
+            "adaptation_only"
+        );
+        assert_eq!(
+            AdaptationFieldControl::AdaptationAndPayload.name(),
+            "adaptation_and_payload"
+        );
+        // Display
+        assert_eq!(
+            AdaptationFieldControl::PayloadOnly.to_string(),
+            "payload_only"
+        );
+    }
+
+    #[test]
+    fn ts_header_scrambling_control_accessor() {
+        let hdr = TsHeader {
+            tei: false,
+            pusi: false,
+            pid: 0x0100,
+            scrambling: 0b10,
+            has_adaptation: false,
+            has_payload: true,
+            continuity_counter: 0,
+        };
+        assert_eq!(hdr.scrambling_control(), ScramblingControl::EvenKey);
+    }
+
+    #[test]
+    fn ts_header_adaptation_field_control_accessor() {
+        let hdr_payload_only = TsHeader {
+            tei: false,
+            pusi: false,
+            pid: 0x0100,
+            scrambling: 0,
+            has_adaptation: false,
+            has_payload: true,
+            continuity_counter: 0,
+        };
+        assert_eq!(
+            hdr_payload_only.adaptation_field_control(),
+            AdaptationFieldControl::PayloadOnly
+        );
+
+        let hdr_both = TsHeader {
+            tei: false,
+            pusi: false,
+            pid: 0x0100,
+            scrambling: 0,
+            has_adaptation: true,
+            has_payload: true,
+            continuity_counter: 0,
+        };
+        assert_eq!(
+            hdr_both.adaptation_field_control(),
+            AdaptationFieldControl::AdaptationAndPayload
+        );
+    }
+
+    // ── iter_packets / extract_ts_payload helpers ──
+
+    #[test]
+    fn iter_packets_yields_valid_and_skips_bad_sync() {
+        // Two valid packets back-to-back, then one bad-sync packet.
+        let pkt1 = make_packet(0x00, 0x00, PAYLOAD_FLAG, &[0xAA; 10]);
+        let pkt2 = make_packet(0x40, 0x64, PAYLOAD_FLAG, &[0xBB; 10]);
+        let mut bad = [0u8; TS_PACKET_SIZE];
+        bad[0] = 0x00; // bad sync byte
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&pkt1);
+        buf.extend_from_slice(&pkt2);
+        buf.extend_from_slice(&bad);
+
+        let pkts: Vec<_> = super::iter_packets(&buf).collect();
+        assert_eq!(pkts.len(), 2, "bad sync packet must be skipped");
+        assert_eq!(pkts[0].header.pid, 0x0000);
+        assert_eq!(pkts[1].header.pid, 0x0064);
+    }
+
+    #[test]
+    fn extract_ts_payload_payload_only() {
+        let pkt = make_packet(0x00, 0x00, PAYLOAD_FLAG, &[0xABu8; 10]);
+        let p = super::extract_ts_payload(&pkt).expect("payload present");
+        assert_eq!(p[0], 0xAB);
+        assert_eq!(p.len(), TS_PACKET_SIZE - 4);
+    }
+
+    #[test]
+    fn extract_ts_payload_adaptation_only_returns_none() {
+        let pkt = make_packet(0x00, 0x00, ADAPTATION_FLAG, &[]);
+        assert!(super::extract_ts_payload(&pkt).is_none());
     }
 }
