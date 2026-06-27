@@ -3,6 +3,17 @@
 [![Crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg)
 [![docs.rs](https://img.shields.io/docsrs/mp4-emsg)](https://docs.rs/mp4-emsg)
 
+> **Formerly `dvb-emsg`.** This crate was renamed from `dvb-emsg` (v0.1.0) to
+> `mp4-emsg` (v0.1.0) and is now independently versioned. The deprecated
+> `dvb-emsg` crate re-exports this one.
+
+## Install
+
+```toml
+[dependencies]
+mp4-emsg = "0.1"
+```
+
 ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1) — inband DASH/CMAF
 timed events (SCTE 35 splice signalling, ID3 metadata, ad/tracking triggers):
 version 0/1 `FullBox` parse + serialize.

@@ -1,8 +1,19 @@
-# dvb-scte35
+# scte35-splice
 
-[![crates.io](https://img.shields.io/crates/v/dvb-scte35.svg)](https://crates.io/crates/dvb-scte35)
-[![docs.rs](https://img.shields.io/docsrs/dvb-scte35)](https://docs.rs/dvb-scte35)
+[![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice)
+[![docs.rs](https://img.shields.io/docsrs/scte35-splice)](https://docs.rs/scte35-splice)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](../LICENSE-MIT)
+
+> **Formerly `dvb-scte35`.** This crate was renamed from `dvb-scte35` (last
+> released as 7.9.0 in the DVB lockstep) to `scte35-splice` (v1.0.0) and is now
+> independently versioned. The deprecated `dvb-scte35` crate re-exports this one.
+
+## Install
+
+```toml
+[dependencies]
+scte35-splice = "1.0"
+```
 
 Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program
 Insertion cueing) parser **and builder** in Rust, with the rust-dvb family's
@@ -25,8 +36,8 @@ transport stream. A `splice_info_section` (table_id `0xFC`) carries one splice
 ## Quick start
 
 ```rust
-use dvb_scte35::{SpliceInfoSection, commands::{AnyCommand, TimeSignal}};
-use dvb_scte35::time::SpliceTime;
+use scte35_splice::{SpliceInfoSection, commands::{AnyCommand, TimeSignal}};
+use scte35_splice::time::SpliceTime;
 use dvb_common::{Parse, Serialize};
 
 // Build a time_signal() section and emit it.
@@ -126,13 +137,13 @@ Rust **1.81**.
 ## Spec grounding
 
 The syntax tables and the assignment tables are hand-transcribed in
-[`dvb-scte35/docs/scte_35.md`](docs/scte_35.md); every module doc cites the SCTE
+[`scte35-splice/docs/scte_35.md`](docs/scte_35.md); every module doc cites the SCTE
 35 section, table and tag/command_type it implements. SCTE 35 is published by
 SCTE at no cost.
 
 ## Examples
 
-Run with `cargo run -p dvb-scte35 --example <name>`:
+Run with `cargo run -p scte35-splice --example <name>`:
 
 - **`parse_splice_insert`** — parse a real `splice_info_section` carrying a `splice_insert()`.
 - **`round_trip_and_descriptors`** — walk the splice descriptor loop and prove the serializer is byte-exact.

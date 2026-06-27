@@ -6,6 +6,14 @@ license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-dvb"
 rust-version = "1.81"
 description  = "DEPRECATED: renamed to `scte35-splice`. This crate re-exports it."
+keywords     = ["scte35", "splice", "ad-insertion", "mpeg", "broadcast"]
+categories   = ["parser-implementations", "multimedia"]
+readme       = "README.md"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 scte35-splice = { path = "../scte35-splice", version = "1.0" }
