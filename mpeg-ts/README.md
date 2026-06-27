@@ -20,7 +20,7 @@ the full SI/descriptor stack.
 | Feature | Default | Description |
 |---------|---------|-------------|
 | `std`   | yes     | Enable `std::error::Error` impls; disable for embedded |
-| `serde` | yes     | `Serialize`/`Deserialize` for packet types |
+| `serde` | yes     | `Serialize` for packet/section types (serialize-only) |
 
 ## Installation
 
@@ -73,7 +73,7 @@ directly should replace:
 |---|---|
 | `ts::TsPacket` | `ts::TsPacket` |
 | `ts::SectionReassembler` | `ts::SectionReassembler` |
-| `mux::TsMux` / `SectionPacketizer` | `mux::TsMux` / `SectionPacketizer` |
+| `mux::SiMux` / `SectionPacketizer` | `mux::SiMux` / `SectionPacketizer` |
 | `resync::TsResync` | `resync::TsResync` |
 | `pid::Pid` | `pid::Pid` |
 

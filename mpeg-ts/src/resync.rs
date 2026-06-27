@@ -47,6 +47,18 @@ pub enum PacketStride {
     Rs204,
 }
 
+impl PacketStride {
+    /// Short machine-readable label for this stride.
+    pub fn name(&self) -> &'static str {
+        match self {
+            PacketStride::Ts188 => "ts_188",
+            PacketStride::Rs204 => "rs_204",
+        }
+    }
+}
+
+dvb_common::impl_spec_display!(PacketStride);
+
 /// Counters accumulated during resynchronisation.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

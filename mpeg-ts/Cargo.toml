@@ -8,7 +8,7 @@ rust-version = "1.81"
 description  = "MPEG-2 Transport Stream framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetization, resync. no_std."
 keywords     = ["mpeg-ts", "transport-stream", "mpeg2", "psi", "no-std"]
 categories   = ["parser-implementations", "multimedia::video", "no-std"]
-exclude      = ["docs/**"]
+exclude      = ["docs/**", "tests/fixtures/**"]
 
 [dependencies]
 dvb-common = { path = "../dvb-common", version = "8", default-features = false }
@@ -21,6 +21,9 @@ default = ["std", "serde"]
 std    = ["dvb-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 
+[[test]]
+name = "label_coverage"
+required-features = []
+
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]

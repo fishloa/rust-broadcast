@@ -26,8 +26,10 @@ use crate::ts::{TsHeader, TS_PACKET_SIZE, TS_SYNC_BYTE};
 /// [`serialize_with_payload`](Self::serialize_with_payload) constructs a plain
 /// payload-only packet (no adaptation field) filled with 0xFF stuffing.
 #[derive(Clone, Debug)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TsPacketBuf {
-    /// The raw 188 bytes.
+    /// The raw 188 bytes (serialized as a byte sequence).
+    #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_raw_bytes"))]
     pub raw: [u8; TS_PACKET_SIZE],
     /// 13-bit PID extracted from bytes 1–2.
     pub pid: u16,
@@ -43,6 +45,21 @@ pub struct TsPacketBuf {
     pub scrambling: u8,
     /// 4-bit continuity_counter (byte 3 bits 3–0).
     pub continuity_counter: u8,
+}
+
+/// Serialize a `[u8; N]` as a variable-length byte sequence so serde's
+/// blanket impls (only up to `[u8; 32]`) are not required.
+#[cfg(feature = "serde")]
+fn serialize_raw_bytes<S: serde::Serializer>(
+    bytes: &[u8; TS_PACKET_SIZE],
+    s: S,
+) -> core::result::Result<S::Ok, S::Error> {
+    use serde::ser::SerializeSeq;
+    let mut seq = s.serialize_seq(Some(bytes.len()))?;
+    for b in bytes {
+        seq.serialize_element(b)?;
+    }
+    seq.end()
 }
 
 impl TsPacketBuf {

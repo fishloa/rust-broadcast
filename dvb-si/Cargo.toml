@@ -50,7 +50,7 @@ std      = ["dvb-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "
 chrono   = ["dep:chrono", "dvb-common/chrono"]
 
 # MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
-ts       = ["dep:bytes", "mpeg-ts/std"]
+ts       = ["dep:bytes"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to chrono.
 serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde", "mpeg-ts/serde"]
