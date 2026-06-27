@@ -1,0 +1,188 @@
+# Changelog
+
+## [Unreleased]
+
+## [1.0.0] — 2026-06-27
+
+- Renamed from `dvb-scte35` (was 7.9.0); code unchanged. Left the DVB lockstep — now versioned independently. Old crate `dvb-scte35` continues as a deprecated re-export shim at 7.9.1.
+
+## [7.9.0] — 2026-06-22
+
+### Changed
+
+- Lockstep release; no functional changes to this crate.
+
+## [7.8.0] — 2026-06-21
+
+### Fixed
+- **`DvbDasDescriptor::serialize_into` — `descriptor_length` overflow guard
+  (dvb_ta audit P1):** a `upid` of ≥ 252 bytes would make `4 + body_len ≥ 256`,
+  silently wrapping the 8-bit `descriptor_length` field and producing corrupt
+  wire bytes with no error. `serialize_into` now returns
+  `Err(Error::InvalidValue { field: "DVB_DAS_descriptor.descriptor_length", … })`
+  when `FIXED_BODY_LEN + upid.len() > 251` (the largest value where
+  `descriptor_length = 4 + body_len` still fits in a `u8`). Mirrors the guard
+  already present in `CompactTimeSignal::serialize_into` and
+  `CompactSpliceInsert::serialize_into`.
+
+### Added
+- **TOML spec-mirror + drift tests for `EquivalentSegmentationType` (Table 2) and
+  `TimelineType` (Table 4)** (dvb_ta audit C): `docs/enums/dvb_ta/
+  equivalent_segmentation_type.toml` and `docs/enums/dvb_ta/timeline_type.toml`
+  record every named variant/value/spec-label from ETSI TS 103 752-1 Tables 2 and
+  4; `tests/dvb_ta_spec_drift.rs` byte-sweeps each enum and cross-checks the TOML,
+  mirroring the existing SCTE-35 enum drift tests.
+- **`CompactTimeSignal` upid-overflow regression test** (dvb_ta audit 2A): a new
+  in-module test `time_signal_upid_overflow_guard_fires` confirms the existing
+  guard at `compact.rs` fires when `segmentation_upid.len() > 255`.
+
+### Added
+- **DVB Targeted Advertising — binary SCTE 35 profile (ETSI TS 103 752-1 V1.2.1)**
+  in a new `dvb_ta` module (DVB-TA folded into this crate, not a new crate, since
+  it is a DVB profile over ANSI/SCTE 35):
+  - `dvb_ta::das_descriptor::DvbDasDescriptor` — the `DVB_DAS_descriptor()`
+    (§5.3.5.16, tag `0xF0`, identifier `"DVB_"`): a DVB-private splice descriptor
+    carried in the base `splice_info_section()` descriptor loop, with
+    `EquivalentSegmentationType` (Table 2). Integrated into
+    `AnySpliceDescriptor` (dispatched on tag `0xF0`).
+  - `dvb_ta::compact` — the Compact SCTE 35 Encoding Format (§8.3.3):
+    `CompactScte35` / `CompactTimeSignal` / `CompactSpliceInsert` (+ inline
+    `CompactDas`) for low-capacity watermark carriage. Implements the
+    reconstructed ("likely") bit widths the transcription cross-checks against
+    §5.3.5.11 and Table 1 (the PDF render of Tables 6/8 is mis-registered).
+  - `dvb_ta::stream_event::StreamEventPayload` — the
+    `DSM-CC_stream_event_payload_binary()` (§6.3.1) wrapping an inline
+    `SpliceInfoSection` (`event_type 0`) or a carousel-object DVB URI reference
+    (`event_type 1`), with `TimelineType` (Table 4) and a TEMI option; plus a
+    `no_std` RFC 4648 `base64_encode` helper for the carriage recipe.
+  - `dvb_ta::profiling` — typed helpers over the existing
+    `SegmentationDescriptor` for the PPO/DPO profiling constraints (§5.3.4–5.3.5,
+    no new wire syntax): `PlacementOpportunity` (classifies the 0x34–0x37 PO
+    type-IDs) and `validate_po_segmentation` → `ProfileViolation`.
+  - The base SCTE 35 structures the profile references
+    (`splice_info_section()`, `splice_insert()`, `time_signal()`,
+    `segmentation_descriptor()`, the CRC-32 and the `segmentation_type_id` /
+    `segmentation_upid_type` tables) are reused, not reimplemented.
+
+## [7.7.1] — 2026-06-21
+
+### Changed
+- Value-enum accessors (`to_u8`/`to_u16`/`to_u32`) are now `const fn`, so they can be used in `const` initializers downstream. Non-breaking.
+
+## [7.7.0] — 2026-06-20
+
+### Changed
+- Lockstep release; no functional changes to this crate.
+
+## [7.6.0] — 2026-06-20
+
+### Changed
+- Lockstep release; no functional changes to this crate.
+
+## [7.5.0] — 2026-06-19
+
+### Added
+- `examples/`: `parse_splice_insert` (parse a real `splice_insert` section) and
+  `round_trip_and_descriptors` (walk the descriptor loop + byte-exact round-trip).
+
+## [7.4.0] — 2026-06-18
+
+Lockstep release; no functional changes.
+
+## [7.3.0] — 2026-06-17
+
+### Changed
+- Lockstep release; no functional changes to this crate.
+
+## [7.2.0] — 2026-06-16
+
+### Fixed
+- `SpliceInfoSection::parse` no longer underflows (`total - CRC_LEN`) / panics on
+  a section with `section_length < 1`; guarded before the subtraction (#216).
+
+## [7.1.0] — 2026-06-15
+
+### Changed
+- Internal: byte-readers hardened with bounds-checked `split_first_chunk` /
+  `split_last_chunk` / `first_chunk`, folding manual length checks into the read.
+  No API or behaviour change (#207).
+
+## [7.0.0] — 2026-06-14
+
+**BREAKING (MSRV 1.75 → 1.81).**
+
+### Added
+- **no_std + alloc support** (#63).
+
+### Changed (breaking)
+- Every public enum is `#[non_exhaustive]` (#208) — incl. `DeviceRestrictions`,
+  `SegmentationUpidType`, `SegmentationTypeId`.
+- MSRV **1.81**.
+
+## [6.7.0] — 2026-06-14
+
+### Added
+- `name()` + `Display` on `DeviceRestrictions`, `SegmentationUpidType`
+  (Table 22 UPID names) and `SegmentationTypeId` (Table 23 names) via
+  `impl_spec_display!`; `label_coverage` drift-guard test (#204).
+
+## [6.6.0] — 2026-06-14
+
+Version-lockstep release with the workspace (dvb-t2mi L1-pre/L1-post signalling parser #54; dvb-si BIOP object-carousel layer #64; criterion benchmark suites #62). No changes to this crate.
+
+## [6.5.0] — 2026-06-13
+
+Version-lockstep release with the workspace (#47 T2 emission-time accessors; #50 SSU GroupInfoIndication + data_broadcast_id 0x000A selector; #53 S2Xv2 0x24 extension descriptor). No changes to this crate.
+
+## [6.4.0] — 2026-06-13
+
+### Added
+- Spec-table data mirror `dvb-scte35/spec_tables/segmentation_type_id.toml`
+  (reviewable, spec-cited `segmentation_type_id` value→name table) plus
+  `tests/spec_drift.rs`, a drift test that byte-sweeps `SegmentationTypeId`
+  and fails CI if the enum and its TOML diverge (#158). Test/data only.
+- Extended `tests/spec_drift.rs` with drift-guard coverage for three further
+  code-backing enums/dispatch tables (#158): `DeviceRestrictions` (Table 21,
+  4 variants), `SegmentationUpidType` (Table 22, 18 named variants) and
+  `splice_command_type` via `AnyCommand::DISPATCHED_TYPES` (Table 7, 6
+  implemented types). Adds `spec_tables/device_restrictions.toml`,
+  `spec_tables/segmentation_upid_type.toml`, and
+  `spec_tables/splice_command_type.toml`. Test/data only.
+
+## [6.3.0] — 2026-06-13
+
+_Initial release._
+
+### Added
+- **Typed MPU/MID UPID sub-structures** (§10.3.3.3-4, Tables 24-25): `Mpu<'a>`
+  (format_identifier + private_data) and `MidUpid<'a>` (per-entry type + raw upid
+  bytes) decoded on demand via `SegmentationDescriptor::mpu()` /
+  `SegmentationDescriptor::mid()`. Raw `segmentation_upid: &[u8]` is unchanged so
+  round-trip serialization is unaffected.
+
+### Fixed
+- **Serde test vector**: replaced the self-assembled base64 in
+  `tests/serde_round_trip.rs` with the real ANSI/SCTE 35 2023r1 §14.1 vector
+  (`/DA0AAAAAAAA///wBQb+…`); assertions updated to match the spec-decoded fields.
+
+- **New crate `dvb-scte35`** (#58) — ANSI/SCTE 35 2023r1 splice information
+  (Digital Program Insertion cueing) parser **and** builder, with the
+  workspace's symmetric `Parse`/`Serialize` round-trip discipline.
+  - `SpliceInfoSection` (table_id `0xFC`): the full §9.6 header
+    (protocol_version, sap_type, the encryption flags, 33-bit `pts_adjustment`,
+    `cw_index`, 12-bit `tier`, `splice_command_length`/type, descriptor loop,
+    CRC_32 via `dvb_common::crc32_mpeg2`). Encrypted sections are kept raw and
+    round-trip losslessly; clear sections expose typed commands and descriptors.
+  - Commands: `splice_null`, `splice_schedule`, `splice_insert`, `time_signal`,
+    `bandwidth_reservation`, `private_command`, plus `splice_time()` /
+    `break_duration()` — unified by `AnyCommand` with a raw fall-through for
+    reserved command types.
+  - Splice descriptors: `avail`, `DTMF`, `segmentation` (with the
+    `SegmentationTypeId` / `SegmentationUpidType` / `DeviceRestrictions`
+    assignment-table enums), `time`, `audio` — unified by `AnySpliceDescriptor`
+    with a raw fall-through for unknown tags.
+  - Decoded accessors (the 4.1.0 pattern): 90 kHz fields (`pts_time`,
+    `break_duration`, `pts_adjustment`) ⇄ `core::time::Duration`, and the 33-bit
+    `pts_adjustment` carry-ignored wrap (`pts_add_wrapping`).
+  - Optional `serde` feature (default on), Serialize-only — mirrors the
+    workspace posture (no Deserialize).

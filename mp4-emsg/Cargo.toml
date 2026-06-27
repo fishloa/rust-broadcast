@@ -1,0 +1,32 @@
+[package]
+name    = "mp4-emsg"
+version = "0.1.0"
+edition = "2021"
+description = "ISO BMFF / DASH Event Message Box (emsg, ISO/IEC 23009-1) — parser + serializer, no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["dash", "emsg", "cmaf", "scte35", "isobmff"]
+categories = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+rust-version = "1.81"
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["dvb-common/std", "thiserror/std"]
+serde = ["dep:serde"]

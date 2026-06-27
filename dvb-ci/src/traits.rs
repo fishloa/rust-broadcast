@@ -1,7 +1,7 @@
 //! `dvb-ci`-specific dispatch trait. `Parse` / `Serialize` come from
 //! `dvb_common` and are imported at the call sites.
 //!
-//! Mirrors dvb-si's `DescriptorDef` and dvb-scte35's `CommandDef`: each typed
+//! Mirrors dvb-si's `DescriptorDef` and scte35-splice's `CommandDef`: each typed
 //! APDU object declares its 3-byte `apdu_tag` and a SCREAMING_SNAKE diagnostic
 //! `NAME`, and the `declare_apdus!` dispatch macro pins the tag in the dispatch
 //! list to the trait const via a drift test, so the list can never silently

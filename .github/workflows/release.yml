@@ -34,7 +34,7 @@ jobs:
       - name: Gate — tag matches crate versions
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          for c in dvb-common dvb-scte35 dvb-si dvb-conformance dvb-t2mi dvb-bbframe dvb-tools; do
+          for c in dvb-common dvb-si dvb-conformance dvb-t2mi dvb-bbframe dvb-tools; do
             V=$(cargo metadata --no-deps --format-version 1 --locked \
                 | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['$c'])")
             if [ "$V" != "$TAG" ]; then
@@ -43,13 +43,15 @@ jobs:
           done
 
       # Dependency order (topological): dvb-common has no workspace deps and
-      # must go first. dvb-scte35, dvb-si and dvb-bbframe each depend only on
-      # dvb-common (so dvb-scte35 publishes right after dvb-common).
+      # must go first. dvb-si and dvb-bbframe each depend only on dvb-common.
       # dvb-t2mi depends on dvb-common AND (optionally, ts-gated) dvb-bbframe,
       # so it must publish after dvb-bbframe is on the index.
       # dvb-tools depends on both dvb-si (ts + serde + chrono) and dvb-t2mi (ts),
       # so it publishes LAST. Hence:
-      #   common → scte35 → bbframe → si → t2mi → tools.
+      #   common → bbframe → si → conformance → t2mi → tools.
+      # (dvb-scte35 and dvb-emsg are now independent crates with their own
+      # release workflows: release-scte35-splice.yml, release-mp4-emsg.yml,
+      # release-dvb-scte35.yml, release-dvb-emsg.yml)
       # The index can lag a few seconds after a publish; `cargo publish` blocks
       # until the published crate is available since Cargo 1.66, so no manual
       # sleep is needed.
@@ -77,7 +79,6 @@ jobs:
             return 1
           }
           publish_crate dvb-common
-          publish_crate dvb-scte35
           publish_crate dvb-bbframe
           publish_crate dvb-si
           publish_crate dvb-conformance

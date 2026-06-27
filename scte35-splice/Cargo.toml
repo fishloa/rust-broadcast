@@ -1,0 +1,37 @@
+[package]
+name         = "scte35-splice"
+version      = "1.0.0"
+edition      = "2021"
+description  = "ANSI/SCTE 35 splice information (DPI cueing) — parser + serializer, no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["scte35", "splice", "ad-insertion", "mpeg", "broadcast"]
+categories   = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/rust-dvb"
+readme       = "README.md"
+rust-version = "1.81"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+[dependencies]
+dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive"] }
+
+[dev-dependencies]
+hex        = "0.4"
+base64     = "0.22"
+serde_json = "1.0"
+dvb-t2mi   = { path = "../dvb-t2mi", features = ["ts"] }
+
+[features]
+default = ["std", "serde"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std  = ["dvb-common/std", "thiserror/std"]
+
+# JSON / generic serialization on parsed + owned variants (Serialize-only,
+# mirroring the workspace posture — there is no Deserialize).
+serde = ["dep:serde"]

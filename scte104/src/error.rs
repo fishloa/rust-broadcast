@@ -1,7 +1,7 @@
 //! Error types for the scte104 crate.
 //!
 //! One structured `thiserror` enum used by every parser and serializer,
-//! mirroring the convention established by `dvb-scte35`.
+//! mirroring the convention established by `scte35-splice`.
 
 use thiserror::Error;
 

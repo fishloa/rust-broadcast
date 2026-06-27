@@ -5,7 +5,7 @@
 //! produces the enum, the `From<T>` conversions, the tag → parser dispatcher,
 //! and a drift test that pins each tag literal to the type's
 //! [`ApduDef::TAG`](crate::traits::ApduDef::TAG). Mirrors dvb-si's
-//! `AnyDescriptor` and dvb-scte35's `AnyCommand`.
+//! `AnyDescriptor` and scte35-splice's `AnyCommand`.
 //!
 //! An `apdu_tag` with no typed implementation (or one not yet implemented —
 //! e.g. the MMI high-level and low-speed-comms objects) falls through to

@@ -10,7 +10,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding, TS packet / section reassembly.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
-- **dvb-scte35** — ANSI/SCTE 35 splice information (DPI cueing); live.
+- **scte35-splice** — ANSI/SCTE 35 splice information (DPI cueing); independently versioned (left the DVB lockstep at v1.0.0). (`dvb-scte35` is a deprecated re-export shim at 7.9.1.)
 - **dvb-conformance** — ETSI TR 101 290 stream conformance monitor.
 - **dvb-tools** — CLI analyzer (`dump`/`services`/`epg`/`pids`/`t2mi`).
 - **dvb-stream** — async/tokio stream adapters; independently versioned.
@@ -19,6 +19,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via dvb-pes; `no_std`; independently versioned.
 - **scte104** — ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + the full operation set; `no_std`, depends only on dvb-common; independently versioned.
 - **dvb-cc** — DVB closed-caption carriage cc_data() (ETSI TS 101 154 Table B.9): typed CEA-608/708 triplets + 608/708 split; `no_std`, depends only on dvb-common; independently versioned.
+- **mp4-emsg** — ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1): version 0/1 parse + serialize for inband DASH/CMAF timed events (SCTE 35 splice, ID3, ad/tracking); `no_std`, independently versioned. (`dvb-emsg` is a deprecated re-export shim at 0.1.1.)
 - **dvb-si-py** (`bindings/python/`) — PyO3/maturin Python bindings over dvb-si/dvb-t2mi: `parse_section(bytes)->dict` + `Demux`/`T2miDemux` classes (read-only, parse→serde_json→Python). NOT a workspace member (own MSRV); consumes published crates by version; abi3 wheels to PyPI via its own workflow.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
@@ -62,7 +63,7 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
    - `cargo fmt --all --check`
    - clippy `-D warnings` on all targets
    - doc build with `RUSTDOCFLAGS="-D warnings"`
-5. **Releases are tag-driven and CI-only.** Bump all **seven** core crate versions together (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-scte35`, `dvb-conformance`, `dvb-tools`; `dvb-stream` releases independently), merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
+5. **Releases are tag-driven and CI-only.** Bump all **six** core crate versions together (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `dvb-conformance`, `dvb-tools`; `dvb-stream`, `scte35-splice`, `mp4-emsg`, and other independent crates release on their own cadence), merge, then push a `v<version>` tag — `release.yml` gates (tests, clippy, tag==version check) and publishes to crates.io in dependency order (dvb-common first). **Never `cargo publish` from a workstation.**
 6. **Every release produces documentation** per [`docs/RELEASE-DOCS.md`](docs/RELEASE-DOCS.md) — the authoritative standard for the docs.rs / crates.io / GitHub surfaces. Run its **per-release checklist** each tag (CHANGELOG → release note → README coverage → crate-root `//!` → Cargo.toml + docs.rs metadata sweep → GitHub Release → post-publish verify docs.rs built green). This is enforced like the gate suite.
 7. **Every release is audited** per [`docs/RELEASE-AUDIT.md`](docs/RELEASE-AUDIT.md) — the full battery of tests/checks run before a tag: the 6-gate CI suite (run yourself, not on CI/subagent say-so), the version + inter-crate dep-ref consistency audit (the v7.7.0 partial-publish trap; verify live versions against crates.io, not CHANGELOG headings), and the adversarial **extensibility/code-quality audit** (round-trip symmetry + no `self.raw` passthrough, no raw-byte public API, decode-completeness, spec-fidelity/no-magic-numbers, the #204 `name()`+`impl_spec_display!` label convention + per-crate `label_coverage` drift-guard, `#[non_exhaustive]`, panic-class safety, `declare_*`-macro dispatch). Companion to the doc standard above; [`AUDIT-LEDGER.md`](docs/AUDIT-LEDGER.md) records which PDF→md fidelity audits are already done.
 
@@ -70,7 +71,7 @@ Work in this repo is tracked as GitHub issues and lands via PRs to `main`. Use t
 
 Token-heavy authoring is delegated to DeepSeek (via the `delegate` skill → headless `opencode`); Claude stays the orchestrator, auditor, and release engineer. **Claude never marks a story done on the delegate's say-so** — only on its own fresh gate evidence.
 
-**Claude owns (does NOT delegate):** story ordering (by dependency then value-for-effort), version semantics (patch = fixes only, minor = additive API, major = breaking; lockstep across all four crates), release bundling (batch related additive stories into one minor; ship breaking/urgent work standalone), and the correctness of every CHANGELOG, `docs/release-notes/vX.Y.Z.md`, README coverage table, module spec-citation, and example/doctest.
+**Claude owns (does NOT delegate):** story ordering (by dependency then value-for-effort), version semantics (patch = fixes only, minor = additive API, major = breaking; lockstep across the six lockstep crates), release bundling (batch related additive stories into one minor; ship breaking/urgent work standalone), and the correctness of every CHANGELOG, `docs/release-notes/vX.Y.Z.md`, README coverage table, module spec-citation, and example/doctest.
 
 **Per-story loop:**
 
@@ -81,7 +82,7 @@ Token-heavy authoring is delegated to DeepSeek (via the `delegate` skill → hea
 4. **Audit** — judge by `git diff` + running the **full gate suite yourself** (see Commands), never by the delegate's stdout (often empty on success) or its claims. Then check line-by-line against every AC and the hard invariants (symmetric serialize + round-trip test, no magic numbers outside `#[cfg(test)]`, spec citation in the module doc, `--no-default-features` builds, feature-gating). If a delegated test doesn't *bite*, reject or rewrite it — Claude owns verification.
 5. **Drive fixes** — feed concrete findings back via `opencode run --continue` (same session keeps context). After 2 failed fix cycles on the same point, take over and finish it directly.
 6. **Repeat 4–5** until every gate is green *and* every AC is met, on Claude's own run.
-7. **Ship** — update CHANGELOG/release-note/README/examples; branch→PR (`Closes #n`)→CI green→merge; then the lockstep version bump + `v<version>` tag (per the tag-driven release rule above). Verify all four crates went live.
+7. **Ship** — update CHANGELOG/release-note/README/examples; branch→PR (`Closes #n`)→CI green→merge; then the lockstep version bump + `v<version>` tag (per the tag-driven release rule above). Verify all six lockstep crates went live (plus any independent crates in the same release).
 
 **Continuous improvement:** treat this loop as living. When a brief pattern, gate ordering, or audit check repeatedly saves (or costs) time, refine this section and say so in the turn. Recurring delegate failure modes belong in the brief template, not rediscovered each story.
 

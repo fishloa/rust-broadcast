@@ -29,7 +29,7 @@ mpeg-ps      = { path = "../mpeg-ps" }
 scte104      = { path = "../scte104" }
 dvb-cc       = { path = "../dvb-cc" }
 dvb-ci       = { path = "../dvb-ci" }
-dvb-scte35   = { path = "../dvb-scte35" }
+scte35-splice = { path = "../scte35-splice" }
 libfuzzer-sys = "0.4"
 
 [[bin]]

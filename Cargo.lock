@@ -361,12 +361,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-emsg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "mp4-emsg",
 ]
 
 [[package]]
@@ -391,15 +388,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-scte35"
-version = "7.9.0"
+version = "7.9.1"
 dependencies = [
- "base64",
- "dvb-common",
- "dvb-t2mi",
- "hex",
- "serde",
- "serde_json",
- "thiserror",
+ "scte35-splice",
 ]
 
 [[package]]
@@ -743,6 +734,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mp4-emsg"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "mpeg-ps"
 version = "0.1.1"
 dependencies = [
@@ -933,6 +934,19 @@ name = "scte104"
 version = "0.1.0"
 dependencies = [
  "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "scte35-splice"
+version = "1.0.0"
+dependencies = [
+ "base64",
+ "dvb-common",
+ "dvb-t2mi",
+ "hex",
  "serde",
  "serde_json",
  "thiserror",
