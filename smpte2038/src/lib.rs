@@ -24,7 +24,7 @@
 //!
 //! Depends only on `dvb-common` and is `#![no_std]` (+ `alloc`). The PES header
 //! is parsed inline (every field is fixed by Table 2, so the dedicated
-//! `dvb-pes` parser adds a dependency without simplifying the bit-packed
+//! `mpeg-pes` parser adds a dependency without simplifying the bit-packed
 //! payload walk).
 //!
 //! # Examples
