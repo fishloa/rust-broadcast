@@ -16,7 +16,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-scte35-splice = { path = "../scte35-splice", version = "1.0" }
+scte35-splice = { path = "../scte35-splice", version = "1.0", default-features = false }
 
 [features]
 default = ["std", "serde"]
