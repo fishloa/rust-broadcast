@@ -1,6 +1,7 @@
-//! Reserved DVB/MPEG-2 PIDs.
+//! MPEG-TS Packet Identifier (PID) types and well-known PID constants.
 //!
-//! Values are fixed by ETSI EN 300 468 §5.1.3 Table 1 and ISO/IEC 13818-1.
+//! Specified by ITU-T H.222.0 §2.4 (= ISO/IEC 13818-1). DVB-specific
+//! well-known PID assignments are also listed in ETSI EN 300 468 §5.1.3 Table 1.
 
 /// A 13-bit MPEG-TS Packet Identifier.
 ///

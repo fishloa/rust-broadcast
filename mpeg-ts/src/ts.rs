@@ -1,4 +1,4 @@
-//! MPEG-TS packet parser + section reassembler. Feature-gated under `ts`.
+//! MPEG-TS packet parser and section reassembler — ITU-T H.222.0 §2.4 (= ISO/IEC 13818-1).
 
 use crate::error::{Error, Result};
 
@@ -495,6 +495,8 @@ impl SectionReassembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     /// Helper: construct a minimal 188-byte TS packet buffer with given header flags and payload.
     fn make_packet(b1: u8, b2: u8, b3: u8, payload_data: &[u8]) -> [u8; TS_PACKET_SIZE] {
@@ -675,7 +677,7 @@ mod tests {
         reasm.feed(&payload, true);
 
         // Consumers must drain with a loop, not a single `if let`.
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 3, "all three concatenated sections must pop");
         assert_eq!(got[0].as_ref(), &s1[..]);
         assert_eq!(got[1].as_ref(), &s2[..]);
@@ -698,7 +700,7 @@ mod tests {
         let mut reasm = SectionReassembler::default();
         reasm.feed(&payload, true);
 
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].as_ref(), &s1[..]);
         assert_eq!(got[1].as_ref(), &s2[..]);
@@ -760,7 +762,7 @@ mod tests {
         assert!(reasm.pop_section().is_none(), "head alone is incomplete");
 
         reasm.feed(&payload_b, true);
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 2, "spanning section + new section must both pop");
         assert_eq!(
             got[0].as_ref(),

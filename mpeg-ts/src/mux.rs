@@ -1,7 +1,7 @@
 //! Section → TS packetizer (the byte-exact inverse of
 //! [`SectionReassembler::feed`](crate::ts::SectionReassembler::feed)).
 //!
-//! Per the PSI carriage rules of ISO/IEC 13818-1:2007 §2.4.4
+//! Per the PSI carriage rules of ITU-T H.222.0 §2.4.4 (= ISO/IEC 13818-1:2007 §2.4.4)
 //! (`docs/iso_13818_1_systems.md`): sections are packed into 188-byte packets
 //! with a `pointer_field` where sections begin, concatenated contiguously, and
 //! 0xFF-stuffed at the batch tail.
@@ -378,6 +378,8 @@ fn split_sections(data: &[u8]) -> Vec<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use crate::ts::{SectionReassembler, TsPacket};
 
     // ── helpers ──────────────────────────────────────────────────────────────
@@ -420,7 +422,7 @@ mod tests {
             reasm.feed(payload, pusi);
         }
 
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(
             got.len(),
             sections.len(),
@@ -648,7 +650,7 @@ mod tests {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].as_ref(), s2.as_slice());
     }
@@ -742,7 +744,7 @@ mod tests {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 2, "round-trip must recover both sections");
         assert_eq!(got[0].as_ref(), s1.as_slice());
         assert_eq!(got[1].as_ref(), s2.as_slice());
@@ -768,8 +770,8 @@ mod tests {
                 _ => {}
             }
         }
-        let got_a: Vec<_> = std::iter::from_fn(|| reasm_a.pop_section()).collect();
-        let got_b: Vec<_> = std::iter::from_fn(|| reasm_b.pop_section()).collect();
+        let got_a: Vec<_> = core::iter::from_fn(|| reasm_a.pop_section()).collect();
+        let got_b: Vec<_> = core::iter::from_fn(|| reasm_b.pop_section()).collect();
         assert_eq!(got_a.len(), 1);
         assert_eq!(got_b.len(), 1);
         assert_eq!(got_a[0].as_ref(), s_a.as_slice());
@@ -1071,7 +1073,7 @@ mod tests {
             reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
         }
 
-        let got: Vec<_> = std::iter::from_fn(|| reasm.pop_section()).collect();
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
         assert_eq!(got.len(), 2);
         assert!(
             reasm.is_empty(),

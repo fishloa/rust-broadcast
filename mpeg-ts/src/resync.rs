@@ -1,4 +1,4 @@
-//! Stateful TS byte-stream resynchroniser — ISO/IEC 13818-1 §2.4.3.2.
+//! Stateful TS byte-stream resynchroniser — ITU-T H.222.0 §2.4.3.2 (= ISO/IEC 13818-1 §2.4.3.2).
 //!
 //! Recovers 188-byte MPEG-TS packet alignment from an arbitrary byte stream
 //! (file reads, UDP payloads) that may start mid-packet or contain leading
@@ -14,7 +14,7 @@
 //! # Example
 //!
 //! ```
-//! use dvb_si::resync::TsResync;
+//! use mpeg_ts::resync::TsResync;
 //!
 //! let mut r = TsResync::new();
 //! // Feed arbitrary bytes (file chunks, UDP datagrams, etc.).
@@ -205,6 +205,9 @@ fn try_stride(buf: &[u8], offset: usize, s: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    extern crate std;
 
     /// Build a 188-byte TS packet starting with `TS_SYNC_BYTE` followed by
     /// `tag` (repeated).  All non-sync bytes are kept away from `0x47` so

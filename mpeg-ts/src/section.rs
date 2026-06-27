@@ -1,4 +1,4 @@
-//! Generic PSI/SI section framing — ETSI EN 300 468 §5.1.1.
+//! Generic PSI/SI section framing — ITU-T H.222.0 §2.4 (= ISO/IEC 13818-1) and ETSI EN 300 468 §5.1.1.
 //!
 //! Every PSI and SI table is carried in one or more sections. This module
 //! parses the **section header** and exposes the payload + CRC for
@@ -27,7 +27,7 @@
 //!
 //! NOTE the TOT exception: the TOT (0x73) also sets SSI=0 but DOES end with a
 //! CRC_32 (EN 300 468 §5.2.6). Parsing it through this generic short-form
-//! path folds the CRC into `payload` — use [`crate::tables::tot::TotSection`].
+//! path folds the CRC into `payload` — use the table-specific `TotSection` parser instead.
 //!
 //! `section_length` counts bytes *after* the 3-byte section header, so the
 //! total section size is `section_length + 3`.
@@ -301,6 +301,8 @@ impl Serialize for Section<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
     use dvb_common::crc32_mpeg2::compute as crc32;
 
     // ── Helper: build a minimal long-form section with correct CRC ───────────
