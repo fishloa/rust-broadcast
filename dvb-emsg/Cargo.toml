@@ -1,0 +1,24 @@
+[package]
+name         = "dvb-emsg"
+version      = "0.1.1"
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-dvb"
+rust-version = "1.81"
+description  = "DEPRECATED: renamed to `mp4-emsg`. This crate re-exports it."
+keywords     = ["dash", "emsg", "cmaf", "scte35", "isobmff"]
+categories   = ["parser-implementations", "multimedia", "no-std", "deprecated"]
+readme       = "README.md"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+mp4-emsg = { path = "../mp4-emsg", version = "0.1" }
+
+[features]
+default = ["std"]
+std     = ["mp4-emsg/std"]
+serde   = ["mp4-emsg/serde"]

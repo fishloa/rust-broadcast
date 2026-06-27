@@ -360,6 +360,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "dvb-emsg"
+version = "0.1.1"
+dependencies = [
+ "mp4-emsg",
+]
+
+[[package]]
 name = "dvb-flute"
 version = "0.1.0"
 dependencies = [
