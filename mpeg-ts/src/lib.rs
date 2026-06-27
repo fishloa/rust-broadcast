@@ -4,11 +4,11 @@
 extern crate alloc;
 
 pub mod error;
-pub mod pid;
-pub mod ts;
-pub mod section;
-pub mod resync;
 pub mod mux;
 pub mod packet_buf;
+pub mod pid;
+pub mod resync;
+pub mod section;
+pub mod ts;
 
 pub use error::{Error, Result};
