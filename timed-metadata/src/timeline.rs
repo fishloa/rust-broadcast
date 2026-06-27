@@ -115,4 +115,16 @@ mod tests {
             5 + (1u64 << 33)
         );
     }
+
+    #[test]
+    fn wrap_unroll_forward_delta_keeps_epoch() {
+        // A normal forward delta within range must NOT bump the epoch.
+        let (mut last, mut epoch) = (Some(1_000u64), 0u64);
+        assert_eq!(unroll_pts(&mut last, &mut epoch, 2_000), 2_000);
+        assert_eq!(epoch, 0);
+        // First call (no prior pts) returns the raw value, epoch unchanged.
+        let (mut last2, mut epoch2) = (None, 0u64);
+        assert_eq!(unroll_pts(&mut last2, &mut epoch2, 42), 42);
+        assert_eq!(epoch2, 0);
+    }
 }

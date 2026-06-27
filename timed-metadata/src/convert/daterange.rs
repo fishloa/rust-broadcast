@@ -18,6 +18,9 @@ pub fn scte35_to_daterange(ev: &TimedEvent, anchor: &TimeAnchor) -> Result<DateR
         }
     };
 
+    // EventKind -> cue is intentionally lossy: Chapter/Unspecified both collapse
+    // to Cmd. The DateRange -> TimedEvent reverse edge is out of v0.1 scope, so no
+    // round-trip symmetry is implied here.
     let cue = match ev.kind {
         EventKind::BreakStart => Scte35Cue::Out,
         EventKind::BreakEnd => Scte35Cue::In,
