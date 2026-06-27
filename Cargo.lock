@@ -123,6 +123,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc-data"
+version = "0.2.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,12 +320,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-cc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "cc-data",
 ]
 
 [[package]]
@@ -378,12 +385,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-pes"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "mpeg-pes",
 ]
 
 [[package]]
@@ -425,12 +429,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-smpte2038"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "smpte2038",
 ]
 
 [[package]]
@@ -447,10 +448,10 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dvb-common",
- "dvb-pes",
+ "mpeg-pes",
  "serde",
  "serde_json",
  "thiserror",
@@ -486,12 +487,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-ule"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "ule",
 ]
 
 [[package]]
@@ -744,11 +742,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mpeg-ps"
+name = "mpeg-pes"
 version = "0.1.1"
 dependencies = [
  "dvb-common",
- "dvb-pes",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "mpeg-ps"
+version = "0.1.2"
+dependencies = [
+ "dvb-common",
+ "mpeg-pes",
  "serde",
  "serde_json",
  "thiserror",
@@ -1014,6 +1022,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
+name = "smpte2038"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1135,6 +1153,16 @@ name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
+
+[[package]]
+name = "ule"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "unicode-ident"

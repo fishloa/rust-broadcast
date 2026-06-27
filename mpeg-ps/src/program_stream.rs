@@ -2,7 +2,7 @@
 //!
 //! Iterates through a Program Stream, yielding each [`Pack`], which itself
 //! carries a [`PackHeader`], an optional
-//! [`SystemHeader`], and parsed PES packets (via `dvb-pes`).
+//! [`SystemHeader`], and parsed PES packets (via `mpeg-pes`).
 //!
 //! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
 
@@ -26,7 +26,7 @@ pub struct Pack<'a> {
     /// The optional system header (only in the first pack of a compliant stream).
     pub system_header: Option<SystemHeader>,
     /// Parsed PES packets within this pack.
-    pub pes_packets: Vec<dvb_pes::PesPacket<'a>>,
+    pub pes_packets: Vec<mpeg_pes::PesPacket<'a>>,
 }
 
 /// Scans forward for the next pack_start_code or program_end_code boundary.
@@ -107,7 +107,7 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
     ))
 }
 
-fn parse_pes_loop<'a>(data: &'a [u8]) -> Result<(Vec<dvb_pes::PesPacket<'a>>, usize)> {
+fn parse_pes_loop<'a>(data: &'a [u8]) -> Result<(Vec<mpeg_pes::PesPacket<'a>>, usize)> {
     use crate::error::Error;
 
     let mut packets = Vec::new();
@@ -118,7 +118,7 @@ fn parse_pes_loop<'a>(data: &'a [u8]) -> Result<(Vec<dvb_pes::PesPacket<'a>>, us
         && data[pos + 1] == 0x00
         && data[pos + 2] == 0x01
     {
-        match dvb_pes::PesPacket::parse(&data[pos..]) {
+        match mpeg_pes::PesPacket::parse(&data[pos..]) {
             Ok(pkt) => {
                 let pkt_len = pkt.serialized_len();
                 packets.push(pkt);

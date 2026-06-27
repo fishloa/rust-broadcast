@@ -9,7 +9,7 @@ Parses the `.mpg`/`.vob` framing that wraps PES packets: the pack header
 (42-bit SCR + `program_mux_rate`), the optional system header (rate/audio/video
 bounds + per-stream P-STD buffer bounds), and the program stream map (PSM).
 
-`#![no_std]` + `alloc`; depends only on `dvb-common` and `dvb-pes`.
+`#![no_std]` + `alloc`; depends only on `dvb-common` and `mpeg-pes`.
 
 ## Quick start
 
