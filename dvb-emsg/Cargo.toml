@@ -7,7 +7,7 @@ repository   = "https://github.com/fishloa/rust-dvb"
 rust-version = "1.81"
 description  = "DEPRECATED: renamed to `mp4-emsg`. This crate re-exports it."
 keywords     = ["dash", "emsg", "cmaf", "scte35", "isobmff"]
-categories   = ["parser-implementations", "multimedia", "no-std", "deprecated"]
+categories   = ["parser-implementations", "multimedia", "no-std"]
 readme       = "README.md"
 exclude      = ["docs/**"]
 
