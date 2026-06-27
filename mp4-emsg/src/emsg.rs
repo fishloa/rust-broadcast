@@ -5,7 +5,7 @@
 //! flags = 0)` declaration, field ordering, and the null-terminated-string
 //! layout): ISO/IEC 23009-1 §5.10.3.3 (paid, **not vendored** — see the crate
 //! root caveat). Both the field set/types and the v0/v1 ordering difference are
-//! transcribed in `dvb-emsg/docs/emsg.md`.
+//! transcribed in `mp4-emsg/docs/emsg.md`.
 //!
 //! Wire layout (ISOBMFF `FullBox`):
 //!

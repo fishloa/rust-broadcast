@@ -360,16 +360,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-emsg"
-version = "0.1.0"
-dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "dvb-flute"
 version = "0.1.0"
 dependencies = [
@@ -727,6 +717,16 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "mp4-emsg"
+version = "0.1.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

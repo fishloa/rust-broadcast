@@ -1,11 +1,11 @@
-# dvb-emsg
+# mp4-emsg
 
-[![Crates.io](https://img.shields.io/crates/v/dvb-emsg.svg)](https://crates.io/crates/dvb-emsg)
-[![docs.rs](https://img.shields.io/docsrs/dvb-emsg)](https://docs.rs/dvb-emsg)
+[![Crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg)
+[![docs.rs](https://img.shields.io/docsrs/mp4-emsg)](https://docs.rs/mp4-emsg)
 
-MPEG-DASH Event Message Box (`emsg`) — inband DASH/CMAF timed events (SCTE 35
-splice signalling, ID3 metadata, ad/tracking triggers): version 0/1 `FullBox`
-parse + serialize.
+ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1) — inband DASH/CMAF
+timed events (SCTE 35 splice signalling, ID3 metadata, ad/tracking triggers):
+version 0/1 `FullBox` parse + serialize.
 
 Implements:
 
@@ -48,7 +48,7 @@ project policy.
 ## Quick start
 
 ```rust
-use dvb_emsg::{EmsgBox, PresentationTime};
+use mp4_emsg::{EmsgBox, PresentationTime};
 
 let scte35 = [0xFCu8, 0x30, 0x11]; // start of a splice_info_section
 let b = EmsgBox {
@@ -68,8 +68,8 @@ assert_eq!(EmsgBox::parse(&bytes).unwrap(), b);
 ## Examples
 
 ```sh
-cargo run -p dvb-emsg --example build_emsg
-cargo run -p dvb-emsg --example parse_emsg
+cargo run -p mp4-emsg --example build_emsg
+cargo run -p mp4-emsg --example parse_emsg
 ```
 
 ## Features

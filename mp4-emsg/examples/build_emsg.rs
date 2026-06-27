@@ -4,9 +4,9 @@
 /// the v0/v1 field-ordering difference.
 ///
 /// ```sh
-/// cargo run -p dvb-emsg --example build_emsg
+/// cargo run -p mp4-emsg --example build_emsg
 /// ```
-use dvb_emsg::{EmsgBox, PresentationTime};
+use mp4_emsg::{EmsgBox, PresentationTime};
 
 fn dump(label: &str, b: &EmsgBox) {
     let bytes = b.to_vec().unwrap();

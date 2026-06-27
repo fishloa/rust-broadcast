@@ -13,7 +13,7 @@
 
 use std::fs;
 
-use dvb_emsg::{EmsgBox, EmsgVersion, PresentationTime};
+use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
     let path = concat!(

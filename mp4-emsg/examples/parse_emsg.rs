@@ -3,11 +3,11 @@
 /// decoded fields, and prove a byte-exact round-trip + recomputed `size`.
 ///
 /// ```sh
-/// cargo run -p dvb-emsg --example parse_emsg
+/// cargo run -p mp4-emsg --example parse_emsg
 /// ```
 use std::fs;
 
-use dvb_emsg::EmsgBox;
+use mp4_emsg::EmsgBox;
 
 fn main() {
     let path = concat!(

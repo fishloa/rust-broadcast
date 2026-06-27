@@ -1,5 +1,5 @@
-//! `dvb-emsg` — MPEG-DASH Event Message Box (`emsg`): inband DASH/CMAF timed
-//! events (SCTE 35 splice signalling, ID3 metadata, ad/tracking triggers).
+//! `mp4-emsg` — ISO BMFF / DASH Event Message Box (`emsg`): inband DASH/CMAF
+//! timed events (SCTE 35 splice signalling, ID3 metadata, ad/tracking triggers).
 //!
 //! The `emsg` box delivers sparse, timed application events alongside the media
 //! in a DASH/CMAF segment. This crate implements:
@@ -30,7 +30,7 @@
 //! `timescale`, `presentation_time`/`presentation_time_delta`,
 //! `event_duration`, `id`, `message_data`) are render-verified from a **free**
 //! source: **DASH-IF IOP Part 10 (Events and Timed Metadata) V5.0.0, §6.1 +
-//! Table 6-2** (transcribed in `dvb-emsg/docs/emsg.md`).
+//! Table 6-2** (transcribed in `mp4-emsg/docs/emsg.md`).
 //!
 //! However, the **normative ISOBMFF box syntax** —
 //!
@@ -64,7 +64,7 @@
 //! it:
 //!
 //! ```
-//! use dvb_emsg::{EmsgBox, PresentationTime};
+//! use mp4_emsg::{EmsgBox, PresentationTime};
 //!
 //! let scte35 = [0xFCu8, 0x30, 0x11]; // start of a splice_info_section
 //! let b = EmsgBox {
@@ -86,7 +86,7 @@
 // Runnable examples, embedded so they render on docs.rs and stay in sync with
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n## Runnable examples\n"]
-#![doc = "Run with `cargo run -p dvb-emsg --example <name>`.\n"]
+#![doc = "Run with `cargo run -p mp4-emsg --example <name>`.\n"]
 #![doc = "\n### `build_emsg`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/build_emsg.rs")]
 #![doc = "```\n\n### `parse_emsg`\n\n```rust,ignore"]

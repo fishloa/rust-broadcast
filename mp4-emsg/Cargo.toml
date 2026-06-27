@@ -1,8 +1,8 @@
 [package]
-name    = "dvb-emsg"
+name    = "mp4-emsg"
 version = "0.1.0"
 edition = "2021"
-description = "MPEG-DASH Event Message Box (`emsg`) — inband DASH/CMAF timed events (SCTE 35, ID3, ad triggers): version 0/1 FullBox parse + serialize. Box syntax per ISO/IEC 23009-1 §5.10.3.3; field semantics per DASH-IF IOP Part 10."
+description = "ISO BMFF / DASH Event Message Box (emsg, ISO/IEC 23009-1) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["dash", "emsg", "cmaf", "scte35", "isobmff"]

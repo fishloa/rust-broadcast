@@ -1,7 +1,7 @@
 //! Drift-guard for the spec/field-enum label convention (issue #204).
 //!
 //! Scans this crate's `src/` for every `pub enum`, subtracts a documented
-//! skip-list (errors only — all other public enums in dvb-emsg are spec/field
+//! skip-list (errors only — all other public enums in mp4-emsg are spec/field
 //! label enums), and fails if any remaining enum has neither
 //! `dvb_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
 //! A present `Display` delegates to an inherent `name()`, so it transitively
