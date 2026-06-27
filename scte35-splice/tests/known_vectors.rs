@@ -7,11 +7,11 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use dvb_common::{Parse, Serialize};
-use dvb_scte35::commands::AnyCommand;
-use dvb_scte35::descriptors::{
+use scte35_splice::commands::AnyCommand;
+use scte35_splice::descriptors::{
     AnySpliceDescriptor, DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 
 fn b64(s: &str) -> Vec<u8> {
     STANDARD.decode(s).unwrap()
@@ -52,7 +52,7 @@ fn splice_insert_4800008f() {
     assert_eq!(descs.len(), 1);
     match &descs[0] {
         AnySpliceDescriptor::Avail(a) => {
-            assert_eq!(a.identifier, dvb_scte35::descriptors::CUEI);
+            assert_eq!(a.identifier, scte35_splice::descriptors::CUEI);
             assert_eq!(a.provider_avail_id, 0x135);
         }
         other => panic!("expected Avail, got {other:?}"),
@@ -110,7 +110,7 @@ fn time_signal_segmentation_placement_opportunity_start_s14_1() {
     assert_eq!(descs.len(), 1);
     match &descs[0] {
         AnySpliceDescriptor::Segmentation(seg) => {
-            assert_eq!(seg.identifier, dvb_scte35::descriptors::CUEI);
+            assert_eq!(seg.identifier, scte35_splice::descriptors::CUEI);
             assert_eq!(seg.segmentation_event_id, 0x4800_008E);
             assert!(!seg.segmentation_event_cancel_indicator);
             assert!(seg.program_segmentation_flag);
@@ -146,6 +146,6 @@ fn rejects_bad_crc() {
     bytes[4] ^= 0xFF; // flip the encryption/pts_adjustment byte
     assert!(matches!(
         SpliceInfoSection::parse(&bytes),
-        Err(dvb_scte35::Error::CrcMismatch { .. })
+        Err(scte35_splice::Error::CrcMismatch { .. })
     ));
 }

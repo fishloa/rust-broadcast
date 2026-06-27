@@ -1,4 +1,4 @@
-//! # dvb-scte35 — ANSI/SCTE 35 2023r1 splice information
+//! # scte35-splice — ANSI/SCTE 35 2023r1 splice information
 //!
 //! Spec-cited parser **and builder** for the SCTE 35 Digital Program Insertion
 //! cueing message (`splice_info_section`, table_id `0xFC`), with the workspace's
@@ -7,7 +7,7 @@
 //!
 //! The implemented edition is **ANSI/SCTE 35 2023r1** (the single-document
 //! edition; SCTE has since split the standard into 35-1 / 35-2). Layouts are
-//! transcribed in `dvb-scte35/docs/scte_35.md` and cited per module.
+//! transcribed in `scte35-splice/docs/scte_35.md` and cited per module.
 //!
 //! ## Coverage
 //!
@@ -35,12 +35,12 @@
 //! ## Quick start
 //!
 //! ```
-//! use dvb_scte35::{SpliceInfoSection, commands::AnyCommand};
+//! use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
 //! use dvb_common::{Parse, Serialize};
 //!
 //! // A minimal time_signal() section with no descriptors, built and emitted.
-//! let ts = dvb_scte35::commands::TimeSignal {
-//!     splice_time: dvb_scte35::time::SpliceTime::with_pts(0x0_0012_3456),
+//! let ts = scte35_splice::commands::TimeSignal {
+//!     splice_time: scte35_splice::time::SpliceTime::with_pts(0x0_0012_3456),
 //! };
 //! let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
 //! let bytes = section.to_bytes();
@@ -58,19 +58,19 @@
 //! parses). Once you have the `0xFC` section bytes, route them here:
 //!
 //! ```
-//! use dvb_scte35::SpliceInfoSection;
+//! use scte35_splice::SpliceInfoSection;
 //! use dvb_common::{Parse, Serialize};
 //!
 //! // A splice_null() section produced by this crate stands in for bytes a
 //! // dvb-si demux would hand you from the SCTE 35 PID.
 //! let section = SpliceInfoSection::new_clear(
-//!     dvb_scte35::commands::AnyCommand::SpliceNull(Default::default()),
+//!     scte35_splice::commands::AnyCommand::SpliceNull(Default::default()),
 //!     &[],
 //! );
 //! let on_the_wire = section.to_bytes();
 //!
 //! // table_id 0xFC marks it as a splice_info_section; parse it.
-//! assert_eq!(on_the_wire[0], dvb_scte35::section::TABLE_ID);
+//! assert_eq!(on_the_wire[0], scte35_splice::section::TABLE_ID);
 //! let parsed = SpliceInfoSection::parse(&on_the_wire).unwrap();
 //! assert_eq!(parsed.descriptors().count(), 0);
 //! ```
@@ -89,7 +89,7 @@
 // Runnable examples, embedded so they render on docs.rs and stay in sync with
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n# Examples\n"]
-#![doc = "Two runnable examples ship with this crate (`cargo run -p dvb-scte35 --example <name>`).\n"]
+#![doc = "Two runnable examples ship with this crate (`cargo run -p scte35-splice --example <name>`).\n"]
 #![doc = "\n## `parse_splice_insert`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/parse_splice_insert.rs")]
 #![doc = "```\n\n## `round_trip_and_descriptors`\n\n```rust,ignore"]

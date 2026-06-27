@@ -1,4 +1,4 @@
-//! Drift-guard: every `pub enum` in dvb-scte35 must carry `#[non_exhaustive]`.
+//! Drift-guard: every `pub enum` in scte35-splice must carry `#[non_exhaustive]`.
 //!
 //! Scans `src/` for every `pub enum`, subtracts a documented SKIP list, and
 //! fails if any remaining enum lacks a `#[non_exhaustive]` attribute on one of
@@ -10,7 +10,7 @@ use std::path::Path;
 
 /// Enums that are intentionally exempt from the `#[non_exhaustive]` requirement.
 ///
-/// This list is empty: every public enum in dvb-scte35 should be non-exhaustive.
+/// This list is empty: every public enum in scte35-splice should be non-exhaustive.
 const SKIP: &[&str] = &[];
 
 fn read_rs_files(dir: &Path, out: &mut Vec<(String, String)>) {

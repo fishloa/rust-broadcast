@@ -1,10 +1,10 @@
 //! Advanced: parse a `splice_info_section`, walk its descriptor loop, and
 //! prove the serializer is byte-exact (the project's round-trip invariant).
 //!
-//! Run with: `cargo run -p dvb-scte35 --example round_trip_and_descriptors`
+//! Run with: `cargo run -p scte35-splice --example round_trip_and_descriptors`
 
 use dvb_common::{Parse, Serialize};
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 
 #[rustfmt::skip]
 const SPLICE_INSERT: [u8; 50] = [

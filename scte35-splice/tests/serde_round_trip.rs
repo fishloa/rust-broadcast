@@ -6,7 +6,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use dvb_common::Parse;
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 
 #[test]
 fn splice_insert_section_serializes_to_json() {
@@ -51,7 +51,7 @@ fn segmentation_section_serializes_descriptors() {
 
 #[test]
 fn enums_serialize_as_names() {
-    use dvb_scte35::descriptors::{SegmentationTypeId, SegmentationUpidType};
+    use scte35_splice::descriptors::{SegmentationTypeId, SegmentationUpidType};
     assert_eq!(
         serde_json::to_value(SegmentationTypeId::ProviderPlacementOpportunityStart).unwrap(),
         serde_json::json!("ProviderPlacementOpportunityStart")

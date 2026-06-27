@@ -1,12 +1,12 @@
 //! Basic: parse a real `splice_info_section` carrying a `splice_insert()`.
 //!
-//! Run with: `cargo run -p dvb-scte35 --example parse_splice_insert`
+//! Run with: `cargo run -p scte35-splice --example parse_splice_insert`
 //!
 //! Bytes are a well-known SCTE 35 reference vector (a `splice_insert` with
 //! event_id 0x4800008F), inlined so the example is self-contained.
 
 use dvb_common::Parse;
-use dvb_scte35::{commands::AnyCommand, SpliceInfoSection};
+use scte35_splice::{commands::AnyCommand, SpliceInfoSection};
 
 #[rustfmt::skip]
 const SPLICE_INSERT: [u8; 50] = [

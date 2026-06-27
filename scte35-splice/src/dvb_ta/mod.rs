@@ -10,7 +10,7 @@
 //! module implements only the new/profiled binary syntax; the base SCTE 35
 //! structures it references are reused from this crate (not reimplemented).
 //!
-//! Layouts are transcribed in `dvb-scte35/docs/dvb_ta/` and cited per module.
+//! Layouts are transcribed in `scte35-splice/docs/dvb_ta/` and cited per module.
 //!
 //! ## Contents
 //!

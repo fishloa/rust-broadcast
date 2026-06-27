@@ -390,19 +390,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-scte35"
-version = "7.9.0"
-dependencies = [
- "base64",
- "dvb-common",
- "dvb-t2mi",
- "hex",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "dvb-si"
 version = "7.9.0"
 dependencies = [
@@ -933,6 +920,19 @@ name = "scte104"
 version = "0.1.0"
 dependencies = [
  "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "scte35-splice"
+version = "1.0.0"
+dependencies = [
+ "base64",
+ "dvb-common",
+ "dvb-t2mi",
+ "hex",
  "serde",
  "serde_json",
  "thiserror",

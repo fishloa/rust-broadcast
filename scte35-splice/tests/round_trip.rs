@@ -3,16 +3,16 @@
 //! Round-trip is the crate's primary, fabrication-proof correctness oracle.
 
 use dvb_common::{Parse, Serialize};
-use dvb_scte35::commands::{
+use scte35_splice::commands::{
     AnyCommand, BandwidthReservation, PrivateCommand, SpliceInsert, SpliceNull, SpliceSchedule,
     SpliceScheduleEvent, TimeSignal,
 };
-use dvb_scte35::descriptors::{
+use scte35_splice::descriptors::{
     AudioComponent, AudioDescriptor, AvailDescriptor, DtmfDescriptor, SegmentationDescriptor,
     SegmentationTypeId, SegmentationUpidType, TimeDescriptor, CUEI,
 };
-use dvb_scte35::time::{BreakDuration, SpliceTime};
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::time::{BreakDuration, SpliceTime};
+use scte35_splice::SpliceInfoSection;
 
 /// Serialize a section, parse it back, assert equality and byte-identity.
 fn section_round_trip(section: &SpliceInfoSection) {
@@ -211,7 +211,7 @@ fn encrypted_section_round_trips_raw() {
 /// 33-bit `pts_adjustment` wrap boundary (§9.6.1: carry ignored on overflow).
 #[test]
 fn pts_adjustment_33bit_wrap_boundary() {
-    use dvb_scte35::time::{pts_add_wrapping, PTS_MAX, PTS_MODULUS};
+    use scte35_splice::time::{pts_add_wrapping, PTS_MAX, PTS_MODULUS};
 
     // The maximum 33-bit pts_adjustment round-trips through the section.
     let mut s = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
@@ -224,7 +224,7 @@ fn pts_adjustment_33bit_wrap_boundary() {
     let mut buf = vec![0u8; bad.serialized_len()];
     assert!(matches!(
         bad.serialize_into(&mut buf),
-        Err(dvb_scte35::Error::InvalidValue { .. })
+        Err(scte35_splice::Error::InvalidValue { .. })
     ));
 
     // Adding pts_adjustment to a pts_time wraps modulo 2^33, dropping the carry.
@@ -239,5 +239,5 @@ fn section_length_zero_no_underflow() {
     // Construct bytes: table_id=0xFC, section_length=0 (<= bytes 1-2).
     let data = [0xFC, 0x00, 0x00];
     let err = SpliceInfoSection::parse(&data).unwrap_err();
-    assert!(matches!(err, dvb_scte35::Error::BufferTooShort { .. }));
+    assert!(matches!(err, scte35_splice::Error::BufferTooShort { .. }));
 }

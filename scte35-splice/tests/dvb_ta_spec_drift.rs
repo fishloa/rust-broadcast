@@ -6,7 +6,7 @@
 //! from the TOML mirror in `docs/enums/dvb_ta/`. Fails symmetrically if either
 //! set has something the other lacks.
 
-use dvb_scte35::dvb_ta::{EquivalentSegmentationType, TimelineType};
+use scte35_splice::dvb_ta::{EquivalentSegmentationType, TimelineType};
 use std::collections::BTreeSet;
 
 // ── tiny TOML parser (mirrors spec_drift.rs) ─────────────────────────────────

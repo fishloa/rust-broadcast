@@ -1,8 +1,8 @@
 [package]
-name         = "dvb-scte35"
-version      = "7.9.0"
+name         = "scte35-splice"
+version      = "1.0.0"
 edition      = "2021"
-description  = "ANSI/SCTE 35 2023r1 splice information (Digital Program Insertion cueing) parser + builder."
+description  = "ANSI/SCTE 35 splice information (DPI cueing) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["scte35", "splice", "ad-insertion", "mpeg", "broadcast"]

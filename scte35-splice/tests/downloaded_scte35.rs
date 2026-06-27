@@ -13,7 +13,7 @@ use std::fs;
 use std::path::Path;
 
 use dvb_common::Parse;
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
 
 const CAPTURE: &str = "russia-t2mi-scte35";
@@ -81,7 +81,7 @@ fn russia_t2mi_scte35_parse() {
                 continue;
             }
             let table_id = inner_pkt[sec_start];
-            if table_id != dvb_scte35::section::TABLE_ID {
+            if table_id != scte35_splice::section::TABLE_ID {
                 continue;
             }
 

@@ -5,14 +5,14 @@
 //! compact encoding round-trip, and the DSM-CC stream-event wrap + base-64.
 
 use dvb_common::{Parse, Serialize};
-use dvb_scte35::commands::{AnyCommand, SpliceInsert};
-use dvb_scte35::descriptors::AnySpliceDescriptor;
-use dvb_scte35::dvb_ta::{
+use scte35_splice::commands::{AnyCommand, SpliceInsert};
+use scte35_splice::descriptors::AnySpliceDescriptor;
+use scte35_splice::dvb_ta::{
     base64_encode, CompactDas, CompactScte35, CompactSpliceInsert, DvbDasDescriptor,
     EquivalentSegmentationType, PlacementOpportunity, Scte35Carriage, StreamEventPayload,
     TimelineType,
 };
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 
 /// The §5.3.5.11 example UPID URI.
 const EXAMPLE_UPID: &[u8] = b"urn:com.broadcaster:112210F47DE98115";
@@ -44,7 +44,7 @@ fn das_descriptor_rides_in_a_real_splice_info_section() {
     assert_eq!(descs.len(), 1);
     match &descs[0] {
         AnySpliceDescriptor::DvbDas(d) => {
-            assert_eq!(d.identifier, dvb_scte35::dvb_ta::DVB_IDENTIFIER);
+            assert_eq!(d.identifier, scte35_splice::dvb_ta::DVB_IDENTIFIER);
             assert_eq!(d.break_num, 1);
             assert_eq!(d.breaks_expected, 2);
             assert_eq!(
@@ -123,7 +123,7 @@ fn placement_opportunity_classifies_the_spec_block() {
         (0x36, false, true),
         (0x37, false, false),
     ] {
-        let stid = dvb_scte35::descriptors::SegmentationTypeId::from_u8(id);
+        let stid = scte35_splice::descriptors::SegmentationTypeId::from_u8(id);
         let po = PlacementOpportunity::from_segmentation_type_id(stid).unwrap();
         assert_eq!(po.is_provider(), is_provider);
         assert_eq!(po.is_start(), is_start);
@@ -131,7 +131,7 @@ fn placement_opportunity_classifies_the_spec_block() {
     }
     // A non-PO type is rejected.
     assert!(PlacementOpportunity::from_segmentation_type_id(
-        dvb_scte35::descriptors::SegmentationTypeId::ProgramStart
+        scte35_splice::descriptors::SegmentationTypeId::ProgramStart
     )
     .is_none());
 }

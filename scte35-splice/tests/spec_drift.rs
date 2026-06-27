@@ -5,8 +5,8 @@
 //! produces the "from spec" set.  Fails symmetrically if either set has
 //! something the other lacks.
 
-use dvb_scte35::commands::AnyCommand;
-use dvb_scte35::descriptors::segmentation_enums::{
+use scte35_splice::commands::AnyCommand;
+use scte35_splice::descriptors::segmentation_enums::{
     DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
 use std::collections::BTreeSet;

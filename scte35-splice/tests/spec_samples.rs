@@ -1,6 +1,6 @@
 //! Every worked sample message from ANSI/SCTE 35 2023r1 §14 (PDF pp.112-121),
 //! run through the crate end-to-end. Each base64 string is verbatim from the
-//! spec's §14 (transcribed into `dvb-scte35/docs/scte_35.md`, machine-verified
+//! spec's §14 (transcribed into `scte35-splice/docs/scte_35.md`, machine-verified
 //! to decode to its stated byte length + match the spec's hex/CRC).
 //!
 //! For each: `parse` must succeed (which validates the splice_info_section
@@ -10,7 +10,7 @@
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use dvb_common::{Parse, Serialize};
-use dvb_scte35::SpliceInfoSection;
+use scte35_splice::SpliceInfoSection;
 
 /// (label, base64) for all eight §14 sample messages.
 const SAMPLES: &[(&str, &str)] = &[
