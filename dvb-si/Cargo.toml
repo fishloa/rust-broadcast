@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "7.9.0"
+version      = "7.10.0"
 edition      = "2021"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
@@ -17,6 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 dvb-common  = { path = "../dvb-common", version = "7.9", default-features = false }
+mpeg-ts     = { path = "../mpeg-ts",    version = "0.1", default-features = false }
 thiserror = { version = "2", default-features = false }
 num_enum = { version = "0.7", default-features = false }
 libm = "0.2"
@@ -43,16 +44,16 @@ default = ["std", "chrono", "ts", "serde"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
-std      = ["dvb-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std"]
+std      = ["dvb-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std", "mpeg-ts/std"]
 
 # Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
 chrono   = ["dep:chrono", "dvb-common/chrono"]
 
 # MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
-ts       = ["dep:bytes"]
+ts       = ["dep:bytes", "mpeg-ts/std"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to chrono.
-serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde"]
+serde    = ["dep:serde", "dep:erased-serde", "chrono?/serde", "mpeg-ts/serde"]
 
 # Yokeable impls on the zero-copy view types + the `Owned<T>` wrapper, so a
 # parsed table/descriptor can be retained past the input buffer's borrow

@@ -101,6 +101,12 @@ pub enum CollectError {
     },
 }
 
+impl From<mpeg_ts::Error> for CollectError {
+    fn from(e: mpeg_ts::Error) -> Self {
+        CollectError::Section(crate::Error::from(e))
+    }
+}
+
 /// Logical key for one section sequence.
 ///
 /// The key deliberately excludes `version_number` and `section_number`. Version

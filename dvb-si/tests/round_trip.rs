@@ -78,7 +78,7 @@ fn serialize_rejects_too_small_buffer() {
     let mut too_small = vec![0u8; parsed.serialized_len() - 1];
     let err = parsed.serialize_into(&mut too_small).unwrap_err();
     assert!(
-        matches!(err, dvb_si::error::Error::OutputBufferTooSmall { .. }),
+        matches!(err, mpeg_ts::Error::OutputBufferTooSmall { .. }),
         "expected OutputBufferTooSmall, got {err:?}"
     );
 }

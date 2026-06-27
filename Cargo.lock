@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "7.9.0"
+version = "7.10.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -410,6 +410,7 @@ dependencies = [
  "flate2",
  "hex",
  "libm",
+ "mpeg-ts",
  "num_enum",
  "serde",
  "serde_json",
