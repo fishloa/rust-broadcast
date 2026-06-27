@@ -13,8 +13,8 @@ use std::fs;
 use std::path::Path;
 
 use dvb_common::Parse;
-use scte35_splice::SpliceInfoSection;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
+use scte35_splice::SpliceInfoSection;
 
 const CAPTURE: &str = "russia-t2mi-scte35";
 
