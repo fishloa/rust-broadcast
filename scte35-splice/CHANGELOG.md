@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-27
+
+- Renamed from `dvb-scte35` (was 7.9.0); code unchanged. Left the DVB lockstep — now versioned independently. Old crate `dvb-scte35` continues as a deprecated re-export shim at 7.9.1.
+
 ## [7.9.0] — 2026-06-22
 
 ### Changed

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] — 2026-06-21
 
+Renamed from `dvb-emsg` (code unchanged); `dvb-emsg` continues as a deprecated re-export shim at 0.1.1.
+
 ### Fixed
 
 - `EmsgVersion` and `PresentationTime` are now `#[non_exhaustive]` — forward-compat signal for downstream matchers if new spec versions are ever defined.
