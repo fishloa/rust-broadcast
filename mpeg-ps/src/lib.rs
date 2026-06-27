@@ -5,9 +5,9 @@
 //! [`SystemHeader`] (rate/audio/video bounds + per-stream P-STD buffer bounds),
 //! and the [`ProgramStreamMap`] (PSM).
 //!
-//! PES payloads are parsed via the `dvb-pes` crate.
+//! PES payloads are parsed via the `mpeg-pes` crate.
 //!
-//! Depends only on `dvb-common` + `dvb-pes` and is `#![no_std]` (+ `alloc`).
+//! Depends only on `dvb-common` + `mpeg-pes` and is `#![no_std]` (+ `alloc`).
 //!
 //! # Examples
 //!

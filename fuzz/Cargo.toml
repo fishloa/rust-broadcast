@@ -23,7 +23,7 @@ dvb-common   = { path = "../dvb-common" }
 dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
 dvb-t2mi     = { path = "../dvb-t2mi",     features = ["ts"] }
 dvb-bbframe  = { path = "../dvb-bbframe" }
-dvb-pes      = { path = "../dvb-pes" }
+mpeg-pes     = { path = "../mpeg-pes" }
 dvb-subtitle = { path = "../dvb-subtitle" }
 mpeg-ps      = { path = "../mpeg-ps" }
 scte104      = { path = "../scte104" }

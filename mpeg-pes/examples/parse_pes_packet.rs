@@ -1,8 +1,8 @@
 //! Basic: parse one PES packet from raw bytes and read its stream_id + PTS.
 //!
-//! Run with: `cargo run -p dvb-pes --example parse_pes_packet`
+//! Run with: `cargo run -p mpeg-pes --example parse_pes_packet`
 
-use dvb_pes::{PesPacket, StreamId};
+use mpeg_pes::{PesPacket, StreamId};
 
 fn main() {
     // A minimal PES packet: start_code(00 00 01), stream_id 0xE0 (video),

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-06-27
+
+### Changed
+- Depend on `mpeg-pes` (renamed from `dvb-pes`) as dev-dependency; no behaviour change.
+
+## [0.1.0]
+
 ### Added
 
 - Initial release: parser and serializer for ETSI EN 300 743 V1.6.1 DVB subtitling segments.

@@ -1,8 +1,8 @@
 [package]
 name    = "dvb-pes"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
-description = "PES (Packetized Elementary Stream) depacketization + PTS/DTS — ISO/IEC 13818-1 §2.4.3."
+description = "DEPRECATED — renamed to `mpeg-pes`. PES depacketization + PTS/DTS, ISO/IEC 13818-1 §2.4.3."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["pes", "mpeg-ts", "pts", "broadcast", "mpeg"]
@@ -17,16 +17,9 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
-thiserror  = { version = "2", default-features = false }
-serde      = { version = "1", optional = true, features = ["derive"] }
-
-[dev-dependencies]
-serde_json = "1.0"
+mpeg-pes = { path = "../mpeg-pes", version = "0.1", default-features = false }
 
 [features]
 default = ["std"]
-# `std` links the standard library. Without it the crate is `#![no_std]` and
-# needs only `alloc`.
-std = ["dvb-common/std", "thiserror/std"]
-serde = ["dep:serde"]
+std     = ["mpeg-pes/std"]
+serde   = ["mpeg-pes/serde"]

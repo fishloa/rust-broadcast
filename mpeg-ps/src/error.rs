@@ -65,7 +65,7 @@ pub enum Error {
         /// Bytes available after the length field.
         available: usize,
     },
-    /// PES packet parse error from `dvb-pes`.
+    /// PES packet parse error from `mpeg-pes`.
     #[error("PES parse error: {0}")]
-    Pes(#[from] dvb_pes::Error),
+    Pes(#[from] mpeg_pes::Error),
 }

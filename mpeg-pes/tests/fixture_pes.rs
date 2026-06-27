@@ -1,9 +1,9 @@
-//! Validate `dvb-pes` against a real broadcast capture (the committed
+//! Validate `mpeg-pes` against a real broadcast capture (the committed
 //! `m6-single.ts` DVB fixture). Extracts the PES PID's PES packets with a
 //! minimal inline TS depacketizer (no dvb-si dependency) and asserts the PTS
 //! values are present, 33-bit-bounded, and monotonically non-decreasing.
 
-use dvb_pes::{PesAssembler, PesPacket};
+use mpeg_pes::{PesAssembler, PesPacket};
 
 const TS: &[u8] = include_bytes!("../../dvb-si/tests/fixtures/m6-single.ts");
 const PKT: usize = 188;

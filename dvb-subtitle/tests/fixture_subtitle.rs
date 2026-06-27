@@ -1,14 +1,14 @@
 //! Validate `dvb-subtitle` against real broadcast captures.
 //!
 //! Extracts the DVB subtitle PES (data_identifier 0x20) from the committed
-//! `dvb-si` capture fixtures, reassembles each PES with `dvb-pes`, and parses
+//! `dvb-si` capture fixtures, reassembles each PES with `mpeg-pes`, and parses
 //! the PES data field into typed segments — then proves the serializer is
 //! byte-exact on real-world bytes (the round-trip invariant, on data we did
 //! not author).
 
 use dvb_common::{Parse, Serialize};
-use dvb_pes::{PesAssembler, PesPacket, StreamId};
 use dvb_subtitle::{AnySegment, PesDataField};
+use mpeg_pes::{PesAssembler, PesPacket, StreamId};
 
 const M6: &[u8] = include_bytes!("../../dvb-si/tests/fixtures/m6-single.ts");
 const PKT: usize = 188;

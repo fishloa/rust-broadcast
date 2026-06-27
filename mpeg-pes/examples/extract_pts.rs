@@ -1,12 +1,12 @@
 //! Advanced: depacketize a real MPEG-TS capture, reassemble PES on one PID,
 //! and report the PTS timeline.
 //!
-//! Run with: `cargo run -p dvb-pes --example extract_pts`
+//! Run with: `cargo run -p mpeg-pes --example extract_pts`
 //!
 //! Reads the committed `m6-single.ts` DVB fixture from the sibling `dvb-si`
 //! crate at runtime (so the example compiles even when the fixture is absent).
 
-use dvb_pes::{PesAssembler, PesPacket};
+use mpeg_pes::{PesAssembler, PesPacket};
 
 const PKT: usize = 188;
 const PES_PID: u16 = 0x0082; // an ES PID carrying PES with PTS in this capture
