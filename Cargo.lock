@@ -1096,6 +1096,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "timed-metadata"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dvb-common",
+ "mp4-emsg",
+ "scte35-splice",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "tinytemplate"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
