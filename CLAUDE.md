@@ -14,11 +14,13 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **dvb-conformance** — ETSI TR 101 290 stream conformance monitor.
 - **dvb-tools** — CLI analyzer (`dump`/`services`/`epg`/`pids`/`t2mi`).
 - **dvb-stream** — async/tokio stream adapters; independently versioned.
-- **dvb-pes** — PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned.
+- **mpeg-pes** — PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned. (`dvb-pes` is a deprecated re-export shim at 0.1.2.)
 - **dvb-subtitle** — ETSI EN 300 743 DVB (bitmap) subtitling segments (page/region/CLUT/object/DDS/disparity + 2/4/8-bit pixel-data sub-blocks), fed the subtitle PES data field; `no_std`, depends only on dvb-common; independently versioned.
-- **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via dvb-pes; `no_std`; independently versioned.
+- **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via mpeg-pes; `no_std`; independently versioned.
 - **scte104** — ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + the full operation set; `no_std`, depends only on dvb-common; independently versioned.
-- **dvb-cc** — DVB closed-caption carriage cc_data() (ETSI TS 101 154 Table B.9): typed CEA-608/708 triplets + 608/708 split; `no_std`, depends only on dvb-common; independently versioned.
+- **cc-data** — DVB closed-caption carriage cc_data() (ETSI TS 101 154 Table B.9): typed CEA-608/708 triplets + 608/708 split; `no_std`, depends only on dvb-common; independently versioned. (`dvb-cc` is a deprecated re-export shim at 0.2.1.)
+- **smpte2038** — SMPTE ST 2038 ancillary data in MPEG-2 TS: parse/build the PES payload carrying ANC packets (DID/SDID, user data); `no_std`, independently versioned. (`dvb-smpte2038` is a deprecated re-export shim at 0.1.1.)
+- **ule** — Unidirectional Lightweight Encapsulation (RFC 4326): SNDU framing + bridged/non-bridged PDU parsing over DVB-S/T/C MPEG-2 TS; `no_std`, independently versioned. (`dvb-ule` is a deprecated re-export shim at 0.1.1.)
 - **mp4-emsg** — ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1): version 0/1 parse + serialize for inband DASH/CMAF timed events (SCTE 35 splice, ID3, ad/tracking); `no_std`, independently versioned. (`dvb-emsg` is a deprecated re-export shim at 0.1.1.)
 - **dvb-si-py** (`bindings/python/`) — PyO3/maturin Python bindings over dvb-si/dvb-t2mi: `parse_section(bytes)->dict` + `Demux`/`T2miDemux` classes (read-only, parse→serde_json→Python). NOT a workspace member (own MSRV); consumes published crates by version; abi3 wheels to PyPI via its own workflow.
 

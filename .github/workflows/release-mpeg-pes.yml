@@ -1,0 +1,61 @@
+name: Release mpeg-pes
+
+# Publishes the mpeg-pes crate to crates.io on an `mpeg-pes-v*` tag.
+# mpeg-pes is versioned and released INDEPENDENTLY of the lockstep `v*` tag (it is
+# a standalone reusable crate with its own cadence), so it has its own publish
+# workflow. CI is the only source of published artifacts — never `cargo publish`
+# from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# Formerly dvb-pes; the `dvb-pes` shim is published via release-pes.yml on dvb-pes-v* tags.
+
+on:
+  push:
+    tags: ["mpeg-pes-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish mpeg-pes to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — mpeg-pes tests
+        run: cargo test -p mpeg-pes --all-features --locked
+
+      - name: Gate — mpeg-pes clippy
+        run: cargo clippy -p mpeg-pes --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — mpeg-pes no_std build
+        run: cargo build -p mpeg-pes --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — tag matches mpeg-pes version
+        run: |
+          TAG="${GITHUB_REF_NAME#mpeg-pes-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['mpeg-pes'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::mpeg-pes is $V but tag is $TAG"; exit 1
+          fi
+
+      # mpeg-pes's dvb-common dependency must already be on crates.io (it ships via
+      # the lockstep `v*` release). Idempotent: an "already uploaded" error is
+      # treated as success so a re-run is safe.
+      - name: Publish mpeg-pes
+        run: |
+          if out=$(cargo publish -p mpeg-pes --locked 2>&1); then
+            echo "$out"; echo "::notice::published mpeg-pes"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::mpeg-pes already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish mpeg-pes"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

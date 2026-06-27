@@ -1,0 +1,62 @@
+name: Release cc-data
+
+# Publishes the cc-data crate to crates.io on a `cc-data-v*` tag.
+# cc-data is versioned and released INDEPENDENTLY of the lockstep `v*` tag (it is
+# a standalone reusable crate with its own cadence), so it has its own publish
+# workflow. CI is the only source of published artifacts — never `cargo publish`
+# from a workstation. Requires the CARGO_REGISTRY_TOKEN secret.
+#
+# Formerly dvb-cc; the `dvb-cc` shim is published via release-dvb-cc.yml on
+# dvb-cc-v* tags.
+
+on:
+  push:
+    tags: ["cc-data-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish cc-data to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — cc-data tests
+        run: cargo test -p cc-data --all-features --locked
+
+      - name: Gate — cc-data clippy
+        run: cargo clippy -p cc-data --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — cc-data no_std build
+        run: cargo build -p cc-data --no-default-features --target thumbv7em-none-eabi --locked
+
+      - name: Gate — tag matches cc-data version
+        run: |
+          TAG="${GITHUB_REF_NAME#cc-data-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['cc-data'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::cc-data is $V but tag is $TAG"; exit 1
+          fi
+
+      # cc-data's dvb-common dependency must already be on crates.io (it ships via
+      # the lockstep `v*` release). Idempotent: an "already uploaded" error is
+      # treated as success so a re-run is safe.
+      - name: Publish cc-data
+        run: |
+          if out=$(cargo publish -p cc-data --locked 2>&1); then
+            echo "$out"; echo "::notice::published cc-data"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::cc-data already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish cc-data"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
