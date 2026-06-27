@@ -8,7 +8,7 @@ Transcribed from the authoritative eCFR / Cornell LII text._
 This document captures the **decode CONFORMANCE / SEMANTIC model** that the FCC
 regulation imposes on DTV closed-caption decoders. It is the public-domain
 grounding for the CEA-708 (DTVCC) decode layer that folds **into the existing
-`dvb-cc` crate** (above the `cc_data()` carriage already implemented from ETSI TS
+`cc-data` crate** (above the `cc_data()` carriage already implemented from ETSI TS
 101 154 Table B.9 — see [`../ts_101_154/b9-cc-data.md`](../ts_101_154/b9-cc-data.md)).
 
 §79.102 mandates the decoder's display/rendering behaviour and which parts of the
@@ -298,7 +298,7 @@ cart-gated; **not yet vendored**) and must NOT be guessed from the regulation:
 ### CEA-608 (line-21) — needs CTA-608-E
 - The **line-21 control-code + Preamble Address Code (PAC) byte values**, the
   608 colour/style codes, and roll-up / pop-on / paint-on timing — for the
-  `cc_type` 0/1 (608) path that `dvb-cc` already demuxes. These are in **ANSI/CTA-
+  `cc_type` 0/1 (608) path that `cc-data` already demuxes. These are in **ANSI/CTA-
   608-E** (also copyright CTA, not vendored).
 
 Until CTA-608-E / 708-E are vendored, a decode implementation is **grounded** for:

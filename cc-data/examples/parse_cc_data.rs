@@ -1,8 +1,8 @@
 //! Basic: parse a `cc_data()` byte sequence and split CEA-608 / CEA-708 triplets.
 //!
-//! Run with: `cargo run -p dvb-cc --example parse_cc_data`
+//! Run with: `cargo run -p cc-data --example parse_cc_data`
 
-use dvb_cc::CcData;
+use cc_data::CcData;
 use dvb_common::Parse;
 
 fn main() {

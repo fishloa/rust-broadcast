@@ -3,7 +3,7 @@
 //! Decodes the line-21 two-byte control / character codes that the
 //! [`crate::CcData`] carriage demuxes (`cc_type` 0 = field 1, 1 = field 2) into a
 //! caption screen. Implements the control-code state machine of
-//! `dvb-cc/docs/decode/cea608-decode.md`:
+//! `cc-data/docs/decode/cea608-decode.md`:
 //!
 //! - pop-on (RCL/EOC), roll-up (RU2/RU3/RU4 + CR), paint-on (RDC) modes,
 //! - Preamble Address Codes (row + indent + colour/italics/underline),
@@ -331,7 +331,7 @@ impl ChannelState {
 /// [`screen`](Cea608Decoder::screen).
 ///
 /// ```
-/// use dvb_cc::decode::{Cea608Decoder, Cea608Channel};
+/// use cc_data::decode::{Cea608Decoder, Cea608Channel};
 /// let mut dec = Cea608Decoder::new();
 /// // RCL, PAC row 15, "HI", EOC — a pop-on caption on CC1 (field 1).
 /// dec.push_pair(false, 0x14, 0x20); // RCL (field 1 → CC1)

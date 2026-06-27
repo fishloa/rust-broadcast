@@ -123,6 +123,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc-data"
+version = "0.2.0"
+dependencies = [
+ "dvb-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -310,12 +320,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-cc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "dvb-common",
- "serde",
- "serde_json",
- "thiserror",
+ "cc-data",
 ]
 
 [[package]]

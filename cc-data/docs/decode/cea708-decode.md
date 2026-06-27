@@ -5,7 +5,7 @@ _Source: ANSI/CTA-708-E S-2023, "Digital Television (DTV) Closed Captioning",
 `specs/cta_708_e_2023.pdf` (copyright CTA; local-only, not committed)._
 
 This document transcribes the **bit-level DTVCC decode syntax** — the layers
-**above** the `cc_data()` carriage that `dvb-cc` already implements (ETSI TS
+**above** the `cc_data()` carriage that `cc-data` already implements (ETSI TS
 101 154 Table B.9, see [`../ts_101_154/b9-cc-data.md`](../ts_101_154/b9-cc-data.md)).
 It is the missing companion to the public-domain conformance model in
 [`cea708-conformance.md`](cea708-conformance.md) (47 CFR §79.102), filling the
@@ -17,7 +17,7 @@ The DTVCC protocol is a 5-layer stack (§3, Table 1, PDF p.6):
 
 | Layer | Defined in | What it frames |
 |---|---|---|
-| Transport | §4 (cc_data()) | byte-pairs in `cc_data()` — **already in dvb-cc** |
+| Transport | §4 (cc_data()) | byte-pairs in `cc_data()` — **already in cc-data** |
 | Packet | §5 | the **Caption Channel Packet (CCP)** — `sequence_number` + `packet_size_code` + packet data |
 | Service | §6 | **Service Blocks** — `service_number` + `block_size` + block data |
 | Coding | §7 | code spaces C0/C1/C2/C3, G0/G1/G2/G3; command/character syntactic elements |
@@ -78,7 +78,7 @@ a one-byte header followed by `n−1` bytes of data. The header carries
   Over-length packets are undefined; decoders may ignore data beyond
   `packet_size_code`.
 
-CCP framing within `cc_data()` (the carriage layer already in dvb-cc): the
+CCP framing within `cc_data()` (the carriage layer already in cc-data): the
 first byte-pair of a CCP is marked `cc_type = 11` (CCP start), continuation
 pairs `cc_type = 10`. A CCP ends on either a subsequent CCP header
 (`cc_valid=1, cc_type=11`) or after `packet_size_code` bytes are processed

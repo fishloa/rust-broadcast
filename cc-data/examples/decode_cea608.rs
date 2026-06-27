@@ -1,8 +1,8 @@
 //! Decode a CEA-608 (line-21) pop-on caption to on-screen text.
 //!
-//! Run with: `cargo run -p dvb-cc --example decode_cea608`
+//! Run with: `cargo run -p cc-data --example decode_cea608`
 
-use dvb_cc::decode::{Cea608Channel, Cea608Decoder};
+use cc_data::decode::{Cea608Channel, Cea608Decoder};
 
 /// Add odd parity to a 7-bit value so the pairs look like real line-21 bytes.
 fn par(v: u8) -> u8 {

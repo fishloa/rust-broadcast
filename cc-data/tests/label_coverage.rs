@@ -10,7 +10,7 @@
 //! check enforces the whole convention and catches the one thing the compiler
 //! cannot: a brand-new `pub enum` that nobody labelled.
 //!
-//! Public enums in dvb-cc and their status:
+//! Public enums in cc-data and their status:
 //! - `CcType` — spec/field label → has `name()` + `impl_spec_display!`
 //! - `Cea608Mode` — spec/field label → has `name()` + `impl_spec_display!`
 //! - `Cea608Channel` — spec/field label → has `name()` + `impl_spec_display!`

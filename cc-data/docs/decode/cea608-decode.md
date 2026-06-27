@@ -7,17 +7,17 @@ gitignored). Render-verified against the vendored PDF; tables transcribed from t
 PDF render, not pdftotext._
 
 This document captures the **DECODE byte-pair semantics** of the EIA/CEA-608 line-21
-data service — the meaning of the two-byte control / character codes that `dvb-cc`
+data service — the meaning of the two-byte control / character codes that `cc-data`
 already demuxes out of `cc_data()` (`cc_type` 0 = field 1, `cc_type` 1 = field 2;
 the digital 608 byte pairs — see [`../ts_101_154/b9-cc-data.md`](../ts_101_154/b9-cc-data.md)).
-It folds **into the existing `dvb-cc` crate** — it is **not** a separate crate.
+It folds **into the existing `cc-data` crate** — it is **not** a separate crate.
 
 It deliberately **skips** the analog line-21 VBI waveform / clock-run-in / IRE
-modulation chapters (§5.2, Figure 2, Table 2): `dvb-cc` is fed the digital
+modulation chapters (§5.2, Figure 2, Table 2): `cc-data` is fed the digital
 `cc_data_1`/`cc_data_2` bytes, not the analog signal. Only the decode-relevant
 byte-pair structure, code tables and command semantics are reproduced here.
 
-> The `dvb-cc` crate is `no_std` and ships typed CEA-608/708 triplets; this doc is
+> The `cc-data` crate is `no_std` and ships typed CEA-608/708 triplets; this doc is
 > the spec grounding for interpreting the 608 (`cc_type` 0/1) bytes. No Rust here.
 
 ---
@@ -601,7 +601,7 @@ is in `0x01`–`0x0F` — a range never used by caption or Text codes (§8.6.1, 
 
 ⚠ The exact per-class control-code byte values and the full XDS Type/Class catalogue
 (§9.5 — Current/Future/Channel-Info/Misc/Public-Service classes, Tables 14–44) are
-out of scope for the *caption* decode path. `dvb-cc` decodes captions (CC1–CC4 / Text);
+out of scope for the *caption* decode path. `cc-data` decodes captions (CC1–CC4 / Text);
 XDS is a separate metadata channel. The framing above is what a caption decoder needs
 to **detect and skip** XDS sub-packets on field 2 (a `0x01`–`0x0F` first byte = XDS,
 hand off / ignore for caption purposes). Transcribe §9 / Tables 14–44 separately if an

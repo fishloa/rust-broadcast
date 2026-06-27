@@ -1,8 +1,8 @@
 //! Advanced: build a `cc_data()` from typed triplets, serialize, and round-trip.
 //!
-//! Run with: `cargo run -p dvb-cc --example build_cc_data`
+//! Run with: `cargo run -p cc-data --example build_cc_data`
 
-use dvb_cc::{CcData, CcTriplet, CcType};
+use cc_data::{CcData, CcTriplet, CcType};
 use dvb_common::{Parse, Serialize};
 
 fn main() {

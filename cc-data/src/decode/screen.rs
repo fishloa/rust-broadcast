@@ -1,6 +1,6 @@
 //! Shared caption display model — colour / opacity / edge / font enumerations
 //! and pen attributes, per the CEA-708 conformance model (47 CFR §79.102 (h)–(q),
-//! ANSI/CTA-708-E §8.5, §8.8; `dvb-cc/docs/decode/cea708-conformance.md`,
+//! ANSI/CTA-708-E §8.5, §8.8; `cc-data/docs/decode/cea708-conformance.md`,
 //! `cea708-decode.md`).
 
 /// A CEA-708 colour: 2 bits per RGB component (R, G, B each 0–3), 64 colours

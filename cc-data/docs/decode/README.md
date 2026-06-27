@@ -1,12 +1,12 @@
-# dvb-cc — caption DECODE docs
+# cc-data — caption DECODE docs
 
 This directory grounds the **CEA-708 / CEA-608 caption DECODE model** (the meaning
 of the caption byte stream), as distinct from the **carriage** model already
-implemented in `dvb-cc` (the `cc_data()` extraction + 608/708 demux from ETSI TS
+implemented in `cc-data` (the `cc_data()` extraction + 608/708 demux from ETSI TS
 101 154 Table B.9 — see [`../ts_101_154/b9-cc-data.md`](../ts_101_154/b9-cc-data.md)).
 
-Caption decode folds **into the existing `dvb-cc` crate** — it is **not** a
-separate crate. `dvb-cc` already produces typed caption triplets and splits 608
+Caption decode folds **into the existing `cc-data` crate** — it is **not** a
+separate crate. `cc-data` already produces typed caption triplets and splits 608
 (`cc_type` 0/1) from 708 (`cc_type` 2/3); the decode layer interprets those bytes.
 
 ## Source posture

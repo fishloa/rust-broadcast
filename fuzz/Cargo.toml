@@ -27,7 +27,7 @@ mpeg-pes     = { path = "../mpeg-pes" }
 dvb-subtitle = { path = "../dvb-subtitle" }
 mpeg-ps      = { path = "../mpeg-ps" }
 scte104      = { path = "../scte104" }
-dvb-cc       = { path = "../dvb-cc" }
+cc-data      = { path = "../cc-data" }
 dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
 libfuzzer-sys = "0.4"

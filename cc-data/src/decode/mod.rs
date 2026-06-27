@@ -7,14 +7,14 @@
 //!
 //! - [`Cea608Decoder`] — fed the 608 byte-pairs (`cc_type` 0 = field 1, 1 =
 //!   field 2). Decodes the line-21 control-code state machine per ANSI/CTA-608-E
-//!   (`dvb-cc/docs/decode/cea608-decode.md`): pop-on (RCL/EOC), roll-up
+//!   (`cc-data/docs/decode/cea608-decode.md`): pop-on (RCL/EOC), roll-up
 //!   (RU2/RU3/RU4/CR), paint-on (RDC), PACs, mid-row codes, the standard /
 //!   special / extended Western-European character sets, tab offsets, the four
 //!   data channels CC1–CC4, with control-code doubling and field-2 XDS skip.
 //! - [`Cea708Decoder`] — fed the DTVCC `cc_data` bytes. Reassembles caption
 //!   channel packets, parses service blocks, and runs the C0/C1/G0/G1/G2/G3
 //!   command interpreter — the window and pen model — per ANSI/CTA-708-E
-//!   (`dvb-cc/docs/decode/cea708-decode.md`) and the 47 CFR §79.102 conformance
+//!   (`cc-data/docs/decode/cea708-decode.md`) and the 47 CFR §79.102 conformance
 //!   model (`cea708-conformance.md`). Exposes the six services' window text.
 //!
 //! The shared caption display model — typed colour / opacity / edge / font

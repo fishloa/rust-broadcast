@@ -1,8 +1,8 @@
 [package]
 name    = "dvb-cc"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
-description = "DVB closed-caption carriage — cc_data() from picture user_data (ETSI TS 101 154 Table B.9), CEA-608/708 triplet demux."
+description = "Deprecated shim — use cc-data instead. Closed-caption cc_data() carriage (CEA-608/708), per ETSI TS 101 154 Table B.9."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["dvb", "closed-caption", "cea-708", "cea-608", "cc-data"]
@@ -10,35 +10,16 @@ categories = ["parser-implementations", "multimedia", "no-std"]
 repository   = "https://github.com/fishloa/rust-dvb"
 readme       = "README.md"
 rust-version = "1.81"
-exclude = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
-thiserror  = { version = "2", default-features = false }
-serde      = { version = "1", optional = true, features = ["derive"] }
-
-[dev-dependencies]
-serde_json = "1.0"
+cc-data = { path = "../cc-data", version = "0.2", default-features = false }
 
 [features]
 default = ["std", "decode"]
-# `std` links the standard library. Without it the crate is `#![no_std]` and
-# needs only `alloc`.
-std = ["dvb-common/std", "thiserror/std"]
-serde = ["dep:serde"]
-# `decode` adds the CEA-608/708 caption-decode layer (Cea608Decoder /
-# Cea708Decoder + the caption screen/window model) on top of the cc_data()
-# carriage. Additive, `no_std` + `alloc`.
-decode = []
-
-[[example]]
-name = "decode_cea608"
-required-features = ["decode"]
-
-[[example]]
-name = "decode_cea708"
-required-features = ["decode"]
+std     = ["cc-data/std"]
+serde   = ["cc-data/serde"]
+decode  = ["cc-data/decode"]

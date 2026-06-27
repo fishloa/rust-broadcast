@@ -1,6 +1,6 @@
 //! CEA-708 (DTVCC) caption decode — ANSI/CTA-708-E S-2023 §5–§8 + 47 CFR §79.102.
 //!
-//! Decode pipeline (`dvb-cc/docs/decode/cea708-decode.md`):
+//! Decode pipeline (`cc-data/docs/decode/cea708-decode.md`):
 //! `cc_data` byte pairs → Caption Channel Packets (§5) → Service Blocks (§6) →
 //! the C0/C1/G0/G1/G2/G3 command interpreter (§7/§8) driving the window + pen
 //! model. Up to six services (47 CFR §79.102 (c)) are tracked; each service has
@@ -397,7 +397,7 @@ impl Service {
 /// [`service_text`](Cea708Decoder::service_text) / [`windows`](Cea708Decoder::windows).
 ///
 /// ```
-/// use dvb_cc::decode::Cea708Decoder;
+/// use cc_data::decode::Cea708Decoder;
 /// let mut dec = Cea708Decoder::new();
 /// // A CCP (header + service-1 block) carrying the DefineWindow worked example
 /// // for window 2: 0x9A 38 4A D1 8B 0F 11.

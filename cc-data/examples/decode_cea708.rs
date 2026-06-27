@@ -1,8 +1,8 @@
 //! Decode a CEA-708 (DTVCC) caption packet to window text.
 //!
-//! Run with: `cargo run -p dvb-cc --example decode_cea708`
+//! Run with: `cargo run -p cc-data --example decode_cea708`
 
-use dvb_cc::decode::Cea708Decoder;
+use cc_data::decode::Cea708Decoder;
 
 fn main() {
     let mut dec = Cea708Decoder::new();
