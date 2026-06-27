@@ -22,6 +22,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **smpte2038** — SMPTE ST 2038 ancillary data in MPEG-2 TS: parse/build the PES payload carrying ANC packets (DID/SDID, user data); `no_std`, independently versioned. (`dvb-smpte2038` is a deprecated re-export shim at 0.1.1.)
 - **ule** — Unidirectional Lightweight Encapsulation (RFC 4326): SNDU framing + bridged/non-bridged PDU parsing over DVB-S/T/C MPEG-2 TS; `no_std`, independently versioned. (`dvb-ule` is a deprecated re-export shim at 0.1.1.)
 - **mp4-emsg** — ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1): version 0/1 parse + serialize for inband DASH/CMAF timed events (SCTE 35 splice, ID3, ad/tracking); `no_std`, independently versioned. (`dvb-emsg` is a deprecated re-export shim at 0.1.1.)
+- **timed-metadata** — Convert DPI/timed-metadata signalling between SCTE-35, HLS `EXT-X-DATERANGE` (RFC 8216 §4.4.5.1), and DASH `emsg` (SCTE 214-3); lossless round-trips, 33-bit PTS wrap-unroll via `Timeline`; `no_std`; independently versioned.
 - **dvb-si-py** (`bindings/python/`) — PyO3/maturin Python bindings over dvb-si/dvb-t2mi: `parse_section(bytes)->dict` + `Demux`/`T2miDemux` classes (read-only, parse→serde_json→Python). NOT a workspace member (own MSRV); consumes published crates by version; abi3 wheels to PyPI via its own workflow.
 
 MSRV is **1.81** (workspace `rust-version`); the committed `Cargo.lock` pins MSRV-compatible deps — always build/test with `--locked`.
