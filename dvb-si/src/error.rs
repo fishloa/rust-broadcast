@@ -99,3 +99,33 @@ pub enum Error {
         found: u8,
     },
 }
+
+impl From<mpeg_ts::Error> for Error {
+    fn from(e: mpeg_ts::Error) -> Self {
+        match e {
+            mpeg_ts::Error::BufferTooShort { need, have, what } => {
+                Error::BufferTooShort { need, have, what }
+            }
+            mpeg_ts::Error::CrcMismatch { computed, expected } => {
+                Error::CrcMismatch { computed, expected }
+            }
+            mpeg_ts::Error::InvalidSyncByte { found } => Error::InvalidSyncByte { found },
+            mpeg_ts::Error::OutputBufferTooSmall { need, have } => {
+                Error::OutputBufferTooSmall { need, have }
+            }
+            mpeg_ts::Error::SectionLengthOverflow {
+                declared,
+                available,
+            } => Error::SectionLengthOverflow {
+                declared,
+                available,
+            },
+            // mpeg_ts::Error is #[non_exhaustive]; catch future variants generically.
+            _ => Error::BufferTooShort {
+                need: 0,
+                have: 0,
+                what: "mpeg_ts (unknown error)",
+            },
+        }
+    }
+}

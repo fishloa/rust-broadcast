@@ -1,6 +1,9 @@
 # Changelog
 
-## [Unreleased]
+## [8.0.0] — 2026-06-27
+
+### Changed
+- Lockstep major release; parity bump. No functional changes to this crate.
 
 ## [7.9.0] — 2026-06-22
 

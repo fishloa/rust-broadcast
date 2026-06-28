@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [8.0.0] — 2026-06-27
 
 ### Changed
 - CLI rebuilt on `clap` (derive) per the workspace CLI standard

@@ -16,7 +16,7 @@ exclude      = ["docs/**"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "7.9", default-features = false }
+dvb-common = { path = "../dvb-common", version = "8", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

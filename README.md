@@ -8,7 +8,7 @@ stream in; get typed, decoded, serde-ready data out. Every wire layout is cited
 to its ETSI / ISO clause, has a symmetric serializer, and is round-trip tested.
 
 ```text
-TS (T2-MI PID) ─▶ dvb-t2mi ─▶ BBFrame ─▶ dvb-bbframe ─▶ inner TS ─▶ dvb-si ─▶ typed SI
+TS (T2-MI PID) ─▶ dvb-t2mi ─▶ BBFrame ─▶ dvb-bbframe ─▶ inner TS ─▶ mpeg-ts ─▶ dvb-si ─▶ typed SI
    T2-MI pump        AnyPayload      Bbheader + up_iter        SiDemux      AnyTableSection + collect
 ```
 
@@ -19,9 +19,9 @@ feed all the way down to a service name string.
 
 | | |
 |---|---|
-| **Versions** | 7 core crates at **7.7.1** (lockstep); `dvb-stream` (**0.2.1**), `mpeg-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**), `mpeg-ps` (**0.1.2**), `scte104` (**0.1.0**), `cc-data` (**0.2.0**), `smpte2038` (**0.1.0**), `ule` (**0.1.0**) and `dvb-ci` (**0.4.1**) independently versioned |
+| **Versions** | 6 core crates at **8.0.0** (lockstep); `mpeg-ts` (**0.1.0**), `dvb-stream` (**0.2.1**), `mpeg-pes` (**0.1.1**), `dvb-subtitle` (**0.1.0**), `mpeg-ps` (**0.1.2**), `scte104` (**0.1.0**), `cc-data` (**0.2.0**), `smpte2038` (**0.1.0**), `ule` (**0.1.0**) and `dvb-ci` (**0.4.1**) independently versioned |
 | **MSRV** | **1.81** across the workspace |
-| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `scte35-splice`, `dvb-conformance`, `mpeg-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`, `cc-data`, `smpte2038`, `ule`, `dvb-ci`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
+| **`no_std`** | The library crates (`dvb-common`, `dvb-si`, `dvb-t2mi`, `dvb-bbframe`, `scte35-splice`, `dvb-conformance`, `mpeg-ts`, `mpeg-pes`, `dvb-subtitle`, `mpeg-ps`, `scte104`, `cc-data`, `smpte2038`, `ule`, `dvb-ci`) are `#![no_std]` + `alloc` when built `--no-default-features`. Suitable for embedded targets with a heap. |
 | **`std` apps** | `dvb-tools` (CLI) and `dvb-stream` (tokio) require `std` and are not embedded-suitable. |
 
 To build the library crates for an embedded target:
@@ -35,13 +35,14 @@ $ cargo build --workspace --no-default-features --locked \
 
 | Crate | Version | Docs | What it does |
 |---|---|---|---|
-| [`dvb-si`](dvb-si/) | [![crates.io](https://img.shields.io/crates/v/dvb-si.svg)](https://crates.io/crates/dvb-si) | [![docs.rs](https://img.shields.io/docsrs/dvb-si)](https://docs.rs/dvb-si) | ETSI EN 300 468 Service Information + MPEG-2 PSI: every table_id and descriptor, DSM-CC carousel, Annex A text, a version-gated demux. |
+| [`dvb-si`](dvb-si/) | [![crates.io](https://img.shields.io/crates/v/dvb-si.svg)](https://crates.io/crates/dvb-si) | [![docs.rs](https://img.shields.io/docsrs/dvb-si)](https://docs.rs/dvb-si) | ETSI EN 300 468 Service Information + MPEG-2 PSI: every table_id and descriptor, DSM-CC carousel, Annex A text, a version-gated `SiDemux`. TS framing lives in `mpeg-ts`. |
 | [`dvb-t2mi`](dvb-t2mi/) | [![crates.io](https://img.shields.io/crates/v/dvb-t2mi.svg)](https://crates.io/crates/dvb-t2mi) | [![docs.rs](https://img.shields.io/docsrs/dvb-t2mi)](https://docs.rs/dvb-t2mi) | ETSI TS 102 773 DVB-T2 Modulator Interface (T2-MI): all 12 packet types + a feed-and-iterate pump. |
 | [`dvb-bbframe`](dvb-bbframe/) | [![crates.io](https://img.shields.io/crates/v/dvb-bbframe.svg)](https://crates.io/crates/dvb-bbframe) | [![docs.rs](https://img.shields.io/docsrs/dvb-bbframe)](https://docs.rs/dvb-bbframe) | DVB-S2 / S2X / T2 BBFRAME headers (MATYPE/UPL/DFL/SYNCD) + user-packet extraction. |
 | [`scte35-splice`](scte35-splice/) | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | [![docs.rs](https://img.shields.io/docsrs/scte35-splice)](https://docs.rs/scte35-splice) | ANSI/SCTE 35 2023r1 splice information (DPI cueing): every command + splice descriptor, the segmentation assignment tables, round-trip builders. |
 | [`dvb-common`](dvb-common/) | [![crates.io](https://img.shields.io/crates/v/dvb-common.svg)](https://crates.io/crates/dvb-common) | [![docs.rs](https://img.shields.io/docsrs/dvb-common)](https://docs.rs/dvb-common) | The shared `Parse` / `Serialize` traits and CRC-32/MPEG-2 that everything builds on. |
 | [`dvb-tools`](dvb-tools/) | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | [![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools) | Command-line analyzer over the family: `dump` / `services` / `epg` / `pids` / `t2mi`. |
 | [`dvb-conformance`](dvb-conformance/) | [![crates.io](https://img.shields.io/crates/v/dvb-conformance.svg)](https://crates.io/crates/dvb-conformance) | [![docs.rs](https://img.shields.io/docsrs/dvb-conformance)](https://docs.rs/dvb-conformance) | ETSI TR 101 290 stream conformance monitor: Priority-1/2 + SI-repetition indicators on a caller-supplied clock. |
+| [`mpeg-ts`](mpeg-ts/) | [![crates.io](https://img.shields.io/crates/v/mpeg-ts.svg)](https://crates.io/crates/mpeg-ts) | [![docs.rs](https://img.shields.io/docsrs/mpeg-ts)](https://docs.rs/mpeg-ts) | MPEG-2 TS framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetization, resync. `no_std`. **Independently versioned.** |
 | [`dvb-stream`](dvb-stream/) | [![crates.io](https://img.shields.io/crates/v/dvb-stream.svg)](https://crates.io/crates/dvb-stream) | [![docs.rs](https://img.shields.io/docsrs/dvb-stream)](https://docs.rs/dvb-stream) | Async/tokio stream adapters: `SectionStream` and `T2miEventStream` over any `AsyncRead` source (file, TCP, UDP multicast). **Independently versioned** (tokio MSRV moves faster than the workspace). |
 | [`mpeg-pes`](mpeg-pes/) | [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes) | [![docs.rs](https://img.shields.io/docsrs/mpeg-pes)](https://docs.rs/mpeg-pes) | PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3): `PesPacket`, 33-bit `Pts`/`Dts`, per-PID `PesAssembler`. `no_std`, depends only on `dvb-common`. **Independently versioned.** |
 | [`dvb-subtitle`](dvb-subtitle/) | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | [![docs.rs](https://img.shields.io/docsrs/dvb-subtitle)](https://docs.rs/dvb-subtitle) | ETSI EN 300 743 DVB (bitmap) subtitling: page/region/CLUT/object/display-definition/disparity segments + 2/4/8-bit pixel-data sub-blocks, fed the PES data field. `no_std`, depends only on `dvb-common`. **Independently versioned.** |

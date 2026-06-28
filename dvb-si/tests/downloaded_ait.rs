@@ -15,9 +15,9 @@ use std::fs;
 use std::path::Path;
 
 use dvb_si::demux::SiDemux;
-use dvb_si::pid::Pid;
 use dvb_si::tables::AnyTableSection;
-use dvb_si::ts::TS_PACKET_SIZE;
+use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 const CAPTURE: &str = "france-tnt-uhf32";
 

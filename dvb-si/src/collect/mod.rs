@@ -18,8 +18,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
-use crate::section::Section;
 use dvb_common::Parse;
+use mpeg_ts::section::Section;
 
 mod bat;
 mod eit;
@@ -99,6 +99,12 @@ pub enum CollectError {
         /// Advertised last_table_id.
         last_table_id: u8,
     },
+}
+
+impl From<mpeg_ts::Error> for CollectError {
+    fn from(e: mpeg_ts::Error) -> Self {
+        CollectError::Section(crate::Error::from(e))
+    }
 }
 
 /// Logical key for one section sequence.

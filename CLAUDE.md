@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders, published to crates.io:
 
 - **dvb-common** — shared `Parse<'a>` / `Serialize` traits and CRC-32/MPEG-2. Everything else depends on it.
-- **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding, TS packet / section reassembly.
+- **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding. TS packet / section reassembly lives in `mpeg-ts` (used internally via the `ts` feature).
+- **mpeg-ts** — generic MPEG-2 TS framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetization, resync. `no_std`. Independently versioned.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
 - **scte35-splice** — ANSI/SCTE 35 splice information (DPI cueing); independently versioned (left the DVB lockstep at v1.0.0). (`dvb-scte35` is a deprecated re-export shim at 7.9.1.)

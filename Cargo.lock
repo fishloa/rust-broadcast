@@ -307,7 +307,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dvb-bbframe"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "criterion",
  "dvb-common",
@@ -350,7 +350,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -359,10 +359,11 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "dvb-common",
  "dvb-si",
+ "mpeg-ts",
  "serde",
 ]
 
@@ -399,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -410,6 +411,7 @@ dependencies = [
  "flate2",
  "hex",
  "libm",
+ "mpeg-ts",
  "num_enum",
  "serde",
  "serde_json",
@@ -443,6 +445,7 @@ dependencies = [
  "dvb-t2mi",
  "futures-core",
  "futures-util",
+ "mpeg-ts",
  "tokio",
 ]
 
@@ -459,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -477,11 +480,12 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "7.9.0"
+version = "8.0.0"
 dependencies = [
  "clap",
  "dvb-si",
  "dvb-t2mi",
+ "mpeg-ts",
  "serde_json",
 ]
 
@@ -759,6 +763,16 @@ dependencies = [
  "mpeg-pes",
  "serde",
  "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "mpeg-ts"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "dvb-common",
+ "serde",
  "thiserror",
 ]
 

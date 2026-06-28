@@ -6,7 +6,7 @@
 //! The TOT is the spec's framing exception: `section_syntax_indicator` SHALL
 //! be `0b0` (§5.2.6: "This 1-bit field shall be set to 0b0") yet the section
 //! still ends with a CRC_32. Do not route TOT bytes through the generic
-//! [`crate::section::Section`] short-form path — it would fold the CRC into
+//! [`mpeg_ts::section::Section`] short-form path — it would fold the CRC into
 //! the payload. Parse with [`TotSection::parse`] directly.
 
 use crate::descriptors::DescriptorLoop;

@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use dvb_si::demux::SiDemux;
-use dvb_si::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 /// `<repo>/.test-streams/` — `CARGO_MANIFEST_DIR` is the `dvb-si/` crate dir.
 fn streams_dir() -> PathBuf {

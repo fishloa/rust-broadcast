@@ -2,7 +2,7 @@
 //! and an identical struct for every parser type in the crate.
 
 use dvb_common::{Parse, Serialize};
-use dvb_si::section::Section;
+use mpeg_ts::section::Section;
 
 #[test]
 fn long_form_section_round_trip_is_identity() {
@@ -78,7 +78,7 @@ fn serialize_rejects_too_small_buffer() {
     let mut too_small = vec![0u8; parsed.serialized_len() - 1];
     let err = parsed.serialize_into(&mut too_small).unwrap_err();
     assert!(
-        matches!(err, dvb_si::error::Error::OutputBufferTooSmall { .. }),
+        matches!(err, mpeg_ts::Error::OutputBufferTooSmall { .. }),
         "expected OutputBufferTooSmall, got {err:?}"
     );
 }

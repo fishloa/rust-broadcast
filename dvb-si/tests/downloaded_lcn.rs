@@ -18,7 +18,7 @@ use std::path::Path;
 use dvb_si::collect::SectionSetCollector;
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
-use dvb_si::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 const CAPTURE: &str = "france-tnt-uhf32";
 

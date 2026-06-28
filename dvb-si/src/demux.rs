@@ -3,7 +3,7 @@
 //! Feed 188-byte MPEG-TS packets in with [`SiDemux::feed`]; get back an
 //! iterator of [`SectionEvent`]s — one per **changed** complete section.
 //! The demux reassembles sections per PID (via
-//! [`crate::ts::SectionReassembler`]), validates the CRC of CRC-bearing
+//! [`mpeg_ts::ts::SectionReassembler`]), validates the CRC of CRC-bearing
 //! sections, and suppresses repeats through a version gate so that a steady
 //! carousel of unchanging tables produces no events after the first.
 //!
@@ -81,8 +81,8 @@ use alloc::vec::Vec;
 
 use bytes::Bytes;
 
-use crate::pid::Pid;
-use crate::ts::{SectionReassembler, TsPacket};
+use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 /// table_id of the Program Association Table (PAT) — followed for PMT PIDs.
 const PAT_TABLE_ID: u8 = 0x00;
@@ -313,7 +313,7 @@ impl SiDemuxBuilder {
     pub fn build(self) -> SiDemux {
         let mut pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
         if self.dvb_si_pids {
-            use crate::pid::well_known as wk;
+            use mpeg_ts::pid::well_known as wk;
             for pid in [
                 wk::PAT,
                 wk::CAT,
@@ -530,7 +530,7 @@ impl SiDemux {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ts::{TsHeader, TS_PACKET_SIZE};
+    use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
 
     /// Wrap section bytes in a single PUSI TS packet on `pid`, with a
     /// pointer_field of 0 and 0xFF stuffing tail. Section must fit one packet.

@@ -16,10 +16,10 @@ use dvb_common::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::ait::AnyAitDescriptor;
-use dvb_si::pid::Pid;
 use dvb_si::tables::dsmcc::DsmccSection;
 use dvb_si::tables::AnyTableSection;
-use dvb_si::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
 
 const CAPTURE: &str = "hotbird-mhp";
 

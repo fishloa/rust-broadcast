@@ -1,11 +1,11 @@
 //! TS byte-stream resynchronisation helpers for `dvb-stream`.
 //!
-//! Thin wrappers over [`dvb_si::resync::TsResync`] — the shared stateful
-//! resynchroniser now lives in `dvb-si` (feature `ts`).  This module keeps
+//! Thin wrappers over [`mpeg_ts::resync::TsResync`] — the shared stateful
+//! resynchroniser lives in `mpeg-ts` (feature `ts`).  This module keeps
 //! the public surface that `section_stream` and `t2mi_stream` use (the
 //! stateless `resync` + `aligned_packets` pair and the size/sync constants).
 
-pub use dvb_si::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
+pub use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 /// Find the byte offset of the first confirmed 0x47 sync byte in `buf`.
 ///
@@ -17,7 +17,7 @@ pub use dvb_si::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 ///
 /// This is a stateless best-effort helper.  For a full stateful resynchroniser
 /// with 204-byte detection and per-call carry-over buffering, use
-/// [`dvb_si::resync::TsResync`].
+/// [`mpeg_ts::resync::TsResync`].
 #[must_use]
 pub fn resync(buf: &[u8]) -> Option<usize> {
     let mut i = 0;

@@ -6,8 +6,8 @@
 //! dvb-si serde shape (not an invented second schema).
 
 use dvb_si::demux::SiDemux;
-use dvb_si::ts::TS_PACKET_SIZE;
-use dvb_si::ts::TS_SYNC_BYTE;
+use mpeg_ts::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::TS_SYNC_BYTE;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
