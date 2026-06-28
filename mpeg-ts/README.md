@@ -55,7 +55,57 @@ for raw_packet in ts_source {
 }
 ```
 
-See [`examples/demux.rs`](examples/demux.rs) for a runnable end-to-end example.
+### Typed packet inspection
+
+The [`ScramblingControl`] and [`AdaptationFieldControl`] enums give typed
+access to the 2-bit `transport_scrambling_control` and `adaptation_field_control`
+fields. Use `scrambling_control()` / `adaptation_field_control()` on either
+[`TsHeader`] or [`OwnedTsPacket`]:
+
+```rust
+use mpeg_ts::ts::{TsPacket, ScramblingControl, AdaptationFieldControl};
+use mpeg_ts::OwnedTsPacket;
+
+// On a borrowed TsPacket:
+let pkt = TsPacket::parse(raw_188_bytes)?;
+let sc = pkt.header.scrambling_control();
+let afc = pkt.header.adaptation_field_control();
+
+// On an owned OwnedTsPacket:
+let owned = OwnedTsPacket::parse(raw_array)?;
+let sc2 = owned.scrambling_control();
+let afc2 = owned.adaptation_field_control();
+
+match sc {
+    ScramblingControl::NotScrambled => println!("clear"),
+    ScramblingControl::EvenKey | ScramblingControl::OddKey => println!("scrambled"),
+    _ => {}
+}
+# Ok::<(), mpeg_ts::Error>(())
+```
+
+### Bulk-walking a TS byte stream
+
+The free helper [`iter_packets`] walks a buffer of concatenated 188-byte packets
+without explicit length checks:
+
+```rust
+use mpeg_ts::ts::iter_packets;
+
+// Build a buffer of 3 minimal payload-only packets with sync 0x47.
+let mut buf = vec![0u8; 188 * 3];
+for chunk in buf.chunks_exact_mut(188) {
+    chunk[0] = 0x47;      // sync byte
+    chunk[3] = 0x10;      // payload_only (adaptation_field_control = 01)
+    chunk[4..].fill(0xFF); // stuffing
+}
+for pkt in iter_packets(&buf) {
+    println!("PID: 0x{:04X}", pkt.header.pid);
+}
+```
+
+See [`examples/iter_packets.rs`](examples/iter_packets.rs) for a full CLI example
+that tallies scrambled vs clear packets across a `.ts` file.
 
 ## Spec
 

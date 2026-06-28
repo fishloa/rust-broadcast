@@ -5,8 +5,9 @@ value-verified (one **false-positive** verifier warning on the Table 2-31 hex co
 — eyeballed, the rendered values 0x00..0x03 are correct; see pdf2md issue #46), then
 structure-cleaned. Scope = the **generic section framing** that `Section<'a>` /
 `SectionReassembler` implement. PAT/CA sections below are shown as the canonical
-*generic-section* template; parsing the concrete PSI tables (PAT/PMT/CAT) is deferred
-to `mpeg-ts` 0.2.
+*generic-section* template. Parsing the concrete PSI tables (PAT/PMT/CAT) is **not** in
+`mpeg-ts`'s scope by design — that lives in `dvb-si`, which builds on this framing layer;
+`mpeg-ts` stays the generic section/framing layer and does not duplicate it.
 
 ## §2.4.4.1 General — PSI structures (Table 2-28)
 
