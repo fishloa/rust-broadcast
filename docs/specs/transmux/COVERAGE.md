@@ -36,6 +36,31 @@ Lists every box required for TS→fMP4/CMAF/HLS muxing, its source, and transcri
 | `trun`    | Track Fragment Run Box             | [W3C-MSE]             | DONE (ISO 14496-12 §8.8.8, owner-directed reference) | `fragment-boxes.md` |
 | `mdat`    | Media Data Box                     | [QTFF], [W3C-MSE]     | DONE              | `fragment-boxes.md`     |
 | `sidx`    | Segment Index Box                  | [3GP-26244] §13.4     | DONE              | `sidx.md`               |
+| `edts`    | Edit Box                          | ISO/IEC 14496-12:2015 §8.6.5 | DONE              | `edit-and-sampletable.md` |
+| `elst`    | Edit List Box                     | ISO/IEC 14496-12:2015 §8.6.6 | DONE              | `edit-and-sampletable.md` |
+| `ctts`    | Composition Time to Sample Box    | ISO/IEC 14496-12:2015 §8.6.1.3 | DONE            | `edit-and-sampletable.md` |
+| `stss`    | Sync Sample Box                   | ISO/IEC 14496-12:2015 §8.6.2 | DONE              | `edit-and-sampletable.md` |
+| `sdtp`    | Independent and Disposable Samples Box | ISO/IEC 14496-12:2015 §8.6.4 | DONE           | `edit-and-sampletable.md` |
+| `subs`    | Sub-Sample Information Box        | ISO/IEC 14496-12:2015 §8.7.7 | DONE              | `edit-and-sampletable.md` |
+| `saiz`    | Sample Auxiliary Information Sizes Box | ISO/IEC 14496-12:2015 §8.7.8 | DONE            | `edit-and-sampletable.md` |
+| `saio`    | Sample Auxiliary Information Offsets Box | ISO/IEC 14496-12:2015 §8.7.9 | DONE           | `edit-and-sampletable.md` |
+| `btrt`    | Bit Rate Box                      | ISO/IEC 14496-12:2015 §8.5.2 | DONE              | `edit-and-sampletable.md` |
+| `tfra`    | Track Fragment Random Access Box  | ISO/IEC 14496-12:2015 §8.8.10 | DONE             | `random-access-and-groups.md` |
+| `mfra`    | Movie Fragment Random Access Box  | ISO/IEC 14496-12:2015 §8.8.9 | DONE              | `random-access-and-groups.md` |
+| `mfro`    | Movie Fragment Random Access Offset Box | ISO/IEC 14496-12:2015 §8.8.11 | DONE          | `random-access-and-groups.md` |
+| `sbgp`    | Sample to Group Box               | ISO/IEC 14496-12:2015 §8.9.2 | DONE              | `random-access-and-groups.md` |
+| `sgpd`    | Sample Group Description Box      | ISO/IEC 14496-12:2015 §8.9.3 | DONE              | `random-access-and-groups.md` |
+| `sinf`    | Protection Scheme Information Box | ISO/IEC 14496-12:2015 §8.12.1 | DONE             | `protection-scheme.md`   |
+| `frma`    | Original Format Box               | ISO/IEC 14496-12:2015 §8.12.2 | DONE              | `protection-scheme.md`   |
+| `schm`    | Scheme Type Box                   | ISO/IEC 14496-12:2015 §8.12.5 | DONE              | `protection-scheme.md`   |
+| `schi`    | Scheme Information Box            | ISO/IEC 14496-12:2015 §8.12.6 | DONE              | `protection-scheme.md`   |
+| `rinf`    | Restricted Scheme Information Box | ISO/IEC 14496-12:2015 §8.15.3 | DONE              | `protection-scheme.md`   |
+| `stvi`    | Stereo Video Box                  | ISO/IEC 14496-12:2015 §8.15.4 | DONE              | `protection-scheme.md`   |
+| `pasp`    | Pixel Aspect Ratio Box            | ISO/IEC 14496-12:2015 §12.1.4 | DONE             | `sample-entry-ext.md`    |
+| `clap`    | Clean Aperture Box                | ISO/IEC 14496-12:2015 §12.1.4 | DONE             | `sample-entry-ext.md`    |
+| `colr`    | Colour Information Box            | ISO/IEC 14496-12:2015 §12.1.5 | DONE             | `sample-entry-ext.md`    |
+| `prft`    | Producer Reference Time Box       | ISO/IEC 14496-12:2015 §8.16.5 | DONE              | `timing-and-refs.md`     |
+| `tref`    | Track Reference Box               | ISO/IEC 14496-12:2015 §8.3.3 | DONE              | `timing-and-refs.md`     |
 | `av01`    | AV1 Sample Entry                   | [AOM-AV1] §2.2        | DONE              | `codec-config.md`       |
 | `av1C`    | AV1 Codec Configuration Box        | [AOM-AV1] §2.3        | DONE              | `codec-config.md`       |
 | `avc1`    | AVC/H.264 Sample Entry             | ISO/IEC 14496-15 (paid)| GAP — paid-only  | `codec-config.md`       |
@@ -51,12 +76,16 @@ Lists every box required for TS→fMP4/CMAF/HLS muxing, its source, and transcri
 
 | Status        | Count | Boxes                                                                   |
 |---------------|-------|-------------------------------------------------------------------------|
-| DONE          | 34    | `ftyp`, `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`, `smhd`, `dinf`, `dref`, `url `, `stbl`, `stsd`, `stts`, `stsc`, `stsz`, `stco`, `co64`, `styp`, `mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun`, `mdat`, `sidx`, `av01`, `av1C` |
+| DONE          | 60    | `ftyp`, `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`, `smhd`, `dinf`, `dref`, `url `, `stbl`, `stsd`, `stts`, `stsc`, `stsz`, `stco`, `co64`, `styp`, `mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun`, `mdat`, `sidx`, `edts`, `elst`, `ctts`, `stss`, `sdtp`, `subs`, `saiz`, `saio`, `btrt`, `tfra`, `mfra`, `mfro`, `sbgp`, `sgpd`, `sinf`, `frma`, `schm`, `schi`, `rinf`, `stvi`, `pasp`, `clap`, `colr`, `prft`, `tref`, `av01`, `av1C` |
 | GAP — paid-only | 6  | `avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds` |
 
-**DONE = 34 boxes; GAP = 6 boxes** (remaining GAP entries are codec-config boxes from ISO/IEC 14496-14 and -15 — paid standards not consulted).
+**DONE = 60 boxes; GAP = 6 boxes** (remaining GAP entries are codec-config boxes from ISO/IEC 14496-14 and -15 — paid standards not consulted).
 
-Note: All fragmentation-control boxes (`mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun`)
+Note: This coverage count includes boxes from ISO/IEC 14496-12:2015 §§8.3.3, 8.5.2, 8.6.1.3, 8.6.2,
+8.6.4, 8.6.5, 8.6.6, 8.7.7, 8.7.8, 8.7.9, 8.8.9, 8.8.10, 8.8.11, 8.9.2, 8.9.3, 8.12.1, 8.12.2,
+8.12.5, 8.12.6, 8.15.3, 8.15.4, 8.16.5, 12.1.4, and 12.1.5.
+All fragmentation-control boxes (`mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun`)
+are now transcribed using an owner-directed reference to ISO/IEC 14496-12 §8.8 per SOURCES.md.
 are now transcribed using an owner-directed reference to ISO/IEC 14496-12 §8.8 per SOURCES.md.
 The remaining 6 GAP boxes (`avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds`) are codec-config
 entries requiring ISO/IEC 14496-14/-15.
