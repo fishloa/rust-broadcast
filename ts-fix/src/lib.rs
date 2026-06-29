@@ -130,13 +130,23 @@ impl TsFixBuilder {
         })
     }
 
+    /// Enable continuity counter repair.
+    ///
+    /// Renumbers the 4-bit `continuity_counter` per PID to a correct monotonic
+    /// sequence (mod 16), respecting the ISO/IEC 13818-1 §2.4.3.3 rule that the
+    /// counter increments **only** on payload-bearing packets.
+    pub fn repair_continuity(mut self) -> Self {
+        self.ops
+            .push(alloc::boxed::Box::new(ops::continuity::ContinuityOp::new()));
+        self
+    }
+
     // ── Future operation methods (stubs document the planned API surface) ────
     //
     // These will be added in later tasks.  They are NOT present in v0.1 — they
     // appear here only as comments so reviewers can confirm the builder surface
     // is stable and additive.
     //
-    //   pub fn repair_continuity(self) -> Self           // Task 2
     //   pub fn filter_pids(self, cfg: PidFilter) -> Self // Task 3
     //   pub fn regen_psi(self) -> Self                   // Task 4
     //   pub fn stuffing(self, cfg: Stuffing) -> Self     // Task 5

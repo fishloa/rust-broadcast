@@ -18,6 +18,8 @@
 
 use alloc::vec::Vec;
 
+pub(crate) mod continuity;
+
 /// Observable state built up as the engine processes packets.
 ///
 /// Repair operations receive a shared `&mut StreamModel` reference on every
