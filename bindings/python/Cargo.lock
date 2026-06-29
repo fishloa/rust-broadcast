@@ -18,6 +18,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
+name = "broadcast-common"
+version = "8.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7a39abcaa26a6ec6f96cc260f98c892eae197cf00423a5e58612cde2b2d083f"
+dependencies = [
+ "chrono",
+ "libm",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -65,37 +75,28 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "dvb-bbframe"
-version = "7.6.0"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b835d8ff8ec125a3322204d1e79b7e0aa0b96b386c20cf7a45f94604efa24a61"
+checksum = "2171d0928ad925fdaf9ee40a9bf22cfd8bc67d9db3c0060ebf3296dd51ac78de"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "num_enum",
  "thiserror",
 ]
 
 [[package]]
-name = "dvb-common"
-version = "7.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c56eaf1538271a40c8920bfea81d18008717b4d7b75e95b4a4a43d360fdbce"
-dependencies = [
- "chrono",
- "libm",
-]
-
-[[package]]
 name = "dvb-si"
-version = "7.6.0"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "278cedbf8152497ed426af84c19ef9fc27bb1f02c7ea4bbfda5a65a880963615"
+checksum = "445eefd52905946e1f29dc01e4e7861c1991ba8bf14f5d89f6a445034097ec90"
 dependencies = [
+ "broadcast-common",
  "bytes",
  "chrono",
- "dvb-common",
  "encoding_rs",
  "erased-serde",
  "libm",
+ "mpeg-ts",
  "num_enum",
  "serde",
  "thiserror",
@@ -105,7 +106,6 @@ dependencies = [
 name = "dvb-si-py"
 version = "0.1.0"
 dependencies = [
- "dvb-common",
  "dvb-si",
  "dvb-t2mi",
  "pyo3",
@@ -116,14 +116,14 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "7.6.0"
+version = "8.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3d566917de5ab51798c64702804c6bb08f81e57a63fe2aff989727ee5dda607"
+checksum = "cc42050b570911ccb03edfc6cf9e002e232f175ae009a6d2728c2f3605b03b4f"
 dependencies = [
+ "broadcast-common",
  "bytes",
  "chrono",
  "dvb-bbframe",
- "dvb-common",
  "erased-serde",
  "num_enum",
  "serde",
@@ -249,9 +249,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "js-sys"
-version = "0.3.102"
+version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03d04c30968dffe80775bd4d7fb676131cd04a1fb46d2686dbffbaec2d9dfd31"
+checksum = "53b44bfcdb3f8d5837a46dae1ca9660a837176eee74a28b229bc626816589102"
 dependencies = [
  "cfg-if",
  "futures-util",
@@ -272,9 +272,9 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "log"
-version = "0.4.32"
+version = "0.4.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
+checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "memchr"
@@ -289,6 +289,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mpeg-ts"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55d690179fc3dd575aa151672a6c3198cc1dfb2af7df95a44a2faa6ffe62c510"
+dependencies = [
+ "broadcast-common",
+ "bytes",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
@@ -433,9 +445,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.45"
+version = "1.0.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
+checksum = "dfbc457d0c7a0759a614551b11a6409e5951f6c7537be1f1b7682b9ae9230368"
 dependencies = [
  "proc-macro2",
 ]
@@ -588,9 +600,9 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ddb3f79143bced6de84270411622a2699cee572fc0875aeaf1e7867cf9fca1a"
+checksum = "4b067c0c11094aef6b7a801c1e34a26affafdf3d051dba08456b868789aaf9a4"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -601,9 +613,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e21a184b13fb19e157296e2c46056aec9092264fab83e4ba59e68c61b323c3d"
+checksum = "167ce5e579f6bcf889c4f7175a8a5a585de84e8ff93976ce393efa5f2837aab1"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -611,9 +623,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fecefd9c35bd935a20fc3fc344b5f29138961e4f47fb03297d88f2587afb5ebd"
+checksum = "f3997c7839262f4ef12cf90b818d6340c18e80f263f1a94bf157d0ec4420380e"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -624,9 +636,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.125"
+version = "0.2.126"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23939e44bb9a5d7576fa2b563dc2e136628f1224e88a8deed09e04858b77871f"
+checksum = "dc1b4cb0cc549fcf58d7dfc081778139b3d283a081644e833e84682ad71cea24"
 dependencies = [
  "unicode-ident",
 ]
