@@ -30,8 +30,9 @@ const TS_PACKET_SIZE: usize = 188;
 const INTER_PACKET_US: u64 = 40;
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../dvb-si/tests/fixtures");
-    let path = format!("{}/{}", base, name);
+    let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures");
+    let subdir = if name == "m6-single.ts" { "/ts/" } else { "/dvb-si/" };
+    let path = format!("{}{}{}", base, subdir, name);
     let mut f = File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {}", path, e));
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();

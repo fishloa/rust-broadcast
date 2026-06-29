@@ -8,7 +8,7 @@ use std::fs;
 use smpte2038::{AncDataPacket, AncPacket};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/anc.bin");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/smpte2038/anc.bin");
     fs::read(path).expect("fixture anc.bin must be committed")
 }
 

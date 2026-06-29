@@ -42,7 +42,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
 }
 
 fn m6_dsmcc_sections() -> Vec<Vec<u8>> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
     extract_sections_for_pid(path, 0x00AB)
 }
 
@@ -99,7 +99,7 @@ fn fixture_m6_ddb_header_prefix_links_to_dii() {
     assert!(!dii_download_ids.is_empty(), "capture should contain a DII");
 
     // Find the start of the 0x3C section directly in the TS packets.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
     let data = std::fs::read(path).expect("read fixture");
     let mut ddb_prefix: Option<Vec<u8>> = None;
     for chunk in data.chunks(TS_PACKET_SIZE) {

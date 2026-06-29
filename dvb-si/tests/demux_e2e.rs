@@ -42,7 +42,13 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 // ─────────────────────────────────────── helpers ────────────────────────────
 
 fn read_fixture(filename: &str) -> Vec<u8> {
-    let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), filename);
+    let subdir = if filename == "m6-single.ts" { "ts" } else { "dvb-si" };
+    let path = format!(
+        "{}/../fixtures/{}/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        subdir,
+        filename
+    );
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 

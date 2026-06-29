@@ -59,7 +59,7 @@ fn sync_oracle(data: &[u8]) -> Vec<dvb_si::demux::SectionEvent> {
 fn m6_fixture_path() -> &'static str {
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../dvb-si/tests/fixtures/m6-single.ts"
+        "/../fixtures/ts/m6-single.ts"
     )
 }
 

@@ -24,7 +24,7 @@ fn t2mi_sync_oracle(data: &[u8], pid: u16) -> Vec<dvb_t2mi::pump::T2miEvent> {
 fn t2mi_fixture_path() -> &'static str {
     concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../dvb-t2mi/tests/fixtures/colombia-capital-t2mi.ts"
+        "/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts"
     )
 }
 

@@ -1,11 +1,22 @@
 //! Real `EXT-X-DATERANGE` lines from a production packager (Unified Streaming).
 //! The SCTE35-OUT hex is the splice input; PLANNED-DURATION is the golden output.
+use std::fs;
+
 use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use timed_metadata::convert::scte35_to_daterange;
 use timed_metadata::daterange::{DateRange, Scte35Cue};
 use timed_metadata::event::TimedEvent;
 use timed_metadata::TimeAnchor;
+
+fn read_fixture(name: &str) -> String {
+    let path = format!(
+        "{}/../fixtures/timed-metadata/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        name
+    );
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+}
 
 fn check(line: &str, expect_id: &str) {
     // 1. Parse the real DATERANGE line.
@@ -33,10 +44,10 @@ fn check(line: &str, expect_id: &str) {
 
 #[test]
 fn unified_daterange_2002() {
-    check(include_str!("fixtures/daterange_2002.txt"), "2002");
+    check(&read_fixture("daterange_2002.txt"), "2002");
 }
 
 #[test]
 fn unified_daterange_2004() {
-    check(include_str!("fixtures/daterange_2004.txt"), "2004");
+    check(&read_fixture("daterange_2004.txt"), "2004");
 }

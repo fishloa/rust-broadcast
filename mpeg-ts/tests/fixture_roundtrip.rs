@@ -15,7 +15,10 @@ use mpeg_ts::ts::{
 };
 
 fn fixture_path() -> String {
-    format!("{}/tests/fixtures/m6-single.ts", env!("CARGO_MANIFEST_DIR"))
+    format!(
+        "{}/../fixtures/ts/m6-single.ts",
+        env!("CARGO_MANIFEST_DIR")
+    )
 }
 
 #[test]

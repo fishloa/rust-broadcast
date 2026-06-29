@@ -1,13 +1,23 @@
+use std::fs;
+
 use broadcast_common::Parse;
 use mpeg_ps::program_stream;
 use mpeg_ps::SystemHeader;
 
 // Fixture: ffmpeg -f lavfi -i testsrc2=duration=1:size=352x288:rate=25 -f lavfi -i sine=frequency=440:duration=1 -c:v mpeg2video -c:a mp2 -f vob -y mpeg-ps/tests/fixtures/ffmpeg-mpeg2-ps.mpg
 
+fn fixture() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/mpeg-ps/ffmpeg-mpeg2-ps.mpg"
+    );
+    fs::read(path).expect("fixture ffmpeg-mpeg2-ps.mpg must be present")
+}
+
 #[test]
 fn real_fixture_walk() {
-    let data: &[u8] = include_bytes!("fixtures/ffmpeg-mpeg2-ps.mpg");
-    let (packs, trailing) = program_stream::parse_all_packs(data).unwrap();
+    let data = fixture();
+    let (packs, trailing) = program_stream::parse_all_packs(&data).unwrap();
 
     // 7 pack headers expected
     assert!(

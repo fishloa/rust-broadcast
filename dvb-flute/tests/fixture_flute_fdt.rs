@@ -11,7 +11,7 @@ use dvb_flute::{
 };
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/flute_fdt.bin");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/dvb-flute/flute_fdt.bin");
     fs::read(path).expect("fixture flute_fdt.bin must be committed")
 }
 

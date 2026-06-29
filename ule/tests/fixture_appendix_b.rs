@@ -8,7 +8,7 @@ use std::fs;
 use ule::{Sndu, TypeField};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/appendix_b.bin");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ule/appendix_b.bin");
     fs::read(path).expect("fixture appendix_b.bin must be committed")
 }
 
