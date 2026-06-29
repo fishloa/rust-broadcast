@@ -1,14 +1,10 @@
 # `specs/rules/` — curated behavioural-rules summaries
 
-Per-spec **semantic** rule summaries the workspace's crates depend on: the prose, constraints,
-ordering, frequency, validity, and reserved-bit policy — **not** just the syntax tables. Each file
-references the full pdf2md text in `specs/fulltext/` (gitignored: the copyrighted raw spec text)
-with **§ + line citations**, so a code design decision can cite the documented prose instead of
-asserting it (see memory `full-spec-comprehension-extraction`).
-
-These files **are committed** (curated summaries, not the copyrighted full text). To regenerate a
-`specs/fulltext/*.md` from its PDF, use the pdf2md skill (`--engine textlayer --report`, expect
-exit 0). `specs/MEDIA-SPECS-LOCAL.md` is the PDF manifest.
+Per-spec rule summaries the workspace's crates depend on — the prose, constraints, ordering,
+frequency, validity, and reserved-bit policy, with **§ + line citations** into the full pdf2md text
+in `specs/fulltext/` (gitignored copyrighted spec text). Committed (summaries, not the full text).
+Regenerate a `specs/fulltext/*.md` with the pdf2md skill (`--engine textlayer --report`).
+`specs/MEDIA-SPECS-LOCAL.md` is the PDF manifest.
 
 | Rules file | Spec | Full text (gitignored) | Drives |
 |---|---|---|---|
@@ -18,7 +14,7 @@ exit 0). `specs/MEDIA-SPECS-LOCAL.md` is the PDF manifest.
 | `dash-mpd-rules.md` | ISO/IEC 23009-1:2012 (DASH MPD — timing only) | `iso_iec_23009-1_dash_2012.md` | `timed-metadata`, future DASH crate |
 | `emsg-rules.md` | DASH Event Message Box (`emsg`) — ISO/IEC 23009-1:2022 ed.5 §5.10 (+ DASH-IF IOP Part 10 v5.0.0 for usage) | `iso_iec_23009-1_dash_2022.md`, `dashif_iop_part10_v5_emsg.md` | `mp4-emsg` (implemented), `timed-metadata` |
 
-## Known gaps (tracked, not silently skipped)
+## Known gaps
 
 - **Codec-config records not yet curated** (referenced as "lift per spec" by the rules above): AAC
   `AudioSpecificConfig` (14496-3 §1.6), `avcC`/`hvcC` (**14496-15**). 14496-15's vendored PDF is

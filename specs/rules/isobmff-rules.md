@@ -1,11 +1,7 @@
-# ISO/IEC 14496-12 (ISOBMFF) — behavioural rules we depend on
+# ISO/IEC 14496-12:2015 (ISOBMFF) — MP4/fMP4/CMAF rules
 
-Curated **semantic** rules (the prose, not just syntax) the workspace's MP4/fMP4/CMAF
-crates must honour. Source: the full spec text at
-`specs/fulltext/iso_iec_14496-12_isobmff_2015.md` (gitignored pdf2md of the copyrighted
-`specs/iso_iec_14496-12_isobmff_2015.pdf`; regenerate with the pdf2md skill). Each rule
-cites the spec § and the line in that full-text md. Consumers: the planned transmux /
-fMP4-mux / `mp4-emsg` crates. Design decisions cite here — they are not asserted.
+Box / sample / timing / fragment / segment rules for the planned transmux / fMP4-mux and
+`mp4-emsg`. Source: `specs/fulltext/iso_iec_14496-12_isobmff_2015.md` (§ + line cites).
 
 ## Box / FullBox structure — §4.2 (fulltext L1254)
 
@@ -134,13 +130,11 @@ Mostly *recommendations* (read-tolerant), but two are **shall** and one is struc
   non-edit-omitted access unit and `referenced_size`/`first_offset` from the actual byte layout — never
   copies stale values.
 
-## Code-conformance notes (tracked — NOT yet applied; for the future transmux crate)
-
-1. Box parser: size-driven, skip-unknown (§4.2 L1294); serializer recomputes every `size`/`largesize`
-   from contents — no stored-and-echoed length (the workspace no-raw-passthrough invariant).
-2. fMP4 writer: `tfhd`/`trun` field presence derived from flags (§8.8.8 L3997); `tfdt` placed
-   after `tfhd`, before `trun` (L4162); pick `default-base-is-moof` only with `iso5`+ brands (L3968).
-3. Timeline preservation: a transmux that re-times/moves samples must carry or recompute `stts`/`ctts`/
-   `elst`/`tfdt` consistently (§8.6.1, §8.6.6) — dropping `elst` or `ctts` corrupts A/V sync.
-4. Segment index: rebuild `sidx` (EPT, sizes, offsets, SAP flags) from the produced byte layout;
-   rebuild or drop `mfra`/`sidx` after any offset rewrite (§8.16.3 L6413, §8.8.9 L4082).
+## Implications for our crates
+- Box parser size-driven, skip-unknown (§4.2 L1294); serializer recomputes every `size`/`largesize`
+  from contents (no stored-and-echoed length).
+- fMP4 writer: `tfhd`/`trun` field presence derived from flags (§8.8.8 L3997); `tfdt` after `tfhd`,
+  before `trun` (L4162); `default-base-is-moof` only with `iso5`+ brands (L3968).
+- A transmux that re-times/moves samples must carry or recompute `stts`/`ctts`/`elst`/`tfdt`
+  consistently (§8.6.1, §8.6.6); rebuild `sidx` (EPT, sizes, offsets, SAP) and rebuild/drop
+  `mfra`/`sidx` after any offset rewrite (§8.16.3 L6413, §8.8.9 L4082).

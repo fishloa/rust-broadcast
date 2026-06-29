@@ -1,11 +1,7 @@
-# H.222.0 / ISO 13818-1 — behavioural rules we depend on
+# H.222.0 / ISO 13818-1 (MPEG-2 Systems) — TS/PES rules
 
-Curated **semantic** rules (the prose, not the syntax tables) that the workspace's TS/PES
-crates must honour. Source: the full spec text at
-`specs/fulltext/itu_t_h222_0_202308_mpeg2_systems.md` (gitignored pdf2md of the copyrighted
-`specs/itu_t_h222_0_202308_mpeg2_systems.pdf`; regenerate with the pdf2md skill). Each rule
-cites the spec § and the line in that full-text md. Consumers: `mpeg-ts`, `mpeg-pes`,
-`ts-fix`, `dvb-conformance`. Design decisions cite here — they are not asserted.
+TS/PES behavioural rules for `mpeg-ts`, `mpeg-pes`, `ts-fix`, `dvb-conformance`. Source:
+`specs/fulltext/itu_t_h222_0_202308_mpeg2_systems.md` (§ + line cites).
 
 ## TS packet header — §2.4.3.3 (fulltext L1708)
 
@@ -39,7 +35,8 @@ cites the spec § and the line in that full-text md. Consumers: `mpeg-ts`, `mpeg
 
 - **System clock** 27 MHz; PCR/PTS/DTS @ 90 kHz (= 27 MHz / 300). §2.7.2 PCR ≤100 ms spacing per program; §2.7.4 PTS spacing constraints.
 
-## Code-conformance notes (tracked — NOT yet applied)
-1. `ts-fix` CC-repair: must honour **duplicate packets** + **discontinuity_indicator** (currently enforces strict increment).
-2. `ts-fix` PCR-restamp: must **re-anchor** on a PCR_PID `discontinuity_indicator` (system-time-base change); cite §2.4.3.5.
-3. mpeg-ts/mpeg-pes: byte-identical stuffing already honoured.
+## Implications for our crates
+- `ts-fix` CC-repair must honour **duplicate packets** (§2.4.3.3 L1772) + **discontinuity_indicator**
+  (§2.4.3.5 L1874) — not a strict +1 per PID.
+- `ts-fix` PCR-restamp must **re-anchor** on a PCR_PID `discontinuity_indicator` (§2.4.3.5), per-PID
+  (§2.7.2 + §2.4.4.9 — a multi-program TS has multiple PCR PIDs).

@@ -1,12 +1,9 @@
 # ISO/IEC 14496-1 (Systems) + 14496-14 (MP4) — `esds` / ES_Descriptor rules
 
-Curated **semantic** rules for the MPEG-4 elementary-stream descriptor (`esds`) carried in MP4
-sample entries (`mp4a`/`mp4v`/`mp4s`). Sources:
-`specs/fulltext/iso_iec_14496-1_systems_es_descriptor_2010.md` and
-`specs/fulltext/iso_iec_14496-14_mp4_2003.md` (gitignored pdf2md of the copyrighted PDFs;
-regenerate with pdf2md). Each rule cites the spec § and line. Consumers: the planned transmux /
-MP4-mux crate (extracting AAC `AudioSpecificConfig`, demuxing `mp4a`/`mp4v` to ES). Decisions
-cite here.
+MPEG-4 elementary-stream descriptor (`esds`) carried in MP4 sample entries (`mp4a`/`mp4v`/`mp4s`),
+for the planned transmux / MP4-mux. Sources:
+`specs/fulltext/iso_iec_14496-1_systems_es_descriptor_2010.md` (`14496-1 L…`) and
+`specs/fulltext/iso_iec_14496-14_mp4_2003.md` (`14496-14 L…`).
 
 ## Expandable descriptor framing — 14496-1 §8.3.3 (fulltext L3986) — the parse primitive
 
@@ -80,11 +77,10 @@ Layout (L1574): `objectTypeIndication`(8) + `streamType`(6) `upStream`(1) `reser
 - **track_ID**: low 2 bytes = ES_ID for media tracks, high 2 bytes zero (L257). IDs unique per file;
   `next_track_ID` in `mvhd` is the allocator (search needed once it hits ≥65535 / all-1s) (L259).
 
-## Code-conformance notes (tracked — NOT yet applied; future transmux crate)
-
-1. Descriptor walker: tag+expandable-size loop, skip-unknown (§8.3.3 L3988); serializer computes the
-   size varint from the body (no stored-and-echoed length); round-trip preserves the size-byte width.
-2. Codec lift: switch on `objectTypeIndication` (Table 5 L1584) + `streamType` (Table 6 L1664) to type
-   the `DecoderSpecificInfo` (AAC AudioSpecificConfig for 0x40; opaque only for unknown OTI).
-3. ES→TS / TS→ES: honour the stored-vs-streamed constraints (ES_ID=0 stored, low 16 bits of track_ID
-   at stream time; config in descriptor not samples) (§3.1.2 L209, §5.6 L450).
+## Implications for our crates
+- Descriptor walker: tag + expandable-size loop, skip-unknown (§8.3.3 L3988); serializer computes the
+  size varint from the body (no stored-and-echoed length); round-trip preserves the size-byte width.
+- Codec lift: switch on `objectTypeIndication` (Table 5 L1584) + `streamType` (Table 6 L1664) to type
+  the `DecoderSpecificInfo` (AAC AudioSpecificConfig for 0x40; opaque only for unknown OTI).
+- ES↔TS: honour the stored-vs-streamed constraints (ES_ID=0 stored, low 16 bits of track_ID at
+  stream time; config in descriptor not samples) (§3.1.2 L209, §5.6 L450).

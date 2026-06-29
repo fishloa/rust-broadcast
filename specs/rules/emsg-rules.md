@@ -1,21 +1,16 @@
-# DASH `emsg` (Event Message Box) — behavioural rules we depend on
+# DASH `emsg` (Event Message Box) — rules
 
-Curated **semantic** rules for the inband DASH/CMAF **Event Message Box** (`emsg`). **Normative
-source (vendored, official ISO publicly-available standard):** ISO/IEC 23009-1:**2022 (ed.5)**
-**§5.10** — `specs/fulltext/iso_iec_23009-1_dash_2022.md` (gitignored pdf2md of
-`specs/iso_iec_23009-1_dash_2022_ed5.pdf`). Companion authoring/usage source: **DASH-IF IOP Part 10
-v5.0.0** — `specs/fulltext/dashif_iop_part10_v5_emsg.md`. Citations are `2022 L…` for the normative
-spec and `IOP L…` for DASH-IF. Consumers: **`mp4-emsg` (implements this)** and `timed-metadata`.
+Inband DASH/CMAF Event Message Box (`emsg`), for `mp4-emsg` and `timed-metadata`. Sources:
+ISO/IEC 23009-1:2022 ed.5 §5.10 — `specs/fulltext/iso_iec_23009-1_dash_2022.md` (`2022 L…`,
+normative); DASH-IF IOP Part 10 v5.0.0 — `specs/fulltext/dashif_iop_part10_v5_emsg.md` (`IOP L…`,
+usage).
 
-> ✅ **Fully grounded on the current edition.** The normative SDL is on disk (2022 ed.5 §5.10.3.3);
-> `mp4-emsg/docs/emsg.md` matches it. The 2012 DASH PDF predates events — ignore it for `emsg`.
-
-## Box & versions — §5.10.3.3 (2022 L5231) — the normative SDL
+## Box & versions — §5.10.3.3 (2022 L5231)
 
 - `emsg` Container = **Segment**, Mandatory No, Quantity Zero or more (2022 L5233). Boxes whose
   scheme/value isn't declared in the MPD should not be present and are ignored by clients (2022 L5229).
 - **`aligned(8) class DASHEventMessageBox extends FullBox('emsg', version, flags=0)`** (2022 L5241).
-  Body field ORDER differs by version (the trap `mp4-emsg/src/lib.rs` documents):
+  Body field ORDER differs by version:
   - **version 0** — *segment-relative*. **strings first**: `scheme_id_uri`(C-string), `value`
     (C-string), then `timescale`(u32), `presentation_time_delta`(u32), `event_duration`(u32),
     `id`(u32), then `message_data[]`.
@@ -40,8 +35,7 @@ spec and `IOP L…` for DASH-IF. Consumers: **`mp4-emsg` (implements this)** and
   segment index is present, else the earliest AU presentation time. Non-negative — can't signal a
   past start.
 - **`event_duration`** (u32) — duration in media presentation time, in `timescale` units;
-  **`0xFFFFFFFF` = unknown duration** (scheme-defined interpretation) (2022 L5287). *(Confirmed
-  against ed.5; the older 2019 pdf2md had dropped digits to `0xFFFF`.)*
+  **`0xFFFFFFFF` = unknown duration** (scheme-defined interpretation) (2022 L5287).
 - **`id`** (u32) — instance id, scoped to the (`scheme_id_uri`,`value`) pair; same id in that scope ⇒
   **equivalent**, process any one (2022 L5289).
 - **`message_data`** (u8[]) — fills the remainder of the box; may be empty (2022 L5293). For SCTE-35
@@ -93,15 +87,12 @@ DASH segments may be **MPEG-2 TS** (not just ISOBMFF), and the `emsg` box can ri
   `scheme_id_uri` (IOP L219); `@value` should match `value` (IOP L221); `@timescale`, if present, must
   match the box `timescale` (IOP L223).
 
-## Code-conformance notes (tracked)
-
-1. `mp4-emsg`: already honours the **v0/v1 field-order difference**, null-terminated strings, and
-   `size`/`version` recomputed on serialize (no raw passthrough) — verified against this source.
-2. `timed-metadata`: v0 (EPT-relative `presentation_time_delta`) ↔ v1 (Movie-timeline
-   `presentation_time`) conversion must recompute the timing field + honour the
-   `InbandEventStream@presentationTimeOffset` rule (2022 L5279) and `timescale` (2022 L5275) —
-   agreeing with the segment's `sidx` / MPD `SegmentTimeline` (see `isobmff-rules`/`dash-mpd-rules`).
-3. ✅ Byte layout now spec-grounded on ISO/IEC 23009-1:2022 ed.5 §5.10.3.3 (vendored) — supersedes
-   the earlier DASH-IF-only footing; `mp4-emsg` matches it.
-4. `mpeg-ts`/`dvb-si` (future): reassemble a PID-`0x0004` `emsg` from TS packets (PUSI start,
-   AF-stuffing tail) and hand to `mp4-emsg` (§5.10.3.3.5, 2022 L5295).
+## Implications for our crates
+- `mp4-emsg`: honour the **v0/v1 field-order difference**, null-terminated strings, `size`/`version`
+  recomputed on serialize (no raw passthrough).
+- `timed-metadata`: v0 (EPT-relative `presentation_time_delta`) ↔ v1 (Movie-timeline
+  `presentation_time`) conversion recomputes the timing field + honours
+  `InbandEventStream@presentationTimeOffset` (2022 L5279) and `timescale` (2022 L5275), agreeing with
+  the segment's `sidx` / MPD `SegmentTimeline`.
+- `mpeg-ts`/`dvb-si` (future): reassemble a PID-`0x0004` `emsg` from TS packets (PUSI start,
+  AF-stuffing tail) and hand to `mp4-emsg` (§5.10.3.3.5, 2022 L5295).
