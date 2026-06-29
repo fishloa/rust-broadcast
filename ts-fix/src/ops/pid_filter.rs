@@ -19,12 +19,11 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.8 (PMT).
 
 use alloc::collections::BTreeSet;
-use alloc::vec::Vec;
 
 use broadcast_common::traits::Parse;
 use dvb_si::tables::pat::PatSection;
 use dvb_si::tables::pmt::PmtSection;
-use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{extract_ts_payload, SectionReassembler, TsHeader, TS_PACKET_SIZE};
 
 use crate::ops::{Op, StreamModel};
 
@@ -92,107 +91,35 @@ impl PidFilter {
 // ── Internal state machine ───────────────────────────────────────────────────
 
 /// State for service-extract mode.
-#[derive(Debug)]
+///
+/// PSI sections (PAT, PMT) are reassembled with the canonical
+/// [`mpeg_ts::ts::SectionReassembler`] rather than a bespoke buffer — it
+/// handles pointer_field, multi-packet sections, and multiple sections per
+/// payload correctly and is the better-tested code path.
 enum ServiceState {
     /// Waiting to see the PAT; we know which program_number we want.
-    WaitingPat { program_number: u16 },
+    WaitingPat {
+        program_number: u16,
+        /// Reassembles PAT sections on PID 0x0000.
+        pat_reasm: SectionReassembler,
+    },
     /// PAT seen; waiting for the PMT on `pmt_pid`.
     WaitingPmt {
-        #[allow(dead_code)]
-        program_number: u16,
         pmt_pid: u16,
-        /// Bytes accumulated for the PMT section on `pmt_pid`.
-        pmt_reasm: PmtReassembler,
+        /// Reassembles PMT sections on `pmt_pid`.
+        pmt_reasm: SectionReassembler,
     },
     /// PMT seen; keep-set fully resolved.
     Resolved { keep: BTreeSet<u16> },
 }
 
-/// Minimal per-PID section reassembler for the PID filter op.
-///
-/// We cannot depend on `dvb-si`'s `ts` feature (which would pull `bytes`);
-/// instead we manually track PUSI + accumulate section bytes until we have a
-/// complete section.
-#[derive(Debug, Default)]
-struct PmtReassembler {
-    buf: Vec<u8>,
-}
-
-impl PmtReassembler {
-    /// Feed one TS packet's payload (already extracted from the TS header level).
-    ///
-    /// `payload` is the raw bytes after the 4-byte TS header.
-    /// `pusi` is the PUSI flag from the TS header.
-    ///
-    /// Returns `Some(section_bytes)` when a complete section has been collected.
-    fn feed(&mut self, payload: &[u8], pusi: bool) -> Option<Vec<u8>> {
-        if pusi {
-            self.buf.clear();
-            if payload.is_empty() {
-                return None;
-            }
-            // pointer_field tells how many bytes of a previous section precede
-            // the start of a new section (ISO/IEC 13818-1 §2.4.4).
-            let pointer = payload[0] as usize;
-            let start = 1 + pointer;
-            if start >= payload.len() {
-                return None;
-            }
-            self.buf.extend_from_slice(&payload[start..]);
-        } else {
-            if self.buf.is_empty() {
-                return None;
-            }
-            self.buf.extend_from_slice(payload);
-        }
-
-        self.try_pop()
-    }
-
-    /// Try to extract a complete section from the accumulated buffer.
-    fn try_pop(&mut self) -> Option<Vec<u8>> {
-        if self.buf.len() < 3 {
-            return None;
-        }
-        // section_length is bits [11:0] of bytes [1:2] (ISO/IEC 13818-1 §2.4.4.1).
-        let section_length = (((self.buf[1] & 0x0F) as usize) << 8) | self.buf[2] as usize;
-        let total = 3 + section_length;
-        if self.buf.len() >= total {
-            let section = self.buf[..total].to_vec();
-            // Clear for potential next section (pointer_field bytes already trimmed above).
-            self.buf.clear();
-            Some(section)
-        } else {
-            None
-        }
-    }
-}
-
-/// Extract the TS payload from a raw 188-byte packet.
-///
-/// Returns `(payload_bytes, pusi)` or `None` if the packet has no payload.
+/// Extract `(payload, pusi)` from a raw 188-byte packet, or `None` if it has
+/// no payload. Payload extraction defers to [`mpeg_ts::ts::extract_ts_payload`]
+/// (handles the adaptation-field offset); PUSI comes from the parsed header.
 fn ts_payload_and_pusi(packet: &[u8]) -> Option<(&[u8], bool)> {
-    if packet.len() < 4 {
-        return None;
-    }
     let header = TsHeader::parse(&packet[..4]).ok()?;
-    if !header.has_payload {
-        return None;
-    }
-    let payload_start = if header.has_adaptation {
-        // adaptation_field_length occupies byte 4; the field itself follows.
-        if packet.len() < 5 {
-            return None;
-        }
-        let afl = packet[4] as usize;
-        5 + afl
-    } else {
-        4
-    };
-    if payload_start >= packet.len() {
-        return None;
-    }
-    Some((&packet[payload_start..], header.pusi))
+    let payload = extract_ts_payload(packet)?;
+    Some((payload, header.pusi))
 }
 
 // ── The operation ────────────────────────────────────────────────────────────
@@ -215,7 +142,10 @@ impl PidFilterOp {
         let state = match cfg {
             PidFilter::Keep { pids } => FilterState::KeepSet(pids),
             PidFilter::Service { program_number } => {
-                FilterState::Service(ServiceState::WaitingPat { program_number })
+                FilterState::Service(ServiceState::WaitingPat {
+                    program_number,
+                    pat_reasm: SectionReassembler::default(),
+                })
             }
         };
         Self { state }
@@ -247,7 +177,10 @@ impl PidFilterOp {
         };
 
         match state {
-            ServiceState::WaitingPat { program_number } => {
+            ServiceState::WaitingPat {
+                program_number,
+                pat_reasm,
+            } => {
                 // Listen on PID 0x0000 for the PAT.
                 let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
                 if pid != PAT_PID {
@@ -256,49 +189,26 @@ impl PidFilterOp {
                 let Some((payload, pusi)) = ts_payload_and_pusi(packet) else {
                     return;
                 };
-                if !pusi {
-                    // We accept only complete single-packet PATs here (common).
-                    // For the filter-on-first-section approach: re-feed on PUSI.
-                    return;
-                }
-                // pointer_field.
-                if payload.is_empty() {
-                    return;
-                }
-                let pointer = payload[0] as usize;
-                let start = 1 + pointer;
-                if start >= payload.len() {
-                    return;
-                }
-                let section_bytes = &payload[start..];
-                if section_bytes.len() < 3 {
-                    return;
-                }
-                // Compute total section size.
-                let section_length =
-                    (((section_bytes[1] & 0x0F) as usize) << 8) | section_bytes[2] as usize;
-                let total = 3 + section_length;
-                if section_bytes.len() < total {
-                    return;
-                }
-                let Ok(pat) = PatSection::parse(&section_bytes[..total]) else {
-                    return;
-                };
-                // Find the PMT PID for our program_number.
+                pat_reasm.feed(payload, pusi);
+
                 let pn = *program_number;
-                if let Some(entry) = pat.entries.iter().find(|e| e.program_number == pn) {
-                    let pmt_pid = entry.pid;
-                    *state = ServiceState::WaitingPmt {
-                        program_number: pn,
-                        pmt_pid,
-                        pmt_reasm: PmtReassembler::default(),
+                while let Some(section) = pat_reasm.pop_section() {
+                    let Ok(pat) = PatSection::parse(&section) else {
+                        continue;
                     };
+                    // Find the PMT PID for our program_number.
+                    if let Some(entry) = pat.entries.iter().find(|e| e.program_number == pn) {
+                        let pmt_pid = entry.pid;
+                        *state = ServiceState::WaitingPmt {
+                            pmt_pid,
+                            pmt_reasm: SectionReassembler::default(),
+                        };
+                        return;
+                    }
                 }
             }
 
-            ServiceState::WaitingPmt {
-                pmt_pid, pmt_reasm, ..
-            } => {
+            ServiceState::WaitingPmt { pmt_pid, pmt_reasm } => {
                 let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
                 if pid != *pmt_pid {
                     return;
@@ -306,19 +216,23 @@ impl PidFilterOp {
                 let Some((payload, pusi)) = ts_payload_and_pusi(packet) else {
                     return;
                 };
-                if let Some(section_bytes) = pmt_reasm.feed(payload, pusi) {
-                    let Ok(pmt) = PmtSection::parse(&section_bytes) else {
-                        return;
+                pmt_reasm.feed(payload, pusi);
+
+                let pmt_pid = *pmt_pid;
+                while let Some(section) = pmt_reasm.pop_section() {
+                    let Ok(pmt) = PmtSection::parse(&section) else {
+                        continue;
                     };
                     // Resolve the keep-set.
                     let mut keep = BTreeSet::new();
                     keep.insert(PAT_PID);
-                    keep.insert(*pmt_pid);
+                    keep.insert(pmt_pid);
                     keep.insert(pmt.pcr_pid);
                     for stream in &pmt.streams {
                         keep.insert(stream.elementary_pid);
                     }
                     *state = ServiceState::Resolved { keep };
+                    return;
                 }
             }
 
