@@ -17,7 +17,11 @@
 //!
 //! # Spec
 //!
-//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.3.5 (PCR semantics).
+//! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.3.5 (PCR semantics). PCR is
+//! **per-program**: the PMT names a `PCR_PID` per program (§2.4.4.9), and
+//! §2.7.2 requires the PCRs on "the PCR_PID **for each program**" — so a
+//! multi-program TS carries multiple PCR PIDs, which is why this op anchors
+//! and restamps each PCR PID independently.
 
 use alloc::collections::BTreeMap;
 
