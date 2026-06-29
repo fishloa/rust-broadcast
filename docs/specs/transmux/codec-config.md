@@ -475,7 +475,7 @@ high-bit clear).
 |--------------------------|-----------|------------------------------------------------------------------|
 | tag                      | 1 byte    | `0x04` (DecoderConfigDescriptor tag).                            |
 | length (expanded)        | 1-4 bytes | Remaining descriptor length.                                     |
-| objectTypeIndication     | 1 byte    | MPEG-4 object type (e.g. `0x40`=AAC, `0x6B`=MPEG-1 Layer 3, `0x20`=H.264). |
+| objectTypeIndication     | 1 byte    | MPEG-4 object type (e.g. `0x40`=AAC (14496-3), `0x6B`=MP3 (11172-3), `0x21`=H.264/AVC (14496-10), `0x20`=MPEG-4 Visual (14496-2)). |
 | streamType               | 1 byte    | `0x15` for audio (`0x11` for video). Bits: `streamType(6)`=5 (audio), `upstream(1)`=0, `reserved(1)`=1. |
 | bufferSizeDB             | 3 bytes   | Decoding buffer size in bytes (big-endian).                      |
 | maxBitrate               | 4 bytes   | Maximum bitrate in bits/second.                                  |
