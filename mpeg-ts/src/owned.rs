@@ -10,8 +10,13 @@
 
 use crate::error::{Error, Result};
 use crate::ts::{
-    AdaptationFieldControl, ScramblingControl, TsHeader, TS_PACKET_SIZE, TS_SYNC_BYTE,
+    AdaptationField, AdaptationFieldControl, Pcr, ScramblingControl, TsHeader, ADAPTATION_FLAG,
+    AF_PCR_FLAG, CC_MASK, TS_PACKET_SIZE, TS_SYNC_BYTE,
 };
+
+/// The 13-bit PID value used for null packets — `0x1FFF`
+/// (ISO/IEC 13818-1 §2.4.3.3, Table 2-3).
+const NULL_PID: u16 = 0x1FFF;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
@@ -188,6 +193,140 @@ impl OwnedTsPacket {
         let copy_len = payload.len().min(184);
         pkt[4..4 + copy_len].copy_from_slice(&payload[..copy_len]);
         pkt
+    }
+
+    /// Build a 188-byte null packet (PID `0x1FFF`) with `0xFF`-stuffed payload.
+    ///
+    /// Null packets carry PID `0x1FFF` and have no meaningful payload
+    /// (ISO/IEC 13818-1 §2.4.1). The continuity counter `cc` is masked to 4
+    /// bits. Transport scrambling is `00` (not scrambled).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mpeg_ts::OwnedTsPacket;
+    /// use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+    /// let raw = OwnedTsPacket::null_packet(3);
+    /// assert_eq!(raw.len(), TS_PACKET_SIZE);
+    /// let pkt = TsPacket::parse(&raw).unwrap();
+    /// assert_eq!(pkt.header.pid, 0x1FFF);
+    /// assert_eq!(pkt.header.continuity_counter, 3);
+    /// ```
+    #[must_use]
+    pub fn null_packet(cc: u8) -> [u8; TS_PACKET_SIZE] {
+        Self::serialize_with_payload(NULL_PID, false, cc, &[])
+    }
+
+    /// Overwrite the `continuity_counter` field in `packet` without re-parsing.
+    ///
+    /// Writes the low 4 bits of `cc` into byte 3 bits `[3:0]` in place
+    /// (ISO/IEC 13818-1 §2.4.3.3). The other bits of byte 3 are preserved.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mpeg_ts::OwnedTsPacket;
+    /// use mpeg_ts::ts::TsPacket;
+    /// let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+    /// OwnedTsPacket::set_continuity_counter(&mut raw, 7);
+    /// let pkt = TsPacket::parse(&raw).unwrap();
+    /// assert_eq!(pkt.header.continuity_counter, 7);
+    /// ```
+    pub fn set_continuity_counter(packet: &mut [u8; TS_PACKET_SIZE], cc: u8) {
+        // Byte 3 bits [3:0] = continuity_counter (ISO/IEC 13818-1 §2.4.3.3).
+        packet[3] = (packet[3] & !CC_MASK) | (cc & CC_MASK);
+    }
+
+    /// Overwrite the PCR value in an existing adaptation field in `packet`.
+    ///
+    /// The packet must already have `adaptation_field_control` with adaptation
+    /// present (`has_adaptation == true`) and the PCR flag set in the adaptation
+    /// field flags byte. This function locates the 6-byte PCR field and
+    /// overwrites it with the encoding of `pcr`.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::BufferTooShort`] — the adaptation field does not contain a
+    ///   PCR slot (no adaptation field, zero-length field, or PCR flag not set).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use mpeg_ts::ts::{AdaptationField, AF_PCR_FLAG, Pcr, TsPacket,
+    ///                    TS_PACKET_SIZE, TS_SYNC_BYTE,
+    ///                    ADAPTATION_FLAG, PAYLOAD_FLAG};
+    /// use mpeg_ts::OwnedTsPacket;
+    ///
+    /// // Build a packet that has a PCR slot (adaptation_field_length = 7).
+    /// let mut raw = [0xAAu8; TS_PACKET_SIZE];
+    /// raw[0] = TS_SYNC_BYTE;
+    /// raw[1] = 0x00; raw[2] = 0x64; // PID = 100
+    /// raw[3] = ADAPTATION_FLAG | PAYLOAD_FLAG;
+    /// raw[4] = 7;  // adaptation_field_length
+    /// raw[5] = AF_PCR_FLAG;
+    /// raw[6..12].copy_from_slice(&[0u8; 6]);
+    ///
+    /// let new_pcr = Pcr { base: 10_000, extension: 0 };
+    /// OwnedTsPacket::set_pcr(&mut raw, new_pcr).unwrap();
+    ///
+    /// let pkt = TsPacket::parse(&raw).unwrap();
+    /// let af = pkt.adaptation_field().unwrap().unwrap();
+    /// assert_eq!(af.pcr, Some(new_pcr));
+    /// ```
+    pub fn set_pcr(packet: &mut [u8; TS_PACKET_SIZE], pcr: Pcr) -> Result<()> {
+        // Byte 3: check adaptation_field_control has adaptation bit set
+        // (ADAPTATION_FLAG = bit 5, ISO/IEC 13818-1 §2.4.3.3).
+        if packet[3] & ADAPTATION_FLAG == 0 {
+            return Err(Error::BufferTooShort {
+                need: 6,
+                have: 0,
+                what: "set_pcr: no adaptation field",
+            });
+        }
+        let af_len = packet[4] as usize;
+        if af_len < 1 {
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "set_pcr: adaptation field length is 0 (no flags byte)",
+            });
+        }
+        // Byte 5: adaptation field flags byte (AF_PCR_FLAG = 0x10, §2.4.3.4).
+        if packet[5] & AF_PCR_FLAG == 0 {
+            return Err(Error::BufferTooShort {
+                need: 6,
+                have: 0,
+                what: "set_pcr: PCR flag not set in adaptation field",
+            });
+        }
+        // PCR occupies the 6 bytes starting at offset 6 (after header + af_len byte + flags byte).
+        let pcr_start = 6usize;
+        let pcr_end = pcr_start + 6;
+        if packet.len() < pcr_end {
+            return Err(Error::BufferTooShort {
+                need: pcr_end,
+                have: packet.len(),
+                what: "set_pcr: packet too short for PCR field",
+            });
+        }
+        packet[pcr_start..pcr_end].copy_from_slice(&pcr.to_field_bytes());
+        Ok(())
+    }
+
+    /// Decode the adaptation field from this packet, if present.
+    ///
+    /// Returns `None` when no adaptation field is present, and
+    /// `Some(Err(..))` when the adaptation field bytes are malformed.
+    /// The returned [`AdaptationField`] borrows from `self.raw`.
+    pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField<'_>>> {
+        if self.raw[3] & ADAPTATION_FLAG == 0 {
+            return None;
+        }
+        let af_len = self.raw[4] as usize;
+        if af_len == 0 || 5 + af_len > TS_PACKET_SIZE {
+            return None;
+        }
+        Some(AdaptationField::parse(&self.raw[5..5 + af_len]))
     }
 }
 
