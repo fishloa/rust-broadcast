@@ -56,6 +56,19 @@ impl ScramblingControl {
         }
     }
 
+    /// Encode as the 2-bit `transport_scrambling_control` field value (`[1:0]`).
+    ///
+    /// The returned byte is in the range `0x00`–`0x03`; the caller shifts it
+    /// into position within the TS header byte 3 (H.222.0 Table 2-4).
+    pub fn to_bits(self) -> u8 {
+        match self {
+            Self::NotScrambled => 0b00,
+            Self::Reserved => 0b01,
+            Self::EvenKey => 0b10,
+            Self::OddKey => 0b11,
+        }
+    }
+
     /// Short label for this value, per the #204 convention.
     pub fn name(&self) -> &'static str {
         match self {
@@ -96,6 +109,31 @@ impl AdaptationFieldControl {
             (false, true) => Self::PayloadOnly,
             (true, false) => Self::AdaptationOnly,
             (true, true) => Self::AdaptationAndPayload,
+        }
+    }
+
+    /// Encode as the 2-bit `adaptation_field_control` field value (`[1:0]`).
+    ///
+    /// Bit 1 = adaptation present, bit 0 = payload present (H.222.0 Table 2-5).
+    /// The returned byte is in the range `0x00`–`0x03`; the caller shifts it
+    /// into bits `[5:4]` of TS header byte 3.
+    pub fn to_bits(self) -> u8 {
+        match self {
+            Self::Reserved => 0b00,
+            Self::PayloadOnly => 0b01,
+            Self::AdaptationOnly => 0b10,
+            Self::AdaptationAndPayload => 0b11,
+        }
+    }
+
+    /// Decode into the `(has_adaptation, has_payload)` flag pair stored on
+    /// [`TsHeader`]. Exact inverse of [`from_flags`](Self::from_flags).
+    pub fn to_flags(self) -> (bool, bool) {
+        match self {
+            Self::Reserved => (false, false),
+            Self::PayloadOnly => (false, true),
+            Self::AdaptationOnly => (true, false),
+            Self::AdaptationAndPayload => (true, true),
         }
     }
 
@@ -337,20 +375,23 @@ impl<'a> TsPacket<'a> {
     /// Returns `None` when the packet carries no adaptation field, and
     /// `Some(Err(..))` when a present field is truncated. Layout per
     /// ISO/IEC 13818-1:2007 §2.4.3.4 (`docs/iso_13818_1_systems.md`).
-    pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField>> {
+    pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField<'a>>> {
         self.adaptation.map(AdaptationField::parse)
     }
 }
 
 // Adaptation-field flag bits, byte 0 (ISO/IEC 13818-1:2007 §2.4.3.4).
-const AF_DISCONTINUITY: u8 = 0x80;
-const AF_RANDOM_ACCESS: u8 = 0x40;
-const AF_ES_PRIORITY: u8 = 0x20;
-const AF_PCR_FLAG: u8 = 0x10;
-const AF_OPCR_FLAG: u8 = 0x08;
-const AF_SPLICING_FLAG: u8 = 0x04;
+pub(crate) const AF_DISCONTINUITY: u8 = 0x80;
+pub(crate) const AF_RANDOM_ACCESS: u8 = 0x40;
+pub(crate) const AF_ES_PRIORITY: u8 = 0x20;
+/// PCR present flag (bit 4 of adaptation field flags byte — §2.4.3.4).
+pub const AF_PCR_FLAG: u8 = 0x10;
+pub(crate) const AF_OPCR_FLAG: u8 = 0x08;
+pub(crate) const AF_SPLICING_FLAG: u8 = 0x04;
+pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
+pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
-const PCR_FIELD_LEN: usize = 6;
+pub(crate) const PCR_FIELD_LEN: usize = 6;
 
 /// Program Clock Reference (ISO/IEC 13818-1:2007 §2.4.3.5): a 33-bit base on a
 /// 90 kHz clock plus a 9-bit extension on a 27 MHz clock.
@@ -365,13 +406,58 @@ pub struct Pcr {
 
 impl Pcr {
     /// Full PCR value on the 27 MHz clock: `base * 300 + extension`.
+    ///
+    /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`.
     #[must_use]
     pub fn as_27mhz(self) -> u64 {
         self.base * 300 + self.extension as u64
     }
 
+    /// Construct a [`Pcr`] from an absolute 27 MHz clock value.
+    ///
+    /// Decomposes `ticks` into `base = ticks / 300` and
+    /// `extension = ticks % 300`, clamping each to its wire width
+    /// (33-bit base, 9-bit extension) — ISO/IEC 13818-1:2007 §2.4.3.5.
+    ///
+    /// Round-trips with [`as_27mhz`](Self::as_27mhz):
+    /// `Pcr::from_27mhz(p.as_27mhz()) == p` for any valid `Pcr`.
+    #[must_use]
+    pub fn from_27mhz(ticks: u64) -> Self {
+        // 33-bit base mask: (1 << 33) - 1 = 0x1_FFFF_FFFF
+        const BASE_MASK: u64 = 0x1_FFFF_FFFF;
+        // 9-bit extension mask.
+        const EXT_MASK: u16 = 0x1FF;
+        Self {
+            base: (ticks / 300) & BASE_MASK,
+            extension: ((ticks % 300) as u16) & EXT_MASK,
+        }
+    }
+
+    /// Encode as the exact 6-byte PCR/OPCR field used in the adaptation field
+    /// (ISO/IEC 13818-1:2007 §2.4.3.5).
+    ///
+    /// Wire layout (big-endian, 48 bits):
+    /// `[base[32:25]][base[24:17]][base[16:9]][base[8:1]][base[0] | 6×reserved(1) | ext[8]][ext[7:0]]`
+    ///
+    /// The 6 reserved bits are set to `1` as per the spec's "reserved" convention.
+    /// Exact inverse of the private `parse` function.
+    #[must_use]
+    pub fn to_field_bytes(self) -> [u8; PCR_FIELD_LEN] {
+        let b = self.base;
+        let e = self.extension as u64;
+        [
+            ((b >> 25) & 0xFF) as u8,
+            ((b >> 17) & 0xFF) as u8,
+            ((b >> 9) & 0xFF) as u8,
+            ((b >> 1) & 0xFF) as u8,
+            // byte 4: base[0] in bit 7, bits 6-1 = reserved (set to 1), ext[8] in bit 0.
+            (((b & 0x01) as u8) << 7) | 0x7E | ((e >> 8) as u8 & 0x01),
+            (e & 0xFF) as u8,
+        ]
+    }
+
     /// Decode the 6-byte PCR/OPCR field starting at `at` within `af`.
-    fn parse(af: &[u8], at: usize) -> Result<Self> {
+    pub(crate) fn parse(af: &[u8], at: usize) -> Result<Self> {
         let b: &[u8; PCR_FIELD_LEN] = af
             .get(at..at + PCR_FIELD_LEN)
             .and_then(|s| s.try_into().ok())
@@ -390,14 +476,221 @@ impl Pcr {
     }
 }
 
-/// Decoded adaptation field — flags plus PCR/OPCR and splice point per
-/// ISO/IEC 13818-1:2007 §2.4.3.4. Transport-private data and the
-/// adaptation-field extension are not yet surfaced; more fields may be
-/// added in future releases.
-#[non_exhaustive]
+// ── Adaptation-field extension sub-structures (ISO/IEC 13818-1 §2.4.3.5) ──────
+
+/// `legal_time_window` field within the adaptation-field extension
+/// (ISO/IEC 13818-1:2007 §2.4.3.5, `ltw_flag == 1`).
+///
+/// Wire layout: `ltw_valid_flag(1) | ltw_offset(15)` = 2 bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct AdaptationField {
+pub struct Ltw {
+    /// LTW offset valid flag.
+    pub ltw_valid_flag: bool,
+    /// 15-bit `ltw_offset` (lower bound of the legal time window).
+    pub ltw_offset: u16,
+}
+
+/// `seamless_splice` field within the adaptation-field extension
+/// (ISO/IEC 13818-1:2007 §2.4.3.5, `seamless_splice_flag == 1`).
+///
+/// Wire layout: 5 bytes — `splice_type(4) | DTS_next_AU[32:30](3) | marker(1) |
+/// DTS_next_AU[29:15](15) | marker(1) | DTS_next_AU[14:0](15) | marker(1)`.
+/// The DTS field uses the same marker-bit encoding as PTS/DTS in PES headers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SeamlessSplice {
+    /// 4-bit `splice_type`.
+    pub splice_type: u8,
+    /// 33-bit `DTS_next_AU` (90 kHz decoding time of the next splice unit).
+    pub dts_next_au: u64,
+}
+
+/// Adaptation-field extension (ISO/IEC 13818-1:2007 §2.4.3.5,
+/// `adaptation_field_extension_flag == 1`).
+///
+/// Contains optional sub-fields gated by `ltw_flag`,
+/// `piecewise_rate_flag`, and `seamless_splice_flag`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct AdaptationFieldExtension {
+    /// LTW (legal time window), if `ltw_flag` is set.
+    pub ltw: Option<Ltw>,
+    /// 22-bit piecewise rate, if `piecewise_rate_flag` is set.
+    pub piecewise_rate: Option<u32>,
+    /// Seamless splice info, if `seamless_splice_flag` is set.
+    pub seamless_splice: Option<SeamlessSplice>,
+}
+
+impl AdaptationFieldExtension {
+    /// Parse the adaptation-field extension starting at `data[0]`
+    /// (the `adaptation_field_extension_length` byte).
+    fn parse(data: &[u8]) -> Result<Self> {
+        if data.is_empty() {
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: 0,
+                what: "adaptation_field_extension_length",
+            });
+        }
+        let ext_len = data[0] as usize;
+        // At least 1 byte (the flags byte) must be present inside the extension.
+        if data.len() < 1 + ext_len || ext_len < 1 {
+            return Err(Error::BufferTooShort {
+                need: 2.max(1 + ext_len),
+                have: data.len(),
+                what: "adaptation_field_extension body",
+            });
+        }
+        let ext = &data[1..1 + ext_len]; // extension bytes, starts with flags byte
+        let flags = ext[0];
+        let mut cursor = 1usize;
+
+        let ltw = if flags & 0x80 != 0 {
+            if ext.len() < cursor + 2 {
+                return Err(Error::BufferTooShort {
+                    need: cursor + 2,
+                    have: ext.len(),
+                    what: "ltw_offset",
+                });
+            }
+            let w0 = ext[cursor];
+            let w1 = ext[cursor + 1];
+            cursor += 2;
+            Some(Ltw {
+                ltw_valid_flag: (w0 & 0x80) != 0,
+                ltw_offset: (((w0 & 0x7F) as u16) << 8) | (w1 as u16),
+            })
+        } else {
+            None
+        };
+
+        let piecewise_rate = if flags & 0x40 != 0 {
+            if ext.len() < cursor + 3 {
+                return Err(Error::BufferTooShort {
+                    need: cursor + 3,
+                    have: ext.len(),
+                    what: "piecewise_rate",
+                });
+            }
+            let r = (((ext[cursor] & 0x3F) as u32) << 16)
+                | ((ext[cursor + 1] as u32) << 8)
+                | (ext[cursor + 2] as u32);
+            cursor += 3;
+            Some(r)
+        } else {
+            None
+        };
+
+        // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
+        let seamless_splice = if flags & 0x20 != 0 {
+            if ext.len() < cursor + 5 {
+                return Err(Error::BufferTooShort {
+                    need: cursor + 5,
+                    have: ext.len(),
+                    what: "seamless_splice DTS_next_AU",
+                });
+            }
+            let b = &ext[cursor..cursor + 5];
+            let splice_type = (b[0] >> 4) & 0x0F;
+            // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS.
+            let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
+            let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
+            let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
+            let dts_next_au = (hi << 30) | (mid << 15) | lo;
+            cursor += 5;
+            Some(SeamlessSplice {
+                splice_type,
+                dts_next_au,
+            })
+        } else {
+            None
+        };
+        let _ = cursor; // remaining extension bytes (reserved) are skipped
+
+        Ok(AdaptationFieldExtension {
+            ltw,
+            piecewise_rate,
+            seamless_splice,
+        })
+    }
+
+    /// Number of bytes written by [`serialize_into`](Self::serialize_into),
+    /// **including** the leading `adaptation_field_extension_length` byte.
+    #[must_use]
+    pub fn serialized_len(&self) -> usize {
+        let body = 1 // flags byte
+            + self.ltw.map_or(0, |_| 2)
+            + self.piecewise_rate.map_or(0, |_| 3)
+            + self.seamless_splice.map_or(0, |_| 5);
+        1 + body // + length byte itself
+    }
+
+    /// Serialize into `buf` (includes the `adaptation_field_extension_length` byte).
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let body_len = need - 1;
+        buf[0] = body_len as u8;
+
+        let mut flags = 0u8;
+        if self.ltw.is_some() {
+            flags |= 0x80;
+        }
+        if self.piecewise_rate.is_some() {
+            flags |= 0x40;
+        }
+        if self.seamless_splice.is_some() {
+            flags |= 0x20;
+        }
+        buf[1] = flags;
+        let mut cursor = 2usize;
+
+        if let Some(ltw) = self.ltw {
+            let ltw_valid = if ltw.ltw_valid_flag { 0x80u8 } else { 0x00 };
+            buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & 0x7F);
+            buf[cursor + 1] = (ltw.ltw_offset & 0xFF) as u8;
+            cursor += 2;
+        }
+        if let Some(rate) = self.piecewise_rate {
+            // 2 reserved bits (set to 1) | 22-bit rate (ISO/IEC 13818-1 §2.4.3.5).
+            buf[cursor] = 0xC0 | ((rate >> 16) as u8 & 0x3F);
+            buf[cursor + 1] = (rate >> 8) as u8;
+            buf[cursor + 2] = rate as u8;
+            cursor += 3;
+        }
+        if let Some(ss) = self.seamless_splice {
+            let ts = ss.dts_next_au & 0x1_FFFF_FFFF;
+            let st = ss.splice_type & 0x0F;
+            // byte 0: splice_type(4) | DTS[32:30](3) | marker(1)
+            buf[cursor] = (st << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01;
+            buf[cursor + 1] = ((ts >> 22) & 0xFF) as u8;
+            buf[cursor + 2] = ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01;
+            buf[cursor + 3] = ((ts >> 7) & 0xFF) as u8;
+            buf[cursor + 4] = (((ts & 0x7F) as u8) << 1) | 0x01;
+            cursor += 5;
+        }
+        Ok(cursor)
+    }
+}
+
+/// Decoded adaptation field — full §2.4.3.4 layout including transport-private
+/// data and the adaptation-field extension sub-structure.
+///
+/// The `transport_private_data` slice borrows from the original packet buffer
+/// (it is genuinely opaque caller-defined bytes per the spec — `&[u8]` is the
+/// correct public type). All other fields are fully typed.
+///
+/// ISO/IEC 13818-1:2007 §2.4.3.4.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct AdaptationField<'a> {
     /// A timing/continuity discontinuity starts at this packet.
     pub discontinuity_indicator: bool,
     /// This packet is a random-access point.
@@ -410,11 +703,23 @@ pub struct AdaptationField {
     pub opcr: Option<Pcr>,
     /// Splice countdown (packets until the splice point), iff the flag is set.
     pub splice_countdown: Option<i8>,
+    /// Opaque transport-private data (caller-defined; `&[u8]` is spec-correct here).
+    ///
+    /// Present iff `transport_private_data_flag` is set in the flags byte
+    /// (ISO/IEC 13818-1:2007 §2.4.3.4).
+    pub transport_private_data: Option<&'a [u8]>,
+    /// Typed adaptation-field extension sub-structure, if the flag is set.
+    pub extension: Option<AdaptationFieldExtension>,
 }
 
-impl AdaptationField {
+impl<'a> AdaptationField<'a> {
     /// Parse the adaptation-field bytes (those following the length byte).
-    fn parse(af: &[u8]) -> Result<Self> {
+    ///
+    /// `af` must be exactly the adaptation-field body bytes: the slice starts
+    /// at the **flags byte** (byte 0 of `af`), i.e. the bytes AFTER the
+    /// `adaptation_field_length` byte itself. This matches how
+    /// `TsPacket::parse` captures and hands them off.
+    pub(crate) fn parse(af: &'a [u8]) -> Result<Self> {
         let flags = *af.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -442,10 +747,51 @@ impl AdaptationField {
                 have: af.len(),
                 what: "adaptation_field splice_countdown",
             })?;
+            cursor += 1;
             Some(b as i8)
         } else {
             None
         };
+
+        // transport_private_data (ISO/IEC 13818-1 §2.4.3.4):
+        // transport_private_data_length(8) + transport_private_data_byte * N
+        let transport_private_data = if flags & AF_TRANSPORT_PRIVATE_DATA_FLAG != 0 {
+            let tpd_len = *af.get(cursor).ok_or(Error::BufferTooShort {
+                need: cursor + 1,
+                have: af.len(),
+                what: "transport_private_data_length",
+            })? as usize;
+            cursor += 1;
+            let end = cursor + tpd_len;
+            let slice = af.get(cursor..end).ok_or(Error::BufferTooShort {
+                need: end,
+                have: af.len(),
+                what: "transport_private_data",
+            })?;
+            cursor = end;
+            Some(slice)
+        } else {
+            None
+        };
+
+        // adaptation_field_extension (ISO/IEC 13818-1 §2.4.3.5):
+        let extension = if flags & AF_EXTENSION_FLAG != 0 {
+            let ext_data = af.get(cursor..).ok_or(Error::BufferTooShort {
+                need: cursor + 1,
+                have: af.len(),
+                what: "adaptation_field_extension",
+            })?;
+            let ext = AdaptationFieldExtension::parse(ext_data)?;
+            // advance cursor past the extension (ext_data[0] = length byte)
+            if !ext_data.is_empty() {
+                let _ext_len = ext_data[0] as usize;
+                cursor += 1 + _ext_len;
+            }
+            Some(ext)
+        } else {
+            None
+        };
+        let _ = cursor;
 
         Ok(AdaptationField {
             discontinuity_indicator: flags & AF_DISCONTINUITY != 0,
@@ -454,7 +800,109 @@ impl AdaptationField {
             pcr,
             opcr,
             splice_countdown,
+            transport_private_data,
+            extension,
         })
+    }
+
+    /// Number of bytes written by [`serialize_into`](Self::serialize_into).
+    ///
+    /// This is the body length **excluding** the leading `adaptation_field_length`
+    /// byte — it is the value carried in that length byte itself
+    /// (ISO/IEC 13818-1:2007 §2.4.3.4).
+    #[must_use]
+    pub fn serialized_len(&self) -> usize {
+        let mut n = 1usize; // flags byte
+        if self.pcr.is_some() {
+            n += PCR_FIELD_LEN;
+        }
+        if self.opcr.is_some() {
+            n += PCR_FIELD_LEN;
+        }
+        if self.splice_countdown.is_some() {
+            n += 1;
+        }
+        if let Some(tpd) = self.transport_private_data {
+            n += 1 + tpd.len(); // length byte + data
+        }
+        if let Some(ref ext) = self.extension {
+            n += ext.serialized_len();
+        }
+        n
+    }
+
+    /// Serialize the adaptation field into `buf`.
+    ///
+    /// Writes the **body** bytes — the flags byte plus optional fields in the
+    /// order specified by ISO/IEC 13818-1:2007 §2.4.3.4. The
+    /// `adaptation_field_length` byte itself is **not** written here; the caller
+    /// must prepend it (it equals `serialized_len()`).
+    ///
+    /// Returns the number of bytes written on success, or
+    /// [`Error::OutputBufferTooSmall`] if `buf` is shorter than
+    /// `serialized_len()`.
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+
+        // Byte 0: flags (ISO/IEC 13818-1:2007 §2.4.3.4).
+        let mut flags = 0u8;
+        if self.discontinuity_indicator {
+            flags |= AF_DISCONTINUITY;
+        }
+        if self.random_access_indicator {
+            flags |= AF_RANDOM_ACCESS;
+        }
+        if self.elementary_stream_priority_indicator {
+            flags |= AF_ES_PRIORITY;
+        }
+        if self.pcr.is_some() {
+            flags |= AF_PCR_FLAG;
+        }
+        if self.opcr.is_some() {
+            flags |= AF_OPCR_FLAG;
+        }
+        if self.splice_countdown.is_some() {
+            flags |= AF_SPLICING_FLAG;
+        }
+        if self.transport_private_data.is_some() {
+            flags |= AF_TRANSPORT_PRIVATE_DATA_FLAG;
+        }
+        if self.extension.is_some() {
+            flags |= AF_EXTENSION_FLAG;
+        }
+        buf[0] = flags;
+
+        let mut cursor = 1usize;
+        if let Some(pcr) = self.pcr {
+            buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
+            cursor += PCR_FIELD_LEN;
+        }
+        if let Some(opcr) = self.opcr {
+            buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&opcr.to_field_bytes());
+            cursor += PCR_FIELD_LEN;
+        }
+        if let Some(sc) = self.splice_countdown {
+            buf[cursor] = sc as u8;
+            cursor += 1;
+        }
+        if let Some(tpd) = self.transport_private_data {
+            buf[cursor] = tpd.len() as u8;
+            cursor += 1;
+            buf[cursor..cursor + tpd.len()].copy_from_slice(tpd);
+            cursor += tpd.len();
+        }
+        if let Some(ref ext) = self.extension {
+            let written = ext.serialize_into(&mut buf[cursor..])?;
+            cursor += written;
+        }
+
+        Ok(cursor)
     }
 }
 
@@ -1378,5 +1826,382 @@ mod tests {
     fn extract_ts_payload_adaptation_only_returns_none() {
         let pkt = make_packet(0x00, 0x00, ADAPTATION_FLAG, &[]);
         assert!(super::extract_ts_payload(&pkt).is_none());
+    }
+
+    // ── Pcr write-side ──────────────────────────────────────────────────────
+
+    /// `from_27mhz(v).as_27mhz() == v` for representative values
+    /// (ISO/IEC 13818-1:2007 §2.4.3.5).
+    #[test]
+    fn pcr_from_27mhz_round_trips() {
+        for &ticks in &[0u64, 1, 300, 27_000_000, u64::from(u32::MAX), 8_589_934_591] {
+            let pcr = Pcr::from_27mhz(ticks);
+            assert_eq!(pcr.as_27mhz(), ticks, "ticks={ticks}");
+        }
+    }
+
+    /// `to_field_bytes` → `parse` → same `Pcr` (field-bytes round-trip).
+    #[test]
+    fn pcr_to_field_bytes_round_trips_parse() {
+        let cases = [
+            Pcr {
+                base: 0,
+                extension: 0,
+            },
+            Pcr {
+                base: 10_000,
+                extension: 0,
+            },
+            Pcr {
+                base: 1,
+                extension: 100,
+            },
+            Pcr {
+                base: 0x1_FFFF_FFFF,
+                extension: 0x1FF,
+            },
+        ];
+        for pcr in cases {
+            let bytes = pcr.to_field_bytes();
+            // Prefix the 6 bytes with a dummy flags byte so the offset is 1,
+            // matching the parse() calling convention inside AdaptationField::parse.
+            let mut af = [0u8; 7];
+            af[1..7].copy_from_slice(&bytes);
+            let decoded = Pcr::parse(&af, 1).expect("parse round-trip");
+            assert_eq!(decoded, pcr, "round-trip failed for {pcr:?}");
+        }
+    }
+
+    /// Known vector from ts.rs existing test — base=10000, extension=0 produces
+    /// the 6-byte encoding `[0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]`.
+    #[test]
+    fn pcr_to_field_bytes_known_vector() {
+        let pcr = Pcr {
+            base: 10_000,
+            extension: 0,
+        };
+        let bytes = pcr.to_field_bytes();
+        assert_eq!(bytes, [0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]);
+    }
+
+    // ── ScramblingControl to_bits ───────────────────────────────────────────
+
+    #[test]
+    fn scrambling_control_to_bits_inverse_of_from_bits() {
+        for bits in 0u8..=3 {
+            let sc = ScramblingControl::from_bits(bits);
+            assert_eq!(sc.to_bits(), bits, "to_bits() != from_bits() for {bits}");
+        }
+    }
+
+    // ── AdaptationFieldControl to_bits / to_flags ──────────────────────────
+
+    #[test]
+    fn adaptation_field_control_to_bits_inverse_of_from_flags() {
+        let cases = [
+            (false, false, 0b00u8),
+            (false, true, 0b01),
+            (true, false, 0b10),
+            (true, true, 0b11),
+        ];
+        for (has_af, has_pl, expected_bits) in cases {
+            let afc = AdaptationFieldControl::from_flags(has_af, has_pl);
+            assert_eq!(afc.to_bits(), expected_bits);
+            assert_eq!(afc.to_flags(), (has_af, has_pl));
+        }
+    }
+
+    // ── AdaptationField serialize_into ─────────────────────────────────────
+
+    /// Build an adaptation field with PCR, serialize → parse → verify equal.
+    #[test]
+    fn adaptation_field_serialize_round_trip_with_pcr() {
+        let original = AdaptationField {
+            discontinuity_indicator: true,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: Some(Pcr {
+                base: 10_000,
+                extension: 0,
+            }),
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+        };
+        let len = original.serialized_len();
+        assert_eq!(len, 7); // 1 flags + 6 PCR
+        let mut buf = vec![0u8; len];
+        let written = original.serialize_into(&mut buf).expect("serialize");
+        assert_eq!(written, len);
+        let decoded = AdaptationField::parse(&buf).expect("parse round-trip");
+        assert_eq!(decoded, original);
+    }
+
+    /// Known-bytes test: flags=0x30 (discontinuity + PCR), known PCR vector.
+    #[test]
+    fn adaptation_field_serialize_produces_known_bytes() {
+        // Matches the packet in ts.rs `adaptation_field_flags_and_pcr` test:
+        // raw[5] = AF_DISCONTINUITY | AF_PCR_FLAG = 0x90
+        // raw[6..12] = [0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]
+        let af = AdaptationField {
+            discontinuity_indicator: true,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: Some(Pcr {
+                base: 10_000,
+                extension: 0,
+            }),
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+        };
+        let mut buf = [0u8; 7];
+        af.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0], AF_DISCONTINUITY | AF_PCR_FLAG);
+        assert_eq!(&buf[1..7], &[0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]);
+    }
+
+    /// Serialize → parse round-trip for AdaptationField with OPCR + splice_countdown.
+    #[test]
+    fn adaptation_field_serialize_round_trip_opcr_and_splice() {
+        let original = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: true,
+            elementary_stream_priority_indicator: true,
+            pcr: Some(Pcr {
+                base: 1,
+                extension: 100,
+            }),
+            opcr: Some(Pcr {
+                base: 999,
+                extension: 5,
+            }),
+            splice_countdown: Some(-3),
+            transport_private_data: None,
+            extension: None,
+        };
+        let len = original.serialized_len();
+        assert_eq!(len, 1 + 6 + 6 + 1); // flags + PCR + OPCR + splice
+        let mut buf = vec![0u8; len];
+        original.serialize_into(&mut buf).unwrap();
+        let decoded = AdaptationField::parse(&buf).expect("parse");
+        assert_eq!(decoded, original);
+    }
+
+    /// Flags-only AdaptationField (no PCR/OPCR/splice).
+    #[test]
+    fn adaptation_field_serialize_flags_only() {
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: true,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+        };
+        assert_eq!(af.serialized_len(), 1);
+        let mut buf = [0u8; 1];
+        af.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0], AF_RANDOM_ACCESS);
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        assert_eq!(decoded, af);
+    }
+
+    /// OutputBufferTooSmall returned when buffer is too short.
+    #[test]
+    fn adaptation_field_serialize_rejects_small_buffer() {
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: Some(Pcr {
+                base: 0,
+                extension: 0,
+            }),
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+        };
+        let mut buf = [0u8; 3]; // need 7
+        assert!(matches!(
+            af.serialize_into(&mut buf),
+            Err(Error::OutputBufferTooSmall { .. })
+        ));
+    }
+
+    // ── AdaptationFieldExtension (§2.4.3.5) ────────────────────────────────
+
+    /// Round-trip LTW field.
+    #[test]
+    fn adaptation_field_extension_ltw_round_trip() {
+        let ext = AdaptationFieldExtension {
+            ltw: Some(Ltw {
+                ltw_valid_flag: true,
+                ltw_offset: 0x1234,
+            }),
+            piecewise_rate: None,
+            seamless_splice: None,
+        };
+        let mut buf = vec![0u8; ext.serialized_len()];
+        ext.serialize_into(&mut buf).unwrap();
+        // Parse via AdaptationField (extension is the last field)
+        // Build a full AdaptationField with only the extension set.
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: Some(ext),
+        };
+        let len = af.serialized_len();
+        let mut abuf = vec![0u8; len];
+        af.serialize_into(&mut abuf).unwrap();
+        let decoded = AdaptationField::parse(&abuf).unwrap();
+        assert_eq!(decoded.extension, Some(ext));
+    }
+
+    /// Round-trip piecewise_rate field.
+    #[test]
+    fn adaptation_field_extension_piecewise_rate_round_trip() {
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: Some(AdaptationFieldExtension {
+                ltw: None,
+                piecewise_rate: Some(0x3FFFFF), // max 22-bit
+                seamless_splice: None,
+            }),
+        };
+        let mut buf = vec![0u8; af.serialized_len()];
+        af.serialize_into(&mut buf).unwrap();
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        assert_eq!(decoded.extension.unwrap().piecewise_rate, Some(0x3FFFFF));
+    }
+
+    /// Round-trip seamless_splice field.
+    #[test]
+    fn adaptation_field_extension_seamless_splice_round_trip() {
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: Some(AdaptationFieldExtension {
+                ltw: None,
+                piecewise_rate: None,
+                seamless_splice: Some(SeamlessSplice {
+                    splice_type: 0xA,
+                    dts_next_au: 0x1_2345_6789,
+                }),
+            }),
+        };
+        let mut buf = vec![0u8; af.serialized_len()];
+        af.serialize_into(&mut buf).unwrap();
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        let ss = decoded.extension.unwrap().seamless_splice.unwrap();
+        assert_eq!(ss.splice_type, 0xA);
+        assert_eq!(ss.dts_next_au, 0x1_2345_6789);
+    }
+
+    /// Round-trip with transport_private_data.
+    #[test]
+    fn adaptation_field_transport_private_data_round_trip() {
+        let tpd = [0xDE, 0xAD, 0xBE, 0xEF];
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: Some(&tpd),
+            extension: None,
+        };
+        let mut buf = vec![0u8; af.serialized_len()];
+        af.serialize_into(&mut buf).unwrap();
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        assert_eq!(decoded.transport_private_data, Some(tpd.as_slice()));
+    }
+
+    /// All optional fields together: PCR + splice + TPD + extension.
+    #[test]
+    fn adaptation_field_all_fields_round_trip() {
+        let tpd = [0x01u8, 0x02, 0x03];
+        let af = AdaptationField {
+            discontinuity_indicator: true,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: Some(Pcr {
+                base: 90_000,
+                extension: 50,
+            }),
+            opcr: None,
+            splice_countdown: Some(10),
+            transport_private_data: Some(&tpd),
+            extension: Some(AdaptationFieldExtension {
+                ltw: Some(Ltw {
+                    ltw_valid_flag: false,
+                    ltw_offset: 500,
+                }),
+                piecewise_rate: Some(12345),
+                seamless_splice: None,
+            }),
+        };
+        let len = af.serialized_len();
+        let mut buf = vec![0u8; len];
+        af.serialize_into(&mut buf).unwrap();
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        assert_eq!(decoded.pcr, af.pcr);
+        assert_eq!(decoded.splice_countdown, af.splice_countdown);
+        assert_eq!(decoded.transport_private_data, af.transport_private_data);
+        assert_eq!(decoded.extension, af.extension);
+        assert!(decoded.discontinuity_indicator);
+    }
+
+    /// Full round-trip: build a packet with PCR in adaptation field, parse
+    /// it, re-serialize the adaptation field, re-parse, assert PCR matches.
+    #[test]
+    fn adaptation_field_serialize_from_real_packet_bytes() {
+        // Replicate the raw packet from `adaptation_field_flags_and_pcr`.
+        let mut raw = [0xAAu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0x01;
+        raw[2] = 0x00;
+        raw[3] = ADAPTATION_FLAG | PAYLOAD_FLAG;
+        raw[4] = 7;
+        raw[5] = AF_DISCONTINUITY | AF_PCR_FLAG;
+        raw[6..12].copy_from_slice(&[0x00, 0x00, 0x13, 0x88, 0x7E, 0x00]);
+
+        let pkt = TsPacket::parse(&raw).unwrap();
+        let af = pkt.adaptation_field().unwrap().unwrap();
+
+        // Re-serialize.
+        let mut ser = vec![0u8; af.serialized_len()];
+        af.serialize_into(&mut ser).unwrap();
+        let decoded = AdaptationField::parse(&ser).unwrap();
+        assert_eq!(
+            decoded.pcr,
+            Some(Pcr {
+                base: 10_000,
+                extension: 0
+            })
+        );
+        assert!(decoded.discontinuity_indicator);
     }
 }

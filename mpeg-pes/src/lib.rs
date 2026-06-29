@@ -46,7 +46,9 @@ mod timestamp;
 
 pub use assembler::PesAssembler;
 pub use error::{Error, Result};
-pub use packet::{PesHeader, PesPacket};
+pub use packet::{
+    Escr, PStdBuffer, PesExtension, PesHeader, PesPacket, ProgramPacketSequenceCounter, TrickMode,
+};
 pub use stream_id::StreamId;
 pub use timestamp::{Dts, Pts};
 

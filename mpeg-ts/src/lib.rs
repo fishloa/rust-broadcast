@@ -49,3 +49,7 @@ pub mod ts;
 
 pub use error::{Error, Result};
 pub use owned::OwnedTsPacket;
+pub use ts::{
+    AdaptationField, AdaptationFieldControl, AdaptationFieldExtension, Ltw, Pcr, ScramblingControl,
+    SeamlessSplice, TsHeader, TsPacket,
+};

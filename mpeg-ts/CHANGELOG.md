@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-06-29
+
+### Added
+- `Pcr::from_27mhz(ticks: u64) -> Pcr` — construct a PCR from an absolute 27 MHz
+  clock value (ISO/IEC 13818-1 §2.4.3.5).
+- `Pcr::to_field_bytes(self) -> [u8; 6]` — serialize PCR to the 6-byte wire
+  field; exact inverse of `Pcr::parse`.
+- `ScramblingControl::to_bits(self) -> u8` — 2-bit scrambling-control code
+  (ETSI TS 100 289 §5.1, H.222.0 Table 2-4).
+- `AdaptationFieldControl::to_bits(self) -> u8` — 2-bit adaptation_field_control
+  code (H.222.0 Table 2-5).
+- `AdaptationFieldControl::to_flags(self) -> (bool, bool)` — `(has_adaptation,
+  has_payload)` pair for constructing TS packet headers.
+- `AdaptationField::serialize_into` — full symmetric serializer for the
+  adaptation field, including all optional sub-structures.
+- `Ltw`, `SeamlessSplice`, `AdaptationFieldExtension` — typed sub-structures for
+  the adaptation field extension (ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5): LTW
+  (2-byte: valid_flag + 15-bit offset), piecewise_rate (22-bit), and seamless
+  splice (33-bit DTS-format next AU DTS with 4-bit splice_type).
+- `AdaptationField::transport_private_data: Option<&[u8]>` — opaque private data
+  blob (correct API per spec).
+- `AdaptationField::extension: Option<AdaptationFieldExtension>` — typed extension
+  sub-structure.
+- `OwnedTsPacket::null_packet(cc: u8) -> [u8; 188]` — construct a null packet
+  (PID 0x1FFF, no payload) per ISO/IEC 13818-1 §2.4.1.
+- `OwnedTsPacket::set_continuity_counter(packet, cc)` — overwrite the CC in an
+  existing 188-byte packet buffer (bits [3:0] of byte 3).
+- `OwnedTsPacket::set_pcr(packet, pcr) -> Result<()>` — overwrite the PCR field
+  in an existing adaptation field.
+- `OwnedTsPacket::adaptation_field` — decode the adaptation field from the owned
+  buffer.
+- All new types are symmetric: `parse` + `serialize_into` with round-trip tests.
+
+### Changed
+- `AdaptationField` now carries a `'a` lifetime (borrows `transport_private_data`
+  from the packet buffer); it is no longer `Copy` (use `Clone`).
+
 ## [0.1.1] — 2026-06-29
 
 ### Changed

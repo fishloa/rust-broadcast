@@ -33,6 +33,17 @@ impl Pts {
     pub fn to_field_bytes(self) -> [u8; 5] {
         write(self.0, 0b0010)
     }
+    /// Decode from a 5-byte PTS-only field (prefix `0010`).
+    ///
+    /// Exact inverse of [`to_field_bytes`](Self::to_field_bytes).
+    /// Returns an error if the prefix or marker bits are wrong.
+    pub fn from_field_bytes(b: &[u8; 5]) -> crate::Result<Self> {
+        Ok(Pts(read(b, 0b0010, "PTS")?))
+    }
+    /// Decode from a 5-byte PTS field in a PTS+DTS pair (prefix `0011`).
+    pub fn from_field_bytes_with_dts(b: &[u8; 5]) -> crate::Result<Self> {
+        Ok(Pts(read(b, 0b0011, "PTS(with DTS)")?))
+    }
 }
 
 impl Dts {
@@ -50,6 +61,12 @@ impl Dts {
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; 5] {
         write(self.0, 0b0001)
+    }
+    /// Decode from a 5-byte DTS field (prefix `0001`).
+    ///
+    /// Exact inverse of [`to_field_bytes`](Self::to_field_bytes).
+    pub fn from_field_bytes(b: &[u8; 5]) -> crate::Result<Self> {
+        Ok(Dts(read(b, 0b0001, "DTS")?))
     }
 }
 
@@ -122,5 +139,39 @@ mod tests {
     #[test]
     fn seconds() {
         assert!((Pts(90_000).seconds() - 1.0).abs() < 1e-9);
+    }
+
+    // ── from_field_bytes round-trips ─────────────────────────────────────────
+
+    /// `to_field_bytes` → `from_field_bytes` → same value.
+    #[test]
+    fn pts_from_field_bytes_round_trip() {
+        for val in [0u64, 1, 90_000, 0x1_FFFF_FFFF, TS_MASK] {
+            let pts = Pts(val);
+            let bytes = pts.to_field_bytes();
+            let decoded = Pts::from_field_bytes(&bytes).unwrap();
+            assert_eq!(decoded, pts, "val={val:#x}");
+        }
+    }
+
+    /// `to_field_bytes` → `from_field_bytes_with_dts` → same value.
+    #[test]
+    fn pts_from_field_bytes_with_dts_round_trip() {
+        let pts = Pts(0x1234_5678);
+        // In a PTS+DTS pair, PTS uses prefix 0b0011.
+        let bytes = crate::timestamp::write(pts.0, 0b0011);
+        let decoded = Pts::from_field_bytes_with_dts(&bytes).unwrap();
+        assert_eq!(decoded, pts);
+    }
+
+    /// `Dts::to_field_bytes` → `Dts::from_field_bytes` → same value.
+    #[test]
+    fn dts_from_field_bytes_round_trip() {
+        for val in [0u64, 1, 90_000, TS_MASK] {
+            let dts = Dts(val);
+            let bytes = dts.to_field_bytes();
+            let decoded = Dts::from_field_bytes(&bytes).unwrap();
+            assert_eq!(decoded, dts, "val={val:#x}");
+        }
     }
 }
