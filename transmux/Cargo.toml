@@ -1,0 +1,23 @@
+[package]
+name         = "transmux"
+version      = "0.1.0"
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-broadcast"
+rust-version = "1.81"
+description  = "ISOBMFF box layer parser and serializer (ISO/IEC 14496-12:2015 §4.2): Box/FullBox headers, size-driven box walker."
+keywords     = ["isobmff", "mp4", "fmp4", "box", "mpeg"]
+categories   = ["parser-implementations", "multimedia::video", "no-std"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+
+[features]
+default = ["std", "serde"]
+std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
+serde  = ["dep:serde"]
+
+[package.metadata.docs.rs]
+all-features = true
