@@ -1,188 +1,173 @@
-//! PCR restamp tests for `ts-fix`.
+//! PCR restamp — real-fixture fault-inject test (ISO/IEC 13818-1 §2.4.3.5).
 //!
-//! Fault-inject: generate a synthetic TS stream with known PCRs on PID 100,
-//! zero the PCR field bytes, run restamp with a known bitrate, and verify:
+//! Oracle: the shared `fixtures/france-tnt-pcr.ts` — a 2688-packet slice of a
+//! real French TNT mux carrying 24 PCRs across 5 PCR PIDs. We corrupt the PCRs
+//! on the busiest PCR PID (keeping the first as the anchor), run
+//! `restamp_pcr(from_bitrate)`, and assert the output PCRs are strictly
+//! increasing and within tolerance of the original timeline — `from_bitrate`
+//! recomputes them from packet position, ignoring the corruption.
 //!
-//! 1. Output PCRs are monotonic non-decreasing.
-//! 2. The rewritten PCR field round-trips through `Pcr::to_field_bytes` + decode.
-//! 3. Output PCRs match the expected timeline (within tolerance).
-//! 4. The test BITES: identity pass-through leaves zeroed (non-monotonic flatline) PCRs.
+//! The test BITES: an identity pass-through leaves the corrupted, non-monotonic
+//! PCRs (see `identity_leaves_corrupted_pcrs_nonmonotonic`).
 
-use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE};
-use mpeg_ts::OwnedTsPacket;
+use ts_fix::{PcrRestamp, TsFix};
 
-/// Manually decode a PCR from the 6-byte adaptation-field slot.
-fn decode_pcr_field(buf: &[u8]) -> Option<Pcr> {
-    if buf.len() < 6 {
-        return None;
-    }
-    let base = ((buf[0] as u64) << 25)
-        | ((buf[1] as u64) << 17)
-        | ((buf[2] as u64) << 9)
-        | ((buf[3] as u64) << 1)
-        | (((buf[4] as u64) >> 7) & 0x01);
-    let ext_hi = ((buf[4] as u16) & 0x01) << 8;
-    let ext_lo = buf[5] as u16;
-    let extension = ext_hi | ext_lo;
-    Some(Pcr { base, extension })
+const PKT: usize = 188;
+// Shared workspace fixtures live one level up from the crate root (read at
+// runtime via std::fs, so `cargo publish` — which never runs integration tests
+// — is unaffected by the out-of-crate path).
+const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/france-tnt-pcr.ts");
+
+fn pid(p: &[u8]) -> u16 {
+    (((p[1] & 0x1f) as u16) << 8) | p[2] as u16
 }
 
-fn extract_pcr(pkt: &[u8]) -> Option<Pcr> {
-    if pkt.len() < 12 {
+/// `Some(pcr_27mhz)` if this packet carries a PCR in its adaptation field.
+fn pcr_27mhz(p: &[u8]) -> Option<u64> {
+    let afc = (p[3] >> 4) & 0x3;
+    if afc != 2 && afc != 3 {
         return None;
     }
-    if pkt[3] & 0x20 == 0 {
+    if *p.get(4)? == 0 {
         return None;
     }
-    if pkt[4] < 1 {
+    if *p.get(5)? & 0x10 == 0 {
         return None;
     }
-    if pkt[5] & 0x10 == 0 {
-        return None;
-    }
-    decode_pcr_field(&pkt[6..12])
+    let b = p.get(6..12)?;
+    let base = ((b[0] as u64) << 25)
+        | ((b[1] as u64) << 17)
+        | ((b[2] as u64) << 9)
+        | ((b[3] as u64) << 1)
+        | ((b[4] as u64) >> 7);
+    let ext = (((b[4] & 0x01) as u16) << 8) | (b[5] as u16);
+    Some(base * 300 + ext as u64)
 }
 
-fn has_pcr_flag(pkt: &[u8]) -> bool {
-    pkt.len() >= 6 && (pkt[3] & 0x20) != 0 && pkt[4] >= 1 && (pkt[5] & 0x10) != 0
+fn set_pcr_27mhz(p: &mut [u8], v: u64) {
+    let base = v / 300;
+    let ext = (v % 300) as u16;
+    p[6] = (base >> 25) as u8;
+    p[7] = (base >> 17) as u8;
+    p[8] = (base >> 9) as u8;
+    p[9] = (base >> 1) as u8;
+    p[10] = (((base & 1) as u8) << 7) | 0x7e | (((ext >> 8) & 1) as u8);
+    p[11] = (ext & 0xff) as u8;
 }
 
-/// Build a synthetic stream of `count` packets on PID 100 with PCRs every
-/// `pcr_interval` packets.
-fn build_pcr_stream(count: usize, pcr_interval: usize, ticks_per_pkt: u64) -> Vec<u8> {
-    let mut stream = Vec::with_capacity(count * 188);
-    for i in 0..count {
-        let pid = 100u16;
-        let cc = (i & 0x0F) as u8;
+fn load() -> Vec<u8> {
+    std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
+}
 
-        if i % pcr_interval == 0 {
-            let pcr_27mhz = (i as u64) * ticks_per_pkt;
-            let pcr = Pcr::from_27mhz(pcr_27mhz);
-
-            let mut pkt = [0u8; TS_PACKET_SIZE];
-            pkt[0] = 0x47;
-            pkt[3] = 0x30 | cc;
-            pkt[4] = 7;
-            pkt[5] = 0x10;
-            pkt[6..12].copy_from_slice(&pcr.to_field_bytes());
-            for b in &mut pkt[12..] {
-                *b = 0xFF;
-            }
-            stream.extend_from_slice(&pkt);
-        } else {
-            stream.extend_from_slice(&OwnedTsPacket::serialize_with_payload(pid, i == 0, cc, &[]));
+/// The PCR PID with the most PCRs, and its (packet_index, pcr_27mhz) series.
+fn busiest_pcr_pid(buf: &[u8]) -> (u16, Vec<(usize, u64)>) {
+    use std::collections::BTreeMap;
+    let mut by_pid: BTreeMap<u16, Vec<(usize, u64)>> = BTreeMap::new();
+    for (i, p) in buf.chunks_exact(PKT).enumerate() {
+        if let Some(v) = pcr_27mhz(p) {
+            by_pid.entry(pid(p)).or_default().push((i, v));
         }
     }
-    stream
+    by_pid
+        .into_iter()
+        .max_by_key(|(_, v)| v.len())
+        .expect("fixture must carry PCRs")
+}
+
+/// Zero every PCR on `pcr_pid` except the one at `keep_index` (the anchor).
+fn corrupt_pcrs(buf: &mut [u8], pcr_pid: u16, keep_index: usize) {
+    for (idx, p) in buf.chunks_exact_mut(PKT).enumerate() {
+        if pid(p) == pcr_pid && pcr_27mhz(p).is_some() && idx != keep_index {
+            set_pcr_27mhz(p, 0);
+        }
+    }
+}
+
+fn run<F: FnOnce(ts_fix::TsFixBuilder) -> ts_fix::TsFixBuilder>(input: &[u8], cfg: F) -> Vec<u8> {
+    let mut fix = cfg(TsFix::builder()).build().expect("build");
+    let mut out = Vec::with_capacity(input.len());
+    for p in input.chunks_exact(PKT) {
+        let _ = fix.push(p, |o| out.extend_from_slice(o));
+    }
+    fix.finish(|o| out.extend_from_slice(o));
+    out
 }
 
 #[test]
-fn pcr_restamp_from_bitrate_recovers_monotonic() {
-    let ticks_per_pkt = 1504u64;
-    let bitrate = 27_000_000u64;
-    let pcr_interval = 10usize;
-    let input = build_pcr_stream(500, pcr_interval, ticks_per_pkt);
+fn from_bitrate_repairs_corrupted_pcrs_on_real_capture() {
+    let original = load();
+    let (pcr_pid, series) = busiest_pcr_pid(&original);
+    assert!(series.len() >= 3, "need >=3 PCRs; got {}", series.len());
 
-    // ── 1. Record original PCRs and compute ideal values ─────────────────
-    let original_pcrs: Vec<Pcr> = input.chunks(188).filter_map(extract_pcr).collect();
-    assert!(original_pcrs.len() >= 5);
-    let ideal_pcrs: Vec<u64> = (0..original_pcrs.len())
-        .map(|n| n as u64 * pcr_interval as u64 * ticks_per_pkt)
-        .collect();
-
-    // ── 2. Zero the PCR field bytes to create worst-case corruption ───────
-    let zeroed: Vec<u8> = input
-        .chunks(188)
-        .flat_map(|chunk| {
-            let mut buf = [0u8; TS_PACKET_SIZE];
-            buf.copy_from_slice(chunk);
-            if has_pcr_flag(&buf) {
-                buf[6..12].fill(0);
-            }
-            buf.to_vec()
-        })
-        .collect();
-
-    // Verify zeroing worked: all PCRs are now Pcr { base: 0, ext: 0 }
-    let zeroed_pcrs: Vec<Pcr> = zeroed.chunks(188).filter_map(extract_pcr).collect();
-    assert!(zeroed_pcrs.len() >= 2);
-    for pcr in &zeroed_pcrs {
-        assert_eq!(pcr.as_27mhz(), 0, "zeroed PCRs must all be 0");
-    }
-
-    // ── 3. Run PCR restamp with known bitrate ─────────────────────────────
-    let mut engine = ts_fix::TsFix::builder()
-        .restamp_pcr(ts_fix::PcrRestamp::from_bitrate(bitrate))
-        .build()
-        .expect("restamp_pcr build should not fail");
-
-    let mut output = Vec::with_capacity(zeroed.len());
-    for chunk in zeroed.chunks(188) {
-        engine
-            .push(chunk, |pkt| output.extend_from_slice(pkt))
-            .expect("valid 188-byte packet");
-    }
-    engine.finish(|pkt| output.extend_from_slice(pkt));
-
-    assert_eq!(output.len(), zeroed.len());
-    assert_eq!(output.len() % 188, 0);
-
-    // ── 4. Verify output PCRs are monotonic non-decreasing ────────────────
-    let output_pcrs: Vec<Pcr> = output.chunks(188).filter_map(extract_pcr).collect();
-    assert_eq!(output_pcrs.len(), original_pcrs.len());
-
-    let mut output_27mhz: Vec<u64> = output_pcrs.iter().map(|p| p.as_27mhz()).collect();
-    output_27mhz.dedup();
-    for pair in output_27mhz.windows(2) {
-        assert!(
-            pair[0] <= pair[1],
-            "output PCRs must be monotonic non-decreasing: {} > {}",
-            pair[0],
-            pair[1]
-        );
-    }
-
-    // ── 5. Verify round-trip via to_field_bytes ───────────────────────────
-    for chunk in output.chunks(188) {
-        if let Some(pcr) = extract_pcr(chunk) {
-            let bytes = pcr.to_field_bytes();
-            let reparsed = decode_pcr_field(&bytes).expect("PCR round-trip");
-            assert_eq!(
-                pcr, reparsed,
-                "PCR must round-trip through to_field_bytes + decode"
-            );
-        }
-    }
-
-    // ── 6. Verify PCRs match ideal values (within 5%) ─────────────────────
-    for (n, out_pcr) in output_pcrs.iter().enumerate() {
-        let out = out_pcr.as_27mhz();
-        let ideal = ideal_pcrs[n];
-        if n == 0 {
-            assert_eq!(out, 0, "first PCR must be preserved (was zeroed to 0)");
-            continue;
-        }
-        let ratio = (out as f64) / (ideal as f64);
-        assert!(
-            (ratio - 1.0).abs() < 0.05,
-            "output PCR {out} at index {n} deviates from ideal {ideal} by >5% (ratio={ratio})"
-        );
-    }
-
-    // ── 7. BITES: identity must preserve zeroed PCRs (flatline) ──────────
-    let mut identity = ts_fix::TsFix::builder().build().expect("identity build");
-
-    let mut ident_out = Vec::with_capacity(zeroed.len());
-    for chunk in zeroed.chunks(188) {
-        identity
-            .push(chunk, |pkt| ident_out.extend_from_slice(pkt))
-            .unwrap();
-    }
-    identity.finish(|pkt| ident_out.extend_from_slice(pkt));
-
-    let ident_pcrs: Vec<Pcr> = ident_out.chunks(188).filter_map(extract_pcr).collect();
+    // Derive the real bitrate from first..last original PCR on this PID.
+    let (first_i, first_pcr) = series[0];
+    let (last_i, last_pcr) = *series.last().unwrap();
+    let pkt_span = (last_i - first_i) as u64;
+    let pcr_span = last_pcr - first_pcr;
+    let bps = (pkt_span * 188 * 8 * 27_000_000) / pcr_span;
     assert!(
-        ident_pcrs.iter().all(|p| p.as_27mhz() == 0),
-        "FATAL: identity pass-through produced non-zero PCRs from zeroed input"
+        (1_000_000..100_000_000).contains(&bps),
+        "sane bitrate, got {bps}"
+    );
+
+    let mut corrupted = original.clone();
+    corrupt_pcrs(&mut corrupted, pcr_pid, first_i);
+
+    // The corruption must break monotonicity, else the test cannot bite.
+    let corr: Vec<u64> = corrupted
+        .chunks_exact(PKT)
+        .filter(|p| pid(p) == pcr_pid)
+        .filter_map(pcr_27mhz)
+        .collect();
+    assert!(
+        corr.windows(2).any(|w| w[1] < w[0]),
+        "corruption must break monotonicity"
+    );
+
+    let out = run(&corrupted, |b| b.restamp_pcr(PcrRestamp::from_bitrate(bps)));
+    assert_eq!(out.len(), corrupted.len(), "packet count preserved");
+
+    let repaired: Vec<u64> = out
+        .chunks_exact(PKT)
+        .filter(|p| pid(p) == pcr_pid)
+        .filter_map(pcr_27mhz)
+        .collect();
+    assert_eq!(repaired.len(), series.len(), "same PCR count out");
+    for w in repaired.windows(2) {
+        assert!(
+            w[1] > w[0],
+            "repaired PCRs strictly increasing: {} !> {}",
+            w[1],
+            w[0]
+        );
+    }
+    // Within ~1ms + a per-index packet-time of the original (ticks/pkt rounding accrues).
+    let ticks_per_pkt = 188 * 8 * 27_000_000 / bps;
+    for (i, ((_, orig), got)) in series.iter().zip(repaired.iter()).enumerate() {
+        let tol = 27_000 + ticks_per_pkt * (i as u64 + 2);
+        assert!(
+            orig.abs_diff(*got) <= tol,
+            "PCR[{i}] off by {} (tol {tol})",
+            orig.abs_diff(*got)
+        );
+    }
+}
+
+#[test]
+fn identity_leaves_corrupted_pcrs_nonmonotonic() {
+    // Proves the repair test bites: without restamp, the zeroed PCRs survive.
+    let original = load();
+    let (pcr_pid, series) = busiest_pcr_pid(&original);
+    let mut corrupted = original.clone();
+    corrupt_pcrs(&mut corrupted, pcr_pid, series[0].0);
+    let out = run(&corrupted, |b| b); // no ops
+    let pcrs: Vec<u64> = out
+        .chunks_exact(PKT)
+        .filter(|p| pid(p) == pcr_pid)
+        .filter_map(pcr_27mhz)
+        .collect();
+    assert!(
+        pcrs.windows(2).any(|w| w[1] < w[0]),
+        "identity must leave the corruption"
     );
 }

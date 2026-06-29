@@ -61,17 +61,10 @@ pub(crate) struct StreamModel {
 pub(crate) struct TimingContext {
     /// Accumulated 27 MHz clock ticks (monotonic, may wrap beyond 2^33).
     pub(crate) clock_27mhz: u64,
-    /// The last PCR value we wrote (for interpolation mode).
-    pub(crate) last_pcr_base: u64,
-    pub(crate) last_pcr_ext: u16,
-    /// Whether we have seen a PCR anchor yet.
+    /// Whether a PCR anchor has been seen yet.
     pub(crate) has_anchor: bool,
-    /// Packet index at which `last_pcr` was observed.
-    pub(crate) anchor_packet_index: u64,
-    /// Packet index of the *previous* PCR (for rate calculation).
-    pub(crate) prev_packet_index: u64,
-    /// Inter-packet bitrate in bytes/s, derived from two consecutive PCRs.
-    pub(crate) interpolated_bitrate: Option<f64>,
+    // v0.2 (PTS/DTS wrap) will extend this with last-PCR / rate fields as needed;
+    // PCR restamp's per-PID anchors live in the op itself (pcr_restamp::PcrRestampOp).
 }
 
 /// Private operation trait — sealed inside this module.
