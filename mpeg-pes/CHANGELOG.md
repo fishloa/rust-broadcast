@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- `examples/build_pes_header.rs` — walk-through demonstrating the build/edit
+  API: construct a PES header from typed fields (PTS+DTS, ESCR, DSM trick
+  mode), serialize, re-parse, and verify round-trip.
 - `PesHeader::header_stuffing_len: usize` — number of trailing `0xFF` stuffing
   bytes inside the `PES_header_data_length` region, after the typed optional
   fields (ISO/IEC 13818-1 §2.4.3.7). Captured on parse and re-emitted on

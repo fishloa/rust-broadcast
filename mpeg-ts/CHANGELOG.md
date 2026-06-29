@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Added
+- `examples/edit_packet.rs` — walk-through demonstrating the write/edit API:
+  read a PCR-bearing packet, mutate PCR and CC, build a null packet, and
+  round-trip a packet.
 - `AdaptationField::stuffing_len: usize` — number of trailing `0xFF` stuffing
   bytes padding the adaptation-field body out to its `adaptation_field_length`
   (ISO/IEC 13818-1 §2.4.3.4). Captured on parse and re-emitted on serialize so a
