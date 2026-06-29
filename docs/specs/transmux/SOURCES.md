@@ -79,17 +79,41 @@ explicit owner direction in the project brief.  These are transcribed in `fragme
     (marker, version, seq\_profile, seq\_level\_idx\_0, seq\_tier\_0, high\_bitdepth, twelve\_bit,
     monochrome, chroma\_subsampling\_x/y, chroma\_sample\_position, initial\_presentation\_delay)
 
-### 5. ISO/IEC 14496-12 — ISO Base Media File Format
-- **Status:** Used as normative source for fragmentation-control boxes per owner direction.
-- **What it covered:**
-  - §8.8.1: `mvex` (Movie Extends Box) — container description
-  - §8.8.2: `mehd` (Movie Extends Header Box) — fragment duration field
-  - §8.8.3: `trex` (Track Extends Box) — default sample field table + `sample_flags` 32-bit structure
-  - §8.8.4: `moof` (Movie Fragment Box) — container description
-  - §8.8.5: `mfhd` (Movie Fragment Header Box) — `sequence_number` field table
-  - §8.8.6: `traf` (Track Fragment Box) — container description
-  - §8.8.7: `tfhd` (Track Fragment Header Box) — optional field table + `tf_flags` bit table
-  - §8.8.8: `trun` (Track Fragment Run Box) — per-sample array structure + `tr_flags` bit table
+### 5. ISO/IEC 14496-12:2015 — ISO Base Media File Format (expanded)
+- **Status:** Used as normative source per owner direction.
+- **Additional sections used in this round:**
+  - §8.3.3: `tref` (Track Reference Box)
+  - §8.5.2: `btrt` (Bit Rate Box) — class BitRateBox
+  - §8.6.1.3: `ctts` (Composition Time to Sample Box)
+  - §8.6.2: `stss` (Sync Sample Box)
+  - §8.6.4: `sdtp` (Independent and Disposable Samples Box)
+  - §8.6.5: `edts` (Edit Box)
+  - §8.6.6: `elst` (Edit List Box)
+  - §8.7.7: `subs` (Sub-Sample Information Box)
+  - §8.7.8: `saiz` (Sample Auxiliary Information Sizes Box)
+  - §8.7.9: `saio` (Sample Auxiliary Information Offsets Box)
+  - §8.8.9: `mfra` (Movie Fragment Random Access Box)
+  - §8.8.10: `tfra` (Track Fragment Random Access Box)
+  - §8.8.11: `mfro` (Movie Fragment Random Access Offset Box)
+  - §8.9.2: `sbgp` (Sample to Group Box)
+  - §8.9.3: `sgpd` (Sample Group Description Box)
+  - §8.12.1: `sinf` (Protection Scheme Information Box)
+  - §8.12.2: `frma` (Original Format Box)
+  - §8.12.5: `schm` (Scheme Type Box)
+  - §8.12.6: `schi` (Scheme Information Box)
+  - §8.15.3: `rinf` (Restricted Scheme Information Box)
+  - §8.15.4: `stvi` (Stereo Video Box / stereoscopic video)
+  - §8.16.5: `prft` (Producer Reference Time Box)
+  - §12.1.4: `pasp` (Pixel Aspect Ratio Box), `clap` (Clean Aperture Box)
+  - §12.1.5: `colr` (Colour Information Box)
+  - §6.2.3: Box Order rules (Table 1 containment hierarchy)
+- **What it covered (cumulative):**
+  - `mvex`, `mehd`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun` (from earlier round)
+  - `tref`, `btrt`, `ctts`, `stss`, `sdtp`, `edts`, `elst`, `subs`, `saiz`, `saio`
+  - `mfra`, `tfra`, `mfro`, `sbgp`, `sgpd`
+  - `sinf`, `frma`, `schm`, `schi`, `rinf`, `stvi`
+  - `prft`, `pasp`, `clap`, `colr`
+  - Box Order rules + Table 1 hierarchy (27 new boxes this round)
 
 ### 6. MP4 Registration Authority (MP4RA)
 - **URL:** `https://mp4ra.org/registered-types/boxes`  
