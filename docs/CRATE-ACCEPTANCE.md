@@ -1,6 +1,6 @@
-# New-crate acceptance standard
+# Crate acceptance standard (every crates.io publish)
 
-The consolidated hard bar **every new crate** in this workspace must clear before it ships.
+The consolidated hard bar **every crates.io publish** clears � not just new crates. A **new crate** clears the entire bar; a **new version** of an existing crate keeps the whole crate compliant and holds any newly-added wire type to the same invariants. Gated per-release via [`RELEASE-AUDIT.md`](RELEASE-AUDIT.md).
 Companion to [`DESCRIPTOR-ACCEPTANCE.md`](DESCRIPTOR-ACCEPTANCE.md) (descriptor-level),
 [`RELEASE-DOCS.md`](RELEASE-DOCS.md) (per-release docs) and [`RELEASE-AUDIT.md`](RELEASE-AUDIT.md)
 (pre-tag battery). Where those overlap, this doc is the index; they hold the detail.
@@ -52,7 +52,7 @@ CHANGELOG (Keep-a-Changelog) · `docs/release-notes/<ver>.md` · README (badges,
 Independent crates version on their own cadence; lockstep crates move together. Dep-ref consistency verified against crates.io ground truth (the partial-publish trap). **Tag-driven, CI-only publish — never `cargo publish` from a workstation.** No publish without explicit owner sign-off.
 
 ---
-### Acceptance checklist (tick before the PR)
+### Acceptance checklist (tick before any publish � new crate or new version)
 - [ ] Symmetric parse/serialize + **byte-identical** round-trip test
 - [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
