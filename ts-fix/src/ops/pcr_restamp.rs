@@ -6,6 +6,15 @@
 //! programs, each with its own PCR PID; every PCR PID is restamped
 //! independently from its own anchor.
 //!
+//! # Discontinuity re-anchor (ITU-T H.222.0 §2.4.3.5)
+//!
+//! When a packet on a PCR_PID has adaptation-field
+//! [`discontinuity_indicator == 1`], it signals a **system-time-base
+//! discontinuity**: the next PCR on that PID samples a new clock. The restamp
+//! MUST NOT interpolate or smooth across this boundary — it resets that PID's
+//! anchor to the observed PCR, so the two segments are restamped independently
+//! from their own bases.
+//!
 //! # Forward-compat note
 //!
 //! The PCR is set **in-place** via [`mpeg_ts::OwnedTsPacket::set_pcr`], which
@@ -109,14 +118,17 @@ impl PcrRestampOp {
         }
     }
 
-    /// Read `(pid, pcr)` if this packet carries a PCR.
-    fn read_pcr(packet: &[u8]) -> Option<(u16, Pcr)> {
+    /// Read `(pid, pcr, discontinuity)` if this packet carries a PCR.
+    ///
+    /// `discontinuity` is `true` when `discontinuity_indicator == 1` in the
+    /// adaptation field (ITU-T H.222.0 §2.4.3.5).
+    fn read_pcr(packet: &[u8]) -> Option<(u16, Pcr, bool)> {
         let pkt = TsPacket::parse(packet).ok()?;
-        let pcr = pkt
+        let af = pkt
             .adaptation_field()
-            .and_then(|r| r.ok())
-            .and_then(|af| af.pcr)?;
-        Some((pkt.header.pid, pcr))
+            .and_then(|r| r.ok())?;
+        let pcr = af.pcr?;
+        Some((pkt.header.pid, pcr, af.discontinuity_indicator))
     }
 }
 
@@ -126,11 +138,29 @@ impl Op for PcrRestampOp {
             out(packet);
             return;
         }
-        let Some((pid, current)) = Self::read_pcr(packet) else {
+        let Some((pid, current, discontinuity)) = Self::read_pcr(packet) else {
             out(packet);
             return;
         };
         let now = model.packet_count;
+
+        // System-time-base discontinuity (§2.4.3.5): re-anchor this PID to the
+        // current observed PCR. The discontinuity packet itself passes through
+        // unchanged (its discontinuity_indicator is in the AF flags byte, not
+        // touched by set_pcr).
+        if discontinuity {
+            let a = Anchor {
+                anchor_27mhz: current.as_27mhz(),
+                anchor_pkt: now,
+                last_obs_pkt: now,
+                last_obs_27mhz: current.as_27mhz(),
+            };
+            self.anchors.insert(pid, a);
+            model.timing.has_anchor = true;
+            model.timing.clock_27mhz = current.as_27mhz();
+            out(packet);
+            return;
+        }
 
         // First PCR on this PID → anchor, preserve as-is.
         let Some(anchor) = self.anchors.get_mut(&pid) else {
