@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
-use ts_fix::{PidFilter, Stuffing, TsFix};
+use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 
 #[derive(Parser)]
 #[command(
@@ -69,6 +69,23 @@ struct Cli {
     )]
     service: Option<u16>,
 
+    /// PCR restamp — interpolate between observed PCRs.
+    #[arg(
+        long = "restamp-pcr-interpolate",
+        conflicts_with = "restamp_pcr_bitrate",
+        help = "Interpolate PCRs between observed anchors (preserves first PCR)"
+    )]
+    restamp_pcr_interpolate: bool,
+
+    /// PCR restamp — recompute from a fixed bitrate.
+    #[arg(
+        long = "restamp-pcr-bitrate",
+        value_name = "BPS",
+        conflicts_with = "restamp_pcr_interpolate",
+        help = "Recompute PCRs from a fixed bitrate in bits/sec (e.g. 27000000)"
+    )]
+    restamp_pcr_bitrate: Option<u64>,
+
     /// Regenerate PAT/PMT from observed stream state.
     #[arg(
         long = "regen-psi",
@@ -123,6 +140,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.regen_psi {
         builder = builder.regen_psi();
+    }
+
+    if cli.restamp_pcr_interpolate {
+        builder = builder.restamp_pcr(PcrRestamp::interpolate());
+    } else if let Some(bps) = cli.restamp_pcr_bitrate {
+        builder = builder.restamp_pcr(PcrRestamp::from_bitrate(bps));
     }
 
     if cli.drop_nulls {

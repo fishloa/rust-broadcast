@@ -16,9 +16,10 @@
 //!
 //! No existing public signatures change.
 
-use alloc::vec::Vec;
+use alloc::boxed::Box;
 
 pub(crate) mod continuity;
+pub(crate) mod pcr_restamp;
 pub(crate) mod pid_filter;
 pub(crate) mod psi_regen;
 pub(crate) mod stuffing;
@@ -32,10 +33,45 @@ pub(crate) mod stuffing;
 pub(crate) struct StreamModel {
     /// Number of TS packets seen so far (used by PCR timing interpolation).
     pub(crate) packet_count: u64,
+    /// Timing context — 27 MHz clock, last PCR anchor, etc.
+    /// Used by PCR restamp (v0.1) and will be reused by PTS/DTS-wrap (v0.2).
+    pub(crate) timing: TimingContext,
     // Future tasks will add:
     //   pub(crate) pat: Option<...>,
     //   pub(crate) pmt: BTreeMap<u16, ...>,
-    //   pub(crate) timing: TimingContext,
+}
+
+// — TimingContext ───────────────────────────────────────────────────────────
+
+/// Forward-compat timing model for TS-level clock reconstruction.
+///
+/// Holds the 27 MHz clock state and last-anchor information needed by PCR
+/// restamp (v0.1) and, in v0.2+, PTS/DTS wrap-around repair.
+///
+/// # Design rationale
+///
+/// This is deliberately NOT PCR-specific — it lives in `StreamModel` and stores
+/// the stream's 27 MHz clock model.  v0.2's PTS/DTS-wrap op will read and
+/// update the same context to unroll 33-bit wrap on presentation timestamps
+/// without duplicating clock state.
+///
+/// PCR-specific configuration (mode, target bitrate) lives in
+/// [`super::pcr_restamp::PcrRestamp`], not here.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TimingContext {
+    /// Accumulated 27 MHz clock ticks (monotonic, may wrap beyond 2^33).
+    pub(crate) clock_27mhz: u64,
+    /// The last PCR value we wrote (for interpolation mode).
+    pub(crate) last_pcr_base: u64,
+    pub(crate) last_pcr_ext: u16,
+    /// Whether we have seen a PCR anchor yet.
+    pub(crate) has_anchor: bool,
+    /// Packet index at which `last_pcr` was observed.
+    pub(crate) anchor_packet_index: u64,
+    /// Packet index of the *previous* PCR (for rate calculation).
+    pub(crate) prev_packet_index: u64,
+    /// Inter-packet bitrate in bytes/s, derived from two consecutive PCRs.
+    pub(crate) interpolated_bitrate: Option<f64>,
 }
 
 /// Private operation trait — sealed inside this module.
@@ -68,7 +104,19 @@ pub(crate) trait Op: Send {
 }
 
 /// A boxed, heap-allocated operation.  The engine holds an ordered `Vec<BoxedOp>`.
-pub(crate) type BoxedOp = alloc::boxed::Box<dyn Op>;
+pub(crate) type BoxedOp = Box<dyn Op>;
+
+/// Canonical operation-kind discriminant used by the builder to enforce
+/// engine ordering (filter → regen_psi → cc_repair → pcr_restamp → stuffing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum OpKind {
+    PidFilter,
+    PsiRegen,
+    Continuity,
+    PcrRestamp,
+    Stuffing,
+    Identity,
+}
 
 // ── Identity pass-through (the v0.1 no-op) ──────────────────────────────────
 
@@ -89,9 +137,4 @@ impl Op for IdentityOp {
     fn flush(&mut self, _model: &mut StreamModel, _out: &mut dyn FnMut(&[u8])) {
         // Nothing buffered.
     }
-}
-
-/// Build the default identity pipeline (no repair operations).
-pub(crate) fn identity_pipeline() -> Vec<BoxedOp> {
-    alloc::vec![alloc::boxed::Box::new(IdentityOp)]
 }

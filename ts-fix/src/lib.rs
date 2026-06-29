@@ -11,6 +11,7 @@
 //! | Continuity repair | [`repair_continuity`](TsFixBuilder::repair_continuity) | Renumber per-PID continuity counters (§2.4.3.3). |
 //! | PID filter / service extract | [`filter_pids`](TsFixBuilder::filter_pids) | Keep specified PIDs or extract a single programme by `program_number`. |
 //! | PAT/PMT regeneration | [`regen_psi`](TsFixBuilder::regen_psi) | Rebuild PAT from observed PMT PIDs on flush. |
+//! | PCR restamp | [`restamp_pcr`](TsFixBuilder::restamp_pcr) | Recompute PCR values on the PCR PID (§2.4.3.5). |
 //! | Stuffing | [`stuffing`](TsFixBuilder::stuffing) | Drop null packets or pad to a target packet rate. |
 //!
 //! # Forward compatibility
@@ -27,12 +28,13 @@
 //! # Quick start
 //!
 //! ```rust,no_run
-//! use ts_fix::{TsFix, PidFilter, Stuffing};
+//! use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 //!
 //! let mut engine = TsFix::builder()
 //!     .repair_continuity()
 //!     .filter_pids(PidFilter::keep([0x0100, 0x0101]))
 //!     .regen_psi()
+//!     .restamp_pcr(PcrRestamp::interpolate())
 //!     .stuffing(Stuffing::drop_nulls())
 //!     .build()
 //!     .unwrap();
@@ -53,7 +55,10 @@ pub mod error;
 mod engine;
 mod ops;
 
+use ops::OpKind;
+
 pub use error::Error;
+pub use ops::pcr_restamp::PcrRestamp;
 pub use ops::pid_filter::PidFilter;
 pub use ops::stuffing::Stuffing;
 
@@ -106,11 +111,8 @@ impl TsFix {
 /// construct `TsFix::builder().build()?` (with no additional methods) will
 /// compile and behave identically across versions.
 pub struct TsFixBuilder {
-    /// Ordered list of configured operations.
-    ///
-    /// The engine enforces canonical ordering at `build()` time; callers do not
-    /// need to call methods in the correct order.
-    ops: alloc::vec::Vec<ops::BoxedOp>,
+    /// Ops paired with their `OpKind` for canonical ordering at `build()` time.
+    ops: alloc::vec::Vec<(OpKind, ops::BoxedOp)>,
 }
 
 impl TsFixBuilder {
@@ -124,15 +126,22 @@ impl TsFixBuilder {
     ///
     /// When no operations have been registered the engine is an **identity
     /// pass-through**: every packet is emitted unchanged.
-    pub fn build(self) -> Result<TsFix, Error> {
+    ///
+    /// The engine applies operations in the canonical ordering:
+    /// filter_pids → regen_psi → repair_continuity → restamp_pcr → stuffing.
+    /// The `build()` method sorts ops by this order regardless of the order
+    /// in which builder methods were called.
+    pub fn build(mut self) -> Result<TsFix, Error> {
         // If no ops were configured, install the identity no-op so the engine
         // always has something to call.  This keeps `engine::Engine::push`
         // simple and ensures zero-op builds are provably correct.
-        let ops = if self.ops.is_empty() {
-            ops::identity_pipeline()
-        } else {
-            self.ops
-        };
+        if self.ops.is_empty() {
+            self.ops = alloc::vec![(OpKind::Identity, alloc::boxed::Box::new(ops::IdentityOp))];
+        }
+
+        // Sort by canonical ordering, then discard the OpKind tag.
+        self.ops.sort_by_key(|(kind, _)| *kind);
+        let ops: alloc::vec::Vec<ops::BoxedOp> = self.ops.into_iter().map(|(_, op)| op).collect();
 
         Ok(TsFix {
             engine: engine::Engine::new(ops),
@@ -145,8 +154,10 @@ impl TsFixBuilder {
     /// sequence (mod 16), respecting the ISO/IEC 13818-1 §2.4.3.3 rule that the
     /// counter increments **only** on payload-bearing packets.
     pub fn repair_continuity(mut self) -> Self {
-        self.ops
-            .push(alloc::boxed::Box::new(ops::continuity::ContinuityOp::new()));
+        self.ops.push((
+            OpKind::Continuity,
+            alloc::boxed::Box::new(ops::continuity::ContinuityOp::new()),
+        ));
         self
     }
 
@@ -171,10 +182,10 @@ impl TsFixBuilder {
     ///     .unwrap();
     /// ```
     pub fn filter_pids(mut self, cfg: PidFilter) -> Self {
-        self.ops
-            .push(alloc::boxed::Box::new(ops::pid_filter::PidFilterOp::new(
-                cfg,
-            )));
+        self.ops.push((
+            OpKind::PidFilter,
+            alloc::boxed::Box::new(ops::pid_filter::PidFilterOp::new(cfg)),
+        ));
         self
     }
 
@@ -201,8 +212,39 @@ impl TsFixBuilder {
     ///     .unwrap();
     /// ```
     pub fn regen_psi(mut self) -> Self {
-        self.ops
-            .push(alloc::boxed::Box::new(ops::psi_regen::PsiRegenOp::new()));
+        self.ops.push((
+            OpKind::PsiRegen,
+            alloc::boxed::Box::new(ops::psi_regen::PsiRegenOp::new()),
+        ));
+        self
+    }
+
+    /// Enable PCR restamping.
+    ///
+    /// Recomputes the 42-bit Program Clock Reference on the PCR PID using a
+    /// timing model (ISO/IEC 13818-1 §2.4.3.5). Two modes:
+    ///
+    /// - [`PcrRestamp::interpolate`] — interpolate PCRs between observed anchors.
+    /// - [`PcrRestamp::from_bitrate`] — recompute from a fixed bitrate.
+    ///
+    /// PCR values are written in-place via mpeg-ts editors; the adaptation field
+    /// layout is preserved.
+    ///
+    /// # Example — restore a plausible PCR timeline
+    ///
+    /// ```rust,no_run
+    /// use ts_fix::{TsFix, PcrRestamp};
+    ///
+    /// let mut engine = TsFix::builder()
+    ///     .restamp_pcr(PcrRestamp::interpolate())
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn restamp_pcr(mut self, cfg: PcrRestamp) -> Self {
+        self.ops.push((
+            OpKind::PcrRestamp,
+            alloc::boxed::Box::new(ops::pcr_restamp::PcrRestampOp::new(cfg)),
+        ));
         self
     }
 
@@ -226,19 +268,10 @@ impl TsFixBuilder {
     ///     .unwrap();
     /// ```
     pub fn stuffing(mut self, cfg: Stuffing) -> Self {
-        self.ops
-            .push(alloc::boxed::Box::new(ops::stuffing::StuffingOp::new(cfg)));
+        self.ops.push((
+            OpKind::Stuffing,
+            alloc::boxed::Box::new(ops::stuffing::StuffingOp::new(cfg)),
+        ));
         self
     }
-
-    // ── Future operation methods (stubs document the planned API surface) ────
-    //
-    // These will be added in later tasks.  They are NOT present in v0.1 — they
-    // appear here only as comments so reviewers can confirm the builder surface
-    // is stable and additive.
-    //
-    //   pub fn restamp_pcr(self, cfg: PcrRestamp) -> Self // Task 6
-    //
-    // Each adds a builder method and a corresponding ops/<name>.rs module.
-    // No existing public signature changes.
 }
