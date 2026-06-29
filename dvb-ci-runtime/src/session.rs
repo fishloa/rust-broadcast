@@ -10,12 +10,12 @@
 
 use std::collections::BTreeMap;
 
+use broadcast_common::{Parse, Serialize};
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
     tags, CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,
     OpenSessionResponse, SessionNumber, SessionStatus,
 };
-use dvb_common::{Parse, Serialize};
 
 fn ser<S: Serialize>(s: &S) -> Vec<u8> {
     let mut b = vec![0u8; s.serialized_len()];

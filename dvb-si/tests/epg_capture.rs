@@ -92,7 +92,7 @@ struct MyPrivateDesc {
     val: u8,
 }
 
-impl<'a> dvb_common::Parse<'a> for MyPrivateDesc {
+impl<'a> broadcast_common::Parse<'a> for MyPrivateDesc {
     type Error = dvb_si::Error;
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         if bytes.len() < 3 {
@@ -162,7 +162,7 @@ fn eit_with_registry_surfaces_private_descriptor() {
         buf[ev_off + 12..ev_off + 12 + private_desc.len()].copy_from_slice(&private_desc);
 
         let crc_pos = total - 4;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..].copy_from_slice(&crc.to_be_bytes());
         buf
     };

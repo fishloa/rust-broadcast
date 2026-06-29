@@ -8,7 +8,7 @@
 //! DII geometry vs DDB block sizes).
 #![cfg(feature = "ts")]
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::{DownloadDataBlock, ModuleReassembler, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::tables::dsmcc::DsmccSection;

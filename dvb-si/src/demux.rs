@@ -12,7 +12,7 @@
 //! [`SectionEvent::parse`]) borrow the event lazily.
 //!
 //! ```
-//! use dvb_common::Serialize;
+//! use broadcast_common::Serialize;
 //! use dvb_si::demux::SiDemux;
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
@@ -201,7 +201,7 @@ impl SectionEvent {
     /// # Errors
     /// Propagates `T::parse` errors.
     pub fn parse<'s, T: crate::traits::TableDef<'s>>(&'s self) -> crate::Result<T> {
-        <T as dvb_common::Parse>::parse(&self.bytes)
+        <T as broadcast_common::Parse>::parse(&self.bytes)
     }
 }
 
@@ -435,7 +435,7 @@ impl SiDemux {
             }
             let (covered, crc_bytes) = section.split_last_chunk::<CRC_LEN>().unwrap();
             let declared = u32::from_be_bytes(*crc_bytes);
-            let computed = dvb_common::crc32_mpeg2::compute(covered);
+            let computed = broadcast_common::crc32_mpeg2::compute(covered);
             if computed != declared {
                 self.stats.crc_failures += 1;
                 return;
@@ -457,7 +457,12 @@ impl SiDemux {
                 // Short-form (incl. TOT and any malformed long-form that slipped
                 // the size check above): no version, ext/section_number = 0,
                 // change detector is a CRC over all the section bytes.
-                (0u16, 0u8, 0u8, dvb_common::crc32_mpeg2::compute(&section))
+                (
+                    0u16,
+                    0u8,
+                    0u8,
+                    broadcast_common::crc32_mpeg2::compute(&section),
+                )
             };
 
         let key = (pid.value() as u64)
@@ -516,7 +521,7 @@ impl SiDemux {
     /// nonetheless passed CRC is implausible, and we never panic.
     fn follow_pat(&mut self, event: &SectionEvent) {
         use crate::tables::pat::PatSection;
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
         if let Ok(pat) = PatSection::parse(&event.bytes) {
             for entry in &pat.entries {
                 if entry.program_number != 0 {
@@ -573,7 +578,7 @@ mod tests {
             section_number, // last_section_number
         ];
         v.extend_from_slice(payload);
-        let crc = dvb_common::crc32_mpeg2::compute(&v);
+        let crc = broadcast_common::crc32_mpeg2::compute(&v);
         v.extend_from_slice(&crc.to_be_bytes());
         v
     }
@@ -736,7 +741,7 @@ mod tests {
         use crate::tables::registry::TableRegistry;
         use crate::tables::AnyTableSection;
         use crate::traits::TableDef;
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
 
         const PRIVATE_TID: u8 = 0x90;
 

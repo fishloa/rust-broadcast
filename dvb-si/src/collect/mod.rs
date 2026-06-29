@@ -18,7 +18,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use mpeg_ts::section::Section;
 
 mod bat;
@@ -512,7 +512,7 @@ mod tests {
         buf[5] = 0xC1;
         buf[6] = 0;
         buf[7] = 0;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..8]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..8]);
         buf[8..12].copy_from_slice(&crc.to_be_bytes());
         buf
     }
@@ -565,7 +565,7 @@ mod tests {
             // Make section 0 of 1 be incomplete: change last_section_number to 1
             buf[7] = 1;
             // Recompute CRC
-            let crc = dvb_common::crc32_mpeg2::compute(&buf[..8]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..8]);
             buf[8..12].copy_from_slice(&crc.to_be_bytes());
             buf
         };
@@ -577,7 +577,7 @@ mod tests {
         let mut sec1 = min_section(0xAB);
         sec1[6] = 1; // section_number = 1
         sec1[7] = 1; // last_section_number = 1
-        let crc = dvb_common::crc32_mpeg2::compute(&sec1[..8]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&sec1[..8]);
         sec1[8..12].copy_from_slice(&crc.to_be_bytes());
 
         let result = c.push_section(&sec1).unwrap();

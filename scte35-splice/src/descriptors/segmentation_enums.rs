@@ -51,7 +51,7 @@ impl DeviceRestrictions {
         }
     }
 }
-dvb_common::impl_spec_display!(DeviceRestrictions);
+broadcast_common::impl_spec_display!(DeviceRestrictions);
 
 /// `segmentation_upid_type` — §10.3.3.1, Table 22 (8 bits).
 ///
@@ -165,7 +165,7 @@ impl SegmentationUpidType {
         }
     }
 }
-dvb_common::impl_spec_display!(SegmentationUpidType, Reserved);
+broadcast_common::impl_spec_display!(SegmentationUpidType, Reserved);
 
 /// `segmentation_type_id` — §10.3.3.1, Table 23 (8 bits).
 ///
@@ -422,7 +422,7 @@ impl SegmentationTypeId {
         }
     }
 }
-dvb_common::impl_spec_display!(SegmentationTypeId, Reserved);
+broadcast_common::impl_spec_display!(SegmentationTypeId, Reserved);
 
 #[cfg(test)]
 mod tests {

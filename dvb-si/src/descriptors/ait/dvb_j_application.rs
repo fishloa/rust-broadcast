@@ -7,7 +7,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for dvb_j_application_descriptor (AIT namespace).
 pub const TAG: u8 = 0x03;

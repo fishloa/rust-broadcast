@@ -7,7 +7,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for Stuffing Table.
 pub const TABLE_ID: u8 = 0x72;

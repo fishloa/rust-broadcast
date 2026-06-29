@@ -8,7 +8,7 @@ use dvb_si::tables::AnyTableSection;
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn crc32_mpeg2(data: &[u8]) -> u32 {
-    dvb_common::crc32_mpeg2::compute(data)
+    broadcast_common::crc32_mpeg2::compute(data)
 }
 
 /// Append a correct CRC_32 over all bytes already in `v`.

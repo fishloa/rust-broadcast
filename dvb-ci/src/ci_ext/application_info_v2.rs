@@ -14,7 +14,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application Information v2 (Table 87).
 pub mod tag {
@@ -99,7 +99,7 @@ impl ApplicationTypeV2 {
         }
     }
 }
-dvb_common::impl_spec_display!(ApplicationTypeV2, Reserved);
+broadcast_common::impl_spec_display!(ApplicationTypeV2, Reserved);
 
 /// `application_info_enq()` — header-only enquiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

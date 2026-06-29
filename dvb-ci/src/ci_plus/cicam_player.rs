@@ -38,7 +38,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the CICAM Player resource (Table 71).
 pub mod tag {
@@ -122,7 +122,7 @@ impl PlayerVerifyStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(PlayerVerifyStatus, Reserved);
+broadcast_common::impl_spec_display!(PlayerVerifyStatus, Reserved);
 
 // --- input_status (Table 56) ---
 
@@ -177,7 +177,7 @@ impl InputStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(InputStatus, Reserved);
+broadcast_common::impl_spec_display!(InputStatus, Reserved);
 
 // --- play_status (Table 59) ---
 
@@ -227,7 +227,7 @@ impl PlayStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(PlayStatus, Reserved);
+broadcast_common::impl_spec_display!(PlayStatus, Reserved);
 
 // --- Command (Table 61) / seek_mode (Table 62) ---
 
@@ -272,7 +272,7 @@ impl SeekMode {
         }
     }
 }
-dvb_common::impl_spec_display!(SeekMode, Reserved);
+broadcast_common::impl_spec_display!(SeekMode, Reserved);
 
 // --- update_status (Table 70) ---
 
@@ -317,7 +317,7 @@ impl UpdateStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(UpdateStatus, Reserved);
+broadcast_common::impl_spec_display!(UpdateStatus, Reserved);
 
 // ---------------------------------------------------------------------------
 // CICAM_player_verify_req (Table 49)

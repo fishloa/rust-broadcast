@@ -174,7 +174,7 @@ pub use private_data_specifier::{PDS_EACEM, PDS_NORDIG};
 /// error tagged with the descriptor `field`. Shared by the delivery-system
 /// descriptors.
 pub(crate) fn encode_bcd_field(value: u64, nibbles: u8, field: &'static str) -> crate::Result<u64> {
-    dvb_common::bcd::decimal_to_bcd(value, nibbles).ok_or(crate::Error::ValueOutOfRange {
+    broadcast_common::bcd::decimal_to_bcd(value, nibbles).ok_or(crate::Error::ValueOutOfRange {
         field,
         reason: "value exceeds the BCD field width",
     })

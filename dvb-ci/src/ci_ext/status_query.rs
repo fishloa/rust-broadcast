@@ -23,7 +23,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Status Query (Tables 37-41).
 pub mod tag {
@@ -99,7 +99,7 @@ impl StatusItem {
         }
     }
 }
-dvb_common::impl_spec_display!(StatusItem, Reserved);
+broadcast_common::impl_spec_display!(StatusItem, Reserved);
 
 // =================== APDU objects ===================
 
@@ -705,7 +705,7 @@ impl ActivationState {
         }
     }
 }
-dvb_common::impl_spec_display!(ActivationState, Reserved);
+broadcast_common::impl_spec_display!(ActivationState, Reserved);
 
 /// `Activation status data` (Table 50) — status item 4: a single packed byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

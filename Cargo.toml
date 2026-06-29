@@ -1,5 +1,5 @@
 [workspace]
-members = ["dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "smpte2038", "dvb-smpte2038", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts"]
+members = ["broadcast-common", "dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "smpte2038", "dvb-smpte2038", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts"]
 exclude = ["fuzz", "demo", "bindings/python"]
 resolver = "2"
 
@@ -7,5 +7,5 @@ resolver = "2"
 authors = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/fishloa/rust-dvb"
+repository = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.81"

@@ -14,7 +14,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for CA Pipeline (Tables 84-86).
 pub mod tag {

@@ -17,7 +17,7 @@
 //! ```rust,no_run
 //! use dvb_si::tables::{TableRegistry, AnyTableSection};
 //! use dvb_si::traits::TableDef;
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `TableObject` requires there).
@@ -232,7 +232,8 @@ impl TableRegistry {
                 self.custom.insert(
                     id,
                     Box::new(|b| {
-                        Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn TableObject>)
+                        Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
+                            as Box<dyn TableObject>)
                     }),
                 );
             }
@@ -246,7 +247,7 @@ mod tests {
     use super::*;
     use crate::tables::AnyTableSection;
     use crate::traits::TableDef;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     // -- A trivial custom table for a private table_id -------------------------
     const CUSTOM_TABLE_ID: u8 = 0x90;
@@ -393,7 +394,7 @@ mod tests {
         let reg = TableRegistry::new();
         // Build a minimal PAT (table_id 0x00)
         use crate::tables::pat::{PatEntry, PatSection};
-        use dvb_common::Serialize;
+        use broadcast_common::Serialize;
         let pat = PatSection {
             transport_stream_id: 1,
             version_number: 0,

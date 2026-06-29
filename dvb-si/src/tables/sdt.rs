@@ -9,7 +9,7 @@ use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
 pub const TABLE_ID_ACTUAL: u8 = 0x42;
@@ -225,7 +225,7 @@ impl Serialize for SdtSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }

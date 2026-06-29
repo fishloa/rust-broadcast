@@ -2,8 +2,8 @@
 //!
 //! Run with: `cargo run -p cc-data --example build_cc_data`
 
+use broadcast_common::{Parse, Serialize};
 use cc_data::{CcData, CcTriplet, CcType};
-use dvb_common::{Parse, Serialize};
 
 fn main() {
     let cc = CcData {

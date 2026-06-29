@@ -32,7 +32,7 @@ use core::fmt;
 
 use num_enum::TryFromPrimitive;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Function tags per §5.2.8.2 Tables 5 & 6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -98,7 +98,7 @@ impl AddressingFunctionTag {
         }
     }
 }
-dvb_common::impl_spec_display!(AddressingFunctionTag);
+broadcast_common::impl_spec_display!(AddressingFunctionTag);
 
 // ── Typed function bodies (§5.2.8.2 Tables 7–12b) ──────────────────────────
 
@@ -289,7 +289,7 @@ impl FunctionBody<'_> {
         }
     }
 }
-dvb_common::impl_spec_display!(FunctionBody<'_>);
+broadcast_common::impl_spec_display!(FunctionBody<'_>);
 
 // ── TransmitterEntry ───────────────────────────────────────────────────────
 

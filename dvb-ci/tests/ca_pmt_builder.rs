@@ -5,9 +5,9 @@
 //! through `dvb-si`, strip every (non-CA) descriptor, and emit a well-formed,
 //! round-trippable `ca_pmt` carrying the full component list with empty CA loops.
 
+use broadcast_common::{Parse, Serialize};
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
-use dvb_common::{Parse, Serialize};
 use dvb_si::tables::pmt::PmtSection;
 
 const REAL_PMT: &[u8] = include_bytes!("fixtures/real-pmt.bin");

@@ -7,7 +7,7 @@
 //! session-layer SPDUs and transport-layer TPDUs, plus a `CA_PMT` builder that
 //! turns a `dvb-si` PMT into the object handed to a CICAM.
 //!
-//! Every wire structure implements [`dvb_common::Parse`] / [`dvb_common::Serialize`]
+//! Every wire structure implements [`broadcast_common::Parse`] / [`broadcast_common::Serialize`]
 //! symmetrically (parse → serialize is byte-identical), with all length fields
 //! computed from content. Spec citations live in each module doc; the
 //! render-verified transcription is in `docs/en_50221/`.

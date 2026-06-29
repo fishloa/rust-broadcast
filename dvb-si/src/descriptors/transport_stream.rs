@@ -8,7 +8,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for transport_stream_descriptor.
 pub const TAG: u8 = 0x67;

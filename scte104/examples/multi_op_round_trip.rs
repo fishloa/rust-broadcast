@@ -3,7 +3,7 @@
 //! This example constructs a message with a splice_request followed by a
 //! time_signal_request (≥2 operations), serializes it, then parses it back.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte104::operations::{
     splice_request::{SpliceInsertType, SpliceRequest},
     time_signal_request::TimeSignalRequest,

@@ -1,12 +1,12 @@
 //! T2-MI CRC helpers.
 //!
-//! The CRC-32 MPEG-2 primitive lives in `dvb_common::crc32_mpeg2`.
+//! The CRC-32 MPEG-2 primitive lives in `broadcast_common::crc32_mpeg2`.
 //! This module keeps the T2-MI-packet-level validator, whose trailer
 //! position semantics come from TS 102 773 §5.1 — a T2-MI-framing
 //! concern, not a CRC primitive.
 
 use crate::error::{Error, Result};
-use dvb_common::crc32_mpeg2;
+use broadcast_common::crc32_mpeg2;
 
 /// Length of the CRC-32 trailer in each T2-MI packet.
 pub const CRC_LEN: usize = 4;
@@ -36,7 +36,7 @@ pub fn validate_crc(bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::crc32_mpeg2::compute;
+    use broadcast_common::crc32_mpeg2::compute;
 
     #[test]
     fn crc32_of_empty_input_is_initial_state() {

@@ -1,6 +1,6 @@
 //! T2-MI payload type 0x00: Baseband Frame (BBFRAME) — §5.2.1.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// BBFrame payload (type 0x00) per ETSI TS 102 773 §5.2.1.
 ///

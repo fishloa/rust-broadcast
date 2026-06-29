@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
 use crate::traits::CommandDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `splice_command_type` for splice_insert (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x05;

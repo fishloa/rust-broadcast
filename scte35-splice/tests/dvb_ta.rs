@@ -4,7 +4,7 @@
 //! splice_info_section() (parsed back via the generic descriptor loop), the
 //! compact encoding round-trip, and the DSM-CC stream-event wrap + base-64.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
 use scte35_splice::descriptors::AnySpliceDescriptor;
 use scte35_splice::dvb_ta::{

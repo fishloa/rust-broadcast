@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::length;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `comms_command_id` values (Table 52, p. 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,7 +72,7 @@ impl CommsCommandId {
         }
     }
 }
-dvb_common::impl_spec_display!(CommsCommandId, Reserved);
+broadcast_common::impl_spec_display!(CommsCommandId, Reserved);
 
 /// `connection_descriptor_type` values (Table 53, p. 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +116,7 @@ impl ConnectionDescriptorType {
         }
     }
 }
-dvb_common::impl_spec_display!(ConnectionDescriptorType, Reserved);
+broadcast_common::impl_spec_display!(ConnectionDescriptorType, Reserved);
 
 /// `connection_descriptor()` object (Table 53): carries the connection info.
 ///
@@ -441,7 +441,7 @@ impl CommsReplyId {
         }
     }
 }
-dvb_common::impl_spec_display!(CommsReplyId, Reserved);
+broadcast_common::impl_spec_display!(CommsReplyId, Reserved);
 
 /// `comms_reply()` object (Table 54): id + signed return_value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -10,7 +10,7 @@
 //!   `schedule_definition_data()` / `schedule_component_mode_request_data()`).
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `time()` — §12.4.
 ///
@@ -176,7 +176,7 @@ impl TimeType {
     }
 }
 
-dvb_common::impl_spec_display!(TimeType, Reserved);
+broadcast_common::impl_spec_display!(TimeType, Reserved);
 
 /// UTC payload of [`Timestamp`] when `time_type == 1` — §12.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -84,7 +84,7 @@ impl FrameDurationCode {
         }
     }
 }
-dvb_common::impl_spec_display!(FrameDurationCode);
+broadcast_common::impl_spec_display!(FrameDurationCode);
 
 /// `MaxPayloadCode` — Table G.17.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +155,7 @@ impl MaxPayloadCode {
         }
     }
 }
-dvb_common::impl_spec_display!(MaxPayloadCode, Reserved);
+broadcast_common::impl_spec_display!(MaxPayloadCode, Reserved);
 
 /// Fixed length before the `codec_selector` bytes.
 const DTS_UHD_FIXED_LEN: usize = 2;

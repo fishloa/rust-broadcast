@@ -5,7 +5,7 @@
 //! CRC-32 (4 bytes). The `Length` field counts from the byte *after* the Type
 //! field up to and including the CRC (§4.2). The CRC-32 is the MPEG-2/DSM-CC
 //! CRC over the whole SNDU excluding the 4-byte trailer (§4.6) — provided by
-//! [`dvb_common::crc32_mpeg2`].
+//! [`broadcast_common::crc32_mpeg2`].
 
 use alloc::vec::Vec;
 
@@ -158,7 +158,7 @@ impl<'a> Sndu<'a> {
         }
 
         // CRC covers the whole SNDU from byte 0 up to (not including) the CRC.
-        let computed = dvb_common::crc32_mpeg2::compute(&data[..crc_start]);
+        let computed = broadcast_common::crc32_mpeg2::compute(&data[..crc_start]);
         let found = u32::from_be_bytes([
             data[crc_start],
             data[crc_start + 1],
@@ -220,7 +220,7 @@ impl<'a> Sndu<'a> {
         off += written;
 
         // CRC-32 over bytes [0, off).
-        let crc = dvb_common::crc32_mpeg2::compute(&out[..off]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&out[..off]);
         out[off..off + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
         off += CRC_LEN;
         Ok(off)
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(&out[4..10], &npa);
         assert_eq!(&out[10..16], &pdu);
         // CRC = MPEG-2 over bytes [0,16).
-        let crc = dvb_common::crc32_mpeg2::compute(&out[..16]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&out[..16]);
         assert_eq!(&out[16..20], &crc.to_be_bytes());
 
         // Reparse → equal.
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(&out[0..2], &[0x80, 0x08]);
         assert_eq!(&out[2..4], &[0x86, 0xDD]);
         assert_eq!(&out[4..8], &pdu);
-        let crc = dvb_common::crc32_mpeg2::compute(&out[..8]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&out[..8]);
         assert_eq!(&out[8..12], &crc.to_be_bytes());
 
         assert_eq!(Sndu::parse(&out).unwrap(), sndu);

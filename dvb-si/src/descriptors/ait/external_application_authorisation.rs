@@ -8,7 +8,7 @@ use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use crate::tables::ait::ApplicationIdentifier;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for external_application_authorisation_descriptor (AIT namespace).
 pub const TAG: u8 = 0x05;

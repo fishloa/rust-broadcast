@@ -27,7 +27,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Download resource (Tables 75-78).
 pub mod tag {

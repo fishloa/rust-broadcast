@@ -3,7 +3,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Wire tag for the Bouquet Name Descriptor.
 pub const TAG: u8 = 0x47;

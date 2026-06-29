@@ -5,9 +5,9 @@
 //! is round-trip tested (parse → serialize → byte-identical). This shows the
 //! shape you follow when adding a new type.
 //!
-//! Run with: `cargo run -p dvb-common --example implement_parse_serialize`
+//! Run with: `cargo run -p broadcast-common --example implement_parse_serialize`
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// A toy 3-byte header: a 1-byte tag and a big-endian 16-bit value.
 #[derive(Debug, PartialEq, Eq)]

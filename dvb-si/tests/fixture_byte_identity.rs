@@ -5,7 +5,7 @@
 //! on real broadcast data (reserved bits, SSI, CRC included).
 #![cfg(feature = "ts")]
 
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;

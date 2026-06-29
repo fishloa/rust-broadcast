@@ -11,7 +11,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Power Manager (Tables 52, 54).
 pub mod tag {
@@ -59,7 +59,7 @@ impl ActivationState {
         }
     }
 }
-dvb_common::impl_spec_display!(ActivationState, Reserved);
+broadcast_common::impl_spec_display!(ActivationState, Reserved);
 
 /// `reply_code` — the module's response to a state-change request (Table 55).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl ReplyCode {
         }
     }
 }
-dvb_common::impl_spec_display!(ReplyCode, Reserved);
+broadcast_common::impl_spec_display!(ReplyCode, Reserved);
 
 /// `activation_state_change_request()` (Table 52): host → module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

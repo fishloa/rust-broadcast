@@ -6,6 +6,11 @@ versioning.
 
 ## Unreleased
 
+## 0.5.1 — 2026-06-29
+
+### Changed
+- Dependency `broadcast-common` bump (renamed from `dvb-common`); no API change.
+
 ## 0.5.0 — 2026-06-23
 
 ### Added

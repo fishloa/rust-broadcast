@@ -9,7 +9,7 @@
 //! authoritative-vector coverage available: the spec's own messages.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 /// (label, base64) for all eight §14 sample messages.

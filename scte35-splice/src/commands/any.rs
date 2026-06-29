@@ -86,7 +86,7 @@ macro_rules! declare_commands {
             /// Parse a command `body` by its `splice_command_type`. Reserved /
             /// unimplemented types yield [`AnyCommand::Unknown`].
             pub fn dispatch(command_type: u8, body: &$lt [u8]) -> Result<Self> {
-                use dvb_common::Parse;
+                use broadcast_common::Parse;
                 match command_type {
                     $(
                         $ct => <$($path)::+>::parse(body).map(Self::$variant),
@@ -99,7 +99,7 @@ macro_rules! declare_commands {
             /// will write (the `splice_command_length`).
             #[must_use]
             pub fn body_len(&self) -> usize {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialized_len(),
@@ -110,7 +110,7 @@ macro_rules! declare_commands {
 
             /// Serialize just the command body (no type byte) into `buf`.
             pub fn serialize_body_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialize_into(buf),

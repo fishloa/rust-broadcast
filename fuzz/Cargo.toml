@@ -12,14 +12,14 @@ cargo-fuzz = true
 [workspace]
 
 # Redirect crates.io references (used by dvb-ci) to the local workspace paths,
-# so all crates share the same dvb-common/dvb-si type definitions and the
+# so all crates share the same broadcast-common/dvb-si type definitions and the
 # dvb_common::Parse trait is the same instance.
 [patch.crates-io]
-dvb-common = { path = "../dvb-common" }
+broadcast-common = { path = "../broadcast-common" }
 dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
-dvb-common   = { path = "../dvb-common" }
+broadcast-common   = { path = "../broadcast-common" }
 dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
 dvb-t2mi     = { path = "../dvb-t2mi",     features = ["ts"] }
 dvb-bbframe  = { path = "../dvb-bbframe" }

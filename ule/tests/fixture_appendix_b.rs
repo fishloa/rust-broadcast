@@ -1,7 +1,7 @@
 //! RFC 4326 Appendix B test vector: parse the committed `appendix_b.bin` (an
 //! ICMPv6-over-IPv6 SNDU with D=0, NPA 00:01:02:03:04:05, Type 0x86DD, and the
 //! RFC's stated CRC-32 `0x7C171763`), assert the decoded fields, verify a
-//! byte-exact round-trip, and confirm the CRC matches `dvb_common::crc32_mpeg2`.
+//! byte-exact round-trip, and confirm the CRC matches `broadcast_common::crc32_mpeg2`.
 
 use std::fs;
 
@@ -43,7 +43,7 @@ fn appendix_b_crc_matches_mpeg2() {
     let data = fixture();
     // The SNDU bytes excluding the 4-byte CRC trailer.
     let body = &data[..data.len() - 4];
-    let computed = dvb_common::crc32_mpeg2::compute(body);
+    let computed = broadcast_common::crc32_mpeg2::compute(body);
     let found = u32::from_be_bytes([data[63], data[64], data[65], data[66]]);
     assert_eq!(found, 0x7C17_1763, "RFC 4326 Appendix B stated CRC-32");
     assert_eq!(

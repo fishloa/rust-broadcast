@@ -824,7 +824,7 @@ mod tests {
 
         // CRC-32
         let crc_pos = total - 4;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..].copy_from_slice(&crc.to_be_bytes());
         buf
     }
@@ -1307,7 +1307,7 @@ mod tests {
 
             // CRC
             let crc_off = buf.len() - 4;
-            let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_off]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_off]);
             buf[crc_off..].copy_from_slice(&crc.to_be_bytes());
             buf
         };

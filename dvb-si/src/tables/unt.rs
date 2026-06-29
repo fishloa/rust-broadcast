@@ -15,7 +15,7 @@ use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Update Notification Table.
 pub const TABLE_ID: u8 = 0x4B;
@@ -71,7 +71,7 @@ impl UntActionType {
         }
     }
 }
-dvb_common::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
+broadcast_common::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
 
 const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
@@ -426,7 +426,7 @@ impl Serialize for UntSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -713,7 +713,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![
             0x4B, 0xF0, 0x0F, 0x01, 0x5B, 0xC1, 0x00, 0x00, 0x00, 0x01, 0x5A, 0x00, 0xF0, 0x00,
         ];
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let unt = UntSection::parse(&bytes).unwrap();
         assert_eq!(unt.action_type, UntActionType::SystemSoftwareUpdate);

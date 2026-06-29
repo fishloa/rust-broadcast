@@ -89,7 +89,7 @@ impl PresentationTime {
     }
 }
 
-dvb_common::impl_spec_display!(PresentationTime, Delta, Absolute);
+broadcast_common::impl_spec_display!(PresentationTime, Delta, Absolute);
 
 /// A parsed/owned MPEG-DASH Event Message Box (`emsg`).
 ///

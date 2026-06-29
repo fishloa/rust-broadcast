@@ -8,7 +8,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for FTA_content_management_descriptor.
 pub const TAG: u8 = 0x7E;
@@ -85,7 +85,7 @@ impl ControlRemoteAccess {
         }
     }
 }
-dvb_common::impl_spec_display!(ControlRemoteAccess, Reserved);
+broadcast_common::impl_spec_display!(ControlRemoteAccess, Reserved);
 
 /// FTA Content Management Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

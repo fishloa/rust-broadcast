@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::operations::{AnyOperation, Operation};
 use crate::time::Timestamp;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Wire constants.
 const HEADER_LEN: usize = 10; // reserved(2) + messageSize(2) + protocol_version(1) + AS_index(1) + message_number(1) + DPI_PID_index(2) + SCTE35_protocol_version(1)

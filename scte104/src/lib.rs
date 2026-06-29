@@ -32,7 +32,7 @@
 //!
 //! ```
 //! use scte104::{SingleOperationMessage, MultipleOperationMessage, operations::{AnyOperation, Operation, splice_request::{SpliceRequest, SpliceInsertType}}};
-//! use dvb_common::{Parse, Serialize};
+//! use broadcast_common::{Parse, Serialize};
 //!
 //! // Build a splice_request single_operation_message (basic response wrap).
 //! let msg = SingleOperationMessage::new_request(

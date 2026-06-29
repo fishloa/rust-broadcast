@@ -12,7 +12,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for transport_protocol_descriptor (AIT namespace).
 pub const TAG: u8 = 0x02;
@@ -91,7 +91,7 @@ impl SelectorKind<'_> {
         }
     }
 }
-dvb_common::impl_spec_display!(SelectorKind<'_>);
+broadcast_common::impl_spec_display!(SelectorKind<'_>);
 
 /// Transport Protocol Descriptor (AIT tag 0x02).
 #[derive(Debug, Clone, PartialEq, Eq)]

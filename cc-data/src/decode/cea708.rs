@@ -77,7 +77,7 @@ impl AnchorPoint {
         }
     }
 }
-dvb_common::impl_spec_display!(AnchorPoint);
+broadcast_common::impl_spec_display!(AnchorPoint);
 
 // ── Service / window counts (§6.1, §8) ──────────────────────────────────────
 /// Number of standard services tracked (47 CFR §79.102 (c): Caption Service #1–#6).
@@ -158,7 +158,7 @@ impl WindowState {
         }
     }
 }
-dvb_common::impl_spec_display!(WindowState);
+broadcast_common::impl_spec_display!(WindowState);
 
 /// A decoded CEA-708 caption window (§8.4 window model).
 ///

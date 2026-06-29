@@ -1,7 +1,7 @@
 //! Biting round-trip, multi-parameter boundary, field-mutation, and
 //! enum-value-drift tests for the SimulCrypt generic message framing.
 
-use dvb_common::traits::{Parse, Serialize};
+use broadcast_common::traits::{Parse, Serialize};
 use dvb_simulcrypt::{
     CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
     EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,

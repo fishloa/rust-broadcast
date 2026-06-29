@@ -6,7 +6,7 @@
 use crate::descriptors::{AitDescriptorLoop, DescriptorLoop};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
 pub const TABLE_ID: u8 = 0x74;
@@ -101,7 +101,7 @@ impl ControlCode {
         }
     }
 }
-dvb_common::impl_spec_display!(ControlCode, Unallocated);
+broadcast_common::impl_spec_display!(ControlCode, Unallocated);
 
 /// Application type — ETSI TS 102 809 §5.2.4.2 Tables 2-3 (application_type).
 ///
@@ -164,7 +164,7 @@ impl ApplicationType {
         }
     }
 }
-dvb_common::impl_spec_display!(ApplicationType, Reserved, UserDefined);
+broadcast_common::impl_spec_display!(ApplicationType, Reserved, UserDefined);
 
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,7 +414,7 @@ impl Serialize for AitSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }

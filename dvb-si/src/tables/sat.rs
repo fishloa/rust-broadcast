@@ -14,7 +14,7 @@
 use crate::error::{Error, Result};
 use alloc::vec;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.
 pub const TABLE_ID: u8 = 0x4D;
@@ -326,7 +326,7 @@ impl AssociationType {
         }
     }
 }
-dvb_common::impl_spec_display!(AssociationType, Reserved);
+broadcast_common::impl_spec_display!(AssociationType, Reserved);
 
 /// Leap-second signalling info (present when `association_type == 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,7 +414,7 @@ impl TimePlanMode {
         }
     }
 }
-dvb_common::impl_spec_display!(TimePlanMode, Reserved);
+broadcast_common::impl_spec_display!(TimePlanMode, Reserved);
 
 /// Mode-specific data in a beamhopping plan entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -594,7 +594,7 @@ impl InterpolationType {
         }
     }
 }
-dvb_common::impl_spec_display!(InterpolationType, ReservedOther);
+broadcast_common::impl_spec_display!(InterpolationType, ReservedOther);
 
 /// Ephemeris acceleration (optional, 3 × 32-bit spfmsbf).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1731,7 +1731,7 @@ impl Serialize for SatSection {
             }
         }
         let body_end = HEADER_LEN + sat_body_serialized_len(&self.body);
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..body_end]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
         buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -1993,7 +1993,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![
             0x4D, 0xF0, 0x0E, 0x1C, 0x00, 0xCB, 0x00, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
         ];
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let sat = SatSection::parse(&bytes).unwrap();
         assert_eq!(sat.satellite_table_id, 7);
@@ -2336,7 +2336,7 @@ mod tests {
         corrupt_buf[1] = 0x80 | 0x40 | 0x30 | ((section_length >> 8) as u8 & 0x0F);
         corrupt_buf[2] = (section_length & 0xFF) as u8;
         let crc_end = corrupt_buf.len();
-        let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
         corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
         let original_len = corrupt_buf.len();
         corrupt_buf.truncate(original_len - 100);
@@ -2344,7 +2344,7 @@ mod tests {
         corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
         corrupt_buf[2] = (sl & 0xFF) as u8;
         let crc_end = corrupt_buf.len();
-        let crc2 = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+        let crc2 = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
         corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc2.to_be_bytes());
         assert!(SatSection::parse(&corrupt_buf).is_err());
     }
@@ -2389,7 +2389,7 @@ mod tests {
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
             corrupt_buf[2] = (sl & 0xFF) as u8;
             let crc_end = corrupt_buf.len();
-            let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
             corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
             assert!(SatSection::parse(&corrupt_buf).is_err());
         }
@@ -2451,7 +2451,7 @@ mod tests {
             corrupt_buf[1] = (corrupt_buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
             corrupt_buf[2] = (sl & 0xFF) as u8;
             let crc_end = corrupt_buf.len();
-            let crc = dvb_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&corrupt_buf[..crc_end - CRC_LEN]);
             corrupt_buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
             assert!(SatSection::parse(&corrupt_buf).is_err());
         }
@@ -2596,7 +2596,7 @@ mod tests {
 
     fn crc_section(bytes: &[u8]) -> Vec<u8> {
         let mut v = bytes.to_vec();
-        let crc = dvb_common::crc32_mpeg2::compute(&v);
+        let crc = broadcast_common::crc32_mpeg2::compute(&v);
         v.extend_from_slice(&crc.to_be_bytes());
         v
     }
@@ -2808,7 +2808,7 @@ mod tests {
         buf[1] = (buf[1] & 0xF0) | ((sl >> 8) as u8 & 0x0F);
         buf[2] = (sl & 0xFF) as u8;
         let crc_end = buf.len();
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_end - CRC_LEN]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_end - CRC_LEN]);
         buf[crc_end - CRC_LEN..crc_end].copy_from_slice(&crc.to_be_bytes());
         assert!(SatSection::parse(&buf).is_err());
     }

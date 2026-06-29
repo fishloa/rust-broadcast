@@ -1,13 +1,13 @@
 [package]
 name         = "dvb-conformance"
-version      = "8.0.0"
+version      = "8.1.0"
 edition      = "2021"
 description  = "ETSI TR 101 290 transport-stream conformance monitor (DVB measurement guidelines)."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["dvb", "mpeg-ts", "conformance", "monitoring"]
 categories   = ["multimedia", "parsing"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 
@@ -15,16 +15,16 @@ rust-version = "1.81"
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 dvb-si      = { path = "../dvb-si", version = "8", default-features = false, features = ["ts"] }
 mpeg-ts     = { path = "../mpeg-ts", version = "0.1", default-features = false }
 serde       = { version = "1", optional = true, features = ["derive"] }
 
 [features]
 default = ["std", "serde"]
-std     = ["dvb-common/std", "dvb-si/std", "mpeg-ts/std"]
+std     = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std"]
 
 serde = ["dep:serde", "dvb-si/serde"]
 
 [dev-dependencies]
-dvb-common = { path = "../dvb-common", version = "8" }
+broadcast-common = { path = "../broadcast-common", version = "8" }

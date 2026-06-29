@@ -1,43 +1,24 @@
 [package]
 name         = "dvb-common"
-version      = "8.0.0"
+version      = "8.1.0"
 edition      = "2021"
-description  = "Shared Parse/Serialize traits and CRC-32 MPEG-2 used by the dvb_si / dvb_t2mi / dvb_bbframe family."
+description  = "DEPRECATED: renamed to `broadcast-common`. This crate re-exports it."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["dvb", "mpeg", "broadcast", "crc", "parser"]
 categories   = ["parser-implementations", "multimedia"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = ["std"]
-# `std` links the standard library. Without it the crate is `#![no_std]` and
-# needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
-# the parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["chrono?/std", "chrono?/clock"]
-# MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
-# helpers remain available; only the chrono-typed UTC functions are gated.
-chrono = ["dep:chrono"]
+std     = ["broadcast-common/std"]
+chrono  = ["broadcast-common/chrono"]
 
 [dependencies]
-# Default build stays lean — consumers of dvb_common pay for nothing they aren't
-# already paying for downstream. `chrono` is pulled only when the `chrono`
-# feature is enabled (e.g. by dvb-si's own `chrono` feature); it is configured
-# `no_std + alloc` so it composes with the crate's `no_std` build.
-chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
-# Pure-Rust `floor` for the MJD↔calendar codec: `f64::floor` is a std-only
-# intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
-# bit-identical to `f64::floor` and is used uniformly in std and no_std.
-libm = "0.2"
-
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name    = "crc32"
-harness = false
+broadcast-common = { path = "../broadcast-common", version = "8.1", default-features = false }

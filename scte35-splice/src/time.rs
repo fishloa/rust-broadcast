@@ -7,7 +7,7 @@
 //! pattern), so callers never re-derive the 90 kHz scaling by hand.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// One second of the program clock in 90 kHz ticks.
 pub const TICKS_PER_SECOND: u64 = 90_000;

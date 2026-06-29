@@ -8,7 +8,7 @@
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `system_header_start_code` — `0x000001BB`.
 pub const SYSTEM_HEADER_START_CODE: u32 = 0x0000_01BB;

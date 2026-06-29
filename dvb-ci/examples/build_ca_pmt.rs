@@ -5,9 +5,9 @@
 //! Shows the headline workflow: a host takes a parsed MPEG-2 PMT, strips every
 //! non-CA descriptor, and hands the CA-only `ca_pmt` object to a CICAM.
 
+use broadcast_common::Parse;
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
-use dvb_common::Parse;
 use dvb_si::tables::pmt::PmtSection;
 
 fn main() {
@@ -77,7 +77,7 @@ fn sample_pmt() -> Vec<u8> {
     let section_length = body.len() - 3 + 4;
     body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
     body[2] = section_length as u8;
-    let crc = dvb_common::crc32_mpeg2::compute(&body);
+    let crc = broadcast_common::crc32_mpeg2::compute(&body);
     body.extend_from_slice(&crc.to_be_bytes());
     body
 }

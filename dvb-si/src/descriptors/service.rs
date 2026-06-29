@@ -6,7 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
 pub const TAG: u8 = 0x48;
@@ -204,7 +204,7 @@ impl ServiceType {
         }
     }
 }
-dvb_common::impl_spec_display!(ServiceType, Reserved);
+broadcast_common::impl_spec_display!(ServiceType, Reserved);
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -14,7 +14,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
 /// (`docs/ts_102_006_ssu.md`, Table 5 — Update_type coding).
@@ -79,7 +79,7 @@ impl UpdateType {
         }
     }
 }
-dvb_common::impl_spec_display!(UpdateType, Reserved);
+broadcast_common::impl_spec_display!(UpdateType, Reserved);
 
 /// Descriptor tag for data_broadcast_id_descriptor.
 pub const TAG: u8 = 0x66;

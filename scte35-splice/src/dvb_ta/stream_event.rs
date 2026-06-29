@@ -22,7 +22,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::section::SpliceInfoSection;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `event_type` value for inline carriage (`SCTE_35_section()` follows).
 pub const EVENT_TYPE_INLINE: u8 = 0;
@@ -85,7 +85,7 @@ impl TimelineType {
         }
     }
 }
-dvb_common::impl_spec_display!(TimelineType, Reserved);
+broadcast_common::impl_spec_display!(TimelineType, Reserved);
 
 /// The SCTE 35 carriage body of a stream-event payload (`event_type`-selected).
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -40,7 +40,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
 pub const TABLE_ID: u8 = 0x7C;
@@ -360,7 +360,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             }
         }
 
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
         buf[pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }

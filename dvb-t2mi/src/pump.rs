@@ -139,9 +139,9 @@ impl T2miEvent {
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::Error`] from [`dvb_common::Parse::parse`] on [`Header`].
+    /// Propagates [`crate::Error`] from [`broadcast_common::Parse::parse`] on [`Header`].
     pub fn header(&self) -> crate::Result<Header> {
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
         Header::parse(&self.bytes)
     }
 
@@ -413,7 +413,7 @@ impl T2miPump {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::crc32_mpeg2;
+    use broadcast_common::crc32_mpeg2;
 
     // ── Test helpers ─────────────────────────────────────────────────────────
 
@@ -618,7 +618,7 @@ mod tests {
     fn payload_with_dispatches_custom_registered_type() {
         use crate::payload::registry::PayloadRegistry;
         use crate::traits::PayloadDef;
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
 
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -682,7 +682,7 @@ mod tests {
     fn payload_with_dispatches_genuinely_private_packet_type() {
         use crate::payload::registry::PayloadRegistry;
         use crate::traits::PayloadDef;
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
 
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]

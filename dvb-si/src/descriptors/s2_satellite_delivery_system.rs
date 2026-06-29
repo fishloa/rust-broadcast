@@ -25,7 +25,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for s2_satellite_delivery_system_descriptor.
 pub const TAG: u8 = 0x79;
@@ -98,7 +98,7 @@ impl TsGsMode {
         }
     }
 }
-dvb_common::impl_spec_display!(TsGsMode, Reserved);
+broadcast_common::impl_spec_display!(TsGsMode, Reserved);
 
 /// S2 Satellite Delivery System Descriptor (§6.2.13.3, Table 42).
 #[derive(Debug, Clone, PartialEq, Eq)]

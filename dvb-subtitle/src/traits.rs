@@ -1,6 +1,6 @@
-//! Subtitling-specific traits. `Parse` is provided by `dvb_common`.
+//! Subtitling-specific traits. `Parse` is provided by `broadcast_common`.
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 /// Implemented by every typed subtitling segment; drives
 /// [`crate::any::AnySegment`] dispatch. `SEGMENT_TYPE` is the wire

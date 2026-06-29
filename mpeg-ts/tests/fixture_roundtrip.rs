@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::fs;
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{
     iter_packets, AdaptationFieldControl, ScramblingControl, SectionReassembler, TsHeader,

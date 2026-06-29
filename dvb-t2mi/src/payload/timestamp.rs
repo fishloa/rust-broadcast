@@ -37,7 +37,7 @@
 
 use num_enum::TryFromPrimitive;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Bandwidth per §5.2.7 Table 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -88,7 +88,7 @@ impl Bandwidth {
         }
     }
 }
-dvb_common::impl_spec_display!(Bandwidth);
+broadcast_common::impl_spec_display!(Bandwidth);
 
 /// Subsecond denominator D for 1.7 MHz bandwidth.
 /// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 131.
@@ -388,7 +388,7 @@ impl T2TimestampPayload {
     #[must_use]
     pub fn emission_time_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         let offset = self.emission_offset()?;
-        dvb_common::time::decode_seconds_since_2000_utc(
+        broadcast_common::time::decode_seconds_since_2000_utc(
             offset.as_secs(),
             offset.subsec_nanos(),
             self.utco,
@@ -408,7 +408,7 @@ impl T2TimestampPayload {
         dt: chrono::DateTime<chrono::Utc>,
         utco: u16,
     ) -> Result<(), crate::error::Error> {
-        let (secs, nanos) = dvb_common::time::encode_seconds_since_2000_utc(dt, utco).ok_or(
+        let (secs, nanos) = broadcast_common::time::encode_seconds_since_2000_utc(dt, utco).ok_or(
             crate::error::Error::ReservedBitsViolation {
                 field: "seconds_since_2000",
                 reason: "date before 2000 epoch or exceeds 40-bit range",

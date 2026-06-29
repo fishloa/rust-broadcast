@@ -77,7 +77,7 @@ mod tests {
         bouquet_desc: &[u8],
         ts_entries: &[(u16, u16, &[u8])],
     ) -> Vec<u8> {
-        use dvb_common::Serialize;
+        use broadcast_common::Serialize;
         let bat = BatSection {
             bouquet_id,
             version_number: version,

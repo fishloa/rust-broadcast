@@ -74,7 +74,7 @@ impl TypeField {
     }
 }
 
-dvb_common::impl_spec_display!(TypeField);
+broadcast_common::impl_spec_display!(TypeField);
 
 #[cfg(test)]
 mod tests {

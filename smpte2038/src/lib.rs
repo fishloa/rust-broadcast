@@ -17,7 +17,7 @@
 //!
 //! The per-ANC-packet fields (`DID`/`SDID`/`data_count`/`user_data_word`/
 //! `checksum_word`) are a **contiguous MSB-first 10-bit bit stream**, walked
-//! with [`dvb_common::bits`]. Per §4.2.1 the `user_data_word` loop counter uses
+//! with [`broadcast_common::bits`]. Per §4.2.1 the `user_data_word` loop counter uses
 //! only the **low 8 bits** of `data_count`; the full 10-bit values are stored
 //! verbatim and ST 291-1 parity/checksum is **not** validated here (ST 2038
 //! defers it to ST 291-1, which is not vendored).

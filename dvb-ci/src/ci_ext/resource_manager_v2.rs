@@ -17,7 +17,7 @@ use crate::objects;
 use crate::resource::ResourceId;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Resource Manager v2 (Table 87 / Tables 3-7).
 pub mod tag {
@@ -103,7 +103,7 @@ impl ModuleIdCommandKind {
         }
     }
 }
-dvb_common::impl_spec_display!(ModuleIdCommandKind, Reserved);
+broadcast_common::impl_spec_display!(ModuleIdCommandKind, Reserved);
 
 /// `module_id_command()` — host acknowledges or sets the Module ID (Table 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

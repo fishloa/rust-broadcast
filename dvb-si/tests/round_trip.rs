@@ -1,7 +1,7 @@
 //! Round-trip tests: parse → serialize → parse must produce identical bytes
 //! and an identical struct for every parser type in the crate.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use mpeg_ts::section::Section;
 
 #[test]
@@ -18,7 +18,7 @@ fn long_form_section_round_trip_is_identity() {
     raw.push(0); // section_number
     raw.push(0); // last_section_number
     raw.extend_from_slice(&payload);
-    let crc = dvb_common::crc32_mpeg2::compute(&raw);
+    let crc = broadcast_common::crc32_mpeg2::compute(&raw);
     raw.extend_from_slice(&crc.to_be_bytes());
 
     let parsed = Section::parse(&raw).expect("parse");

@@ -20,7 +20,7 @@
 //! always-present fields plus an [`EmiData`] enum selected by the EMI value.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `uri_message` fixed length — 64 bits (8 bytes).
 pub const URI_MESSAGE_LEN: usize = 8;

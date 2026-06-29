@@ -50,7 +50,7 @@ impl RangeType {
         }
     }
 }
-dvb_common::impl_spec_display!(RangeType, Reserved);
+broadcast_common::impl_spec_display!(RangeType, Reserved);
 
 impl<'a> ExtensionBodyDef<'a> for VideoDepthRange<'a> {
     const TAG_EXTENSION: u8 = 0x10;

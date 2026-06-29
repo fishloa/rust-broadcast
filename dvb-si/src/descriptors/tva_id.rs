@@ -9,7 +9,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for TVA_id_descriptor.
 pub const TAG: u8 = 0x75;
@@ -92,7 +92,7 @@ impl TvaRunningStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(TvaRunningStatus, Unallocated);
+broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]

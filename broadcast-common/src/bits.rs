@@ -12,7 +12,7 @@
 //! clears each target bit, so the destination buffer need not be pre-zeroed.
 //!
 //! ```
-//! use dvb_common::bits::{BitReader, BitWriter};
+//! use broadcast_common::bits::{BitReader, BitWriter};
 //!
 //! let mut buf = [0u8; 2];
 //! let mut w = BitWriter::new(&mut buf);

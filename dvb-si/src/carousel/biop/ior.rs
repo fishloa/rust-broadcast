@@ -17,7 +17,7 @@ use super::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // ── wire-layout byte counts ────────────────────────────────────────────────────
 
@@ -1311,7 +1311,7 @@ impl Serialize for Ior<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     fn sample_ior() -> Vec<u8> {
         // IOR for a ServiceGateway object in the m6 fixture format:

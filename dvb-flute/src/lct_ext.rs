@@ -64,7 +64,7 @@ impl LctExtType {
     }
 }
 
-dvb_common::impl_spec_display!(LctExtType, Other);
+broadcast_common::impl_spec_display!(LctExtType, Other);
 
 // EXT_TIME Use-field bit masks (RFC 5651 §5.2.2, Figure 4). The Use field is
 // the low 16 bits of the first 32-bit word; SCT-High is the MSB.

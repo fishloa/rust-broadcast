@@ -37,7 +37,7 @@
 //! # Adding a descriptor
 //!
 //! 1. Create the module with the wire layout, a `pub const TAG: u8`, and the
-//!    symmetric [`dvb_common::Parse`]/[`dvb_common::Serialize`] impls +
+//!    symmetric [`broadcast_common::Parse`]/[`broadcast_common::Serialize`] impls +
 //!    round-trip tests (copy an existing module).
 //! 2. `impl DescriptorDef` for the type (`TAG` from the module const, `NAME`
 //!    in SCREAMING_SNAKE without the `_descriptor` suffix).
@@ -159,7 +159,7 @@ macro_rules! declare_descriptors {
             /// caller turns that into [`AnyDescriptor::Unknown`]). `Some(Err)`
             /// is a typed parse failure for a recognised tag.
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::Result<Self>> {
-                use dvb_common::Parse;
+                use broadcast_common::Parse;
                 match tag {
                     $(
                         $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),
@@ -702,7 +702,7 @@ mod tests {
             x: u8,
         }
 
-        impl<'a> dvb_common::Parse<'a> for MyTag0xA7 {
+        impl<'a> broadcast_common::Parse<'a> for MyTag0xA7 {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {

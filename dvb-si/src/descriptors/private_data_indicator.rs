@@ -6,7 +6,7 @@
 use super::descriptor_body;
 pub use super::private_data_specifier::private_data_specifier_name;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for private_data_indicator_descriptor.
 pub const TAG: u8 = 0x0F;

@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `close_mmi_cmd_id` values (Table, p. 36).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl CloseMmiCmdId {
         }
     }
 }
-dvb_common::impl_spec_display!(CloseMmiCmdId, Reserved);
+broadcast_common::impl_spec_display!(CloseMmiCmdId, Reserved);
 
 /// `close_mmi()` object (Table 33).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

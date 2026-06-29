@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `display_control_cmd` values (Table 34, p. 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +79,7 @@ impl DisplayControlCmd {
         }
     }
 }
-dvb_common::impl_spec_display!(DisplayControlCmd, Reserved);
+broadcast_common::impl_spec_display!(DisplayControlCmd, Reserved);
 
 /// `mmi_mode` values (Table 34, p. 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +128,7 @@ impl MmiMode {
         }
     }
 }
-dvb_common::impl_spec_display!(MmiMode, Reserved);
+broadcast_common::impl_spec_display!(MmiMode, Reserved);
 
 /// `display_control()` object (Table 34).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,7 +263,7 @@ impl DisplayReplyId {
         }
     }
 }
-dvb_common::impl_spec_display!(DisplayReplyId, Reserved);
+broadcast_common::impl_spec_display!(DisplayReplyId, Reserved);
 
 /// One pixel-depth entry in a graphics-characteristics display reply (Table 35).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -542,7 +542,7 @@ impl KeypadControlCmd {
         )
     }
 }
-dvb_common::impl_spec_display!(KeypadControlCmd, Reserved);
+broadcast_common::impl_spec_display!(KeypadControlCmd, Reserved);
 
 /// `keypad_control()` object (Table 36).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -791,7 +791,7 @@ impl DisplayMessageId {
         }
     }
 }
-dvb_common::impl_spec_display!(DisplayMessageId, Reserved);
+broadcast_common::impl_spec_display!(DisplayMessageId, Reserved);
 
 /// `display_message()` object (Table 39).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1137,7 +1137,7 @@ impl DownloadReplyId {
         }
     }
 }
-dvb_common::impl_spec_display!(DownloadReplyId, Reserved);
+broadcast_common::impl_spec_display!(DownloadReplyId, Reserved);
 
 /// `download_reply()` object (Table 45): object_id + download_reply_id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

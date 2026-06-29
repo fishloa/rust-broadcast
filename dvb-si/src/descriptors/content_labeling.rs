@@ -9,7 +9,7 @@
 use super::descriptor_body;
 use crate::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for content_labeling_descriptor.
 pub const TAG: u8 = 0x24;

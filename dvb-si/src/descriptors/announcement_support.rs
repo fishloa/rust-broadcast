@@ -26,7 +26,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for announcement_support_descriptor.
 pub const TAG: u8 = 0x6E;
@@ -123,7 +123,7 @@ impl AnnouncementType {
         }
     }
 }
-dvb_common::impl_spec_display!(AnnouncementType, Reserved);
+broadcast_common::impl_spec_display!(AnnouncementType, Reserved);
 
 /// Reference type — ETSI EN 300 468 Table 20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,7 +188,7 @@ impl ReferenceType {
         }
     }
 }
-dvb_common::impl_spec_display!(ReferenceType, Reserved);
+broadcast_common::impl_spec_display!(ReferenceType, Reserved);
 
 /// Conditional reference block, present for reference_type 1, 2, 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

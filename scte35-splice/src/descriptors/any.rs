@@ -74,7 +74,7 @@ macro_rules! declare_splice_descriptors {
             /// Parse one full descriptor (2-byte header included) by its tag.
             /// Unknown tags yield [`AnySpliceDescriptor::Unknown`].
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Result<Self> {
-                use dvb_common::Parse;
+                use broadcast_common::Parse;
                 match tag {
                     $(
                         $tag => <$($path)::+>::parse(full).map(Self::$variant),
@@ -86,7 +86,7 @@ macro_rules! declare_splice_descriptors {
             /// Bytes this descriptor serializes to (header included).
             #[must_use]
             pub fn serialized_len(&self) -> usize {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(d) => d.serialized_len(),
@@ -97,7 +97,7 @@ macro_rules! declare_splice_descriptors {
 
             /// Serialize this descriptor (header included) into `buf`.
             pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(d) => d.serialize_into(buf),
@@ -209,7 +209,7 @@ mod tests {
     use super::*;
     use crate::descriptors::avail::AvailDescriptor;
     use crate::descriptors::header::CUEI;
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
 
     #[test]
     fn loop_dispatches_typed_and_unknown() {

@@ -1,8 +1,8 @@
 //! Basic: the shared building blocks — MPEG-2 CRC-32 and BCD coding.
 //!
-//! Run with: `cargo run -p dvb-common --example crc_and_bcd`
+//! Run with: `cargo run -p broadcast-common --example crc_and_bcd`
 
-use dvb_common::{bcd, crc32_mpeg2};
+use broadcast_common::{bcd, crc32_mpeg2};
 
 fn main() {
     // Every CRC-bearing PSI/SI section is protected by this CRC-32/MPEG-2.

@@ -23,7 +23,7 @@ use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Width in bits (and bytes) of the `format_identifier` field in MPU() (§10.3.3.3, Table 24).
 const MPU_FORMAT_IDENTIFIER_LEN: usize = 4; // 32 bits / 8

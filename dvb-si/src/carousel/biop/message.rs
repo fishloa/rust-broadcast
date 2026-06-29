@@ -18,7 +18,7 @@ use super::{
     BYTE_ORDER_BIG_ENDIAN, COMPRESSED_MODULE_DESCRIPTOR_TAG,
 };
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Binding type — TR 101 202 §4.7.4.1, Table 4.9
 /// (`docs/iso_13818_6_biop.md`, p. 55–56).
@@ -69,7 +69,7 @@ impl BindingType {
         }
     }
 }
-dvb_common::impl_spec_display!(BindingType, Reserved);
+broadcast_common::impl_spec_display!(BindingType, Reserved);
 
 // ── Message header constants ──────────────────────────────────────────────────
 
@@ -1917,7 +1917,7 @@ impl<'a> ServiceGatewayInfo<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     /// Build a simple FileMessage around a buffer of bytes.
     fn sample_file_message(key: &'static [u8], content: &'static [u8]) -> BiopMessage<'static> {

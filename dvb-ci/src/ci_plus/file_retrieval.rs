@@ -23,7 +23,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Auxiliary File System resource (Table 75).
 pub mod tag {
@@ -81,7 +81,7 @@ impl AckCode {
         }
     }
 }
-dvb_common::impl_spec_display!(AckCode, Reserved);
+broadcast_common::impl_spec_display!(AckCode, Reserved);
 
 // ---------------------------------------------------------------------------
 // FileSystemOffer (Table 72)

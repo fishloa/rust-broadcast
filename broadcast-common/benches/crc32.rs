@@ -1,14 +1,14 @@
-//! CRC-32 MPEG-2 throughput bench — dvb-common.
+//! CRC-32 MPEG-2 throughput bench — broadcast-common.
 //!
-//! Measures `dvb_common::crc32_mpeg2::compute` over three payload sizes that
+//! Measures `broadcast_common::crc32_mpeg2::compute` over three payload sizes that
 //! bracket the section-scale payloads seen in practice:
 //!
 //! - 188 B  — one full MPEG-TS packet (also the PAT/PMT common case)
 //! - 4096 B — a large private section
 //! - 65536 B — stress / theoretical max PSI section payload
 
+use broadcast_common::crc32_mpeg2;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use dvb_common::crc32_mpeg2;
 
 fn bench_crc32(c: &mut Criterion) {
     let mut group = c.benchmark_group("crc32_mpeg2");

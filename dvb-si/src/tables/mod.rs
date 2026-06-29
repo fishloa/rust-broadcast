@@ -83,7 +83,7 @@ impl RunningStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(RunningStatus, Reserved);
+broadcast_common::impl_spec_display!(RunningStatus, Reserved);
 
 #[cfg(test)]
 mod running_status_tests {

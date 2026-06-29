@@ -6,7 +6,7 @@ use core::fmt;
 
 use num_enum::TryFromPrimitive;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// S1 field (3 bits) per EN 302 755 §7.2.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -69,7 +69,7 @@ impl S1Field {
         self.meaning()
     }
 }
-dvb_common::impl_spec_display!(S1Field);
+broadcast_common::impl_spec_display!(S1Field);
 
 /// S2 field 1 (upper 3 bits of the 4-bit S2 field) per EN 302 755 §7.2.3 Tables 19-20.
 ///
@@ -163,7 +163,7 @@ impl S2Field1 {
         self.fft_size()
     }
 }
-dvb_common::impl_spec_display!(S2Field1);
+broadcast_common::impl_spec_display!(S2Field1);
 
 /// FEF part: Null payload (type 0x30) per ETSI TS 102 773 §5.2.9.
 #[derive(Debug, Clone, PartialEq, Eq)]

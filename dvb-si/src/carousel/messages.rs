@@ -19,7 +19,7 @@
 use crate::compatibility::CompatibilityDescriptor;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `protocolDiscriminator` — always 0x11 for MPEG-2 DSM-CC.
 pub const PROTOCOL_DISCRIMINATOR: u8 = 0x11;

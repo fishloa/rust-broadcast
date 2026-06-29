@@ -6,7 +6,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for terrestrial\_delivery\_system\_descriptor.
 pub const TAG: u8 = 0x5A;
@@ -66,7 +66,7 @@ impl Bandwidth {
         }
     }
 }
-dvb_common::impl_spec_display!(Bandwidth, Reserved);
+broadcast_common::impl_spec_display!(Bandwidth, Reserved);
 
 /// Constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,7 +95,7 @@ impl Constellation {
         }
     }
 }
-dvb_common::impl_spec_display!(Constellation, Reserved);
+broadcast_common::impl_spec_display!(Constellation, Reserved);
 
 /// Hierarchy mode — combines native/in-depth interleaver and α.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +139,7 @@ impl Hierarchy {
         }
     }
 }
-dvb_common::impl_spec_display!(Hierarchy, Reserved);
+broadcast_common::impl_spec_display!(Hierarchy, Reserved);
 
 /// Convolutional code rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,7 +174,7 @@ impl CodeRate {
         }
     }
 }
-dvb_common::impl_spec_display!(CodeRate, Reserved);
+broadcast_common::impl_spec_display!(CodeRate, Reserved);
 
 /// Guard interval fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -203,7 +203,7 @@ impl GuardInterval {
         }
     }
 }
-dvb_common::impl_spec_display!(GuardInterval);
+broadcast_common::impl_spec_display!(GuardInterval);
 
 /// Transmission mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,7 +232,7 @@ impl TransmissionMode {
         }
     }
 }
-dvb_common::impl_spec_display!(TransmissionMode, Reserved);
+broadcast_common::impl_spec_display!(TransmissionMode, Reserved);
 
 /// Terrestrial Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

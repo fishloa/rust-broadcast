@@ -5,7 +5,7 @@
 
 #![cfg(feature = "ts")]
 
-use dvb_common::crc32_mpeg2;
+use broadcast_common::crc32_mpeg2;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::{Stats, T2miPump};
 

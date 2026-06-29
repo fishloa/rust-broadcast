@@ -18,7 +18,7 @@
 //! default dispatcher would route to `DsmccSection`.
 //!
 //! ```
-//! use dvb_common::Serialize;
+//! use broadcast_common::Serialize;
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
@@ -41,7 +41,7 @@
 //!
 //! 1. Create the module with the wire layout, a `pub const TABLE_ID: u8` (or
 //!    `TABLE_ID_FIRST`/`TABLE_ID_LAST` for a range), and the symmetric
-//!    [`dvb_common::Parse`]/[`dvb_common::Serialize`] impls + round-trip tests
+//!    [`broadcast_common::Parse`]/[`broadcast_common::Serialize`] impls + round-trip tests
 //!    (copy an existing module).
 //! 2. `impl TableDef` for the type (`TABLE_ID_RANGES` covering the full
 //!    table_id range, `NAME` in SCREAMING_SNAKE without the `_section` or
@@ -181,7 +181,7 @@ macro_rules! declare_tables {
                 match table_id {
                     $(
                         $( $lo..=$hi )|+ => {
-                            <$($path)::+ as dvb_common::Parse>::parse(bytes).map(Self::$variant)
+                            <$($path)::+ as broadcast_common::Parse>::parse(bytes).map(Self::$variant)
                         }
                     )+
                     _ => Ok(Self::Unknown { table_id, raw: bytes }),
@@ -208,7 +208,7 @@ macro_rules! declare_tables {
             where
                 T: crate::traits::TableDef<$lt>,
             {
-                <T as dvb_common::Parse>::parse(bytes)
+                <T as broadcast_common::Parse>::parse(bytes)
             }
         }
 

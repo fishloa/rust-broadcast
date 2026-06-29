@@ -3,7 +3,7 @@
 //! Permits a CLUT to be defined in colour systems other than ITU-R BT.601.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The alternative_CLUT_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x16;
@@ -90,7 +90,7 @@ impl OutputBitDepth {
     }
 }
 
-dvb_common::impl_spec_display!(OutputBitDepth, Reserved);
+broadcast_common::impl_spec_display!(OutputBitDepth, Reserved);
 
 /// Dynamic range and colour gamut as defined in Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +124,7 @@ impl DynamicRangeColourGamut {
     }
 }
 
-dvb_common::impl_spec_display!(DynamicRangeColourGamut, Reserved);
+broadcast_common::impl_spec_display!(DynamicRangeColourGamut, Reserved);
 
 /// A single alternative CLUT entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,7 +321,7 @@ impl Serialize for AlternativeClutSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip_8bit() {

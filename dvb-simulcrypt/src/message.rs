@@ -24,7 +24,7 @@
 
 use alloc::vec::Vec;
 
-use dvb_common::traits::{Parse, Serialize};
+use broadcast_common::traits::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::registry::{Interface, MessageType, ParameterType};

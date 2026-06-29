@@ -40,7 +40,7 @@ impl Scte35Cue {
         }
     }
 }
-dvb_common::impl_spec_display!(Scte35Cue);
+broadcast_common::impl_spec_display!(Scte35Cue);
 
 /// A SCTE-35 attribute on a DATERANGE: the cue kind plus the raw splice bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]

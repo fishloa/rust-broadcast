@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `opID` for schedule_definition_data (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010E;
@@ -72,7 +72,7 @@ impl SpliceScheduleCommand {
     }
 }
 
-dvb_common::impl_spec_display!(SpliceScheduleCommand, Unknown);
+broadcast_common::impl_spec_display!(SpliceScheduleCommand, Unknown);
 
 /// schedule_definition_data() — §9.7.2, Table 9-19.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

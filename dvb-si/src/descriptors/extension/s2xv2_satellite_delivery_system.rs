@@ -114,7 +114,7 @@ impl S2Xv2Mode {
         matches!(self, Self::S2XSuperframe | Self::S2XSuperframeTimeSlicing)
     }
 }
-dvb_common::impl_spec_display!(S2Xv2Mode, Reserved);
+broadcast_common::impl_spec_display!(S2Xv2Mode, Reserved);
 
 /// Superframe block present in S2Xv2_mode 4 and 5 (Table 144b §6.4.6.5.3).
 #[derive(Debug, Clone, PartialEq, Eq)]

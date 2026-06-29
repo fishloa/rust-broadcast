@@ -1,7 +1,7 @@
 //! Region Composition Segment — ETSI EN 300 743 §7.2.3, Table 11 (segment_type 0x11).
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The region_composition_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x11;
@@ -56,7 +56,7 @@ impl RegionLevelOfCompatibility {
     }
 }
 
-dvb_common::impl_spec_display!(RegionLevelOfCompatibility, Reserved);
+broadcast_common::impl_spec_display!(RegionLevelOfCompatibility, Reserved);
 
 /// Intended region pixel depth as defined in Table 13.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +100,7 @@ impl RegionDepth {
     }
 }
 
-dvb_common::impl_spec_display!(RegionDepth, Reserved);
+broadcast_common::impl_spec_display!(RegionDepth, Reserved);
 
 /// Object type as defined in Table 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +140,7 @@ impl ObjectType {
     }
 }
 
-dvb_common::impl_spec_display!(ObjectType, Reserved);
+broadcast_common::impl_spec_display!(ObjectType, Reserved);
 
 /// Object provider flag as defined in Table 15.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +176,7 @@ impl ObjectProviderFlag {
     }
 }
 
-dvb_common::impl_spec_display!(ObjectProviderFlag, Reserved);
+broadcast_common::impl_spec_display!(ObjectProviderFlag, Reserved);
 
 /// An object entry within a region composition segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -474,7 +474,7 @@ impl Serialize for RegionCompositionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip_bitmap_objects() {

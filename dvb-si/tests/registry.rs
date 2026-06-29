@@ -16,7 +16,7 @@ struct MyPrivate {
     x: u8,
 }
 
-impl<'a> dvb_common::Parse<'a> for MyPrivate {
+impl<'a> broadcast_common::Parse<'a> for MyPrivate {
     type Error = dvb_si::Error;
 
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
@@ -53,7 +53,7 @@ struct MyPrivate2 {
     y: u8,
 }
 
-impl<'a> dvb_common::Parse<'a> for MyPrivate2 {
+impl<'a> broadcast_common::Parse<'a> for MyPrivate2 {
     type Error = dvb_si::Error;
 
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
@@ -149,7 +149,7 @@ fn custom_registration_overrides_builtin() {
         raw_len: u8,
     }
 
-    impl<'a> dvb_common::Parse<'a> for MyShortEventOverride {
+    impl<'a> broadcast_common::Parse<'a> for MyShortEventOverride {
         type Error = dvb_si::Error;
         fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
             if bytes.len() < 2 {

@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from a DASH-IF live-simulator segment — with parse + byte-exact round-trip
   tests, complementing the constructed v0 fixture.
 
+## [0.1.1] — 2026-06-29
+
+### Changed
+- Dependency `broadcast-common` bump (renamed from `dvb-common`); no API change.
+
 ## [0.1.0] — 2026-06-21
 
 Renamed from `dvb-emsg` (code unchanged); `dvb-emsg` continues as a deprecated re-export shim at 0.1.1.

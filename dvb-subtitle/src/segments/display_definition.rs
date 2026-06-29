@@ -3,7 +3,7 @@
 //! Defines the display resolution and optional display window for a subtitle service.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The display_definition_segment segment_type as listed in Table 7.
 pub const SEGMENT_TYPE: u8 = 0x14;
@@ -177,7 +177,7 @@ impl Serialize for DisplayDefinitionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip_no_window() {

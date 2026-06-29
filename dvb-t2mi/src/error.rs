@@ -68,7 +68,7 @@ pub enum Error {
         expected: u32,
     },
 
-    /// A bit-field error from [`dvb_common::bits::BitReader`] / [`dvb_common::bits::BitWriter`].
+    /// A bit-field error from [`broadcast_common::bits::BitReader`] / [`broadcast_common::bits::BitWriter`].
     #[error("L1 bit-field error: {0}")]
-    L1Bits(#[from] dvb_common::bits::BitError),
+    L1Bits(#[from] broadcast_common::bits::BitError),
 }

@@ -56,7 +56,7 @@ impl ContentTimeBaseIndicator {
         }
     }
 }
-dvb_common::impl_spec_display!(ContentTimeBaseIndicator, Reserved, Private);
+broadcast_common::impl_spec_display!(ContentTimeBaseIndicator, Reserved, Private);
 
 #[cfg(test)]
 mod tests {

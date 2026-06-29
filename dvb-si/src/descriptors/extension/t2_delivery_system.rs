@@ -56,7 +56,7 @@ impl T2SisoMiso {
         }
     }
 }
-dvb_common::impl_spec_display!(T2SisoMiso, Reserved);
+broadcast_common::impl_spec_display!(T2SisoMiso, Reserved);
 
 /// Bandwidth — ETSI EN 300 468 Table 135.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +122,7 @@ impl T2Bandwidth {
         }
     }
 }
-dvb_common::impl_spec_display!(T2Bandwidth, Reserved);
+broadcast_common::impl_spec_display!(T2Bandwidth, Reserved);
 
 /// Guard interval — ETSI EN 300 468 Table 136.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,7 +193,7 @@ impl T2GuardInterval {
         }
     }
 }
-dvb_common::impl_spec_display!(T2GuardInterval, Reserved);
+broadcast_common::impl_spec_display!(T2GuardInterval, Reserved);
 
 /// Transmission mode — ETSI EN 300 468 Table 137.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,7 +259,7 @@ impl T2TransmissionMode {
         }
     }
 }
-dvb_common::impl_spec_display!(T2TransmissionMode, Reserved);
+broadcast_common::impl_spec_display!(T2TransmissionMode, Reserved);
 
 // ---------------------------------------------------------------------------
 //  Structs

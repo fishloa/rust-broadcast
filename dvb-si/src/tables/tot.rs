@@ -11,7 +11,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for Time Offset Table.
 pub const TABLE_ID: u8 = 0x73;
@@ -46,20 +46,24 @@ impl<'a> TotSection<'a> {
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
-    pub fn utc_time_decoded(&self) -> Option<dvb_common::time::MjdBcdDateTime> {
-        dvb_common::time::decode_mjd_bcd(self.utc_time_raw)
+    pub fn utc_time_decoded(&self) -> Option<broadcast_common::time::MjdBcdDateTime> {
+        broadcast_common::time::decode_mjd_bcd(self.utc_time_raw)
     }
 
-    /// Set the UTC time, encoding it from a [`dvb_common::time::MjdBcdDateTime`].
+    /// Set the UTC time, encoding it from a [`broadcast_common::time::MjdBcdDateTime`].
     ///
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
-    pub fn set_utc_time_decoded(&mut self, dt: dvb_common::time::MjdBcdDateTime) -> Result<()> {
-        self.utc_time_raw = dvb_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
-            field: "TotSection::utc_time",
-            reason: "date not representable in 16-bit MJD",
-        })?;
+    pub fn set_utc_time_decoded(
+        &mut self,
+        dt: broadcast_common::time::MjdBcdDateTime,
+    ) -> Result<()> {
+        self.utc_time_raw =
+            broadcast_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
+                field: "TotSection::utc_time",
+                reason: "date not representable in 16-bit MJD",
+            })?;
         Ok(())
     }
 
@@ -87,7 +91,7 @@ impl TotSection<'_> {
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
     pub fn utc_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        dvb_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
+        broadcast_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
     }
 
     /// Set the UTC time, encoding it into the 40-bit `utc_time` field.
@@ -97,7 +101,7 @@ impl TotSection<'_> {
     /// outside the representable 16-bit MJD range.
     pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
         self.utc_time_raw =
-            dvb_common::time::encode_mjd_bcd_utc(utc_time).ok_or(Error::ValueOutOfRange {
+            broadcast_common::time::encode_mjd_bcd_utc(utc_time).ok_or(Error::ValueOutOfRange {
                 field: "TotSection::utc_time",
                 reason: "date not representable in 16-bit MJD",
             })?;
@@ -180,7 +184,7 @@ impl Serialize for TotSection<'_> {
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -206,7 +210,7 @@ mod tests {
         v.push(0xF0 | ((dl >> 8) as u8 & 0x0F));
         v.push((dl & 0xFF) as u8);
         v.extend_from_slice(desc);
-        let crc = dvb_common::crc32_mpeg2::compute(&v);
+        let crc = broadcast_common::crc32_mpeg2::compute(&v);
         v.extend_from_slice(&crc.to_be_bytes());
         v
     }

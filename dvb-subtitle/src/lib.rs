@@ -8,7 +8,7 @@
 //! `#![no_std]` (+ `alloc`).
 //!
 //! ```
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //! use dvb_subtitle::{PesDataField, DataIdentifier, SyncByte, EndOfPesMarker};
 //!
 //! let bytes = [

@@ -1,7 +1,7 @@
 //! Page Composition Segment — ETSI EN 300 743 §7.2.2, Table 9 (segment_type 0x10).
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The page_composition_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x10;
@@ -50,7 +50,7 @@ impl PageState {
     }
 }
 
-dvb_common::impl_spec_display!(PageState, Reserved);
+broadcast_common::impl_spec_display!(PageState, Reserved);
 
 /// A single region entry within a page composition segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -230,7 +230,7 @@ impl Serialize for PageCompositionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip() {

@@ -89,7 +89,7 @@ impl Opacity {
         }
     }
 }
-dvb_common::impl_spec_display!(Opacity);
+broadcast_common::impl_spec_display!(Opacity);
 
 /// Character edge type (§79.102 (p) / SPA edge-type field; 3-bit). 0–5 defined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -138,7 +138,7 @@ impl EdgeType {
         }
     }
 }
-dvb_common::impl_spec_display!(EdgeType);
+broadcast_common::impl_spec_display!(EdgeType);
 
 /// Pen size (§79.102 (j) / SPA pen-size field; 2-bit). Value 3 is reserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -174,7 +174,7 @@ impl PenSize {
         }
     }
 }
-dvb_common::impl_spec_display!(PenSize);
+broadcast_common::impl_spec_display!(PenSize);
 
 /// Pen vertical offset (§79.102 (l) / SPA offset field; 2-bit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -210,7 +210,7 @@ impl PenOffset {
         }
     }
 }
-dvb_common::impl_spec_display!(PenOffset);
+broadcast_common::impl_spec_display!(PenOffset);
 
 /// Font style (§79.102 (k) / SPA font-style field; 3-bit, 0–7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -266,7 +266,7 @@ impl FontStyle {
         }
     }
 }
-dvb_common::impl_spec_display!(FontStyle);
+broadcast_common::impl_spec_display!(FontStyle);
 
 /// Text justification (SWA justify field; 2-bit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -306,7 +306,7 @@ impl Justify {
         }
     }
 }
-dvb_common::impl_spec_display!(Justify);
+broadcast_common::impl_spec_display!(Justify);
 
 /// Print direction (SWA print-direction field; 2-bit).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -346,7 +346,7 @@ impl PrintDirection {
         }
     }
 }
-dvb_common::impl_spec_display!(PrintDirection);
+broadcast_common::impl_spec_display!(PrintDirection);
 
 /// Scroll direction (SWA scroll-direction field; 2-bit). Same wire mapping as
 /// [`PrintDirection`].
@@ -387,7 +387,7 @@ impl ScrollDirection {
         }
     }
 }
-dvb_common::impl_spec_display!(ScrollDirection);
+broadcast_common::impl_spec_display!(ScrollDirection);
 
 #[cfg(test)]
 mod tests {

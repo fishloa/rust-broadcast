@@ -12,7 +12,7 @@ use core::fmt;
 
 use num_enum::TryFromPrimitive;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Sub-part variety per §5.2.12 Table 13.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -59,7 +59,7 @@ impl SubpartVariety {
         }
     }
 }
-dvb_common::impl_spec_display!(SubpartVariety);
+broadcast_common::impl_spec_display!(SubpartVariety);
 
 /// PRBS type for SubpartVariety::Prbs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -86,7 +86,7 @@ impl PrbsType {
         }
     }
 }
-dvb_common::impl_spec_display!(PrbsType);
+broadcast_common::impl_spec_display!(PrbsType);
 
 /// FEF sub-part payload (type 0x33) per ETSI TS 102 773 §5.2.12.
 ///

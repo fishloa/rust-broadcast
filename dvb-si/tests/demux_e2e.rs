@@ -395,7 +395,7 @@ fn tnt_version_gate_suppresses_second_pass() {
 #[cfg(feature = "serde")]
 #[test]
 fn tnt_decoded_json_acceptance() {
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
     use dvb_si::tables::eit::EitSection;
     use dvb_si::tables::sdt::SdtSection;
 

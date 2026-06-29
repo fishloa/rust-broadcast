@@ -33,8 +33,8 @@
 //! total section size is `section_length + 3`.
 
 use crate::error::{Error, Result};
-use dvb_common::crc32_mpeg2 as crc;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::crc32_mpeg2 as crc;
+use broadcast_common::{Parse, Serialize};
 
 // Minimum bytes to read the section header (table_id + section_syntax_indicator
 // + section_length field = 3 bytes).
@@ -303,7 +303,7 @@ mod tests {
     use super::*;
     use alloc::vec;
     use alloc::vec::Vec;
-    use dvb_common::crc32_mpeg2::compute as crc32;
+    use broadcast_common::crc32_mpeg2::compute as crc32;
 
     // ── Helper: build a minimal long-form section with correct CRC ───────────
 

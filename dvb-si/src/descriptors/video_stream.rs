@@ -5,7 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for video_stream_descriptor.
 pub const TAG: u8 = 0x02;
@@ -98,7 +98,7 @@ impl FrameRateCode {
         }
     }
 }
-dvb_common::impl_spec_display!(FrameRateCode, Reserved);
+broadcast_common::impl_spec_display!(FrameRateCode, Reserved);
 
 /// Video Stream Descriptor.
 ///

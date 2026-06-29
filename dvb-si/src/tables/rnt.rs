@@ -10,7 +10,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Resolution provider Notification Table.
 pub const TABLE_ID: u8 = 0x79;
@@ -80,7 +80,7 @@ impl CridAuthorityPolicy {
         }
     }
 }
-dvb_common::impl_spec_display!(CridAuthorityPolicy);
+broadcast_common::impl_spec_display!(CridAuthorityPolicy);
 
 /// Context ID type — ETSI TS 102 323 §5.2.2 Table 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +135,7 @@ impl ContextIdType {
         }
     }
 }
-dvb_common::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
+broadcast_common::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
 
 /// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -481,7 +481,7 @@ impl Serialize for RntSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -670,7 +670,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![
             0x79, 0xF0, 0x0C, 0x00, 0x42, 0xC7, 0x00, 0x00, 0x01, 0xF0, 0x00,
         ];
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let rnt = RntSection::parse(&bytes).unwrap();
         assert_eq!(rnt.context_id, 0x0042);

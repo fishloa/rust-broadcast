@@ -167,7 +167,7 @@ impl SamplingFrequency {
         }
     }
 }
-dvb_common::impl_spec_display!(SamplingFrequency);
+broadcast_common::impl_spec_display!(SamplingFrequency);
 
 /// Maximum `channel_count` (5-bit field).
 const MAX_CHANNEL_COUNT: u8 = 0x1F;

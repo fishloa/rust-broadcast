@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// MPEG-2 `CA_descriptor` tag (ISO/IEC 13818-1 §2.6.16); the only descriptor a
 /// `ca_pmt` carries.
@@ -81,7 +81,7 @@ impl CaPmtListManagement {
         }
     }
 }
-dvb_common::impl_spec_display!(CaPmtListManagement, Reserved);
+broadcast_common::impl_spec_display!(CaPmtListManagement, Reserved);
 
 /// `ca_pmt_cmd_id` values (Table, p. 31).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +135,7 @@ impl CaPmtCmdId {
         }
     }
 }
-dvb_common::impl_spec_display!(CaPmtCmdId, Rfu);
+broadcast_common::impl_spec_display!(CaPmtCmdId, Rfu);
 
 /// One elementary-stream entry in a `ca_pmt`.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 //! This example constructs a basic response (inject_response),
 //! serializes it, then parses it back to verify round-trip integrity.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte104::operations::{AnySingleOperation, InjectResponse};
 use scte104::SingleOperationMessage;
 

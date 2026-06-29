@@ -5,7 +5,7 @@
 //! Bytes are a well-known SCTE 35 reference vector (a `splice_insert` with
 //! event_id 0x4800008F), inlined so the example is self-contained.
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use scte35_splice::{commands::AnyCommand, SpliceInfoSection};
 
 #[rustfmt::skip]

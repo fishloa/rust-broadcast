@@ -50,7 +50,7 @@ fn long_section(
         section_number,
     ];
     v.extend_from_slice(payload);
-    let crc = dvb_common::crc32_mpeg2::compute(&v);
+    let crc = broadcast_common::crc32_mpeg2::compute(&v);
     v.extend_from_slice(&crc.to_be_bytes());
     v
 }
@@ -160,7 +160,7 @@ fn tot_section() -> Vec<u8> {
     v.extend_from_slice(&utc_time);
     v.push(0xF0);
     v.push(0x00);
-    let crc = dvb_common::crc32_mpeg2::compute(&v);
+    let crc = broadcast_common::crc32_mpeg2::compute(&v);
     v.extend_from_slice(&crc.to_be_bytes());
     v
 }

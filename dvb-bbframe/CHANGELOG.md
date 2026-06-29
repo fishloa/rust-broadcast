@@ -1,5 +1,10 @@
 # Changelog
 
+## [8.1.0] — 2026-06-29
+
+### Changed
+- Lockstep release. Internal dependency `dvb-common` renamed to `broadcast-common`; no API change.
+
 ## [8.0.0] — 2026-06-27
 
 ### Changed

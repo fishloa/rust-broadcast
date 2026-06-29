@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Largest `cc_count` the 5-bit field can carry.
 const MAX_CC_COUNT: usize = 31;
@@ -68,7 +68,7 @@ impl CcType {
     }
 }
 
-dvb_common::impl_spec_display!(CcType);
+broadcast_common::impl_spec_display!(CcType);
 
 /// One closed-caption construct (the per-`cc_count` loop entry of Table B.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

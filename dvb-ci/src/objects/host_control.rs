@@ -8,7 +8,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `tune()` object (Table 27): retune to a different service. Parameters are the
 /// EN 300 468 identifiers, each 16 bits.

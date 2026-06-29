@@ -1,13 +1,13 @@
 [package]
 name    = "dvb-vbi"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "VBI data carriage in DVB (ETSI EN 301 775) — the PES data field: VPS, WSS, Closed Captioning, EBU/Inverted Teletext, and monochrome 4:2:2 luminance sample data units."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["vbi", "teletext", "vps", "wss", "dvb"]
 categories = ["parser-implementations", "multimedia::video", "no-std"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 exclude = ["docs/**", "tests/fixtures/**"]
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
@@ -28,5 +28,5 @@ serde_json = "1.0"
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["dvb-common/std", "thiserror/std"]
+std = ["broadcast-common/std", "thiserror/std"]
 serde = ["dep:serde"]

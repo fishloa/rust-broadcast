@@ -4,7 +4,7 @@
 //! The body is opaque raw bytes.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The stuffing segment_type.
 pub const SEGMENT_TYPE: u8 = 0xFF;
@@ -82,7 +82,7 @@ impl Serialize for StuffingSegment<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip() {

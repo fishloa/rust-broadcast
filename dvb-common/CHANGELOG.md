@@ -1,5 +1,10 @@
 # Changelog
 
+## [8.1.0] — 2026-06-29
+
+### Deprecated
+- This crate is now a thin re-export shim of `broadcast-common`. Depend on `broadcast-common` directly.
+
 ## [8.0.0] — 2026-06-27
 
 ### Changed

@@ -6,7 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for content_descriptor.
 pub const TAG: u8 = 0x54;
@@ -129,7 +129,7 @@ impl ContentGenre {
         }
     }
 }
-dvb_common::impl_spec_display!(ContentGenre, Reserved, UserDefined);
+broadcast_common::impl_spec_display!(ContentGenre, Reserved, UserDefined);
 
 /// Return the most specific content genre name from EN 300 468 Table 29.
 ///

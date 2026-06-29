@@ -13,7 +13,7 @@
 //! (`UnMessage::Dii`).
 #![cfg(feature = "serde")]
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::descriptors::DescriptorLoop;

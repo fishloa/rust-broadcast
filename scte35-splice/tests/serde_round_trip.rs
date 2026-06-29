@@ -5,7 +5,7 @@
 #![cfg(feature = "serde")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use scte35_splice::SpliceInfoSection;
 
 #[test]

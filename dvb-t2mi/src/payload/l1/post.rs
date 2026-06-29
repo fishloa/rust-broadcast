@@ -9,11 +9,11 @@
 //! As carried in T2-MI (ETSI TS 102 773 §5.2.4 Table 2), each section is
 //! prefixed with a 16-bit bit-length and zero-padded to a byte boundary.
 //!
-//! Parsing uses [`dvb_common::bits::BitReader`] / [`dvb_common::bits::BitWriter`] (MSB-first).
+//! Parsing uses [`broadcast_common::bits::BitReader`] / [`broadcast_common::bits::BitWriter`] (MSB-first).
 
 use alloc::vec;
 use alloc::vec::Vec;
-use dvb_common::bits::{BitReader, BitWriter};
+use broadcast_common::bits::{BitReader, BitWriter};
 
 use super::enums::{
     AuxStreamType, PlpCodeRate, PlpFecType, PlpMode, PlpModulation, PlpPayloadType, PlpType,

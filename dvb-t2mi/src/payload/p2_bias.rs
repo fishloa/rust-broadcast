@@ -1,6 +1,6 @@
 //! T2-MI payload type 0x12: P2 bias balancing cells — §5.2.6.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// P2 bias balancing payload (type 0x12), ETSI TS 102 773 §5.2.6 Figure 9.
 ///

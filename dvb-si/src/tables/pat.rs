@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// PAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x00;
@@ -149,7 +149,7 @@ impl Serialize for PatSection {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)
@@ -322,7 +322,7 @@ mod tests {
         bytes[2] = ((sl + 2) & 0xFF) as u8;
         bytes.extend_from_slice(&[0xFF, 0xFF]);
         let crc_pos = bytes.len();
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes[..crc_pos - CRC_LEN]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes[..crc_pos - CRC_LEN]);
         bytes[crc_pos - CRC_LEN..crc_pos].copy_from_slice(&crc.to_be_bytes());
         assert!(matches!(
             PatSection::parse(&bytes).unwrap_err(),

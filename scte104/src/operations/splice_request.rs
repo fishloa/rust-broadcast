@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `opID` for splice_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0101;
@@ -82,7 +82,7 @@ impl SpliceInsertType {
     }
 }
 
-dvb_common::impl_spec_display!(SpliceInsertType, Unknown);
+broadcast_common::impl_spec_display!(SpliceInsertType, Unknown);
 
 /// splice_request_data() — §9.3.1, Table 9-5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

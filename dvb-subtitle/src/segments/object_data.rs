@@ -4,7 +4,7 @@
 //! a character string, or a progressive (zlib-compressed) pixel block.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The object_data_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x13;
@@ -55,7 +55,7 @@ impl ObjectCodingMethod {
     }
 }
 
-dvb_common::impl_spec_display!(ObjectCodingMethod, Reserved);
+broadcast_common::impl_spec_display!(ObjectCodingMethod, Reserved);
 
 /// Data type for pixel-data sub-blocks as defined in Table 21.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl DataType {
     }
 }
 
-dvb_common::impl_spec_display!(DataType, Reserved);
+broadcast_common::impl_spec_display!(DataType, Reserved);
 
 /// Size of a 2-to-4 bit map table in bytes.
 const MAP_TABLE_2TO4_BYTES: usize = 2;
@@ -747,7 +747,7 @@ impl Serialize for ObjectDataSegment<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip_pixels_no_stuffing() {

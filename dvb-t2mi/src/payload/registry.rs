@@ -18,7 +18,7 @@
 //! ```rust,no_run
 //! use dvb_t2mi::payload::{PayloadRegistry, AnyPayload};
 //! use dvb_t2mi::traits::PayloadDef;
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `PayloadObject` requires there).
@@ -224,7 +224,7 @@ impl PayloadRegistry {
         self.custom.insert(
             packet_type,
             Box::new(|b| {
-                Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn PayloadObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn PayloadObject>)
             }),
         );
         self
@@ -244,7 +244,7 @@ impl PayloadRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     // A custom owned payload type for testing, using an unused packet_type.
     #[derive(Debug, PartialEq)]

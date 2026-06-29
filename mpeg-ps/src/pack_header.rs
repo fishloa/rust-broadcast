@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::scr::{self, Scr};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `pack_start_code` — `0x000001BA`.
 pub const PACK_START_CODE: u32 = 0x0000_01BA;

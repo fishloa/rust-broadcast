@@ -69,7 +69,7 @@
 
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 mod ac4;
 mod audio_preselection;
@@ -415,7 +415,7 @@ declare_extension_bodies! {'a;
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
 /// `descriptor_tag_extension` value and a diagnostic name. Mirrors
 /// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
-pub trait ExtensionBodyDef<'a>: dvb_common::Parse<'a, Error = crate::error::Error> {
+pub trait ExtensionBodyDef<'a>: broadcast_common::Parse<'a, Error = crate::error::Error> {
     /// The `descriptor_tag_extension` value this body is selected by.
     const TAG_EXTENSION: u8;
     /// SCREAMING_SNAKE diagnostic name, suffix-free.

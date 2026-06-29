@@ -24,7 +24,7 @@
 //!
 //! The CRC-32 is the MPEG-2 / DSM-CC CRC (poly `0x04C11DB7`, init
 //! `0xFFFFFFFF`, MSB-first, no reflection, no final XOR — RFC 4326 §4.6),
-//! reused from [`dvb_common::crc32_mpeg2`]; this is verified byte-exact against
+//! reused from [`broadcast_common::crc32_mpeg2`]; this is verified byte-exact against
 //! RFC 4326 Appendix B's worked example in the crate's fixture test.
 //!
 //! `#![no_std]` + `alloc`; depends only on `dvb-common`.

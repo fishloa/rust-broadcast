@@ -12,7 +12,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Length of the `UTC_time` field (40 bits = 5 bytes).
 pub const UTC_TIME_LEN: usize = 5;

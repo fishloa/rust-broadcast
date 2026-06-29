@@ -5,7 +5,7 @@
 //! byte: `transition_flag(1) | reserved_future_use(7)`. No CRC.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Discontinuity Information Table.
 pub const TABLE_ID: u8 = 0x7E;

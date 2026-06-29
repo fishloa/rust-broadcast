@@ -1,7 +1,7 @@
 //! End of Display Set Segment — ETSI EN 300 743 §7.2.6, Table 28 (segment_type 0x80).
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The end_of_display_set_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x80;
@@ -66,7 +66,7 @@ impl Serialize for EndOfDisplaySetSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip() {
