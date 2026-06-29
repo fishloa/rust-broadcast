@@ -8,9 +8,9 @@ with pdf2md). Each rule cites the spec § and line. Decisions cite here.
 
 > ⚠️ **Edition note (not a blocker).** This is the **2012 first edition** — no `emsg`,
 > `EventStream`/`InbandEventStream`, or MPD events (added in 23009-1:2014+). This doc therefore
-> covers only the MPD **timing** model (stable since 2012). **`emsg` is fully covered separately**
-> in [`emsg-rules.md`](emsg-rules.md), grounded on the free **DASH-IF IOP Part 10** source already
-> on disk and implemented in the `mp4-emsg` crate — nothing further needs vendoring for it.
+> covers only the MPD **timing** model (stable since 2012). **Events + `emsg` are fully covered
+> separately** in [`emsg-rules.md`](emsg-rules.md), grounded on **ISO/IEC 23009-1:2022 ed.5 §5.10**
+> (vendored, official ISO publicly-available standard) and implemented in the `mp4-emsg` crate.
 
 ## Presentation hierarchy & timeline — §5.3.2 (fulltext L675)
 

@@ -12,7 +12,9 @@ ISO/IEC + codec/container spec PDFs vendored **locally for transcription referen
 | `iso_iec_14496-12_isobmff_2015.pdf` | ISO/IEC 14496-12:2015 ISOBMFF | **TEXT** | base box format (ftyp/moov/moof/trun/sidx/edts/saiz/sgpd/sinf/…); used for the transmux box docs |
 | `iso_iec_14496-14_mp4_2003.pdf` | ISO/IEC 14496-14:2003 MP4 | **TEXT** | MP4 file format, `esds` box (ESDBox) |
 | `iso_iec_14496-15_nal_avc_hevc_2017_SCANNED.pdf` | ISO/IEC 14496-15:2017 NAL file format | **SCANNED (image, OCR-only — NOT value-verifiable)** | avcC / hvcC decoder config records — cross-check vs FFmpeg only |
-| `iso_iec_23009-1_dash_2012.pdf` | ISO/IEC 23009-1:2012 DASH | **TEXT** | MPD / DASH manifest |
+| `iso_iec_23009-1_dash_2012.pdf` | ISO/IEC 23009-1:2012 DASH (1st ed.) | **TEXT** | MPD / DASH manifest timing (no events) |
+| `iso_iec_23009-1_dash_2022_ed5.pdf` | ISO/IEC 23009-1:2022 DASH (5th ed.) | **TEXT** | §5.10 events + `emsg` box (normative); official ISO publicly-available standard |
+| `dashif_iop_part10_v5.0.0_emsg.pdf` | DASH-IF IOP Part 10 v5.0.0 | **TEXT** | `emsg` authoring/usage (companion to 23009-1 §5.10) |
 
 **Verification discipline:** TEXT-layer PDFs are value-verifiable via `pdf2md ... --report` (exit 0). The SCANNED one (14496-15) can only be OCR'd → treat as a cross-reference, never a verified primary (use FFmpeg `movenc.c` as the verifiable source for avcC/hvcC; the scan cross-checks it).
 
