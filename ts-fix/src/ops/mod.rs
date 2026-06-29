@@ -21,6 +21,7 @@ use alloc::vec::Vec;
 pub(crate) mod continuity;
 pub(crate) mod pid_filter;
 pub(crate) mod psi_regen;
+pub(crate) mod stuffing;
 
 /// Observable state built up as the engine processes packets.
 ///

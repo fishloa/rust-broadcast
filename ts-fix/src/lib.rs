@@ -48,6 +48,7 @@ mod ops;
 
 pub use error::Error;
 pub use ops::pid_filter::PidFilter;
+pub use ops::stuffing::Stuffing;
 
 /// A repair / remux engine for MPEG-2 TS byte streams.
 ///
@@ -198,13 +199,37 @@ impl TsFixBuilder {
         self
     }
 
+    /// Enable null packet stuffing or drop.
+    ///
+    /// Two modes:
+    ///
+    /// - [`Stuffing::drop_nulls`] — strip all null packets (PID 0x1FFF)
+    ///   from the output.
+    /// - [`Stuffing::pad_to`] — insert null packets to reach a target
+    ///   packet rate (e.g. `pad_to(2.0)` doubles the output packet count).
+    ///
+    /// # Example — drop all null packets
+    ///
+    /// ```rust,no_run
+    /// use ts_fix::{TsFix, Stuffing};
+    ///
+    /// let mut engine = TsFix::builder()
+    ///     .stuffing(Stuffing::drop_nulls())
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn stuffing(mut self, cfg: Stuffing) -> Self {
+        self.ops
+            .push(alloc::boxed::Box::new(ops::stuffing::StuffingOp::new(cfg)));
+        self
+    }
+
     // ── Future operation methods (stubs document the planned API surface) ────
     //
     // These will be added in later tasks.  They are NOT present in v0.1 — they
     // appear here only as comments so reviewers can confirm the builder surface
     // is stable and additive.
     //
-    //   pub fn stuffing(self, cfg: Stuffing) -> Self     // Task 5
     //   pub fn restamp_pcr(self, cfg: PcrRestamp) -> Self // Task 6
     //
     // Each adds a builder method and a corresponding ops/<name>.rs module.
