@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use super::descriptor_body;
 

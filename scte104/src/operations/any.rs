@@ -74,7 +74,7 @@ macro_rules! declare_operations {
             /// Parse an operation `body` by its `opID`. Reserved / unimplemented
             /// types yield [`AnyOperation::Unknown`].
             pub fn dispatch(op_id: u16, body: &$lt [u8]) -> Result<Self> {
-                use dvb_common::Parse;
+                use broadcast_common::Parse;
                 match op_id {
                     $(
                         $oid => <$ty>::parse(body).map(Self::$variant),
@@ -87,7 +87,7 @@ macro_rules! declare_operations {
             /// will write (the `data_length`).
             #[must_use]
             pub fn body_len(&self) -> usize {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialized_len(),
@@ -98,7 +98,7 @@ macro_rules! declare_operations {
 
             /// Serialize just the operation body (no opID+length) into `buf`.
             pub fn serialize_body_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use dvb_common::Serialize;
+                use broadcast_common::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialize_into(buf),
@@ -245,7 +245,7 @@ mod tests {
     use super::*;
     use crate::operations::splice_request::{SpliceInsertType, SpliceRequest};
     use alloc::vec;
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
 
     #[test]
     fn unknown_op_id_round_trips_body() {

@@ -5,7 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::operations::AnySingleOperation;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Wire constants.
 const HEADER_LEN: usize = 13; // opID(2) + messageSize(2) + result(2) + result_ext(2) + protocol_version(1) + AS_index(1) + message_number(1) + DPI_PID_index(2)

@@ -23,7 +23,7 @@ use dvb_ci::resource::{
     RESOURCE_MANAGER,
 };
 use dvb_ci::tag::{self, ApduTag};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use crate::event::{MmiEvent, MmiMenu, Notification};
 

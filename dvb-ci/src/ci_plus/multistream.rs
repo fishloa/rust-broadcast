@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Multi-stream resource (Table 2).
 pub mod tag {

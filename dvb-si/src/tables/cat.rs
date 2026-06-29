@@ -11,7 +11,7 @@ use crate::descriptors::ca::CaDescriptor;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x01;
@@ -170,7 +170,7 @@ impl Serialize for CatSection<'_> {
         buf[desc_start..desc_start + self.descriptors.len()]
             .copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }

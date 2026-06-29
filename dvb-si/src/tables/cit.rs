@@ -12,7 +12,7 @@
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for Content Identifier Table.
 pub const TABLE_ID: u8 = 0x77;
@@ -279,7 +279,7 @@ impl Serialize for CitSection<'_> {
             pos += entry.unique_string.len();
         }
 
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
         buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -492,7 +492,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![
             0x77, 0xF0, 0x0E, 0x12, 0x34, 0xC7, 0x00, 0x00, 0x00, 0x64, 0x00, 0x02, 0x00,
         ];
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let cit = CitSection::parse(&bytes).unwrap();
         assert_eq!(cit.service_id, 0x1234);

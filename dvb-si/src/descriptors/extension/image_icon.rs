@@ -50,7 +50,7 @@ impl IconTransportMode {
         }
     }
 }
-dvb_common::impl_spec_display!(IconTransportMode, Reserved);
+broadcast_common::impl_spec_display!(IconTransportMode, Reserved);
 
 impl<'a> ExtensionBodyDef<'a> for ImageIcon<'a> {
     const TAG_EXTENSION: u8 = 0x00;

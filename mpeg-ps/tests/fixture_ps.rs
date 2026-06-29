@@ -1,4 +1,4 @@
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use mpeg_ps::program_stream;
 use mpeg_ps::SystemHeader;
 
@@ -101,7 +101,7 @@ fn real_fixture_walk() {
     }
 }
 
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 use mpeg_ps::ProgramStreamMap;
 
 /// Build a PSM per Table 2-41 and byte-exact round-trip.

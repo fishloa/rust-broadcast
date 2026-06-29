@@ -10,7 +10,7 @@
 use crate::error::{Error, Result};
 use crate::length;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `tpdu_tag` values — Table A.16 (p. 70). One byte each.
 pub mod tags {
@@ -94,7 +94,7 @@ impl DataBlock {
         }
     }
 }
-dvb_common::impl_spec_display!(DataBlock);
+broadcast_common::impl_spec_display!(DataBlock);
 
 // --- single-field connection-management objects (tag + length + t_c_id) ---
 

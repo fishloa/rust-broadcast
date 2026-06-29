@@ -7,7 +7,7 @@
 //! a drift test pins each segment_type literal to the type's
 //! [`crate::traits::SegmentDef::SEGMENT_TYPE`].
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Declares [`AnySegment`] + its dispatcher from one segment type list.
 ///

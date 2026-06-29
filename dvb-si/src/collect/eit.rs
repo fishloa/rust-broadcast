@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use crate::descriptors::DescriptorRegistry;
 use crate::tables::eit;
 use crate::tables::RunningStatus;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use mpeg_ts::section::Section;
 
 use super::{
@@ -512,7 +512,7 @@ impl CompleteEitEvent<'_> {
     /// Returns `None` if the BCD nibbles are out of range.
     #[must_use]
     pub fn duration(&self) -> Option<core::time::Duration> {
-        dvb_common::time::decode_bcd_duration(self.duration_raw)
+        broadcast_common::time::decode_bcd_duration(self.duration_raw)
     }
 
     /// Decode `start_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
@@ -522,7 +522,7 @@ impl CompleteEitEvent<'_> {
     #[cfg(feature = "chrono")]
     #[must_use]
     pub fn start_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        dvb_common::time::decode_mjd_bcd_utc(self.start_time_raw)
+        broadcast_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
 }
 

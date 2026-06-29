@@ -112,7 +112,7 @@ impl DataUnitId {
     }
 }
 
-dvb_common::impl_spec_display!(DataUnitId, Reserved, UserDefined);
+broadcast_common::impl_spec_display!(DataUnitId, Reserved, UserDefined);
 
 #[cfg(test)]
 mod tests {

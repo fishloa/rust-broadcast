@@ -65,11 +65,11 @@ impl IdentifierType {
         }
     }
 }
-dvb_common::impl_spec_display!(IdentifierType);
+broadcast_common::impl_spec_display!(IdentifierType);
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for Related Content Table.
 pub const TABLE_ID: u8 = 0x76;
@@ -167,7 +167,7 @@ impl LinkType {
         }
     }
 }
-dvb_common::impl_spec_display!(LinkType, DvbReserved);
+broadcast_common::impl_spec_display!(LinkType, DvbReserved);
 
 /// How-related classification scheme ID — ETSI TS 102 323 §10.4.3 Table 112.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,7 +222,7 @@ impl HowRelated {
         }
     }
 }
-dvb_common::impl_spec_display!(HowRelated, DvbReserved, UserPrivate);
+broadcast_common::impl_spec_display!(HowRelated, DvbReserved, UserPrivate);
 
 /// A promotional text item within a link_info entry (Table 110, §10.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -982,7 +982,7 @@ impl Serialize for RctSection<'_> {
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
         pos += self.descriptors.len();
 
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
         buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -1222,7 +1222,7 @@ mod tests {
         let mut bytes: Vec<u8> = vec![
             0x76, 0x80, 0x0E, 0x00, 0x64, 0xC7, 0x00, 0x00, 0x07, 0xD3, 0x00, 0xF0, 0x00,
         ];
-        let crc = dvb_common::crc32_mpeg2::compute(&bytes);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
         bytes.extend_from_slice(&crc.to_be_bytes());
         let rct = RctSection::parse(&bytes).unwrap();
         assert_eq!(rct.service_id, 0x0064);

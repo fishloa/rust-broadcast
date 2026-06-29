@@ -13,7 +13,7 @@
 //! is `0x0000`, following the `dsmcc.rs` precedent.
 //!
 //! Per the crate contract this parser does NOT verify the trailing CRC/checksum
-//! integrity; [`dvb_common`]'s section machinery owns CRC validation. Reserved
+//! integrity; [`broadcast_common`]'s section machinery owns CRC validation. Reserved
 //! bits are ignored on parse and emitted as `1`s on serialize.
 //!
 //! ## Trailer (SSI-dependent)
@@ -30,7 +30,7 @@
 //! CRC_32 on serialize and `checksum` is ignored.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for an MPE `datagram_section` — the DSM-CC private-data value
 /// (ISO/IEC 13818-6); see [`crate::tables::dsmcc`] for the raw view.
@@ -313,7 +313,7 @@ impl Serialize for MpeDatagramSection<'_> {
 
         if self.section_syntax_indicator {
             // SSI=1 → recompute CRC_32 over the whole section up to the trailer.
-            let crc = dvb_common::crc32_mpeg2::compute(&buf[..trailer_start]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..trailer_start]);
             buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
         } else {
             // SSI=0 → ISO/IEC 13818-6 checksum we cannot recompute; re-emit

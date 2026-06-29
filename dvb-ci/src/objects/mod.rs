@@ -1,6 +1,6 @@
 //! Application-layer APDU objects (resource APDUs) — ETSI EN 50221 §8.4-§8.6.
 //!
-//! Each object implements [`dvb_common::Parse`] / [`dvb_common::Serialize`] over
+//! Each object implements [`broadcast_common::Parse`] / [`broadcast_common::Serialize`] over
 //! the **whole** APDU including its `apdu_tag` (3 bytes) + `length_field`
 //! header, so dispatch routes on the header and round-trips are byte-symmetric.
 //! The shared header helpers here keep every object's length field computed from

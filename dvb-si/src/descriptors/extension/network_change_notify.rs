@@ -84,7 +84,7 @@ impl ChangeType {
         }
     }
 }
-dvb_common::impl_spec_display!(ChangeType, MinorReserved, MajorReserved);
+broadcast_common::impl_spec_display!(ChangeType, MinorReserved, MajorReserved);
 
 const CELL_HEADER_LEN: usize = 2; // cell_id(16)
 const LOOP_LENGTH_LEN: usize = 1; // loop_length(8)
@@ -161,7 +161,7 @@ impl NetworkChange {
             (raw >> 8) as u8,
             raw as u8,
         ];
-        dvb_common::time::decode_mjd_bcd_utc(bytes)
+        broadcast_common::time::decode_mjd_bcd_utc(bytes)
     }
 
     /// Decode `change_duration` (24-bit BCD `HHMMSS`) to seconds.
@@ -171,7 +171,7 @@ impl NetworkChange {
     pub fn change_duration_secs(&self) -> Option<u32> {
         let raw = self.change_duration;
         let bytes = [(raw >> 16) as u8, (raw >> 8) as u8, raw as u8];
-        dvb_common::time::decode_bcd_duration(bytes).map(|d| d.as_secs() as u32)
+        broadcast_common::time::decode_bcd_duration(bytes).map(|d| d.as_secs() as u32)
     }
 }
 

@@ -3,7 +3,7 @@
 //! Scans this crate's `src/` for every `pub enum`, subtracts a documented
 //! skip-list (error / dispatch-wrapper enums that carry no spec label), and
 //! fails if any remaining enum has neither
-//! `dvb_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+//! `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
 //!
 //! Because the project-wide `Display` impl delegates to an inherent
 //! `name() -> &'static str`, a present `Display` transitively guarantees
@@ -75,7 +75,7 @@ fn every_public_spec_enum_has_a_display_impl() {
     assert!(
         missing.is_empty(),
         "pub enum(s) missing a Display impl (issue #204 convention): {missing:?}\n\
-         Add `dvb_common::impl_spec_display!(Name)` plus an inherent `name()`, \
+         Add `broadcast_common::impl_spec_display!(Name)` plus an inherent `name()`, \
          or add the enum to SKIP if it is not a spec/field label."
     );
 }

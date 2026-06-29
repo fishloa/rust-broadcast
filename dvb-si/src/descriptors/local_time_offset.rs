@@ -7,7 +7,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for local_time_offset_descriptor.
 pub const TAG: u8 = 0x58;
@@ -67,9 +67,9 @@ impl LocalTimeOffsetEntry {
     #[must_use]
     pub fn time_of_change_parts(&self) -> (u16, Option<u8>, Option<u8>, Option<u8>) {
         let mjd = u16::from_be_bytes([self.time_of_change_raw[0], self.time_of_change_raw[1]]);
-        let h = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[2]);
-        let m = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[3]);
-        let s = dvb_common::bcd::from_bcd_byte(self.time_of_change_raw[4]);
+        let h = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[2]);
+        let m = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[3]);
+        let s = broadcast_common::bcd::from_bcd_byte(self.time_of_change_raw[4]);
         (mjd, h, m, s)
     }
 
@@ -89,8 +89,8 @@ impl LocalTimeOffsetEntry {
 /// `negative`). `None` if a BCD nibble is out of range.
 #[cfg(feature = "chrono")]
 fn decode_hhmm(bcd: u16, negative: bool) -> Option<chrono::Duration> {
-    let h = dvb_common::bcd::from_bcd_byte((bcd >> 8) as u8)?;
-    let m = dvb_common::bcd::from_bcd_byte((bcd & 0xFF) as u8)?;
+    let h = broadcast_common::bcd::from_bcd_byte((bcd >> 8) as u8)?;
+    let m = broadcast_common::bcd::from_bcd_byte((bcd & 0xFF) as u8)?;
     let mins = i64::from(h) * 60 + i64::from(m);
     Some(chrono::Duration::minutes(if negative {
         -mins
@@ -110,8 +110,8 @@ fn encode_hhmm(offset: chrono::Duration) -> Option<(bool, u16)> {
     if h > 99 {
         return None;
     }
-    let hb = dvb_common::bcd::to_bcd_byte(h as u8)?;
-    let mb = dvb_common::bcd::to_bcd_byte(m as u8)?;
+    let hb = broadcast_common::bcd::to_bcd_byte(h as u8)?;
+    let mb = broadcast_common::bcd::to_bcd_byte(m as u8)?;
     Some((negative, (u16::from(hb) << 8) | u16::from(mb)))
 }
 
@@ -137,7 +137,7 @@ impl LocalTimeOffsetEntry {
     /// datetime. `None` if the date/time fields are out of range.
     #[must_use]
     pub fn time_of_change(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        dvb_common::time::decode_mjd_bcd_utc(self.time_of_change_raw)
+        broadcast_common::time::decode_mjd_bcd_utc(self.time_of_change_raw)
     }
 
     /// Set the `time_of_change`, encoding it into the 40-bit raw field.
@@ -147,7 +147,7 @@ impl LocalTimeOffsetEntry {
     /// outside the representable 16-bit MJD range.
     pub fn set_time_of_change(&mut self, dt: chrono::DateTime<chrono::Utc>) -> Result<()> {
         self.time_of_change_raw =
-            dvb_common::time::encode_mjd_bcd_utc(dt).ok_or(Error::ValueOutOfRange {
+            broadcast_common::time::encode_mjd_bcd_utc(dt).ok_or(Error::ValueOutOfRange {
                 field: "LocalTimeOffsetEntry::time_of_change",
                 reason: "date not representable in 16-bit MJD",
             })?;

@@ -48,7 +48,7 @@
 //!
 //! # // Minimal PAT-in-a-TS-packet builder used by the doctest above.
 //! # fn build_pat_packet() -> [u8; 188] {
-//! #     use dvb_common::Serialize;
+//! #     use broadcast_common::Serialize;
 //! #     use dvb_si::tables::pat::{PatSection, PatEntry};
 //! #     const PMT_PID: u16 = 0x0100;
 //! #     let pat = PatSection {
@@ -138,7 +138,7 @@
 //!   sub-descriptors at runtime.
 //! - [`tables::TableRegistry`] — register private table_ids at runtime.
 //! - [`text::DvbText`] / [`text::LangCode`] — decoded-on-demand Annex A text.
-//! - [`Parse`](dvb_common::Parse) / [`Serialize`](dvb_common::Serialize) — the two
+//! - [`Parse`](broadcast_common::Parse) / [`Serialize`](broadcast_common::Serialize) — the two
 //!   symmetric contracts every table and descriptor implements.
 //! - [`tables`] — `*Section` parsers for PAT, PMT, CAT, TSDT, NIT, BAT, SDT,
 //!   EIT, TDT, TOT, RST, DIT, SIT, ST, SAT, AIT, DSM-CC section, UNT, INT, RCT,

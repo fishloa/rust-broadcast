@@ -57,7 +57,7 @@ impl EmsgVersion {
     }
 }
 
-dvb_common::impl_spec_display!(EmsgVersion);
+broadcast_common::impl_spec_display!(EmsgVersion);
 
 #[cfg(test)]
 mod tests {

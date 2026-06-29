@@ -4,7 +4,7 @@
 //! to be ascribed to regions or subregions.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The disparity_signalling_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x15;
@@ -379,7 +379,7 @@ impl Serialize for DisparitySignallingSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn round_trip_simple() {

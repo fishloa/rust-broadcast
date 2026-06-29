@@ -1,13 +1,13 @@
 [package]
 name    = "dvb-ci"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "DVB Common Interface (EN 50221) — APDU/resource objects, session/transport PDUs, and a CA_PMT builder from a dvb-si PMT."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["dvb", "common-interface", "ci", "en50221", "cam"]
 categories = ["parser-implementations", "multimedia", "no-std"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 exclude = ["docs/**", "tests/fixtures/**"]
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 dvb-si     = { path = "../dvb-si", version = "8", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
@@ -27,5 +27,5 @@ serde_json = "1.0"
 
 [features]
 default = ["std"]
-std = ["dvb-common/std", "dvb-si/std", "thiserror/std"]
+std = ["broadcast-common/std", "dvb-si/std", "thiserror/std"]
 serde = ["dep:serde"]

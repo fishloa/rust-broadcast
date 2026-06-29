@@ -8,7 +8,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for subtitling_descriptor.
 pub const TAG: u8 = 0x59;
@@ -160,7 +160,7 @@ impl SubtitlingType {
         }
     }
 }
-dvb_common::impl_spec_display!(SubtitlingType, Reserved);
+broadcast_common::impl_spec_display!(SubtitlingType, Reserved);
 
 /// One subtitling component.
 #[derive(Debug, Clone, PartialEq, Eq)]

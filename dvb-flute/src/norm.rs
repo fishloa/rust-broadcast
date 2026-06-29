@@ -102,7 +102,7 @@ impl NormMessageType {
     }
 }
 
-dvb_common::impl_spec_display!(NormMessageType, Other);
+broadcast_common::impl_spec_display!(NormMessageType, Other);
 
 /// The NORM common message header (RFC 5740 §4.1, Figure 1): 8 bytes carrying
 /// `version | type | hdr_len | sequence | source_id`.
@@ -590,7 +590,7 @@ impl NormCmdType {
     }
 }
 
-dvb_common::impl_spec_display!(NormCmdType, Other);
+broadcast_common::impl_spec_display!(NormCmdType, Other);
 
 /// NORM ack_type (RFC 5740 §4.2.3, shared by NORM_CMD(ACK_REQ) and NORM_ACK).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -638,7 +638,7 @@ impl NormAckType {
     }
 }
 
-dvb_common::impl_spec_display!(NormAckType, Reserved, Application);
+broadcast_common::impl_spec_display!(NormAckType, Reserved, Application);
 
 /// A NORM_CMD message (RFC 5740 §4.2.3): common header + sender word + an 8-bit
 /// `sub-type` selecting the body, then the sub-type-specific content (kept

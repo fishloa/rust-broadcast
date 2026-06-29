@@ -5,7 +5,7 @@
 
 use crate::any::AnySegment;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// The required `data_identifier` value for DVB subtitles.
 pub const DATA_IDENTIFIER: u8 = 0x20;
@@ -149,7 +149,7 @@ impl Serialize for PesDataField<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
 
     #[test]
     fn round_trip_single_end_of_display_set() {

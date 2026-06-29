@@ -67,7 +67,7 @@ impl ScramblingControl {
     }
 }
 
-dvb_common::impl_spec_display!(ScramblingControl);
+broadcast_common::impl_spec_display!(ScramblingControl);
 
 /// 2-bit `adaptation_field_control` field — ITU-T H.222.0 (08/2023) Table 2-5.
 ///
@@ -110,7 +110,7 @@ impl AdaptationFieldControl {
     }
 }
 
-dvb_common::impl_spec_display!(AdaptationFieldControl);
+broadcast_common::impl_spec_display!(AdaptationFieldControl);
 
 /// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
@@ -255,7 +255,7 @@ impl TsHeader {
     }
 }
 
-impl<'a> dvb_common::Parse<'a> for TsHeader {
+impl<'a> broadcast_common::Parse<'a> for TsHeader {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -263,7 +263,7 @@ impl<'a> dvb_common::Parse<'a> for TsHeader {
     }
 }
 
-impl dvb_common::Serialize for TsHeader {
+impl broadcast_common::Serialize for TsHeader {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {

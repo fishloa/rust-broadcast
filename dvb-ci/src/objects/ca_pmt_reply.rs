@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `CA_enable` 7-bit value (Table, p. 32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,7 @@ impl CaEnable {
         }
     }
 }
-dvb_common::impl_spec_display!(CaEnable, Rfu);
+broadcast_common::impl_spec_display!(CaEnable, Rfu);
 
 /// One ES entry in a `ca_pmt_reply`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

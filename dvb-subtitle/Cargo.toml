@@ -1,13 +1,13 @@
 [package]
 name    = "dvb-subtitle"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["dvb", "subtitle", "subtitling", "broadcast", "mpeg-ts"]
 categories = ["parser-implementations", "multimedia", "no-std"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 exclude = ["docs/**", "tests/fixtures/**"]
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-common = { path = "../dvb-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
@@ -30,5 +30,5 @@ mpeg-pes = { path = "../mpeg-pes", version = "0.1" }
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["dvb-common/std", "thiserror/std"]
+std = ["broadcast-common/std", "thiserror/std"]
 serde = ["dep:serde"]

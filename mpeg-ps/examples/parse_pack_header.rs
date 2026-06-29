@@ -1,4 +1,4 @@
-use dvb_common::Parse;
+use broadcast_common::Parse;
 /// Parse one pack header from inline bytes and print the SCR + mux_rate.
 ///
 /// ```sh

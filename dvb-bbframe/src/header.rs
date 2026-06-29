@@ -3,7 +3,7 @@
 //! Supports both Normal Mode (NM) and High Efficiency Mode (HEM)
 //! per EN 302 755 v1.4.1 §5.1.7.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use num_enum::TryFromPrimitive;
 
 use crate::crc::crc8;
@@ -61,7 +61,7 @@ impl TsGs {
     }
 }
 
-dvb_common::impl_spec_display!(TsGs);
+broadcast_common::impl_spec_display!(TsGs);
 
 /// Operating mode: Normal or High Efficiency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -92,7 +92,7 @@ impl Mode {
     }
 }
 
-dvb_common::impl_spec_display!(Mode);
+broadcast_common::impl_spec_display!(Mode);
 
 /// The pair of MATYPE bytes describing the input stream format and mode adaptation.
 ///
@@ -184,7 +184,7 @@ impl RollOff {
     }
 }
 
-dvb_common::impl_spec_display!(RollOff);
+broadcast_common::impl_spec_display!(RollOff);
 
 impl Matype {
     /// Decode the roll-off factor from the EXT bits `[1:0]`.

@@ -80,7 +80,7 @@ async fn t2mi_stream_matches_sync_oracle() {
 
 /// Build a minimal syntactically-valid T2-MI TS packet (BBFrame type 0x00).
 fn make_t2mi_ts_packet(pid: u16) -> [u8; 188] {
-    use dvb_common::crc32_mpeg2;
+    use broadcast_common::crc32_mpeg2;
 
     // Build the T2-MI packet: header(6) + payload(3) + CRC(4).
     let payload = [0x01u8, 0x02, 0x00]; // minimal BBFrame payload

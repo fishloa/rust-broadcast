@@ -95,6 +95,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "broadcast-common"
+version = "8.1.0"
+dependencies = [
+ "chrono",
+ "criterion",
+ "libm",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,9 +133,9 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -307,10 +316,10 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "dvb-bbframe"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
+ "broadcast-common",
  "criterion",
- "dvb-common",
  "num_enum",
  "serde",
  "serde_json",
@@ -327,9 +336,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "dvb-si",
  "serde",
  "serde_json",
@@ -338,11 +347,11 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci-runtime"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
+ "broadcast-common",
  "clap",
  "dvb-ci",
- "dvb-common",
  "dvb-si",
  "libc",
  "thiserror",
@@ -350,18 +359,16 @@ dependencies = [
 
 [[package]]
 name = "dvb-common"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
- "chrono",
- "criterion",
- "libm",
+ "broadcast-common",
 ]
 
 [[package]]
 name = "dvb-conformance"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -376,9 +383,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-flute"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -400,12 +407,12 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
+ "broadcast-common",
  "bytes",
  "chrono",
  "criterion",
- "dvb-common",
  "encoding_rs",
  "erased-serde",
  "flate2",
@@ -421,9 +428,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-simulcrypt"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -438,9 +445,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-stream"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "dvb-si",
  "dvb-t2mi",
  "futures-core",
@@ -451,9 +458,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "mpeg-pes",
  "serde",
  "serde_json",
@@ -462,13 +469,13 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
+ "broadcast-common",
  "bytes",
  "chrono",
  "criterion",
  "dvb-bbframe",
- "dvb-common",
  "dvb-si",
  "erased-serde",
  "num_enum",
@@ -480,7 +487,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "8.0.0"
+version = "8.1.0"
 dependencies = [
  "clap",
  "dvb-si",
@@ -498,9 +505,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-vbi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -737,9 +744,9 @@ dependencies = [
 
 [[package]]
 name = "mp4-emsg"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -747,9 +754,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -757,9 +764,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "mpeg-pes",
  "serde",
  "serde_json",
@@ -768,10 +775,10 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
+ "broadcast-common",
  "bytes",
- "dvb-common",
  "serde",
  "thiserror",
 ]
@@ -953,9 +960,9 @@ dependencies = [
 
 [[package]]
 name = "scte104"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -963,10 +970,10 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "base64",
- "dvb-common",
+ "broadcast-common",
  "dvb-t2mi",
  "hex",
  "serde",
@@ -1037,9 +1044,9 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "smpte2038"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",
@@ -1111,10 +1118,10 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
+ "broadcast-common",
  "chrono",
- "dvb-common",
  "mp4-emsg",
  "scte35-splice",
  "serde",
@@ -1182,9 +1189,9 @@ checksum = "bc7d623258602320d5c55d1bc22793b57daff0ec7efc270ea7d55ce1d5f5471c"
 
 [[package]]
 name = "ule"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "dvb-common",
+ "broadcast-common",
  "serde",
  "serde_json",
  "thiserror",

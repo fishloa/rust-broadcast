@@ -34,7 +34,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
 const DESC_COUNT_FIELD: usize = 2;
@@ -99,7 +99,7 @@ impl DescriptorType {
         }
     }
 }
-dvb_common::impl_spec_display!(DescriptorType, IsoReserved, DvbReserved, UserDefined);
+broadcast_common::impl_spec_display!(DescriptorType, IsoReserved, DvbReserved, UserDefined);
 
 /// Compatibility specifier type — TS 102 006 Table 15 / ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,7 +140,7 @@ impl SpecifierType {
         }
     }
 }
-dvb_common::impl_spec_display!(SpecifierType, Unallocated);
+broadcast_common::impl_spec_display!(SpecifierType, Unallocated);
 
 /// Compatibility sub-descriptor type — ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,7 +174,7 @@ impl SubDescriptorType {
         }
     }
 }
-dvb_common::impl_spec_display!(SubDescriptorType, Unallocated);
+broadcast_common::impl_spec_display!(SubDescriptorType, Unallocated);
 
 /// Compatibility Descriptor — ETSI TS 102 006 §9.4.2.2 Table 15 / ISO/IEC
 /// 13818-6 `compatibilityDescriptor()`.

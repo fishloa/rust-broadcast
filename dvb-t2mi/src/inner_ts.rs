@@ -146,7 +146,7 @@ mod tests {
     use super::*;
     use dvb_bbframe::crc::crc8;
     use dvb_bbframe::header::{Matype, TsGs};
-    use dvb_common::crc32_mpeg2;
+    use broadcast_common::crc32_mpeg2;
 
     const TS_SYNC: u8 = 0x47;
     const TS_LEN: usize = 188;

@@ -8,7 +8,7 @@
 use super::descriptor_body;
 use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for HEVC_video_descriptor.
 pub const TAG: u8 = 0x38;

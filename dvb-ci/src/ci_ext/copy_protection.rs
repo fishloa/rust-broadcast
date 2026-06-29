@@ -12,7 +12,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Copy Protection (Tables 69-73).
 pub mod tag {
@@ -74,7 +74,7 @@ impl CpStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(CpStatus, Reserved);
+broadcast_common::impl_spec_display!(CpStatus, Reserved);
 
 /// `cp_query()` (Table 69): app → host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

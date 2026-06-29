@@ -63,7 +63,7 @@ impl UriLinkageType {
         }
     }
 }
-dvb_common::impl_spec_display!(UriLinkageType, Other);
+broadcast_common::impl_spec_display!(UriLinkageType, Other);
 
 impl UriLinkageType {
     /// `true` when this type carries a `min_polling_interval` field per

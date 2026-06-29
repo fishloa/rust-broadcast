@@ -5,7 +5,7 @@
 //! for a given `frame_idx` (if used in current frame).
 
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use super::l1::L1PostDynamic;
 

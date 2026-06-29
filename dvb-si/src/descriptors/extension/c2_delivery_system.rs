@@ -57,7 +57,7 @@ impl C2TuningFrequencyType {
         }
     }
 }
-dvb_common::impl_spec_display!(C2TuningFrequencyType, Reserved);
+broadcast_common::impl_spec_display!(C2TuningFrequencyType, Reserved);
 
 /// Active OFDM symbol duration — ETSI EN 300 468 Table 117.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,7 +103,7 @@ impl ActiveOfdmSymbolDuration {
         }
     }
 }
-dvb_common::impl_spec_display!(ActiveOfdmSymbolDuration, Reserved);
+broadcast_common::impl_spec_display!(ActiveOfdmSymbolDuration, Reserved);
 
 /// C2 guard interval — ETSI EN 300 468 Table 118.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +149,7 @@ impl C2GuardInterval {
         }
     }
 }
-dvb_common::impl_spec_display!(C2GuardInterval, Reserved);
+broadcast_common::impl_spec_display!(C2GuardInterval, Reserved);
 
 /// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -8,7 +8,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `application_type` (Table, p. 28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +52,7 @@ impl ApplicationType {
         }
     }
 }
-dvb_common::impl_spec_display!(ApplicationType, Reserved);
+broadcast_common::impl_spec_display!(ApplicationType, Reserved);
 
 /// `application_info_enq()` — header-only enquiry (Table 20).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

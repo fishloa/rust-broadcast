@@ -5,8 +5,8 @@
 //! §5.2.4) the CRC is dropped; the T2-MI packet CRC covers the whole packet.
 
 use alloc::vec::Vec;
-use dvb_common::bits::{BitReader, BitWriter};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_common::{Parse, Serialize};
 
 use super::enums::{
     GuardInterval, L1CodeRate, L1FecType, L1Modulation, PaprReduction, PaprReductionV0,
@@ -176,7 +176,7 @@ impl L1Pre {
     #[must_use]
     pub fn crc32(&self) -> u32 {
         let bytes = self.to_bytes();
-        dvb_common::crc32_mpeg2::compute(&bytes)
+        broadcast_common::crc32_mpeg2::compute(&bytes)
     }
 
     /// Serialise to the 21-byte T2-MI form (no CRC).
@@ -358,7 +358,7 @@ impl Serialize for L1Pre {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     fn synthetic_pre() -> L1Pre {
         L1Pre {

@@ -2,7 +2,7 @@
 //!
 //! One module per `splice_command_type` (§9.6.1, Table 7), each mirroring the
 //! dvb-si descriptor shape: spec-cited doc → `COMMAND_TYPE` const → struct →
-//! symmetric [`Parse`](dvb_common::Parse)/[`Serialize`](dvb_common::Serialize)
+//! symmetric [`Parse`](broadcast_common::Parse)/[`Serialize`](broadcast_common::Serialize)
 //! → in-module round-trip tests. [`AnyCommand`] unifies them with a raw
 //! fall-through for reserved types.
 

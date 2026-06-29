@@ -30,7 +30,7 @@ use crate::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use crate::objects::ca_pmt_reply::CaEnable;
 use crate::tag::{ApduTag, CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // Re-export the shared value enums so callers needn't reach into `objects`.
 pub use crate::objects::ca_pmt::{

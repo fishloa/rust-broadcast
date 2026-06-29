@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::Path;
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
 use scte35_splice::SpliceInfoSection;
 

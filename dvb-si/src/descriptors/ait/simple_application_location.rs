@@ -7,7 +7,7 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for simple_application_location_descriptor (AIT namespace).
 pub const TAG: u8 = 0x15;

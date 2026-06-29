@@ -1,5 +1,5 @@
 //! SCTE-35-specific dispatch traits. `Parse` / `Serialize` come from
-//! `dvb_common` and are imported directly at call sites.
+//! `broadcast_common` and are imported directly at call sites.
 //!
 //! These mirror dvb-si's `DescriptorDef` / `TableDef`: each typed wire entity
 //! declares its discriminant byte and a SCREAMING_SNAKE diagnostic `NAME`, and
@@ -7,7 +7,7 @@
 //! to the trait const via a drift test, so the list can never silently drift
 //! from the implemented set.
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 /// Implemented by every typed splice command; drives
 /// [`crate::commands::AnyCommand`] dispatch. `COMMAND_TYPE` is the

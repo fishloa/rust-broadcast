@@ -8,7 +8,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for content_identifier_descriptor.
 pub const TAG: u8 = 0x76;
@@ -72,7 +72,7 @@ impl CridType {
         }
     }
 }
-dvb_common::impl_spec_display!(CridType, Reserved);
+broadcast_common::impl_spec_display!(CridType, Reserved);
 
 /// CRID location per TS 102 323 Table 10.
 ///

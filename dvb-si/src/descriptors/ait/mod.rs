@@ -127,7 +127,7 @@ macro_rules! declare_ait_descriptors {
             /// caller turns that into [`AnyAitDescriptor::Unknown`]). `Some(Err)`
             /// is a typed parse failure for a recognised tag.
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::error::Result<Self>> {
-                use dvb_common::Parse;
+                use broadcast_common::Parse;
                 match tag {
                     $(
                         $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),

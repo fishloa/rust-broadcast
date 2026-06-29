@@ -11,7 +11,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::tables::RunningStatus;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
 pub const TABLE_ID_PF_ACTUAL: u8 = 0x4E;
@@ -293,7 +293,7 @@ impl Serialize for EitSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }
@@ -312,8 +312,8 @@ impl<'a> EitEvent<'a> {
     /// conversion per ETSI EN 300 468 Annex C. Available without the `chrono`
     /// feature.
     #[must_use]
-    pub fn start_time(&self) -> Option<dvb_common::time::MjdBcdDateTime> {
-        dvb_common::time::decode_mjd_bcd(self.start_time_raw)
+    pub fn start_time(&self) -> Option<broadcast_common::time::MjdBcdDateTime> {
+        broadcast_common::time::decode_mjd_bcd(self.start_time_raw)
     }
 
     /// Set the event start time, encoding it into the 40-bit `start_time` field.
@@ -323,10 +323,10 @@ impl<'a> EitEvent<'a> {
     /// outside the representable 16-bit MJD range.
     pub fn set_start_time_decoded(
         &mut self,
-        dt: dvb_common::time::MjdBcdDateTime,
+        dt: broadcast_common::time::MjdBcdDateTime,
     ) -> crate::Result<()> {
         self.start_time_raw =
-            dvb_common::time::encode_mjd_bcd(dt).ok_or(crate::Error::ValueOutOfRange {
+            broadcast_common::time::encode_mjd_bcd(dt).ok_or(crate::Error::ValueOutOfRange {
                 field: "EitEvent::start_time",
                 reason: "date not representable in 16-bit MJD",
             })?;
@@ -339,7 +339,7 @@ impl<'a> EitEvent<'a> {
     /// `chrono` feature — a duration is a plain elapsed-seconds value.
     #[must_use]
     pub fn duration(&self) -> Option<core::time::Duration> {
-        dvb_common::time::decode_bcd_duration(self.duration_raw)
+        broadcast_common::time::decode_bcd_duration(self.duration_raw)
     }
 
     /// Set the event duration, encoding it into the 24-bit BCD `duration` field.
@@ -348,7 +348,7 @@ impl<'a> EitEvent<'a> {
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the duration
     /// is 100 hours or longer (the `HH` field holds only two BCD digits).
     pub fn set_duration(&mut self, duration: core::time::Duration) -> crate::Result<()> {
-        self.duration_raw = dvb_common::time::encode_bcd_duration(duration).ok_or(
+        self.duration_raw = broadcast_common::time::encode_bcd_duration(duration).ok_or(
             crate::Error::ValueOutOfRange {
                 field: "EitEvent::duration",
                 reason: "duration must be < 100 hours",
@@ -403,7 +403,7 @@ impl EitEvent<'_> {
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
     pub fn start_time_chrono(&self) -> Option<chrono::DateTime<chrono::Utc>> {
-        dvb_common::time::decode_mjd_bcd_utc(self.start_time_raw)
+        broadcast_common::time::decode_mjd_bcd_utc(self.start_time_raw)
     }
 
     /// Set the event start time, encoding it into the 40-bit `start_time` field.
@@ -415,7 +415,7 @@ impl EitEvent<'_> {
         &mut self,
         start_time: chrono::DateTime<chrono::Utc>,
     ) -> crate::Result<()> {
-        self.start_time_raw = dvb_common::time::encode_mjd_bcd_utc(start_time).ok_or(
+        self.start_time_raw = broadcast_common::time::encode_mjd_bcd_utc(start_time).ok_or(
             crate::Error::ValueOutOfRange {
                 field: "EitEvent::start_time",
                 reason: "date not representable in 16-bit MJD",

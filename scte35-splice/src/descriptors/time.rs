@@ -6,7 +6,7 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for time_descriptor (§10.1, Table 16).
 pub const TAG: u8 = 0x03;

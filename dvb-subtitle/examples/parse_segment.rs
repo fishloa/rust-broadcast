@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p dvb-subtitle --example parse_segment`
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_subtitle::{AnySegment, DataIdentifier, EndOfPesMarker, PesDataField, SyncByte};
 
 fn main() {

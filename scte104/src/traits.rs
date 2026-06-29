@@ -4,7 +4,7 @@
 //! discriminant and diagnostic `NAME`. The `declare_operations!` macro in
 //! `any.rs` pins the byte literal to this trait const via a drift test.
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 /// Implemented by every typed SCTE 104 operation; drives
 /// [`crate::operations::AnyOperation`] dispatch.

@@ -46,7 +46,7 @@ impl EventKind {
         }
     }
 }
-dvb_common::impl_spec_display!(EventKind);
+broadcast_common::impl_spec_display!(EventKind);
 
 /// The lossless original payload, carried verbatim.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +118,7 @@ impl TimedEvent {
 mod tests {
     use super::*;
     use alloc::vec::Vec;
-    use dvb_common::traits::Parse;
+    use broadcast_common::traits::Parse;
     use scte35_splice::SpliceInfoSection;
 
     // Real Unified Streaming splice (ID 2002): out-of-network, break_duration 2160000 (24s).

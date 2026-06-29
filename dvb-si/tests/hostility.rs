@@ -12,7 +12,7 @@
 
 #![cfg(feature = "ts")]
 
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::parse_loop;
 use dvb_si::tables::sdt::{SdtKind, SdtSection};

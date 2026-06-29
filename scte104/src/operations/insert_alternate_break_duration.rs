@@ -6,7 +6,7 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `opID` for insert_alternate_break_duration request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0113;

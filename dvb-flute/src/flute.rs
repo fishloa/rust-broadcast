@@ -143,7 +143,7 @@ impl CencAlgorithm {
     }
 }
 
-dvb_common::impl_spec_display!(CencAlgorithm, Other);
+broadcast_common::impl_spec_display!(CencAlgorithm, Other);
 
 /// EXT_CENC — FDT Instance Content Encoding Header (RFC 6726 §3.4.3, HET = 193,
 /// fixed-length).

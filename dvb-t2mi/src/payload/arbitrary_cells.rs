@@ -1,6 +1,6 @@
 //! T2-MI payload type 0x02: Arbitrary cell insertion — §5.2.3.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Arbitrary cell insertion payload (type 0x02) per ETSI TS 102 773 §5.2.3.
 ///

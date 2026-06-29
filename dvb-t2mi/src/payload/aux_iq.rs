@@ -4,7 +4,7 @@
 //! Each sample: 12-bit two's complement I, then 12-bit two's complement Q.
 //! `Re(x) = I / 2^9`, `Im(x) = Q / 2^9`. Can span multiple T2-MI packets.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Minimum valid aux_id value.
 const AUX_ID_MIN: u8 = 1;

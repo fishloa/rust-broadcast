@@ -41,7 +41,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s, inherited from the DVB Host Control v3 resource
 /// (§13.2). These live in the `0x9F84xx` namespace alongside EN 50221's Host
@@ -85,7 +85,7 @@ impl HostControlMode {
         }
     }
 }
-dvb_common::impl_spec_display!(HostControlMode);
+broadcast_common::impl_spec_display!(HostControlMode);
 
 // --- The three tune flag bits, packed into the high bits of the prefix byte. ---
 //

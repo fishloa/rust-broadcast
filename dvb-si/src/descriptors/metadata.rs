@@ -8,7 +8,7 @@ use super::descriptor_body;
 use crate::descriptors::decoder_config_flags::DecoderConfigFlags;
 use crate::descriptors::metadata_format::MetadataFormat;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for metadata_descriptor.
 pub const TAG: u8 = 0x26;

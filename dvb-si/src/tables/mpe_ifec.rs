@@ -38,7 +38,7 @@
 //! follows the [`crate::tables::dsmcc`] precedent.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for the MPE-IFEC section.
 pub const TABLE_ID: u8 = 0x7A;
@@ -252,7 +252,7 @@ impl Serialize for MpeIfecSection<'_> {
         buf[data_start..data_end].copy_from_slice(self.ifec_data);
 
         // CRC-32 over everything up to (but not including) the CRC slot.
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..data_end]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..data_end]);
         buf[data_end..len].copy_from_slice(&crc.to_be_bytes());
 
         Ok(len)

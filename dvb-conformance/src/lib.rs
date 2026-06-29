@@ -44,7 +44,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
 use mpeg_ts::section::Section;
@@ -189,7 +189,7 @@ impl Priority {
         }
     }
 }
-dvb_common::impl_spec_display!(Priority);
+broadcast_common::impl_spec_display!(Priority);
 
 /// A TR 101 290 measurement indicator.
 ///
@@ -295,7 +295,7 @@ impl Indicator {
         }
     }
 }
-dvb_common::impl_spec_display!(Indicator);
+broadcast_common::impl_spec_display!(Indicator);
 
 /// One raised conformance error.
 #[derive(Debug, Clone, PartialEq, Eq)]

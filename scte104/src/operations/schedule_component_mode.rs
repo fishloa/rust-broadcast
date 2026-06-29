@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `opID` for schedule_component_mode_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010D;

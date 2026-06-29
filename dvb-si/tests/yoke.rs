@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::owned::Owned;
 use dvb_si::tables::sdt::{SdtKind, SdtSection, SdtService};

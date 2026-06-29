@@ -1,6 +1,6 @@
 use core::time::Duration;
 
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
 use dvb_si::tables::eit::{EitKind, EitSection};
 use dvb_si::tables::nit::{NitKind, NitSection};
@@ -921,7 +921,7 @@ fn build_valid_cat_section() -> Vec<u8> {
         0x00, // section_number
         0x00, // last_section_number
     ];
-    let crc = dvb_common::crc32_mpeg2::compute(&cat);
+    let crc = broadcast_common::crc32_mpeg2::compute(&cat);
     cat.extend_from_slice(&crc.to_be_bytes());
     cat
 }

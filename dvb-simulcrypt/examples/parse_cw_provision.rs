@@ -8,7 +8,7 @@
 /// ```
 use std::fs;
 
-use dvb_common::traits::Serialize;
+use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsParameterType, Interface, MessageType, ParameterType, SimulcryptMessage,
 };

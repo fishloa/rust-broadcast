@@ -19,7 +19,7 @@ use crate::commands::AnyCommand;
 use crate::descriptors::{parse_loop, SpliceDescriptorIter};
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of a splice_info_section (§9.6.1).
 pub const TABLE_ID: u8 = 0xFC;
@@ -183,7 +183,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
                     what: "splice_info_section header",
                 })?;
         let expected = u32::from_be_bytes(*crc_bytes);
-        let computed = dvb_common::crc32_mpeg2::compute(crc_region);
+        let computed = broadcast_common::crc32_mpeg2::compute(crc_region);
         if computed != expected {
             return Err(Error::CrcMismatch { computed, expected });
         }
@@ -369,7 +369,7 @@ impl Serialize for SpliceInfoSection<'_> {
         }
 
         let crc_pos = need - CRC_LEN;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
         buf[crc_pos..need].copy_from_slice(&crc.to_be_bytes());
         Ok(need)
     }

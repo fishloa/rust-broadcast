@@ -2,7 +2,7 @@
 //!
 //! Spec-cited parser **and builder** for the SCTE 35 Digital Program Insertion
 //! cueing message (`splice_info_section`, table_id `0xFC`), with the workspace's
-//! symmetric [`Parse`](dvb_common::Parse)/[`Serialize`](dvb_common::Serialize)
+//! symmetric [`Parse`](broadcast_common::Parse)/[`Serialize`](broadcast_common::Serialize)
 //! discipline: every wire type round-trips byte-for-byte.
 //!
 //! The implemented edition is **ANSI/SCTE 35 2023r1** (the single-document
@@ -36,7 +36,7 @@
 //!
 //! ```
 //! use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
-//! use dvb_common::{Parse, Serialize};
+//! use broadcast_common::{Parse, Serialize};
 //!
 //! // A minimal time_signal() section with no descriptors, built and emitted.
 //! let ts = scte35_splice::commands::TimeSignal {
@@ -59,7 +59,7 @@
 //!
 //! ```
 //! use scte35_splice::SpliceInfoSection;
-//! use dvb_common::{Parse, Serialize};
+//! use broadcast_common::{Parse, Serialize};
 //!
 //! // A splice_null() section produced by this crate stands in for bytes a
 //! // dvb-si demux would hand you from the SCTE 35 PID.
@@ -79,7 +79,7 @@
 //!
 //! Reserved bits are written as `1` on serialize (the spec's convention) and
 //! ignored on parse. `splice_info_section` uses the MPEG-2 CRC-32
-//! ([`dvb_common::crc32_mpeg2`], §9.6.1): parse verifies it, serialize
+//! ([`broadcast_common::crc32_mpeg2`], §9.6.1): parse verifies it, serialize
 //! recomputes it.
 
 #![forbid(unsafe_code)]

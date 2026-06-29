@@ -6,7 +6,7 @@
 use super::cable_delivery_system::FecInner;
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for satellite_delivery_system_descriptor.
 pub const TAG: u8 = 0x43;
@@ -62,7 +62,7 @@ impl Polarization {
         }
     }
 }
-dvb_common::impl_spec_display!(Polarization);
+broadcast_common::impl_spec_display!(Polarization);
 
 /// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,7 +85,7 @@ impl ModulationSystem {
         }
     }
 }
-dvb_common::impl_spec_display!(ModulationSystem);
+broadcast_common::impl_spec_display!(ModulationSystem);
 
 /// Modulation type (§6.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +114,7 @@ impl ModulationType {
         }
     }
 }
-dvb_common::impl_spec_display!(ModulationType);
+broadcast_common::impl_spec_display!(ModulationType);
 
 /// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only; also used by S2X
 /// with extended values per Table 144).
@@ -167,7 +167,7 @@ impl RollOff {
         }
     }
 }
-dvb_common::impl_spec_display!(RollOff, Reserved);
+broadcast_common::impl_spec_display!(RollOff, Reserved);
 
 /// Satellite Delivery System Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl SatelliteDeliverySystemDescriptor {
     /// e.g. `0x0117_2500` → `11_725_000_000` Hz (11.72500 GHz).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 10_000)
     }
 
     /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
@@ -226,7 +226,7 @@ impl SatelliteDeliverySystemDescriptor {
     /// e.g. `0x027_5000` → `27_500_000` (27.5 Msym/s).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
     }
 
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).
@@ -247,7 +247,7 @@ impl SatelliteDeliverySystemDescriptor {
     /// `None` if the BCD nibbles are out of range. e.g. `0x1920` → `192.0`.
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.orbital_position_bcd), 4)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position_bcd), 4)
             .map(|tenths| tenths as f64 / 10.0)
     }
 

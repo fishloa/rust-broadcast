@@ -71,7 +71,7 @@ impl PacketType {
         }
     }
 }
-dvb_common::impl_spec_display!(PacketType);
+broadcast_common::impl_spec_display!(PacketType);
 
 /// T2-MI packet header (6 bytes / 48 bits) per §5.1.
 ///
@@ -98,7 +98,7 @@ pub struct Header {
     pub payload_len_bits: u16,
 }
 
-impl<'a> dvb_common::Parse<'a> for Header {
+impl<'a> broadcast_common::Parse<'a> for Header {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
@@ -215,7 +215,7 @@ impl Header {
     }
 }
 
-impl dvb_common::Serialize for Header {
+impl broadcast_common::Serialize for Header {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
@@ -254,7 +254,7 @@ impl dvb_common::Serialize for Header {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dvb_common::{Parse, Serialize};
+    use broadcast_common::{Parse, Serialize};
 
     #[test]
     fn packet_type_try_from_all_valid() {

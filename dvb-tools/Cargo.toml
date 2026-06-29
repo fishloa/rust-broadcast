@@ -1,11 +1,11 @@
 [package]
 name         = "dvb-tools"
-version      = "8.0.0"
+version      = "8.1.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-dvb crates."
 edition      = "2021"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 license      = "MIT OR Apache-2.0"
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.81"
 readme       = "README.md"
 keywords     = ["dvb", "mpeg-ts", "analyzer", "cli", "broadcast"]

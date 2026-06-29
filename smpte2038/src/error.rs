@@ -1,6 +1,6 @@
 //! Error type for SMPTE ST 2038 ANC-data parsing/serialization.
 
-use dvb_common::bits::BitError;
+use broadcast_common::bits::BitError;
 
 /// Result alias for ST 2038 parsing.
 pub type Result<T> = core::result::Result<T, Error>;

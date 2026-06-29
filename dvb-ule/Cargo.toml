@@ -7,7 +7,7 @@ license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["ule", "rfc4326", "mpeg-ts", "encapsulation", "broadcast"]
 categories = ["parser-implementations", "network-programming", "no-std"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 rust-version = "1.81"
 

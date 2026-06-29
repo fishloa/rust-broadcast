@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use crate::pack_header::{PackHeader, PACK_START_CODE};
 use crate::system_header::{SystemHeader, SYSTEM_HEADER_START_CODE};

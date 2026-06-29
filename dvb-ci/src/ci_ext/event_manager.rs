@@ -11,7 +11,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Event Manager (Tables 56, 59, 61).
 pub mod tag {
@@ -61,7 +61,7 @@ impl EventType {
         }
     }
 }
-dvb_common::impl_spec_display!(EventType, Reserved);
+broadcast_common::impl_spec_display!(EventType, Reserved);
 
 /// `reply` — the event request reply code (Table 60).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +110,7 @@ impl EventReply {
         }
     }
 }
-dvb_common::impl_spec_display!(EventReply, Reserved);
+broadcast_common::impl_spec_display!(EventReply, Reserved);
 
 /// `event_request()` (Table 56): module → host. The `event_desc` bytes define
 /// the event; their format depends on `event_type` (Table 58 — for a Timer,

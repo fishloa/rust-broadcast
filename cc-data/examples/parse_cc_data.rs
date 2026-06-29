@@ -3,7 +3,7 @@
 //! Run with: `cargo run -p cc-data --example parse_cc_data`
 
 use cc_data::CcData;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 fn main() {
     // cc_data: process_cc_data_flag=1, cc_count=2; one DTVCC-start triplet + one

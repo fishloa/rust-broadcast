@@ -6,7 +6,7 @@
 
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_usage_descriptor (AIT namespace).
 pub const TAG: u8 = 0x16;

@@ -9,7 +9,7 @@
 //! '1', so the `HDR_WCG_idc` (bits [1:0]) assertion catches any parser that
 //! reads it from the wrong bit position.
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
 use dvb_si::descriptors::video_stream::FrameRateCode;
 use dvb_si::descriptors::AnyDescriptor;
@@ -229,7 +229,7 @@ const PMT4: &[u8] = include_bytes!("fixtures/tsduck-protection-message-pmt.bin")
 
 #[test]
 fn decodes_tsduck_compiled_protection_message() {
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
     let pmt = PmtSection::parse(PMT4).expect("TSDuck PMT section must parse");
@@ -266,7 +266,7 @@ const PMT5: &[u8] = include_bytes!("fixtures/tsduck-cpcm-delivery-signalling-pmt
 
 #[test]
 fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
     let pmt = PmtSection::parse(PMT5).expect("TSDuck PMT section must parse");
@@ -301,7 +301,7 @@ const PMT6: &[u8] = include_bytes!("fixtures/tsduck-dts-descriptors-pmt.bin");
 
 #[test]
 fn decodes_tsduck_compiled_dts_descriptors() {
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
     use dvb_si::descriptors::extension::SamplingFrequency;
     use dvb_si::descriptors::extension::{
         ExtensionBody, ExtensionDescriptor, ExtensionTag, FrameDurationCode, MaxPayloadCode,

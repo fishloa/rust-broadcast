@@ -13,7 +13,7 @@
 //! `line_number`(11) + `horizontal_offset`(12) + `DID`(10) + `SDID`(10) +
 //! `data_count`(10) + (`data_count & 0xFF`)×`user_data_word`(10) +
 //! `checksum_word`(10), then `'1'` bits padding up to the next byte boundary
-//! (§4.2, Table 2). [`dvb_common::bits`] provides the MSB-first reader/writer.
+//! (§4.2, Table 2). [`broadcast_common::bits`] provides the MSB-first reader/writer.
 //!
 //! ## `data_count` loop counter (§4.2.1) — the easy-to-misimplement point
 //! `DID`, `SDID`, `data_count`, every `user_data_word` and `checksum_word` are
@@ -26,7 +26,7 @@
 
 use alloc::vec::Vec;
 
-use dvb_common::bits::{BitReader, BitWriter};
+use broadcast_common::bits::{BitReader, BitWriter};
 
 use crate::error::{Error, Result};
 

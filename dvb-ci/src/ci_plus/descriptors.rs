@@ -14,7 +14,7 @@
 //! and the byte sequence are structural.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `descriptor_tag` of the `ciplus_initialization_vector_descriptor` (Table 46).
 pub const IV_DESCRIPTOR_TAG: u8 = 0xD0;

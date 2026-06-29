@@ -20,7 +20,7 @@ use crate::objects::ca_pmt::{
     CaPmt, CaPmtCmdId, CaPmtListManagement, CaPmtStream, CA_DESCRIPTOR_TAG,
 };
 use alloc::vec::Vec;
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pmt::PmtSection;
 
@@ -215,7 +215,7 @@ mod tests {
     use super::*;
     use crate::objects::ca_pmt::CaPmt;
     use alloc::vec;
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
 
     #[test]
     fn builds_from_real_pmt_fixture() {
@@ -401,7 +401,7 @@ mod tests {
 
         // Append a CRC (the parser validates length, not CRC for construction;
         // compute the real MPEG-2 CRC so the section is well-formed).
-        let crc = dvb_common::crc32_mpeg2::compute(&body);
+        let crc = broadcast_common::crc32_mpeg2::compute(&body);
         body.extend_from_slice(&crc.to_be_bytes());
         body
     }

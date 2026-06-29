@@ -1,5 +1,5 @@
 //! `dvb-ci`-specific dispatch trait. `Parse` / `Serialize` come from
-//! `dvb_common` and are imported at the call sites.
+//! `broadcast_common` and are imported at the call sites.
 //!
 //! Mirrors dvb-si's `DescriptorDef` and scte35-splice's `CommandDef`: each typed
 //! APDU object declares its 3-byte `apdu_tag` and a SCREAMING_SNAKE diagnostic
@@ -12,7 +12,7 @@
 //! APDU back — so dispatch can route on the header and round-trip is symmetric.
 
 use crate::tag::ApduTag;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 /// Implemented by every typed APDU object; drives [`crate::AnyApdu`] dispatch.
 pub trait ApduDef<'a>: Parse<'a, Error = crate::error::Error> {

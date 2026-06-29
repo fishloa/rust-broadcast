@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Sample decryption resource (Table 30).
 pub mod tag {
@@ -385,7 +385,7 @@ impl TransmissionStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(TransmissionStatus, Reserved);
+broadcast_common::impl_spec_display!(TransmissionStatus, Reserved);
 
 /// `drm_status` values (Table 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -433,7 +433,7 @@ impl DrmStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(DrmStatus, Reserved);
+broadcast_common::impl_spec_display!(DrmStatus, Reserved);
 
 /// `sd_start_reply()` (Table 35): CICAM → Host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

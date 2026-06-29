@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::Path;
 
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::ait::AnyAitDescriptor;

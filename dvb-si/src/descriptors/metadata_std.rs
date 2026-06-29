@@ -5,7 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for Metadata_STD_descriptor.
 pub const TAG: u8 = 0x27;

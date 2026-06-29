@@ -1,13 +1,13 @@
 [package]
 name         = "dvb-stream"
-version      = "0.2.1"
+version      = "0.2.2"
 edition      = "2021"
 description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["dvb", "tokio", "async", "stream", "mpeg"]
 categories   = ["asynchronous", "multimedia", "network-programming"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 # dvb-stream is versioned and released INDEPENDENTLY from the dvb-si/dvb-t2mi
 # lockstep. tokio's MSRV moves faster than the workspace 1.81; set explicitly.
@@ -25,7 +25,7 @@ tokio        = { version = "1", default-features = false, features = ["io-util",
 
 [dev-dependencies]
 tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
-dvb-common    = { path = "../dvb-common", version = "8" }
+broadcast-common    = { path = "../broadcast-common", version = "8" }
 futures-util  = { version = "0.3", default-features = false }
 
 [features]

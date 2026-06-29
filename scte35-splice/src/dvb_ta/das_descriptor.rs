@@ -17,7 +17,7 @@
 use crate::descriptors::header::{self, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for `DVB_DAS_descriptor()` (§5.3.5.16). Shall be
 /// `0xF0` (the SCTE 35 private/DVB tag).
@@ -95,7 +95,7 @@ impl EquivalentSegmentationType {
         }
     }
 }
-dvb_common::impl_spec_display!(EquivalentSegmentationType, Reserved);
+broadcast_common::impl_spec_display!(EquivalentSegmentationType, Reserved);
 
 /// `DVB_DAS_descriptor()` — §5.3.5.16, Table 1.
 ///

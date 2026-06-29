@@ -11,7 +11,7 @@
 //! for SSI=0 the serializer re-emits the preserved checksum bytes.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// First table_id in the DSM-CC section range (inclusive).
 pub const TABLE_ID_FIRST: u8 = 0x3A;
@@ -170,7 +170,7 @@ impl Serialize for DsmccSection<'_> {
 
         let trailer_start = payload_end;
         if self.section_syntax_indicator {
-            let crc = dvb_common::crc32_mpeg2::compute(&buf[..trailer_start]);
+            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..trailer_start]);
             buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
         } else {
             buf[trailer_start..len].copy_from_slice(&self.checksum);

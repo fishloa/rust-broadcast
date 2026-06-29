@@ -1,5 +1,5 @@
 use super::ExtensionDescriptor;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 pub(crate) fn wrap(tag_ext: u8, sel: &[u8]) -> Vec<u8> {
     let mut v = vec![super::TAG, (sel.len() + 1) as u8, tag_ext];

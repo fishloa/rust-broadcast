@@ -24,7 +24,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
 pub const TABLE_ID: u8 = 0x7B;
@@ -89,7 +89,7 @@ impl ReferenceType {
         }
     }
 }
-dvb_common::impl_spec_display!(ReferenceType, Unallocated);
+broadcast_common::impl_spec_display!(ReferenceType, Unallocated);
 
 /// table_id(1) + section_length hi/lo(2) + extension(2) + version/cni(1)
 /// + section_number(1) + last_section_number(1) = 8-byte common header.
@@ -517,7 +517,7 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[7] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
-        let crc = dvb_common::crc32_mpeg2::compute(&buf[..body_end]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
         buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
         Ok(len)
     }

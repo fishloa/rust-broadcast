@@ -6,7 +6,7 @@
 //! byte-exact on real-world bytes (the round-trip invariant, on data we did
 //! not author).
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, PesDataField};
 use mpeg_pes::{PesAssembler, PesPacket, StreamId};
 

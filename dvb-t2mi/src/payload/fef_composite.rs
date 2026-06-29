@@ -5,7 +5,7 @@
 
 use core::fmt;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use super::fef_null::{S1Field, S2Field1};
 

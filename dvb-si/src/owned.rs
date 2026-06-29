@@ -17,7 +17,7 @@
 //! use std::sync::Arc;
 //! use dvb_si::owned::Owned;
 //! use dvb_si::tables::pmt::PmtSection;
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //!
 //! # let section: Vec<u8> = dvb_si::owned::doc::pmt_section();
 //! // `section` is the complete PMT section bytes (e.g. straight off the demux).
@@ -136,7 +136,7 @@ pub mod doc {
     #[must_use]
     pub fn pmt_section() -> Vec<u8> {
         use crate::tables::pmt::{PmtSection, PmtStream};
-        use dvb_common::Serialize;
+        use broadcast_common::Serialize;
 
         let pmt = PmtSection {
             program_number: 1,

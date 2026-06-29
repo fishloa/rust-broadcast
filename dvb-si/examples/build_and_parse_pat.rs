@@ -5,7 +5,7 @@
 //! Shows the symmetric build/parse contract without needing a TS source —
 //! every table type works the same way.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 
 fn main() {

@@ -10,7 +10,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
 // NordigLogicalChannelV1 — tag 0x83, 14-bit LCN

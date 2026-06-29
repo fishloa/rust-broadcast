@@ -139,7 +139,7 @@ impl CopyControl {
         }
     }
 }
-dvb_common::impl_spec_display!(CopyControl, Reserved);
+broadcast_common::impl_spec_display!(CopyControl, Reserved);
 
 /// `move_and_copy_propagation_information` — ETSI TS 102 825-4 Table 10.
 ///
@@ -188,7 +188,7 @@ impl MoveCopyPropagation {
         }
     }
 }
-dvb_common::impl_spec_display!(MoveCopyPropagation);
+broadcast_common::impl_spec_display!(MoveCopyPropagation);
 
 /// `view_propagation_information` — ETSI TS 102 825-4 Table 11.
 ///
@@ -237,7 +237,7 @@ impl ViewPropagation {
         }
     }
 }
-dvb_common::impl_spec_display!(ViewPropagation);
+broadcast_common::impl_spec_display!(ViewPropagation);
 
 /// One entry in the `export_controlled_cps` CPS vector (Table 8, §5.4).
 ///
@@ -684,7 +684,7 @@ mod tests {
     use super::*;
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
 
     // ── helper: construct a minimal USI (no conditional fields) ──────────────
     fn minimal_usi() -> CpcmUsi {

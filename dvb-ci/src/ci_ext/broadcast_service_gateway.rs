@@ -20,7 +20,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Broadcast Service Gateway EIT extension
 /// (Tables 32-33). The generic-gateway tags live in [`super::service_gateway::tag`].
@@ -79,7 +79,7 @@ impl EitResponseCode {
         }
     }
 }
-dvb_common::impl_spec_display!(EitResponseCode);
+broadcast_common::impl_spec_display!(EitResponseCode);
 
 /// `EITSectionReq()` (Table 32) — app → module: request an EIT section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
-use dvb_common::{crc32_mpeg2, Parse, Serialize};
+use broadcast_common::{crc32_mpeg2, Parse, Serialize};
 
 /// `packet_start_code_prefix` — `0x000001`.
 pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;

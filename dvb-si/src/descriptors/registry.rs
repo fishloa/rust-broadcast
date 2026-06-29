@@ -29,7 +29,7 @@
 //! ```rust,no_run
 //! use dvb_si::descriptors::{DescriptorRegistry, AnyDescriptor};
 //! use dvb_si::traits::DescriptorDef;
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `DescriptorObject` requires there).
@@ -252,7 +252,7 @@ impl DescriptorRegistry {
         self.custom.insert(
             (None, tag),
             Box::new(|b| {
-                Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
             }),
         );
         self
@@ -277,7 +277,7 @@ impl DescriptorRegistry {
         self.custom.insert(
             (Some(pds), tag),
             Box::new(|b| {
-                Ok(Box::new(<T as dvb_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
             }),
         );
         self
@@ -377,13 +377,13 @@ pub(crate) fn dispatch_entry<'a>(
         if tag == crate::descriptors::logical_channel::TAG
             && registry.logical_channel_pds.contains(&pds)
         {
-            use dvb_common::Parse;
+            use broadcast_common::Parse;
             return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
                 .map(AnyDescriptor::LogicalChannel);
         }
     }
     if registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
         return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
             .map(AnyDescriptor::LogicalChannel);
     }
@@ -398,7 +398,7 @@ pub(crate) fn dispatch_entry<'a>(
 
 fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
     if tag == crate::descriptors::private_data_specifier::TAG {
-        use dvb_common::Parse;
+        use broadcast_common::Parse;
         if let Ok(pds) =
             crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(full)
         {
@@ -565,7 +565,7 @@ mod tests {
         v: u8,
     }
 
-    impl<'a> dvb_common::Parse<'a> for PdsEacem {
+    impl<'a> broadcast_common::Parse<'a> for PdsEacem {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
@@ -590,7 +590,7 @@ mod tests {
         w: u8,
     }
 
-    impl<'a> dvb_common::Parse<'a> for PdsNordig {
+    impl<'a> broadcast_common::Parse<'a> for PdsNordig {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
@@ -615,7 +615,7 @@ mod tests {
         z: u8,
     }
 
-    impl<'a> dvb_common::Parse<'a> for PdsAgnostic {
+    impl<'a> broadcast_common::Parse<'a> for PdsAgnostic {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
@@ -724,7 +724,7 @@ mod tests {
             a: u8,
         }
 
-        impl<'a> dvb_common::Parse<'a> for Agnostic83 {
+        impl<'a> broadcast_common::Parse<'a> for Agnostic83 {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {
@@ -871,7 +871,7 @@ mod tests {
             payload: Vec<u8>,
         }
 
-        impl<'a> dvb_common::Parse<'a> for MyCustomExt {
+        impl<'a> broadcast_common::Parse<'a> for MyCustomExt {
             type Error = crate::error::Error;
             fn parse(sel: &'a [u8]) -> crate::Result<Self> {
                 Ok(Self {

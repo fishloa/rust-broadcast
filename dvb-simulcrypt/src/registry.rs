@@ -53,7 +53,7 @@ impl Interface {
         }
     }
 }
-dvb_common::impl_spec_display!(Interface);
+broadcast_common::impl_spec_display!(Interface);
 
 // ===========================================================================
 // message_type — ECMG ⇔ SCS (Table 3 subset, §5)
@@ -162,7 +162,7 @@ impl EcmgScsMessageType {
         }
     }
 }
-dvb_common::impl_spec_display!(EcmgScsMessageType, Reserved);
+broadcast_common::impl_spec_display!(EcmgScsMessageType, Reserved);
 
 // ===========================================================================
 // message_type — EMMG/PDG ⇔ MUX (Table 3 subset, §6)
@@ -272,7 +272,7 @@ impl EmmgMuxMessageType {
         }
     }
 }
-dvb_common::impl_spec_display!(EmmgMuxMessageType, Reserved);
+broadcast_common::impl_spec_display!(EmmgMuxMessageType, Reserved);
 
 // ===========================================================================
 // message_type — C(P)SIG ⇔ (P)SIG (Table 3 subset, §8)
@@ -426,7 +426,7 @@ impl CpSigMessageType {
         }
     }
 }
-dvb_common::impl_spec_display!(CpSigMessageType, Reserved);
+broadcast_common::impl_spec_display!(CpSigMessageType, Reserved);
 
 /// Interface-tagged `message_type`: decode a raw value once the [`Interface`]
 /// is known.
@@ -483,7 +483,7 @@ impl MessageType {
         }
     }
 }
-dvb_common::impl_spec_display!(MessageType);
+broadcast_common::impl_spec_display!(MessageType);
 
 // ===========================================================================
 // parameter_type — ECMG ⇔ SCS (Table 5, §5.2 p. 31)
@@ -658,7 +658,7 @@ impl EcmgScsParameterType {
         }
     }
 }
-dvb_common::impl_spec_display!(EcmgScsParameterType, Reserved);
+broadcast_common::impl_spec_display!(EcmgScsParameterType, Reserved);
 
 // ===========================================================================
 // parameter_type — EMMG/PDG ⇔ MUX (Table 7, §6.2.2 p. 42)
@@ -748,7 +748,7 @@ impl EmmgMuxParameterType {
         }
     }
 }
-dvb_common::impl_spec_display!(EmmgMuxParameterType, Reserved);
+broadcast_common::impl_spec_display!(EmmgMuxParameterType, Reserved);
 
 // ===========================================================================
 // parameter_type — C(P)SIG ⇔ (P)SIG (Table 36, §8)
@@ -1022,7 +1022,7 @@ impl CpSigParameterType {
         }
     }
 }
-dvb_common::impl_spec_display!(CpSigParameterType, Reserved);
+broadcast_common::impl_spec_display!(CpSigParameterType, Reserved);
 
 /// Interface-tagged `parameter_type`: decode a raw value once the [`Interface`]
 /// is known.
@@ -1079,7 +1079,7 @@ impl ParameterType {
         }
     }
 }
-dvb_common::impl_spec_display!(ParameterType);
+broadcast_common::impl_spec_display!(ParameterType);
 
 // ===========================================================================
 // EMMG/PDG value sub-tables (§6.2.3)
@@ -1134,7 +1134,7 @@ impl DataType {
         }
     }
 }
-dvb_common::impl_spec_display!(DataType, Reserved);
+broadcast_common::impl_spec_display!(DataType, Reserved);
 
 /// `section_TSpkt_flag` values (TS 103 197 §6.2.3 p. 43) — the datagram framing
 /// in `datagram` parameters. (The same flag, with the same meaning, is carried
@@ -1187,7 +1187,7 @@ impl SectionTspktFlag {
         }
     }
 }
-dvb_common::impl_spec_display!(SectionTspktFlag, Reserved);
+broadcast_common::impl_spec_display!(SectionTspktFlag, Reserved);
 
 // ===========================================================================
 // error_status (Table 6 / Table 8)
@@ -1342,7 +1342,7 @@ impl EcmgErrorStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(EcmgErrorStatus, Reserved);
+broadcast_common::impl_spec_display!(EcmgErrorStatus, Reserved);
 
 /// EMMG/PDG⇔MUX `error_status` values (TS 103 197 Table 8, §6.2.6 p. 47).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1488,4 +1488,4 @@ impl EmmgErrorStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(EmmgErrorStatus, Reserved);
+broadcast_common::impl_spec_display!(EmmgErrorStatus, Reserved);

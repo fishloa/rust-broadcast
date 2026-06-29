@@ -69,7 +69,7 @@ impl S2XMode {
         }
     }
 }
-dvb_common::impl_spec_display!(S2XMode, Reserved);
+broadcast_common::impl_spec_display!(S2XMode, Reserved);
 
 /// TS/GS S2X mode — ETSI EN 300 468 Table 143.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,7 @@ impl TsGsS2XMode {
         }
     }
 }
-dvb_common::impl_spec_display!(TsGsS2XMode, Reserved);
+broadcast_common::impl_spec_display!(TsGsS2XMode, Reserved);
 
 // Receiver profile bit flags (additive — field stays raw u8).
 const RP_BROADCAST: u8 = 0x01;
@@ -164,20 +164,20 @@ impl S2XChannelBond {
     /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
             .map(|tenths| tenths as f64 / 10.0)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
     }
 }
 
@@ -225,20 +225,20 @@ impl S2XSatelliteDeliverySystem<'_> {
     /// EN 300 468 §6.2.13.2).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency), 8).map(|v| v * 10_000)
     }
 
     /// Decode the 16-bit BCD `orbital_position` to degrees (tenths resolution).
     #[must_use]
     pub fn orbital_position_deg(&self) -> Option<f64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.orbital_position), 4)
             .map(|tenths| tenths as f64 / 10.0)
     }
 
     /// Decode the 28-bit BCD `symbol_rate` to symbols/second (100 sym/s resolution).
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate), 7).map(|v| v * 100)
     }
 
     // ---- Receiver profile flag accessors (additive, Table 141) ----

@@ -216,7 +216,7 @@ mod tests {
         ior::{BiopProfileBody, ConnBinder, Ior, ObjectLocation, TaggedProfile},
         message::{Binding, BindingType, BiopMessage, DirectoryMessage, FileMessage},
     };
-    use dvb_common::Serialize;
+    use broadcast_common::Serialize;
 
     /// Build a simple carousel in memory:
     ///   Module 1: ServiceGateway dir with one binding "index.html" → module 2, key [2]

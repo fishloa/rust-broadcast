@@ -70,7 +70,7 @@ fn tdt_utc_time_round_trips() {
 
 #[test]
 fn satellite_delivery_decoded_accessors() {
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
     use dvb_si::descriptors::satellite_delivery_system::SatelliteDeliverySystemDescriptor;
     // tag, len, freq 0x01172500 (11.72500 GHz), orbital 0x1920, flags 0x00, symbol_rate+fec.
     let raw = [
@@ -92,7 +92,7 @@ fn satellite_delivery_decoded_accessors() {
 
 #[test]
 fn cable_delivery_decoded_accessors() {
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
     use dvb_si::descriptors::cable_delivery_system::CableDeliverySystemDescriptor;
     let raw = [
         0x44, 11, 0x03, 0x46, 0x00, 0x00, 0xFF, 0xF1, 0x05, 0x00, 0x00, 0x00, 0x03,
@@ -106,7 +106,7 @@ fn cable_delivery_decoded_accessors() {
 
 #[test]
 fn terrestrial_delivery_centre_frequency_hz() {
-    use dvb_common::Parse;
+    use broadcast_common::Parse;
     use dvb_si::descriptors::terrestrial_delivery_system::TerrestrialDeliverySystemDescriptor;
     let raw = [
         0x5A, 11, 0x04, 0xA8, 0x58, 0xF0, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF,

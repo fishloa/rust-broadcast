@@ -9,7 +9,7 @@
 //! `u32` and expose typed views over it — no information is lost on round-trip.
 
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// A `resource_identifier()` — 4 octets, carried verbatim as a big-endian `u32`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

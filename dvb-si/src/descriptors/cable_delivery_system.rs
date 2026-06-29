@@ -5,7 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for cable_delivery_system_descriptor.
 pub const TAG: u8 = 0x44;
@@ -42,7 +42,7 @@ impl FecOuter {
         }
     }
 }
-dvb_common::impl_spec_display!(FecOuter, Reserved);
+broadcast_common::impl_spec_display!(FecOuter, Reserved);
 
 /// Modulation scheme — ETSI EN 300 468 Table 35.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl Modulation {
         }
     }
 }
-dvb_common::impl_spec_display!(Modulation, Reserved);
+broadcast_common::impl_spec_display!(Modulation, Reserved);
 
 /// FEC inner convolutional code rate — ETSI EN 300 468 Table 36.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,7 +171,7 @@ impl FecInner {
         }
     }
 }
-dvb_common::impl_spec_display!(FecInner, Reserved);
+broadcast_common::impl_spec_display!(FecInner, Reserved);
 
 /// Cable Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,7 +196,7 @@ impl CableDeliverySystemDescriptor {
     /// e.g. `0x0346_0000` → `346_000_000` Hz (346.0000 MHz).
     #[must_use]
     pub fn frequency_hz(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.frequency_bcd), 8).map(|v| v * 100)
     }
 
     /// Set `frequency` from Hz, encoding to the 8-digit BCD field at the field's
@@ -216,7 +216,7 @@ impl CableDeliverySystemDescriptor {
     /// resolution). `None` if the BCD nibbles are out of range.
     #[must_use]
     pub fn symbol_rate_sps(&self) -> Option<u64> {
-        dvb_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
+        broadcast_common::bcd::bcd_to_decimal(u64::from(self.symbol_rate_bcd), 7).map(|v| v * 100)
     }
 
     /// Set `symbol_rate` from symbols/second (100 sym/s field resolution).

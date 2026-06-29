@@ -15,7 +15,7 @@
 //!
 //! ```
 //! use mpeg_ps::PackHeader;
-//! use dvb_common::Parse;
+//! use broadcast_common::Parse;
 //!
 //! // A minimal pack header: start_code 0x000001BA, SCR=0, mux_rate=3, stuffing=0
 //! let bytes = [

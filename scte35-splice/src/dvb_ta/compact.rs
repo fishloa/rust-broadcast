@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 
 use crate::dvb_ta::das_descriptor::EquivalentSegmentationType;
 use crate::error::{Error, Result};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `message_type` for [`CompactTimeSignal`] (§8.3.3, Table 5).
 pub const MESSAGE_TYPE_TIME_SIGNAL: u8 = 0x00;

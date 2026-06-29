@@ -2,7 +2,7 @@
 //! descriptor, serialize → parse → equal, and parse → serialize → byte-identical.
 //! Round-trip is the crate's primary, fabrication-proof correctness oracle.
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte35_splice::commands::{
     AnyCommand, BandwidthReservation, PrivateCommand, SpliceInsert, SpliceNull, SpliceSchedule,
     SpliceScheduleEvent, TimeSignal,

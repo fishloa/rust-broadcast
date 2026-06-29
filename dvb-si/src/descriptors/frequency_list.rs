@@ -7,7 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for frequency_list_descriptor.
 pub const TAG: u8 = 0x62;
@@ -49,7 +49,7 @@ impl CodingType {
         }
     }
 }
-dvb_common::impl_spec_display!(CodingType);
+broadcast_common::impl_spec_display!(CodingType);
 
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +85,7 @@ impl FrequencyListDescriptor {
                     .iter()
                     .map(|b| {
                         let value =
-                            dvb_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
+                            broadcast_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
                         Some(value * scale)
                     })
                     .collect()

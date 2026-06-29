@@ -14,7 +14,7 @@ use crate::length;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `text()` object (Table 46): a run of `text_char` bytes (EN 300 468 Annex A).
 ///
@@ -227,7 +227,7 @@ impl AnswId {
         }
     }
 }
-dvb_common::impl_spec_display!(AnswId, Reserved);
+broadcast_common::impl_spec_display!(AnswId, Reserved);
 
 /// `answ()` object (Table 48): the user input reply.
 #[derive(Debug, Clone, PartialEq, Eq)]

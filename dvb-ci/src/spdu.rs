@@ -14,7 +14,7 @@
 use crate::error::{Error, Result};
 use crate::length;
 use crate::resource::ResourceId;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `spdu_tag` values — Table 14 (p. 23). One byte each.
 pub mod tags {
@@ -92,7 +92,7 @@ impl SessionStatus {
         }
     }
 }
-dvb_common::impl_spec_display!(SessionStatus, Reserved);
+broadcast_common::impl_spec_display!(SessionStatus, Reserved);
 
 // --- shared SPDU header helpers ---
 

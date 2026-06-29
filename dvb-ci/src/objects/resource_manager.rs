@@ -9,7 +9,7 @@ use crate::resource::ResourceId;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// `profile_enq()` — Profile Enquiry, an empty-body object (Table 17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

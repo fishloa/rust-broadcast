@@ -5,7 +5,7 @@
 
 use num_enum::TryFromPrimitive;
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 use super::l1::post::parse_l1_post_from_framed;
 use super::l1::pre::L1PRE_BYTES;
@@ -51,7 +51,7 @@ impl FrequencySource {
         }
     }
 }
-dvb_common::impl_spec_display!(FrequencySource);
+broadcast_common::impl_spec_display!(FrequencySource);
 
 /// L1-current payload (type 0x10) per ETSI TS 102 773 §5.2.4.
 ///

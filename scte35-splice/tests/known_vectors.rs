@@ -6,7 +6,7 @@
 //! these tests add the *semantic* assertions on top.
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte35_splice::commands::AnyCommand;
 use scte35_splice::descriptors::{
     AnySpliceDescriptor, DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,

@@ -37,7 +37,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// New LSC v4 `apdu_tag`s (§10), in the `0x9F8Cxx` namespace.
 pub mod tag {
@@ -101,7 +101,7 @@ impl ConnectionState {
         }
     }
 }
-dvb_common::impl_spec_display!(ConnectionState, Reserved);
+broadcast_common::impl_spec_display!(ConnectionState, Reserved);
 
 // --- IP_protocol_version (Table 86) ---
 
@@ -146,7 +146,7 @@ impl IpProtocolVersion {
         }
     }
 }
-dvb_common::impl_spec_display!(IpProtocolVersion, Reserved);
+broadcast_common::impl_spec_display!(IpProtocolVersion, Reserved);
 
 // ---------------------------------------------------------------------------
 // comms_info_req (Table 76)
@@ -485,7 +485,7 @@ impl IpConnectionType {
         }
     }
 }
-dvb_common::impl_spec_display!(IpConnectionType, Reserved);
+broadcast_common::impl_spec_display!(IpConnectionType, Reserved);
 
 /// `hybrid_descriptor()` (Table 83). The inner `IP_descriptor()` /
 /// `hostname_descriptor()` / `multicast_descriptor()` body is carried verbatim as

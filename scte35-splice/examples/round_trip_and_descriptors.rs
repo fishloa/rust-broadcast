@@ -3,7 +3,7 @@
 //!
 //! Run with: `cargo run -p scte35-splice --example round_trip_and_descriptors`
 
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 #[rustfmt::skip]

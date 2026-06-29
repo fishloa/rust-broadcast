@@ -137,7 +137,7 @@ pub struct InjectCompleteResponse {
 
 use crate::error::{Error, Result};
 use crate::time::TIME_LEN;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 macro_rules! impl_empty_body {
     ($ty:ident, $what:literal, $oid:literal) => {

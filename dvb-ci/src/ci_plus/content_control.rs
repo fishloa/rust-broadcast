@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s implemented for the Content Control resource
 /// (the printed-syntax subset of Table 6).
@@ -275,7 +275,7 @@ impl DatatypeId {
         }
     }
 }
-dvb_common::impl_spec_display!(DatatypeId, Other);
+broadcast_common::impl_spec_display!(DatatypeId, Other);
 
 /// `operating_mode` (datatype 38) values (§6.4.3.3.2 prose): the CICAM treats
 /// the programme as unattended when this is `Timeshift` or `UnattendedRecording`.
@@ -320,7 +320,7 @@ impl OperatingMode {
         }
     }
 }
-dvb_common::impl_spec_display!(OperatingMode, Other);
+broadcast_common::impl_spec_display!(OperatingMode, Other);
 
 /// A single SAC protocol datatype: `datatype_id` (8) + `datatype_length` (16,
 /// number of value bytes) + value. Value bytes are carried opaque so crypto /
