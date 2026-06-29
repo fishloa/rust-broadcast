@@ -170,13 +170,40 @@ impl TsFixBuilder {
         self
     }
 
+    /// Enable PAT/PMT regeneration.
+    ///
+    /// Rebuilds the Program Association Table (PAT) to be consistent with the
+    /// actual programs present in the stream output. This is particularly useful
+    /// after [`filter_pids`](Self::filter_pids) to ensure the PAT lists only the
+    /// programs that survived the filter.
+    ///
+    /// The engine observes PAT sections as packets pass through, collecting the
+    /// program → PMT PID mappings. On flush (end of stream), it emits a
+    /// freshly-generated PAT listing exactly the observed programs.
+    ///
+    /// # Example — filter to one service, then regenerate PAT
+    ///
+    /// ```rust,no_run
+    /// use ts_fix::{TsFix, PidFilter};
+    ///
+    /// let mut engine = TsFix::builder()
+    ///     .filter_pids(PidFilter::service(1))
+    ///     .regen_psi()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn regen_psi(mut self) -> Self {
+        self.ops
+            .push(alloc::boxed::Box::new(ops::psi_regen::PsiRegenOp::new()));
+        self
+    }
+
     // ── Future operation methods (stubs document the planned API surface) ────
     //
     // These will be added in later tasks.  They are NOT present in v0.1 — they
     // appear here only as comments so reviewers can confirm the builder surface
     // is stable and additive.
     //
-    //   pub fn regen_psi(self) -> Self                   // Task 4
     //   pub fn stuffing(self, cfg: Stuffing) -> Self     // Task 5
     //   pub fn restamp_pcr(self, cfg: PcrRestamp) -> Self // Task 6
     //
