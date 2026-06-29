@@ -11,12 +11,14 @@ categories   = ["parser-implementations", "multimedia::video"]
 exclude      = ["tests/fixtures/**"]
 
 [dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 mpeg-ts   = { path = "../mpeg-ts",  version = "0.1", default-features = false }
+dvb-si    = { path = "../dvb-si",   version = "8",   default-features = false }
 thiserror = { version = "2",        default-features = false }
 
 [features]
 default = ["std"]
-std     = ["mpeg-ts/std", "thiserror/std"]
+std     = ["broadcast-common/std", "mpeg-ts/std", "dvb-si/std", "thiserror/std"]
 
 [package.metadata.docs.rs]
 all-features = true

@@ -47,6 +47,7 @@ mod engine;
 mod ops;
 
 pub use error::Error;
+pub use ops::pid_filter::PidFilter;
 
 /// A repair / remux engine for MPEG-2 TS byte streams.
 ///
@@ -141,13 +142,40 @@ impl TsFixBuilder {
         self
     }
 
+    /// Enable PID filtering / service extraction.
+    ///
+    /// Two modes:
+    ///
+    /// - [`PidFilter::keep`] — pass only packets whose PID is in the supplied
+    ///   set.  PAT PID 0x0000 is always implicitly included.
+    /// - [`PidFilter::service`] — observe the live PAT/PMT and keep exactly
+    ///   the PIDs that belong to the given program_number
+    ///   (PAT + PMT PID + PCR PID + all ES PIDs); everything else is dropped.
+    ///
+    /// # Example — extract service 1 from a multi-program mux
+    ///
+    /// ```rust,no_run
+    /// use ts_fix::{TsFix, PidFilter};
+    ///
+    /// let mut engine = TsFix::builder()
+    ///     .filter_pids(PidFilter::service(1))
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn filter_pids(mut self, cfg: PidFilter) -> Self {
+        self.ops
+            .push(alloc::boxed::Box::new(ops::pid_filter::PidFilterOp::new(
+                cfg,
+            )));
+        self
+    }
+
     // ── Future operation methods (stubs document the planned API surface) ────
     //
     // These will be added in later tasks.  They are NOT present in v0.1 — they
     // appear here only as comments so reviewers can confirm the builder surface
     // is stable and additive.
     //
-    //   pub fn filter_pids(self, cfg: PidFilter) -> Self // Task 3
     //   pub fn regen_psi(self) -> Self                   // Task 4
     //   pub fn stuffing(self, cfg: Stuffing) -> Self     // Task 5
     //   pub fn restamp_pcr(self, cfg: PcrRestamp) -> Self // Task 6
