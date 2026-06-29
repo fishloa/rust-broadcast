@@ -1,0 +1,22 @@
+[package]
+name         = "ts-fix"
+version      = "0.1.0"
+edition      = "2021"
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-broadcast"
+rust-version = "1.81"
+description  = "MPEG-2 TS repair / remux — continuity, PID filter, PAT/PMT regen, stuffing, PCR restamp (ISO/IEC 13818-1)."
+keywords     = ["mpeg-ts", "transport-stream", "repair", "remux", "dvb"]
+categories   = ["parser-implementations", "multimedia::video"]
+exclude      = ["tests/fixtures/**"]
+
+[dependencies]
+mpeg-ts   = { path = "../mpeg-ts",  version = "0.1", default-features = false }
+thiserror = { version = "2",        default-features = false }
+
+[features]
+default = ["std"]
+std     = ["mpeg-ts/std", "thiserror/std"]
+
+[package.metadata.docs.rs]
+all-features = true

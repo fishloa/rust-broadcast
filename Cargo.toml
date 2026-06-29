@@ -1,5 +1,5 @@
 [workspace]
-members = ["broadcast-common", "dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "smpte2038", "dvb-smpte2038", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts"]
+members = ["broadcast-common", "dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "smpte2038", "dvb-smpte2038", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix"]
 exclude = ["fuzz", "demo", "bindings/python"]
 resolver = "2"
 
