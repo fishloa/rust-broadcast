@@ -30,11 +30,13 @@
 
 extern crate alloc;
 
+mod diagnostics;
 mod report;
-mod sync_byte;
 
+pub use diagnostics::cc_anomaly::CcAnomalyCheck;
+pub use diagnostics::pat_pmt_version::PatPmtVersionCheck;
+pub use diagnostics::sync_byte::SyncByteCheck;
 pub use report::{Finding, Location, Report, Severity};
-pub use sync_byte::SyncByteCheck;
 
 /// A pluggable diagnostic check that examines a Transport Stream byte buffer.
 ///
