@@ -1198,6 +1198,7 @@ name = "ts-fix"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "clap",
  "dvb-si",
  "mpeg-ts",
  "thiserror",

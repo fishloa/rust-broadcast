@@ -4,6 +4,15 @@
 //! TS packets in and emits repaired packets out.  Repair operations are opt-in
 //! via builder methods; the engine owns and enforces the canonical ordering.
 //!
+//! # Operations
+//!
+//! | Operation | Builder method | What it does |
+//! |---|---|---|
+//! | Continuity repair | [`repair_continuity`](TsFixBuilder::repair_continuity) | Renumber per-PID continuity counters (§2.4.3.3). |
+//! | PID filter / service extract | [`filter_pids`](TsFixBuilder::filter_pids) | Keep specified PIDs or extract a single programme by `program_number`. |
+//! | PAT/PMT regeneration | [`regen_psi`](TsFixBuilder::regen_psi) | Rebuild PAT from observed PMT PIDs on flush. |
+//! | Stuffing | [`stuffing`](TsFixBuilder::stuffing) | Drop null packets or pad to a target packet rate. |
+//!
 //! # Forward compatibility
 //!
 //! The public API is designed so that adding a new repair operation in a future
@@ -18,17 +27,15 @@
 //! # Quick start
 //!
 //! ```rust,no_run
-//! use ts_fix::{TsFix, Error};
+//! use ts_fix::{TsFix, PidFilter, Stuffing};
 //!
-//! fn repair(input: &[u8]) -> Result<Vec<u8>, Error> {
-//!     let mut engine = TsFix::builder().build()?;
-//!     let mut output = Vec::with_capacity(input.len());
-//!     for chunk in input.chunks(188) {
-//!         engine.push(chunk, |pkt| output.extend_from_slice(pkt));
-//!     }
-//!     engine.finish(|pkt| output.extend_from_slice(pkt));
-//!     Ok(output)
-//! }
+//! let mut engine = TsFix::builder()
+//!     .repair_continuity()
+//!     .filter_pids(PidFilter::keep([0x0100, 0x0101]))
+//!     .regen_psi()
+//!     .stuffing(Stuffing::drop_nulls())
+//!     .build()
+//!     .unwrap();
 //! ```
 //!
 //! # Spec
