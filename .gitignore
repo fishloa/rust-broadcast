@@ -30,3 +30,4 @@ tools/dvb-si-audit/out/
 target-*/
 # CTA standards: free to download but copyright CTA — consulted locally, only transcriptions committed (like ci_plus/nordig).
 specs/cta_*.pdf
+specs/fulltext/
