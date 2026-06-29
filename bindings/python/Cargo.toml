@@ -5,7 +5,7 @@ edition = "2021"
 description = "Python bindings for dvb-si — parse DVB SI/PSI sections and demux MPEG-TS into Python dicts."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
-repository   = "https://github.com/fishloa/rust-dvb"
+repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
 # NOT a workspace member (PyO3 MSRV moves faster than the workspace 1.81); it
 # consumes the published dvb-si crate by version, not path.
@@ -19,8 +19,7 @@ pyo3       = { version = "0.24", features = ["extension-module", "abi3-py39"] }
 pythonize  = "0.24"
 serde      = "1"
 serde_json = "1"
-dvb-common = { version = "7.6" }
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
-dvb-si     = { version = "7.6", features = ["ts", "serde", "chrono"] }
-dvb-t2mi   = { version = "7.6", features = ["ts", "serde"] }
+dvb-si     = { version = "8", features = ["ts", "serde", "chrono"] }
+dvb-t2mi   = { version = "8", features = ["ts", "serde"] }
