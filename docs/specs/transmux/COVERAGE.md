@@ -63,12 +63,12 @@ Lists every box required for TS→fMP4/CMAF/HLS muxing, its source, and transcri
 | `tref`    | Track Reference Box               | ISO/IEC 14496-12:2015 §8.3.3 | DONE              | `timing-and-refs.md`     |
 | `av01`    | AV1 Sample Entry                   | [AOM-AV1] §2.2        | DONE              | `codec-config.md`       |
 | `av1C`    | AV1 Codec Configuration Box        | [AOM-AV1] §2.3        | DONE              | `codec-config.md`       |
-| `avc1`    | AVC/H.264 Sample Entry             | ISO/IEC 14496-15 (paid)| GAP — paid-only  | `codec-config.md`       |
-| `avcC`    | AVC Decoder Configuration Record   | ISO/IEC 14496-15 (paid)| GAP — paid-only  | `codec-config.md`       |
-| `hvc1`    | HEVC/H.265 Sample Entry            | ISO/IEC 14496-15 (paid)| GAP — paid-only  | `codec-config.md`       |
-| `hvcC`    | HEVC Decoder Configuration Record  | ISO/IEC 14496-15 (paid)| GAP — paid-only  | `codec-config.md`       |
-| `mp4a`    | MPEG-4 Audio Sample Entry          | ISO/IEC 14496-14 (paid)| GAP — paid-only  | `codec-config.md`       |
-| `esds`    | Elementary Stream Descriptor Box   | ISO/IEC 14496-14/-1 (paid)| GAP — paid-only | `codec-config.md`      |
+| `avc1`    | AVC/H.264 Sample Entry             | [FFmpeg-movenc]+[ITU-H264]| DONE              | `codec-config.md`       |
+| `avcC`    | AVC Decoder Configuration Record   | [FFmpeg-movenc]+[FFmpeg-avc]+[ITU-H264]| DONE              | `codec-config.md`       |
+| `hvc1`    | HEVC/H.265 Sample Entry            | [FFmpeg-movenc]+[ITU-H265]| DONE              | `codec-config.md`       |
+| `hvcC`    | HEVC Decoder Configuration Record  | [FFmpeg-movenc]+[FFmpeg-hevc]+[ITU-H265]| DONE              | `codec-config.md`       |
+| `mp4a`    | MPEG-4 Audio Sample Entry          | [FFmpeg-movenc]| DONE              | `codec-config.md`       |
+| `esds`    | Elementary Stream Descriptor Box   | [FFmpeg-movenc]| DONE              | `codec-config.md`       |
 
 ---
 
@@ -76,10 +76,10 @@ Lists every box required for TS→fMP4/CMAF/HLS muxing, its source, and transcri
 
 | Status        | Count | Boxes                                                                   |
 |---------------|-------|-------------------------------------------------------------------------|
-| DONE          | 60    | `ftyp`, `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`, `smhd`, `dinf`, `dref`, `url `, `stbl`, `stsd`, `stts`, `stsc`, `stsz`, `stco`, `co64`, `styp`, `mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun`, `mdat`, `sidx`, `edts`, `elst`, `ctts`, `stss`, `sdtp`, `subs`, `saiz`, `saio`, `btrt`, `tfra`, `mfra`, `mfro`, `sbgp`, `sgpd`, `sinf`, `frma`, `schm`, `schi`, `rinf`, `stvi`, `pasp`, `clap`, `colr`, `prft`, `tref`, `av01`, `av1C` |
-| GAP — paid-only | 6  | `avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds` |
+| DONE          | 66    | `ftyp`, `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`, `smhd`, `dinf`, `dref`, `url `, `stbl`, `stsd`, `stts`, `stsc`, `stsz`, `stco`, `co64`, `styp`, `mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun`, `mdat`, `sidx`, `edts`, `elst`, `ctts`, `stss`, `sdtp`, `subs`, `saiz`, `saio`, `btrt`, `tfra`, `mfra`, `mfro`, `sbgp`, `sgpd`, `sinf`, `frma`, `schm`, `schi`, `rinf`, `stvi`, `pasp`, `clap`, `colr`, `prft`, `tref`, `av01`, `av1C`, `avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds` |
+| GAP — paid-only | 0  | |
 
-**DONE = 60 boxes; GAP = 6 boxes** (remaining GAP entries are codec-config boxes from ISO/IEC 14496-14 and -15 — paid standards not consulted).
+**DONE = 66 boxes; GAP = 0 boxes** — all boxes now transcribed.
 
 Note: This coverage count includes boxes from ISO/IEC 14496-12:2015 §§8.3.3, 8.5.2, 8.6.1.3, 8.6.2,
 8.6.4, 8.6.5, 8.6.6, 8.7.7, 8.7.8, 8.7.9, 8.8.9, 8.8.10, 8.8.11, 8.9.2, 8.9.3, 8.12.1, 8.12.2,
@@ -87,8 +87,8 @@ Note: This coverage count includes boxes from ISO/IEC 14496-12:2015 §§8.3.3, 8
 All fragmentation-control boxes (`mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun`)
 are now transcribed using an owner-directed reference to ISO/IEC 14496-12 §8.8 per SOURCES.md.
 are now transcribed using an owner-directed reference to ISO/IEC 14496-12 §8.8 per SOURCES.md.
-The remaining 6 GAP boxes (`avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds`) are codec-config
-entries requiring ISO/IEC 14496-14/-15.
+All 6 codec-config GAP boxes (`avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds`) are now DONE,
+derived from FFmpeg reference implementations + free ITU-T standards.
 
 ---
 
@@ -99,20 +99,20 @@ entries requiring ISO/IEC 14496-14/-15.
 These seven boxes are transcribed in `fragment-boxes.md` using an owner-directed reference to
 ISO/IEC 14496-12 §8.8.  Field tables derived from the verified transcription in §8.8.1–8.8.8.
 
-### AVC/H.264 codec config (`avc1`, `avcC`)
+### Codec-config boxes: all DONE
 
-Defined in ISO/IEC 14496-15.  The public H.264 spec (ITU-T H.264, free from ITU-T) describes
-the SPS/PPS NAL unit syntax embedded in `avcC`.
+All six codec-config GAP entries (`avc1`, `avcC`, `hvc1`, `hvcC`, `mp4a`, `esds`) are now
+transcribed in `codec-config.md` from:
 
-### HEVC/H.265 codec config (`hvc1`, `hvcC`)
+- **avc1/avcC**: FFmpeg `mov_write_video_tag()` + `mov_write_avcc_tag()` + `ff_isom_write_avcc()`
+  (libavformat/movenc.c + avc.c). SPS/PPS fields referenced per ITU-T H.264 §.7.3.
+- **hvc1/hvcC**: FFmpeg `mov_write_video_tag()` + `mov_write_hvcc_tag()` + `hvcc_write()`
+  (libavformat/movenc.c + hevc.c). VPS/SPS/PPS fields referenced per ITU-T H.265 §.7.3.
+- **mp4a/esds**: FFmpeg `mov_write_audio_tag()` + `mov_write_esds_tag()` + `put_descr()`
+  (libavformat/movenc.c). Descriptor structure per ISO/IEC 14496-1 (referenced); AudioSpecificConfig per ISO/IEC 14496-3 (referenced).
 
-Defined in ISO/IEC 14496-15.  ITU-T H.265 (free) covers the VPS/SPS/PPS NAL syntax.
-
-### AAC/MPEG-4 audio (`mp4a`, `esds`)
-
-Defined in ISO/IEC 14496-14 and ISO/IEC 14496-1.  The `AudioSpecificConfig` bit syntax is
-in ISO/IEC 14496-3 (MPEG-4 Audio, available via some national bodies at reduced cost, and
-partially reproduced in public IETF RFCs for AAC).
+Note: The ISO/IEC 14496-14/-15 standards were NOT purchased or consulted. All field tables
+were derived solely from the FFmpeg reference implementations and the free ITU-T specifications.
 
 ---
 
@@ -125,4 +125,4 @@ For each DONE box, validation approach:
 3. **Parse PTS/DTS:** `ffprobe -show_packets -select_streams v:0 ref.mp4` to get per-frame timing; cross-validate against `tfdt.base_media_decode_time` and `sidx.earliest_presentation_time`.
 4. **Byte-level verification:** `hexdump -C ref.mp4 | head -200` to confirm `ftyp`/`moov`/`moof` header bytes against field tables above.
 
-For GAP boxes, the reference implementation's output (FFmpeg/GPAC) serves as the ground truth until the paid spec is obtained.
+All codec-config boxes are now transcribed from FFmpeg reference implementations and free ITU-T standards.
