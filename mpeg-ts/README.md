@@ -107,6 +107,47 @@ for pkt in iter_packets(&buf) {
 See [`examples/iter_packets.rs`](examples/iter_packets.rs) for a full CLI example
 that tallies scrambled vs clear packets across a `.ts` file.
 
+### Building & editing packets
+
+The [`OwnedTsPacket`] helpers let you construct, mutate, and round-trip TS
+packets without manual byte manipulation:
+
+```rust
+use mpeg_ts::ts::{Pcr, TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::OwnedTsPacket;
+
+// Build a null packet (PID 0x1FFF) with a given continuity counter.
+let null_raw = OwnedTsPacket::null_packet(3);
+let pkt = TsPacket::parse(&null_raw)?;
+assert_eq!(pkt.header.pid, 0x1FFF);
+assert_eq!(pkt.header.continuity_counter, 3);
+
+// Overwrite a continuity counter in-place.
+let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+OwnedTsPacket::set_continuity_counter(&mut raw, 7);
+let pkt = TsPacket::parse(&raw)?;
+assert_eq!(pkt.header.continuity_counter, 7);
+
+// Shift a PCR bearing packet (requires adaptation field with PCR flag).
+let mut raw = [0x47u8; 188];
+raw[3] = 0x20; // adaptation-only
+raw[4] = 7;    // adaptation_field_length
+raw[5] = 0x10; // PCR flag
+OwnedTsPacket::set_pcr(&mut raw, Pcr::from_27mhz(27_000_000))?;
+let pkt = TsPacket::parse(&raw)?;
+assert_eq!(pkt.adaptation_field().unwrap()?.pcr.unwrap().as_27mhz(), 27_000_000);
+# Ok::<(), mpeg_ts::Error>(())
+```
+
+Run the worked example:
+```sh
+cargo run -p mpeg-ts --example edit_packet
+```
+
+See [`examples/edit_packet.rs`](examples/edit_packet.rs) for a complete walk-through
+that builds a PCR-bearing packet, mutates PCR and CC, builds a null
+packet, and round-trips a packet header.
+
 ## Spec
 
 - **ITU-T H.222.0** (= ISO/IEC 13818-1): §2.4.3.2 (TS packet), §2.4.4 (PSI

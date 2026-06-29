@@ -29,11 +29,13 @@
 // Runnable examples, embedded so they render on docs.rs and stay in sync with
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n# Examples\n"]
-#![doc = "Two runnable examples ship with this crate (`cargo run -p mpeg-pes --example <name>`).\n"]
+#![doc = "Three runnable examples ship with this crate (`cargo run -p mpeg-pes --example <name>`).\n"]
 #![doc = "\n## `parse_pes_packet`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/parse_pes_packet.rs")]
 #![doc = "```\n\n## `extract_pts`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/extract_pts.rs")]
+#![doc = "```\n\n## `build_pes_header`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/build_pes_header.rs")]
 #![doc = "```"]
 
 extern crate alloc;

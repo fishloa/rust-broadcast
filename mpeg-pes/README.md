@@ -54,6 +54,34 @@ Run with `cargo run -p mpeg-pes --example <name>`:
 
 - **`parse_pes_packet`** — parse one PES packet from raw bytes (stream_id + PTS + payload).
 - **`extract_pts`** — depacketize a real capture, reassemble PES on a PID, and report the PTS timeline.
+- **`build_pes_header`** — construct a PES packet header from typed fields (PTS+DTS, ESCR, DSM trick mode), serialize, re-parse, and verify round-trip.
+
+### Building & editing PES headers
+
+The [`PesPacket::serialize_into`] method lets you re-serialize a parsed or
+hand-built packet byte-for-byte. Because [`PesHeader`] is `#[non_exhaustive]`,
+constructors from outside the crate currently need to assemble the wire bytes
+using the public typed field encoders and then parse:
+
+```rust,ignore
+
+// Build raw bytes with PTS+DTS using the typed field encoders, then parse.
+let pts = Pts(90_000);
+let dts = mpeg_pes::Dts(45_000);
+// (full example: `cargo run -p mpeg-pes --example build_pes_header`)
+
+// Once parsed, round-trip through serialize_into:
+let pkt = PesPacket::parse(&bytes).unwrap();
+let mut buf = vec![0u8; pkt.serialized_len()];
+pkt.serialize_into(&mut buf).unwrap();
+let re_pkt = PesPacket::parse(&buf).unwrap();
+assert_eq!(re_pkt.header.unwrap().pts.unwrap().ticks(), 90_000);
+```
+
+Run the worked example:
+```sh
+cargo run -p mpeg-pes --example build_pes_header
+```
 
 ## License
 
