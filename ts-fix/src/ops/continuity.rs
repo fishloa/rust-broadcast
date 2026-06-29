@@ -6,7 +6,8 @@
 
 use alloc::collections::BTreeMap;
 
-use mpeg_ts::ts::{TsHeader, CC_MASK, TS_PACKET_SIZE};
+use mpeg_ts::owned::OwnedTsPacket;
+use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
 
 use crate::ops::{Op, StreamModel};
 
@@ -81,10 +82,10 @@ impl Op for ContinuityOp {
             // Already correct, pass through unchanged.
             out(packet);
         } else {
-            // Repair: clone and rewrite the CC.
+            // Repair: clone and rewrite the CC via mpeg-ts editor.
             let mut buf = [0u8; TS_PACKET_SIZE];
             buf.copy_from_slice(packet);
-            buf[3] = (buf[3] & !CC_MASK) | (*expected & CC_MASK);
+            OwnedTsPacket::set_continuity_counter(&mut buf, *expected);
             out(&buf[..]);
         }
 

@@ -10,11 +10,15 @@
 //! - Adaptation field control = 01 (payload only, no adaptation field)
 //! - No payload; rest is 0xFF padding
 //!
+//! Null packets are built via [`mpeg_ts::OwnedTsPacket::null_packet`]; this
+//! module contains no raw wire-byte construction.
+//!
 //! # Spec
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.1 (null packets).
 
-use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
+use mpeg_ts::owned::OwnedTsPacket;
+use mpeg_ts::ts::TS_PACKET_SIZE;
 
 use crate::ops::{Op, StreamModel};
 
@@ -77,28 +81,9 @@ impl Stuffing {
 
 // ── Null packet construction ──────────────────────────────────────────────
 
-/// Construct a standard null TS packet (PID 0x1FFF, all padding).
+/// Construct a standard null TS packet via the mpeg-ts writer.
 fn make_null_packet(continuity_counter: u8) -> [u8; TS_PACKET_SIZE] {
-    let mut pkt = [0xFF_u8; TS_PACKET_SIZE];
-
-    // Sync byte.
-    pkt[0] = TS_SYNC_BYTE;
-
-    // Byte 1: TEI (bit 7) = 0, PUSI (bit 6) = 0, PID upper 5 bits.
-    // PID 0x1FFF = 0b1_1111_1111_1111 → upper 5 bits are 0b1_1111 = 0x1F
-    pkt[1] = 0x1F;
-
-    // Byte 2: PID lower 8 bits = 0xFF.
-    pkt[2] = 0xFF;
-
-    // Byte 3:
-    // - Bits [7:6]: scrambling control (00 = not scrambled).
-    // - Bits [5:4]: adaptation field control (01 = payload only, no adaptation).
-    // - Bits [3:0]: continuity counter.
-    pkt[3] = 0x10 | (continuity_counter & 0x0F);
-
-    // Rest (4-187): 0xFF padding.
-    pkt
+    OwnedTsPacket::null_packet(continuity_counter)
 }
 
 // ── The operation ────────────────────────────────────────────────────────────
