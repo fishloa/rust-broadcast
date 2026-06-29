@@ -4,10 +4,11 @@
 
 All field tables in this documentation set are traced to the sources listed below.
 ISO/IEC 14496-14 and ISO/IEC 14496-15 are mentioned only as the normative home of codec-config
-boxes that could NOT be transcribed from a free source (they appear as GAP entries in COVERAGE.md).
+boxes that were transcribed from FFmpeg reference implementations + free ITU-T standards
+(see Sources 7 and 8 below). No ISO copy was purchased or consulted.
 No copy — authorized or unauthorized — of those standards was downloaded, fetched, or consulted.
 
-**Exception:** ISO/IEC 14496-12 §8.8 (Movie Fragments) was used as a normative source for
+**Exceptions:** ISO/IEC 14496-12 §8.8 (Movie Fragments) was used as a normative source for
 fragmentation-control boxes (`mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun`) per
 explicit owner direction in the project brief.  These are transcribed in `fragment-boxes.md`.
 
@@ -120,6 +121,45 @@ explicit owner direction in the project brief.  These are transcribed in `fragme
   (MP4RA — the authoritative fourCC registry, free)
 - **What it covered:** Enumeration and descriptions of all registered box fourCCs;
   confirmation that all target box types are registered and their defining spec is noted as `[ISO]`.
+### 7. FFmpeg libavformat (reference implementation)
+
+- **Repository:** FFmpeg/FFmpeg at `master`
+- **License:** LGPL v2.1+
+- **Files fetched (raw.githubusercontent.com):**
+  - `libavformat/movenc.c` — muxer box-writing functions:
+    - `mov_write_video_tag()` (~line 2815): `avc1`/`hvc1` VisualSampleEntry header layout.
+    - `mov_write_audio_tag()` (~line 1397): `mp4a` AudioSampleEntry header layout.
+    - `mov_write_avcc_tag()` (~line 1603): `avcC` box writer (delegates to `ff_isom_write_avcc()`).
+    - `mov_write_hvcc_tag()` (~line 1658): `hvcC` box writer (delegates to `write_configuration_record()`).
+    - `mov_write_esds_tag()` (~line 783): `esds` box writer (MPEG-4 Systems descriptor tree).
+    - `put_descr()` (~line 712): Expanded-length descriptor encoding helper.
+  - `libavformat/avc.c` — `ff_isom_write_avcc()` (~line 32): AVCDecoderConfigurationRecord byte layout.
+  - `libavformat/hevc.c` — `hvcc_write()` (~line 961), `write_configuration_record()` (~line 1290):
+    HEVCDecoderConfigurationRecord byte layout.
+  - `libavformat/avc.h` — `H264SPS` struct definition; `ff_avc_decode_sps()` declaration.
+  - `libavformat/hevc.h` — `ff_isom_write_hvcc()` declaration.
+  - `libavformat/isom.h` — MP4 descriptor tag constants (`MP4ESDescrTag 0x03`, `MP4DecConfigDescrTag 0x04`,
+    `MP4DecSpecificDescrTag 0x05`, `MP4SLDescrTag 0x06`).
+- **What it covered:**
+  - `avc1`/`avcC`: Full VisualSampleEntry fixed header + AVCDecoderConfigurationRecord
+    (configurationVersion, profile, compatibility, level, lengthSizeMinusOne, SPS/PPS arrays,
+    High-profile extensions).
+  - `hvc1`/`hvcC`: VisualSampleEntry + HEVCDecoderConfigurationRecord
+    (31-byte fixed header with general_profile/tier/level fields + NAL unit arrays).
+  - `mp4a`/`esds`: AudioSampleEntry + ES_Descriptor → DecoderConfigDescriptor →
+    DecoderSpecificInfo → SLConfigDescriptor descriptor tree.
+
+### 8. ITU-T H.264 (AVC) and H.265 (HEVC)
+
+- **URL:** `https://www.itu.int/rec/T-REC-H.264` and `https://www.itu.int/rec/T-REC-H.265`
+- **License:** ITU-T makes all Recommendations freely available online.
+- **What it covered (by reference — SPS/VPS/PPS field definitions):**
+  - H.264 §.7.3.2.1.1: `profile_idc`, `constraint_set*_flags`, `level_idc` in AVC SPS.
+  - H.265 §.7.3.2: `general_profile_space`, `general_tier_flag`, `general_profile_idc`,
+    `general_profile_compatibility_flags`, `general_constraint_indicator_flags`, `general_level_idc`
+    in HEVC ProfileTierLevel syntax.
+
+---
 
 ---
 
