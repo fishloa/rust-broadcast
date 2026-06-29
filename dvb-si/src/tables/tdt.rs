@@ -40,11 +40,15 @@ impl TdtSection {
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
-    pub fn set_utc_time_decoded(&mut self, dt: broadcast_common::time::MjdBcdDateTime) -> Result<()> {
-        self.utc_time_raw = broadcast_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
-            field: "TdtSection::utc_time",
-            reason: "date not representable in 16-bit MJD",
-        })?;
+    pub fn set_utc_time_decoded(
+        &mut self,
+        dt: broadcast_common::time::MjdBcdDateTime,
+    ) -> Result<()> {
+        self.utc_time_raw =
+            broadcast_common::time::encode_mjd_bcd(dt).ok_or(Error::ValueOutOfRange {
+                field: "TdtSection::utc_time",
+                reason: "date not representable in 16-bit MJD",
+            })?;
         Ok(())
     }
 

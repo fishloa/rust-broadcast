@@ -457,7 +457,12 @@ impl SiDemux {
                 // Short-form (incl. TOT and any malformed long-form that slipped
                 // the size check above): no version, ext/section_number = 0,
                 // change detector is a CRC over all the section bytes.
-                (0u16, 0u8, 0u8, broadcast_common::crc32_mpeg2::compute(&section))
+                (
+                    0u16,
+                    0u8,
+                    0u8,
+                    broadcast_common::crc32_mpeg2::compute(&section),
+                )
             };
 
         let key = (pid.value() as u64)

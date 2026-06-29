@@ -144,9 +144,9 @@ impl InnerTsRecovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::crc32_mpeg2;
     use dvb_bbframe::crc::crc8;
     use dvb_bbframe::header::{Matype, TsGs};
-    use broadcast_common::crc32_mpeg2;
 
     const TS_SYNC: u8 = 0x47;
     const TS_LEN: usize = 188;

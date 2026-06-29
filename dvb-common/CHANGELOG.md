@@ -2,8 +2,8 @@
 
 ## [8.1.0] — 2026-06-29
 
-### Changed
-- Renamed from `dvb-common` (same API, same content). `dvb-common` continues as a deprecated re-export shim.
+### Deprecated
+- This crate is now a thin re-export shim of `broadcast-common`. Depend on `broadcast-common` directly.
 
 ## [8.0.0] — 2026-06-27
 
@@ -179,7 +179,7 @@ Version-lockstep release with the workspace (dvb-si spanning-into-PUSI section f
 Version-lockstep release with the workspace (dvb-si `SectionReassembler`
 concatenated-section fix); no changes to this crate.
 
-All notable changes to the `broadcast_common` crate are documented in this file.
+All notable changes to the `dvb_common` crate are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -189,7 +189,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Lockstep release with the `dvb-si` 3.x line. The workspace-wide move to
 Serialize-only serde does not affect this crate — its `Parse` / `Serialize`
 traits are first-party (not serde) and it never carried any serde `Deserialize`.
-The `yoke` feature added downstream needs nothing here: `broadcast-common` exposes no
+The `yoke` feature added downstream needs nothing here: `dvb-common` exposes no
 borrowing view types (only the `Parse<'a>` trait). No functional changes.
 
 ## [2.1.0] — 2026-06-05

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-29
+
+### Changed
+- Dependency `broadcast-common` bump (renamed from `dvb-common`); no API change.
+
 ## [1.0.0] — 2026-06-27
 
 - Renamed from `dvb-scte35` (was 7.9.0); code unchanged. Left the DVB lockstep — now versioned independently. Old crate `dvb-scte35` continues as a deprecated re-export shim at 7.9.1.

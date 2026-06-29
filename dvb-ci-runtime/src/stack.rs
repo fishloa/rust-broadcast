@@ -12,6 +12,7 @@ use crate::resource::{
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
+use broadcast_common::{Parse, Serialize};
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
@@ -19,7 +20,6 @@ use dvb_ci::resource::{
     ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
     RESOURCE_MANAGER,
 };
-use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::pmt::PmtSection;
 
 /// Serialize an APDU object to owned bytes (buffer is sized exactly).
@@ -371,10 +371,10 @@ impl CiStack {
 mod tests {
     use super::*;
     use crate::transport::DEFAULT_POLL_INTERVAL;
+    use broadcast_common::Serialize;
     use dvb_ci::resource::RESOURCE_MANAGER;
     use dvb_ci::spdu::{tags as spdu_tags, OpenSessionRequest};
     use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
-    use broadcast_common::Serialize;
 
     fn ser<S: Serialize>(s: &S) -> Vec<u8> {
         let mut b = vec![0u8; s.serialized_len()];
@@ -662,8 +662,8 @@ mod tests {
     /// Parse every `ca_pmt` (tag `9F 80 32`) found in the written frames,
     /// returning each one's `cmd_id` + programme CA-descriptor bytes (owned).
     fn all_ca_pmts(actions: &[Action]) -> Vec<CaPmtSummary> {
-        use dvb_ci::objects::ca_pmt::CaPmt;
         use broadcast_common::Parse;
+        use dvb_ci::objects::ca_pmt::CaPmt;
         let tag = [0x9F, 0x80, 0x32];
         let mut out = Vec::new();
         for a in actions {

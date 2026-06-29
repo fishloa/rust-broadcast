@@ -232,7 +232,8 @@ impl TableRegistry {
                 self.custom.insert(
                     id,
                     Box::new(|b| {
-                        Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn TableObject>)
+                        Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
+                            as Box<dyn TableObject>)
                     }),
                 );
             }

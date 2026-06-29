@@ -188,7 +188,8 @@ impl ExtensionRegistry {
         self.custom.insert(
             tag_ext,
             Box::new(|sel| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(sel)?) as Box<dyn ExtensionObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(sel)?)
+                    as Box<dyn ExtensionObject>)
             }),
         );
         self

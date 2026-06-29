@@ -252,7 +252,8 @@ impl DescriptorRegistry {
         self.custom.insert(
             (None, tag),
             Box::new(|b| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
+                    as Box<dyn DescriptorObject>)
             }),
         );
         self
@@ -277,7 +278,8 @@ impl DescriptorRegistry {
         self.custom.insert(
             (Some(pds), tag),
             Box::new(|b| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
+                    as Box<dyn DescriptorObject>)
             }),
         );
         self

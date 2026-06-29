@@ -18,8 +18,8 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use dvb_ci::tpdu::{create_t_c, tags, CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject};
 use broadcast_common::{Parse, Serialize};
+use dvb_ci::tpdu::{create_t_c, tags, CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject};
 
 /// Length of a standalone/appended `T_SB` object: `tag · 0x02 · t_c_id · SB`.
 const SB_OBJECT_LEN: usize = 4;

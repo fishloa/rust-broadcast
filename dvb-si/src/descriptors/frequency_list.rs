@@ -84,8 +84,10 @@ impl FrequencyListDescriptor {
                 self.centre_frequencies_bcd
                     .iter()
                     .map(|b| {
-                        let value =
-                            broadcast_common::bcd::bcd_to_decimal(u64::from(u32::from_be_bytes(*b)), 8)?;
+                        let value = broadcast_common::bcd::bcd_to_decimal(
+                            u64::from(u32::from_be_bytes(*b)),
+                            8,
+                        )?;
                         Some(value * scale)
                     })
                     .collect()

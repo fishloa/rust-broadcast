@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## [0.1.2] — 2026-06-29
+
+### Changed
+- Dependency `broadcast-common` bump (renamed from `dvb-common`); no API change.
+
 ## [0.1.1→mpeg-pes] Crate renamed from `dvb-pes` to `mpeg-pes`; code unchanged.
 
 ## 0.1.1 — 2026-06-19
