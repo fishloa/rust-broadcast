@@ -390,6 +390,8 @@ pub(crate) const AF_OPCR_FLAG: u8 = 0x08;
 pub(crate) const AF_SPLICING_FLAG: u8 = 0x04;
 pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
 pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
+/// Adaptation-field stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.4 — `0xFF`).
+pub(crate) const AF_STUFFING_BYTE: u8 = 0xFF;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
 pub(crate) const PCR_FIELD_LEN: usize = 6;
 
@@ -710,6 +712,16 @@ pub struct AdaptationField<'a> {
     pub transport_private_data: Option<&'a [u8]>,
     /// Typed adaptation-field extension sub-structure, if the flag is set.
     pub extension: Option<AdaptationFieldExtension>,
+    /// Number of trailing `0xFF` stuffing bytes that pad the adaptation-field
+    /// body out to its declared `adaptation_field_length` (ISO/IEC 13818-1:2007
+    /// §2.4.3.4 — "stuffing_byte: fixed 8-bit value `0xFF`").
+    ///
+    /// Real encoders pad the adaptation field so the packet payload begins at a
+    /// fixed offset; these bytes are part of the wire image. Capturing the count
+    /// lets [`serialize_into`](Self::serialize_into) reproduce the packet
+    /// byte-for-byte. Set to `0` when constructing an adaptation field with no
+    /// stuffing.
+    pub stuffing_len: usize,
 }
 
 impl<'a> AdaptationField<'a> {
@@ -791,7 +803,11 @@ impl<'a> AdaptationField<'a> {
         } else {
             None
         };
-        let _ = cursor;
+
+        // Any bytes after the last present field, up to `adaptation_field_length`
+        // (= `af.len()`), are `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.4).
+        // Record the count so serialization reproduces the body byte-for-byte.
+        let stuffing_len = af.len().saturating_sub(cursor);
 
         Ok(AdaptationField {
             discontinuity_indicator: flags & AF_DISCONTINUITY != 0,
@@ -802,6 +818,7 @@ impl<'a> AdaptationField<'a> {
             splice_countdown,
             transport_private_data,
             extension,
+            stuffing_len,
         })
     }
 
@@ -828,6 +845,7 @@ impl<'a> AdaptationField<'a> {
         if let Some(ref ext) = self.extension {
             n += ext.serialized_len();
         }
+        n += self.stuffing_len;
         n
     }
 
@@ -901,6 +919,13 @@ impl<'a> AdaptationField<'a> {
             let written = ext.serialize_into(&mut buf[cursor..])?;
             cursor += written;
         }
+
+        // Trailing `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.4), reproducing
+        // the padding the encoder used to fill `adaptation_field_length`.
+        for b in buf[cursor..cursor + self.stuffing_len].iter_mut() {
+            *b = AF_STUFFING_BYTE;
+        }
+        cursor += self.stuffing_len;
 
         Ok(cursor)
     }
@@ -1928,6 +1953,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
+            stuffing_len: 0,
         };
         let len = original.serialized_len();
         assert_eq!(len, 7); // 1 flags + 6 PCR
@@ -1956,6 +1982,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
+            stuffing_len: 0,
         };
         let mut buf = [0u8; 7];
         af.serialize_into(&mut buf).unwrap();
@@ -1981,6 +2008,7 @@ mod tests {
             splice_countdown: Some(-3),
             transport_private_data: None,
             extension: None,
+            stuffing_len: 0,
         };
         let len = original.serialized_len();
         assert_eq!(len, 1 + 6 + 6 + 1); // flags + PCR + OPCR + splice
@@ -2002,6 +2030,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
+            stuffing_len: 0,
         };
         assert_eq!(af.serialized_len(), 1);
         let mut buf = [0u8; 1];
@@ -2026,6 +2055,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
+            stuffing_len: 0,
         };
         let mut buf = [0u8; 3]; // need 7
         assert!(matches!(
@@ -2060,6 +2090,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: Some(ext),
+            stuffing_len: 0,
         };
         let len = af.serialized_len();
         let mut abuf = vec![0u8; len];
@@ -2084,6 +2115,7 @@ mod tests {
                 piecewise_rate: Some(0x3FFFFF), // max 22-bit
                 seamless_splice: None,
             }),
+            stuffing_len: 0,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2110,6 +2142,7 @@ mod tests {
                     dts_next_au: 0x1_2345_6789,
                 }),
             }),
+            stuffing_len: 0,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2132,11 +2165,57 @@ mod tests {
             splice_countdown: None,
             transport_private_data: Some(&tpd),
             extension: None,
+            stuffing_len: 0,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
         let decoded = AdaptationField::parse(&buf).unwrap();
         assert_eq!(decoded.transport_private_data, Some(tpd.as_slice()));
+    }
+
+    /// PCR + `0xFF` stuffing round-trips byte-identical, and the stuffing is
+    /// re-emitted as `0xFF` (ISO/IEC 13818-1:2007 §2.4.3.4).
+    #[test]
+    fn adaptation_field_stuffing_round_trip() {
+        let af = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: Some(Pcr {
+                base: 12_345,
+                extension: 7,
+            }),
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+            stuffing_len: 20,
+        };
+        // 1 flags + 6 PCR + 20 stuffing.
+        assert_eq!(af.serialized_len(), 27);
+        let mut buf = vec![0u8; af.serialized_len()];
+        af.serialize_into(&mut buf).unwrap();
+        // Trailing bytes are 0xFF stuffing.
+        assert!(buf[7..27].iter().all(|&b| b == AF_STUFFING_BYTE));
+        let decoded = AdaptationField::parse(&buf).unwrap();
+        assert_eq!(decoded.stuffing_len, 20);
+        assert_eq!(decoded, af);
+        // Pure stuffing (flags-only body padded out) also round-trips.
+        let pure = AdaptationField {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+            stuffing_len: 5,
+        };
+        let mut pbuf = vec![0u8; pure.serialized_len()];
+        pure.serialize_into(&mut pbuf).unwrap();
+        assert_eq!(pbuf, vec![0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(AdaptationField::parse(&pbuf).unwrap(), pure);
     }
 
     /// All optional fields together: PCR + splice + TPD + extension.
@@ -2162,6 +2241,7 @@ mod tests {
                 piecewise_rate: Some(12345),
                 seamless_splice: None,
             }),
+            stuffing_len: 0,
         };
         let len = af.serialized_len();
         let mut buf = vec![0u8; len];

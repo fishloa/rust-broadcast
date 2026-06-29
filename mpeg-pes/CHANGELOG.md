@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+- `PesHeader::header_stuffing_len: usize` — number of trailing `0xFF` stuffing
+  bytes inside the `PES_header_data_length` region, after the typed optional
+  fields (ISO/IEC 13818-1 §2.4.3.7). Captured on parse and re-emitted on
+  serialize so a stuffed PES header round-trips **byte-identical**. Construct
+  with `header_stuffing_len: 0` for no stuffing.
+- `PesHeader` is now `#[non_exhaustive]` (matching the workspace convention), so
+  future optional fields are additive.
+
+### Fixed
+- `PesPacket::serialize_into` now reproduces the `PES_header_data_length`
+  `0xFF` stuffing instead of dropping it (and writes the original
+  `PES_header_data_length`), so parse → serialize is byte-identical for real
+  broadcast PES headers. Verified on a `test-001.ts`-derived fixture (PTS+DTS and
+  PTS-only headers, each with stuffing) round-tripping byte-for-byte.
+
 ## [0.1.3] — 2026-06-29
 
 ### Added

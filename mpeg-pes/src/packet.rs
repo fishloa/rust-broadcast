@@ -7,6 +7,8 @@ use crate::PACKET_START_CODE_PREFIX;
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
+/// PES header stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.7 — `0xFF`).
+const PES_HEADER_STUFFING_BYTE: u8 = 0xFF;
 
 // ── ESCR (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────────
 
@@ -46,12 +48,12 @@ impl Escr {
     /// Decode from the 6-byte ESCR field.
     ///
     /// Bit layout (ISO/IEC 13818-1 §2.4.3.7, Table 2-21):
-    /// `B0[7:6]`=reserved, `B0[5:3]`=base[32:30], `B0[2]`=marker,
-    /// `B0[1:0]`=base[29:28], `B1[7:0]`=base[27:20],
-    /// `B2[7:3]`=base[19:15], `B2[2]`=marker, `B2[1:0]`=base[14:13],
-    /// `B3[7:0]`=base[12:5],
-    /// `B4[7:3]`=base[4:0], `B4[2]`=marker, `B4[1:0]`=ext[8:7],
-    /// `B5[7:1]`=ext[6:0], `B5[0]`=marker.
+    /// `B0[7:6]`=reserved, `B0[5:3]`=`base[32:30]`, `B0[2]`=marker,
+    /// `B0[1:0]`=`base[29:28]`, `B1[7:0]`=`base[27:20]`,
+    /// `B2[7:3]`=`base[19:15]`, `B2[2]`=marker, `B2[1:0]`=`base[14:13]`,
+    /// `B3[7:0]`=`base[12:5]`,
+    /// `B4[7:3]`=`base[4:0]`, `B4[2]`=marker, `B4[1:0]`=`ext[8:7]`,
+    /// `B5[7:1]`=`ext[6:0]`, `B5[0]`=marker.
     pub fn from_field_bytes(b: &[u8; 6]) -> Result<Self> {
         let base = ((((b[0] >> 3) & 0x07) as u64) << 30)   // base[32:30]
             | (((b[0] & 0x03) as u64) << 28)                 // base[29:28]
@@ -355,7 +357,7 @@ impl<'a> PesExtension<'a> {
         })
     }
 
-    /// Number of bytes written by [`serialize_into`](Self::serialize_into).
+    /// Number of bytes this PES extension occupies on the wire.
     pub fn serialized_len(&self) -> usize {
         let mut n = 1usize; // flags byte
         if self.pes_private_data.is_some() {
@@ -446,6 +448,7 @@ impl<'a> PesExtension<'a> {
 /// (ISO/IEC 13818-1 §2.4.3.6, §2.4.3.7). All optional sub-fields are fully
 /// typed — the raw `optional_fields` blob has been replaced with the
 /// individual decoded fields.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PesHeader<'a> {
@@ -475,6 +478,16 @@ pub struct PesHeader<'a> {
     pub pes_crc: Option<u16>,
     /// PES extension sub-structure, if `PES_extension_flag` is set.
     pub pes_extension: Option<PesExtension<'a>>,
+    /// Number of trailing `0xFF` stuffing bytes inside the `PES_header_data_length`
+    /// region, after the typed optional fields (ISO/IEC 13818-1:2007 §2.4.3.7 —
+    /// "stuffing_byte: fixed 8-bit value `0xFF`").
+    ///
+    /// Encoders pad the optional-header block (often so the elementary stream
+    /// starts at a fixed offset). These bytes are part of the wire image;
+    /// capturing the count lets [`PesPacket::serialize_into`] reproduce the
+    /// header byte-for-byte. Set to `0` when constructing a header with no
+    /// stuffing.
+    pub header_stuffing_len: usize,
 }
 
 impl<'a> PesHeader<'a> {
@@ -506,6 +519,7 @@ impl<'a> PesHeader<'a> {
         if let Some(ref ext) = self.pes_extension {
             n += ext.serialized_len();
         }
+        n += self.header_stuffing_len;
         n
     }
 }
@@ -703,7 +717,11 @@ impl<'a> PesPacket<'a> {
         } else {
             None
         };
-        let _ = cursor;
+
+        // Bytes remaining in the `PES_header_data_length` region after the typed
+        // optional fields are `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.7).
+        // Record the count so serialization reproduces the header byte-for-byte.
+        let header_stuffing_len = hdl.saturating_sub(cursor);
 
         let header = PesHeader {
             scrambling_control: (f1 >> 4) & 0x03,
@@ -719,6 +737,7 @@ impl<'a> PesPacket<'a> {
             additional_copy_info,
             pes_crc,
             pes_extension,
+            header_stuffing_len,
         };
 
         Ok(PesPacket {
@@ -832,6 +851,13 @@ impl<'a> PesPacket<'a> {
                     cursor += written;
                 }
 
+                // Trailing `0xFF` stuffing inside the header_data_length region
+                // (ISO/IEC 13818-1:2007 §2.4.3.7), reproducing the encoder's pad.
+                for b in buf[cursor..cursor + h.header_stuffing_len].iter_mut() {
+                    *b = PES_HEADER_STUFFING_BYTE;
+                }
+                cursor += h.header_stuffing_len;
+
                 cursor
             }
         };
@@ -886,6 +912,28 @@ mod tests {
         assert!(h.pts.is_some());
         assert!(h.dts.is_some());
         round_trip(&b);
+    }
+
+    #[test]
+    fn pes_header_stuffing_round_trip() {
+        // PTS-only (flags 0x80), PES_header_data_length = 8: 5 PTS bytes + 3
+        // 0xFF stuffing bytes (ISO/IEC 13818-1:2007 §2.4.3.7).
+        let b = [
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0C, 0x80, 0x80, 0x08, // hdl = 8
+            0x21, 0x00, 0x01, 0x00, 0x01, // PTS = 0
+            0xFF, 0xFF, 0xFF, // 3 stuffing bytes
+            0xAA, // payload
+        ];
+        let pkt = PesPacket::parse(&b).unwrap();
+        let h = pkt.header.as_ref().unwrap();
+        assert!(h.pts.is_some());
+        assert_eq!(
+            h.header_stuffing_len, 3,
+            "3 stuffing bytes after the 5-byte PTS"
+        );
+        // serialized_len must account for the stuffing.
+        assert_eq!(pkt.serialized_len(), b.len());
+        round_trip(&b); // byte-identical, incl. the 0xFF stuffing
     }
 
     #[test]
@@ -962,6 +1010,7 @@ mod tests {
             additional_copy_info: None,
             pes_crc: None,
             pes_extension: None,
+            header_stuffing_len: 0,
         }
     }
 
@@ -1199,6 +1248,7 @@ mod tests {
             additional_copy_info: Some(5),
             pes_crc: Some(0xCAFE),
             pes_extension: Some(ext),
+            header_stuffing_len: 0,
         };
         let bytes = build_pes(h, &[0xFF]);
         let pkt = PesPacket::parse(&bytes).unwrap();

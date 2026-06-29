@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+### Added
+- `AdaptationField::stuffing_len: usize` — number of trailing `0xFF` stuffing
+  bytes padding the adaptation-field body out to its `adaptation_field_length`
+  (ISO/IEC 13818-1 §2.4.3.4). Captured on parse and re-emitted on serialize so a
+  stuffed adaptation field round-trips **byte-identical**. Additive on the
+  `#[non_exhaustive]` struct; construct with `stuffing_len: 0` for no stuffing.
+
+### Fixed
+- `AdaptationField::serialize_into` now reproduces the trailing `0xFF` stuffing
+  instead of dropping it, so parse → serialize is byte-identical for real
+  broadcast adaptation fields (PCR + stuffing, pure stuffing, etc.). Verified on
+  the committed `m6-single.ts` capture and a France-TNT-derived stuffed-AF
+  fixture (every unscrambled adaptation field round-trips byte-for-byte).
+
 ## [0.1.2] — 2026-06-29
 
 ### Added
