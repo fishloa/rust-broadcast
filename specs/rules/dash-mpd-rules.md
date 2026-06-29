@@ -6,11 +6,11 @@ SCTE-35 + HLS `EXT-X-DATERANGE`. Source:
 `specs/fulltext/iso_iec_23009-1_dash_2012.md` (gitignored pdf2md of the copyrighted PDF; regenerate
 with pdf2md). Each rule cites the spec § and line. Decisions cite here.
 
-> ⚠️ **Edition gap.** This is the **2012 first edition**. It has **no `emsg` (Event Message) box,
-> no `EventStream`/`InbandEventStream`, no MPD events** — those were added in 23009-1:2014 (2nd
-> ed.) and refined later. The workspace's `mp4-emsg` crate is grounded on **ISO/IEC 23009-1:2014+
-> §5.10.3.3** (see `mp4-emsg` crate docs / `timed-metadata`), NOT this PDF. To curate emsg rules,
-> vendor a 2014+ edition first. This doc covers only the MPD **timing** model (stable since 2012).
+> ⚠️ **Edition note (not a blocker).** This is the **2012 first edition** — no `emsg`,
+> `EventStream`/`InbandEventStream`, or MPD events (added in 23009-1:2014+). This doc therefore
+> covers only the MPD **timing** model (stable since 2012). **`emsg` is fully covered separately**
+> in [`emsg-rules.md`](emsg-rules.md), grounded on the free **DASH-IF IOP Part 10** source already
+> on disk and implemented in the `mp4-emsg` crate — nothing further needs vendoring for it.
 
 ## Presentation hierarchy & timeline — §5.3.2 (fulltext L675)
 
