@@ -14,10 +14,12 @@ Regenerate a `specs/fulltext/*.md` with the pdf2md skill (`--engine textlayer --
 | `dash-mpd-rules.md` | ISO/IEC 23009-1:2012 (DASH MPD — timing only) | `iso_iec_23009-1_dash_2012.md` | `timed-metadata`, future DASH crate |
 | `emsg-rules.md` | DASH Event Message Box (`emsg`) — ISO/IEC 23009-1:2022 ed.5 §5.10 (+ DASH-IF IOP Part 10 v5.0.0 for usage) | `iso_iec_23009-1_dash_2022.md`, `dashif_iop_part10_v5_emsg.md` | `mp4-emsg` (implemented), `timed-metadata` |
 
+| `nal-avcc-hvcc-rules.md` | ISO/IEC 14496-15:2017 §5.3–5.4, §8.3–8.4 (`avcC`/`hvcC` + sample entries) | `iso_iec_14496-15_avc_hevc_2017_excerpt.md` | transmux (H.264/H.265 → MP4) |
+
 ## Known gaps
 
-- **Codec-config records not yet curated** (referenced as "lift per spec" by the rules above): AAC
-  `AudioSpecificConfig` (14496-3 §1.6), `avcC`/`hvcC` (**14496-15**). 14496-15's vendored PDF is
-  **scanned** (OCR-only, not value-verifiable) — needs a **text-layer 14496-15** before curating;
-  cross-check against FFmpeg `movenc.c`, never treat the scan as primary. Codec-config is a later
-  story (the media pivot is container-layer first).
+- **AAC `AudioSpecificConfig`** (14496-3 §1.6) not yet curated — the audio counterpart of avcC/hvcC,
+  needed for `mp4a`/ADTS transmux. PDF on disk (text-layer); a later story.
+- **14496-15 footing**: its vendored PDF body is image-only; `nal-avcc-hvcc-rules.md` is
+  vision-transcribed (excerpt in `specs/fulltext/`), cross-checked against FFmpeg `movenc.c`. A
+  text-layer edition would let pdf2md value-verify it.
