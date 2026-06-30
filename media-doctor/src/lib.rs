@@ -2,7 +2,7 @@
 //!
 //! An extensible lint-style analysis framework: individual [`Diagnostic`]s each
 //! check one rule against a TS byte-stream, producing [`Finding`]s that feed into
-//! a [`Report`]. A trivial built-in [`sync_byte::SyncByteCheck`] proves the
+//! a [`Report`]. A trivial built-in [`SyncByteCheck`] proves the
 //! harness.
 //!
 //! # Feature flags
