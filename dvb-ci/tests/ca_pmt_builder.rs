@@ -5,16 +5,25 @@
 //! through `dvb-si`, strip every (non-CA) descriptor, and emit a well-formed,
 //! round-trippable `ca_pmt` carrying the full component list with empty CA loops.
 
+use std::fs;
+
 use broadcast_common::{Parse, Serialize};
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::pmt::PmtSection;
 
-const REAL_PMT: &[u8] = include_bytes!("fixtures/real-pmt.bin");
+fn real_pmt() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/shared/real-pmt.bin"
+    );
+    fs::read(path).expect("fixture real-pmt.bin must be present")
+}
 
 #[test]
 fn builds_ca_pmt_from_real_broadcast_pmt() {
-    let pmt = PmtSection::parse(REAL_PMT).expect("real PMT parses");
+    let data = real_pmt();
+    let pmt = PmtSection::parse(&data).expect("real PMT parses");
     let original_streams = pmt.streams.len();
     assert!(original_streams > 0, "fixture should carry ES");
 

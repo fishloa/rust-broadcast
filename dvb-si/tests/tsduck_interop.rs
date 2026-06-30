@@ -9,17 +9,23 @@
 //! '1', so the `HDR_WCG_idc` (bits [1:0]) assertion catches any parser that
 //! reads it from the wrong bit position.
 
+use std::fs;
+
 use broadcast_common::Parse;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
 use dvb_si::descriptors::video_stream::FrameRateCode;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::pmt::PmtSection;
 
-const PMT: &[u8] = include_bytes!("fixtures/tsduck-mpeg-descriptors-pmt.bin");
+fn fixture(name: &str) -> Vec<u8> {
+    let path = format!("{}/../fixtures/dvb-si/{}", env!("CARGO_MANIFEST_DIR"), name);
+    fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+}
 
 #[test]
 fn decodes_tsduck_compiled_mpeg_descriptors() {
-    let pmt = PmtSection::parse(PMT).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-mpeg-descriptors-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
 
     let mut seen_video = false;
     let mut seen_audio = false;
@@ -80,8 +86,6 @@ fn decodes_tsduck_compiled_mpeg_descriptors() {
     assert!(seen_hevc, "HEVC_video_descriptor not decoded");
 }
 
-const PMT2: &[u8] = include_bytes!("fixtures/tsduck-metadata-j2k-pmt.bin");
-
 #[test]
 fn decodes_tsduck_compiled_conditional_descriptors() {
     use dvb_si::descriptors::decoder_config_flags::DecoderConfigFlags;
@@ -89,7 +93,8 @@ fn decodes_tsduck_compiled_conditional_descriptors() {
     use dvb_si::descriptors::metadata_format::MetadataFormat;
     use dvb_si::descriptors::mpeg_carriage_flags::MpegCarriageFlags;
 
-    let pmt = PmtSection::parse(PMT2).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-metadata-j2k-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
     let mut seen_ptr = false;
     let mut seen_meta = false;
     let mut seen_j2k = false;
@@ -138,11 +143,10 @@ fn decodes_tsduck_compiled_conditional_descriptors() {
     assert!(seen_j2k, "J2K_video_descriptor not decoded");
 }
 
-const PMT3: &[u8] = include_bytes!("fixtures/tsduck-mpeg-simple-pmt.bin");
-
 #[test]
 fn decodes_tsduck_compiled_simple_descriptors() {
-    let pmt = PmtSection::parse(PMT3).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-mpeg-simple-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
     let mut seen = std::collections::BTreeSet::new();
     for stream in &pmt.streams {
         for desc in stream.es_info.iter() {
@@ -225,14 +229,13 @@ fn decodes_tsduck_compiled_simple_descriptors() {
     }
 }
 
-const PMT4: &[u8] = include_bytes!("fixtures/tsduck-protection-message-pmt.bin");
-
 #[test]
 fn decodes_tsduck_compiled_protection_message() {
     use broadcast_common::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
-    let pmt = PmtSection::parse(PMT4).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-protection-message-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
     let mut seen = false;
     for stream in &pmt.streams {
         for desc in stream.es_info.iter() {
@@ -262,14 +265,13 @@ fn decodes_tsduck_compiled_protection_message() {
     );
 }
 
-const PMT5: &[u8] = include_bytes!("fixtures/tsduck-cpcm-delivery-signalling-pmt.bin");
-
 #[test]
 fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
     use broadcast_common::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
-    let pmt = PmtSection::parse(PMT5).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-cpcm-delivery-signalling-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
     let mut seen = false;
     for stream in &pmt.streams {
         for desc in stream.es_info.iter() {
@@ -297,8 +299,6 @@ fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
     );
 }
 
-const PMT6: &[u8] = include_bytes!("fixtures/tsduck-dts-descriptors-pmt.bin");
-
 #[test]
 fn decodes_tsduck_compiled_dts_descriptors() {
     use broadcast_common::Serialize;
@@ -308,7 +308,8 @@ fn decodes_tsduck_compiled_dts_descriptors() {
     };
     use dvb_si::text::LangCode;
 
-    let pmt = PmtSection::parse(PMT6).expect("TSDuck PMT section must parse");
+    let data = fixture("tsduck-dts-descriptors-pmt.bin");
+    let pmt = PmtSection::parse(&data).expect("TSDuck PMT section must parse");
     let mut seen_hd = false;
     let mut seen_uhd = false;
     let mut seen_neural = false;

@@ -1,0 +1,31 @@
+[package]
+name         = "media-doctor"
+version      = "0.1.0"
+edition      = "2021"
+description  = "Media diagnostics harness: DVB/MPEG-TS stream analysis framework with pluggable lint-style checks."
+license      = "MIT OR Apache-2.0"
+repository   = "https://github.com/fishloa/rust-broadcast"
+rust-version = "1.81"
+
+[[bin]]
+name = "media-doctor"
+path = "src/bin/media-doctor.rs"
+required-features = ["cli"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.1", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "8", default-features = false }
+clap             = { version = "4", features = ["derive"], optional = true }
+serde            = { version = "1", features = ["derive", "alloc"], optional = true }
+serde_json       = { version = "1", optional = true }
+thiserror        = { version = "2", optional = true }
+
+[features]
+default = ["std", "serde", "cli"]
+std     = ["broadcast-common/std", "mpeg-ts/std"]
+serde   = ["dep:serde", "dep:serde_json"]
+cli     = ["dep:clap", "dep:thiserror", "std"]
+
+[package.metadata.docs.rs]
+all-features = true
