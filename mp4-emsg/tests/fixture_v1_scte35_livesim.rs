@@ -19,7 +19,7 @@ use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/emsg_v1_scte35_livesim.bin"
+        "/../fixtures/shared/emsg_v1_scte35_livesim.bin"
     );
     fs::read(path).expect("fixture emsg_v1_scte35_livesim.bin must be committed")
 }

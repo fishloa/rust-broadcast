@@ -11,7 +11,16 @@ use dvb_si::tables::AnyTableSection;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {
-    let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), filename);
+    let path = format!(
+        "{}/../fixtures/{}/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        if filename == "m6-single.ts" {
+            "ts"
+        } else {
+            "dvb-si"
+        },
+        filename
+    );
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 

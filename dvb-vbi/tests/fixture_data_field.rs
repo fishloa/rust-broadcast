@@ -11,7 +11,7 @@ use dvb_vbi::{DataField, DataUnitId, DataUnitPayload};
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/vbi_data_field.bin"
+        "/../fixtures/dvb-vbi/vbi_data_field.bin"
     );
     fs::read(path).expect("fixture vbi_data_field.bin must be committed")
 }

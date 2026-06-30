@@ -468,7 +468,7 @@ mod tests {
     // ------------------------------------------------------------------
     #[test]
     fn fixture_m6_matches_plain_chunks() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/m6-single.ts");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
         let data = std::fs::read(path).expect("m6-single.ts fixture not found");
 
         // Oracle: plain aligned 188-byte reads.

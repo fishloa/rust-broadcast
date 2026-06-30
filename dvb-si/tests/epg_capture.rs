@@ -15,7 +15,7 @@ const EIT_PID: u16 = 0x0012;
 const TS_SYNC: u8 = 0x47;
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
+    let path = format!("{}/../fixtures/dvb-si/{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))
 }
 

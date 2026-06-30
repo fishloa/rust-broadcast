@@ -1,8 +1,22 @@
 //! Integration tests using real TV capture fixtures.
 
-// Fixtures are vendored under tests/fixtures/ and embedded via include_bytes!.
-const TNT_FIXTURE: &[u8] = include_bytes!("fixtures/tnt-5w-12732v-bbframe.ts");
-const RAI_FIXTURE: &[u8] = include_bytes!("fixtures/rai-5w-12606v-bbframe.ts");
+use std::fs;
+
+fn tnt_fixture() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts"
+    );
+    fs::read(path).expect("fixture tnt-5w-12732v-bbframe.ts must be present")
+}
+
+fn rai_fixture() -> Vec<u8> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/dvb-bbframe/rai-5w-12606v-bbframe.ts"
+    );
+    fs::read(path).expect("fixture rai-5w-12606v-bbframe.ts must be present")
+}
 
 /// Walk a capture file and reassemble complete BBFrames from TS sections
 /// on a given PID. The section count byte `0xB8` marks the start of a new
@@ -63,7 +77,8 @@ fn extract_bbframes(data: &[u8], pid: u16) -> Vec<Vec<u8>> {
 
 #[test]
 fn extract_at_least_50_bbframes_from_tnt() {
-    let frames = extract_bbframes(TNT_FIXTURE, 0x010E);
+    let data = tnt_fixture();
+    let frames = extract_bbframes(&data, 0x010E);
     assert!(
         frames.len() > 50,
         "expected >50 BBFrames from TNT fixture, got {}",
@@ -73,9 +88,10 @@ fn extract_at_least_50_bbframes_from_tnt() {
 
 #[test]
 fn every_tnt_bbframe_has_crc_zero_xor() {
+    let data = tnt_fixture();
     use dvb_bbframe::crc::crc8;
 
-    let frames = extract_bbframes(TNT_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
     for (i, frame) in frames.iter().enumerate() {
         if frame.len() < 10 {
             continue;
@@ -92,9 +108,10 @@ fn every_tnt_bbframe_has_crc_zero_xor() {
 
 #[test]
 fn every_tnt_bbframe_parses_as_normal_mode() {
+    let data = tnt_fixture();
     use dvb_bbframe::header::{Bbheader, Mode};
 
-    let frames = extract_bbframes(TNT_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
     assert!(!frames.is_empty(), "no BBFrames from TNT fixture");
 
     for (i, frame) in frames.iter().enumerate() {
@@ -109,9 +126,10 @@ fn every_tnt_bbframe_parses_as_normal_mode() {
 
 #[test]
 fn tnt_bbframe_fields_match_known_values() {
+    let data = tnt_fixture();
     use dvb_bbframe::header::{Bbheader, Mode, TsGs};
 
-    let frames = extract_bbframes(TNT_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
     let hdr = Bbheader::parse(&frames[0]).unwrap();
 
     assert_eq!(hdr.mode, Mode::Normal);
@@ -126,10 +144,11 @@ fn tnt_bbframe_fields_match_known_values() {
 
 #[test]
 fn serialize_round_trip_all_tnt_bbframes() {
+    let data = tnt_fixture();
     use dvb_bbframe::crc::crc8;
     use dvb_bbframe::header::Bbheader;
 
-    let frames = extract_bbframes(TNT_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
 
     for (i, frame) in frames.iter().enumerate() {
         if frame.len() < 10 {
@@ -170,9 +189,10 @@ fn serialize_round_trip_all_tnt_bbframes() {
 
 #[test]
 fn rai_fixture_outer_bbframes_parse_as_nm() {
+    let data = rai_fixture();
     use dvb_bbframe::header::{Bbheader, Mode};
 
-    let frames = extract_bbframes(RAI_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
     assert!(
         frames.len() > 50,
         "expected >50 outer BBFrames from Rai fixture, got {}",
@@ -195,9 +215,10 @@ fn rai_fixture_outer_bbframes_parse_as_nm() {
 
 #[test]
 fn rai_fixture_outer_bbframes_pass_nm_crc8() {
+    let data = rai_fixture();
     use dvb_bbframe::crc::crc8;
 
-    let frames = extract_bbframes(RAI_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
     for (i, frame) in frames.iter().enumerate() {
         if frame.len() < 10 {
             continue;
@@ -214,10 +235,11 @@ fn rai_fixture_outer_bbframes_pass_nm_crc8() {
 
 #[test]
 fn rai_outer_bbheader_round_trip() {
+    let data = rai_fixture();
     use dvb_bbframe::crc::crc8;
     use dvb_bbframe::header::Bbheader;
 
-    let frames = extract_bbframes(RAI_FIXTURE, 0x010E);
+    let frames = extract_bbframes(&data, 0x010E);
 
     for (i, frame) in frames.iter().enumerate() {
         let hdr = Bbheader::parse(frame).unwrap();

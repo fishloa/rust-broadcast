@@ -19,7 +19,7 @@ const TS_PACKET: usize = 188;
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/colombia-capital-t2mi.ts"
+        "/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts"
     );
     std::fs::read(path).expect("fixture present")
 }

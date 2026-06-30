@@ -13,7 +13,7 @@ use dvb_simulcrypt::{
 fn fixture() -> Vec<u8> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/cw_provision.bin"
+        "/../fixtures/dvb-simulcrypt/cw_provision.bin"
     );
     fs::read(path).expect("fixture cw_provision.bin must be committed")
 }

@@ -3,9 +3,15 @@
 //! minimal inline TS depacketizer (no dvb-si dependency) and asserts the PTS
 //! values are present, 33-bit-bounded, and monotonically non-decreasing.
 
+use std::fs;
+
 use mpeg_pes::{PesAssembler, PesPacket};
 
-const TS: &[u8] = include_bytes!("../../dvb-si/tests/fixtures/m6-single.ts");
+fn m6_bytes() -> Vec<u8> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    fs::read(path).expect("fixture m6-single.ts must be present")
+}
+
 const PKT: usize = 188;
 const PES_PID: u16 = 0x0082; // an ES PID carrying PES (private_stream_1) with PTS
 
@@ -30,10 +36,11 @@ fn ts_payload(p: &[u8]) -> Option<(u16, bool, &[u8])> {
 
 #[test]
 fn extracts_video_pts_from_m6_fixture() {
+    let ts = m6_bytes();
     let mut asm = PesAssembler::new();
     let mut pes_bytes: Vec<Vec<u8>> = Vec::new();
 
-    for pkt in TS.chunks(PKT) {
+    for pkt in ts.chunks(PKT) {
         if let Some((pid, pusi, payload)) = ts_payload(pkt) {
             if pid == PES_PID {
                 if let Some(v) = asm.feed(pusi, payload) {

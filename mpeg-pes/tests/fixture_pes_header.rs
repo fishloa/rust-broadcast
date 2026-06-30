@@ -34,7 +34,7 @@ const TS: usize = 188;
 
 fn fixture(name: &str) -> Vec<u8> {
     fs::read(format!(
-        "{}/tests/fixtures/{}",
+        "{}/../fixtures/mpeg-pes/{}",
         env!("CARGO_MANIFEST_DIR"),
         name
     ))

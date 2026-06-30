@@ -6,11 +6,17 @@
 //! byte-exact on real-world bytes (the round-trip invariant, on data we did
 //! not author).
 
+use std::fs;
+
 use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, PesDataField};
 use mpeg_pes::{PesAssembler, PesPacket, StreamId};
 
-const M6: &[u8] = include_bytes!("../../dvb-si/tests/fixtures/m6-single.ts");
+fn m6_bytes() -> Vec<u8> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
+    fs::read(path).expect("fixture m6-single.ts must be present")
+}
+
 const PKT: usize = 188;
 const SUBTITLE_PID: u16 = 0x008C; // component in m6-single.ts carrying DVB subtitle
                                   // DVB subtitle is carried in private_stream_1 with data_identifier 0x20; the same
@@ -54,7 +60,7 @@ fn subtitle_pes(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
 
 #[test]
 fn parses_real_subtitle_pes_from_m6() {
-    let pes = subtitle_pes(M6, SUBTITLE_PID);
+    let pes = subtitle_pes(&m6_bytes(), SUBTITLE_PID);
     assert!(!pes.is_empty(), "no subtitle PES reassembled");
 
     let mut fields = 0;
