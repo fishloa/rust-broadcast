@@ -153,6 +153,12 @@ impl BoxType {
             b"enca" => "enca",
             b"encv" => "encv",
             b"hvc1" => "hvc1",
+            b"avcC" => "avcC",
+            b"hvcC" => "hvcC",
+            b"avc2" => "avc2",
+            b"avc3" => "avc3",
+            b"avc4" => "avc4",
+            b"hev1" => "hev1",
             _ => "<unknown>",
         }
     }

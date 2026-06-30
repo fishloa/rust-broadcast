@@ -58,4 +58,15 @@ pub enum Error {
         /// Actual size.
         have: usize,
     },
+
+    /// A field had an invalid or reserved value.
+    #[error("invalid {field}: {reason} (value: 0x{value:X})")]
+    InvalidValue {
+        /// Name of the field.
+        field: &'static str,
+        /// The parsed value.
+        value: u64,
+        /// Human-readable explanation.
+        reason: &'static str,
+    },
 }
