@@ -39,6 +39,7 @@ pub mod avc_config;
 pub mod box_types;
 pub mod error;
 pub mod hevc_config;
+pub mod mp4esds;
 pub mod nalu_types;
 pub mod sample_entries;
 
@@ -46,5 +47,9 @@ pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
 pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+pub use mp4esds::{
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
+    SLConfigDescriptor, StreamType,
+};
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
