@@ -6,11 +6,7 @@ use mp4_emsg::EmsgBox;
 use timed_metadata::convert::{emsg_to_scte35, scte35_to_emsg, EmsgConfig};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/../fixtures/shared/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
+    let path = format!("{}/../fixtures/shared/{}", env!("CARGO_MANIFEST_DIR"), name);
     fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
 }
 

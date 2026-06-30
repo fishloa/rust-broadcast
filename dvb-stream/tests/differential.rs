@@ -57,10 +57,7 @@ fn sync_oracle(data: &[u8]) -> Vec<dvb_si::demux::SectionEvent> {
 // ── fixture path helper ───────────────────────────────────────────────────────
 
 fn m6_fixture_path() -> &'static str {
-    concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/m6-single.ts"
-    )
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts")
 }
 
 // ── test 1: differential against SiDemux on m6-single.ts ─────────────────────

@@ -8,10 +8,7 @@ use std::fs;
 use mpeg_pes::{PesAssembler, PesPacket};
 
 fn m6_bytes() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ts/m6-single.ts"
-    );
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
     fs::read(path).expect("fixture m6-single.ts must be present")
 }
 

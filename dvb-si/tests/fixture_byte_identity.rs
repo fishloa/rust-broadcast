@@ -14,7 +14,11 @@ fn read_fixture(filename: &str) -> Vec<u8> {
     let path = format!(
         "{}/../fixtures/{}/{}",
         env!("CARGO_MANIFEST_DIR"),
-        if filename == "m6-single.ts" { "ts" } else { "dvb-si" },
+        if filename == "m6-single.ts" {
+            "ts"
+        } else {
+            "dvb-si"
+        },
         filename
     );
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {path}: {e}"))

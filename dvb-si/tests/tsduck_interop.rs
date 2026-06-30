@@ -18,11 +18,7 @@ use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::pmt::PmtSection;
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!(
-        "{}/../fixtures/dvb-si/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
+    let path = format!("{}/../fixtures/dvb-si/{}", env!("CARGO_MANIFEST_DIR"), name);
     fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
 }
 
@@ -90,7 +86,6 @@ fn decodes_tsduck_compiled_mpeg_descriptors() {
     assert!(seen_hevc, "HEVC_video_descriptor not decoded");
 }
 
-
 #[test]
 fn decodes_tsduck_compiled_conditional_descriptors() {
     use dvb_si::descriptors::decoder_config_flags::DecoderConfigFlags;
@@ -147,7 +142,6 @@ fn decodes_tsduck_compiled_conditional_descriptors() {
     assert!(seen_meta, "metadata_descriptor not decoded");
     assert!(seen_j2k, "J2K_video_descriptor not decoded");
 }
-
 
 #[test]
 fn decodes_tsduck_compiled_simple_descriptors() {
@@ -235,7 +229,6 @@ fn decodes_tsduck_compiled_simple_descriptors() {
     }
 }
 
-
 #[test]
 fn decodes_tsduck_compiled_protection_message() {
     use broadcast_common::Serialize;
@@ -272,7 +265,6 @@ fn decodes_tsduck_compiled_protection_message() {
     );
 }
 
-
 #[test]
 fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
     use broadcast_common::Serialize;
@@ -306,7 +298,6 @@ fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
         "cpcm_delivery_signalling_descriptor not decoded from TSDuck PMT"
     );
 }
-
 
 #[test]
 fn decodes_tsduck_compiled_dts_descriptors() {
