@@ -4,7 +4,8 @@ use std::fs;
 
 use media_doctor::Diagnostic;
 use media_doctor::{
-    CcAnomalyCheck, Finding, Location, PatPmtVersionCheck, Report, Severity, SyncByteCheck,
+    CcAnomalyCheck, Finding, Location, PatPmtVersionCheck, PcrCheck, Report, Severity,
+    SyncByteCheck,
 };
 
 /// Path helper: fixture TS file.
@@ -562,4 +563,156 @@ fn calc_crc32(data: &[u8]) -> u32 {
         }
     }
     crc ^ 0xFFFF_FFFF
+}
+
+// ── PcrCheck tests ───────────────────────────────────────────────────────────
+
+/// Path helper: fixture TS file from fixtures/ top level.
+fn fixture_pcr(name: &str) -> Vec<u8> {
+    let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
+    fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+}
+
+/// france-tnt-pcr.ts is a clean multi-PCR TS stream. PcrCheck must produce
+/// zero PCR-error findings (Warning or Error severity on PCR rules).
+#[test]
+fn pcr_check_clean_fixture_no_errors() {
+    let ts = fixture_pcr("france-tnt-pcr.ts");
+    let mut report = Report::new();
+    PcrCheck.run(&ts, &mut report);
+
+    // We allow Info findings but no Warnings or Errors.
+    let pcr_warn_or_err: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| {
+            (f.rule_id == "pcr-repetition" || f.rule_id == "pcr-discontinuity")
+                && matches!(f.severity, Severity::Warning | Severity::Error)
+        })
+        .collect();
+
+    assert!(
+        pcr_warn_or_err.is_empty(),
+        "clean fixture should produce no PCR warnings/errors, got {}: {:#?}",
+        pcr_warn_or_err.len(),
+        pcr_warn_or_err,
+    );
+}
+
+/// france-pcr-discontinuity.ts has a +10s PCR jump on PID 0x0208 with
+/// discontinuity_indicator set. PcrCheck must NOT flag that jump.
+#[test]
+fn pcr_check_discontinuity_not_flagged() {
+    let ts = fixture("france-pcr-discontinuity.ts");
+    let mut report = Report::new();
+    PcrCheck.run(&ts, &mut report);
+
+    // No pcr-discontinuity findings on PID 0x0208 — the signalled jump
+    // is legitimate.
+    let disc_on_0208: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "pcr-discontinuity" && f.location.pid == 0x0208)
+        .collect();
+
+    assert!(
+        disc_on_0208.is_empty(),
+        "signalled discontinuity on PID 0x0208 must not be flagged, got {:?}",
+        disc_on_0208,
+    );
+
+    // Also check that the discontinuity PID (0x0208) has no repetition errors.
+    let rep_on_0208: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| f.rule_id == "pcr-repetition" && f.location.pid == 0x0208)
+        .collect();
+
+    assert!(
+        rep_on_0208.is_empty(),
+        "PCR repetition on PID 0x0208 with signalled discontinuity should be clean: {:?}",
+        rep_on_0208,
+    );
+}
+
+/// Positive case: take the clean fixture bytes, corrupt one PCR on PID 0x0208
+/// by adding a large offset WITHOUT setting discontinuity_indicator, then
+/// assert PcrCheck produces a PCR anomaly finding.
+#[test]
+fn pcr_check_corrupted_pcr_produces_finding() {
+    let mut ts = fixture_pcr("france-tnt-pcr.ts");
+
+    // Locate the first PCR-bearing packet on PID 0x0208.
+    // PCR flag = 0x10 in adaptation field flags byte.
+    let mut found = false;
+    for i in (0..ts.len()).step_by(188) {
+        let pid = (((ts[i + 1] & 0x1F) as u16) << 8) | ts[i + 2] as u16;
+        if pid != 0x0208 {
+            continue;
+        }
+        let afc = (ts[i + 3] >> 4) & 0x03;
+        if afc < 2 {
+            continue;
+        }
+        let af_len = ts[i + 4] as usize;
+        if af_len == 0 {
+            continue;
+        }
+        let flags = ts[i + 5];
+        if flags & 0x10 == 0 {
+            continue;
+        }
+        // Found a PCR packet on PID 0x0208. Corrupt the PCR base by adding
+        // a large offset (~10s worth of 90 kHz base ticks) without setting
+        // discontinuity_indicator.
+        let pcr_start = i + 6;
+        // Decode current base value.
+        let base = ((ts[pcr_start] as u64) << 25)
+            | ((ts[pcr_start + 1] as u64) << 17)
+            | ((ts[pcr_start + 2] as u64) << 9)
+            | ((ts[pcr_start + 3] as u64) << 1)
+            | ((ts[pcr_start + 4] as u64) >> 7);
+        // Add ~12 seconds to the base (12 × 90_000 = 1_080_000).
+        let new_base = (base + 1_080_000) & 0x1_FFFF_FFFF;
+        ts[pcr_start] = ((new_base >> 25) & 0xFF) as u8;
+        ts[pcr_start + 1] = ((new_base >> 17) & 0xFF) as u8;
+        ts[pcr_start + 2] = ((new_base >> 9) & 0xFF) as u8;
+        ts[pcr_start + 3] = ((new_base >> 1) & 0xFF) as u8;
+        ts[pcr_start + 4] = (ts[pcr_start + 4] & 0x7E)
+            | (((new_base & 0x01) as u8) << 7)
+            | (ts[pcr_start + 4] & 0x01);
+        found = true;
+        break;
+    }
+
+    assert!(
+        found,
+        "could not find a PCR packet on PID 0x0208 to corrupt"
+    );
+
+    let mut report = Report::new();
+    PcrCheck.run(&ts, &mut report);
+
+    // The corrupted PCR should produce findings on PID 0x0208.
+    let pcr_findings: Vec<_> = report
+        .findings()
+        .iter()
+        .filter(|f| {
+            f.location.pid == 0x0208
+                && (f.rule_id == "pcr-repetition" || f.rule_id == "pcr-discontinuity")
+        })
+        .collect();
+
+    assert!(
+        !pcr_findings.is_empty(),
+        "corrupted PCR on PID 0x0208 without discontinuity_indicator must produce a finding"
+    );
+
+    // At least one should be Error severity.
+    let has_error = pcr_findings.iter().any(|f| f.severity == Severity::Error);
+    assert!(
+        has_error,
+        "corrupted PCR should produce at least one Error: {:?}",
+        pcr_findings,
+    );
 }
