@@ -517,7 +517,7 @@ mod tests {
         pkt1b[3] = 0x30 | 0x01; // afc=11, CC=1
         pkt1b[4] = 7; // af_length
         pkt1b[5] = 0x10; // PCR flag set
-        // PCR bytes (6)
+                         // PCR bytes (6)
         pkt1b[6] = 0x00;
         pkt1b[7] = 0x00;
         pkt1b[8] = 0x00;
@@ -535,7 +535,7 @@ mod tests {
         pkt2[3] = 0x30 | 0x01; // afc=11, CC=1 (same CC!)
         pkt2[4] = 7; // af_length
         pkt2[5] = 0x10; // PCR flag set
-        // Different PCR
+                        // Different PCR
         pkt2[6] = 0x12;
         pkt2[7] = 0x34;
         pkt2[8] = 0x56;

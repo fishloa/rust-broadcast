@@ -124,9 +124,7 @@ impl PcrRestampOp {
     /// adaptation field (ITU-T H.222.0 §2.4.3.5).
     fn read_pcr(packet: &[u8]) -> Option<(u16, Pcr, bool)> {
         let pkt = TsPacket::parse(packet).ok()?;
-        let af = pkt
-            .adaptation_field()
-            .and_then(|r| r.ok())?;
+        let af = pkt.adaptation_field().and_then(|r| r.ok())?;
         let pcr = af.pcr?;
         Some((pkt.header.pid, pcr, af.discontinuity_indicator))
     }

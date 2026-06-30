@@ -52,20 +52,30 @@ fn has_adaptation(pkt: &[u8]) -> bool {
 }
 
 fn has_discontinuity(pkt: &[u8]) -> bool {
-    if pkt.len() < 6 { return false; }
-    if !has_adaptation(pkt) { return false; }
+    if pkt.len() < 6 {
+        return false;
+    }
+    if !has_adaptation(pkt) {
+        return false;
+    }
     let af_len = pkt[4] as usize;
-    if af_len == 0 { return false; }
+    if af_len == 0 {
+        return false;
+    }
     (pkt[5] & 0x80) != 0
 }
 
 fn get_payload(pkt: &[u8]) -> &[u8] {
-    if !has_payload(pkt) { return &[]; }
+    if !has_payload(pkt) {
+        return &[];
+    }
     let mut cursor = 4usize;
     if has_adaptation(pkt) {
         cursor += 1 + pkt[4] as usize;
     }
-    if cursor >= 188 { return &[]; }
+    if cursor >= 188 {
+        return &[];
+    }
     &pkt[cursor..188]
 }
 
@@ -100,9 +110,15 @@ fn repair_continuity_from_corrupted_zeros() {
     let mut input = fs::read(m6_single_path()).expect("fixture not found");
     support::zero_continuity_counters(&mut input);
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
     assert_eq!(output.len(), input.len());
     let before = count_strict_anomalies(&input);
@@ -115,9 +131,15 @@ fn repair_continuity_from_xor_corruption() {
     let mut input = fs::read(m6_single_path()).expect("fixture not found");
     support::xor_continuity_counters(&mut input, 0xAA);
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
     assert_eq!(output.len(), input.len());
     let before = count_strict_anomalies(&input);
@@ -129,15 +151,24 @@ fn repair_continuity_from_xor_corruption() {
 fn repair_continuity_makes_stream_valid() {
     let input = fs::read(m6_single_path()).expect("fixture not found");
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
     assert_eq!(output.len(), input.len());
     assert_eq!(output.len() % 188, 0);
     let before = count_strict_anomalies(&input);
     let after = count_strict_anomalies(&output);
-    assert!(after <= before, "repair must not increase strict CC anomalies");
+    assert!(
+        after <= before,
+        "repair must not increase strict CC anomalies"
+    );
 }
 
 #[test]
@@ -158,12 +189,21 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
             last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
     }
-    assert_eq!(legal_dup_count, 5, "m6-duplicate.ts should have 5 legal duplicates");
+    assert_eq!(
+        legal_dup_count, 5,
+        "m6-duplicate.ts should have 5 legal duplicates"
+    );
 
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut output_dup_count = 0usize;
@@ -181,16 +221,25 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
             out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
     }
-    assert_eq!(output_dup_count, 5, "all 5 legal duplicates preserved, got {output_dup_count}");
+    assert_eq!(
+        output_dup_count, 5,
+        "all 5 legal duplicates preserved, got {output_dup_count}"
+    );
 }
 
 #[test]
 fn cc_errors_on_m6_single_are_renumbered() {
     let input = fs::read(m6_single_path()).expect("fixture m6-single.ts not found");
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut remaining_errors = 0usize;
@@ -208,7 +257,10 @@ fn cc_errors_on_m6_single_are_renumbered() {
             last_per_pid.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
     }
-    assert_eq!(remaining_errors, 0, "CC errors must be renumbered; {remaining_errors} remain");
+    assert_eq!(
+        remaining_errors, 0,
+        "CC errors must be renumbered; {remaining_errors} remain"
+    );
 }
 
 #[test]
@@ -216,16 +268,26 @@ fn discontinuity_indicator_cc_is_preserved_from_real_fixture() {
     let input = fs::read(m6_discontinuity_path()).expect("fixture m6-discontinuity.ts not found");
     let mut disc_indices: Vec<usize> = Vec::new();
     for (idx, chunk) in input.chunks(188).enumerate() {
-        if has_discontinuity(chunk) { disc_indices.push(idx); }
+        if has_discontinuity(chunk) {
+            disc_indices.push(idx);
+        }
     }
     assert_eq!(disc_indices.len(), 3);
-    let disc_ccs: Vec<u8> = disc_indices.iter()
-        .map(|&idx| extract_cc(&input[idx * 188..])).collect();
+    let disc_ccs: Vec<u8> = disc_indices
+        .iter()
+        .map(|&idx| extract_cc(&input[idx * 188..]))
+        .collect();
 
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     for (i, &idx) in disc_indices.iter().enumerate() {
@@ -255,23 +317,39 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     assert!(injected, "should have injected a CC error");
 
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let before = count_pid_anomalies(&input, target_pid);
     let after = count_pid_anomalies(&output, target_pid);
-    assert!(after < before, "PID {:#05x}: before={before}, after={after}; repair must reduce", target_pid);
+    assert!(
+        after < before,
+        "PID {:#05x}: before={before}, after={after}; repair must reduce",
+        target_pid
+    );
 }
 
 #[test]
 fn strict_plus_one_would_renumber_legal_duplicates() {
     let input = fs::read(m6_duplicate_path()).expect("fixture m6-duplicate.ts not found");
     let mut engine = ts_fix::TsFix::builder()
-        .repair_continuity().build().expect("build");
+        .repair_continuity()
+        .build()
+        .expect("build");
     let mut output = Vec::with_capacity(input.len());
-    for chunk in input.chunks(188) { engine.push(chunk, |pkt| output.extend_from_slice(pkt)).unwrap(); }
+    for chunk in input.chunks(188) {
+        engine
+            .push(chunk, |pkt| output.extend_from_slice(pkt))
+            .unwrap();
+    }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut output_dup_count = 0usize;
@@ -289,23 +367,33 @@ fn strict_plus_one_would_renumber_legal_duplicates() {
             out_last.insert(pid, (cc, hash_payload_skip_pcr(chunk)));
         }
     }
-    assert_eq!(output_dup_count, 5, "duplicate-preservation bite: {output_dup_count}/5");
+    assert_eq!(
+        output_dup_count, 5,
+        "duplicate-preservation bite: {output_dup_count}/5"
+    );
     let strict = count_strict_anomalies(&output);
-    assert!(strict > 0, "strict-+1 sees {strict} anomalies — if 0, duplicates renumbered");
+    assert!(
+        strict > 0,
+        "strict-+1 sees {strict} anomalies — if 0, duplicates renumbered"
+    );
 }
 
 fn count_strict_anomalies(data: &[u8]) -> usize {
     let mut per_pid_cc: BTreeMap<u16, u8> = BTreeMap::new();
     let mut anomalies = 0;
     for chunk in data.chunks(188) {
-        if chunk.len() < 4 { continue; }
+        if chunk.len() < 4 {
+            continue;
+        }
         let pid = extract_pid(chunk);
         let cc = extract_cc(chunk);
         let hp = has_payload(chunk);
         if hp {
             if let Some(&last_cc) = per_pid_cc.get(&pid) {
                 let expected = (last_cc + 1) & 0x0F;
-                if cc != expected { anomalies += 1; }
+                if cc != expected {
+                    anomalies += 1;
+                }
             }
             per_pid_cc.insert(pid, cc);
         }
@@ -317,10 +405,14 @@ fn count_pid_anomalies(data: &[u8], pid: u16) -> usize {
     let mut last_cc: Option<u8> = None;
     let mut anomalies = 0;
     for chunk in data.chunks(188) {
-        if extract_pid(chunk) != pid || !has_payload(chunk) { continue; }
+        if extract_pid(chunk) != pid || !has_payload(chunk) {
+            continue;
+        }
         let cc = extract_cc(chunk);
         if let Some(last) = last_cc {
-            if cc != (last + 1) & 0x0F { anomalies += 1; }
+            if cc != (last + 1) & 0x0F {
+                anomalies += 1;
+            }
         }
         last_cc = Some(cc);
     }

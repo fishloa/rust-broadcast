@@ -247,20 +247,32 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     assert_eq!(outp.len(), 5, "5 PCRs on PID 0x208");
 
     // Check discontinuity packet still has indicator set.
-    let disc_pkt: &[u8] = out
-        .chunks_exact(PKT)
-        .nth(1251)
-        .expect("pkt 1251 exists");
+    let disc_pkt: &[u8] = out.chunks_exact(PKT).nth(1251).expect("pkt 1251 exists");
     assert!(pid(disc_pkt) == 0x208, "pkt 1251 is PID 0x208");
     let (_, disc_flag) = pcr_and_disc(disc_pkt).expect("pkt 1251 has PCR");
     assert!(disc_flag, "discontinuity packet still has indicator");
 
     // Segment A (packets 120, 684): must be strictly increasing.
-    assert!(outp[1] > outp[0], "segment A monotonic: {} > {}", outp[1], outp[0]);
+    assert!(
+        outp[1] > outp[0],
+        "segment A monotonic: {} > {}",
+        outp[1],
+        outp[0]
+    );
 
     // Segment B (packets 1251, 1819, 2383): must be strictly increasing.
-    assert!(outp[3] > outp[2], "segment B monotonic [0]: {} > {}", outp[3], outp[2]);
-    assert!(outp[4] > outp[3], "segment B monotonic [1]: {} > {}", outp[4], outp[3]);
+    assert!(
+        outp[3] > outp[2],
+        "segment B monotonic [0]: {} > {}",
+        outp[3],
+        outp[2]
+    );
+    assert!(
+        outp[4] > outp[3],
+        "segment B monotonic [1]: {} > {}",
+        outp[4],
+        outp[3]
+    );
 
     // The jump between segment A's last and B's first must be ~the original
     // ~10 s (270,946,562 ticks). If we had interpolated across the gap instead
