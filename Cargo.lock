@@ -1195,6 +1195,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ts-fix"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "clap",
+ "dvb-si",
+ "mpeg-ts",
+ "thiserror",
+]
+
+[[package]]
 name = "typeid"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
