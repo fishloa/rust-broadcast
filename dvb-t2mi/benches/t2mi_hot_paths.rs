@@ -8,9 +8,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
 use dvb_t2mi::pump::T2miPump;
 
-// ── Fixture (vendored in dvb-t2mi/tests/fixtures/) ────────────────────────────
+// ── Fixture (shared /fixtures/dvb-t2mi/) ────────────────────────────
 
-const COLOMBIA_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/colombia-capital-t2mi.ts");
+const COLOMBIA_FIXTURE: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts"));
 
 /// PID carrying T2-MI in the Colombia fixture (from the PMT).
 const T2MI_PID: u16 = 0x0040;
