@@ -35,6 +35,7 @@
 #![forbid(unsafe_code)]
 extern crate alloc;
 
+pub mod aac_asc;
 pub mod avc_config;
 pub mod box_types;
 pub mod error;
@@ -43,6 +44,10 @@ pub mod mp4esds;
 pub mod nalu_types;
 pub mod sample_entries;
 
+pub use aac_asc::{
+    build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
+    ChannelConfiguration, SamplingFrequencyIndex,
+};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
 pub use error::{Error, Result};
