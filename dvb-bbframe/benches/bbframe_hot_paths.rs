@@ -15,7 +15,10 @@ use dvb_bbframe::pump::BbframePump;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
-const TNT_FIXTURE: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts"));
+const TNT_FIXTURE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/dvb-bbframe/tnt-5w-12732v-bbframe.ts"
+));
 
 /// PID carrying BBFrames in the TNT fixture.
 const TNT_PID: u16 = 0x010E;

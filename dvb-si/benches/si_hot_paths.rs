@@ -15,8 +15,14 @@ use dvb_si::text::DvbText;
 
 // ── Fixtures (shared /fixtures/) ─────────────────────────────
 
-const M6_FIXTURE: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts"));
-const TNT_FIXTURE: &[u8] = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"));
+const M6_FIXTURE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/ts/m6-single.ts"
+));
+const TNT_FIXTURE: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
+));
 
 const TS_PACKET_SIZE: usize = 188;
 
