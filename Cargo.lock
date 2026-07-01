@@ -728,6 +728,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+ "timed-metadata",
 ]
 
 [[package]]
