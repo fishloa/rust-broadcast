@@ -79,6 +79,40 @@ impl VisualSampleEntryFields {
         VISUAL_SAMPLE_ENTRY_SIZE
     }
 
+    /// Parse the VisualSampleEntry fixed fields from full box bytes (including the
+    /// 8-byte box header). `what` names the box for error context.
+    pub fn parse_body(bytes: &[u8], what: &'static str) -> Result<Self> {
+        if bytes.len() < 8 + VISUAL_SAMPLE_ENTRY_SIZE {
+            return Err(Error::BufferTooShort {
+                need: 8 + VISUAL_SAMPLE_ENTRY_SIZE,
+                have: bytes.len(),
+                what,
+            });
+        }
+        let body = &bytes[8..];
+        Ok(Self {
+            data_reference_index: u16::from_be_bytes([body[6], body[7]]),
+            width: u16::from_be_bytes([body[24], body[25]]),
+            height: u16::from_be_bytes([body[26], body[27]]),
+            horizontal_resolution: u32::from_be_bytes([body[28], body[29], body[30], body[31]]),
+            vertical_resolution: u32::from_be_bytes([body[32], body[33], body[34], body[35]]),
+            data_size: u32::from_be_bytes([body[36], body[37], body[38], body[39]]),
+            frame_count: u16::from_be_bytes([body[40], body[41]]),
+            compressorname: {
+                let mut c = [0u8; 32];
+                c.copy_from_slice(&body[42..74]);
+                c
+            },
+            depth: u16::from_be_bytes([body[74], body[75]]),
+            predefined: u16::from_be_bytes([body[76], body[77]]),
+        })
+    }
+
+    /// Serialize the fixed fields into a buffer (public for external sample entries).
+    pub fn serialize_body_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.serialize_into(buf)
+    }
+
     /// Serialize the fixed fields into a buffer.
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if buf.len() < VISUAL_SAMPLE_ENTRY_SIZE {
@@ -157,7 +191,7 @@ impl OpaqueBox {
 
 /// Find a config box (e.g. `avcC`) inside the sample entry's config region.
 /// Returns the full box bytes (including 8-byte header).
-fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
     while off + 8 <= region.len() {
         let size = u32::from_be_bytes([

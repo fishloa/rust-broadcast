@@ -49,18 +49,22 @@ extern crate alloc;
 
 pub mod aac_asc;
 pub mod ac3;
+pub mod ac4;
 pub mod annexb;
+pub mod av1;
 pub mod avc_config;
 pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
 pub mod error;
+pub mod flac;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod nalu_types;
+pub mod opus;
 pub mod pipeline;
 pub mod sample_entries;
 pub mod sample_groups;
@@ -70,16 +74,19 @@ pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
 pub mod visual_ext;
+pub mod vp9;
 
 pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
-    ChannelConfiguration, SamplingFrequencyIndex,
+    ChannelConfiguration, HeAacSignaling, SamplingFrequencyIndex,
 };
 pub use ac3::{Ac3SpecificBox, Ac3SyncframeInfo, Ec3SpecificBox, Ec3Substream, Ec3SyncframeInfo};
+pub use ac4::{Ac4SpecificBox, AC4_FOURCC, DAC4_FOURCC};
 pub use annexb::{
     annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
     length_prefixed_to_annexb, NAL_LENGTH_SIZE,
 };
+pub use av1::{Av1ConfigurationBox, Av1SampleEntry, AV01_FOURCC, AV1C_FOURCC};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
 pub use cenc::{
@@ -89,14 +96,18 @@ pub use cenc::{
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
 };
 pub use error::{Error, Result};
+pub use flac::{
+    FlacMetadataBlock, FlacSpecificBox, BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC,
+};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
-    Ac3SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
-    Ec3SampleEntry, EditBox, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox,
-    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
-    StblChild, StscEntry, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
+    DataReferenceBox, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox, MediaBox,
+    MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
+    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
+    TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
@@ -107,10 +118,11 @@ pub use mp4esds::{
     SLConfigDescriptor, StreamType,
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
+pub use opus::{ChannelMappingTable, OpusSpecificBox, DOPS_FOURCC, OPUS_FOURCC};
 pub use pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
-pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
+pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
 pub use sample_groups::{
     ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry,
     SubSampleDescriptor, SubSampleInformationBox, SubsEntry, GROUPING_TYPE_ROLL,
@@ -130,3 +142,4 @@ pub use timing::{
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
+pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};

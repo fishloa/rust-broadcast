@@ -19,15 +19,19 @@ use alloc::vec::Vec;
 use broadcast_common::Serialize;
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use crate::ac4::{Ac4SpecificBox, DAC4_FOURCC};
 use crate::annexb::annexb_to_length_prefixed;
+use crate::av1::{Av1ConfigurationBox, Av1SampleEntry};
 use crate::avc_config::AVCConfigurationBox;
 use crate::error::Result;
+use crate::flac::{FlacSpecificBox, DFLA_FOURCC};
 use crate::init_segment::{
-    Ac3SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
-    Ec3SampleEntry, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox,
-    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
-    StblChild, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
+    DataReferenceBox, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox, MediaHeaderBox,
+    MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox,
+    OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox,
+    SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox, TrackHeaderBox,
+    VideoMediaHeaderBox,
 };
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
@@ -37,9 +41,11 @@ use crate::movie_fragment::{
     TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT,
 };
 use crate::mp4esds::EsdsBox;
+use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
 use crate::sample_entries::{AVCSampleEntry, VisualSampleEntryFields};
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use crate::timing::TimeToSampleBox;
+use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
 
 // --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
 /// Sample flags for a sync sample (I-frame): `sample_depends_on = 2` (does not
@@ -101,13 +107,69 @@ pub enum CodecConfig {
         /// Sample size in bits (typically 16).
         sample_size: u16,
     },
+    /// AV1 video (`av01` sample entry with an `av1C` box).
+    Av1 {
+        /// The `av1C` configuration box.
+        config: Av1ConfigurationBox,
+        /// Coded width in pixels.
+        width: u16,
+        /// Coded height in pixels.
+        height: u16,
+    },
+    /// VP9 video (`vp09` sample entry with a `vpcC` box).
+    Vp9 {
+        /// The `vpcC` configuration box.
+        config: Vp9ConfigurationBox,
+        /// Coded width in pixels.
+        width: u16,
+        /// Coded height in pixels.
+        height: u16,
+    },
+    /// Opus audio (`Opus` sample entry with a `dOps` box).
+    Opus {
+        /// The `dOps` config box.
+        config: OpusSpecificBox,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz (stored 16.16; per spec always 48000).
+        sample_rate: u32,
+        /// Sample size in bits (typically 16).
+        sample_size: u16,
+    },
+    /// FLAC audio (`fLaC` sample entry with a `dfLa` box).
+    Flac {
+        /// The `dfLa` config box.
+        config: FlacSpecificBox,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits.
+        sample_size: u16,
+    },
+    /// AC-4 audio (`ac-4` sample entry with a `dac4` box).
+    Ac4 {
+        /// The `dac4` config box (opaque `ac4_dsi_v1()`).
+        config: Ac4SpecificBox,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits (16 per spec).
+        sample_size: u16,
+    },
 }
 
 impl CodecConfig {
     fn is_audio(&self) -> bool {
         matches!(
             self,
-            CodecConfig::Aac { .. } | CodecConfig::Ac3 { .. } | CodecConfig::Eac3 { .. }
+            CodecConfig::Aac { .. }
+                | CodecConfig::Ac3 { .. }
+                | CodecConfig::Eac3 { .. }
+                | CodecConfig::Opus { .. }
+                | CodecConfig::Flac { .. }
+                | CodecConfig::Ac4 { .. }
         )
     }
 }
@@ -231,6 +293,18 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     Ok(out)
 }
 
+/// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the
+/// given four-CC (mirrors the `esds`/`dac3` embedding for audio sample entries).
+fn config_box<C: Serialize<Error = crate::error::Error>>(
+    fourcc: &[u8; 4],
+    config: &C,
+) -> Result<OpaqueBox> {
+    let mut body = vec![0u8; config.serialized_len()];
+    let n = config.serialize_into(&mut body)?;
+    body.truncate(n);
+    Ok(OpaqueBox::new(*fourcc, body))
+}
+
 /// Build one fragmented-init `trak` (empty sample tables + a single `stsd` entry).
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
@@ -346,6 +420,150 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 samplesize: *sample_size,
                 samplerate: (*sample_rate) << 16,
                 config_boxes: vec![dec3_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Av1 {
+            config,
+            width,
+            height,
+        } => {
+            let visual = VisualSampleEntryFields {
+                data_reference_index: 1,
+                width: *width,
+                height: *height,
+                ..VisualSampleEntryFields::default()
+            };
+            let entry = SampleEntryVariant::Av01(Box::new(Av1SampleEntry {
+                visual,
+                config: config.clone(),
+            }));
+            (
+                entry,
+                Some(VideoMediaHeaderBox {
+                    version: 0,
+                    flags: 1,
+                    graphicsmode: 0,
+                    opcolor: [0, 0, 0],
+                }),
+                None,
+                *b"vide",
+                b"VideoHandler\0".to_vec(),
+                (*width as u32) << 16,
+                (*height as u32) << 16,
+            )
+        }
+        CodecConfig::Vp9 {
+            config,
+            width,
+            height,
+        } => {
+            let visual = VisualSampleEntryFields {
+                data_reference_index: 1,
+                width: *width,
+                height: *height,
+                ..VisualSampleEntryFields::default()
+            };
+            let entry = SampleEntryVariant::Vp09(Box::new(Vp9SampleEntry {
+                visual,
+                config: config.clone(),
+            }));
+            (
+                entry,
+                Some(VideoMediaHeaderBox {
+                    version: 0,
+                    flags: 1,
+                    graphicsmode: 0,
+                    opcolor: [0, 0, 0],
+                }),
+                None,
+                *b"vide",
+                b"VideoHandler\0".to_vec(),
+                (*width as u32) << 16,
+                (*height as u32) << 16,
+            )
+        }
+        CodecConfig::Opus {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let dops_opaque = config_box(&DOPS_FOURCC, config)?;
+            let entry = SampleEntryVariant::Opus(Box::new(OpusSampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![dops_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Flac {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let dfla_opaque = config_box(&DFLA_FOURCC, config)?;
+            let entry = SampleEntryVariant::Flac(Box::new(FlacSampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![dfla_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Ac4 {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let dac4_opaque = config_box(&DAC4_FOURCC, config)?;
+            let entry = SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![dac4_opaque],
             }));
             (
                 entry,
