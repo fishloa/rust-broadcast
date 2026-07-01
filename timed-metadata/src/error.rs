@@ -21,6 +21,15 @@ pub enum Error {
     /// `EXT-X-DATERANGE` tag could not be parsed.
     #[error("DATERANGE parse: {0}")]
     AttrParse(String),
+    /// emsg ↔ SegmentTiming `timescale` mismatch.
+    #[error("emsg timescale ({emsg}) does not match SegmentTiming timescale ({timing})")]
+    EmsgTimescaleMismatch { emsg: u32, timing: u32 },
+    /// v0 emsg cannot carry an event starting before the segment EPT.
+    #[error("presentation time precedes earliest presentation time; cannot express as v0 delta")]
+    EmsgPresentationTimeBeforeEpt,
+    /// v0 `presentation_time_delta` overflowed u32.
+    #[error("presentation_time_delta value {0} exceeds u32 max")]
+    EmsgDeltaOverflow(u64),
 }
 
 /// Crate result alias.
