@@ -5,6 +5,11 @@ The audio decoder-config record carried in an MP4 `mp4a` sample entry's `esds`
 TS→MP4 transmux. Source: `specs/fulltext/iso_iec_14496-3_aac_2001.md` (text-layer pdf2md; AOT table
 vision-verified from PDF p11). Cites by spec § + PDF page.
 
+> **HE-AAC (SBR AOT 5 / PS AOT 29) — #393 resolved.** The later **text-layer** edition
+> **`specs/iso_iec_14496-3_2009_audio_sbr_ps.pdf`** now grounds the SBR + Parametric-Stereo
+> extension signaling (folded in by amendment; SBR/PS/AudioSpecificConfig all present in the
+> text layer). Free cross-check: 3GPP TS 26.401. Transmux HE-AAC (#432) grounds against this.
+
 ## AudioSpecificConfig — §1.6.2.1, Table 1.8 (PDF p33)
 
 ```
