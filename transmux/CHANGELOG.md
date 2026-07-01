@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-01
+### Added
+- AC-3 / E-AC-3 audio in the fMP4 path (ETSI TS 102 366 Annex F):
+  - `Ac3SpecificBox` (`dac3`) + `Ec3SpecificBox` (`dec3`) — typed config boxes with
+    Parse + symmetric Serialize + round-trip.
+  - AC-3 / E-AC-3 syncframe BSI parsers (`0x0B77` syncword → `syncinfo()`+`bsi()` /
+    E-AC-3 syncframe): build a `dac3`/`dec3` from an elementary stream.
+  - `CodecConfig::Ac3` / `Eac3` + `Ac3SampleEntry` / `Ec3SampleEntry`
+    (`SampleEntryVariant::Ac3`/`Ec3`), wired through `build_init_segment` to emit
+    `ac-3` / `ec-3` sample entries.
+  - `rfc6381()` → `"ac-3"` / `"ec-3"`.
+- Gate `tests/dolby.rs`: parses real ffmpeg-encoded AC-3/E-AC-3 fixtures and asserts
+  the built `dac3`/`dec3` bytes match ffmpeg's own MP4-muxer output byte-for-byte.
+
 ## [0.3.0] — 2026-07-01
 ### Added
 - SPS/VPS decode + RFC 6381 codec strings, so transmux no longer needs an external

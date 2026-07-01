@@ -36,6 +36,7 @@
 extern crate alloc;
 
 pub mod aac_asc;
+pub mod ac3;
 pub mod annexb;
 pub mod avc_config;
 pub mod bitreader;
@@ -58,6 +59,7 @@ pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
     ChannelConfiguration, SamplingFrequencyIndex,
 };
+pub use ac3::{Ac3SpecificBox, Ac3SyncframeInfo, Ec3SpecificBox, Ec3Substream, Ec3SyncframeInfo};
 pub use annexb::{
     annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
     length_prefixed_to_annexb, NAL_LENGTH_SIZE,
@@ -68,11 +70,11 @@ pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
-    ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, EditBox, HandlerBox,
-    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
-    Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
-    SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox,
-    TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+    Ac3SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
+    Ec3SampleEntry, EditBox, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox,
+    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox,
+    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
+    StblChild, StscEntry, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

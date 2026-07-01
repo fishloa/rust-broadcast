@@ -25,7 +25,7 @@ ffmpeg -y -i fixtures/ts/dolby/eac3.ts -c:a copy -f mp4 /tmp/eac3.mp4
   | bsmod | 3 | 0 | complete main (CM) |
   | acmod | 3 | 1 | 1/0 (mono) |
   | lfeon | 1 | 0 | no LFE |
-  | bit_rate_code | 5 | 20 | 192 kbps |
+  | bit_rate_code | 5 | 10 | 192 kbps (= frmsizecod >> 1) |
   | reserved | 5 | 0 | — |
 
   These come from the AC-3 syncframe: `fscod`+`frmsizecod` in `syncinfo()`,
