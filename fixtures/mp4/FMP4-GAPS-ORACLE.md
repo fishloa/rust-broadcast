@@ -73,8 +73,24 @@ system-specific init data, hand-built from a spec vector.)
 | `dfLa` | `flac.mp4` | 50 | `00000000 80000022 1200120000…` | FLAC STREAMINFO metadata block |
 | `vpcC` | `vp9.mp4` | 20 | `01000000 0014820202020000` | v1, profile/level/bit-depth/chroma |
 
-## Blocked (no fixture path here)
+## #431 AC-4 — UNBLOCKED via ../rust-ac4
 
-- **AC-4 #431** — spec vendored (ETSI TS 103 190-2) but **no AC-4 encoder in ffmpeg**. Needs a real DVB capture or a spec-reference bitstream.
+Real fixtures from the sibling `rust-ac4` codec repo:
+- `fixtures/mp4/ac4/ac4_2ch.mp4` — real Dolby AC-4 init segment (moov + `ac-4` sample
+  entry + `dac4`); the **dac4 oracle**.
+- `fixtures/ts/ac4/ac4_channel.ac4` — real AC-4 elementary stream (syncframes/TOC).
+
+| box | len | body (hex) |
+|---|---|---|
+| `dac4` (AC4SpecificBox = ac4_dsi_v1) | 29 | `20a401400000001fffffffe0010ff88000004200000250100000030080` |
+
+Spec md: `ac4-dac4.md` (ETSI TS 103 190-2 §E.5). The `dac4` body is the `ac4_dsi`
+derived from the AC-4 TOC; `rust-ac4`'s `ac4-si` crate parses that TOC (reference).
+transmux (samples-in) can take the `dac4` as caller-supplied config (like avcC/esds)
+and wrap it in the `ac-4` sample entry; gate = build the entry, re-parse, dac4 body
+== oracle byte-for-byte.
+
+## Still blocked (no fixture path)
+
 - **HE-AAC #432** — no `libfdk_aac` in this ffmpeg (default `aac` won't emit SBR/PS).
 - **MPEG-H #433** — no encoder and ISO/IEC 23008-3 not vendored.
