@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dependency on `mpeg-pes` for PES reassembly + PTS/DTS extraction.
 
 ### Fixed
+- `PtsCheck` no longer false-positives on real streams. It now (a) only examines
+  real PES PIDs (payload starts `00 00 01` + a PES stream_id), so PSI/SI PIDs
+  like EIT (0x0012) are no longer misread as PES headers, and (b) validates the
+  **decode timestamp** (DTS when present, else PTS) rather than PTS — legal
+  B-frame PTS reordering is no longer flagged as `pts-backward`. Verified against
+  real captures (`h264_aac.ts`, `france-tnt-pcr.ts`) which now yield zero findings.
 - The CLI now runs the full diagnostic set (`SyncByteCheck`, `PatPmtVersionCheck`,
   `CcAnomalyCheck`, `PcrCheck`, `PtsCheck`, `Scte35Check`) — previously only
   `SyncByteCheck` ran.

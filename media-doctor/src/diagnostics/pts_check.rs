@@ -1,20 +1,27 @@
-//! `PtsCheck` — flags non-monotonic PTS/DTS and forbidden `PTS_DTS_flags == 01`.
+//! `PtsCheck` — flags non-monotonic decode timestamps and forbidden
+//! `PTS_DTS_flags == 01` (ITU-T H.222.0 / ISO/IEC 13818-1 §2.4.3.7).
 //!
-//! ITU-T H.222.0 / ISO/IEC 13818-1 §2.4.3.7 specifies the PTS/DTS timing model:
-//! PTS values must be monotonically increasing on each PID (33-bit wrap permitted).
-//! The `PTS_DTS_flags` field is a 2-bit code (`00`=none, `10`=PTS, `11`=PTS+DTS);
-//! the value `01` is reserved / forbidden by the spec and signals a malformed stream.
+//! The monotonic clock of an elementary stream is the **decode timestamp**: DTS
+//! when present, otherwise PTS. PTS *presentation* order legitimately reorders
+//! when B-frames are present, so a backward PTS accompanied by a DTS is NOT a
+//! fault. The check therefore tracks the decode timestamp per PID and flags only
+//! a genuine backward step (33-bit-wrap-aware). `PTS_DTS_flags` is a 2-bit code
+//! (`00`=none, `10`=PTS, `11`=PTS+DTS); `01` is forbidden.
+//!
+//! Only real PES PIDs are examined: a reassembled unit is treated as a PES only
+//! when it starts with the `00 00 01` prefix + a PES stream_id with an optional
+//! header (0xBD / 0xC0-0xEF). PSI/SI PIDs (PAT/PMT/EIT/SDT) carry table sections,
+//! not PES, and are skipped.
 //!
 //! # Checks
 //!
-//! - **pts-backward** (Error): a PTS that goes backward on a PID after 33-bit
-//!   wrap-unrolling (non-monotonic). Also checks DTS if present.
-//! - **pts-forbidden-flags** (Error): `PTS_DTS_flags == 0b01` in a PES header,
-//!   which is forbidden by ITU-T H.222.0 §2.4.3.7 Table 2-21.
+//! - **dts-backward** / **pts-backward** (Error): the decode timestamp goes
+//!   backward on a PID beyond a legal 33-bit wrap (`dts-backward` when a DTS is
+//!   present, `pts-backward` for a PTS-only stream).
+//! - **pts-forbidden-flags** (Error): `PTS_DTS_flags == 0b01` in a PES header.
 //!
 //! A signalled TS-layer discontinuity (`discontinuity_indicator == 1`) resets
-//! the per-PID PTS/DTS baseline so that a jump across the discontinuity is not
-//! flagged as backward.
+//! the per-PID baseline so a jump across the discontinuity is not flagged.
 
 use alloc::collections::btree_map::BTreeMap;
 
@@ -43,21 +50,15 @@ struct TsValue {
 struct PtsPidState {
     /// PES assembler for this PID.
     assembler: mpeg_pes::PesAssembler,
-    /// Previous raw PTS value (33-bit), if any.
-    prev_pts: TsValue,
-    /// Previous raw DTS value (33-bit), if any.
-    prev_dts: TsValue,
+    /// Previous raw decode timestamp (DTS, else PTS) on this PID, 33-bit.
+    prev_decode: TsValue,
 }
 
 impl Default for PtsPidState {
     fn default() -> Self {
         Self {
             assembler: mpeg_pes::PesAssembler::new(),
-            prev_pts: TsValue {
-                raw: 0,
-                initialised: false,
-            },
-            prev_dts: TsValue {
+            prev_decode: TsValue {
                 raw: 0,
                 initialised: false,
             },
@@ -65,11 +66,12 @@ impl Default for PtsPidState {
     }
 }
 
-/// Checks PTS/DTS monotonicity and forbidden `PTS_DTS_flags` per PID.
+/// Checks decode-timestamp monotonicity and forbidden `PTS_DTS_flags` per PES PID.
 ///
 /// Flags findings when:
-/// - PTS (or DTS) goes backward (non-monotonic) on the same PID.
-/// - A PES header has `PTS_DTS_flags == 0b01`, which is forbidden.
+/// - the decode timestamp (DTS, else PTS) goes backward on a PID (legal B-frame
+///   PTS reordering is never flagged; only real PES PIDs are examined).
+/// - a PES header has `PTS_DTS_flags == 0b01`, which is forbidden.
 ///
 /// A signalled TS-layer discontinuity (`discontinuity_indicator == 1`) resets
 /// the baseline and does NOT produce backward-jump errors across the break.
@@ -126,8 +128,7 @@ impl Diagnostic for PtsCheck {
                     i,
                     pid,
                     report,
-                    &mut state.prev_pts,
-                    &mut state.prev_dts,
+                    &mut state.prev_decode,
                 );
             }
         }
@@ -140,120 +141,114 @@ impl Diagnostic for PtsCheck {
                     n_packets.saturating_sub(1),
                     pid,
                     report,
-                    &mut state.prev_pts,
-                    &mut state.prev_dts,
+                    &mut state.prev_decode,
                 );
             }
         }
     }
 }
 
-/// Check a single assembled PES packet for PTS/DTS issues.
+/// Stream IDs that carry a PES optional header with PTS/DTS
+/// (ISO/IEC 13818-1 §2.4.3.7 Table 2-22): `private_stream_1` (0xBD),
+/// audio (0xC0-0xDF), video (0xE0-0xEF). All other stream_ids (padding,
+/// program_stream_map, etc.) — and any payload that is not a PES at all
+/// (PSI/SI section data on PIDs like PAT/PMT/EIT) — are skipped.
+fn is_pes_with_optional_header(stream_id: u8) -> bool {
+    stream_id == 0xBD || (0xC0..=0xEF).contains(&stream_id)
+}
+
+/// Check a single assembled unit for PTS/DTS issues.
+///
+/// The unit is only treated as a PES when it begins with the
+/// `packet_start_code_prefix` (`00 00 01`) followed by a stream_id that carries
+/// an optional header. This guard is essential: `PtsCheck` sees *every* PID, and
+/// PSI/SI PIDs (PAT/PMT/EIT/SDT) carry table sections, not PES — without the
+/// guard their section bytes get misread as a PES header.
+///
+/// Timing is validated on the **decode timestamp** (DTS when present, otherwise
+/// PTS): decode order is the monotonic clock. PTS alone is *presentation* order
+/// and legitimately reorders when B-frames are present, so a "backward PTS" is
+/// NOT a fault and is never flagged when a DTS accompanies it.
 fn check_pes(
     pes_bytes: &[u8],
     packet_index: usize,
     pid: u16,
     report: &mut Report,
-    prev_pts: &mut TsValue,
-    prev_dts: &mut TsValue,
+    prev_decode: &mut TsValue,
 ) {
-    // --- Forbidden PTS_DTS_flags == 01 check (raw bytes) ---
-    //
-    // We detect this at the raw byte level because `mpeg_pes::PesPacket::parse`
-    // maps `01` to no-PTS (same as `00`), so we cannot see it via the typed
-    // header. Inspect the PES optional-header flags byte directly.
-    //
-    // PES layout (for stream_ids with an optional header):
-    //   [0..3]  packet_start_code_prefix (00 00 01)
-    //   [3]     stream_id
-    //   [4..5]  PES_packet_length
-    //   [6]     flags1 (scrambling, priority, alignment, etc.)
-    //   [7]     flags2 (PTS_DTS_flags at bits [7:6], ESCR_flag, ES_rate_flag, ...)
-    //   [8]     PES_header_data_length
-    if pes_bytes.len() >= 9 {
-        let stream_id = pes_bytes[3];
-        // Only check stream_ids that carry the optional PES header
-        // (video 0xE0-0xEF, audio 0xC0-0xDF, private_stream_1 0xBD, etc.)
-        let has_optional = !matches!(
-            stream_id,
-            0xBC | 0xBE | 0xBF | 0xF0 | 0xF1 | 0xF2 | 0xF8 | 0xFF
-        );
-        if has_optional {
-            // pes_bytes[6] is the first flag byte (f1), [7] is the second (f2).
-            let f2 = pes_bytes[7];
-            let pts_dts_flags = (f2 >> 6) & 0x03;
-            if pts_dts_flags == 0b01 {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::new(packet_index, pid),
-                    "pts-forbidden-flags",
-                    alloc::format!(
-                        "Forbidden PTS_DTS_flags == 0b01 on PID 0x{:04X} \
-                         (stream_id 0x{:02X}) — ITU-T H.222.0 §2.4.3.7",
-                        pid,
-                        stream_id,
-                    ),
-                ));
-            }
-        }
+    // Gate: must be a real PES with an optional header.
+    if pes_bytes.len() < 9 || pes_bytes[0..3] != [0x00, 0x00, 0x01] {
+        return;
+    }
+    let stream_id = pes_bytes[3];
+    if !is_pes_with_optional_header(stream_id) {
+        return;
     }
 
-    // --- Parse the PES to get typed PTS/DTS values ---
+    // --- Forbidden PTS_DTS_flags == 01 (ITU-T H.222.0 §2.4.3.7) ---
+    // Read the flags byte directly: `PesPacket::parse` maps `01` to no-PTS.
+    // pes_bytes[7] is flags2; PTS_DTS_flags are its top two bits.
+    let pts_dts_flags = (pes_bytes[7] >> 6) & 0x03;
+    if pts_dts_flags == 0b01 {
+        report.push(Finding::new(
+            Severity::Error,
+            Location::new(packet_index, pid),
+            "pts-forbidden-flags",
+            alloc::format!(
+                "Forbidden PTS_DTS_flags == 0b01 on PID 0x{:04X} \
+                 (stream_id 0x{:02X}) — ITU-T H.222.0 §2.4.3.7",
+                pid,
+                stream_id,
+            ),
+        ));
+    }
+
+    // --- Parse the PES for typed PTS/DTS ---
     let Ok(pes) = PesPacket::parse(pes_bytes) else {
         return;
     };
-
     let Some(ref header) = pes.header else {
         return;
     };
 
-    // Check PTS monotonicity.
-    if let Some(pts) = header.pts {
-        let raw = pts.ticks();
-        if prev_pts.initialised {
-            let delta = raw.wrapping_sub(prev_pts.raw) & (PTS_MODULUS - 1);
-            if delta != 0 && delta > PTS_HALF {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::new(packet_index, pid),
-                    "pts-backward",
-                    alloc::format!(
-                        "Non-monotonic PTS on PID 0x{:04X}: raw {} → {} (backward delta {})",
-                        pid,
-                        prev_pts.raw,
-                        raw,
-                        PTS_MODULUS - delta,
-                    ),
-                ));
-            }
-        }
-        prev_pts.raw = raw;
-        prev_pts.initialised = true;
+    // The decode clock is DTS when present, else PTS. (When only PTS is present
+    // there is no B-frame reordering signalled, so PTS == the decode order.)
+    let (raw, present, kind) = match (header.dts, header.pts) {
+        (Some(dts), _) => (dts.ticks(), true, "DTS"),
+        (None, Some(pts)) => (pts.ticks(), true, "PTS"),
+        (None, None) => (0, false, ""),
+    };
+    if !present {
+        return;
     }
 
-    // Check DTS monotonicity.
-    if let Some(dts) = header.dts {
-        let raw = dts.ticks();
-        if prev_dts.initialised {
-            let delta = raw.wrapping_sub(prev_dts.raw) & (PTS_MODULUS - 1);
-            if delta != 0 && delta > PTS_HALF {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::new(packet_index, pid),
-                    "dts-backward",
-                    alloc::format!(
-                        "Non-monotonic DTS on PID 0x{:04X}: raw {} → {} (backward delta {})",
-                        pid,
-                        prev_dts.raw,
-                        raw,
-                        PTS_MODULUS - delta,
-                    ),
-                ));
-            }
+    if prev_decode.initialised {
+        // Wrap-aware forward-distance on the 33-bit clock: a legal step is a
+        // small positive modular delta; a backward jump is a large one.
+        let delta = raw.wrapping_sub(prev_decode.raw) & (PTS_MODULUS - 1);
+        if delta != 0 && delta > PTS_HALF {
+            let rule = if kind == "DTS" {
+                "dts-backward"
+            } else {
+                "pts-backward"
+            };
+            report.push(Finding::new(
+                Severity::Error,
+                Location::new(packet_index, pid),
+                rule,
+                alloc::format!(
+                    "Non-monotonic {} (decode order) on PID 0x{:04X}: raw {} → {} (backward delta {})",
+                    kind,
+                    pid,
+                    prev_decode.raw,
+                    raw,
+                    PTS_MODULUS - delta,
+                ),
+            ));
         }
-        prev_dts.raw = raw;
-        prev_dts.initialised = true;
     }
+    prev_decode.raw = raw;
+    prev_decode.initialised = true;
 }
 
 #[cfg(test)]
@@ -297,6 +292,90 @@ mod tests {
         pes.extend_from_slice(&pts_bytes);
         pes.extend_from_slice(payload);
         pes
+    }
+
+    /// Encode a 5-byte PTS/DTS field with the given marker nibble (0b0011 for
+    /// the PTS of a PTS+DTS pair, 0b0001 for the DTS) — ISO/IEC 13818-1 §2.4.3.7.
+    fn ts_field(marker: u8, v: u64) -> [u8; 5] {
+        [
+            (marker << 4) | ((((v >> 30) & 0x7) as u8) << 1) | 1,
+            ((v >> 22) & 0xFF) as u8,
+            ((((v >> 15) & 0x7F) as u8) << 1) | 1,
+            ((v >> 7) & 0xFF) as u8,
+            (((v & 0x7F) as u8) << 1) | 1,
+        ]
+    }
+
+    /// Build a complete PES packet with both PTS and DTS (PTS_DTS_flags = 0b11).
+    fn build_pes_with_pts_dts(stream_id: u8, pts: u64, dts: u64, payload: &[u8]) -> Vec<u8> {
+        let hdr_len = 10u8; // 5-byte PTS + 5-byte DTS
+        let pes_len = 9 + hdr_len as usize + payload.len();
+        let mut pes = Vec::with_capacity(pes_len);
+        pes.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
+        pes.extend_from_slice(&((pes_len - 6) as u16).to_be_bytes());
+        pes.push(0x80); // flags1
+        pes.push(0xC0); // flags2: PTS_DTS_flags = 0b11
+        pes.push(hdr_len);
+        pes.extend_from_slice(&ts_field(0b0011, pts));
+        pes.extend_from_slice(&ts_field(0b0001, dts));
+        pes.extend_from_slice(payload);
+        pes
+    }
+
+    /// B-frame reordering: PTS goes backward while DTS advances → NOT a fault.
+    #[test]
+    fn bframe_pts_reorder_with_monotonic_dts_not_flagged() {
+        let pid = 0x0100;
+        let mut ts = Vec::new();
+        // AU 0: pts=dts=90_000. AU 1: pts=87_000 (backward, reorder) dts=93_000 (forward).
+        ts.extend_from_slice(&make_pes_packet(
+            pid,
+            0,
+            &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
+        ));
+        ts.extend_from_slice(&make_pes_packet(
+            pid,
+            1,
+            &build_pes_with_pts_dts(0xE0, 87_000, 93_000, &[0xBB]),
+        ));
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert!(
+            report.findings().is_empty(),
+            "B-frame PTS reorder with monotonic DTS must not be flagged, got {:?}",
+            report.findings()
+        );
+    }
+
+    /// Backward DTS (decode order) IS a fault.
+    #[test]
+    fn dts_backward_flagged() {
+        let pid = 0x0100;
+        let mut ts = Vec::new();
+        ts.extend_from_slice(&make_pes_packet(
+            pid,
+            0,
+            &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
+        ));
+        // dts=84_000 < prev 90_000 → backward decode timestamp.
+        ts.extend_from_slice(&make_pes_packet(
+            pid,
+            1,
+            &build_pes_with_pts_dts(0xE0, 96_000, 84_000, &[0xBB]),
+        ));
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        let dts_back: Vec<_> = report
+            .findings()
+            .iter()
+            .filter(|f| f.rule_id == "dts-backward")
+            .collect();
+        assert_eq!(
+            dts_back.len(),
+            1,
+            "expected one dts-backward finding, got {:?}",
+            report.findings()
+        );
     }
 
     /// Build a complete PES packet with PTS_DTS_flags = 0b01 (forbidden).
