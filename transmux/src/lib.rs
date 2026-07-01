@@ -36,6 +36,7 @@
 extern crate alloc;
 
 pub mod aac_asc;
+pub mod annexb;
 pub mod avc_config;
 pub mod box_types;
 pub mod error;
@@ -51,6 +52,10 @@ pub mod timing;
 pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
     ChannelConfiguration, SamplingFrequencyIndex,
+};
+pub use annexb::{
+    annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
+    length_prefixed_to_annexb, NAL_LENGTH_SIZE,
 };
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
