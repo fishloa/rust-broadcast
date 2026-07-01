@@ -6,18 +6,68 @@ supplies demuxed *encoded* access units + codec config; `transmux` produces the
 initialization and media segments (and the HLS playlists). No transcode, no
 codec bitstream decoding. `no_std` + `alloc`.
 
-## What's in the box
+## Scope — container multiplexing only
 
-| Layer | Types |
-|---|---|
-| ISOBMFF boxes | `Box`/`FullBox` framing, `MovieBox` tree (`mvhd`/`trak`/`tkhd`/`mdia`/`minf`/`stbl`/`stsd`), `mvex`/`trex`, movie-fragment boxes (`moof`/`mfhd`/`traf`/`tfhd`/`tfdt`/`trun`), `ftyp`/`styp`/`mdat`, timing boxes (`stts`/`ctts`/`stsc`/`stsz`/`stco`/`elst`/`sidx`) |
-| Codec config | `avcC`/`hvcC` decoder-configuration records, `esds`/ES_Descriptor, AAC `AudioSpecificConfig` (+ ADTS) |
-| NAL | Annex B ↔ length-prefixed conversion (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) |
-| Pipeline | `build_init_segment` (ftyp + fragmented-init moov) and `build_media_segment` (styp + moof + mdat) from a `TrackSpec` / `Sample` samples-in API |
-| Packaging | HLS media + master playlist generation (`MediaPlaylist` / `MasterPlaylist`, RFC 8216) |
+`transmux` **packages** coded media; it never encodes or decodes it. It parses
+codec *config/parameter headers* (SPS/PPS/VPS, AAC ASC, AC-3/E-AC-3 syncframe
+BSI) only far enough to build the container boxes and derive metadata
+(dimensions, profile, sample rate, `codecs=` MIME). The compressed samples
+themselves are **opaque payloads copied through byte-for-byte** — decode/encode
+is the caller's job (WebCodecs, FFmpeg, hardware). Demux (TS → elementary
+streams) also lives in the caller.
 
 Every box has a symmetric `Parse` / `Serialize` with byte-identical round-trip
 coverage against real fMP4 fixtures.
+
+## Feature matrix
+
+### Container — ISOBMFF / CMAF boxes
+
+| Group | Boxes | Status |
+|---|---|---|
+| File structure | `ftyp`, `styp`, `mdat`, `free`/`skip`, `uuid` | ✅ |
+| Movie | `moov` · `mvhd` · `trak` · `tkhd` · `mdia` · `mdhd` · `hdlr` · `minf` · `vmhd`/`smhd` · `dinf`/`dref` | ✅ |
+| Sample tables | `stbl` · `stsd` · `stts` · `ctts` · `cslg` · `stsc` · `stsz` · `stco`/`co64` · `stss` · `stsh` | ✅ |
+| Edit / fragment-init | `edts`/`elst`, `mvex`/`trex` | ✅ |
+| Movie fragments | `moof` · `mfhd` · `traf` · `tfhd` · `tfdt` · `trun` | ✅ |
+| Random access / index | `sidx`, `mfra`/`tfra`/`mfro` | ✅ |
+| Inband events / refs | `emsg`, `tref` | ✅ |
+| Encryption (CENC) | `senc`/`saiz`/`saio`/`tenc`/`pssh`/`sinf`/`schm`/`frma` | ⬜ [#429](https://github.com/fishloa/rust-broadcast/issues/429) |
+| Sample-entry ext | `colr` (HDR), `pasp`, `clap` | ⬜ [#434](https://github.com/fishloa/rust-broadcast/issues/434) |
+| Live / grouping | `prft`, `sbgp`/`sgpd`, `subs` | ⬜ [#435](https://github.com/fishloa/rust-broadcast/issues/435) |
+
+### Codecs — sample entries + config (header parse only)
+
+| Codec | Sample entry | Config box / decode | RFC 6381 | Status |
+|---|---|---|---|---|
+| H.264 / AVC | `avc1` (`avc2`/`avc3`/`avc4`) | `avcC` + **SPS/PPS decode** (profile/level/chroma/bit-depth/dims/interlaced) | `avc1.PPCCLL` | ✅ |
+| H.265 / HEVC | `hvc1` (`hev1`) | `hvcC` + **VPS/SPS + profile_tier_level decode** | `hvc1.…` | ✅ |
+| AAC | `mp4a` | `esds` / ES_Descriptor + `AudioSpecificConfig` (+ADTS) | `mp4a.40.N` | ✅ |
+| AC-3 | `ac-3` | `dac3` + syncframe BSI parse | `ac-3` | ✅ |
+| E-AC-3 | `ec-3` | `dec3` + syncframe BSI parse | `ec-3` | ✅ |
+| HE-AAC (SBR/PS) | `mp4a` | explicit-SBR/PS ASC | `mp4a.40.5/29` | ⬜ [#432](https://github.com/fishloa/rust-broadcast/issues/432) |
+| AC-4 | `ac-4` | `dac4` | `ac-4` | ⬜ [#431](https://github.com/fishloa/rust-broadcast/issues/431) |
+| MPEG-H 3D | `mha1`/`mhm1` | `mhaC` | — | ⬜ [#433](https://github.com/fishloa/rust-broadcast/issues/433) |
+| AV1 | `av01` | `av1C` | `av01.…` | ⬜ [#436](https://github.com/fishloa/rust-broadcast/issues/436) |
+| Opus / FLAC / VP9 / DTS | `Opus`/`fLaC`/`vp09`/`dtsc` | `dOps`/`dfLa`/`vpcC`/`ddts` | — | ⬜ [#437](https://github.com/fishloa/rust-broadcast/issues/437) |
+
+### Text / captions
+
+| Format | Sample entry | Status |
+|---|---|---|
+| WebVTT / TTML / CEA-608-708 | `wvtt` / `stpp` / SEI | ⬜ [#430](https://github.com/fishloa/rust-broadcast/issues/430) |
+
+### Pipeline & packaging
+
+| Feature | API | Status |
+|---|---|---|
+| Init segment | `build_init_segment` (ftyp + fragmented-init moov) | ✅ |
+| Media segment (batch) | `build_media_segment` (styp + moof + mdat) from `TrackSpec` / `Sample` | ✅ |
+| **Streaming segmenter** | `Segmenter` — `push` samples → `take_ready` segments, keyframe-cut at a target duration | ✅ |
+| NAL conversion | Annex B ↔ length-prefixed (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) | ✅ |
+| HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216) | ✅ |
+
+✅ = implemented + round-trip-tested · ⬜ = planned (issue linked)
 
 ## Quick start
 
@@ -39,15 +89,40 @@ let media = build_media_segment(1, &[FragmentTrackData {
 # Ok::<(), transmux::Error>(())
 ```
 
-An end-to-end `tests/ts_to_cmaf.rs` demonstrates the full path: demux a real
-H.264+AAC TS, synthesise `avcC`/`esds`, and emit byte-identical-config CMAF
-segments.
+For a live/streaming source, `Segmenter` owns the segment-cutting state machine:
 
-## Scope
+```rust
+use transmux::{Segmenter, Sample};
+# fn tracks() -> Vec<transmux::TrackSpec> { Vec::new() }
+# if false {
+let mut seg = Segmenter::new(tracks(), 1000, 2.0)?;    // ~2 s segments
+let init = seg.init_segment()?;                        // ftyp + moov, once
+seg.push(1, /* Sample */ unimplemented!())?;           // coded AUs, decode order
+for media in seg.take_ready() { /* write out */ }
+seg.flush()?;                                          // trailing segment at EOS
+# }
+# Ok::<(), transmux::Error>(())
+```
 
-`transmux` is the **container layer only**. Demux (TS → elementary streams) and
-transcode live in the caller. It is a clean-room, spec-built alternative to
-ripping a C muxer — every layout cites ISO/IEC 14496-12.
+Codec metadata comes straight from the parsed headers — no external SPS parser:
+
+```rust
+# if false {
+let sps = transmux::AvcSps(sps_nal_bytes);
+let info = sps.decode()?;              // profile / level / width·height / chroma …
+let mime = sps.rfc6381()?;             // e.g. "avc1.4D400D" for WebCodecs / MSE
+# }
+```
+
+`tests/ts_to_cmaf.rs` demonstrates the full path end-to-end: demux a real
+H.264+AAC TS, synthesise `avcC`/`esds`, and emit byte-identical-config CMAF.
+
+## Spec grounding
+
+Every layout cites its source (ISO/IEC 14496-12 boxes; 14496-1 §7.2.6 esds;
+ITU-T H.264 §7.3.2.1.1 / H.265 §7.3.2.2 SPS; ETSI TS 102 366 Annex F AC-3/E-AC-3).
+Codec-config tests decode **real ffmpeg-encoded fixtures** and assert against an
+independent oracle (`trace_headers` fields; ffmpeg's own MP4-muxer config boxes).
 
 ## License
 
