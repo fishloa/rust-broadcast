@@ -200,7 +200,7 @@ impl MediaDataBox {
                 what: "mdat",
             });
         }
-        if &bytes[4..8] != &MDAT {
+        if bytes[4..8] != MDAT {
             return Err(Error::UnexpectedBox { expected: "mdat" });
         }
         let size32 = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -280,7 +280,7 @@ fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
             what: "box header",
         });
     }
-    if &bytes[4..8] != four_cc {
+    if bytes[4..8] != *four_cc {
         return Err(Error::UnexpectedBox {
             expected: "ftyp/styp",
         });
