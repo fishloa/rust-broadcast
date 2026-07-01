@@ -53,6 +53,7 @@ pub mod annexb;
 pub mod avc_config;
 pub mod bitreader;
 pub mod box_types;
+pub mod cenc;
 pub mod error;
 pub mod hevc_config;
 pub mod hls;
@@ -78,6 +79,12 @@ pub use annexb::{
 };
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
+pub use cenc::{
+    OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
+    SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox, SampleEncryptionEntry,
+    SchemeInformationBox, SchemeTypeBox, SubSampleEntry, TrackEncryptionBox,
+    SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+};
 pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
