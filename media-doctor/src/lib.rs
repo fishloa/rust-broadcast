@@ -36,6 +36,7 @@ mod report;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
 pub use diagnostics::pat_pmt_version::PatPmtVersionCheck;
 pub use diagnostics::pcr_check::PcrCheck;
+pub use diagnostics::pts_check::PtsCheck;
 pub use diagnostics::sync_byte::SyncByteCheck;
 pub use report::{Finding, Location, Report, Severity};
 

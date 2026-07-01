@@ -14,6 +14,7 @@ required-features = ["cli"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+mpeg-pes         = { path = "../mpeg-pes", version = "0.1", default-features = false }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.1", default-features = false }
 dvb-si           = { path = "../dvb-si", version = "8", default-features = false }
 clap             = { version = "4", features = ["derive"], optional = true }
