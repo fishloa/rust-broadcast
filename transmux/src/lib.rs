@@ -66,6 +66,7 @@ pub mod segmenter;
 pub mod segments;
 pub mod sps;
 pub mod timing;
+pub mod visual_ext;
 
 pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
@@ -111,3 +112,4 @@ pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
+pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
