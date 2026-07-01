@@ -40,6 +40,7 @@ pub mod avc_config;
 pub mod box_types;
 pub mod error;
 pub mod hevc_config;
+pub mod init_segment;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod nalu_types;
@@ -54,6 +55,13 @@ pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
 pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+pub use init_segment::{
+    ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, EditBox, HandlerBox,
+    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieHeaderBox, Mp4aSampleEntry,
+    OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox,
+    SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox, TrackHeaderBox,
+    VideoMediaHeaderBox,
+};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
