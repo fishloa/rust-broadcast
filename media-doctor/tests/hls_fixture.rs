@@ -90,3 +90,18 @@ fn malformed_daterange_fixture() {
         report.findings(),
     );
 }
+
+/// `real-apple-vod.m3u8` — a genuine Apple HLS VOD media playlist (bipbop sample,
+/// 181 real segments). A real, well-formed playlist must produce zero findings.
+#[test]
+fn real_apple_vod_playlist_clean() {
+    let text = read_fixture("real-apple-vod.m3u8");
+    let mut report = Report::new();
+    media_doctor::check_playlist(&text, &mut report);
+    assert!(
+        report.is_empty(),
+        "real Apple VOD playlist should have no findings, got {}: {:?}",
+        report.len(),
+        report.findings(),
+    );
+}

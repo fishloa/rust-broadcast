@@ -89,3 +89,28 @@ fn scte35_unbalanced_fixture() {
         unbal,
     );
 }
+
+/// `scte35-real.ts` carries the **canonical industry** `splice_insert` vector
+/// (`4800008f`, event_id 0x4800008f, out_of_network=true) — a real SCTE-35
+/// message from the spec/threefive corpus, packetized on PID 0x01F0. As a lone
+/// "out" with no matching "in", `Scte35Check` must parse it and flag it
+/// unbalanced — proving a real industry cue round-trips through our stack.
+#[test]
+fn real_canonical_splice_insert_parsed_and_flagged() {
+    let ts = read("ts/scte35-real.ts");
+    let mut report = Report::new();
+    Scte35Check.run(&ts, &mut report);
+    let unbal = scte35_unbalanced(&report);
+    assert!(
+        !unbal.is_empty(),
+        "real canonical splice_insert (0x4800008f, lone out) must parse + flag \
+         unbalanced, got {:?}",
+        report.findings(),
+    );
+    // event_id 0x4800008f = 1207959695
+    assert!(
+        unbal.iter().any(|f| f.message.contains("1207959695")),
+        "unbalanced finding should reference the real event_id 1207959695: {:?}",
+        unbal,
+    );
+}
