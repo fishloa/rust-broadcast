@@ -15,6 +15,15 @@
 //! anchor to the observed PCR, so the two segments are restamped independently
 //! from their own bases.
 //!
+//! # PCR 33-bit base wrap
+//!
+//! The PCR is a 42-bit field: 33-bit base (90 kHz) × 300 + 9-bit extension,
+//! so the full 27 MHz value wraps at `2^33 × 300` (PCR\_27MHZ\_MODULUS).
+//! The Interpolate mode handles a legal wrap (where the raw observed value
+//! appears to decrease) via modular forward-distance comparison. All computed
+//! values are reduced modulo `PCR_27MHZ_MODULUS` so they wrap at the PCR
+//! boundary rather than the u64 boundary.
+//!
 //! # Forward-compat note
 //!
 //! The PCR is set **in-place** via [`mpeg_ts::OwnedTsPacket::set_pcr`], which
@@ -38,6 +47,9 @@ use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::{Pcr, TsPacket, TS_PACKET_SIZE};
 
 use crate::ops::{Op, StreamModel};
+
+/// 27 MHz PCR wrap period: 33-bit base × 300 (ISO/IEC 13818-1 §2.4.3.5).
+const PCR_27MHZ_MODULUS: u64 = (1u64 << 33) * 300;
 
 /// PCR restamp mode.
 ///
@@ -182,14 +194,19 @@ impl Op for PcrRestampOp {
                 anchor
                     .anchor_27mhz
                     .wrapping_add(Self::ticks_per_packet(*bps) * delta)
+                    % PCR_27MHZ_MODULUS
             }
             PcrRestamp::Interpolate => {
                 // Derive the rate from the last monotonic observation on this PID.
                 let obs = current.as_27mhz();
                 let pkt_delta = now.saturating_sub(anchor.last_obs_pkt);
-                if obs > anchor.last_obs_27mhz && pkt_delta > 0 {
-                    // Sane forward observation: trust it, advance the anchor's
-                    // observation window (jitter smoothing keeps observed values).
+                // Wrap-aware forward-distance check.  On a 33-bit PCR base wrap
+                // the raw `obs` is smaller than `last_obs_27mhz`, but the forward
+                // distance modulo the PCR modulus is a small positive step.
+                let fwd = obs.wrapping_sub(anchor.last_obs_27mhz) % PCR_27MHZ_MODULUS;
+                if fwd > 0 && fwd < PCR_27MHZ_MODULUS / 2 && pkt_delta > 0 {
+                    // Sane forward observation (possibly across a wrap): trust it,
+                    // advance the anchor's observation window.
                     anchor.last_obs_pkt = now;
                     anchor.last_obs_27mhz = obs;
                     obs
@@ -200,7 +217,7 @@ impl Op for PcrRestampOp {
                     let span_ticks = anchor.last_obs_27mhz.saturating_sub(anchor.anchor_27mhz);
                     let rate = (span_ticks / span_pkt).max(1);
                     let delta = now.saturating_sub(anchor.anchor_pkt);
-                    anchor.anchor_27mhz.wrapping_add(rate * delta)
+                    anchor.anchor_27mhz.wrapping_add(rate * delta) % PCR_27MHZ_MODULUS
                 }
             }
         };

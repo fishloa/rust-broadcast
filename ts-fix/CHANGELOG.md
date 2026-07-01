@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+- `restamp_pcr` (Interpolate mode) now handles the 33-bit PCR base wrap: a legal
+  wrap (where the raw 27 MHz value appears to decrease) is recognised via a
+  modular forward-distance test on `2^33 × 300`, instead of being mistaken for a
+  corrupt/non-monotonic observation and recomputed into a bogus discontinuity.
+  Computed values wrap at the PCR boundary (ISO/IEC 13818-1 §2.4.3.5).
+
 ### Added
 - `restamp_pcr(cfg: PcrRestamp)` builder method + `PcrRestamp` config enum with
   `interpolate()` and `from_bitrate(bps)` constructors — recompute PCR values
