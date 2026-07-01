@@ -2,6 +2,15 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- emsg version 0 ↔ version 1 conversion (`emsg_to_v0` / `emsg_to_v1` + `SegmentTiming`),
+  recomputing the timing field against the segment EPT (`T = EPT + delta` ==
+  `presentation_time`), honouring `timescale` equality and carrying PTO for
+  Movie↔Period alignment (ISO/IEC 23009-1:2022 §5.10.3.3). Byte-identical
+  round-trip verified against real v0 + v1 (DASH-IF livesim) SCTE-35 emsg fixtures.
+
 ## 0.1.1 — 2026-06-29
 
 ### Changed
