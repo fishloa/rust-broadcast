@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- End-to-end `tests/ts_to_cmaf.rs`: demux a real H.264+AAC MPEG-TS
+  (`fixtures/ts/h264_aac.ts`), synthesize `avcC` from the stream's SPS/PPS and
+  `esds` from the AAC ADTS header, build init + media segments, then re-parse —
+  asserting **byte-identical** avcC SPS/PPS + esds AudioSpecificConfig fidelity,
+  75 video access units, the computed ADTS frame count, and first-sample
+  round-trip. Closes the literal "TS in → CMAF out" acceptance (#408).
 - HLS playlist generation (RFC 8216): `MediaPlaylist` / `MasterPlaylist` +
   `Variant` / `MediaSegment` with `to_m3u8()` emitters for the CMAF segments
   produced by the remux pipeline (`#EXTM3U` / `EXT-X-VERSION` / `TARGETDURATION` /

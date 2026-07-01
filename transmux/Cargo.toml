@@ -21,6 +21,8 @@ serde  = ["dep:serde"]
 
 [dev-dependencies]
 media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }
+mpeg-ts  = { path = "../mpeg-ts",  version = "0.1", default-features = false, features = ["std"] }
+mpeg-pes = { path = "../mpeg-pes", version = "0.1", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true
