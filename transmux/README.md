@@ -32,9 +32,9 @@ coverage against real fMP4 fixtures.
 | Movie fragments | `moof` · `mfhd` · `traf` · `tfhd` · `tfdt` · `trun` | ✅ |
 | Random access / index | `sidx`, `mfra`/`tfra`/`mfro` | ✅ |
 | Inband events / refs | `emsg`, `tref` | ✅ |
-| Encryption (CENC) | `senc`/`saiz`/`saio`/`tenc`/`pssh`/`sinf`/`schm`/`frma` | ⬜ [#429](https://github.com/fishloa/rust-broadcast/issues/429) |
-| Sample-entry ext | `colr` (HDR), `pasp`, `clap` | ⬜ [#434](https://github.com/fishloa/rust-broadcast/issues/434) |
-| Live / grouping | `prft`, `sbgp`/`sgpd`, `subs` | ⬜ [#435](https://github.com/fishloa/rust-broadcast/issues/435) |
+| Encryption (CENC) | `senc`/`saiz`/`saio`/`tenc`/`pssh`/`sinf`/`schm`/`frma` | ✅ |
+| Sample-entry ext | `colr` (HDR), `pasp`, `clap` | ✅ |
+| Live / grouping | `prft`, `sbgp`/`sgpd`, `subs` | ✅ |
 
 ### Codecs — sample entries + config (header parse only)
 
@@ -45,17 +45,19 @@ coverage against real fMP4 fixtures.
 | AAC | `mp4a` | `esds` / ES_Descriptor + `AudioSpecificConfig` (+ADTS) | `mp4a.40.N` | ✅ |
 | AC-3 | `ac-3` | `dac3` + syncframe BSI parse | `ac-3` | ✅ |
 | E-AC-3 | `ec-3` | `dec3` + syncframe BSI parse | `ec-3` | ✅ |
-| HE-AAC (SBR/PS) | `mp4a` | explicit-SBR/PS ASC | `mp4a.40.5/29` | ⬜ [#432](https://github.com/fishloa/rust-broadcast/issues/432) |
-| AC-4 | `ac-4` | `dac4` | `ac-4` | ⬜ [#431](https://github.com/fishloa/rust-broadcast/issues/431) |
-| MPEG-H 3D | `mha1`/`mhm1` | `mhaC` | — | ⬜ [#433](https://github.com/fishloa/rust-broadcast/issues/433) |
-| AV1 | `av01` | `av1C` | `av01.…` | ⬜ [#436](https://github.com/fishloa/rust-broadcast/issues/436) |
-| Opus / FLAC / VP9 / DTS | `Opus`/`fLaC`/`vp09`/`dtsc` | `dOps`/`dfLa`/`vpcC`/`ddts` | — | ⬜ [#437](https://github.com/fishloa/rust-broadcast/issues/437) |
+| HE-AAC (SBR/PS) | `mp4a` | explicit-SBR/PS ASC | `mp4a.40.5/29` | ✅ |
+| AC-4 | `ac-4` | `dac4` | `ac-4` | ✅ |
+| MPEG-H 3D | `mha1`/`mhm1` | `mhaC` | — | ✅ |
+| AV1 | `av01` | `av1C` | `av01.…` | ✅ |
+| Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
+| DTS | `dtsc` | `ddts` | — | ⬜ [#437](https://github.com/fishloa/rust-broadcast/issues/437) |
 
 ### Text / captions
 
 | Format | Sample entry | Status |
 |---|---|---|
-| WebVTT / TTML / CEA-608-708 | `wvtt` / `stpp` / SEI | ⬜ [#430](https://github.com/fishloa/rust-broadcast/issues/430) |
+| WebVTT / TTML | `wvtt` / `stpp` | ✅ |
+| CEA-608/708 (in-band SEI) | SEI extraction | ⬜ [#430](https://github.com/fishloa/rust-broadcast/issues/430) |
 
 ### Pipeline & packaging
 

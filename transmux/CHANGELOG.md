@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-01
+### Added — fMP4 gap tier (real codecs + container completeness)
+- **Codec sample entries + config boxes** (container-level; header parse only, samples
+  pass through opaque): AV1 (`av01`/`av1C`, #436), VP9 (`vp09`/`vpcC`), Opus (`Opus`/
+  `dOps`), FLAC (`fLaC`/`dfLa`) (#437), AC-4 (`ac-4`/`dac4`, #431), MPEG-H 3D Audio
+  (`mha1`/`mhm1`/`mhaC`, #433), and HE-AAC SBR/PS AudioSpecificConfig signaling →
+  `mp4a.40.5`/`mp4a.40.29` (#432). Each with a `CodecConfig` variant + `rfc6381()`.
+- **CENC per-sample encryption** (#429, ISO/IEC 23001-7): `tenc`/`senc`/`saiz`/`saio`/
+  `pssh` + `sinf`/`frma`/`schm`/`schi` + `enca`/`encv` sample entries.
+- **Subtitle carriage** (#430, ISO/IEC 14496-30): `stpp` (TTML/IMSC) + `wvtt` (WebVTT +
+  `vttC`/`vtte`/`vttc`/`payl`/`sttg`/`iden`).
+- **Sample-entry extensions** (#434): `colr` (nclx — HDR/wide-gamut), `pasp`, `clap`.
+- **Timing / grouping** (#435): `prft` (ProducerReferenceTimeBox), `sgpd`/`sbgp`
+  (sample groups incl. `roll`), `subs` (sub-sample info).
+- **avcC/hvcC value-verification** (#441/#394): byte-exact round-trip against real
+  ffmpeg-muxer boxes; avcC now grounded on the text-layer 14496-15:2012.
+
+All new boxes are typed with symmetric `Parse`/`Serialize` and byte-exact round-trip
+tests against real ffmpeg-authored fixtures (config-box oracles = ffmpeg's own muxer
+output); MPEG-H uses a spec vector (no redistributable fixture/encoder).
+
 ## [0.4.1] — 2026-07-01
 ### Changed
 - Value-verified the `esds` / `mp4a` descriptor layout against the vendored
