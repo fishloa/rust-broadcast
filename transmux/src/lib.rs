@@ -7,10 +7,10 @@
 //! boxes and derive metadata — it never encodes or decodes media; coded samples
 //! pass through opaque. `no_std` + `alloc`.
 //!
-//! See the crate README for the full **feature matrix** (implemented boxes/codecs
-//! + planned coverage). Key entry points: [`build_init_segment`] /
+//! See the crate README for the full **feature matrix** (implemented boxes and
+//! codecs plus planned coverage). Key entry points: [`build_init_segment`] and
 //! [`build_media_segment`] (batch), [`Segmenter`] (streaming), [`AvcSps::decode`]
-//! + [`AvcSps::rfc6381`] (codec metadata), and the HLS playlist builders.
+//! with [`AvcSps::rfc6381`] (codec metadata), and the HLS playlist builders.
 //!
 //! This crate root also exposes the low-level ISOBMFF framing it is built on:
 //! [`BoxHeader`] (optional 64-bit `largesize` / `uuid` extended type),
