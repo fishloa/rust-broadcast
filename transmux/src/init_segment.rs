@@ -2136,12 +2136,172 @@ impl Serialize for TrackBox {
 // MovieBox — moov (container: mvhd, trak*, …) — THE TOP-LEVEL TYPE
 // ---------------------------------------------------------------------------
 
+/// Track Extends Box (`trex`) — ISO/IEC 14496-12:2015 §8.8.3.
+///
+/// Declares per-track defaults for the samples carried in movie fragments. A
+/// fragmented-init `moov` carries one `trex` per track inside [`MovieExtendsBox`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct TrackExtendsBox {
+    /// FullBox version (0).
+    pub version: u8,
+    /// FullBox flags (0).
+    pub flags: u32,
+    /// The track these defaults apply to.
+    pub track_id: u32,
+    /// Default `stsd` entry index (1-based).
+    pub default_sample_description_index: u32,
+    /// Default sample duration (movie timescale units).
+    pub default_sample_duration: u32,
+    /// Default sample size in bytes.
+    pub default_sample_size: u32,
+    /// Default per-sample flags (§8.8.3 sample flags layout).
+    pub default_sample_flags: u32,
+}
+
+impl<'a> Parse<'a> for TrackExtendsBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 32 {
+            return Err(Error::BufferTooShort {
+                need: 32,
+                have: bytes.len(),
+                what: "trex",
+            });
+        }
+        let body = &bytes[8..];
+        let version = body[0];
+        let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
+        Ok(Self {
+            version,
+            flags,
+            track_id: u32::from_be_bytes([body[4], body[5], body[6], body[7]]),
+            default_sample_description_index: u32::from_be_bytes([
+                body[8], body[9], body[10], body[11],
+            ]),
+            default_sample_duration: u32::from_be_bytes([body[12], body[13], body[14], body[15]]),
+            default_sample_size: u32::from_be_bytes([body[16], body[17], body[18], body[19]]),
+            default_sample_flags: u32::from_be_bytes([body[20], body[21], body[22], body[23]]),
+        })
+    }
+}
+
+impl Serialize for TrackExtendsBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        32
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        if buf.len() < 32 {
+            return Err(Error::OutputBufferTooSmall {
+                need: 32,
+                have: buf.len(),
+            });
+        }
+        buf[0..4].copy_from_slice(&32u32.to_be_bytes());
+        buf[4..8].copy_from_slice(b"trex");
+        buf[8] = self.version;
+        let fb = self.flags.to_be_bytes();
+        buf[9..12].copy_from_slice(&fb[1..]);
+        buf[12..16].copy_from_slice(&self.track_id.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.default_sample_description_index.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.default_sample_duration.to_be_bytes());
+        buf[24..28].copy_from_slice(&self.default_sample_size.to_be_bytes());
+        buf[28..32].copy_from_slice(&self.default_sample_flags.to_be_bytes());
+        Ok(32)
+    }
+}
+
+/// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2015 §8.8.1.
+///
+/// Signals that the movie is fragmented and carries the per-track [`TrackExtendsBox`]
+/// defaults. Any other children (e.g. `mehd`) are preserved verbatim in `opaque`;
+/// note the spec orders `mehd` before the `trex` list, so `opaque` is serialized
+/// last (correct for the common `trex`-only case built by the remux pipeline).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct MovieExtendsBox {
+    /// One `trex` per track.
+    pub trex: Vec<TrackExtendsBox>,
+    /// Other `mvex` children preserved verbatim (e.g. `mehd`).
+    pub opaque: Vec<OpaqueBox>,
+}
+
+impl<'a> Parse<'a> for MovieExtendsBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 8 {
+            return Err(Error::BufferTooShort {
+                need: 8,
+                have: bytes.len(),
+                what: "mvex",
+            });
+        }
+        let body = &bytes[8..];
+        let mut trex = Vec::new();
+        let mut opaque = Vec::new();
+        let mut off = 0usize;
+        while off + 8 <= body.len() {
+            let size = u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]])
+                as usize;
+            if size < 8 {
+                break;
+            }
+            let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
+            let box_bytes = &body[off..off + size.min(body.len() - off)];
+            match &boxtype {
+                b"trex" => trex.push(TrackExtendsBox::parse(box_bytes)?),
+                _ => opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec())),
+            }
+            off += size;
+        }
+        Ok(Self { trex, opaque })
+    }
+}
+
+impl Serialize for MovieExtendsBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let mut n = BOX_HDR;
+        for t in &self.trex {
+            n += t.serialized_len();
+        }
+        for o in &self.opaque {
+            n += o.serialized_len();
+        }
+        n
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut c = 0usize;
+        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
+        c += 4;
+        buf[c..c + 4].copy_from_slice(b"mvex");
+        c += 4;
+        for t in &self.trex {
+            c += t.serialize_into(&mut buf[c..])?;
+        }
+        for o in &self.opaque {
+            c += o.serialize_into(&mut buf[c..])?;
+        }
+        Ok(c)
+    }
+}
+
 /// Movie Box (`moov`) — §8.2.1.  The top-level init-segment container.
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MovieBox {
     pub mvhd: MovieHeaderBox,
     pub tracks: Vec<TrackBox>,
+    /// Movie-extends box (`mvex`) present in fragmented-init movies.
+    pub mvex: Option<MovieExtendsBox>,
     pub opaque: Vec<OpaqueBox>,
 }
 
@@ -2158,6 +2318,7 @@ impl<'a> Parse<'a> for MovieBox {
         let body = &bytes[8..];
         let mut mvhd = None;
         let mut tracks = Vec::new();
+        let mut mvex = None;
         let mut opaque = Vec::new();
         let mut off = 0usize;
         while off + 8 <= body.len() {
@@ -2171,6 +2332,7 @@ impl<'a> Parse<'a> for MovieBox {
             match &boxtype {
                 b"mvhd" => mvhd = Some(MovieHeaderBox::parse(box_bytes)?),
                 b"trak" => tracks.push(TrackBox::parse(box_bytes)?),
+                b"mvex" => mvex = Some(MovieExtendsBox::parse(box_bytes)?),
                 _ => {
                     opaque.push(OpaqueBox::new(boxtype, box_bytes[8..].to_vec()));
                 }
@@ -2184,6 +2346,7 @@ impl<'a> Parse<'a> for MovieBox {
                 what: "moov missing mvhd",
             })?,
             tracks,
+            mvex,
             opaque,
         })
     }
@@ -2196,20 +2359,16 @@ impl Serialize for MovieBox {
         for t in &self.tracks {
             n += t.serialized_len();
         }
+        if let Some(mvex) = &self.mvex {
+            n += mvex.serialized_len();
+        }
         for o in &self.opaque {
             n += o.serialized_len();
         }
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut children_len = self.mvhd.serialized_len();
-        for t in &self.tracks {
-            children_len += t.serialized_len();
-        }
-        for o in &self.opaque {
-            children_len += o.serialized_len();
-        }
-        let need = BOX_HDR + children_len;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
@@ -2224,6 +2383,9 @@ impl Serialize for MovieBox {
         c += self.mvhd.serialize_into(&mut buf[c..])?;
         for t in &self.tracks {
             c += t.serialize_into(&mut buf[c..])?;
+        }
+        if let Some(mvex) = &self.mvex {
+            c += mvex.serialize_into(&mut buf[c..])?;
         }
         for o in &self.opaque {
             c += o.serialize_into(&mut buf[c..])?;

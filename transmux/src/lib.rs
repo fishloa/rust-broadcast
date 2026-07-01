@@ -58,10 +58,10 @@ pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, EditBox, HandlerBox,
-    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieHeaderBox, Mp4aSampleEntry,
-    OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox,
-    SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox, TrackHeaderBox,
-    VideoMediaHeaderBox,
+    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
+    SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox,
+    TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

@@ -201,9 +201,7 @@ impl MediaDataBox {
             });
         }
         if &bytes[4..8] != &MDAT {
-            return Err(Error::UnexpectedBox {
-                expected: "mdat",
-            });
+            return Err(Error::UnexpectedBox { expected: "mdat" });
         }
         let size32 = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let (size, hdr) = if size32 == 1 {
