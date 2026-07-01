@@ -120,6 +120,41 @@ fn moov_real_fixture_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
+// Fragmented-init moov round-trip: exercises mvex/trex (+ udta) byte-identity
+// ---------------------------------------------------------------------------
+
+#[test]
+fn moov_frag_fixture_round_trip() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/transmux/h264_aac_frag.mp4"
+    );
+    let data = std::fs::read(path).expect("fixture file must exist");
+    let moov_bytes = find_top_box(&data, b"moov");
+
+    let moov = MovieBox::parse(moov_bytes).expect("should parse fragmented-init moov");
+
+    // mvex must be typed (not swept into opaque) and carry one trex per track.
+    let mvex = moov.mvex.as_ref().expect("fragmented moov must have mvex");
+    assert_eq!(mvex.trex.len(), 2, "two trex (video + audio)");
+    assert_eq!(mvex.trex[0].track_id, 1, "trex[0] track_id");
+    assert_eq!(mvex.trex[1].track_id, 2, "trex[1] track_id");
+    assert_eq!(
+        mvex.trex[0].default_sample_description_index, 1,
+        "trex default_sample_description_index"
+    );
+    // udta and any other non-mvex children stay preserved (round-trip proves it).
+    assert!(!moov.opaque.is_empty(), "udta preserved in opaque");
+
+    let serialized = moov.to_bytes();
+    assert_eq!(
+        &serialized[..],
+        moov_bytes,
+        "fragmented moov round-trip must be byte-identical"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // EXIT CRITERION 2: Navigation — reach avc1 and mp4a sample entries
 // ---------------------------------------------------------------------------
 

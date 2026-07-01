@@ -36,6 +36,7 @@
 extern crate alloc;
 
 pub mod aac_asc;
+pub mod annexb;
 pub mod avc_config;
 pub mod box_types;
 pub mod error;
@@ -44,12 +45,18 @@ pub mod init_segment;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod nalu_types;
+pub mod pipeline;
 pub mod sample_entries;
+pub mod segments;
 pub mod timing;
 
 pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
     ChannelConfiguration, SamplingFrequencyIndex,
+};
+pub use annexb::{
+    annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
+    length_prefixed_to_annexb, NAL_LENGTH_SIZE,
 };
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
@@ -57,10 +64,10 @@ pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use init_segment::{
     ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, EditBox, HandlerBox,
-    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieHeaderBox, Mp4aSampleEntry,
-    OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox,
-    SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox, TrackHeaderBox,
-    VideoMediaHeaderBox,
+    MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
+    SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry, TrackBox,
+    TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
@@ -71,7 +78,11 @@ pub use mp4esds::{
     SLConfigDescriptor, StreamType,
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
+pub use pipeline::{
+    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+};
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
+pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,

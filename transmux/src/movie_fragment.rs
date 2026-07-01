@@ -18,25 +18,35 @@ use broadcast_common::Serialize;
 const BOX_HEADER_SIZE: usize = 8;
 const FULLBOX_EXTRA_SIZE: usize = 4;
 
-// tfhd flags
-#[allow(dead_code)]
-const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
-const TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT: u32 = 0x000002;
-const TFHD_DEFAULT_SAMPLE_DURATION_PRESENT: u32 = 0x000008;
-const TFHD_DEFAULT_SAMPLE_SIZE_PRESENT: u32 = 0x000010;
-const TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT: u32 = 0x000020;
-#[allow(dead_code)]
-const TFHD_DURATION_IS_EMPTY: u32 = 0x010000;
-#[allow(dead_code)]
-const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x020000;
+// tfhd flags — ISO/IEC 14496-12:2015 §8.8.7.1 (public: builders set these).
+/// `tfhd` flag: `base_data_offset` field present.
+pub const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
+/// `tfhd` flag: `sample_description_index` field present.
+pub const TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT: u32 = 0x000002;
+/// `tfhd` flag: `default_sample_duration` field present.
+pub const TFHD_DEFAULT_SAMPLE_DURATION_PRESENT: u32 = 0x000008;
+/// `tfhd` flag: `default_sample_size` field present.
+pub const TFHD_DEFAULT_SAMPLE_SIZE_PRESENT: u32 = 0x000010;
+/// `tfhd` flag: `default_sample_flags` field present.
+pub const TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT: u32 = 0x000020;
+/// `tfhd` flag: duration-is-empty (no samples in this fragment for the track).
+pub const TFHD_DURATION_IS_EMPTY: u32 = 0x010000;
+/// `tfhd` flag: base offset is the containing `moof` (CMAF default).
+pub const TFHD_DEFAULT_BASE_IS_MOOF: u32 = 0x020000;
 
-// trun flags
-const TRUN_DATA_OFFSET_PRESENT: u32 = 0x000001;
-const TRUN_FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x000004;
-const TRUN_SAMPLE_DURATION_PRESENT: u32 = 0x000100;
-const TRUN_SAMPLE_SIZE_PRESENT: u32 = 0x000200;
-const TRUN_SAMPLE_FLAGS_PRESENT: u32 = 0x000400;
-const TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT: u32 = 0x000800;
+// trun flags — ISO/IEC 14496-12:2015 §8.8.8.1 (public: builders set these).
+/// `trun` flag: `data_offset` field present.
+pub const TRUN_DATA_OFFSET_PRESENT: u32 = 0x000001;
+/// `trun` flag: `first_sample_flags` field present.
+pub const TRUN_FIRST_SAMPLE_FLAGS_PRESENT: u32 = 0x000004;
+/// `trun` flag: per-sample `sample_duration` present.
+pub const TRUN_SAMPLE_DURATION_PRESENT: u32 = 0x000100;
+/// `trun` flag: per-sample `sample_size` present.
+pub const TRUN_SAMPLE_SIZE_PRESENT: u32 = 0x000200;
+/// `trun` flag: per-sample `sample_flags` present.
+pub const TRUN_SAMPLE_FLAGS_PRESENT: u32 = 0x000400;
+/// `trun` flag: per-sample `sample_composition_time_offset` present.
+pub const TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT: u32 = 0x000800;
 
 /// Read version(8) and flags(24) from the body bytes (first 4 bytes of a FullBox payload).
 fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {
