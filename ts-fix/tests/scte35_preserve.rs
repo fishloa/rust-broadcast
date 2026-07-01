@@ -236,3 +236,46 @@ fn restamp_pcr_does_not_corrupt_scte35() {
         "at least one PCR PID packet must differ (restamp was not active)"
     );
 }
+
+/// #417 design decision, made semantic: a PCR restamp must **not** shift the
+/// SCTE-35 `splice_time.pts_time` / `pts_adjustment`. Those live on the 90 kHz
+/// *presentation* (PTS) clock — the same timeline as the PES PTS, which this op
+/// does not touch — so the cue must stay put relative to the (unchanged) media.
+/// Parses the splice PTS from the cue before and after `restamp_pcr` and asserts
+/// each is identical. (Stronger-typed complement to the byte-identical check.)
+#[test]
+fn restamp_pcr_preserves_splice_pts_time() {
+    let input = load();
+    let out = run(&input, |b| {
+        b.restamp_pcr(PcrRestamp::from_bitrate(27_000_000))
+    });
+
+    // (pts_adjustment, program splice_time.pts_time) per section, in order.
+    fn splice_pts(ts: &[u8]) -> Vec<(u64, Option<u64>)> {
+        let payload = ts
+            .chunks_exact(PKT)
+            .find(|p| pid(p) == SCTE35_PID)
+            .map(|p| &p[4..])
+            .expect("SCTE-35 packet present");
+        parse_scte35_sections(payload)
+            .iter()
+            .map(|s| {
+                let clear = s.clear.as_ref().expect("clear cue");
+                let pts = match &clear.command {
+                    AnyCommand::SpliceInsert(si) => si.splice_time.and_then(|t| t.pts_time),
+                    AnyCommand::TimeSignal(t) => t.splice_time.pts_time,
+                    _ => None,
+                };
+                (s.pts_adjustment, pts)
+            })
+            .collect()
+    }
+
+    let before = splice_pts(&input);
+    let after = splice_pts(&out);
+    assert!(!before.is_empty(), "fixture must carry at least one cue");
+    assert_eq!(
+        before, after,
+        "PCR restamp must NOT shift SCTE-35 splice PTS / pts_adjustment (#417)"
+    );
+}
