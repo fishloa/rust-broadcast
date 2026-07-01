@@ -76,4 +76,10 @@ pub enum Error {
         /// The four-CC (or description) the parser required.
         expected: &'static str,
     },
+
+    /// A caller-supplied argument violated a documented precondition (e.g. an
+    /// empty track list or a non-positive segment duration passed to the
+    /// [`Segmenter`](crate::segmenter::Segmenter)).
+    #[error("invalid input: {0}")]
+    InvalidInput(&'static str),
 }

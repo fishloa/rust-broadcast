@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-01
+### Added
+- `Segmenter`: a stateful streaming CMAF segmenter wrapping `build_init_segment` /
+  `build_media_segment`. Feed coded samples in decode order (`push`), pull finished
+  media segments (`take_ready`), and `flush` the trailing partial segment at
+  end-of-stream. Segments are cut on the anchor track (first video track, else the
+  first track) at a keyframe once the target duration is reached, so every video
+  segment begins on a random-access point and the concatenation of all segments
+  carries the full stream with contiguous per-track `tfdt`. This is the streaming
+  state machine `build_media_segment` (a batch box builder) deliberately omits;
+  it lets a live remuxer produce a CMAF track without hand-rolling segment cutting.
+- `Error::InvalidInput(&'static str)` for caller-precondition violations (empty
+  track list, non-positive segment duration, duplicate `track_id`, unknown
+  `track_id` on `push`).
+
 ## [0.1.0] — 2026-07-01
 ### Added
 - End-to-end `tests/ts_to_cmaf.rs`: demux a real H.264+AAC MPEG-TS
