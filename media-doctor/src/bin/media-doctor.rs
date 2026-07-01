@@ -7,7 +7,7 @@ use clap::Parser;
 use media_doctor::cli::{CheckArgs, Cli};
 use media_doctor::{
     run_all, CcAnomalyCheck, Diagnostic, PatPmtVersionCheck, PcrCheck, PtsCheck, Report,
-    SyncByteCheck,
+    Scte35Check, SyncByteCheck,
 };
 
 fn main() {
@@ -31,6 +31,7 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
         &CcAnomalyCheck,
         &PcrCheck,
         &PtsCheck,
+        &Scte35Check,
     ];
     run_all(&ts, diagnostics, &mut report);
 

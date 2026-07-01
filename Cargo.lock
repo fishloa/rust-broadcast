@@ -724,6 +724,7 @@ dependencies = [
  "dvb-si",
  "mpeg-pes",
  "mpeg-ts",
+ "scte35-splice",
  "serde",
  "serde_json",
  "thiserror",
