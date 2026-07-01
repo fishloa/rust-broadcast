@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-01
+### Added
+- SPS/VPS decode + RFC 6381 codec strings, so transmux no longer needs an external
+  parser (e.g. `h264_reader`) to learn what it must put in an `avcC`/`hvcC`:
+  - `AvcSps::decode() -> AvcSpsInfo` (ITU-T H.264 §7.3.2.1.1): profile_idc,
+    constraint byte, level_idc, chroma_format_idc, bit-depths, `frame_mbs_only`,
+    and coded width·height after frame cropping (chroma-dependent CropUnit +
+    interlaced height factor). Handles the high-profile branch and skips
+    SPS-embedded scaling lists.
+  - `HevcNalUnit::decode_sps() -> Option<HevcSpsInfo>` (ITU-T H.265 §7.3.2.2 +
+    profile_tier_level §7.3.3): general profile/tier/level, compatibility +
+    constraint flags, chroma/bit-depth, conformance-window-cropped dimensions.
+  - RFC 6381 strings: `AvcSps::rfc6381()` → `avc1.PPCCLL`;
+    `HevcNalUnit::rfc6381()` → `hvc1.…`; `AudioSpecificConfig::rfc6381()` →
+    `mp4a.40.<AOT>`. Plus a public `bitreader` (Exp-Golomb + emulation-prevention
+    unescape) and `sps` module.
+- Gate `tests/codec_config.rs`: decodes real ffmpeg-encoded fixtures across the
+  full H.264 profile matrix (baseline/main/high/high10/high422/high444 + interlaced
+  + 1080-cropped) and HEVC main/main10, asserting every field against a
+  `trace_headers` oracle, plus a scaling-list spec vector and an avcC round-trip.
+
 ## [0.2.0] — 2026-07-01
 ### Added
 - `Segmenter`: a stateful streaming CMAF segmenter wrapping `build_init_segment` /

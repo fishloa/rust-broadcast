@@ -21,6 +21,7 @@
 //! - ADTS: ISO/IEC 13818-7:2003 §A.2.2.3 (Audio Data Transport Stream).
 
 use crate::error::{Error, Result};
+use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -310,6 +311,13 @@ pub struct AudioSpecificConfig {
     pub trailing: Vec<u8>,
     /// Bottom 3 bits of the partial byte shared with fixed fields.
     pub trailing_top: Option<u8>,
+}
+
+impl AudioSpecificConfig {
+    /// Build the RFC 6381 `mp4a.40.<AOT>` codec string.
+    pub fn rfc6381(&self) -> String {
+        crate::sps::rfc6381_mp4a(self.audio_object_type.raw())
+    }
 }
 
 impl Parse<'_> for AudioSpecificConfig {
