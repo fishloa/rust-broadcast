@@ -19,5 +19,8 @@ default = ["std", "serde"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 
+[dev-dependencies]
+media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }
+
 [package.metadata.docs.rs]
 all-features = true

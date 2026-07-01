@@ -1202,6 +1202,7 @@ name = "transmux"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "media-doctor",
  "serde",
  "thiserror",
 ]
