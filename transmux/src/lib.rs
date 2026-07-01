@@ -63,6 +63,7 @@ pub mod hls;
 pub mod init_segment;
 pub mod movie_fragment;
 pub mod mp4esds;
+pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
@@ -104,7 +105,7 @@ pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox, MediaBox,
-    MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
     Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
     SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
     TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
@@ -116,6 +117,10 @@ pub use movie_fragment::{
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType,
+};
+pub use mpegh::{
+    MHADecoderConfigurationRecord, MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION,
+    MHAC_FOURCC, MHAC_RECORD_FIXED_LEN, MHM1_FOURCC, MHM2_FOURCC,
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, OpusSpecificBox, DOPS_FOURCC, OPUS_FOURCC};
