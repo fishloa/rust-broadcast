@@ -1283,6 +1283,145 @@ impl Serialize for Ec3SampleEntry {
 }
 
 // ---------------------------------------------------------------------------
+// OpusSampleEntry (Opus) / FlacSampleEntry (fLaC) / Ac4SampleEntry (ac-4)
+// ---------------------------------------------------------------------------
+
+/// Opus audio sample entry (`Opus`) — Opus-in-ISOBMFF §4.3.2.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `dOps` box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct OpusSampleEntry {
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for OpusSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            b"Opus",
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+impl<'a> Parse<'a> for OpusSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (dri, chan, samp_sz, sr, config_boxes) = parse_audio_sample_entry(bytes, "Opus")?;
+        Ok(Self {
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+/// FLAC audio sample entry (`fLaC`) — FLAC-in-ISOBMFF.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `dfLa` box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct FlacSampleEntry {
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for FlacSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            b"fLaC",
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+impl<'a> Parse<'a> for FlacSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (dri, chan, samp_sz, sr, config_boxes) = parse_audio_sample_entry(bytes, "fLaC")?;
+        Ok(Self {
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+/// AC-4 audio sample entry (`ac-4`) — ETSI TS 103 190-2 §E.4.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `dac4` box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Ac4SampleEntry {
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for Ac4SampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            b"ac-4",
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+impl<'a> Parse<'a> for Ac4SampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (dri, chan, samp_sz, sr, config_boxes) = parse_audio_sample_entry(bytes, "ac-4")?;
+        Ok(Self {
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared audio sample entry parse/serialize helpers
 // ---------------------------------------------------------------------------
 
@@ -1497,6 +1636,8 @@ impl Serialize for Mp4aSampleEntry {
 pub enum SampleEntryVariant {
     Avc1(crate::sample_entries::AVCSampleEntry),
     Hevc1(crate::sample_entries::HEVCSampleEntry),
+    Av01(Box<crate::av1::Av1SampleEntry>),
+    Vp09(Box<crate::vp9::Vp9SampleEntry>),
     Mp4a(Box<Mp4aSampleEntry>),
     Ac3(Box<Ac3SampleEntry>),
     Ec3(Box<Ec3SampleEntry>),
@@ -1504,6 +1645,9 @@ pub enum SampleEntryVariant {
     Stpp(Box<crate::subtitle_entries::XmlSubtitleSampleEntry>),
     /// ISO/IEC 14496-30 WebVTT subtitle sample entry (`wvtt`).
     Wvtt(Box<crate::subtitle_entries::WvttSampleEntry>),
+    Ac4(Box<Ac4SampleEntry>),
+    Opus(Box<OpusSampleEntry>),
+    Flac(Box<FlacSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -1562,6 +1706,15 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
                     crate::subtitle_entries::WvttSampleEntry::bare_parse(box_bytes)?,
                 )),
+                b"av01" => SampleEntryVariant::Av01(Box::new(
+                    crate::av1::Av1SampleEntry::parse_entry(box_bytes)?,
+                )),
+                b"vp09" => SampleEntryVariant::Vp09(Box::new(
+                    crate::vp9::Vp9SampleEntry::parse_entry(box_bytes)?,
+                )),
+                b"ac-4" => SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry::parse(box_bytes)?)),
+                b"Opus" => SampleEntryVariant::Opus(Box::new(OpusSampleEntry::parse(box_bytes)?)),
+                b"fLaC" => SampleEntryVariant::Flac(Box::new(FlacSampleEntry::parse(box_bytes)?)),
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
@@ -1587,11 +1740,16 @@ impl Serialize for SampleDescriptionBox {
             n += match e {
                 SampleEntryVariant::Avc1(a) => a.serialized_len(),
                 SampleEntryVariant::Hevc1(h) => h.serialized_len(),
+                SampleEntryVariant::Av01(a) => a.serialized_len(),
+                SampleEntryVariant::Vp09(v) => v.serialized_len(),
                 SampleEntryVariant::Mp4a(m) => m.serialized_len(),
                 SampleEntryVariant::Ac3(a) => a.serialized_len(),
                 SampleEntryVariant::Ec3(e) => e.serialized_len(),
                 SampleEntryVariant::Stpp(s) => s.serialized_len(),
                 SampleEntryVariant::Wvtt(w) => w.serialized_len(),
+                SampleEntryVariant::Ac4(a) => a.serialized_len(),
+                SampleEntryVariant::Opus(o) => o.serialized_len(),
+                SampleEntryVariant::Flac(f) => f.serialized_len(),
                 SampleEntryVariant::Unknown(u) => u.serialized_len(),
             };
         }
@@ -1621,11 +1779,16 @@ impl Serialize for SampleDescriptionBox {
             c += match e {
                 SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Av01(a) => a.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Vp09(v) => v.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Stpp(s) => s.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Wvtt(w) => w.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Ac4(a) => a.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
             };
         }

@@ -313,11 +313,153 @@ pub struct AudioSpecificConfig {
     pub trailing_top: Option<u8>,
 }
 
+/// Explicit-signaling extension state (HE-AAC SBR / HE-AAC v2 PS) recovered from
+/// an [`AudioSpecificConfig`] — ISO/IEC 14496-3 §1.6.2 (SBR: Amd 1, PS: Amd 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct HeAacSignaling {
+    /// SBR is explicitly signaled (`sbrPresentFlag == 1`, HE-AAC v1).
+    pub sbr_present: bool,
+    /// PS is explicitly signaled (`psPresentFlag == 1`, HE-AAC v2).
+    pub ps_present: bool,
+    /// The effective object type for RFC 6381: `29` (PS), `5` (SBR), or the core AOT.
+    pub effective_aot: u8,
+}
+
+/// AudioObjectType raw value for SBR (HE-AAC v1).
+const AOT_SBR: u8 = 5;
+/// AudioObjectType raw value for PS (HE-AAC v2).
+const AOT_PS: u8 = 29;
+/// AAC backward-compatible SBR sync-extension type (11 bits).
+const SYNC_EXT_SBR: u16 = 0x2B7;
+/// AAC backward-compatible PS sync-extension type (11 bits).
+const SYNC_EXT_PS: u16 = 0x548;
+/// `samplingFrequencyIndex` escape value (24-bit explicit rate follows).
+const SFI_ESCAPE: u8 = 0x0F;
+
 impl AudioSpecificConfig {
-    /// Build the RFC 6381 `mp4a.40.<AOT>` codec string.
+    /// Build the RFC 6381 `mp4a.40.<AOT>` codec string, honouring explicit HE-AAC
+    /// SBR/PS signaling (`mp4a.40.5` / `mp4a.40.29`).
     pub fn rfc6381(&self) -> String {
-        crate::sps::rfc6381_mp4a(self.audio_object_type.raw())
+        crate::sps::rfc6381_mp4a(self.heaac_signaling().effective_aot)
     }
+
+    /// Recover the explicit HE-AAC SBR/PS signaling from the ASC bitstream.
+    ///
+    /// Handles both encodings from ISO/IEC 14496-3 §1.6.2:
+    /// hierarchical (`audioObjectType == 5`/`29`) and the trailing
+    /// backward-compatible sync extensions (`0x2B7` → SBR, `0x548` → PS).
+    /// Read-only over the parsed fields — never mutates the round-trip bytes.
+    pub fn heaac_signaling(&self) -> HeAacSignaling {
+        let bytes = self.to_bytes();
+        detect_heaac_signaling(&bytes).unwrap_or(HeAacSignaling {
+            sbr_present: false,
+            ps_present: false,
+            effective_aot: self.audio_object_type.raw(),
+        })
+    }
+}
+
+/// Read `n` MSB-first bits from `bytes` at `*bit`, advancing it. Returns `None`
+/// if the buffer is exhausted.
+fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
+    if *bit + n > bytes.len() * 8 {
+        return None;
+    }
+    let mut v = 0u32;
+    for _ in 0..n {
+        let byte = bytes[*bit / 8];
+        let b = (byte >> (7 - (*bit % 8))) & 1;
+        v = (v << 1) | b as u32;
+        *bit += 1;
+    }
+    Some(v)
+}
+
+/// `GetAudioObjectType()` — 5 bits, or `31 + 6` bits (ISO/IEC 14496-3 §1.5.1.1).
+fn asc_get_aot(bytes: &[u8], bit: &mut usize) -> Option<u8> {
+    let a = asc_read_bits(bytes, bit, 5)?;
+    if a == 31 {
+        Some((32 + asc_read_bits(bytes, bit, 6)?) as u8)
+    } else {
+        Some(a as u8)
+    }
+}
+
+/// Bit-decode the ASC to detect explicit SBR/PS signaling.
+fn detect_heaac_signaling(bytes: &[u8]) -> Option<HeAacSignaling> {
+    let mut bit = 0usize;
+    let mut aot = asc_get_aot(bytes, &mut bit)?;
+    let mut sbr_present = false;
+    let mut ps_present = false;
+
+    // samplingFrequencyIndex (+ 24-bit escape rate).
+    let sfi = asc_read_bits(bytes, &mut bit, 4)? as u8;
+    if sfi == SFI_ESCAPE {
+        asc_read_bits(bytes, &mut bit, 24)?;
+    }
+    asc_read_bits(bytes, &mut bit, 4)?; // channelConfiguration
+
+    // Hierarchical explicit signaling: AOT 5 (SBR) or 29 (PS).
+    if aot == AOT_SBR || aot == AOT_PS {
+        if aot == AOT_PS {
+            ps_present = true;
+        }
+        sbr_present = true;
+        let esfi = asc_read_bits(bytes, &mut bit, 4)? as u8;
+        if esfi == SFI_ESCAPE {
+            asc_read_bits(bytes, &mut bit, 24)?;
+        }
+        aot = asc_get_aot(bytes, &mut bit)?; // core AOT
+    }
+
+    // Trailing backward-compatible sync extension (best-effort; only for AAC-LC
+    // core where GASpecificConfig is a fixed 3-bit tail with no PCE).
+    if !sbr_present && aot == AudioObjectType::AacLc.raw() {
+        // GASpecificConfig: frameLengthFlag(1) dependsOnCoreCoder(1) extensionFlag(1).
+        asc_read_bits(bytes, &mut bit, 3);
+        if let Some(sync) = asc_read_bits(bytes, &mut bit, 11) {
+            if sync as u16 == SYNC_EXT_SBR {
+                if let Some(ext_aot) = asc_get_aot(bytes, &mut bit) {
+                    if ext_aot == AOT_SBR {
+                        if let Some(flag) = asc_read_bits(bytes, &mut bit, 1) {
+                            sbr_present = flag == 1;
+                            if sbr_present {
+                                let esfi = asc_read_bits(bytes, &mut bit, 4).unwrap_or(0) as u8;
+                                if esfi == SFI_ESCAPE {
+                                    asc_read_bits(bytes, &mut bit, 24);
+                                }
+                                if let Some(sync2) = asc_read_bits(bytes, &mut bit, 11) {
+                                    if sync2 as u16 == SYNC_EXT_PS {
+                                        // The psPresentFlag(1) follows; when the ASC is
+                                        // byte-aligned it may be truncated, in which case
+                                        // the presence of the 0x548 sync itself signals PS.
+                                        ps_present =
+                                            asc_read_bits(bytes, &mut bit, 1).unwrap_or(1) == 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if sync as u16 == SYNC_EXT_PS {
+                ps_present = asc_read_bits(bytes, &mut bit, 1).unwrap_or(0) == 1;
+            }
+        }
+    }
+
+    let effective_aot = if ps_present {
+        AOT_PS
+    } else if sbr_present {
+        AOT_SBR
+    } else {
+        aot
+    };
+    Some(HeAacSignaling {
+        sbr_present,
+        ps_present,
+        effective_aot,
+    })
 }
 
 impl Parse<'_> for AudioSpecificConfig {
