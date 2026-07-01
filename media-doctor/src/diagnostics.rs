@@ -5,4 +5,5 @@
 pub mod cc_anomaly;
 pub mod pat_pmt_version;
 pub mod pcr_check;
+pub mod pts_check;
 pub mod sync_byte;

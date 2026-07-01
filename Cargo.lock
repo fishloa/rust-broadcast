@@ -722,6 +722,7 @@ dependencies = [
  "broadcast-common",
  "clap",
  "dvb-si",
+ "mpeg-pes",
  "mpeg-ts",
  "serde",
  "serde_json",

@@ -5,7 +5,10 @@ use std::process;
 
 use clap::Parser;
 use media_doctor::cli::{CheckArgs, Cli};
-use media_doctor::{run_all, Diagnostic, Report, SyncByteCheck};
+use media_doctor::{
+    run_all, CcAnomalyCheck, Diagnostic, PatPmtVersionCheck, PcrCheck, PtsCheck, Report,
+    SyncByteCheck,
+};
 
 fn main() {
     let cli = Cli::parse();
@@ -22,7 +25,13 @@ fn main() {
 fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
     let ts = fs::read(&args.input)?;
     let mut report = Report::new();
-    let diagnostics: &[&dyn Diagnostic] = &[&SyncByteCheck];
+    let diagnostics: &[&dyn Diagnostic] = &[
+        &SyncByteCheck,
+        &PatPmtVersionCheck,
+        &CcAnomalyCheck,
+        &PcrCheck,
+        &PtsCheck,
+    ];
     run_all(&ts, diagnostics, &mut report);
 
     if args.json {
