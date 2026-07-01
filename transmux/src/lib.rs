@@ -1,9 +1,21 @@
-//! `transmux` — ISOBMFF box layer (ISO/IEC 14496-12:2015 §4.2).
+//! `transmux` — MPEG-2 TS → CMAF/fMP4 container remux (ISO/IEC 14496-12:2015).
 //!
-//! Parses and serialises ISO Base Media File Format box headers: [`BoxHeader`] with
-//! optional 64-bit `largesize` and `uuid` extended type, [`FullBoxHeader`] with
-//! `version` + `flags`, and a generic size-driven box walker ([`BoxIter`]) that
-//! skips unknown box types by advancing by `size`.
+//! A **samples-in** container multiplexer: the caller supplies demuxed *coded*
+//! access units + codec config, and `transmux` produces CMAF initialization and
+//! media segments plus HLS playlists. It parses codec config/parameter headers
+//! (SPS/PPS/VPS, AAC ASC, AC-3/E-AC-3 syncframe BSI) only to build the container
+//! boxes and derive metadata — it never encodes or decodes media; coded samples
+//! pass through opaque. `no_std` + `alloc`.
+//!
+//! See the crate README for the full **feature matrix** (implemented boxes and
+//! codecs plus planned coverage). Key entry points: [`build_init_segment`] and
+//! [`build_media_segment`] (batch), [`Segmenter`] (streaming), [`AvcSps::decode`]
+//! with [`AvcSps::rfc6381`] (codec metadata), and the HLS playlist builders.
+//!
+//! This crate root also exposes the low-level ISOBMFF framing it is built on:
+//! [`BoxHeader`] (optional 64-bit `largesize` / `uuid` extended type),
+//! [`FullBoxHeader`] (`version` + `flags`), and a size-driven box walker
+//! ([`BoxIter`]) that skips unknown box types by advancing by `size`.
 //!
 //! # Quick start
 //!
