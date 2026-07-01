@@ -33,6 +33,19 @@
 //! that v0.2's PTS/DTS-wrap op will reuse; PCR's per-PID anchors are local to
 //! this op.
 //!
+//! # SCTE-35 splice PTS is intentionally NOT adjusted (#417)
+//!
+//! A SCTE-35 `splice_time.pts_time` (and `pts_adjustment`) is a **PTS** on the
+//! program's 90 kHz **presentation** clock — the same timeline as the PES
+//! `PTS`/`DTS`. The **PCR** is the independent transport-layer clock reference.
+//! This op restamps only the PCR PID; it does **not** rewrite PES `PTS`/`DTS`, so
+//! the presentation timeline is unchanged and the cue stays aligned to the media.
+//! Shifting `splice_time.pts_time` by the PCR delta would therefore *desync* the
+//! cue from the (unchanged) PES PTS. So SCTE-35 cues are left byte-identical
+//! through a PCR restamp (see `tests/scte35_preserve.rs`). A splice-PTS
+//! adjustment becomes correct only once a PES-PTS-rebase op exists (the v0.2
+//! PTS/DTS-wrap op), at which point the cue would shift by the *same* PES-PTS delta.
+//!
 //! # Spec
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.3.5 (PCR semantics). PCR is
