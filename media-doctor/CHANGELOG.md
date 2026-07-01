@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `check_playlist` — text-input HLS playlist validator (RFC 8216): flags a missing
+  `#EXTM3U` header, a media playlist without `#EXT-X-TARGETDURATION`, an `#EXTINF`
+  duration exceeding the target, and a malformed `#EXT-X-DATERANGE` line (validated
+  via `timed-metadata`). Adds `timed-metadata` dependency.
 - `Scte35Check` diagnostic: container-level SCTE-35 splice consistency —
   reassembles `splice_info_section`s (table_id 0xFC) and flags unbalanced
   `splice_insert` out/in pairs (out with no matching in by stream end) and
