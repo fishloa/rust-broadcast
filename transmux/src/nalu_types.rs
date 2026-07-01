@@ -4,6 +4,10 @@
 //! Arrays carry them in wire order and compute their own serialized length.
 
 use crate::error::{Error, Result};
+use crate::sps::{
+    decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1, AvcSpsInfo, HevcSpsInfo,
+};
+use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
 
@@ -15,6 +19,26 @@ use broadcast_common::Serialize;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AvcSps(pub Vec<u8>);
+
+impl AvcSps {
+    /// Decode the SPS fields needed for codec configuration.
+    ///
+    /// Returns profile, level, dimensions, chroma, bit-depth, and
+    /// frame-type information.
+    pub fn decode(&self) -> Result<AvcSpsInfo> {
+        decode_avc_sps(&self.0)
+    }
+
+    /// Build the RFC 6381 codec string (e.g. `"avc1.4D400D"`).
+    pub fn rfc6381(&self) -> Result<String> {
+        let info = self.decode()?;
+        Ok(rfc6381_avc1(
+            info.profile_idc,
+            info.constraint_flags,
+            info.level_idc,
+        ))
+    }
+}
 
 /// A single AVC picture parameter set (PPS) NAL unit — raw bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +67,29 @@ impl HevcNalUnit {
     /// Build a new HEVC NAL unit from raw bytes.
     pub fn new(data: Vec<u8>) -> Self {
         Self(data)
+    }
+
+    /// Decode the SPS fields if this NAL unit is an SPS (NAL unit type 33).
+    ///
+    /// Returns `None` if the NAL unit type is not SPS.
+    pub fn decode_sps(&self) -> Result<Option<HevcSpsInfo>> {
+        if self.0.len() < 2 {
+            return Ok(None);
+        }
+        let nal_type = (self.0[0] >> 1) & 0x3F;
+        if nal_type != 33 {
+            return Ok(None);
+        }
+        decode_hevc_sps(&self.0).map(Some)
+    }
+
+    /// Build the RFC 6381 `hvc1.…` codec string if this is an SPS NAL unit.
+    pub fn rfc6381(&self) -> Result<Option<String>> {
+        if let Some(info) = self.decode_sps()? {
+            Ok(Some(rfc6381_hvc1(&info)))
+        } else {
+            Ok(None)
+        }
     }
 }
 

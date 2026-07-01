@@ -38,6 +38,7 @@ extern crate alloc;
 pub mod aac_asc;
 pub mod annexb;
 pub mod avc_config;
+pub mod bitreader;
 pub mod box_types;
 pub mod error;
 pub mod hevc_config;
@@ -50,6 +51,7 @@ pub mod pipeline;
 pub mod sample_entries;
 pub mod segmenter;
 pub mod segments;
+pub mod sps;
 pub mod timing;
 
 pub use aac_asc::{
@@ -87,6 +89,10 @@ pub use pipeline::{
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
 pub use segmenter::Segmenter;
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+pub use sps::{
+    decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a, AvcSpsInfo,
+    HevcSpsInfo,
+};
 pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
