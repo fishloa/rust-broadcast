@@ -5,6 +5,12 @@ Source: `specs/fulltext/iso_iec_14496-15_avc_hevc_2017_excerpt.md` (vision-trans
 syntax of the relevant sections; cites by spec § + printed page). The PDF body is image-only —
 exact bit-field values cross-checked against FFmpeg `movenc.c` where it matters.
 
+> **#394 (partial):** a **text-layer** edition — **`specs/iso_iec_14496-15_2012_avc_format_TEXTLAYER.pdf`**
+> (ISO/IEC 14496-15:2012, "AVC file format") — now grounds **`avcC`** (`AVCDecoderConfigurationRecord`,
+> §5.2.4.1, text-searchable). It predates HEVC-in-MP4, so **`hvcC`** is NOT in it: hvcC stays grounded
+> on the scanned 2017 ed + FFmpeg `movenc.c` + the ffmpeg-oracle byte-exact round-trip test (#443).
+> No free text-layer 2014/2017 (HEVC) edition located.
+
 ## NAL sample format — §4.3.3 / §5.3.2
 
 - A **sample = one access unit** (AVC: §5.3.1; HEVC: §8.3.1). Within a sample, each NAL unit is
