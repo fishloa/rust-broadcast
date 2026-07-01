@@ -41,6 +41,7 @@ pub mod avc_config;
 pub mod box_types;
 pub mod error;
 pub mod hevc_config;
+pub mod hls;
 pub mod init_segment;
 pub mod movie_fragment;
 pub mod mp4esds;
@@ -62,6 +63,7 @@ pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{box_iter, parse_box, BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader};
 pub use error::{Error, Result};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
     ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, EditBox, HandlerBox,
     MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,

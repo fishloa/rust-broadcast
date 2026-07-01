@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- HLS playlist generation (RFC 8216): `MediaPlaylist` / `MasterPlaylist` +
+  `Variant` / `MediaSegment` with `to_m3u8()` emitters for the CMAF segments
+  produced by the remux pipeline (`#EXTM3U` / `EXT-X-VERSION` / `TARGETDURATION` /
+  `MEDIA-SEQUENCE` / `EXTINF` / `ENDLIST`; master `EXT-X-STREAM-INF` with
+  bandwidth/codecs/resolution; `extra_tags` for `EXT-X-DATERANGE`). Generated
+  playlists validate clean through `media-doctor::check_playlist`.
 - Segment-level boxes: `FileTypeBox` (`ftyp`), `SegmentTypeBox` (`styp`),
   `MediaDataBox` (`mdat`, 32-bit + 64-bit largesize).
 - Typed `MovieExtendsBox` (`mvex`) + `TrackExtendsBox` (`trex`) on `MovieBox`
