@@ -1216,6 +1216,7 @@ dependencies = [
  "clap",
  "dvb-si",
  "mpeg-ts",
+ "scte35-splice",
  "thiserror",
 ]
 

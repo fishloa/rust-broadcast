@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- SCTE-35 cue preservation guarantee (tests): PID-filter keep-mode passes the
+  splice PID + its `splice_info_section`s through byte-intact, and `restamp_pcr`
+  leaves SCTE-35 sections untouched while it rewrites the PCR PID (the cue is
+  preserved across remux). Shifting the splice PTS to match a restamped PCR is
+  tracked separately (#417).
+
 ### Fixed
 - `restamp_pcr` (Interpolate mode) now handles the 33-bit PCR base wrap: a legal
   wrap (where the raw 27 MHz value appears to decrease) is recognised via a

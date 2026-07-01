@@ -26,6 +26,9 @@ std     = ["broadcast-common/std", "mpeg-ts/std", "dvb-si/std", "thiserror/std"]
 name = "ts-fix"
 path = "src/bin/ts-fix.rs"
 
+[dev-dependencies]
+scte35-splice = { path = "../scte35-splice", version = "1", default-features = false }
+
 [package.metadata.docs.rs]
 all-features = true
 features = ["std"]
