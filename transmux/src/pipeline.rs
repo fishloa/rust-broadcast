@@ -28,10 +28,10 @@ use crate::flac::{FlacSpecificBox, DFLA_FOURCC};
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox, MediaHeaderBox,
-    MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox,
-    OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox,
-    SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox, TrackHeaderBox,
-    VideoMediaHeaderBox,
+    MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
+    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox,
+    TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
@@ -41,6 +41,7 @@ use crate::movie_fragment::{
     TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT,
 };
 use crate::mp4esds::EsdsBox;
+use crate::mpegh::MHAC_FOURCC;
 use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
 use crate::sample_entries::{AVCSampleEntry, VisualSampleEntryFields};
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
@@ -158,6 +159,21 @@ pub enum CodecConfig {
         /// Sample size in bits (16 per spec).
         sample_size: u16,
     },
+    /// MPEG-H 3D Audio (`mha1` sample entry with an `mhaC` box) — ISO/IEC 23008-3 §20.
+    ///
+    /// Use `mha1` for raw MHAS frames (config in `mhaC`).  For in-band MHAS
+    /// (`mhm1`) the caller should convert the `codec_type` on the resulting
+    /// [`MhaSampleEntry`] if needed; `build_trak` always emits `mha1`.
+    MpegH {
+        /// The `MHADecoderConfigurationRecord` carried in the `mhaC` box.
+        config: crate::mpegh::MHADecoderConfigurationRecord,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits (typically 16).
+        sample_size: u16,
+    },
 }
 
 impl CodecConfig {
@@ -170,6 +186,7 @@ impl CodecConfig {
                 | CodecConfig::Opus { .. }
                 | CodecConfig::Flac { .. }
                 | CodecConfig::Ac4 { .. }
+                | CodecConfig::MpegH { .. }
         )
     }
 }
@@ -564,6 +581,35 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 samplesize: *sample_size,
                 samplerate: (*sample_rate) << 16,
                 config_boxes: vec![dac4_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::MpegH {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let mhac_opaque = config_box(&MHAC_FOURCC, config)?;
+            let entry = SampleEntryVariant::Mha(Box::new(MhaSampleEntry {
+                codec_type: crate::mpegh::MHA1_FOURCC,
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![mhac_opaque],
             }));
             (
                 entry,

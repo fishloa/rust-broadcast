@@ -1422,6 +1422,70 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
 }
 
 // ---------------------------------------------------------------------------
+// MhaSampleEntry (mha1 / mha2 / mhm1 / mhm2) — ISO/IEC 23008-3 §20
+// ---------------------------------------------------------------------------
+
+/// MPEG-H 3D Audio sample entry (`mha1`, `mha2`, `mhm1`, `mhm2`) — ISO/IEC 23008-3 §20.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then an `mhaC` box
+/// (mandatory for `mha1`/`mha2`; optional for `mhm1`/`mhm2`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct MhaSampleEntry {
+    /// The FourCC of this sample entry — one of `mha1`, `mha2`, `mhm1`, `mhm2`.
+    pub codec_type: [u8; 4],
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    /// Config and any extra child boxes (typically one `mhaC`).
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for MhaSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            &self.codec_type,
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+impl<'a> Parse<'a> for MhaSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 8 {
+            return Err(Error::BufferTooShort {
+                need: 8,
+                have: bytes.len(),
+                what: "MhaSampleEntry",
+            });
+        }
+        let mut codec_type = [0u8; 4];
+        codec_type.copy_from_slice(&bytes[4..8]);
+        let (dri, chan, samp_sz, sr, config_boxes) =
+            parse_audio_sample_entry(bytes, "MhaSampleEntry")?;
+        Ok(Self {
+            codec_type,
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared audio sample entry parse/serialize helpers
 // ---------------------------------------------------------------------------
 
@@ -1648,6 +1712,10 @@ pub enum SampleEntryVariant {
     Ac4(Box<Ac4SampleEntry>),
     Opus(Box<OpusSampleEntry>),
     Flac(Box<FlacSampleEntry>),
+    /// MPEG-H 3D Audio sample entry (`mha1`, `mha2`, `mhm1`, or `mhm2`) —
+    /// ISO/IEC 23008-3 §20.  The `codec_type` field on [`MhaSampleEntry`]
+    /// records which FourCC was parsed.
+    Mha(Box<MhaSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -1715,6 +1783,9 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"ac-4" => SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry::parse(box_bytes)?)),
                 b"Opus" => SampleEntryVariant::Opus(Box::new(OpusSampleEntry::parse(box_bytes)?)),
                 b"fLaC" => SampleEntryVariant::Flac(Box::new(FlacSampleEntry::parse(box_bytes)?)),
+                b"mha1" | b"mha2" | b"mhm1" | b"mhm2" => {
+                    SampleEntryVariant::Mha(Box::new(MhaSampleEntry::parse(box_bytes)?))
+                }
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
@@ -1750,6 +1821,7 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Ac4(a) => a.serialized_len(),
                 SampleEntryVariant::Opus(o) => o.serialized_len(),
                 SampleEntryVariant::Flac(f) => f.serialized_len(),
+                SampleEntryVariant::Mha(m) => m.serialized_len(),
                 SampleEntryVariant::Unknown(u) => u.serialized_len(),
             };
         }
@@ -1789,6 +1861,7 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Ac4(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Mha(m) => m.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
             };
         }
