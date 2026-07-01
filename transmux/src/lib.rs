@@ -48,6 +48,7 @@ pub mod mp4esds;
 pub mod nalu_types;
 pub mod pipeline;
 pub mod sample_entries;
+pub mod segmenter;
 pub mod segments;
 pub mod timing;
 
@@ -84,6 +85,7 @@ pub use pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
+pub use segmenter::Segmenter;
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
