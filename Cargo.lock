@@ -1215,6 +1215,7 @@ dependencies = [
  "broadcast-common",
  "clap",
  "dvb-si",
+ "mpeg-pes",
  "mpeg-ts",
  "scte35-splice",
  "thiserror",
