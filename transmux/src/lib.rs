@@ -45,6 +45,7 @@ pub mod movie_fragment;
 pub mod mp4esds;
 pub mod nalu_types;
 pub mod sample_entries;
+pub mod segments;
 pub mod timing;
 
 pub use aac_asc::{
@@ -72,6 +73,7 @@ pub use mp4esds::{
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry};
+pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,

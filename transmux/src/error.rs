@@ -69,4 +69,11 @@ pub enum Error {
         /// Human-readable explanation.
         reason: &'static str,
     },
+
+    /// A box did not carry the four-CC the parser expected.
+    #[error("unexpected box: expected {expected}")]
+    UnexpectedBox {
+        /// The four-CC (or description) the parser required.
+        expected: &'static str,
+    },
 }
