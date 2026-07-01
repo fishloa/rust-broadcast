@@ -1500,6 +1500,10 @@ pub enum SampleEntryVariant {
     Mp4a(Box<Mp4aSampleEntry>),
     Ac3(Box<Ac3SampleEntry>),
     Ec3(Box<Ec3SampleEntry>),
+    /// ISO/IEC 14496-30 TTML/IMSC XML subtitle sample entry (`stpp`).
+    Stpp(Box<crate::subtitle_entries::XmlSubtitleSampleEntry>),
+    /// ISO/IEC 14496-30 WebVTT subtitle sample entry (`wvtt`).
+    Wvtt(Box<crate::subtitle_entries::WvttSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -1552,6 +1556,12 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 }
                 b"ac-3" => SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry::parse(box_bytes)?)),
                 b"ec-3" => SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry::parse(box_bytes)?)),
+                b"stpp" => SampleEntryVariant::Stpp(Box::new(
+                    crate::subtitle_entries::XmlSubtitleSampleEntry::bare_parse(box_bytes)?,
+                )),
+                b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
+                    crate::subtitle_entries::WvttSampleEntry::bare_parse(box_bytes)?,
+                )),
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
@@ -1580,6 +1590,8 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Mp4a(m) => m.serialized_len(),
                 SampleEntryVariant::Ac3(a) => a.serialized_len(),
                 SampleEntryVariant::Ec3(e) => e.serialized_len(),
+                SampleEntryVariant::Stpp(s) => s.serialized_len(),
+                SampleEntryVariant::Wvtt(w) => w.serialized_len(),
                 SampleEntryVariant::Unknown(u) => u.serialized_len(),
             };
         }
@@ -1612,6 +1624,8 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Stpp(s) => s.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Wvtt(w) => w.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
             };
         }
