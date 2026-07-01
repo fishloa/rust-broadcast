@@ -2,10 +2,13 @@
 name         = "media-doctor"
 version      = "0.1.0"
 edition      = "2021"
-description  = "Media diagnostics harness: DVB/MPEG-TS stream analysis framework with pluggable lint-style checks."
+description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.81"
+readme       = "README.md"
+keywords     = ["mpeg-ts", "dvb", "diagnostics", "scte-35", "hls"]
+categories   = ["multimedia::video", "command-line-utilities"]
 
 [[bin]]
 name = "media-doctor"
@@ -32,3 +35,4 @@ cli     = ["dep:clap", "dep:thiserror", "std"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

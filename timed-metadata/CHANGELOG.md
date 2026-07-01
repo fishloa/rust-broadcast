@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-01
 ### Added
 - emsg version 0 ↔ version 1 conversion (`emsg_to_v0` / `emsg_to_v1` + `SegmentTiming`),
   recomputing the timing field against the segment EPT (`T = EPT + delta` ==

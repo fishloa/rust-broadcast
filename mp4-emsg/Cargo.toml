@@ -1,6 +1,6 @@
 [package]
 name    = "mp4-emsg"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "ISO BMFF / DASH Event Message Box (emsg, ISO/IEC 23009-1) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"

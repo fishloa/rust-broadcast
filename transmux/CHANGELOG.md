@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-07-01
 ### Added
 - End-to-end `tests/ts_to_cmaf.rs`: demux a real H.264+AAC MPEG-TS
   (`fixtures/ts/h264_aac.ts`), synthesize `avcC` from the stream's SPS/PPS and
