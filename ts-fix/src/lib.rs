@@ -51,6 +51,7 @@
 extern crate alloc;
 
 pub mod error;
+pub mod pes;
 
 mod engine;
 mod ops;
