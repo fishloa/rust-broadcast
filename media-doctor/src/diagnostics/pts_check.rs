@@ -123,13 +123,7 @@ impl Diagnostic for PtsCheck {
             // Feed the assembler and check if a complete PES was produced.
             let state = pid_states.entry(pid).or_default();
             if let Some(pes_bytes) = state.assembler.feed(pus, payload) {
-                check_pes(
-                    &pes_bytes,
-                    i,
-                    pid,
-                    report,
-                    &mut state.prev_decode,
-                );
+                check_pes(&pes_bytes, i, pid, report, &mut state.prev_decode);
             }
         }
 
