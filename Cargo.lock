@@ -795,6 +795,7 @@ version = "0.1.2"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "mp4-emsg",
  "serde",
  "thiserror",
 ]

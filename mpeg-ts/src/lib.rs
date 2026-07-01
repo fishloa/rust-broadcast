@@ -43,6 +43,7 @@ pub mod error;
 pub mod mux;
 pub mod owned;
 pub mod pid;
+pub mod pusi;
 pub mod resync;
 pub mod section;
 pub mod ts;

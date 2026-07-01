@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- `PusiReassembler` — generic PUSI-delimited payload reassembler for non-PSI PID
+  data (e.g. a DASH `emsg` box on reserved PID `0x0004`, ISO/IEC 23009-1:2022
+  §5.10.3.3.5): accumulates payload bytes across a PUSI-delimited run and yields
+  the complete unit (stuffing lives in the adaptation field, so accumulated
+  payload = clean box bytes).
 - `examples/edit_packet.rs` — walk-through demonstrating the write/edit API:
   read a PCR-bearing packet, mutate PCR and CC, build a null packet, and
   round-trip a packet.
