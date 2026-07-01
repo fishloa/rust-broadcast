@@ -1210,6 +1210,200 @@ pub struct Mp4aSampleEntry {
     pub config_boxes: Vec<OpaqueBox>,
 }
 
+// ---------------------------------------------------------------------------
+// Ac3SampleEntry (ac-3) — ETSI TS 102 366 §F.3
+// ---------------------------------------------------------------------------
+
+/// AC-3 audio sample entry (`ac-3`) — ETSI TS 102 366 §F.3.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `dac3`
+/// config box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Ac3SampleEntry {
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for Ac3SampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            b"ac-3",
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ec3SampleEntry (ec-3) — ETSI TS 102 366 §F.5
+// ---------------------------------------------------------------------------
+
+/// E-AC-3 audio sample entry (`ec-3`) — ETSI TS 102 366 §F.5.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `dec3`
+/// config box.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Ec3SampleEntry {
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for Ec3SampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            b"ec-3",
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared audio sample entry parse/serialize helpers
+// ---------------------------------------------------------------------------
+
+/// Parse an AudioSampleEntry-derived box (28-byte fixed prefix + config boxes).
+fn parse_audio_sample_entry(
+    bytes: &[u8],
+    what: &'static str,
+) -> Result<(u16, u16, u16, u32, Vec<OpaqueBox>)> {
+    if bytes.len() < 8 + 28 {
+        return Err(Error::BufferTooShort {
+            need: 8 + 28,
+            have: bytes.len(),
+            what,
+        });
+    }
+    let body = &bytes[8..];
+    let dri = u16::from_be_bytes([body[6], body[7]]);
+    let chan = u16::from_be_bytes([body[16], body[17]]);
+    let samp_sz = u16::from_be_bytes([body[18], body[19]]);
+    let sr = u32::from_be_bytes([body[24], body[25], body[26], body[27]]);
+
+    let mut config_boxes = Vec::new();
+    let mut off = 28usize;
+    while off + 8 <= body.len() {
+        let sz =
+            u32::from_be_bytes([body[off], body[off + 1], body[off + 2], body[off + 3]]) as usize;
+        if sz < 8 {
+            break;
+        }
+        let end = (off + sz).min(body.len());
+        let boxtype = [body[off + 4], body[off + 5], body[off + 6], body[off + 7]];
+        let data = body[off + 8..end].to_vec();
+        config_boxes.push(OpaqueBox {
+            box_type: boxtype,
+            data,
+        });
+        off += sz;
+    }
+    Ok((dri, chan, samp_sz, sr, config_boxes))
+}
+
+impl<'a> Parse<'a> for Ac3SampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (dri, chan, samp_sz, sr, config_boxes) = parse_audio_sample_entry(bytes, "ac-3")?;
+        Ok(Self {
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for Ec3SampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (dri, chan, samp_sz, sr, config_boxes) = parse_audio_sample_entry(bytes, "ec-3")?;
+        Ok(Self {
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
+    let mut n = BOX_HDR + 28;
+    for c in config_boxes {
+        n += c.serialized_len();
+    }
+    n
+}
+
+fn serialize_audio_sample_entry(
+    buf: &mut [u8],
+    fourcc: &[u8; 4],
+    data_reference_index: u16,
+    channelcount: u16,
+    samplesize: u16,
+    samplerate: u32,
+    config_boxes: &[OpaqueBox],
+) -> Result<usize> {
+    let need = audio_sample_entry_serialized_len(config_boxes);
+    if buf.len() < need {
+        return Err(Error::OutputBufferTooSmall {
+            need,
+            have: buf.len(),
+        });
+    }
+    let mut c = 0usize;
+    buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
+    c += 4;
+    buf[c..c + 4].copy_from_slice(fourcc);
+    c += 4;
+    // SampleEntry: reserved(6) + data_reference_index(2)
+    c += 6;
+    buf[c..c + 2].copy_from_slice(&data_reference_index.to_be_bytes());
+    c += 2;
+    // AudioSampleEntry: reserved[2] (8 bytes)
+    c += 8;
+    buf[c..c + 2].copy_from_slice(&channelcount.to_be_bytes());
+    c += 2;
+    buf[c..c + 2].copy_from_slice(&samplesize.to_be_bytes());
+    c += 2;
+    c += 4; // predefined(16) + reserved(16)
+    buf[c..c + 4].copy_from_slice(&samplerate.to_be_bytes());
+    c += 4;
+    for cb in config_boxes {
+        c += cb.serialize_into(&mut buf[c..])?;
+    }
+    Ok(c)
+}
+
+// ---------------------------------------------------------------------------
+// Mp4aSampleEntry (existing — refactored to use helpers)
+// ---------------------------------------------------------------------------
+
 impl<'a> Parse<'a> for Mp4aSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -1304,6 +1498,8 @@ pub enum SampleEntryVariant {
     Avc1(crate::sample_entries::AVCSampleEntry),
     Hevc1(crate::sample_entries::HEVCSampleEntry),
     Mp4a(Box<Mp4aSampleEntry>),
+    Ac3(Box<Ac3SampleEntry>),
+    Ec3(Box<Ec3SampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -1354,6 +1550,8 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"mp4a" | b"enca" => {
                     SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry::parse(box_bytes)?))
                 }
+                b"ac-3" => SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry::parse(box_bytes)?)),
+                b"ec-3" => SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry::parse(box_bytes)?)),
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
@@ -1380,6 +1578,8 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Avc1(a) => a.serialized_len(),
                 SampleEntryVariant::Hevc1(h) => h.serialized_len(),
                 SampleEntryVariant::Mp4a(m) => m.serialized_len(),
+                SampleEntryVariant::Ac3(a) => a.serialized_len(),
+                SampleEntryVariant::Ec3(e) => e.serialized_len(),
                 SampleEntryVariant::Unknown(u) => u.serialized_len(),
             };
         }
@@ -1410,6 +1610,8 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
             };
         }

@@ -18,15 +18,16 @@ use alloc::vec::Vec;
 
 use broadcast_common::Serialize;
 
+use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::annexb::annexb_to_length_prefixed;
 use crate::avc_config::AVCConfigurationBox;
 use crate::error::Result;
 use crate::init_segment::{
-    ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox, HandlerBox, MediaBox,
-    MediaHeaderBox, MediaInformationBox, MovieBox, MovieExtendsBox, MovieHeaderBox,
-    Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
-    SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox, TrackExtendsBox,
-    TrackHeaderBox, VideoMediaHeaderBox,
+    Ac3SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
+    Ec3SampleEntry, HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MovieBox,
+    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, SampleDescriptionBox,
+    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
+    StblChild, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
@@ -78,11 +79,36 @@ pub enum CodecConfig {
         /// Sample size in bits (typically 16).
         sample_size: u16,
     },
+    /// AC-3 audio (`ac-3` sample entry with a `dac3` box).
+    Ac3 {
+        /// The `dac3` config box.
+        config: Ac3SpecificBox,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits (typically 16).
+        sample_size: u16,
+    },
+    /// E-AC-3 audio (`ec-3` sample entry with a `dec3` box).
+    Eac3 {
+        /// The `dec3` config box.
+        config: Ec3SpecificBox,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits (typically 16).
+        sample_size: u16,
+    },
 }
 
 impl CodecConfig {
     fn is_audio(&self) -> bool {
-        matches!(self, CodecConfig::Aac { .. })
+        matches!(
+            self,
+            CodecConfig::Aac { .. } | CodecConfig::Ac3 { .. } | CodecConfig::Eac3 { .. }
+        )
     }
 }
 
@@ -258,6 +284,68 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 samplesize: *sample_size,
                 samplerate: sample_rate << 16,
                 config_boxes: vec![esds_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Ac3 {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let mut dac3_full = vec![0u8; config.serialized_len() + 8];
+            dac3_full[4..8].copy_from_slice(b"dac3");
+            let n = config.serialize_into(&mut dac3_full[8..])?;
+            let dac3_opaque = OpaqueBox::new(*b"dac3", dac3_full[8..8 + n].to_vec());
+            let entry = SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![dac3_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Eac3 {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let mut dec3_full = vec![0u8; config.serialized_len() + 8];
+            dec3_full[4..8].copy_from_slice(b"dec3");
+            let n = config.serialize_into(&mut dec3_full[8..])?;
+            let dec3_opaque = OpaqueBox::new(*b"dec3", dec3_full[8..8 + n].to_vec());
+            let entry = SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![dec3_opaque],
             }));
             (
                 entry,
