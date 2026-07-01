@@ -5,9 +5,10 @@ edition      = "2021"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.81"
-description  = "ISOBMFF box layer parser and serializer (ISO/IEC 14496-12:2015 §4.2): Box/FullBox headers, size-driven box walker."
-keywords     = ["isobmff", "mp4", "fmp4", "box", "mpeg"]
-categories   = ["parser-implementations", "multimedia::video", "no-std"]
+description  = "MPEG-2 TS → CMAF/fMP4 remux: typed ISOBMFF boxes, a samples-in init/media segment builder, Annex B ↔ length-prefixed NAL, and HLS playlist generation (ISO/IEC 14496-12, RFC 8216)."
+keywords     = ["cmaf", "fmp4", "isobmff", "hls", "remux"]
+categories   = ["multimedia::video", "parser-implementations", "no-std"]
+readme       = "README.md"
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }

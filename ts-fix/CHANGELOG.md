@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-07-01
 ### Added
 - PES access-unit reconstruction (`pes::reconstruct_access_units` + `AccessUnit`):
   reassemble the PES access units on given PIDs from a TS buffer — framing only,

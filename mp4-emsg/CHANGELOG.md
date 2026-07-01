@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-07-01
 ### Tests
 - Added a real-world v1 fixture (`tests/fixtures/emsg_v1_scte35_livesim.bin`) — a
   genuine SCTE-35 inband `emsg` (version 1, `urn:scte:scte35:2013:bin`) extracted

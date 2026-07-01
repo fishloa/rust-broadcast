@@ -760,7 +760,7 @@ dependencies = [
 
 [[package]]
 name = "mp4-emsg"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1135,7 +1135,7 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "broadcast-common",
  "chrono",

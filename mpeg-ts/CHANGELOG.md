@@ -1,7 +1,6 @@
 # Changelog
 
-## [Unreleased]
-
+## [0.1.2] — 2026-07-01
 ### Added
 - `PusiReassembler` — generic PUSI-delimited payload reassembler for non-PSI PID
   data (e.g. a DASH `emsg` box on reserved PID `0x0004`, ISO/IEC 23009-1:2022
@@ -56,8 +55,6 @@
   broadcast adaptation fields (PCR + stuffing, pure stuffing, etc.). Verified on
   the committed `m6-single.ts` capture and a France-TNT-derived stuffed-AF
   fixture (every unscrambled adaptation field round-trips byte-for-byte).
-
-## [0.1.2] — 2026-06-29
 
 ### Added
 - `Pcr::from_27mhz(ticks: u64) -> Pcr` — construct a PCR from an absolute 27 MHz

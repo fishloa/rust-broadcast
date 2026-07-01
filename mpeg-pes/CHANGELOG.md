@@ -1,7 +1,6 @@
 # Changelog
 
-## Unreleased
-
+## [0.1.3] — 2026-07-01
 ### Added
 - `examples/build_pes_header.rs` — walk-through demonstrating the build/edit
   API: construct a PES header from typed fields (PTS+DTS, ESCR, DSM trick
@@ -41,8 +40,6 @@
   `PES_header_data_length`), so parse → serialize is byte-identical for real
   broadcast PES headers. Verified on a `test-001.ts`-derived fixture (PTS+DTS and
   PTS-only headers, each with stuffing) round-tripping byte-for-byte.
-
-## [0.1.3] — 2026-06-29
 
 ### Added
 - `Escr` — 33-bit base (90 kHz) + 9-bit extension (27 MHz) ESCR type with
