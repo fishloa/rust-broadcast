@@ -28,6 +28,11 @@
 //! # Box type
 //! The `esds` box (ISO/IEC 14496-14 §5.6) is a `FullBox('esds', 0, 0)` wrapping an
 //! `ES_Descriptor`. It lives inside a sample entry (e.g. `mp4a` for AAC audio).
+//!
+//! # Value-verified
+//! The field layout is cross-checked against the vendored ISO/IEC 14496-1 §7.2.6
+//! (`transmux/docs/codec/es-descriptor-14496-1.md`) and byte-exact round-tripped
+//! against a real ffmpeg-authored `esds` (see `real_esds_box_round_trips_byte_exact`).
 
 use crate::box_types::BoxHeader;
 use crate::error::{Error, Result};
@@ -934,6 +939,55 @@ mod tests {
             let (decoded, _) = parse_varint(&buf, &mut rc).unwrap();
             assert_eq!(decoded, val, "round-trip {val}");
         }
+    }
+
+    /// A real `esds` box, extracted by muxing the audio of
+    /// `fixtures/ts/h264_aac.ts` (AAC-LC, 44.1 kHz, mono) to MP4 with ffmpeg.
+    /// It carries the 4-byte-expanded (`80 80 80 xx`) descriptor size form and
+    /// real max/avg bitrates — value-verifying the parser against 14496-1 §7.2.6
+    /// on data this crate did not author.
+    #[rustfmt::skip]
+    const REAL_ESDS_BOX_AAC: &[u8] = &[
+        0x00, 0x00, 0x00, 0x33, 0x65, 0x73, 0x64, 0x73, // box size 51 + 'esds'
+        0x00, 0x00, 0x00, 0x00,                         // FullBox version/flags
+        0x03, 0x80, 0x80, 0x80, 0x22,                   // ES_DescrTag, size 0x22
+        0x00, 0x01,                                     // ES_ID = 1
+        0x00,                                           // flags = 0
+        0x04, 0x80, 0x80, 0x80, 0x14,                   // DecoderConfigDescrTag, size 0x14
+        0x40,                                           // objectTypeIndication = MPEG-4 Audio
+        0x15,                                           // streamType(5=Audio)<<2 | upStream | rsvd
+        0x00, 0x00, 0x00,                               // bufferSizeDB
+        0x00, 0x01, 0x80, 0x7d,                         // maxBitrate
+        0x00, 0x01, 0x77, 0x0d,                         // avgBitrate
+        0x05, 0x80, 0x80, 0x80, 0x02,                   // DecSpecificInfoTag, size 2
+        0x12, 0x08,                                     // AudioSpecificConfig (AAC-LC 44.1k mono)
+        0x06, 0x80, 0x80, 0x80, 0x01,                   // SLConfigDescrTag, size 1
+        0x02,                                           // predefined = 2 (MP4)
+    ];
+
+    #[test]
+    fn real_esds_box_round_trips_byte_exact() {
+        let esds = EsdsBox::parse_box(REAL_ESDS_BOX_AAC).expect("parse real esds");
+        assert_eq!(esds.es_descriptor.es_id, 1);
+        let dc = esds
+            .es_descriptor
+            .decoder_config
+            .as_ref()
+            .expect("decoder config");
+        assert_eq!(dc.object_type_indication.0, 0x40, "AAC OTI");
+        assert_eq!(dc.stream_type.0, 5, "AudioStream");
+        assert_eq!(dc.max_bitrate, 0x0001_807d);
+        assert_eq!(dc.avg_bitrate, 0x0001_770d);
+        assert_eq!(
+            dc.decoder_specific_info.as_ref().expect("dsi").data,
+            &[0x12, 0x08],
+            "AudioSpecificConfig"
+        );
+
+        // Byte-exact round-trip on real ffmpeg-authored bytes.
+        let mut buf = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut buf).expect("serialize");
+        assert_eq!(&buf[..n], REAL_ESDS_BOX_AAC, "real esds must round-trip");
     }
 
     #[test]

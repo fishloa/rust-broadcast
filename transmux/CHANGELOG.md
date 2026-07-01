@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-01
+### Changed
+- Value-verified the `esds` / `mp4a` descriptor layout against the vendored
+  ISO/IEC 14496-1 §7.2.6 (transcribed to `docs/codec/es-descriptor-14496-1.md`)
+  and added a **byte-exact round-trip test on a real ffmpeg-authored `esds`**
+  (AAC-LC, 4-byte-expanded descriptor sizes, real max/avg bitrates). No API change.
+
 ## [0.4.0] — 2026-07-01
 ### Added
 - AC-3 / E-AC-3 audio in the fMP4 path (ETSI TS 102 366 Annex F):
