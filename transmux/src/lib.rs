@@ -88,6 +88,7 @@ pub mod dash;
 pub mod dts;
 pub mod error;
 pub mod flac;
+pub mod flv;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
@@ -151,6 +152,7 @@ pub use error::{Error, Result};
 pub use flac::{
     FlacMetadataBlock, FlacSpecificBox, BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC,
 };
+pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
