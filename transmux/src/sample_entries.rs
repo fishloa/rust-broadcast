@@ -390,6 +390,109 @@ impl Serialize for AVCSampleEntry {
 }
 
 // ---------------------------------------------------------------------------
+// MPEG-4/MPEG-2 Visual Sample Entry: mp4v (esds-bearing)
+// ---------------------------------------------------------------------------
+
+/// MPEG visual sample entry (`mp4v`) — ISO/IEC 14496-12:2015 §12.1 /
+/// ISO/IEC 14496-14 §5.6: a `VisualSampleEntry` followed by an `esds`
+/// (`ES_Descriptor`) box and any extra child boxes (`pasp`, `fiel`, `btrt`).
+///
+/// Used to carry MPEG-2 video (H.262) with an `esds` whose ObjectTypeIndication
+/// is 0x60–0x65 (ISO/IEC 14496-1 §7.2.6.6). Every trailing child box (starting
+/// with `esds`) is preserved verbatim as an [`OpaqueBox`] so the sample entry
+/// round-trips byte-identically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Mp4vSampleEntry {
+    /// Visual sample entry fixed fields.
+    pub visual: VisualSampleEntryFields,
+    /// Trailing child boxes (the `esds` first, then any `pasp`/`fiel`/`btrt`),
+    /// each preserved verbatim (box header + body) for byte-exact round-trip.
+    pub config_boxes: Vec<crate::init_segment::OpaqueBox>,
+}
+
+impl Mp4vSampleEntry {
+    /// The four-CC of an MPEG visual sample entry.
+    pub const FOURCC: [u8; 4] = *b"mp4v";
+
+    /// Parse an `mp4v` sample entry from full box bytes (including 8-byte header).
+    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+        let visual = VisualSampleEntryFields::parse_body(bytes, "mp4v")?;
+        // Child boxes start after the 8-byte box header + visual fixed fields.
+        let region = &bytes[8 + VISUAL_SAMPLE_ENTRY_SIZE..];
+        let config_boxes = parse_trailing_boxes(region);
+        Ok(Self {
+            visual,
+            config_boxes,
+        })
+    }
+}
+
+impl Serialize for Mp4vSampleEntry {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let mut n = 8 + VisualSampleEntryFields::serialized_len();
+        for b in &self.config_boxes {
+            n += b.serialized_len();
+        }
+        n
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut cursor = 0usize;
+        buf[cursor..cursor + 4].copy_from_slice(&(need as u32).to_be_bytes());
+        cursor += 4;
+        buf[cursor..cursor + 4].copy_from_slice(&Self::FOURCC);
+        cursor += 4;
+        cursor += self.visual.serialize_into(&mut buf[cursor..])?;
+        for b in &self.config_boxes {
+            cursor += b.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
+    }
+}
+
+/// Split a sample entry's trailing child-box region into verbatim
+/// [`init_segment::OpaqueBox`](crate::init_segment::OpaqueBox) entries (each
+/// carrying the box body after its 8-byte header). Stops at the first malformed
+/// length so a truncated tail does not lose earlier boxes.
+fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
+    let mut out = Vec::new();
+    let mut off = 0usize;
+    while off + 8 <= region.len() {
+        let sz = u32::from_be_bytes([
+            region[off],
+            region[off + 1],
+            region[off + 2],
+            region[off + 3],
+        ]) as usize;
+        if sz < 8 || off + sz > region.len() {
+            break;
+        }
+        let bt = [
+            region[off + 4],
+            region[off + 5],
+            region[off + 6],
+            region[off + 7],
+        ];
+        out.push(crate::init_segment::OpaqueBox::new(
+            bt,
+            region[off + 8..off + sz].to_vec(),
+        ));
+        off += sz;
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------
 // HEVC Sample Entries: hvc1 and hev1
 // ---------------------------------------------------------------------------
 

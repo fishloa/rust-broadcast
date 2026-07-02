@@ -40,6 +40,7 @@ use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, TrackBox};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
+use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
@@ -52,6 +53,12 @@ const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
 /// Default movie timescale used when a source does not specify one.
 const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
+
+/// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) —
+/// ISO/IEC 14496-1 §7.2.6.6 Table 5.
+const OTI_MPEG2_AUDIO: u8 = 0x69;
+/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
+const OTI_MPEG1_AUDIO: u8 = 0x6B;
 
 /// One elementary track: its identity/codec config plus its coded samples.
 ///
@@ -194,9 +201,12 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 
         let tracks = builders
             .into_iter()
-            .map(|b| Track {
-                spec: b.spec,
-                samples: b.samples,
+            .map(|mut b| {
+                refine_legacy_config(&mut b.spec.config, &b.samples);
+                Track {
+                    spec: b.spec,
+                    samples: b.samples,
+                }
             })
             .collect();
         Ok(Media {
@@ -507,14 +517,43 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             width: vp9.visual.width,
             height: vp9.visual.height,
         }),
+        SampleEntryVariant::Mp4v(mp4v) => {
+            // The esds is the mp4v's first child box body (no 8-byte header).
+            let esds = EsdsBox::parse_body(config_box_body(&mp4v.config_boxes, b"esds")?)?;
+            Ok(CodecConfig::Mpeg2Video {
+                esds,
+                // Provisional geometry from the visual sample entry; refined
+                // from the in-band sequence_header() once samples are collected.
+                width: mp4v.visual.width,
+                height: mp4v.visual.height,
+            })
+        }
         SampleEntryVariant::Mp4a(mp4a) => {
             let esds = esds_from_config_boxes(&mp4a.config_boxes)?;
-            Ok(CodecConfig::Aac {
-                esds,
-                channel_count: mp4a.channelcount,
-                sample_rate: mp4a.samplerate >> 16,
-                sample_size: mp4a.samplesize,
-            })
+            let oti = esds
+                .es_descriptor
+                .decoder_config
+                .as_ref()
+                .map(|dc| dc.object_type_indication.0);
+            // OTI 0x69 (MPEG-2 audio) / 0x6B (MPEG-1 audio) → legacy MPEG audio;
+            // otherwise the mp4a carries AAC (ISO/IEC 14496-1 §7.2.6.6 Table 5).
+            if oti == Some(OTI_MPEG2_AUDIO) || oti == Some(OTI_MPEG1_AUDIO) {
+                Ok(CodecConfig::MpegAudio {
+                    esds,
+                    // Provisional layer; refined from the first frame header.
+                    layer: MpegAudioLayer::LayerII,
+                    channel_count: mp4a.channelcount,
+                    sample_rate: mp4a.samplerate >> 16,
+                    sample_size: mp4a.samplesize,
+                })
+            } else {
+                Ok(CodecConfig::Aac {
+                    esds,
+                    channel_count: mp4a.channelcount,
+                    sample_rate: mp4a.samplerate >> 16,
+                    sample_size: mp4a.samplesize,
+                })
+            }
         }
         SampleEntryVariant::Ac3(ac3) => {
             let config = Ac3SpecificBox::parse(config_box_body(&ac3.config_boxes, b"dac3")?)?;
@@ -568,8 +607,33 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
         | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
-            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
+            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
         }),
+    }
+}
+
+/// Refine the provisional geometry/layer of a legacy-codec config from the
+/// first coded sample's in-band header (the sample entry alone cannot carry it):
+/// MPEG-2 video takes width/height from the `sequence_header()`, MPEG audio
+/// takes its layer from the first frame header. A no-op for other codecs and
+/// when the header cannot be decoded (the provisional values then stand).
+fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample]) {
+    let Some(first) = samples.first() else {
+        return;
+    };
+    match config {
+        CodecConfig::Mpeg2Video { width, height, .. } => {
+            if let Ok(sh) = Mpeg2SeqHeader::find(&first.data) {
+                *width = sh.width;
+                *height = sh.height;
+            }
+        }
+        CodecConfig::MpegAudio { layer, .. } => {
+            if let Ok(hdr) = MpegAudioFrameHeader::parse(&first.data) {
+                *layer = hdr.layer;
+            }
+        }
+        _ => {}
     }
 }
 

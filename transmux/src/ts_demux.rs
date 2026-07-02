@@ -9,7 +9,8 @@
 //!
 //! Pipeline: TS packet layer ([`mpeg_ts`]) → follow PAT → PMT → per-PID PES
 //! reassembly ([`mpeg_pes`]) → codec-config recovery (H.264 SPS/PPS → `avcC`,
-//! ADTS → AudioSpecificConfig → `esds`, AC-3/E-AC-3 syncframe BSI →
+//! MPEG-2 video `sequence_header()` → `esds`, ADTS → AudioSpecificConfig →
+//! `esds`, MPEG-1/2 audio frame header → `esds`, AC-3/E-AC-3 syncframe BSI →
 //! `dac3`/`dec3`) → length-prefixed video / raw audio samples.
 //!
 //! HEVC and DTS elementary streams are recognized in the PMT but not yet carried
@@ -45,6 +46,7 @@ use crate::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType as EsdsStreamType,
 };
+use crate::mpeg_legacy::MpegAudioFrameHeader;
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -75,6 +77,12 @@ const NETWORK_PROGRAM_NUMBER: u16 = 0x0000;
 
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
+/// MPEG-2 video (ITU-T H.262 / ISO/IEC 13818-2) — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
+/// MPEG-1 audio (ISO/IEC 11172-3) — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_MPEG1_AUDIO: u8 = 0x03;
+/// MPEG-2 audio (ISO/IEC 13818-3, LSF) — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_MPEG2_AUDIO: u8 = 0x04;
 /// AVC (H.264) video — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_AVC: u8 = 0x1B;
 /// HEVC (H.265) video — ISO/IEC 13818-1 Table 2-34.
@@ -107,8 +115,16 @@ const H264_NAL_TYPE_MASK: u8 = 0x1F;
 
 /// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-1 Table 5).
 const OTI_MPEG4_AUDIO: u8 = 0x40;
+/// `esds` `objectTypeIndication` for MPEG-2 Main Visual (ISO/IEC 14496-1 Table 5).
+const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
+/// `esds` `objectTypeIndication` for MPEG-1 Audio, ISO/IEC 11172-3 (Table 5).
+const OTI_MPEG1_AUDIO: u8 = 0x6B;
+/// `esds` `objectTypeIndication` for MPEG-2 Audio, ISO/IEC 13818-3 (Table 5).
+const OTI_MPEG2_AUDIO: u8 = 0x69;
 /// `esds` `streamType` for an AudioStream (ISO/IEC 14496-1 Table 6).
 const STREAM_TYPE_AUDIO: u8 = 0x05;
+/// `esds` `streamType` for a VisualStream (ISO/IEC 14496-1 Table 6).
+const STREAM_TYPE_VISUAL: u8 = 0x04;
 /// `esds` `ES_ID` assigned to the single audio elementary stream.
 const ESDS_ES_ID: u16 = 1;
 /// `SLConfigDescriptor` predefined body for MP4 file SL packaging
@@ -136,6 +152,10 @@ const TS_WRAP_HALF: u64 = TS_WRAP / 2;
 enum Codec {
     H264,
     Hevc,
+    Mpeg2Video,
+    /// MPEG-1/2 audio; the bool is `true` for MPEG-2 audio (stream_type 0x04,
+    /// OTI 0x69), `false` for MPEG-1 audio (stream_type 0x03, OTI 0x6B).
+    MpegAudio(bool),
     Aac,
     Ac3,
     Eac3,
@@ -147,6 +167,9 @@ impl Codec {
     /// does not carry it (skipped, never fatal — issue #467).
     fn from_stream_type(stream_type: u8) -> Option<Self> {
         match stream_type {
+            STREAM_TYPE_MPEG2_VIDEO => Some(Codec::Mpeg2Video),
+            STREAM_TYPE_MPEG1_AUDIO => Some(Codec::MpegAudio(false)),
+            STREAM_TYPE_MPEG2_AUDIO => Some(Codec::MpegAudio(true)),
             STREAM_TYPE_AVC => Some(Codec::H264),
             STREAM_TYPE_HEVC => Some(Codec::Hevc),
             STREAM_TYPE_AAC_ADTS => Some(Codec::Aac),
@@ -430,6 +453,8 @@ fn push_access_unit(es: &mut ElementaryStream, pes_bytes: &[u8]) {
 fn build_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     match es.codec {
         Codec::H264 => build_h264_track(es, track_id),
+        Codec::Mpeg2Video => build_mpeg2_video_track(es, track_id),
+        Codec::MpegAudio(is_mpeg2) => build_mpeg_audio_track(es, track_id, is_mpeg2),
         Codec::Aac => build_aac_track(es, track_id),
         Codec::Ac3 => build_ac3_track(es, track_id),
         Codec::Eac3 => build_eac3_track(es, track_id),
@@ -574,6 +599,186 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
                 config,
                 width: 0,
                 height: 0,
+            },
+        },
+        samples,
+    ))
+}
+
+/// MPEG-2 video `picture_start_code` (0x00000100) — ISO/IEC 13818-2 §6.2.3.
+const MPEG2_PICTURE_START_CODE: u8 = 0x00;
+/// `picture_coding_type` value for an intra-coded (I) picture — §6.3.9 Table 6-12.
+const MPEG2_PICTURE_CODING_TYPE_I: u8 = 0x01;
+/// `esds` `ES_ID` assigned to the single video elementary stream.
+const ESDS_VIDEO_ES_ID: u16 = 2;
+
+/// Whether an MPEG-2 video access unit is a random-access point: it carries a
+/// `sequence_header()` (0x000001B3) or its `picture_header()` codes an I-frame
+/// (`picture_coding_type == 1`) — ISO/IEC 13818-2 §6.2.2.1 / §6.3.9.
+fn mpeg2_is_sync(au: &[u8]) -> bool {
+    let mut i = 0usize;
+    while i + 4 <= au.len() {
+        if au[i] == 0x00 && au[i + 1] == 0x00 && au[i + 2] == 0x01 {
+            let code = au[i + 3];
+            if code == crate::mpeg_legacy::SEQUENCE_HEADER_CODE[3] {
+                return true;
+            }
+            if code == MPEG2_PICTURE_START_CODE && i + 6 <= au.len() {
+                // picture_coding_type = bits [5:3] of the byte after temporal_ref
+                // high byte: header = temporal_reference(10) + coding_type(3).
+                let pct = (au[i + 5] >> 3) & 0x07;
+                return pct == MPEG2_PICTURE_CODING_TYPE_I;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Build an MPEG-2 video (H.262) track: recover geometry from the in-band
+/// `sequence_header()` into an `esds` (OTI 0x61), one sample per PES access
+/// unit (raw ES bytes, start codes preserved), decode-ordered by DTS.
+fn build_mpeg2_video_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
+    // Geometry from the first sequence_header() seen in the stream.
+    let seq = es
+        .access_units
+        .iter()
+        .find_map(|au| crate::mpeg_legacy::Mpeg2SeqHeader::find(&au.data).ok())?;
+
+    let esds = EsdsBox::new(ESDescriptor {
+        es_id: ESDS_VIDEO_ES_ID,
+        stream_dependence_flag: false,
+        url_flag: false,
+        ocr_stream_flag: false,
+        stream_priority: 0,
+        depends_on_es_id: None,
+        url: None,
+        ocr_es_id: None,
+        decoder_config: Some(DecoderConfigDescriptor {
+            object_type_indication: ObjectTypeIndication(OTI_MPEG2_VIDEO_MAIN),
+            stream_type: EsdsStreamType(STREAM_TYPE_VISUAL),
+            up_stream: false,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+            decoder_specific_info: None,
+        }),
+        sl_config: Some(SLConfigDescriptor {
+            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
+        }),
+    });
+
+    let is_sync: Vec<bool> = es
+        .access_units
+        .iter()
+        .map(|au| mpeg2_is_sync(&au.data))
+        .collect();
+    let ordered = decode_order(&es.access_units);
+    let durations = durations_from_dts(&ordered);
+    let samples: Vec<Sample> = ordered
+        .iter()
+        .enumerate()
+        .map(|(pos, &(i, pts, dts))| Sample {
+            data: es.access_units[i].data.clone(),
+            duration: durations[pos],
+            is_sync: is_sync[i],
+            composition_offset: (pts - dts) as i32,
+        })
+        .collect();
+
+    Some(Track::new(
+        TrackSpec {
+            track_id,
+            timescale: VIDEO_TIMESCALE,
+            config: CodecConfig::Mpeg2Video {
+                esds,
+                width: seq.width,
+                height: seq.height,
+            },
+        },
+        samples,
+    ))
+}
+
+/// Split a concatenated MPEG audio payload into individual frames using the
+/// frame-header length field (ISO/IEC 11172-3 §2.4.1.3). Stops at the first
+/// bad sync / over-run so a partial tail does not lose earlier frames.
+fn split_mpeg_audio_frames(payload: &[u8]) -> Vec<&[u8]> {
+    let mut frames = Vec::new();
+    let mut off = 0usize;
+    while off + 4 <= payload.len() {
+        let Ok(hdr) = MpegAudioFrameHeader::parse(&payload[off..]) else {
+            break;
+        };
+        let flen = hdr.frame_length;
+        if flen < 4 || off + flen > payload.len() {
+            break;
+        }
+        frames.push(&payload[off..off + flen]);
+        off += flen;
+    }
+    frames
+}
+
+/// Build an MPEG-1/2 audio track: recover config from the first frame header
+/// into an `esds` (OTI 0x6B / 0x69), one raw sample per audio frame.
+fn build_mpeg_audio_track(es: &ElementaryStream, track_id: u32, is_mpeg2: bool) -> Option<Track> {
+    let first = es
+        .access_units
+        .iter()
+        .find_map(|au| MpegAudioFrameHeader::parse(&au.data).ok())?;
+    let sample_rate = first.sample_rate;
+    let channel_count = first.channels;
+    let samples_per_frame = first.samples_per_frame;
+    let oti = if is_mpeg2 {
+        OTI_MPEG2_AUDIO
+    } else {
+        OTI_MPEG1_AUDIO
+    };
+
+    let esds = EsdsBox::new(ESDescriptor {
+        es_id: ESDS_ES_ID,
+        stream_dependence_flag: false,
+        url_flag: false,
+        ocr_stream_flag: false,
+        stream_priority: 0,
+        depends_on_es_id: None,
+        url: None,
+        ocr_es_id: None,
+        decoder_config: Some(DecoderConfigDescriptor {
+            object_type_indication: ObjectTypeIndication(oti),
+            stream_type: EsdsStreamType(STREAM_TYPE_AUDIO),
+            up_stream: false,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+            decoder_specific_info: None,
+        }),
+        sl_config: Some(SLConfigDescriptor {
+            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
+        }),
+    });
+
+    let mut samples: Vec<Sample> = Vec::new();
+    for au in &es.access_units {
+        for frame in split_mpeg_audio_frames(&au.data) {
+            samples.push(Sample::from_raw(frame.to_vec(), samples_per_frame));
+        }
+    }
+    if samples.is_empty() {
+        return None;
+    }
+
+    Some(Track::new(
+        TrackSpec {
+            track_id,
+            timescale: sample_rate,
+            config: CodecConfig::MpegAudio {
+                esds,
+                layer: first.layer,
+                channel_count,
+                sample_rate,
+                sample_size: AUDIO_SAMPLE_SIZE_BITS,
             },
         },
         samples,

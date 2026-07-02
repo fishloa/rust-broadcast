@@ -45,7 +45,9 @@ use crate::movie_fragment::{
 use crate::mp4esds::EsdsBox;
 use crate::mpegh::MHAC_FOURCC;
 use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
-use crate::sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
+use crate::sample_entries::{
+    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,
+};
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use crate::timing::TimeToSampleBox;
 use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
@@ -186,6 +188,36 @@ pub enum CodecConfig {
         /// Sample size in bits (typically 16).
         sample_size: u16,
     },
+    /// MPEG-2 video / H.262 (`mp4v` sample entry with an `esds` box) —
+    /// ISO/IEC 13818-2 (ITU-T H.262) carried per ISO/IEC 14496-1 §7.2.6.6
+    /// (ObjectTypeIndication 0x60–0x65, 0x61 = MPEG-2 Main Visual).
+    ///
+    /// The `esds` carries the ES/decoder descriptors (its DecoderSpecificInfo
+    /// optionally the `sequence_header()` bytes); the coded picture geometry is
+    /// decoded from the in-band `sequence_header()` (ISO/IEC 13818-2 §6.2.2.1).
+    Mpeg2Video {
+        /// The `esds` box (its body is re-embedded byte-identically).
+        esds: EsdsBox,
+        /// Coded width in pixels (from the `sequence_header()`).
+        width: u16,
+        /// Coded height in pixels (from the `sequence_header()`).
+        height: u16,
+    },
+    /// MPEG-1/2 audio, Layers I/II/III (`mp4a` sample entry with an `esds` box)
+    /// — ISO/IEC 11172-3 / ISO/IEC 13818-3, carried per ISO/IEC 14496-1
+    /// §7.2.6.6 (ObjectTypeIndication 0x69 = MPEG-2 audio, 0x6B = MPEG-1 audio).
+    MpegAudio {
+        /// The `esds` box (OTI 0x69/0x6B; DecoderSpecificInfo usually empty).
+        esds: EsdsBox,
+        /// Audio layer (1/2/3), from the first frame header.
+        layer: crate::mpeg_legacy::MpegAudioLayer,
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz.
+        sample_rate: u32,
+        /// Sample size in bits (typically 16).
+        sample_size: u16,
+    },
     /// DTS audio (`dtsc`/`dtsh`/`dtsl`/`dtse` sample entry with a `ddts` box) —
     /// ETSI TS 102 114 §E.2.
     ///
@@ -219,6 +251,7 @@ impl CodecConfig {
                 | CodecConfig::Ac4 { .. }
                 | CodecConfig::MpegH { .. }
                 | CodecConfig::Dts { .. }
+                | CodecConfig::MpegAudio { .. }
         )
     }
 }
@@ -676,6 +709,71 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 samplesize: *sample_size,
                 samplerate: (*sample_rate) << 16,
                 config_boxes: vec![mhac_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Mpeg2Video {
+            esds,
+            width,
+            height,
+        } => {
+            let visual = VisualSampleEntryFields {
+                data_reference_index: 1,
+                width: *width,
+                height: *height,
+                ..VisualSampleEntryFields::default()
+            };
+            // Carry the esds as the mp4v's first child box (body only, no header).
+            let mut esds_full = vec![0u8; esds.serialized_len()];
+            let n = esds.serialize_into(&mut esds_full)?;
+            let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
+            let entry = SampleEntryVariant::Mp4v(Box::new(Mp4vSampleEntry {
+                visual,
+                config_boxes: vec![esds_opaque],
+            }));
+            (
+                entry,
+                Some(VideoMediaHeaderBox {
+                    version: 0,
+                    flags: 1,
+                    graphicsmode: 0,
+                    opcolor: [0, 0, 0],
+                }),
+                None,
+                *b"vide",
+                b"VideoHandler\0".to_vec(),
+                (*width as u32) << 16,
+                (*height as u32) << 16,
+            )
+        }
+        CodecConfig::MpegAudio {
+            esds,
+            layer: _,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let mut esds_full = vec![0u8; esds.serialized_len()];
+            let n = esds.serialize_into(&mut esds_full)?;
+            let esds_opaque = OpaqueBox::new(*b"esds", esds_full[8..n].to_vec());
+            let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: sample_rate << 16,
+                config_boxes: vec![esds_opaque],
             }));
             (
                 entry,
