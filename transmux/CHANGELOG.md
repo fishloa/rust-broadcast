@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **WebM / Matroska demuxer** (#471): `WebmDemux` implements the hub
+  `broadcast_common::Unpackage` trait — WebM (EBML) → `Media` IR, the fourth hub
+  input (TS / fMP4 / MPEG-PS / WebM). Hand-written EBML/VINT tree walker
+  (RFC 8794 framing, RFC 9559 element IDs); maps `V_VP9`→`CodecConfig::Vp9`
+  (synthesised `vpcC`) and `A_OPUS`→`CodecConfig::Opus` (`dOps` from the CodecPrivate
+  `OpusHead`); (Simple)Block timestamps in a millisecond IR timescale, Opus
+  pre-skip codec delay applied. Gated against a per-frame **size-column** ffprobe
+  oracle + a CMAF output round-trip (vp09/`vpcC` + Opus/`dOps`).
 - **CENC decrypt** (#465): `CencDecryptor` implements the hub
   `broadcast_common::Decrypt` trait — unprotect a CENC (`cenc` / AES-128-CTR) fMP4
   given the content key. Reuses the existing `cenc.rs` box parsers

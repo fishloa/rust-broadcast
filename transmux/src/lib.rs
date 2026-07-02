@@ -88,6 +88,7 @@ pub mod ts_hls;
 pub mod ts_mux;
 pub mod visual_ext;
 pub mod vp9;
+pub mod webm_demux;
 
 pub use aac_asc::{
     build_adts_header, parse_adts_header, AdtsHeader, AudioObjectType, AudioSpecificConfig,
@@ -174,3 +175,4 @@ pub use ts_hls::{TsHlsOutput, TsHlsPackager};
 pub use ts_mux::TsMux;
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};
+pub use webm_demux::{WebmDemux, IR_TIMESCALE};
