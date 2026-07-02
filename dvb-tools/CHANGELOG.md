@@ -1,5 +1,10 @@
 # Changelog
 
+## [8.2.1] — 2026-07-02
+
+### Changed
+- Lockstep release tracking `broadcast-common` 8.2.1 (mux-trait documentation). No API/behaviour change to this crate.
+
 ## [8.2.0] — 2026-07-02
 
 ### Changed

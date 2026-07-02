@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [8.2.1] — 2026-07-02
 
 ### Documentation
 - Document the `mux` container-mux traits (`Unpackage`/`Package`/`Encrypt`/`Decrypt`)
