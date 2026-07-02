@@ -17,11 +17,14 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.1", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.1", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.1", default-features = false }
+aes        = { version = "0.8", default-features = false, optional = true }
+ctr        = { version = "0.9", default-features = false, optional = true }
 
 [features]
-default = ["std", "serde"]
+default = ["std", "serde", "cenc"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std"]
 serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde"]
+cenc   = ["dep:aes", "dep:ctr"]
 
 [dev-dependencies]
 media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }

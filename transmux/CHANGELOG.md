@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **CENC decrypt** (#465): `CencDecryptor` implements the hub
+  `broadcast_common::Decrypt` trait — unprotect a CENC (`cenc` / AES-128-CTR) fMP4
+  given the content key. Reuses the existing `cenc.rs` box parsers
+  (`tenc`/`senc`/`saiz`/`saio`/`sinf`/`frma`); subsample-aware (clear ranges
+  skipped, CTR streams across protected ranges), IV left-justified to 16
+  (ISO/IEC 23001-7 §10.1). AES via RustCrypto `aes`/`ctr` behind an optional
+  `cenc` feature (`--no-default-features` drops it). `cbcs` documented
+  unsupported. Verified by decrypting a real ffmpeg-encrypted fixture to
+  byte-identical cleartext (+ wrong-key negative). New `CencScheme` enum.
 - **MPEG-2 Program Stream demuxer** (#470): `PsDemux` implements the hub
   `broadcast_common::Unpackage` trait — MPEG-2 PS (`.ps`/VOB-style) → `Media` IR,
   the third hub input alongside TS and fMP4. Parses packs/system-header via
