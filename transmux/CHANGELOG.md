@@ -5,8 +5,15 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] — 2026-07-02
 ### Added
+- **Any-to-any hub** (#466): the container-agnostic IR (`Media` / `Track`, thin wrappers
+  over `TrackSpec`/`Sample`) + implementations of the new **broadcast-common 8.2.0**
+  traits — `CmafMux` / `HlsPackager` (`Package`) and `Fmp4Demux` (`Unpackage`, fMP4 →
+  `Media`). Every demux/mux spoke now targets one hub API; `Unpackage`⇄`Package` and
+  `Encrypt`⇄`Decrypt` are inverse pairs mirroring `Parse`/`Serialize`. Additive —
+  `build_init_segment`/`build_media_segment`/`Segmenter`/`TrackSpec`/`Sample` unchanged.
+- Requires broadcast-common ≥ 8.2.0 (the trait definitions).
 - **MPEG-H 3D Audio** input (promotion): `Fmp4Demux` now reconstructs
   `CodecConfig::MpegH` from `mha1`/`mha2`/`mhm1`/`mhm2` sample entries (re-parsing
   the `mhaC` record, ISO/IEC 23008-3 §20) — MPEG-H was previously output-only.
@@ -135,16 +142,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `byte2[0]<<2 | byte3[7:6]`. Build+parse were self-consistent so round-trip
   tests passed, but a real mono ADTS stream was misread as stereo. Both
   directions corrected.
-
-## [0.7.0] — 2026-07-02
-### Added
-- **Any-to-any hub** (#466): the container-agnostic IR (`Media` / `Track`, thin wrappers
-  over `TrackSpec`/`Sample`) + implementations of the new **broadcast-common 8.2.0**
-  traits — `CmafMux` / `HlsPackager` (`Package`) and `Fmp4Demux` (`Unpackage`, fMP4 →
-  `Media`). Every demux/mux spoke now targets one hub API; `Unpackage`⇄`Package` and
-  `Encrypt`⇄`Decrypt` are inverse pairs mirroring `Parse`/`Serialize`. Additive —
-  `build_init_segment`/`build_media_segment`/`Segmenter`/`TrackSpec`/`Sample` unchanged.
-- Requires broadcast-common ≥ 8.2.0 (the trait definitions).
 
 ## [0.6.0] — 2026-07-02
 ### Added
