@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-02
+### Added
+- **DTS** fMP4 carriage (#437, ETSI TS 102 114 §E.2): `dtsc`/`dtsh`/`dtsl`/`dtse`
+  sample entries + `ddts` (DTSSpecificBox — DTSSamplingFrequency, max/avg bitrate,
+  pcmSampleDepth, FrameDuration, StreamConstruction, channel layout, …) + a
+  `CodecConfig::Dts` variant + `rfc6381()`. Typed Parse/Serialize with a spec-vector
+  byte-exact round-trip + `build_init_segment` moov round-trip (ffmpeg has no `ddts`
+  encoder, so the real-fixture gate is deferred).
+### Changed
+- `hvcC` value-verified against the ISO 14496-15:2017 §8.3.3.1 text (recovered via
+  marker OCR of the scanned edition), matching FFmpeg movenc + the byte-exact oracle
+  (#394). Docs only.
+
 ## [0.5.0] — 2026-07-01
 ### Added — fMP4 gap tier (real codecs + container completeness)
 - **Codec sample entries + config boxes** (container-level; header parse only, samples
