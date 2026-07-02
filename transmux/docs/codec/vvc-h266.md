@@ -3,12 +3,10 @@
 Sources:
 - **ITU-T H.266 (2026-01) = ISO/IEC 23090-3** (VVC codec), vendored at
   `specs/itu_t_h266_vvc.pdf` — SPS + `profile_tier_level` syntax (fields below).
-- **`vvcC` box** = ISO/IEC **14496-15:2022 §11** (VVC file format). That edition is
-  **not** in the repo (paid ISO). The `vvcC` structure is a NAL-array container
-  directly analogous to `hvcC` (already grounded in
-  `avcC-hvcC-14496-15.md`) with a leading VVC PTL record; this doc grounds the
-  **content** fields from H.266 and mirrors the `hvcC` container shape for the
-  box framing. Flagged as such — replace with the 14496-15:2022 table if vendored.
+- **`vvcC` box** = ISO/IEC **14496-15:2022 §11**. The paid ISO edition is not
+  vendored; the exact `vvcC` byte layout is transcribed from the **FFmpeg
+  reference writer** (`libavformat/vvc.c`) and byte-verified against a real
+  ffmpeg-muxed box — see **`vvcC-14496-15.md`** (authoritative layout doc).
 
 Carriage:
 - **MPEG-2 TS:** `stream_type` **0x33** (VVC, ISO/IEC 13818-1 amendment).
