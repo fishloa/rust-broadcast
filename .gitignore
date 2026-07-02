@@ -2,7 +2,9 @@ target/
 **/*.rs.bk
 .DS_Store
 # Paid ISO standards: consulted locally for hand transcription, never vendored.
-specs/iso_iec_*.pdf
+# All vendored spec PDFs are private (see ../rust-broadcast-specs / specs/README.md).
+# Extracted-syntax markdown stays public in each crate's docs/.
+specs/*.pdf
 # Non-redistributable industry specs (NorDig, CI Plus): freely downloadable but
 # their notices forbid reproduction — consulted locally, only transcriptions committed.
 specs/nordig_*.pdf
