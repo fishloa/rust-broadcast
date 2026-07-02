@@ -1,5 +1,12 @@
 # Changelog
 
+> **Frozen at 8.1.0.** As of the `broadcast-common` 8.2.0 lockstep release
+> (2026-07-02), `dvb-common` is no longer part of the lockstep and receives no
+> further version bumps — like the other deprecated re-export shims. It remains a
+> thin re-export of `broadcast-common`, so existing `dvb-common = "8"` deps keep
+> resolving (the 8.1.0 shim re-exports `broadcast-common ^8`). **Migrate to
+> `broadcast-common` directly.**
+
 ## [8.1.0] — 2026-06-29
 
 ### Deprecated

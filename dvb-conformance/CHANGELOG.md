@@ -1,5 +1,11 @@
 # Changelog
 
+## [8.2.0] — 2026-07-02
+
+### Changed
+- Lockstep release tracking `broadcast-common` 8.2.0 (new `mux` container-mux
+  traits). No API or behavioural change to this crate.
+
 ## [8.1.0] — 2026-06-29
 
 ### Changed
