@@ -17,6 +17,10 @@ jobs:
   publish:
     name: publish dvb-ule to crates.io
     runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
