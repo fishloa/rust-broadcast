@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.6.0"
+version      = "0.7.0"
 edition      = "2021"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,7 +11,7 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8.2", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 

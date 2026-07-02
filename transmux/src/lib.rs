@@ -62,6 +62,7 @@ pub mod flac;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
+pub mod media;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpegh;
@@ -114,6 +115,7 @@ pub use init_segment::{
     SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
     StblChild, StscEntry, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, Track};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
