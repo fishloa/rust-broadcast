@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Progressive MP4 output** (#463): `ProgressiveMux` implements the hub
+  `broadcast_common::Package` trait, muxing the `Media` IR into a single-file,
+  non-fragmented `.mp4` (ftyp + one moov with full `stbl` sample tables + one
+  mdat) — the VOD/download counterpart to `CmafMux`. Builds `stts`/`ctts`/
+  `stsc`/`stsz`/`stco`|`co64`/`stss` from the sample stream (ISO/IEC 14496-12
+  §8.5–§8.7); `faststart: bool` writes moov-before-mdat via a two-pass
+  chunk-offset fixup. Adds typed `co64`/`stss` boxes. Gated against the ffmpeg
+  faststart ref mp4 (byte-identical video samples + `avcC`).
 - **TS demuxer** (#467, partial — H.264 + AAC): `TsDemux` implements the hub
   `broadcast_common::Unpackage` trait, turning MPEG-2 TS bytes into the `Media`
   IR — the input side of the any-to-any hub, so `{TS} → IR → {any}` works
