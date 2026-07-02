@@ -46,11 +46,12 @@ use crate::mp4esds::EsdsBox;
 use crate::mpegh::MHAC_FOURCC;
 use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
 use crate::sample_entries::{
-    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,
+    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use crate::timing::TimeToSampleBox;
 use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
+use crate::vvc_config::VvcConfigurationBox;
 
 // --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
 /// Sample flags for a sync sample (I-frame): `sample_depends_on = 2` (does not
@@ -84,6 +85,16 @@ pub enum CodecConfig {
     Hevc {
         /// The `hvcC` decoder configuration record box.
         config: HEVCConfigurationBox,
+        /// Coded width in pixels.
+        width: u16,
+        /// Coded height in pixels.
+        height: u16,
+    },
+    /// H.266/VVC video (`vvc1`/`vvi1` sample entry with a `vvcC` config box) —
+    /// ISO/IEC 14496-15:2022 §11.3.3.
+    Vvc {
+        /// The `vvcC` decoder configuration record box.
+        config: VvcConfigurationBox,
         /// Coded width in pixels.
         width: u16,
         /// Coded height in pixels.
@@ -475,6 +486,40 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 config: config.clone(),
                 extra_boxes: vec![],
             });
+            (
+                entry,
+                Some(VideoMediaHeaderBox {
+                    version: 0,
+                    flags: 1,
+                    graphicsmode: 0,
+                    opcolor: [0, 0, 0],
+                }),
+                None,
+                *b"vide",
+                b"VideoHandler\0".to_vec(),
+                (*width as u32) << 16,
+                (*height as u32) << 16,
+            )
+        }
+        CodecConfig::Vvc {
+            config,
+            width,
+            height,
+        } => {
+            let visual = VisualSampleEntryFields {
+                data_reference_index: 1,
+                width: *width,
+                height: *height,
+                ..VisualSampleEntryFields::default()
+            };
+            // Always emit `vvc1` (parameter sets in the sample entry) —
+            // ISO/IEC 14496-15:2022 §11.3.3.
+            let entry = SampleEntryVariant::Vvc(Box::new(VVCSampleEntry {
+                codec_type: *b"vvc1",
+                visual,
+                config: config.clone(),
+                extra_boxes: vec![],
+            }));
             (
                 entry,
                 Some(VideoMediaHeaderBox {

@@ -1940,6 +1940,10 @@ impl Serialize for Mp4aSampleEntry {
 pub enum SampleEntryVariant {
     Avc1(crate::sample_entries::AVCSampleEntry),
     Hevc1(crate::sample_entries::HEVCSampleEntry),
+    /// H.266/VVC sample entry (`vvc1`/`vvi1`) — ISO/IEC 14496-15:2022 §11.3.3.
+    /// The `codec_type` field on [`crate::sample_entries::VVCSampleEntry`]
+    /// records which FourCC was parsed.
+    Vvc(Box<crate::sample_entries::VVCSampleEntry>),
     /// MPEG visual sample entry (`mp4v`, esds-bearing) — used for MPEG-2 video
     /// (H.262). ISO/IEC 14496-14 §5.6.
     Mp4v(Box<crate::sample_entries::Mp4vSampleEntry>),
@@ -2010,6 +2014,9 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"hvc1" | b"hev1" => SampleEntryVariant::Hevc1(
                     crate::sample_entries::HEVCSampleEntry::bare_parse(box_bytes)?,
                 ),
+                b"vvc1" | b"vvi1" => SampleEntryVariant::Vvc(Box::new(
+                    crate::sample_entries::VVCSampleEntry::bare_parse(box_bytes)?,
+                )),
                 b"mp4v" => SampleEntryVariant::Mp4v(Box::new(
                     crate::sample_entries::Mp4vSampleEntry::bare_parse(box_bytes)?,
                 )),
@@ -2064,6 +2071,7 @@ impl Serialize for SampleDescriptionBox {
             n += match e {
                 SampleEntryVariant::Avc1(a) => a.serialized_len(),
                 SampleEntryVariant::Hevc1(h) => h.serialized_len(),
+                SampleEntryVariant::Vvc(v) => v.serialized_len(),
                 SampleEntryVariant::Mp4v(m) => m.serialized_len(),
                 SampleEntryVariant::Av01(a) => a.serialized_len(),
                 SampleEntryVariant::Vp09(v) => v.serialized_len(),
@@ -2106,6 +2114,7 @@ impl Serialize for SampleDescriptionBox {
             c += match e {
                 SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Vvc(v) => v.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Mp4v(m) => m.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Av01(a) => a.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Vp09(v) => v.serialize_into(&mut buf[c..])?,

@@ -634,6 +634,128 @@ impl Serialize for HEVCSampleEntry {
 }
 
 // ---------------------------------------------------------------------------
+// VVC Sample Entry: vvc1 / vvi1
+// ---------------------------------------------------------------------------
+
+/// H.266/VVC sample entry — ISO/IEC 14496-15:2022 §11.3.3.
+///
+/// `vvc1` carries the parameter sets in the sample entry's `vvcC`; `vvi1`
+/// allows in-band parameter sets. The `codec_type` field records which FourCC
+/// was parsed / is to be emitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct VVCSampleEntry {
+    /// The four-CC (`vvc1` or `vvi1`).
+    pub codec_type: [u8; 4],
+    /// Visual sample entry fields.
+    pub visual: VisualSampleEntryFields,
+    /// VVC configuration box (`vvcC`).
+    pub config: crate::vvc_config::VvcConfigurationBox,
+    /// Additional config boxes preserved verbatim.
+    pub extra_boxes: Vec<OpaqueBox>,
+}
+
+impl VVCSampleEntry {
+    /// Parse a VVC sample entry from full box bytes (including 8-byte header).
+    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+        use crate::vvc_config::VvcConfigurationBox;
+        if bytes.len() < 8 + 78 + 8 {
+            return Err(Error::BufferTooShort {
+                need: 8 + 80 + 8,
+                have: bytes.len(),
+                what: "vvc1 bare",
+            });
+        }
+        let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
+        let visual = VisualSampleEntryFields::parse_body(bytes, "vvc1")?;
+        let config_region = &bytes[8 + VISUAL_SAMPLE_ENTRY_SIZE..];
+        if let Some(vvcc) = find_config_box(config_region, b"vvcC") {
+            let config = if vvcc.len() > 8 {
+                VvcConfigurationBox::parse_body(&vvcc[8..])?
+            } else {
+                return Err(Error::BufferTooShort {
+                    need: 8,
+                    have: vvcc.len(),
+                    what: "vvcC body",
+                });
+            };
+            Ok(Self {
+                codec_type,
+                visual,
+                config,
+                extra_boxes: Vec::new(),
+            })
+        } else {
+            Err(Error::BufferTooShort {
+                need: 0,
+                have: 0,
+                what: "vvc1 missing vvcC",
+            })
+        }
+    }
+
+    /// Create a new `vvc1` sample entry.
+    pub fn new_vvc1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
+        let compressorname = {
+            let mut c = [0u8; 32];
+            c[0] = 10;
+            c[1..11].copy_from_slice(b"VVC Coding");
+            c
+        };
+        Self {
+            codec_type: *b"vvc1",
+            visual: VisualSampleEntryFields {
+                compressorname,
+                ..VisualSampleEntryFields::default()
+            },
+            config,
+            extra_boxes: Vec::new(),
+        }
+    }
+
+    /// Create a new `vvi1` sample entry (in-band parameter sets).
+    pub fn new_vvi1(config: crate::vvc_config::VvcConfigurationBox) -> Self {
+        let mut s = Self::new_vvc1(config);
+        s.codec_type = *b"vvi1";
+        s
+    }
+}
+
+impl Serialize for VVCSampleEntry {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let mut n = 8 + VisualSampleEntryFields::serialized_len() + self.config.serialized_len();
+        for eb in &self.extra_boxes {
+            n += eb.serialized_len();
+        }
+        n
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut cursor = 0usize;
+        let size32 = need as u32;
+        buf[cursor..cursor + 4].copy_from_slice(&size32.to_be_bytes());
+        cursor += 4;
+        buf[cursor..cursor + 4].copy_from_slice(&self.codec_type);
+        cursor += 4;
+        cursor += self.visual.serialize_into(&mut buf[cursor..])?;
+        cursor += self.config.serialize_into(&mut buf[cursor..])?;
+        for eb in &self.extra_boxes {
+            cursor += eb.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

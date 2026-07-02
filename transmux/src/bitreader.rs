@@ -106,6 +106,15 @@ impl BitReader {
         Ok(self.read_bits(1, what)? != 0)
     }
 
+    /// Consume padding bits up to the next byte boundary (e.g.
+    /// `gci_alignment_zero_bit` / `ptl_reserved_zero_bit`, H.266 §7.3.3).
+    pub fn align_to_byte(&mut self, what: &'static str) -> Result<()> {
+        while self.bit_pos % 8 != 0 {
+            let _ = self.read_bits(1, what)?;
+        }
+        Ok(())
+    }
+
     /// Parse `ue(v)` — unsigned integer Exp-Golomb-coded syntax element.
     ///
     /// H.264 §9.1: leadingZeroBits (count of zero bits before the first 1-bit),
