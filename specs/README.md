@@ -1,18 +1,24 @@
 # Vendored specification PDFs
 
-Canonical source-of-truth standards for the `rust-dvb` crates. The
-structured markdown under each crate's `docs/` is transcribed from these.
-Kept in-repo so the parsers can always be checked against the spec they
-claim to implement.
+Canonical source-of-truth standards for the workspace crates. The structured
+markdown under each crate's `docs/` is transcribed from these, and **that
+markdown is the public, reviewable artefact** the parsers are checked against.
 
-These are freely-downloadable deliverables (ETSI, DVB Project, and SCTE —
-all published at no cost), redistributed here for reference. Each publisher
-retains copyright; see <https://www.etsi.org/>, <https://dvb.org/>,
-<https://www.scte.org/>.
+> **The PDFs themselves are now private.** Every spec PDF lives in the private
+> companion repo **`rust-broadcast-specs`** (checked out as a sibling at
+> `../rust-broadcast-specs`), NOT in this repo. `specs/*.pdf` is gitignored
+> here. This keeps redistribution-restricted standards (ISO/IEC, ITU-T, and —
+> conservatively — even the freely-downloadable ETSI/DVB/SCTE deliverables) out
+> of the public tree, while the derived syntax markdown stays public.
+>
+> To regenerate a `docs/` transcription, clone `rust-broadcast-specs` next to
+> this repo (`git clone …/rust-broadcast-specs ../rust-broadcast-specs`) so the
+> PDFs resolve at `specs/` (symlink or copy as needed). CI does not need them —
+> it builds from the committed markdown.
 
-Paid ISO standards (e.g. ISO/IEC 13818-1) are **never** vendored: they are
-consulted locally (gitignored as `specs/iso_iec_*.pdf`) and only the
-provenance-documented hand transcriptions under `*/docs/` are committed.
+Freely-redistributable **text** specs (IETF RFCs, HLS drafts, ID3) remain
+committed here as `.txt`/`.html`. The table below documents the PDF set that
+now lives in `rust-broadcast-specs`.
 
 | File | Standard | Used by |
 |---|---|---|
