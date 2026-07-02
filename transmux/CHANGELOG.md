@@ -143,6 +143,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tests passed, but a real mono ADTS stream was misread as stereo. Both
   directions corrected.
 
+### Fixed
+- `TsDemux` now decodes AVC `width`/`height` from the in-band SPS (was left at 0).
+
 ## [0.6.0] — 2026-07-02
 ### Added
 - **DTS** fMP4 carriage (#437, ETSI TS 102 114 §E.2): `dtsc`/`dtsh`/`dtsl`/`dtse`
