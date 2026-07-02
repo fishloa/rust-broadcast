@@ -80,6 +80,7 @@ pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
 pub mod ts_demux;
+pub mod ts_hls;
 pub mod ts_mux;
 pub mod visual_ext;
 pub mod vp9;
@@ -162,6 +163,7 @@ pub use timing::{
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 pub use ts_demux::TsDemux;
+pub use ts_hls::{TsHlsOutput, TsHlsPackager};
 pub use ts_mux::TsMux;
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};
