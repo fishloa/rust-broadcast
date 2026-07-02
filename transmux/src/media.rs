@@ -19,8 +19,9 @@
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
 //! access units); those types stay public and unchanged. `no_std` + `alloc`.
 //!
-//! Sample `Encrypt` / `Decrypt` impls are deferred (issue #465); only the
-//! `broadcast-common` trait definitions ship for those.
+//! Sample [`Decrypt`](broadcast_common::Decrypt) is implemented for CENC
+//! (ISO/IEC 23001-7 AES-CTR) by [`CencDecryptor`](crate::cenc_decrypt::CencDecryptor)
+//! behind the `cenc` feature (issue #465); the `Encrypt` impl remains deferred.
 
 use alloc::format;
 use alloc::string::String;

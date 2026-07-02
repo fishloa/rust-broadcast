@@ -42,6 +42,7 @@
 //! |---------|---------|-------------|
 //! | `std`   | yes     | `std::error::Error` impls |
 //! | `serde` | yes     | `serde::Serialize` for box types |
+//! | `cenc`  | yes     | CENC (ISO/IEC 23001-7) AES-CTR sample decryption ([`CencDecryptor`]) via the RustCrypto `aes`/`ctr` crates |
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -56,6 +57,8 @@ pub mod avc_config;
 pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
+#[cfg(feature = "cenc")]
+pub mod cenc_decrypt;
 pub mod dash;
 pub mod dts;
 pub mod error;
@@ -105,6 +108,8 @@ pub use cenc::{
     SchemeInformationBox, SchemeTypeBox, SubSampleEntry, TrackEncryptionBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
 };
+#[cfg(feature = "cenc")]
+pub use cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 pub use dash::{DashPackager, MediaKind, MPD_NAMESPACE, PROFILE_ISOFF_LIVE};
 pub use dts::{
     DtsSpecificBox, DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC,
