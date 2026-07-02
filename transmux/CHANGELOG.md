@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- **TS demuxer** (#467, partial — H.264 + AAC): `TsDemux` implements the hub
+  `broadcast_common::Unpackage` trait, turning MPEG-2 TS bytes into the `Media`
+  IR — the input side of the any-to-any hub, so `{TS} → IR → {any}` works
+  in-crate. Follows PAT→PMT, maps `stream_type`→codec, per-PID PES reassembly
+  (PTS/DTS 33-bit unwrap), and recovers codec config from in-band parameters
+  (H.264 SPS/PPS → `avcC`; AAC ADTS → ASC/`esds`; AC-3/E-AC-3 syncframe →
+  `dac3`/`dec3`). Verified against ffprobe timestamp and ffmpeg `-c copy` byte
+  oracles. HEVC/DTS are recognised in the PMT but not yet emitted (no IR
+  HEVC-video variant / DTS-ES parser) — tracked on #467.
+- `mpeg-ts` / `mpeg-pes` are now regular dependencies (were dev-deps).
+
+### Fixed
+- **ADTS `channel_configuration` decode** (`aac_asc`): the 3-bit field was split
+  wrong (`byte2[0]<<3 | byte3[7:5]`); the correct ISO/IEC 13818-7 §6.2 layout is
+  `byte2[0]<<2 | byte3[7:6]`. Build+parse were self-consistent so round-trip
+  tests passed, but a real mono ADTS stream was misread as stereo. Both
+  directions corrected.
 
 ## [0.7.0] — 2026-07-02
 ### Added

@@ -602,8 +602,11 @@ pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; A
     let mut h = [0u8; ADTS_HEADER_SIZE];
     h[0] = 0xFF;
     h[1] = 0xF1;
-    h[2] = (profile & 3) << 6 | (sfi & 0x0F) << 2 | (cc >> 3) & 1;
-    h[3] = (cc & 7) << 5 | ((frame_len >> 11) & 3) as u8;
+    // channel_configuration is a 3-bit field split across the byte boundary
+    // (ISO/IEC 13818-7 §6.2 ADTS fixed header): its MSB is byte2 bit0, and its
+    // low 2 bits are byte3 bits `[7:6]`.
+    h[2] = (profile & 3) << 6 | (sfi & 0x0F) << 2 | (cc >> 2) & 1;
+    h[3] = (cc & 3) << 6 | ((frame_len >> 11) & 3) as u8;
     h[4] = (frame_len >> 3) as u8;
     let bf: u16 = 0x7FF;
     h[5] = ((frame_len as u8 & 7) << 5) | ((bf >> 6) as u8 & 0x1F);
@@ -630,7 +633,7 @@ pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     Ok(AdtsHeader {
         profile: (b2 >> 6) & 3,
         sampling_frequency_index: (b2 >> 2) & 0x0F,
-        channel_configuration: ((b2 & 1) << 3) | ((b3 >> 5) & 7),
+        channel_configuration: ((b2 & 1) << 2) | ((b3 >> 6) & 3),
         frame_length: (((b3 & 3) as u16) << 11) | ((b4 as u16) << 3) | ((b5 >> 5) as u16),
         buffer_fullness: (((b5 & 0x1F) as u16) << 6) | ((b6 >> 2) as u16),
         num_raw_data_blocks: b6 & 3,
