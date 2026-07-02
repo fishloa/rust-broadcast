@@ -558,6 +558,11 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     if sps.len() < 4 {
         return None;
     }
+    // Coded dimensions from the SPS (ISO/IEC 14496-10 §7.3.2.1.1) — the TS in-band
+    // parameter set carries them; decode into the track spec (0 if undecodable).
+    let (width, height) = crate::sps::decode_avc_sps(&sps)
+        .map(|i| (i.width as u16, i.height as u16))
+        .unwrap_or((0, 0));
     let record = AVCDecoderConfigurationRecord {
         configuration_version: 1,
         // profile_idc / constraint_flags / level_idc live at SPS bytes 1..=3
@@ -597,8 +602,8 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             timescale: VIDEO_TIMESCALE,
             config: CodecConfig::Avc {
                 config,
-                width: 0,
-                height: 0,
+                width,
+                height,
             },
         },
         samples,

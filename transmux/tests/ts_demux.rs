@@ -325,11 +325,18 @@ fn enumerates_two_tracks_h264_then_aac() {
     let media: Media = TsDemux::new().unpackage(&ts).expect("demux must succeed");
 
     assert_eq!(media.tracks.len(), 2, "must demux exactly 2 tracks");
-    assert!(
-        matches!(media.tracks[0].spec.config, CodecConfig::Avc { .. }),
-        "track 0 must be H.264/AVC video, got {:?}",
-        media.tracks[0].spec.config
-    );
+    match &media.tracks[0].spec.config {
+        CodecConfig::Avc { width, height, .. } => {
+            // Dimensions must be decoded from the in-band SPS (h264_aac.ts is
+            // Main profile 320x240) — not left at 0.
+            assert_eq!(
+                (*width, *height),
+                (320, 240),
+                "track 0 AVC dimensions must be decoded from the SPS"
+            );
+        }
+        other => panic!("track 0 must be H.264/AVC video, got {other:?}"),
+    }
     assert!(
         matches!(media.tracks[1].spec.config, CodecConfig::Aac { .. }),
         "track 1 must be AAC audio, got {:?}",
