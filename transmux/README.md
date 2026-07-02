@@ -50,7 +50,7 @@ coverage against real fMP4 fixtures.
 | MPEG-H 3D | `mha1`/`mhm1` | `mhaC` | — | ✅ |
 | AV1 | `av01` | `av1C` | `av01.…` | ✅ |
 | Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
-| DTS | `dtsc` | `ddts` | — | ⬜ [#437](https://github.com/fishloa/rust-broadcast/issues/437) |
+| DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` | — | ✅ |
 
 ### Text / captions
 

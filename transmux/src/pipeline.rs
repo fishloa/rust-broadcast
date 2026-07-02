@@ -23,12 +23,13 @@ use crate::ac4::{Ac4SpecificBox, DAC4_FOURCC};
 use crate::annexb::annexb_to_length_prefixed;
 use crate::av1::{Av1ConfigurationBox, Av1SampleEntry};
 use crate::avc_config::AVCConfigurationBox;
+use crate::dts::{DtsSpecificBox, DDTS_FOURCC};
 use crate::error::Result;
 use crate::flac::{FlacSpecificBox, DFLA_FOURCC};
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
-    DataReferenceBox, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox, MediaHeaderBox,
-    MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
+    DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
+    MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
     Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
     SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, TrackBox,
     TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
@@ -174,6 +175,25 @@ pub enum CodecConfig {
         /// Sample size in bits (typically 16).
         sample_size: u16,
     },
+    /// DTS audio (`dtsc`/`dtsh`/`dtsl`/`dtse` sample entry with a `ddts` box) —
+    /// ETSI TS 102 114 §E.2.
+    ///
+    /// `codec_fourcc` selects the sample-entry FourCC:
+    /// `dtsc` (core only), `dtsh` (core + extension / multi-asset),
+    /// `dtsl` (LBR only), or `dtse` (extension substream only).
+    /// Use [`crate::dts::DTSC_FOURCC`] etc. for the named constants.
+    Dts {
+        /// The `ddts` DTSSpecificBox.
+        config: DtsSpecificBox,
+        /// Sample-entry FourCC: one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
+        codec_fourcc: [u8; 4],
+        /// Channel count.
+        channel_count: u16,
+        /// Sampling rate in Hz (48000, 44100, or 32000 per §E.2.2.2).
+        sample_rate: u32,
+        /// Sample size in bits (always 16 per §E.2.2.2).
+        sample_size: u16,
+    },
 }
 
 impl CodecConfig {
@@ -187,6 +207,7 @@ impl CodecConfig {
                 | CodecConfig::Flac { .. }
                 | CodecConfig::Ac4 { .. }
                 | CodecConfig::MpegH { .. }
+                | CodecConfig::Dts { .. }
         )
     }
 }
@@ -610,6 +631,36 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 samplesize: *sample_size,
                 samplerate: (*sample_rate) << 16,
                 config_boxes: vec![mhac_opaque],
+            }));
+            (
+                entry,
+                None,
+                Some(SoundMediaHeaderBox {
+                    version: 0,
+                    flags: 0,
+                    balance: 0,
+                }),
+                *b"soun",
+                b"SoundHandler\0".to_vec(),
+                0,
+                0,
+            )
+        }
+        CodecConfig::Dts {
+            config,
+            codec_fourcc,
+            channel_count,
+            sample_rate,
+            sample_size,
+        } => {
+            let ddts_opaque = config_box(&DDTS_FOURCC, config)?;
+            let entry = SampleEntryVariant::Dts(Box::new(DtsSampleEntry {
+                codec_type: *codec_fourcc,
+                data_reference_index: 1,
+                channelcount: *channel_count,
+                samplesize: *sample_size,
+                samplerate: (*sample_rate) << 16,
+                config_boxes: vec![ddts_opaque],
             }));
             (
                 entry,

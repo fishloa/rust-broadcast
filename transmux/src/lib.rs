@@ -56,6 +56,7 @@ pub mod avc_config;
 pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
+pub mod dts;
 pub mod error;
 pub mod flac;
 pub mod hevc_config;
@@ -96,6 +97,9 @@ pub use cenc::{
     SchemeInformationBox, SchemeTypeBox, SubSampleEntry, TrackEncryptionBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
 };
+pub use dts::{
+    DtsSpecificBox, DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC,
+};
 pub use error::{Error, Result};
 pub use flac::{
     FlacMetadataBlock, FlacSpecificBox, BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC,
@@ -104,11 +108,11 @@ pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
-    DataReferenceBox, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox, MediaBox,
-    MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox, MovieHeaderBox,
-    Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant,
-    SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox, StblChild, StscEntry,
-    TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+    DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox,
+    MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox,
+    MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox,
+    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
+    StblChild, StscEntry, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

@@ -1422,6 +1422,71 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
 }
 
 // ---------------------------------------------------------------------------
+// DtsSampleEntry (dtsc / dtsh / dtsl / dtse) — ETSI TS 102 114 §E.2
+// ---------------------------------------------------------------------------
+
+/// DTS audio sample entry (`dtsc`, `dtsh`, `dtsl`, `dtse`) — ETSI TS 102 114 §E.2.
+///
+/// Same AudioSampleEntry fixed fields as [`Mp4aSampleEntry`], then a `ddts` box
+/// carrying the [`crate::dts::DtsSpecificBox`].  The `codec_type` field records
+/// which of the four DTS FourCCs (`dtsc`/`dtsh`/`dtsl`/`dtse`) was parsed or built.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct DtsSampleEntry {
+    /// The FourCC of this sample entry — one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
+    pub codec_type: [u8; 4],
+    pub data_reference_index: u16,
+    pub channelcount: u16,
+    pub samplesize: u16,
+    pub samplerate: u32,
+    /// Config and any extra child boxes (typically one `ddts`).
+    pub config_boxes: Vec<OpaqueBox>,
+}
+
+impl Serialize for DtsSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        audio_sample_entry_serialized_len(&self.config_boxes)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        serialize_audio_sample_entry(
+            buf,
+            &self.codec_type,
+            self.data_reference_index,
+            self.channelcount,
+            self.samplesize,
+            self.samplerate,
+            &self.config_boxes,
+        )
+    }
+}
+
+impl<'a> Parse<'a> for DtsSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 8 {
+            return Err(Error::BufferTooShort {
+                need: 8,
+                have: bytes.len(),
+                what: "DtsSampleEntry",
+            });
+        }
+        let mut codec_type = [0u8; 4];
+        codec_type.copy_from_slice(&bytes[4..8]);
+        let (dri, chan, samp_sz, sr, config_boxes) =
+            parse_audio_sample_entry(bytes, "DtsSampleEntry")?;
+        Ok(Self {
+            codec_type,
+            data_reference_index: dri,
+            channelcount: chan,
+            samplesize: samp_sz,
+            samplerate: sr,
+            config_boxes,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MhaSampleEntry (mha1 / mha2 / mhm1 / mhm2) — ISO/IEC 23008-3 §20
 // ---------------------------------------------------------------------------
 
@@ -1716,6 +1781,10 @@ pub enum SampleEntryVariant {
     /// ISO/IEC 23008-3 §20.  The `codec_type` field on [`MhaSampleEntry`]
     /// records which FourCC was parsed.
     Mha(Box<MhaSampleEntry>),
+    /// DTS audio sample entry (`dtsc`, `dtsh`, `dtsl`, or `dtse`) —
+    /// ETSI TS 102 114 §E.2.  The `codec_type` field on [`DtsSampleEntry`]
+    /// records which FourCC was parsed.
+    Dts(Box<DtsSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -1786,6 +1855,9 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 b"mha1" | b"mha2" | b"mhm1" | b"mhm2" => {
                     SampleEntryVariant::Mha(Box::new(MhaSampleEntry::parse(box_bytes)?))
                 }
+                b"dtsc" | b"dtsh" | b"dtsl" | b"dtse" => {
+                    SampleEntryVariant::Dts(Box::new(DtsSampleEntry::parse(box_bytes)?))
+                }
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
@@ -1822,6 +1894,7 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Opus(o) => o.serialized_len(),
                 SampleEntryVariant::Flac(f) => f.serialized_len(),
                 SampleEntryVariant::Mha(m) => m.serialized_len(),
+                SampleEntryVariant::Dts(d) => d.serialized_len(),
                 SampleEntryVariant::Unknown(u) => u.serialized_len(),
             };
         }
@@ -1862,6 +1935,7 @@ impl Serialize for SampleDescriptionBox {
                 SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Mha(m) => m.serialize_into(&mut buf[c..])?,
+                SampleEntryVariant::Dts(d) => d.serialize_into(&mut buf[c..])?,
                 SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
             };
         }
