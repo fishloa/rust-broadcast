@@ -14,18 +14,19 @@ use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
 use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
 use dvb_ci::objects::date_time::{DateTime as CiDateTime, DateTimeEnq, UTC_TIME_LEN};
+use dvb_ci::objects::host_control::{AskRelease, ClearReplace, Replace, Tune};
 use dvb_ci::objects::mmi_display::{
     DisplayControl, DisplayControlCmd, DisplayReply, DisplayReplyBody, DisplayReplyId, MmiMode,
 };
 use dvb_ci::objects::mmi_high::{Enq, List, Menu};
 use dvb_ci::objects::resource_manager::{Profile, ProfileChange, ProfileEnq};
 use dvb_ci::resource::{
-    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
+    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
     RESOURCE_MANAGER,
 };
 use dvb_ci::tag::{self, ApduTag};
 
-use crate::event::{MmiEvent, MmiMenu, Notification};
+use crate::event::{HostControlEvent, MmiEvent, MmiMenu, Notification};
 
 /// Decode MMI `text_char` bytes to a `String` (lossy; full EN 300 468 Annex A
 /// decoding is the application's concern).
@@ -436,6 +437,57 @@ impl Resource for Mmi {
     }
 }
 
+/// Host Control (§8.5.1) — host-provided. The module opens a host_control
+/// session and issues `tune` / `replace` / `clear_replace` / `ask_release`
+/// objects; this handler decodes each and surfaces it as
+/// [`Notification::HostControl`]. The host acts on the request out of band (it
+/// retunes / replaces PIDs itself) — the runtime does not re-tune, so there is
+/// no reply APDU.
+#[derive(Debug, Default)]
+pub struct HostControl;
+
+impl Resource for HostControl {
+    fn id(&self) -> ResourceId {
+        HOST_CONTROL
+    }
+
+    fn on_apdu(&mut self, apdu: &[u8]) -> ResourceOut {
+        let mut out = ResourceOut::default();
+        let event = match peek_tag(apdu) {
+            Some(t) if t == tag::TUNE => Tune::parse(apdu).ok().map(|t| HostControlEvent::Tune {
+                network_id: t.network_id,
+                original_network_id: t.original_network_id,
+                transport_stream_id: t.transport_stream_id,
+                service_id: t.service_id,
+            }),
+            Some(t) if t == tag::REPLACE => {
+                Replace::parse(apdu)
+                    .ok()
+                    .map(|r| HostControlEvent::Replace {
+                        replacement_ref: r.replacement_ref,
+                        replaced_pid: r.replaced_pid,
+                        replacement_pid: r.replacement_pid,
+                    })
+            }
+            Some(t) if t == tag::CLEAR_REPLACE => {
+                ClearReplace::parse(apdu)
+                    .ok()
+                    .map(|c| HostControlEvent::ClearReplace {
+                        replacement_ref: c.replacement_ref,
+                    })
+            }
+            Some(t) if t == tag::ASK_RELEASE => AskRelease::parse(apdu)
+                .ok()
+                .map(|_| HostControlEvent::AskRelease),
+            _ => None,
+        };
+        if let Some(event) = event {
+            out.notify.push(Notification::HostControl(event));
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,6 +644,65 @@ mod tests {
                 menu: "Acme CAM".to_string(),
             }]
         );
+    }
+
+    #[test]
+    fn host_control_surfaces_tune_replace_clear_and_ask_release() {
+        let mut h = HostControl;
+        assert_eq!(h.id(), HOST_CONTROL);
+
+        // tune() → HostControlEvent::Tune with the four 16-bit identifiers.
+        let tune = ser(&Tune {
+            network_id: 0x1122,
+            original_network_id: 0x3344,
+            transport_stream_id: 0x5566,
+            service_id: 0x7788,
+        });
+        assert_eq!(
+            h.on_apdu(&tune).notify,
+            vec![Notification::HostControl(HostControlEvent::Tune {
+                network_id: 0x1122,
+                original_network_id: 0x3344,
+                transport_stream_id: 0x5566,
+                service_id: 0x7788,
+            })]
+        );
+
+        // replace() → HostControlEvent::Replace with the 13-bit PIDs decoded.
+        let replace = ser(&Replace {
+            replacement_ref: 0x07,
+            replaced_pid: 0x0123,
+            replacement_pid: 0x01FF,
+        });
+        assert_eq!(
+            h.on_apdu(&replace).notify,
+            vec![Notification::HostControl(HostControlEvent::Replace {
+                replacement_ref: 0x07,
+                replaced_pid: 0x0123,
+                replacement_pid: 0x01FF,
+            })]
+        );
+
+        // clear_replace() → HostControlEvent::ClearReplace.
+        let clear = ser(&ClearReplace {
+            replacement_ref: 0x42,
+        });
+        assert_eq!(
+            h.on_apdu(&clear).notify,
+            vec![Notification::HostControl(HostControlEvent::ClearReplace {
+                replacement_ref: 0x42,
+            })]
+        );
+
+        // ask_release() → HostControlEvent::AskRelease (header-only).
+        let ask = ser(&AskRelease);
+        assert_eq!(
+            h.on_apdu(&ask).notify,
+            vec![Notification::HostControl(HostControlEvent::AskRelease)]
+        );
+
+        // The host acts out of band: no reply APDU is produced.
+        assert!(h.on_apdu(&tune).apdus.is_empty());
     }
 
     #[test]

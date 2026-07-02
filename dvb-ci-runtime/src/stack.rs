@@ -6,8 +6,8 @@
 
 use crate::event::{Action, Event, HostRequest, Notification};
 use crate::resource::{
-    ApplicationInformation, ConditionalAccess, DateTime, Mmi, Resource, ResourceManager,
-    ResourceOut,
+    ApplicationInformation, ConditionalAccess, DateTime, HostControl, Mmi, Resource,
+    ResourceManager, ResourceOut,
 };
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
@@ -17,7 +17,7 @@ use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
 use dvb_ci::resource::{
-    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, MMI,
+    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
     RESOURCE_MANAGER,
 };
 use dvb_si::tables::pmt::PmtSection;
@@ -60,7 +60,7 @@ impl CiStack {
     /// conditional_access handlers.
     #[must_use]
     pub fn new() -> Self {
-        // The host *provides* all five resources it implements; the module opens
+        // The host *provides* all six resources it implements; the module opens
         // a session to each (module → host `open_session_request`, host accepts),
         // and this is the list the RM advertises in its `profile` reply. Verified
         // on hardware (#340, live AlphaCrypt): the module opens sessions only to
@@ -75,6 +75,7 @@ impl CiStack {
             CONDITIONAL_ACCESS_SUPPORT,
             DATE_TIME,
             MMI,
+            HOST_CONTROL,
         ];
         Self {
             transport: Transport::new(1),
@@ -85,6 +86,7 @@ impl CiStack {
                 Box::new(ConditionalAccess),
                 Box::new(DateTime::new()),
                 Box::new(Mmi),
+                Box::new(HostControl),
             ],
             host_provided,
             cam_caids: Vec::new(),

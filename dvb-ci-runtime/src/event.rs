@@ -118,6 +118,10 @@ pub enum Notification {
     },
     /// An MMI menu/enquiry the host should display.
     Mmi(MmiEvent),
+    /// A `host_control` request the CAM made of the host (EN 50221 §8.5.1). The
+    /// host acts on it out-of-band (retune / PID replace); the runtime only
+    /// surfaces the decoded request.
+    HostControl(HostControlEvent),
     /// A session for `resource` was opened.
     SessionOpened {
         /// The resource the session serves.
@@ -177,4 +181,43 @@ pub enum MmiEvent {
     },
     /// The module closed the MMI dialog.
     Close,
+}
+
+/// A `host_control` request the CAM makes of the host (ETSI EN 50221 §8.5.1,
+/// Tables 27-30). The runtime surfaces the decoded request; the host performs
+/// the retune / PID replacement itself (out of band) — there is no re-tune
+/// logic in the stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HostControlEvent {
+    /// `tune()` (Table 27): retune to the identified service.
+    Tune {
+        /// `network_id`.
+        network_id: u16,
+        /// `original_network_id`.
+        original_network_id: u16,
+        /// `transport_stream_id`.
+        transport_stream_id: u16,
+        /// `service_id`.
+        service_id: u16,
+    },
+    /// `replace()` (Table 28): temporarily replace one component PID with
+    /// another from the same multiplex.
+    Replace {
+        /// `replacement_ref` — matched later by a Clear Replace.
+        replacement_ref: u8,
+        /// 13-bit `replaced_PID`.
+        replaced_pid: u16,
+        /// 13-bit `replacement_PID`.
+        replacement_pid: u16,
+    },
+    /// `clear_replace()` (Table 29): undo all Replace operations sharing this
+    /// `replacement_ref`.
+    ClearReplace {
+        /// `replacement_ref` shared with one or more prior Replace requests.
+        replacement_ref: u8,
+    },
+    /// `ask_release()` (Table 30): the CAM asks the host to release any
+    /// replacements it holds (header-only request).
+    AskRelease,
 }
