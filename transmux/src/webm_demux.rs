@@ -12,15 +12,20 @@
 //!   (Simple)Block): RFC 9559 §12 / §27.
 //! - Element-ID table, (Simple)Block layout and the CodecID → [`CodecConfig`]
 //!   mapping are transcribed in `transmux/docs/webm/ebml-matroska.md`.
+//! - **VP8** key-frame header (dimensions): RFC 6386 §9.1 / §19.1.
+//! - **Vorbis** `CodecPrivate` (Xiph-laced 3 headers) + Identification header:
+//!   the Vorbis I specification §4.2.2. Both are transcribed in
+//!   `transmux/docs/codec/vp8-vorbis-webm.md`.
 //!
 //! # Scope
 //!
-//! Only the elements needed to demux VP9-video + Opus-audio WebM are decoded;
+//! Only the elements needed to demux WebM video + audio are decoded;
 //! `SeekHead`, `Cues`, `Tags` and any other master element are skipped by size.
-//! Only `V_VP9` (→ [`CodecConfig::Vp9`]) and `A_OPUS` (→ [`CodecConfig::Opus`])
-//! CodecIDs build a track; every other CodecID is skipped (never fatal). Lacing
-//! is not supported: a laced block is a hard error (VP9/Opus WebM from ffmpeg use
-//! no lacing — one frame per block).
+//! The mapped CodecIDs are `V_VP9` (→ [`CodecConfig::Vp9`]), `V_VP8` (→
+//! [`CodecConfig::Vp8`]), `A_OPUS` (→ [`CodecConfig::Opus`]) and `A_VORBIS` (→
+//! [`CodecConfig::Vorbis`]); every other CodecID is skipped (never fatal).
+//! Lacing is not supported: a laced block is a hard error (VP8/VP9/Opus/Vorbis
+//! WebM from ffmpeg use no lacing — one frame per block).
 //!
 //! # Timescale
 //!
@@ -96,8 +101,12 @@ const REFERENCE_BLOCK: u32 = 0xFB;
 // --- Matroska CodecIDs (RFC 9559 codec-mapping registry) ---------------------
 /// VP9 video CodecID.
 const CODEC_V_VP9: &[u8] = b"V_VP9";
+/// VP8 video CodecID.
+const CODEC_V_VP8: &[u8] = b"V_VP8";
 /// Opus audio CodecID.
 const CODEC_A_OPUS: &[u8] = b"A_OPUS";
+/// Vorbis audio CodecID.
+const CODEC_A_VORBIS: &[u8] = b"A_VORBIS";
 
 // --- TrackType values (RFC 9559 §27 `TrackType`) -----------------------------
 /// `TrackType` value for a video track.
@@ -127,6 +136,36 @@ const OPUS_HEAD_MIN_LEN: usize = 19;
 const OPUS_OUTPUT_SAMPLE_RATE: u32 = 48_000;
 /// Audio sample size in bits carried in the sample entry (convention: 16).
 const AUDIO_SAMPLE_SIZE: u16 = 16;
+
+// --- VP8 key-frame header (RFC 6386 §9.1 / §19.1) ----------------------------
+/// VP8 uncompressed frame tag length (bytes): a 24-bit little-endian field.
+const VP8_FRAME_TAG_LEN: usize = 3;
+/// VP8 key-frame start code that follows the tag (RFC 6386 §9.1): `0x9D 01 2A`.
+const VP8_START_CODE: [u8; 3] = [0x9D, 0x01, 0x2A];
+/// `key_frame` bit is bit `[0]` of the frame tag; `0` marks a key frame.
+const VP8_KEYFRAME_TAG_BIT: u8 = 0x01;
+/// Dimension mask: the width/height are the low 14 bits of each 16-bit word
+/// (the top 2 bits are the horizontal/vertical scale). RFC 6386 §9.1.
+const VP8_DIMENSION_MASK: u16 = 0x3FFF;
+/// Minimum VP8 key-frame header length: frame tag(3) + start code(3) +
+/// width(2) + height(2) = 10 bytes.
+const VP8_KEYFRAME_HEADER_LEN: usize = VP8_FRAME_TAG_LEN + VP8_START_CODE.len() + 4;
+
+// --- Vorbis CodecPrivate (Vorbis I §4.2.2; Xiph lacing) ----------------------
+/// Xiph-lacing header count byte value: `numPackets - 1` = 2 (three headers).
+const VORBIS_LACE_COUNT: u8 = 2;
+/// The Vorbis Identification-header packet type byte (Vorbis I §4.2.1): `0x01`.
+const VORBIS_ID_HEADER_TYPE: u8 = 0x01;
+/// The 6-byte "vorbis" signature following every header's packet-type byte.
+const VORBIS_SIGNATURE: &[u8; 6] = b"vorbis";
+/// Offset of `audio_channels` (u8) within the Identification header: packet
+/// type(1) + "vorbis"(6) + vorbis_version(4). Vorbis I §4.2.2.
+const VORBIS_ID_CHANNELS_OFFSET: usize = 1 + 6 + 4;
+/// Offset of `audio_sample_rate` (u32 LE) within the Identification header:
+/// after `audio_channels`. Vorbis I §4.2.2.
+const VORBIS_ID_SAMPLE_RATE_OFFSET: usize = VORBIS_ID_CHANNELS_OFFSET + 1;
+/// Minimum Identification-header length to read channels + sample rate.
+const VORBIS_ID_MIN_LEN: usize = VORBIS_ID_SAMPLE_RATE_OFFSET + 4;
 
 // --- VP9 vpcC defaults (WebM VP9 "profile 0 / 8-bit" when not derivable) -----
 /// VPCodecConfigurationBox version (`FullBox` v1) — see [`Vp9ConfigurationBox`].
@@ -429,10 +468,6 @@ fn build_media(
     let mut track_id: u32 = 1;
 
     for info in &tracks {
-        let Some(config) = codec_config_for(info)? else {
-            continue; // Unsupported CodecID: skip, never fatal.
-        };
-
         // Gather this track's blocks in file (decode) order.
         let mut samples: Vec<Sample> = Vec::new();
         let mut pts: Vec<i64> = Vec::new();
@@ -448,6 +483,18 @@ fn build_media(
         if payloads.is_empty() {
             continue;
         }
+
+        // Codec config: resolved from the TrackEntry plus, for codecs whose
+        // geometry lives in-band (VP8), the first sync sample's frame header.
+        // Skip unsupported CodecIDs (never fatal).
+        let first_sync = sync
+            .iter()
+            .position(|&s| s)
+            .map(|i| payloads[i].as_slice())
+            .unwrap_or(payloads[0].as_slice());
+        let Some(config) = codec_config_for(info, first_sync)? else {
+            continue;
+        };
 
         // Per-sample duration = delta to next block's PTS; last reuses prior
         // delta (or DefaultDuration in IR ticks when a single block).
@@ -484,14 +531,157 @@ fn build_media(
 }
 
 /// Map a [`TrackInfo`] to a [`CodecConfig`], or `None` for an unsupported CodecID.
-fn codec_config_for(info: &TrackInfo) -> Result<Option<CodecConfig>> {
+///
+/// `first_frame` is the first sync sample's coded bytes (used to decode the VP8
+/// key-frame header dimensions; ignored for the other codecs).
+fn codec_config_for(info: &TrackInfo, first_frame: &[u8]) -> Result<Option<CodecConfig>> {
     if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_VP9 {
         Ok(Some(vp9_config(info)))
+    } else if info.track_type == TRACK_TYPE_VIDEO && info.codec_id == CODEC_V_VP8 {
+        Ok(Some(vp8_config(first_frame)?))
     } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_OPUS {
         Ok(Some(opus_config(info)?))
+    } else if info.track_type == TRACK_TYPE_AUDIO && info.codec_id == CODEC_A_VORBIS {
+        Ok(Some(vorbis_config(info)?))
     } else {
         Ok(None)
     }
+}
+
+/// Build a [`CodecConfig::Vp8`] by decoding the VP8 key-frame header (RFC 6386
+/// §9.1 / §19.1) of the first key frame.
+///
+/// Layout: a 3-byte uncompressed frame tag whose bit `[0]` (`key_frame`) is `0`
+/// for a key frame, then the 3-byte start code `0x9D 01 2A`, then two 16-bit
+/// little-endian words carrying `width`/`height` in their low 14 bits (the top
+/// two bits are the horizontal/vertical scale). See
+/// `docs/codec/vp8-vorbis-webm.md`.
+fn vp8_config(first_frame: &[u8]) -> Result<CodecConfig> {
+    if first_frame.len() < VP8_KEYFRAME_HEADER_LEN {
+        return Err(Error::BufferTooShort {
+            need: VP8_KEYFRAME_HEADER_LEN,
+            have: first_frame.len(),
+            what: "VP8 key-frame header",
+        });
+    }
+    // Frame tag is 24-bit little-endian; bit [0] of byte 0 is `key_frame`.
+    if first_frame[0] & VP8_KEYFRAME_TAG_BIT != 0 {
+        return Err(Error::InvalidValue {
+            field: "VP8 key_frame",
+            value: (first_frame[0] & VP8_KEYFRAME_TAG_BIT) as u64,
+            reason: "first VP8 frame is not a key frame (key_frame bit != 0)",
+        });
+    }
+    let start = &first_frame[VP8_FRAME_TAG_LEN..VP8_FRAME_TAG_LEN + VP8_START_CODE.len()];
+    if start != VP8_START_CODE {
+        return Err(Error::InvalidValue {
+            field: "VP8 start code",
+            value: u32::from_be_bytes([0, start[0], start[1], start[2]]) as u64,
+            reason: "VP8 key-frame start code is not 0x9D012A",
+        });
+    }
+    let d = VP8_FRAME_TAG_LEN + VP8_START_CODE.len();
+    let width = u16::from_le_bytes([first_frame[d], first_frame[d + 1]]) & VP8_DIMENSION_MASK;
+    let height = u16::from_le_bytes([first_frame[d + 2], first_frame[d + 3]]) & VP8_DIMENSION_MASK;
+    Ok(CodecConfig::Vp8 { width, height })
+}
+
+/// Build a [`CodecConfig::Vorbis`] from a Vorbis [`TrackInfo`].
+///
+/// The `CodecPrivate` is stored verbatim (the three Xiph-laced setup headers).
+/// The Identification header (Vorbis I §4.2.2) is located past the Xiph lacing
+/// (byte 0 = `numPackets - 1` = 2, then the laced lengths of the first two
+/// headers) and decoded for `audio_channels` (u8) + `audio_sample_rate` (u32
+/// LE). See `docs/codec/vp8-vorbis-webm.md`.
+fn vorbis_config(info: &TrackInfo) -> Result<CodecConfig> {
+    let cp = &info.codec_private;
+    let id = vorbis_id_header(cp)?;
+
+    // Identification header: packet-type(1) + "vorbis"(6) signature.
+    if id.len() < VORBIS_ID_MIN_LEN {
+        return Err(Error::BufferTooShort {
+            need: VORBIS_ID_MIN_LEN,
+            have: id.len(),
+            what: "Vorbis identification header",
+        });
+    }
+    if id[0] != VORBIS_ID_HEADER_TYPE {
+        return Err(Error::InvalidValue {
+            field: "Vorbis header packet type",
+            value: id[0] as u64,
+            reason: "first Vorbis header is not the identification header (type 0x01)",
+        });
+    }
+    if &id[1..1 + VORBIS_SIGNATURE.len()] != VORBIS_SIGNATURE {
+        return Err(Error::InvalidInput(
+            "Vorbis identification header missing the \"vorbis\" signature",
+        ));
+    }
+    let channels = id[VORBIS_ID_CHANNELS_OFFSET] as u16;
+    let sample_rate = u32::from_le_bytes([
+        id[VORBIS_ID_SAMPLE_RATE_OFFSET],
+        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 1],
+        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 2],
+        id[VORBIS_ID_SAMPLE_RATE_OFFSET + 3],
+    ]);
+
+    Ok(CodecConfig::Vorbis {
+        codec_private: cp.clone(),
+        channels,
+        sample_rate,
+    })
+}
+
+/// Slice the Vorbis Identification header out of the Xiph-laced `CodecPrivate`.
+///
+/// Xiph lacing (Vorbis I §4.2.2): byte 0 = `numPackets - 1` = 2; then the length
+/// of the first two headers, each as a run of bytes summed while the byte is
+/// `0xFF`; the third header's length is the remainder. The identification header
+/// is the first packet, so its length is the first laced length and it starts
+/// right after the lacing table.
+fn vorbis_id_header(cp: &[u8]) -> Result<&[u8]> {
+    if cp.is_empty() {
+        return Err(Error::BufferTooShort {
+            need: 1,
+            have: 0,
+            what: "Vorbis CodecPrivate (Xiph lacing count)",
+        });
+    }
+    if cp[0] != VORBIS_LACE_COUNT {
+        return Err(Error::InvalidValue {
+            field: "Vorbis CodecPrivate lacing count",
+            value: cp[0] as u64,
+            reason: "expected numPackets-1 == 2 (three Xiph-laced Vorbis headers)",
+        });
+    }
+    // Read the laced lengths of the first two headers.
+    let mut pos = 1usize;
+    let mut lengths = [0usize; 2];
+    for len in lengths.iter_mut() {
+        loop {
+            let b = *cp.get(pos).ok_or(Error::BufferTooShort {
+                need: pos + 1,
+                have: cp.len(),
+                what: "Vorbis CodecPrivate Xiph lacing length",
+            })?;
+            pos += 1;
+            *len += b as usize;
+            if b != 0xFF {
+                break;
+            }
+        }
+    }
+    // The identification header is the first packet, immediately after the table.
+    let id_start = pos;
+    let id_end = id_start
+        .checked_add(lengths[0])
+        .filter(|&e| e <= cp.len())
+        .ok_or(Error::BufferTooShort {
+            need: id_start + lengths[0],
+            have: cp.len(),
+            what: "Vorbis identification header body",
+        })?;
+    Ok(&cp[id_start..id_end])
 }
 
 /// Build a [`CodecConfig::Vp9`] from a VP9 [`TrackInfo`].

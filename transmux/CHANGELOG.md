@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **VP8 + Vorbis** (WebM): `CodecConfig::Vp8` (dims from the RFC 6386 key-frame
+  header) + `CodecConfig::Vorbis` (channels/sample_rate + verbatim `CodecPrivate`
+  from the Vorbis I identification header). `WebmDemux` now covers all four WebM
+  codecs (VP9/VP8 video, Opus/Vorbis audio). WebM-native (no mp4 mux path).
 - **MPEG-2 video (H.262) + MPEG-1/2 audio (MP1/2/3)** codecs: `CodecConfig::Mpeg2Video`
   + `MpegAudio`. `Fmp4Demux` reconstructs `mp4v`/esds (OTI 0x60–0x65) → `Mpeg2Video`
   (dims from the in-band sequence header, ISO 13818-2 §6.2.2.1) and `mp4a` OTI
