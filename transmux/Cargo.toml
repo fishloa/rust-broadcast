@@ -16,11 +16,12 @@ thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.1", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.1", default-features = false }
+mpeg-ps    = { path = "../mpeg-ps",  version = "0.1", default-features = false }
 
 [features]
 default = ["std", "serde"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mpeg-ts/std", "mpeg-pes/std"]
-serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde"]
+std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std"]
+serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde"]
 
 [dev-dependencies]
 media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }

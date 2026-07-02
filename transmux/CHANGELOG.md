@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **MPEG-2 Program Stream demuxer** (#470): `PsDemux` implements the hub
+  `broadcast_common::Unpackage` trait — MPEG-2 PS (`.ps`/VOB-style) → `Media` IR,
+  the third hub input alongside TS and fMP4. Parses packs/system-header via
+  `mpeg-ps`, maps elementary streams by `stream_id` (H.264 0xE0–0xEF; AC-3 in
+  `private_stream_1` 0xBD), reassembles PES across packs, recovers H.264 `avcC`
+  (in-band SPS/PPS) + AC-3 `dac3` (syncframe BSI). Gated against ffprobe timing +
+  byte-identical `avcC`/video-NAL oracles (ISO/IEC 13818-1 §2.5).
 - **Classic HLS (MPEG-2 TS segments)** (#472): `TsHlsPackager` implements the hub
   `broadcast_common::Package` trait (`Output = TsHlsOutput { segments, playlist }`),
   segmenting the `TsMux` output at keyframe boundaries into independently-decodable

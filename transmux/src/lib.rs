@@ -71,6 +71,7 @@ pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
 pub mod progressive;
+pub mod ps_demux;
 pub mod repackage;
 pub mod sample_entries;
 pub mod sample_groups;
@@ -142,6 +143,7 @@ pub use pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
 pub use progressive::ProgressiveMux;
+pub use ps_demux::PsDemux;
 pub use repackage::{Repackage, RepackageOutput};
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
 pub use sample_groups::{
