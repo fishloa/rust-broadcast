@@ -1,8 +1,22 @@
 //! Shared primitives for the dvb_si / dvb_t2mi / dvb_bbframe family.
 //!
 //! See individual modules for documentation: the [`Parse`] / [`Serialize`]
-//! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, and the
-//! [`bcd`] / [`time`] codecs.
+//! traits every wire type implements, the MPEG-2 [`crc32_mpeg2`] CRC, the
+//! [`bcd`] / [`time`] codecs, and the [`mux`] container-mux traits.
+//!
+//! # Container-mux traits ([`mux`])
+//!
+//! The [`mux`] module defines the codec-agnostic vocabulary for the any-to-any
+//! muxing hub, mirroring the [`Parse`] / [`Serialize`] symmetry:
+//!
+//! - [`Unpackage`] — demux a packaged container into an in-memory media IR.
+//! - [`Package`] — mux a media IR back into a packaged container.
+//! - [`Decrypt`] / [`Encrypt`] — in-place sample (un)protection.
+//!
+//! Each is generic over its input/output/media/config/key associated types plus
+//! `type Error`; no concrete media or codec types appear here. `Unpackage` ⇄
+//! `Package` and `Decrypt` ⇄ `Encrypt` are inverse pairs. Concrete
+//! implementations live in the container crates (e.g. `transmux`).
 //!
 //! # Quick start
 //! ```

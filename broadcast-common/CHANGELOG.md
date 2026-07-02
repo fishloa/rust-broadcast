@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+- Document the `mux` container-mux traits (`Unpackage`/`Package`/`Encrypt`/`Decrypt`)
+  in the crate-root docs and README. The 8.2.0 release shipped the `mux` module
+  but its published docs did not describe it; this fixes that on the next release.
+
 ## [8.2.0] — 2026-07-02
 
 ### Added

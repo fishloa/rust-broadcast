@@ -100,6 +100,20 @@ Project-wide helper that generates a `Display` impl for spec/field enums that
 delegate to an inherent `fn name(&self) -> &'static str`. Keeps spec token
 labels next to variant docs and greppable; removes identical boilerplate.
 
+### Container-mux traits (`mux`)
+
+The codec-agnostic vocabulary for the any-to-any muxing hub, mirroring the
+`Parse` / `Serialize` symmetry:
+
+- `Unpackage` — demux a packaged container into an in-memory media IR.
+- `Package` — mux a media IR back into a packaged container.
+- `Decrypt` / `Encrypt` — in-place sample (un)protection.
+
+Each is generic over its input/output/media/config/key associated types plus
+`type Error`; no concrete media or codec types appear here. `Unpackage` ⇄
+`Package` and `Decrypt` ⇄ `Encrypt` are inverse pairs. Concrete implementations
+live in the container crates (e.g. `transmux`).
+
 ## Feature flags
 
 | Feature  | Default | Description |
