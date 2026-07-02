@@ -81,6 +81,7 @@ pub mod sample_entries;
 pub mod sample_groups;
 pub mod segmenter;
 pub mod segments;
+pub mod smooth;
 pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
@@ -160,6 +161,10 @@ pub use sample_groups::{
 };
 pub use segmenter::Segmenter;
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+pub use smooth::{
+    SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TfxdBox, FOURCC_AACL,
+    FOURCC_H264, SMOOTH_TIMESCALE, TFXD_UUID,
+};
 pub use sps::{
     decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a, AvcSpsInfo,
     HevcSpsInfo,

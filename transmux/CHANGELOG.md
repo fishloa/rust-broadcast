@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Microsoft Smooth Streaming output** (#473): `SmoothPackager` implements the hub
+  `broadcast_common::Package` trait — `Media` IR → a Smooth client Manifest
+  (`SmoothStreamingMedia`>`StreamIndex`>`QualityLevel`+`c`) + Smooth fragment-MP4
+  fragments (`moof` with the `tfxd` `uuid` box + `mdat`). FourCC `H264`/`AACL`,
+  `CodecPrivateData` = start-code SPS+PPS / raw ASC; TimeScale 10 MHz. New
+  `TfxdBox` uuid type + `SmoothStreamType` enum. Fragments round-trip losslessly
+  via `Fmp4Demux`. Cites [MS-SSTR] + ISO/IEC 14496-12.
 - **Low-latency DASH** (#461): `LlSegmenter` (chunked CMAF — each segment
   subdivided into `moof`+`mdat` chunks, first chunk `styp`-prefixed, contiguous
   `tfdt`/sequence numbers) + `LlDashPackager` (LL-DASH MPD: `type="dynamic"`,
