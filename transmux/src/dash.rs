@@ -103,6 +103,7 @@ fn is_audio(config: &CodecConfig) -> bool {
             | CodecConfig::Ac4 { .. }
             | CodecConfig::MpegH { .. }
             | CodecConfig::Dts { .. }
+            | CodecConfig::MpegAudio { .. }
     )
 }
 
@@ -203,6 +204,10 @@ impl DashPackager {
             CodecConfig::Dts { codec_fourcc, .. } => {
                 Ok(crate::dts::DtsSpecificBox::rfc6381(codec_fourcc).to_string())
             }
+            // RFC 6381 §3.3: MP4 registration uses the sample-entry FourCC plus
+            // the ObjectTypeIndication (e.g. `mp4v.61`, `mp4a.6B`).
+            CodecConfig::Mpeg2Video { esds, .. } => Ok(format!("mp4v.{:02X}", oti_of(esds))),
+            CodecConfig::MpegAudio { esds, .. } => Ok(format!("mp4a.{:02X}", oti_of(esds))),
         }
     }
 
@@ -266,7 +271,8 @@ impl DashPackager {
             }
             CodecConfig::Hevc { width, height, .. }
             | CodecConfig::Av1 { width, height, .. }
-            | CodecConfig::Vp9 { width, height, .. } => {
+            | CodecConfig::Vp9 { width, height, .. }
+            | CodecConfig::Mpeg2Video { width, height, .. } => {
                 info.width = Some(*width as u32);
                 info.height = Some(*height as u32);
                 info.frame_rate = frame_rate_from_samples(&track.samples, info.timescale);
@@ -317,6 +323,11 @@ impl DashPackager {
                 ..
             }
             | CodecConfig::Dts {
+                sample_rate,
+                channel_count,
+                ..
+            }
+            | CodecConfig::MpegAudio {
                 sample_rate,
                 channel_count,
                 ..
@@ -472,6 +483,15 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
             expected: "DecoderSpecificInfo (AudioSpecificConfig) in esds",
         })?;
     AudioSpecificConfig::parse(&dsi.data)
+}
+
+/// The `objectTypeIndication` carried in an `esds` (0 if the DecoderConfig is
+/// absent) — used to build the RFC 6381 `mp4v.<OTI>` / `mp4a.<OTI>` codec string.
+fn oti_of(esds: &crate::mp4esds::EsdsBox) -> u8 {
+    esds.es_descriptor
+        .decoder_config
+        .as_ref()
+        .map_or(0, |dc| dc.object_type_indication.0)
 }
 
 /// The effective sampling rate from a decoded ASC (explicit rate if present,

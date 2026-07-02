@@ -70,6 +70,7 @@ pub mod ll_dash;
 pub mod media;
 pub mod movie_fragment;
 pub mod mp4esds;
+pub mod mpeg_legacy;
 pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
@@ -143,6 +144,9 @@ pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType,
 };
+pub use mpeg_legacy::{
+    Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, MPEG_AUDIO_SYNCWORD, SEQUENCE_HEADER_CODE,
+};
 pub use mpegh::{
     MHADecoderConfigurationRecord, MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION,
     MHAC_FOURCC, MHAC_RECORD_FIXED_LEN, MHM1_FOURCC, MHM2_FOURCC,
@@ -159,7 +163,9 @@ pub use rtp::{
     RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacketizer, RtpStream,
     DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, NAL_TYPE_IDR, VIDEO_CLOCK_RATE,
 };
-pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
+pub use sample_entries::{
+    AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,
+};
 pub use sample_groups::{
     ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry,
     SubSampleDescriptor, SubSampleInformationBox, SubsEntry, GROUPING_TYPE_ROLL,

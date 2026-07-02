@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **MPEG-2 video (H.262) + MPEG-1/2 audio (MP1/2/3)** codecs: `CodecConfig::Mpeg2Video`
+  + `MpegAudio`. `Fmp4Demux` reconstructs `mp4v`/esds (OTI 0x60–0x65) → `Mpeg2Video`
+  (dims from the in-band sequence header, ISO 13818-2 §6.2.2.1) and `mp4a` OTI
+  0x69/0x6B → `MpegAudio` (layer/rate/channels from the frame header, ISO 11172-3
+  §2.4.1.3). `TsDemux` handles `stream_type` 0x02/0x03/0x04 — the classic broadcast
+  pair now round-trips through both fMP4 and TS. New `Mp4vSampleEntry` +
+  `MpegAudioLayer` enum.
 - **`CodecConfig::Hevc`** + **complete `Fmp4Demux` codec-config reconstruction**
   (#467 codec tail): `Fmp4Demux` now reconstructs the IR codec config for every
   codec the crate can output — `hvc1`/`hev1`→`Hevc`, `av01`→`Av1`, `vp09`→`Vp9`,
