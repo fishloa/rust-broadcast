@@ -77,6 +77,7 @@ pub mod pipeline;
 pub mod progressive;
 pub mod ps_demux;
 pub mod repackage;
+pub mod rtp;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod segmenter;
@@ -154,6 +155,10 @@ pub use pipeline::{
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
 pub use repackage::{Repackage, RepackageOutput};
+pub use rtp::{
+    RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacketizer, RtpStream,
+    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, NAL_TYPE_IDR, VIDEO_CLOCK_RATE,
+};
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
 pub use sample_groups::{
     ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry,
