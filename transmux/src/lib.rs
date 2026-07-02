@@ -76,6 +76,7 @@ pub mod segments;
 pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
+pub mod ts_demux;
 pub mod visual_ext;
 pub mod vp9;
 
@@ -152,5 +153,6 @@ pub use timing::{
     CompositionOffsetBox, CompositionToDecodeBox, CttsEntry, EditListBox, EditListEntry,
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
+pub use ts_demux::TsDemux;
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};
