@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-07-02
+### Added
+- **Host Control resource** (EN 50221 §8.5.1, `HOST_CONTROL` 0x0020_0041): a `Resource`
+  impl decoding incoming `tune` / `replace` / `clear_replace` / `ask_release` APDUs and
+  surfacing them as `Notification::HostControl(HostControlEvent{…})` for the host to act
+  on out-of-band; advertised in the profile reply (#328).
+- Driver-level byte-exact gate tests for MMI answering (`menu_answ` / `answ` on the MMI
+  session — send path already existed; this pins its wire bytes).
+
 ## [0.10.1] — 2026-06-29
 
 ### Changed

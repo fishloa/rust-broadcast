@@ -39,6 +39,12 @@ impl<D: CaDevice> Driver<D> {
         &self.device
     }
 
+    /// Mutably borrow the underlying device (e.g. to script a mock's inbound
+    /// frames between pumps).
+    pub fn device_mut(&mut self) -> &mut D {
+        &mut self.device
+    }
+
     /// The poll delay the stack most recently requested, if any.
     pub fn next_timer(&self) -> Option<Duration> {
         self.next_timer
@@ -171,7 +177,237 @@ impl<D: CaDevice> Driver<D> {
 mod tests {
     use super::*;
     use crate::device::{DeviceOp, MockCaDevice};
+    use crate::event::{HostControlEvent, Notification};
+    use broadcast_common::Serialize;
     use dvb_ci::tpdu::tags;
+
+    fn ser<S: Serialize>(s: &S) -> Vec<u8> {
+        let mut b = vec![0u8; s.serialized_len()];
+        match s.serialize_into(&mut b) {
+            Ok(n) => b.truncate(n),
+            Err(_) => b.clear(),
+        }
+        b
+    }
+
+    /// Wrap an SPDU as a module→host `T_Data_Last` R_TPDU (+ trailing T_SB,
+    /// data_available clear) on transport connection `tcid`.
+    fn r_data(tcid: u8, spdu: &[u8]) -> Vec<u8> {
+        use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+        let mut v = vec![tpdu_tags::DATA_LAST, (1 + spdu.len()) as u8, tcid];
+        v.extend_from_slice(spdu);
+        v.extend_from_slice(&[tpdu_tags::SB, 0x02, tcid, SbValue::new(false).0]);
+        v
+    }
+
+    /// Wrap an APDU for delivery on `session_nb` (session_number prefix), then as
+    /// a module→host R_TPDU on tcid 1.
+    fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
+        use dvb_ci::spdu::SessionNumber;
+        let mut spdu = ser(&SessionNumber { session_nb });
+        spdu.extend_from_slice(apdu);
+        r_data(1, &spdu)
+    }
+
+    /// A standalone module→host `T_SB` (data_available clear) ack — flushes one
+    /// queued host write per turn (#337).
+    fn sb() -> Vec<u8> {
+        use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+        vec![tpdu_tags::SB, 0x02, 0x01, SbValue::new(false).0]
+    }
+
+    /// Feed one scripted module frame into the mock and pump it, then pump a
+    /// handful of SB acks so any queued host writes flush.
+    fn feed(d: &mut Driver<MockCaDevice>, frame: Vec<u8>) {
+        d.device_mut().inbound.push_back(frame);
+        d.pump(Duration::from_millis(10)).unwrap();
+        for _ in 0..8 {
+            d.device_mut().inbound.push_back(sb());
+            d.pump(Duration::from_millis(10)).unwrap();
+        }
+    }
+
+    /// Drive the EN 50221 handshake through the `Driver` until host_control and
+    /// the other module-provided sessions are open (mirrors the stack-level
+    /// `stack_with_ca_session`, but exercises the real driver I/O path).
+    fn driver_with_sessions() -> Driver<MockCaDevice> {
+        use dvb_ci::objects::resource_manager::Profile;
+        use dvb_ci::resource::{
+            APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, HOST_CONTROL, MMI,
+            RESOURCE_MANAGER,
+        };
+        use dvb_ci::spdu::{CreateSessionResponse, OpenSessionRequest, SessionStatus};
+
+        let mut d = Driver::new(MockCaDevice::new([]));
+        d.init().unwrap();
+        // module accepts the transport connection
+        feed(&mut d, vec![tags::C_T_C_REPLY, 0x01, 0x01]);
+        // module opens the host's resource_manager → RM session 1
+        feed(
+            &mut d,
+            r_data(
+                1,
+                &ser(&OpenSessionRequest {
+                    resource: RESOURCE_MANAGER,
+                }),
+            ),
+        );
+        // module's profile → host: CamReady + profile_change + create_session for
+        // each module-provided resource.
+        feed(
+            &mut d,
+            r_apdu(
+                1,
+                &ser(&Profile {
+                    resources: vec![
+                        APPLICATION_INFORMATION,
+                        CONDITIONAL_ACCESS_SUPPORT,
+                        MMI,
+                        HOST_CONTROL,
+                    ],
+                }),
+            ),
+        );
+        // module accepts each create_session (session nbs 2..=5 in registration order)
+        for (nb, res) in [
+            (2u16, APPLICATION_INFORMATION),
+            (3, CONDITIONAL_ACCESS_SUPPORT),
+            (4, MMI),
+            (5, HOST_CONTROL),
+        ] {
+            feed(
+                &mut d,
+                r_data(
+                    1,
+                    &ser(&CreateSessionResponse {
+                        status: SessionStatus::Ok,
+                        resource: res,
+                        session_nb: nb,
+                    }),
+                ),
+            );
+        }
+        d
+    }
+
+    // Session numbers the module allocates in `driver_with_sessions`, in
+    // registration order: RM=1, app_info=2, conditional_access=3, mmi=4,
+    // host_control=5. (Asserted by `handshake_opens_expected_sessions`.)
+    const RM_SESSION: u16 = 1;
+    const MMI_SESSION: u16 = 4;
+    const HOST_CONTROL_SESSION: u16 = 5;
+
+    #[test]
+    fn host_control_tune_apdu_surfaces_notification_via_driver() {
+        use dvb_ci::objects::host_control::Tune;
+
+        let mut d = driver_with_sessions();
+        let hc_nb = HOST_CONTROL_SESSION;
+        d.take_notifications(); // drop handshake notifications
+
+        // Module (CAM) sends a Tune request on its host_control session.
+        let tune = Tune {
+            network_id: 0x1122,
+            original_network_id: 0x3344,
+            transport_stream_id: 0x5566,
+            service_id: 0x7788,
+        };
+        feed(&mut d, r_apdu(hc_nb, &ser(&tune)));
+
+        // The runtime surfaces the decoded HostControl(Tune) notification.
+        let notes = d.take_notifications();
+        assert!(
+            notes.contains(&Notification::HostControl(HostControlEvent::Tune {
+                network_id: 0x1122,
+                original_network_id: 0x3344,
+                transport_stream_id: 0x5566,
+                service_id: 0x7788,
+            })),
+            "expected HostControl(Tune) notification, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn profile_reply_advertises_host_control() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
+        use dvb_ci::resource::{HOST_CONTROL, RESOURCE_MANAGER};
+
+        let mut d = Driver::new(MockCaDevice::new([]));
+        d.init().unwrap();
+        feed(&mut d, vec![tags::C_T_C_REPLY, 0x01, 0x01]);
+        // Open RM, then the module enquires the host profile.
+        feed(
+            &mut d,
+            r_data(
+                1,
+                &ser(&dvb_ci::spdu::OpenSessionRequest {
+                    resource: RESOURCE_MANAGER,
+                }),
+            ),
+        );
+        // Module → profile_enq on the RM session → host replies with its profile.
+        feed(&mut d, r_apdu(RM_SESSION, &ser(&ProfileEnq)));
+
+        // Find the host's `profile` reply (tag 9F 80 11) in the written frames and
+        // confirm it lists HOST_CONTROL.
+        let want = dvb_ci::tag::PROFILE.to_bytes();
+        let found = d.device().ops.iter().any(|op| {
+            if let DeviceOp::Write(w) = op {
+                if let Some(pos) = w.windows(3).position(|x| x == want) {
+                    if let Ok(p) = Profile::parse(&w[pos..]) {
+                        return p.resources.contains(&HOST_CONTROL);
+                    }
+                }
+            }
+            false
+        });
+        assert!(found, "profile reply must advertise HOST_CONTROL");
+    }
+
+    #[test]
+    fn mmi_menu_answ_and_answ_are_byte_exact_on_the_mmi_session() {
+        use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
+
+        let mut d = driver_with_sessions();
+        let mmi_nb = MMI_SESSION;
+
+        // menu_answ(choice_ref = 2): the driver method must put the exact dvb-ci
+        // MenuAnsw serialization on the wire, on the MMI session.
+        d.mmi_menu_answer(2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_apdu_on_session(&d, mmi_nb, &ser(&MenuAnsw { choice_ref: 2 }));
+
+        // answ(answer, "1234"): byte-exact Answ serialization on the MMI session.
+        d.mmi_enquiry_answer(b"1234").unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_apdu_on_session(
+            &d,
+            mmi_nb,
+            &ser(&Answ {
+                answ_id: AnswId::Answer,
+                text_chars: b"1234",
+            }),
+        );
+    }
+
+    /// Assert some host write carries `session_number(session_nb)` immediately
+    /// followed by the exact `apdu` bytes (byte-exact APDU on the right session).
+    fn assert_apdu_on_session(d: &Driver<MockCaDevice>, session_nb: u16, apdu: &[u8]) {
+        use dvb_ci::spdu::SessionNumber;
+        let mut want = ser(&SessionNumber { session_nb });
+        want.extend_from_slice(apdu);
+        let hit = d.device().ops.iter().any(|op| match op {
+            DeviceOp::Write(w) => w.windows(want.len()).any(|x| x == want.as_slice()),
+            _ => false,
+        });
+        assert!(
+            hit,
+            "expected APDU {apdu:02X?} on session {session_nb} (session-prefixed {want:02X?}) in writes"
+        );
+    }
 
     #[test]
     fn init_drives_reset_slotinfo_and_create_tc_to_device() {
