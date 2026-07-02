@@ -41,6 +41,7 @@ use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, Tr
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
+use crate::mpegh::{MHADecoderConfigurationRecord, MHAC_FOURCC};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
@@ -491,10 +492,11 @@ fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 /// config record out of the sample entry: video codecs carry a typed config
 /// box on the sample entry (`avcC`/`hvcC`/`av1C`/`vpcC`); audio codecs carry
 /// the config box as an [`OpaqueBox`] body (`esds`/`dac3`/`dec3`/`dOps`/
-/// `dfLa`/`ddts`) which is re-parsed here. Sample entries the crate does not
-/// mux (e.g. `stpp`/`wvtt`/`ac-4`/`mha*`, and `SampleEntryVariant::Unknown`)
+/// `dfLa`/`ddts`/`mhaC`) which is re-parsed here. Sample entries the crate does
+/// not mux (e.g. `stpp`/`wvtt`/`ac-4`, and `SampleEntryVariant::Unknown`)
 /// yield [`Error::UnexpectedBox`] so [`Fmp4Demux`] can skip the track
-/// (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15 §5.4/§8.4 for AVC/HEVC).
+/// (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15 §5.4/§8.4 for AVC/HEVC;
+/// ISO/IEC 23008-3 §20 for MPEG-H `mha*`).
 fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
     match entry {
         SampleEntryVariant::Avc1(avc) => Ok(CodecConfig::Avc {
@@ -616,13 +618,29 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 sample_size: dts.samplesize,
             })
         }
+        SampleEntryVariant::Mha(mha) => {
+            // The mhaC record is carried as an OpaqueBox body (no 8-byte header)
+            // in the MPEG-H sample entry — re-parse it verbatim (ISO/IEC
+            // 23008-3 §20). channel_count / sample_rate come from the
+            // AudioSampleEntry fixed fields (the reference channel layout lives
+            // in the record's `reference_channel_layout`).
+            let config = MHADecoderConfigurationRecord::parse(config_box_body(
+                &mha.config_boxes,
+                &MHAC_FOURCC,
+            )?)?;
+            Ok(CodecConfig::MpegH {
+                config,
+                channel_count: mha.channelcount,
+                sample_rate: mha.samplerate >> 16,
+                sample_size: mha.samplesize,
+            })
+        }
         // Sample entries transmux does not (re)mux to an elementary track.
         SampleEntryVariant::Ac4(_)
-        | SampleEntryVariant::Mha(_)
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
         | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
-            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/vvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
+            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/vvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*/mha*)",
         }),
     }
 }
