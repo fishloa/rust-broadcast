@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Low-latency DASH** (#461): `LlSegmenter` (chunked CMAF — each segment
+  subdivided into `moof`+`mdat` chunks, first chunk `styp`-prefixed, contiguous
+  `tfdt`/sequence numbers) + `LlDashPackager` (LL-DASH MPD: `type="dynamic"`,
+  `SegmentTemplate@availabilityTimeComplete="false"` + `@availabilityTimeOffset`,
+  `<ServiceDescription><Latency>`). Both `impl broadcast_common::Package`. Chunks
+  concatenate losslessly to a whole segment (verified via `Fmp4Demux`). ISO/IEC
+  14496-12 chunk structure + ISO/IEC 23009-1 / DASH-IF LL IOP signalling.
 - **WebM / Matroska demuxer** (#471): `WebmDemux` implements the hub
   `broadcast_common::Unpackage` trait — WebM (EBML) → `Media` IR, the fourth hub
   input (TS / fMP4 / MPEG-PS / WebM). Hand-written EBML/VINT tree walker
