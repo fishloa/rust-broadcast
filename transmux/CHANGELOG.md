@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **TS muxer** (#460): `TsMux` implements the hub `broadcast_common::Package`
+  trait — `Media` IR → a whole-188-byte-packet MPEG-2 TS, the byte-level inverse
+  of `TsDemux`. Emits PAT→PMT (CRC-32/MPEG-2 sections), `stream_type` per codec,
+  PCR on the first video PID; per-sample PES (PTS always, DTS when differing),
+  video length-prefixed→Annex B with SPS/PPS re-injection on keyframes, AAC
+  re-wrapped in ADTS from the `esds` ASC (ISO/IEC 13818-1 §2.4.3/§2.4.4). With
+  `TsDemux` this closes the loop: `{fMP4/CMAF} → IR → {TS}` and byte-fidelity
+  `TS → IR → TS` round-trips.
 - **Progressive MP4 output** (#463): `ProgressiveMux` implements the hub
   `broadcast_common::Package` trait, muxing the `Media` IR into a single-file,
   non-fragmented `.mp4` (ftyp + one moov with full `stbl` sample tables + one
