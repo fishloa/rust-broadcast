@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **MPEG-H 3D Audio** input (promotion): `Fmp4Demux` now reconstructs
+  `CodecConfig::MpegH` from `mha1`/`mha2`/`mhm1`/`mhm2` sample entries (re-parsing
+  the `mhaC` record, ISO/IEC 23008-3 §20) — MPEG-H was previously output-only.
+  Verified byte-exact against a real Fraunhofer/DASH-IF MPEG-H bitstream. This
+  makes the codec set demux+mux complete across the hub.
 - **VVC / H.266** (#474): `CodecConfig::Vvc` + `vvc1`/`vvcC` (VvcDecoderConfiguration-
   Record as a FullBox, byte-exact Parse/Serialize) mirroring HEVC. `decode_vvc_sps`
   (H.266 §7.3.2.4/§7.3.3.1) recovers dims/profile/tier/level; `Fmp4Demux` reconstructs

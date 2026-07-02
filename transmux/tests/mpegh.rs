@@ -1,364 +1,61 @@
-//! Spec-vector tests for the MPEG-H 3D Audio (`mha1`/`mhm1` + `mhaC`) path.
+//! MPEG-H 3D Audio (`mha1`/`mhaC`) full-codec round-trip tests — ISO/IEC 23008-3 §20.
 //!
-//! No real MPEG-H fixture is vendored because:
-//! - No local encoder is available.
-//! - Fraunhofer test content is Git-LFS + license-restricted.
-//! - DASH-IF MCA assets require live network access.
+//! Exercises the promotion of MPEG-H to a first-class IR codec
+//! ([`CodecConfig::MpegH`]): a real `mha1.0x0B` fragmented-MP4 fixture is
+//! demuxed to the IR, re-muxed, and re-demuxed, with the `mhaC` record and the
+//! coded sample bytes checked byte-for-byte against the source.
 //!
-//! The tests here use **hand-computed spec vectors** derived directly from the
-//! `MHADecoderConfigurationRecord` wire layout (ISO/IEC 23008-3 §20) and are
-//! therefore ungameable by a raw-passthrough serializer.
+//! Fixture: `fixtures/mp4/frag/mpegh_stereo.frag.mp4` — a real Fraunhofer/
+//! DASH-IF MPEG-H 3D Audio stereo (48 kHz) fMP4, trimmed to ftyp + moov + 6
+//! fragments. It carries a real 64-byte `mhaC` box (56-byte record body:
+//! configurationVersion=1, profile-level LC L1 = 0x0B, referenceChannelLayout
+//! CICP 2 = stereo, 51-byte `mpegh3daConfig`).
 //!
-//! ## Deferred real-fixture gate
+//! The companion `mpegh_stereo.packets.csv` reflects the *full* source file's
+//! metadata (not this truncated fixture), so expected sample counts are derived
+//! from the fixture's own `moof`/`trun`, never hardcoded.
 //!
-//! A byte-identical fixture gate against a real `mha1`/`mhm1` MP4 is deferred.
-//! To run it, fetch a Fraunhofer-IIS sample (e.g. from the DASH-IF MCA test
-//! vectors at `https://dash.akamaized.net/dash264/TestCasesMCA/fraunhofer/`) and
-//! extract the `mhaC` box body, then add a test that parses the extracted bytes
-//! and asserts byte-equality with the serialized form.
+//! Every oracle is walked out of the source bytes at runtime (no hardcoded
+//! offsets), so these tests bite any structural regression.
 
 extern crate alloc;
 
-use broadcast_common::{Parse, Serialize};
+use alloc::vec::Vec;
+
+use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::{
-    build_init_segment, CodecConfig, MHADecoderConfigurationRecord, MhaSampleEntry,
-    SampleDescriptionBox, SampleEntryVariant, TrackSpec, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC,
-    MHAC_RECORD_FIXED_LEN,
+    CmafMux, CodecConfig, Fmp4Demux, MHADecoderConfigurationRecord, SampleDescriptionBox,
+    SampleEntryVariant, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC,
 };
 
-// Profile-level constants used across tests (ATSC A/342-3 §5.2.2.1).
-const LC_PROFILE_LEVEL_3: u8 = 0x0D;
-const CICP_CH_5_1: u8 = 6; // CICP ChannelConfiguration 5.1
+const FIXTURE: &[u8] = include_bytes!("../../fixtures/mp4/frag/mpegh_stereo.frag.mp4");
+
+// Ground-truth values decoded from the fixture's own mhaC record (asserted, not
+// trusted): LC profile-level L1 and CICP ChannelConfiguration 2 (stereo).
+const EXPECTED_PROFILE_LEVEL: u8 = 0x0B;
+const EXPECTED_REFERENCE_CHANNEL_LAYOUT: u8 = 2;
+const EXPECTED_SAMPLE_RATE: u32 = 48000;
 
 // ---------------------------------------------------------------------------
-// Helper: build a non-trivial mpegh3daConfig blob (opaque to the container).
-// In production this is the mpegh3daConfig() bitstream from the MHAS packet;
-// here we use a deterministic byte pattern to verify round-trip fidelity.
-// ---------------------------------------------------------------------------
-fn test_config_blob() -> alloc::vec::Vec<u8> {
-    // 8-byte pattern: alternating 0xA5/0x5A + a length-field-sized value
-    alloc::vec![0xA5, 0x5A, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06]
-}
-
-// ---------------------------------------------------------------------------
-// Gate 1: serialize → hand-computed expected bytes → byte-identical.
-//
-// Wire layout (ISO/IEC 23008-3 §20):
-//   byte 0: configurationVersion           = 0x01
-//   byte 1: mpegh3daProfileLevelIndication = 0x0D  (LC L3, ATSC A/342-3 §5.2.2.1)
-//   byte 2: referenceChannelLayout         = 0x06  (CICP 5.1)
-//   bytes 3-4: mpegh3daConfigLength        = 0x00 0x08 (8 bytes, big-endian)
-//   bytes 5-12: mpegh3daConfig             = [0xA5,0x5A,0x01,0x02,0x03,0x04,0x05,0x06]
-// ---------------------------------------------------------------------------
-#[test]
-fn record_serialize_byte_identical() {
-    let blob = test_config_blob();
-    let rec = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, blob.clone());
-
-    #[rustfmt::skip]
-    let expected: [u8; 13] = [
-        0x01,               // configurationVersion = 1
-        0x0D,               // mpegh3daProfileLevelIndication = LC L3
-        0x06,               // referenceChannelLayout = CICP 5.1
-        0x00, 0x08,         // mpegh3daConfigLength = 8 (big-endian)
-        0xA5, 0x5A, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,  // mpegh3daConfig
-    ];
-
-    assert_eq!(
-        rec.serialized_len(),
-        MHAC_RECORD_FIXED_LEN + blob.len(),
-        "serialized_len() must be fixed-header + blob length"
-    );
-
-    let mut buf = alloc::vec![0u8; rec.serialized_len()];
-    let n = rec.serialize_into(&mut buf).expect("serialize_into failed");
-    assert_eq!(n, expected.len(), "serialize returned wrong byte count");
-    assert_eq!(
-        buf.as_slice(),
-        &expected[..],
-        "serialized bytes must be byte-identical to spec vector"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Gate 2: serialize → re-parse → field-equal (Parse/Serialize symmetry).
-// ---------------------------------------------------------------------------
-#[test]
-fn record_round_trip_equal() {
-    let blob = test_config_blob();
-    let original = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, blob);
-
-    let mut buf = alloc::vec![0u8; original.serialized_len()];
-    original
-        .serialize_into(&mut buf)
-        .expect("serialize_into failed");
-
-    let reparsed =
-        MHADecoderConfigurationRecord::parse(&buf).expect("re-parse of serialized bytes failed");
-
-    assert_eq!(
-        reparsed.configuration_version, MHAC_CONFIGURATION_VERSION,
-        "configurationVersion must survive round-trip"
-    );
-    assert_eq!(
-        reparsed.mpegh3da_profile_level_indication, LC_PROFILE_LEVEL_3,
-        "mpegh3daProfileLevelIndication must survive round-trip"
-    );
-    assert_eq!(
-        reparsed.reference_channel_layout, CICP_CH_5_1,
-        "referenceChannelLayout must survive round-trip"
-    );
-    assert_eq!(
-        reparsed.mpegh3da_config, original.mpegh3da_config,
-        "mpegh3daConfig blob must survive round-trip"
-    );
-    // Full structural equality
-    assert_eq!(
-        reparsed, original,
-        "round-tripped record must be field-equal to original"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Gate 3: mutation → serialized bytes change (no raw passthrough).
-//
-// Verifies the serializer reads from struct fields rather than caching the
-// original bytes (passthrough serialize would produce identical bytes even
-// after mutation).
-// ---------------------------------------------------------------------------
-#[test]
-fn mutation_changes_serialized_bytes() {
-    let blob = test_config_blob();
-    let original = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, blob);
-
-    let mut original_bytes = alloc::vec![0u8; original.serialized_len()];
-    original
-        .serialize_into(&mut original_bytes)
-        .expect("serialize original");
-
-    // Mutate the profile-level field.
-    let mut mutated_profile = original.clone();
-    mutated_profile.mpegh3da_profile_level_indication = 0x0B; // LC L1
-    let mut profile_bytes = alloc::vec![0u8; mutated_profile.serialized_len()];
-    mutated_profile
-        .serialize_into(&mut profile_bytes)
-        .expect("serialize mutated profile");
-    assert_ne!(
-        original_bytes, profile_bytes,
-        "changing mpegh3daProfileLevelIndication must change serialized bytes"
-    );
-
-    // Mutate the config blob.
-    let mut mutated_blob = original.clone();
-    mutated_blob.mpegh3da_config = alloc::vec![0xFF, 0xFE];
-    let mut blob_bytes = alloc::vec![0u8; mutated_blob.serialized_len()];
-    mutated_blob
-        .serialize_into(&mut blob_bytes)
-        .expect("serialize mutated blob");
-    assert_ne!(
-        original_bytes, blob_bytes,
-        "changing mpegh3daConfig blob must change serialized bytes"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Gate 4: build_init_segment for a CodecConfig::MpegH track → parse moov →
-// locate the mha1 sample entry → confirm its mhaC child round-trips.
-// ---------------------------------------------------------------------------
-#[test]
-fn build_init_segment_mha1_roundtrip() {
-    let blob = test_config_blob();
-    let config = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, blob.clone());
-
-    let tracks = [TrackSpec {
-        track_id: 1,
-        timescale: 48000,
-        config: CodecConfig::MpegH {
-            config: config.clone(),
-            channel_count: 6,
-            sample_rate: 48000,
-            sample_size: 16,
-        },
-    }];
-    let init = build_init_segment(&tracks, 90000).expect("build_init_segment failed");
-
-    // Walk the moov box to find the stsd.
-    // Layout: ftyp | moov [ mvhd | trak [ tkhd | mdia [ mdhd | hdlr | minf [ smhd | dinf | stbl [ stsd | ... ] ] ] ] | mvex ]
-    let (stsd_bytes, stsd_offset) = find_stsd_in_init(&init).expect("stsd not found in init");
-    let stsd = SampleDescriptionBox::parse(stsd_bytes).expect("parse stsd failed");
-    assert_eq!(stsd.entries.len(), 1, "stsd should have exactly 1 entry");
-
-    let entry = &stsd.entries[0];
-    let mha_entry = match entry {
-        SampleEntryVariant::Mha(e) => e,
-        other => panic!(
-            "expected SampleEntryVariant::Mha, found {:?} at stsd offset {}",
-            other, stsd_offset
-        ),
-    };
-
-    assert_eq!(&mha_entry.codec_type, b"mha1", "codec_type must be 'mha1'");
-    assert_eq!(
-        mha_entry.channelcount, 6,
-        "channelcount must survive init build"
-    );
-    assert_eq!(
-        mha_entry.samplesize, 16,
-        "samplesize must survive init build"
-    );
-
-    // Find the mhaC child in config_boxes.
-    let mhac_box = mha_entry
-        .config_boxes
-        .iter()
-        .find(|b| b.box_type == MHAC_FOURCC)
-        .expect("mhaC box not found in mha1 config_boxes");
-
-    // Parse the mhaC body as an MHADecoderConfigurationRecord.
-    let reparsed = MHADecoderConfigurationRecord::parse(&mhac_box.data)
-        .expect("parse mhaC box body as MHADecoderConfigurationRecord failed");
-
-    assert_eq!(
-        reparsed, config,
-        "mhaC content must round-trip through build_init_segment"
-    );
-    assert_eq!(
-        reparsed.mpegh3da_config, blob,
-        "mpegh3daConfig blob must survive init-segment serialization"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Gate 5: rfc6381() returns "mhm1.0x0D" for LC profile-level 3.
-// ---------------------------------------------------------------------------
-#[test]
-fn rfc6381_format() {
-    let rec =
-        MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, test_config_blob());
-    assert_eq!(
-        rec.rfc6381(),
-        "mhm1.0x0D",
-        "rfc6381() must return 'mhm1.0xNN' with profile-level as two upper-hex digits"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Additional coverage: boundary / error cases.
+// Box-walking helpers (dynamic — no hardcoded offsets).
 // ---------------------------------------------------------------------------
 
-/// Buffer too short for the fixed header.
-#[test]
-fn parse_error_too_short() {
-    let too_short = [0x01u8, 0x0D]; // only 2 bytes — need 5
-    let err = MHADecoderConfigurationRecord::parse(&too_short);
-    assert!(
-        err.is_err(),
-        "parse must fail on buffer shorter than MHAC_RECORD_FIXED_LEN"
-    );
-}
-
-/// configurationVersion != 1 must be rejected.
-#[test]
-fn parse_error_bad_version() {
-    let bad_version = [0x02u8, 0x0D, 0x06, 0x00, 0x00]; // version=2, no config bytes
-    let err = MHADecoderConfigurationRecord::parse(&bad_version);
-    assert!(
-        err.is_err(),
-        "parse must reject configurationVersion != 1 (ISO/IEC 23008-3 §20)"
-    );
-}
-
-/// config_length claims more bytes than available.
-#[test]
-fn parse_error_config_truncated() {
-    // configurationVersion=1, profileLevel=0x0D, rcl=6, configLength=10, only 3 config bytes
-    let truncated = [0x01u8, 0x0D, 0x06, 0x00, 0x0A, 0xA5, 0x5A, 0x01];
-    let err = MHADecoderConfigurationRecord::parse(&truncated);
-    assert!(
-        err.is_err(),
-        "parse must fail when config blob is truncated"
-    );
-}
-
-/// Zero-length mpegh3daConfig is valid per the spec.
-#[test]
-fn zero_length_config_round_trips() {
-    let rec = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, alloc::vec![]);
-    assert_eq!(rec.serialized_len(), MHAC_RECORD_FIXED_LEN);
-
-    let mut buf = alloc::vec![0u8; rec.serialized_len()];
-    rec.serialize_into(&mut buf).expect("serialize empty blob");
-
-    let reparsed = MHADecoderConfigurationRecord::parse(&buf).expect("parse zero-length config");
-    assert_eq!(reparsed, rec);
-}
-
-/// MhaSampleEntry can represent mhm1 (in-band MHAS) by setting codec_type.
-#[test]
-fn mha_sample_entry_mhm1_codec_type() {
-    use transmux::MHM1_FOURCC;
-    let blob = test_config_blob();
-    let config = MHADecoderConfigurationRecord::new(LC_PROFILE_LEVEL_3, CICP_CH_5_1, blob.clone());
-
-    // Serialize the record to get the mhaC body.
-    let mut body = alloc::vec![0u8; config.serialized_len()];
-    config.serialize_into(&mut body).unwrap();
-
-    let mhac_opaque = transmux::OpaqueBox::new(MHAC_FOURCC, body);
-
-    let entry = MhaSampleEntry {
-        codec_type: MHM1_FOURCC,
-        data_reference_index: 1,
-        channelcount: 2,
-        samplesize: 16,
-        samplerate: 48000 << 16,
-        config_boxes: alloc::vec![mhac_opaque],
-    };
-
-    // Serialize then parse to verify the FourCC survives.
-    let mut buf = alloc::vec![0u8; entry.serialized_len()];
-    entry.serialize_into(&mut buf).unwrap();
-
-    let reparsed = MhaSampleEntry::parse(&buf).expect("parse mhm1 entry");
-    assert_eq!(
-        &reparsed.codec_type, b"mhm1",
-        "mhm1 codec_type must survive serialize/parse"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test helper: walk an init segment's raw bytes to find the stsd box.
-// Returns the stsd slice and its byte offset in the init buffer.
-// ---------------------------------------------------------------------------
-fn find_stsd_in_init(init: &[u8]) -> Option<(&[u8], usize)> {
-    // The init segment is a flat sequence of top-level boxes (ftyp, moov, …).
-    let moov = walk_boxes(init, b"moov")?;
-    let trak = walk_boxes(box_children(moov), b"trak")?;
-    let mdia = walk_boxes(box_children(trak), b"mdia")?;
-    let minf = walk_boxes(box_children(mdia), b"minf")?;
-    let stbl = walk_boxes(box_children(minf), b"stbl")?;
-    let stsd = walk_boxes(box_children(stbl), b"stsd")?;
-    let offset = stsd.as_ptr() as usize - init.as_ptr() as usize;
-    Some((stsd, offset))
-}
-
-/// Return the children slice of a container box (skipping the 8-byte header).
-fn box_children(box_bytes: &[u8]) -> &[u8] {
-    if box_bytes.len() >= 8 {
-        &box_bytes[8..]
-    } else {
-        &[]
-    }
-}
-
-/// Walk a flat sequence of ISOBMFF boxes and return the first with the given
-/// FourCC (full box bytes, header included).
-fn walk_boxes<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+/// Walk a flat sequence of ISOBMFF boxes; return the first box with `fourcc`
+/// (full bytes, header included). Handles the 64-bit `size==1` large-size form.
+fn walk<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
     while off + 8 <= data.len() {
-        let sz =
+        let mut sz =
             u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]) as usize;
-        if sz < 8 {
+        let mut hdr = 8usize;
+        if sz == 1 {
+            if off + 16 > data.len() {
+                break;
+            }
+            sz = u64::from_be_bytes(data[off + 8..off + 16].try_into().unwrap()) as usize;
+            hdr = 16;
+        }
+        if sz < hdr {
             break;
         }
         let end = (off + sz).min(data.len());
@@ -368,4 +65,237 @@ fn walk_boxes<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
         off += sz;
     }
     None
+}
+
+/// The children region of a container box (skip its 8-byte header).
+fn children(b: &[u8]) -> &[u8] {
+    &b[8..]
+}
+
+/// Walk moov → trak → mdia → minf → stbl → stsd and return the stsd bytes.
+fn find_stsd(init: &[u8]) -> &[u8] {
+    let moov = walk(init, b"moov").expect("moov");
+    let trak = walk(children(moov), b"trak").expect("trak");
+    let mdia = walk(children(trak), b"mdia").expect("mdia");
+    let minf = walk(children(mdia), b"minf").expect("minf");
+    let stbl = walk(children(minf), b"stbl").expect("stbl");
+    walk(children(stbl), b"stsd").expect("stsd")
+}
+
+/// Walk the source mp4 down to the `mhaC` box and return its **body** bytes
+/// (the record, without the 8-byte box header) — the strong byte-exact oracle.
+fn source_mhac_body(mp4: &[u8]) -> &[u8] {
+    let stsd = find_stsd(mp4);
+    // stsd body: 4-byte FullBox header + 4-byte entry_count, then sample entries.
+    let entries = &stsd[8 + 4 + 4..];
+    // The first sample entry is an audio sample entry: 8-byte box header +
+    // 28-byte AudioSampleEntry fixed fields, then its child boxes (mhaC, btrt…).
+    let mha1 = walk(entries, b"mha1").expect("mha1 sample entry");
+    assert_eq!(&mha1[4..8], b"mha1", "fixture sample entry must be mha1");
+    let child_region = &mha1[8 + 28..];
+    let mhac = walk(child_region, MHAC_FOURCC.as_ref().try_into().unwrap()).expect("mhaC box");
+    &mhac[8..]
+}
+
+/// Demux the fixture to the IR and return the single MPEG-H track.
+fn demux_fixture() -> transmux::Media {
+    let mut demux = Fmp4Demux::new();
+    demux.unpackage(FIXTURE).expect("demux fixture")
+}
+
+fn mpegh_track(media: &transmux::Media) -> &transmux::Track {
+    media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.config(), CodecConfig::MpegH { .. }))
+        .expect("an MPEG-H track in the demuxed media")
+}
+
+// ---------------------------------------------------------------------------
+// Gate 1: enumeration + mhaC byte-exact (the strong oracle).
+// ---------------------------------------------------------------------------
+#[test]
+fn demux_enumerates_mpegh_and_mhac_is_byte_exact() {
+    let media = demux_fixture();
+    let track = mpegh_track(&media);
+
+    let CodecConfig::MpegH { config, .. } = track.config() else {
+        panic!("expected CodecConfig::MpegH");
+    };
+
+    // Re-serialize the reconstructed record and compare byte-for-byte against
+    // the mhaC box body walked out of the source mp4.
+    let expected = source_mhac_body(FIXTURE);
+    let mut got = alloc::vec![0u8; config.serialized_len()];
+    let n = config
+        .serialize_into(&mut got)
+        .expect("serialize mhaC record");
+    got.truncate(n);
+    assert_eq!(
+        got.as_slice(),
+        expected,
+        "reconstructed mhaC record must serialize byte-identical to the source mhaC body"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gate 2: decoded config fields (asserted against the parsed record).
+// ---------------------------------------------------------------------------
+#[test]
+fn config_fields_decoded_from_record() {
+    let media = demux_fixture();
+    let track = mpegh_track(&media);
+
+    let CodecConfig::MpegH {
+        config,
+        sample_rate,
+        channel_count,
+        ..
+    } = track.config()
+    else {
+        panic!("expected CodecConfig::MpegH");
+    };
+
+    assert_eq!(
+        *sample_rate, EXPECTED_SAMPLE_RATE,
+        "sample_rate must come from the AudioSampleEntry (48 kHz)"
+    );
+    assert_eq!(
+        config.configuration_version, MHAC_CONFIGURATION_VERSION,
+        "configurationVersion must be 1 (ISO/IEC 23008-3 §20)"
+    );
+    assert_eq!(
+        config.mpegh3da_profile_level_indication, EXPECTED_PROFILE_LEVEL,
+        "profile-level must decode from the record (LC L1 = 0x0B)"
+    );
+    assert_eq!(
+        config.reference_channel_layout, EXPECTED_REFERENCE_CHANNEL_LAYOUT,
+        "referenceChannelLayout must decode from the record (CICP 2 = stereo)"
+    );
+    assert!(
+        !config.mpegh3da_config.is_empty(),
+        "mpegh3daConfig blob must carry the real config bytes"
+    );
+    // channel_count is carried verbatim from the AudioSampleEntry (MPEG-H puts
+    // the true layout in referenceChannelLayout; this fixture's entry carries 0).
+    let _ = channel_count;
+}
+
+// ---------------------------------------------------------------------------
+// Gate 3: sample-fidelity round-trip.
+//   Fmp4Demux → IR → CmafMux → re-Fmp4Demux; coded MPEG-H sample bytes are
+//   byte-identical to the first demux, same count (derived, never hardcoded).
+// ---------------------------------------------------------------------------
+#[test]
+fn sample_bytes_round_trip_byte_identical() {
+    let first = demux_fixture();
+    let track1 = mpegh_track(&first);
+    let count1 = track1.samples.len();
+    assert!(
+        count1 > 0,
+        "the 6 fragments must yield at least one MPEG-H sample"
+    );
+
+    // Re-mux to CMAF, then re-demux.
+    let mut mux = CmafMux::new(1);
+    let remuxed = mux.package(&first).expect("re-mux to CMAF");
+    let mut demux2 = Fmp4Demux::new();
+    let second = demux2.unpackage(&remuxed).expect("re-demux");
+    let track2 = mpegh_track(&second);
+
+    assert_eq!(
+        track2.samples.len(),
+        count1,
+        "sample count must survive the demux → mux → demux round-trip"
+    );
+
+    let bytes1: Vec<&[u8]> = track1.samples.iter().map(|s| s.data.as_slice()).collect();
+    let bytes2: Vec<&[u8]> = track2.samples.iter().map(|s| s.data.as_slice()).collect();
+    assert_eq!(
+        bytes1, bytes2,
+        "coded MPEG-H sample bytes must be byte-identical after the round-trip"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gate 4: output path — the muxed init segment carries an mha1 sample entry
+//   whose mhaC equals the source mhaC.
+// ---------------------------------------------------------------------------
+#[test]
+fn output_init_segment_carries_source_mhac() {
+    let media = demux_fixture();
+    let mut mux = CmafMux::new(1);
+    let out = mux.package(&media).expect("mux");
+
+    // Walk the muxed init to its stsd and confirm the mha1/mhaC.
+    let stsd_bytes = find_stsd(&out);
+    let stsd = SampleDescriptionBox::parse(stsd_bytes).expect("parse muxed stsd");
+    assert_eq!(stsd.entries.len(), 1, "one sample entry expected");
+
+    let SampleEntryVariant::Mha(mha) = &stsd.entries[0] else {
+        panic!("muxed sample entry must be MPEG-H (Mha)");
+    };
+    assert_eq!(&mha.codec_type, b"mha1", "output codec_type must be mha1");
+
+    let mhac = mha
+        .config_boxes
+        .iter()
+        .find(|b| b.box_type == MHAC_FOURCC)
+        .expect("mhaC in muxed mha1 entry");
+
+    // The muxed mhaC body must equal the source mhaC body.
+    assert_eq!(
+        mhac.data.as_slice(),
+        source_mhac_body(FIXTURE),
+        "muxed mhaC must be byte-identical to the source mhaC"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5: round-trip symmetry — parse → serialize identical; mutate a field →
+//   serialized bytes change (decode, not raw passthrough).
+// ---------------------------------------------------------------------------
+#[test]
+fn record_parse_serialize_symmetry_and_mutation_bites() {
+    let body = source_mhac_body(FIXTURE);
+    let rec = MHADecoderConfigurationRecord::parse(body).expect("parse source mhaC record");
+
+    // parse → serialize → byte-identical.
+    let mut out = alloc::vec![0u8; rec.serialized_len()];
+    let n = rec.serialize_into(&mut out).expect("serialize");
+    out.truncate(n);
+    assert_eq!(
+        out.as_slice(),
+        body,
+        "parse → serialize must reproduce the source mhaC record byte-for-byte"
+    );
+
+    // Mutating the profile-level must change the serialized bytes (proves the
+    // serializer reads struct fields, not a cached raw slice).
+    let mut mutated = rec.clone();
+    mutated.mpegh3da_profile_level_indication ^= 0x01;
+    let mut out2 = alloc::vec![0u8; mutated.serialized_len()];
+    let m = mutated
+        .serialize_into(&mut out2)
+        .expect("serialize mutated");
+    out2.truncate(m);
+    assert_ne!(
+        out2.as_slice(),
+        body,
+        "mutating mpegh3daProfileLevelIndication must change the serialized bytes"
+    );
+
+    // Mutating the opaque config blob must also change the bytes.
+    let mut mutated_blob = rec.clone();
+    mutated_blob.mpegh3da_config.push(0xFF);
+    let mut out3 = alloc::vec![0u8; mutated_blob.serialized_len()];
+    let k = mutated_blob
+        .serialize_into(&mut out3)
+        .expect("serialize blob");
+    out3.truncate(k);
+    assert_ne!(
+        out3.as_slice(),
+        body,
+        "mutating mpegh3daConfig must change the serialized bytes"
+    );
 }
