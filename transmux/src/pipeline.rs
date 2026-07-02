@@ -237,6 +237,37 @@ pub enum CodecConfig {
         /// Sample size in bits (always 16 per §E.2.2.2).
         sample_size: u16,
     },
+    /// VP8 video (WebM-native; RFC 6386).
+    ///
+    /// VP8 has **no** out-of-band configuration box — the coded dimensions are
+    /// carried in the key-frame header (RFC 6386 §9.1) and decoded from the first
+    /// key frame at demux time (see `transmux/docs/codec/vp8-vorbis-webm.md`).
+    /// Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there is no
+    /// ISOBMFF sample entry for VP8 in this crate (out of scope), so it does not
+    /// participate in the fMP4 mux path.
+    Vp8 {
+        /// Coded width in pixels (key-frame header, masked `& 0x3FFF`).
+        width: u16,
+        /// Coded height in pixels (key-frame header, masked `& 0x3FFF`).
+        height: u16,
+    },
+    /// Vorbis audio (WebM-native; Vorbis I specification, xiph.org).
+    ///
+    /// The three setup headers (Identification / Comment / Setup) are carried
+    /// verbatim in `codec_private` (Xiph-laced, exactly as WebM `CodecPrivate`
+    /// stores them — see `transmux/docs/codec/vp8-vorbis-webm.md`); `channels`
+    /// and `sample_rate` are decoded from the Identification header (Vorbis I
+    /// §4.2.2). Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there
+    /// is no ISOBMFF sample entry for Vorbis in this crate (out of scope), so it
+    /// does not participate in the fMP4 mux path.
+    Vorbis {
+        /// The Xiph-laced 3-header `CodecPrivate`, verbatim.
+        codec_private: Vec<u8>,
+        /// Channel count (`audio_channels`, Vorbis I §4.2.2).
+        channels: u16,
+        /// Sampling rate in Hz (`audio_sample_rate`, Vorbis I §4.2.2).
+        sample_rate: u32,
+    },
 }
 
 impl CodecConfig {
@@ -252,6 +283,7 @@ impl CodecConfig {
                 | CodecConfig::MpegH { .. }
                 | CodecConfig::Dts { .. }
                 | CodecConfig::MpegAudio { .. }
+                | CodecConfig::Vorbis { .. }
         )
     }
 }
@@ -818,6 +850,15 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
                 0,
                 0,
             )
+        }
+        // WebM-native codecs: carried in the IR (see [`crate::webm_demux`]) but
+        // with no ISOBMFF sample entry in this crate — the fMP4 mux path is out
+        // of scope (see `docs/codec/vp8-vorbis-webm.md`).
+        CodecConfig::Vp8 { .. } => {
+            return Err(crate::error::Error::UnsupportedCodec { codec: "VP8" });
+        }
+        CodecConfig::Vorbis { .. } => {
+            return Err(crate::error::Error::UnsupportedCodec { codec: "Vorbis" });
         }
     };
 

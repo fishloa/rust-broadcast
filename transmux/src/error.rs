@@ -83,6 +83,15 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
+    /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no ISOBMFF/fMP4
+    /// carriage in this crate (e.g. the WebM-native VP8 / Vorbis codecs, which
+    /// are carried in the IR for `{WebM} → IR → {WebM}` and inspection only).
+    #[error("codec {codec} has no ISOBMFF/fMP4 carriage in this crate")]
+    UnsupportedCodec {
+        /// The codec name (e.g. `"VP8"`, `"Vorbis"`).
+        codec: &'static str,
+    },
+
     /// The MPEG-1/2 Program Stream framing could not be parsed
     /// ([`PsDemux`](crate::PsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
     #[error("program stream: {0}")]

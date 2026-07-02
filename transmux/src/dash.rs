@@ -50,6 +50,11 @@ const MIME_VIDEO: &str = "video/mp4";
 /// MIME type carried on an audio `AdaptationSet` (`audio/mp4`).
 const MIME_AUDIO: &str = "audio/mp4";
 
+/// RFC 6381 `codecs` string for VP8 (WebM codec registration).
+const CODECS_VP8: &str = "vp8";
+/// RFC 6381 `codecs` string for Vorbis (WebM codec registration).
+const CODECS_VORBIS: &str = "vorbis";
+
 /// The media kind of a track's `AdaptationSet`.
 ///
 /// Determines the `mimeType` and which geometry / audio attributes a
@@ -104,6 +109,7 @@ fn is_audio(config: &CodecConfig) -> bool {
             | CodecConfig::MpegH { .. }
             | CodecConfig::Dts { .. }
             | CodecConfig::MpegAudio { .. }
+            | CodecConfig::Vorbis { .. }
     )
 }
 
@@ -208,6 +214,10 @@ impl DashPackager {
             // the ObjectTypeIndication (e.g. `mp4v.61`, `mp4a.6B`).
             CodecConfig::Mpeg2Video { esds, .. } => Ok(format!("mp4v.{:02X}", oti_of(esds))),
             CodecConfig::MpegAudio { esds, .. } => Ok(format!("mp4a.{:02X}", oti_of(esds))),
+            // WebM-native codecs (RFC 6386 VP8 / Vorbis I); the WebM codec
+            // registration uses the bare codec name.
+            CodecConfig::Vp8 { .. } => Ok(CODECS_VP8.to_string()),
+            CodecConfig::Vorbis { .. } => Ok(CODECS_VORBIS.to_string()),
         }
     }
 
@@ -272,6 +282,7 @@ impl DashPackager {
             CodecConfig::Hevc { width, height, .. }
             | CodecConfig::Av1 { width, height, .. }
             | CodecConfig::Vp9 { width, height, .. }
+            | CodecConfig::Vp8 { width, height, .. }
             | CodecConfig::Mpeg2Video { width, height, .. } => {
                 info.width = Some(*width as u32);
                 info.height = Some(*height as u32);
@@ -334,6 +345,14 @@ impl DashPackager {
             } => {
                 info.audio_sampling_rate = Some(*sample_rate);
                 info.audio_channels = Some(*channel_count);
+            }
+            CodecConfig::Vorbis {
+                sample_rate,
+                channels,
+                ..
+            } => {
+                info.audio_sampling_rate = Some(*sample_rate);
+                info.audio_channels = Some(*channels);
             }
         }
 
