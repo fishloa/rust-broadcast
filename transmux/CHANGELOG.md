@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **fMP4/CMAF repackage** (#462): `Repackage` + `Media` IR transforms —
+  `select_tracks` (track subset), `trim` (half-open presentation window, snapped
+  back to the preceding sync sample per CMAF ISO/IEC 23000-19 §7.3.2.3), and
+  resegment (via the existing `Segmenter`) to a new target duration. Composes
+  demux → transform → mux with no new box parsers; lossless (byte-identical coded
+  samples across identity repackage, verified against the `TsDemux` oracle).
 - **TS muxer** (#460): `TsMux` implements the hub `broadcast_common::Package`
   trait — `Media` IR → a whole-188-byte-packet MPEG-2 TS, the byte-level inverse
   of `TsDemux`. Emits PAT→PMT (CRC-32/MPEG-2 sections), `stream_type` per codec,
