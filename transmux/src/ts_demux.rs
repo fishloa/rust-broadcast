@@ -108,8 +108,6 @@ const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 const H264_NAL_SPS: u8 = 7;
 /// H.264 `nal_unit_type` for PPS (Table 7-1).
 const H264_NAL_PPS: u8 = 8;
-/// H.264 `nal_unit_type` for a coded slice of an IDR picture (Table 7-1).
-const H264_NAL_IDR: u8 = 5;
 /// Mask for the H.264 5-bit `nal_unit_type` in the NAL header byte.
 const H264_NAL_TYPE_MASK: u8 = 0x1F;
 
@@ -547,8 +545,12 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             match nal[0] & H264_NAL_TYPE_MASK {
                 H264_NAL_SPS if sps.is_none() => sps = Some(nal.to_vec()),
                 H264_NAL_PPS if pps.is_none() => pps = Some(nal.to_vec()),
-                H264_NAL_IDR => idr = true,
                 _ => {}
+            }
+            // IDR/keyframe classification is delegated to the shared helper
+            // (single source of truth across the demuxers — issue #517).
+            if crate::nal::is_keyframe_nal(crate::nal::NalCodec::Avc, nal) {
+                idr = true;
             }
         }
         is_idr.push(idr);

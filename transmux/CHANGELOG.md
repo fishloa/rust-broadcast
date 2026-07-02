@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CompoundPacket` that enforces the §6.1 "first packet must be SR/RR" rule on
   construction, parse, and serialize. Dispatch via `RtcpPacket` / `RtcpPacketType`
   (`name()` + `impl_spec_display!`). RTP companion to `rtp.rs`; not a hub spoke.
+- **Public NAL keyframe helper** (#517): `nal_unit_type` / `is_keyframe_nal` /
+  `access_unit_is_keyframe` + `NalCodec` (Avc/Hevc/Vvc) — Annex-B and 4-byte
+  length-prefixed, spec-cited to H.264/H.265/H.266 §7.3.1. `ts_demux` IDR detection
+  now delegates to it (behaviour byte-identical).
 
 ## [0.8.0] — 2026-07-02
 ### Added
