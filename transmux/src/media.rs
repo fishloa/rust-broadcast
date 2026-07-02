@@ -31,12 +31,16 @@ use core::marker::PhantomData;
 
 use broadcast_common::{Package, Parse, Unpackage};
 
+use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::box_types::{parse_box, BOX_HEADER_MIN_SIZE};
+use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
+use crate::flac::FlacSpecificBox;
 use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, TrackBox};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
+use crate::opus::OpusSpecificBox;
 use crate::pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
@@ -152,13 +156,17 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
 
+        // A track whose sample entry the crate cannot reconstruct into a
+        // `CodecConfig` (an unknown/unsupported codec) is skipped, never fatal:
+        // its samples are simply not collected in step 2.
         let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
         for trak in &moov.tracks {
-            let spec = track_spec_from_trak(trak)?;
-            builders.push(TrackBuilder {
-                spec,
-                samples: Vec::new(),
-            });
+            if let Ok(spec) = track_spec_from_trak(trak) {
+                builders.push(TrackBuilder {
+                    spec,
+                    samples: Vec::new(),
+                });
+            }
         }
 
         // 2. Walk every top-level box; each `moof` pairs with the next `mdat`.
@@ -469,16 +477,35 @@ fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.
 ///
-/// AVC (`avc1`) and AAC (`mp4a`) reconstruct losslessly (their config records
-/// are re-parsed from the sample entry). Other codecs whose config is carried
-/// as an opaque config box are not yet reversible here and return
-/// [`Error::UnexpectedBox`]; extending them is follow-up work (issue #464).
+/// Every codec the crate can output reconstructs losslessly by re-parsing the
+/// config record out of the sample entry: video codecs carry a typed config
+/// box on the sample entry (`avcC`/`hvcC`/`av1C`/`vpcC`); audio codecs carry
+/// the config box as an [`OpaqueBox`] body (`esds`/`dac3`/`dec3`/`dOps`/
+/// `dfLa`/`ddts`) which is re-parsed here. Sample entries the crate does not
+/// mux (e.g. `stpp`/`wvtt`/`ac-4`/`mha*`, and `SampleEntryVariant::Unknown`)
+/// yield [`Error::UnexpectedBox`] so [`Fmp4Demux`] can skip the track
+/// (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15 §5.4/§8.4 for AVC/HEVC).
 fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
     match entry {
         SampleEntryVariant::Avc1(avc) => Ok(CodecConfig::Avc {
             config: avc.config.clone(),
             width: avc.visual.width,
             height: avc.visual.height,
+        }),
+        SampleEntryVariant::Hevc1(hevc) => Ok(CodecConfig::Hevc {
+            config: hevc.config.clone(),
+            width: hevc.visual.width,
+            height: hevc.visual.height,
+        }),
+        SampleEntryVariant::Av01(av1) => Ok(CodecConfig::Av1 {
+            config: av1.config.clone(),
+            width: av1.visual.width,
+            height: av1.visual.height,
+        }),
+        SampleEntryVariant::Vp09(vp9) => Ok(CodecConfig::Vp9 {
+            config: vp9.config.clone(),
+            width: vp9.visual.width,
+            height: vp9.visual.height,
         }),
         SampleEntryVariant::Mp4a(mp4a) => {
             let esds = esds_from_config_boxes(&mp4a.config_boxes)?;
@@ -489,9 +516,59 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 sample_size: mp4a.samplesize,
             })
         }
-        _ => Err(Error::UnexpectedBox {
-            expected:
-                "avc1 or mp4a sample entry (other codecs' Unpackage config reconstruction is deferred)",
+        SampleEntryVariant::Ac3(ac3) => {
+            let config = Ac3SpecificBox::parse(config_box_body(&ac3.config_boxes, b"dac3")?)?;
+            Ok(CodecConfig::Ac3 {
+                config,
+                channel_count: ac3.channelcount,
+                sample_rate: ac3.samplerate >> 16,
+                sample_size: ac3.samplesize,
+            })
+        }
+        SampleEntryVariant::Ec3(ec3) => {
+            let config = Ec3SpecificBox::parse(config_box_body(&ec3.config_boxes, b"dec3")?)?;
+            Ok(CodecConfig::Eac3 {
+                config,
+                channel_count: ec3.channelcount,
+                sample_rate: ec3.samplerate >> 16,
+                sample_size: ec3.samplesize,
+            })
+        }
+        SampleEntryVariant::Opus(opus) => {
+            let config = OpusSpecificBox::parse(config_box_body(&opus.config_boxes, b"dOps")?)?;
+            Ok(CodecConfig::Opus {
+                config,
+                channel_count: opus.channelcount,
+                sample_rate: opus.samplerate >> 16,
+                sample_size: opus.samplesize,
+            })
+        }
+        SampleEntryVariant::Flac(flac) => {
+            let config = FlacSpecificBox::parse(config_box_body(&flac.config_boxes, b"dfLa")?)?;
+            Ok(CodecConfig::Flac {
+                config,
+                channel_count: flac.channelcount,
+                sample_rate: flac.samplerate >> 16,
+                sample_size: flac.samplesize,
+            })
+        }
+        SampleEntryVariant::Dts(dts) => {
+            let config = DtsSpecificBox::parse(config_box_body(&dts.config_boxes, b"ddts")?)?;
+            Ok(CodecConfig::Dts {
+                config,
+                codec_fourcc: dts.codec_type,
+                channel_count: dts.channelcount,
+                sample_rate: dts.samplerate >> 16,
+                sample_size: dts.samplesize,
+            })
+        }
+        // Sample entries transmux does not (re)mux to an elementary track.
+        SampleEntryVariant::Ac4(_)
+        | SampleEntryVariant::Mha(_)
+        | SampleEntryVariant::Stpp(_)
+        | SampleEntryVariant::Wvtt(_)
+        | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
+            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
         }),
     }
 }
@@ -499,13 +576,20 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
 /// Re-parse the `esds` box body preserved as an [`OpaqueBox`] in an `mp4a`
 /// sample entry's `config_boxes` into an owned [`EsdsBox`].
 fn esds_from_config_boxes(boxes: &[OpaqueBox]) -> Result<EsdsBox> {
-    let ob = boxes
-        .iter()
-        .find(|b| &b.box_type == b"esds")
-        .ok_or(Error::UnexpectedBox {
-            expected: "esds config box in mp4a entry",
-        })?;
     // `OpaqueBox.data` is the FullBox *body* (no size/type header); parse it
     // directly (EsdsBox is fully owned, so no lifetime is retained).
-    EsdsBox::parse_body(&ob.data)
+    EsdsBox::parse_body(config_box_body(boxes, b"esds")?)
+}
+
+/// Locate a config box by FourCC among a sample entry's `config_boxes` and
+/// return its body bytes (the [`OpaqueBox`] holds the box body, no 8-byte
+/// header), so a codec-specific `Parse` can re-parse the decoder config record.
+fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [u8]> {
+    boxes
+        .iter()
+        .find(|b| &b.box_type == fourcc)
+        .map(|b| b.data.as_slice())
+        .ok_or(Error::UnexpectedBox {
+            expected: "config box in audio sample entry",
+        })
 }

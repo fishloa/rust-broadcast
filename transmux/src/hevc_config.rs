@@ -96,6 +96,28 @@ impl HEVCDecoderConfigurationRecord {
     pub fn is_valid_length_size(v: u8) -> bool {
         (v == 0) | (v == 1) | (v == 3)
     }
+
+    /// RFC 6381 codec string (`hvc1.A.B.C.constraints`) built from the profile/
+    /// tier/level fields carried in this record — ISO/IEC 14496-15:2017 §E.3.
+    ///
+    /// Delegates to [`crate::sps::rfc6381_hvc1`]; the profile-space/idc,
+    /// compatibility flags, tier flag, level_idc and constraint-indicator flags
+    /// carried here are the same values the decoder derives from the SPS.
+    pub fn rfc6381(&self) -> alloc::string::String {
+        crate::sps::rfc6381_hvc1(&crate::sps::HevcSpsInfo {
+            general_profile_space: self.general_profile_space,
+            general_tier_flag: self.general_tier_flag,
+            general_profile_idc: self.general_profile_idc,
+            general_profile_compatibility_flags: self.general_profile_compatibility_flags,
+            general_constraint_indicator_flags: self.general_constraint_indicator_flags,
+            general_level_idc: self.general_level_idc,
+            chroma_format_idc: self.chroma_format_idc,
+            bit_depth_luma: self.bit_depth_luma_minus8 + 8,
+            bit_depth_chroma: self.bit_depth_chroma_minus8 + 8,
+            width: 0,
+            height: 0,
+        })
+    }
 }
 
 impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
