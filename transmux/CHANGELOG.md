@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-02
+### Added
+- **Any-to-any hub** (#466): the container-agnostic IR (`Media` / `Track`, thin wrappers
+  over `TrackSpec`/`Sample`) + implementations of the new **broadcast-common 8.2.0**
+  traits — `CmafMux` / `HlsPackager` (`Package`) and `Fmp4Demux` (`Unpackage`, fMP4 →
+  `Media`). Every demux/mux spoke now targets one hub API; `Unpackage`⇄`Package` and
+  `Encrypt`⇄`Decrypt` are inverse pairs mirroring `Parse`/`Serialize`. Additive —
+  `build_init_segment`/`build_media_segment`/`Segmenter`/`TrackSpec`/`Sample` unchanged.
+- Requires broadcast-common ≥ 8.2.0 (the trait definitions).
+
 ## [0.6.0] — 2026-07-02
 ### Added
 - **DTS** fMP4 carriage (#437, ETSI TS 102 114 §E.2): `dtsc`/`dtsh`/`dtsl`/`dtse`

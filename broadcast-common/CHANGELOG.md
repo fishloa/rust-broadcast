@@ -1,5 +1,15 @@
 # Changelog
 
+## [8.2.0] — 2026-07-02
+
+### Added
+- `mux` module with four abstract container-mux traits: `Unpackage` / `Package`
+  (demux ⇄ mux between a packaged container and an in-memory media IR) and
+  `Decrypt` / `Encrypt` (in-place sample (un)protection). Each is generic over
+  its input/output/media/config/key associated types plus `type Error`,
+  mirroring the `Parse` / `Serialize` style; no concrete media or codec types
+  appear here. Re-exported at the crate root.
+
 ## [8.1.0] — 2026-06-29
 
 ### Changed

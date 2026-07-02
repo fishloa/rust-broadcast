@@ -36,9 +36,11 @@ extern crate alloc;
 pub mod bcd;
 pub mod bits;
 pub mod crc32_mpeg2;
+pub mod mux;
 pub mod time;
 pub mod traits;
 
+pub use mux::{Decrypt, Encrypt, Package, Unpackage};
 pub use traits::{Parse, Serialize};
 
 /// Generate a [`core::fmt::Display`] impl for a spec/field enum that delegates
