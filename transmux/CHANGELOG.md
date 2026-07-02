@@ -5,6 +5,16 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- **RTCP control packets** (#514): typed `Parse`/`Serialize` for the RFC 3550 §6 set —
+  `SenderReport` (PT 200), `ReceiverReport` (201), `SourceDescription` (202, with
+  `SdesChunk`/`SdesItem`/`SdesItemType`), `Bye` (203), `App` (204), the shared
+  `ReportBlock` (24-bit sign-extended cumulative-lost), `CommonHeader`, and a
+  `CompoundPacket` that enforces the §6.1 "first packet must be SR/RR" rule on
+  construction, parse, and serialize. Dispatch via `RtcpPacket` / `RtcpPacketType`
+  (`name()` + `impl_spec_display!`). RTP companion to `rtp.rs`; not a hub spoke.
+
 ## [0.8.0] — 2026-07-02
 ### Added
 - **Any-to-any hub** (#466): the container-agnostic IR (`Media` / `Track`, thin wrappers
