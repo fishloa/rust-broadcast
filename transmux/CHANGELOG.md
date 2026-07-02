@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **DASH `.mpd` output** (#464): `DashPackager` implements the hub
+  `broadcast_common::Package` trait (`Output = String`), emitting a DASH MPD
+  (ISO/IEC 23009-1) alongside the HLS playlists from one CMAF —
+  MPD→Period→AdaptationSet(`video/mp4`,`audio/mp4`)→Representation with
+  `SegmentTemplate` (`$Number$`/`$RepresentationID$`). `codecs=` from the crate's
+  own rfc6381 builders; `@width`/`@height` from the SPS, `@audioSamplingRate` from
+  the ASC, integer `@bandwidth`; VOD (`static`) + `dynamic` (live). Dependency-free
+  XML writer; integer-only arithmetic (`no_std`-clean).
 - **fMP4/CMAF repackage** (#462): `Repackage` + `Media` IR transforms —
   `select_tracks` (track subset), `trim` (half-open presentation window, snapped
   back to the preceding sync sample per CMAF ISO/IEC 23000-19 §7.3.2.3), and

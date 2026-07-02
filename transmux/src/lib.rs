@@ -56,6 +56,7 @@ pub mod avc_config;
 pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
+pub mod dash;
 pub mod dts;
 pub mod error;
 pub mod flac;
@@ -102,6 +103,7 @@ pub use cenc::{
     SchemeInformationBox, SchemeTypeBox, SubSampleEntry, TrackEncryptionBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
 };
+pub use dash::{DashPackager, MediaKind, MPD_NAMESPACE, PROFILE_ISOFF_LIVE};
 pub use dts::{
     DtsSpecificBox, DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC,
 };
