@@ -97,6 +97,7 @@ pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpeg_legacy;
 pub mod mpegh;
+pub mod nal;
 pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
@@ -178,6 +179,7 @@ pub use mpegh::{
     MHADecoderConfigurationRecord, MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION,
     MHAC_FOURCC, MHAC_RECORD_FIXED_LEN, MHM1_FOURCC, MHM2_FOURCC,
 };
+pub use nal::{access_unit_is_keyframe, is_keyframe_nal, nal_unit_type, NalCodec};
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, OpusSpecificBox, DOPS_FOURCC, OPUS_FOURCC};
 pub use pipeline::{
