@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **RTP spoke** (#469): `RtpPacketizer` (`Package`) and `RtpDepacketizer`
+  (`Unpackage`) — de/packetize the `Media` IR ⇄ RTP. H.264 single-NAL / STAP-A
+  (SPS+PPS) / **FU-A** fragmentation at MTU (RFC 6184), AAC `AAC-hbr` AU-headers
+  (RFC 3640), RTP fixed header with marker/seq/90 kHz timestamps (RFC 3550), and
+  SDP generation (`rtpmap`/`fmtp` with `sprop-parameter-sets` + AAC `config`,
+  RFC 4566). Round-trips byte-identically through the real demuxed NALs; no new
+  dependency (hand-rolled base64/hex). New `RtpMediaKind` enum.
 - **Microsoft Smooth Streaming output** (#473): `SmoothPackager` implements the hub
   `broadcast_common::Package` trait — `Media` IR → a Smooth client Manifest
   (`SmoothStreamingMedia`>`StreamIndex`>`QualityLevel`+`c`) + Smooth fragment-MP4
