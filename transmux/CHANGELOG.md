@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Classic HLS (MPEG-2 TS segments)** (#472): `TsHlsPackager` implements the hub
+  `broadcast_common::Package` trait (`Output = TsHlsOutput { segments, playlist }`),
+  segmenting the `TsMux` output at keyframe boundaries into independently-decodable
+  `.ts` segments (each re-emits PAT+PMT + a keyframe-aligned PES) plus an RFC 8216
+  HLS media playlist (`#EXTINF` + `.ts` URIs, no `#EXT-X-MAP`). Per-segment base DTS
+  keeps one monotonic timeline across boundaries — the concatenated segments
+  round-trip losslessly through `TsDemux`.
 - **DASH `.mpd` output** (#464): `DashPackager` implements the hub
   `broadcast_common::Package` trait (`Output = String`), emitting a DASH MPD
   (ISO/IEC 23009-1) alongside the HLS playlists from one CMAF —

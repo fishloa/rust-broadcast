@@ -1,7 +1,7 @@
 //! Hub [`Media`] IR → MPEG-2 Transport Stream muxer (the output TS spoke).
 //!
 //! `TsMux` is the **output** side of the any-to-any container hub: it consumes
-//! the neutral [`Media`] IR (one [`Track`](crate::media::Track) per elementary
+//! the neutral [`Media`] IR (one [`Track`] per elementary
 //! stream, coded samples in decode order) and produces a whole-packet MPEG-2 TS
 //! byte stream, implementing the abstract [`broadcast_common::Package`] trait so
 //! `{any} → IR → {TS}` composes with the existing
@@ -41,7 +41,7 @@ use mpeg_ts::ts::{Pcr, TsHeader, TS_PACKET_SIZE};
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
-use crate::media::Media;
+use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, Sample};
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
@@ -189,7 +189,7 @@ impl EsKind {
 
 /// One elementary stream to emit: its PID, `stream_id`, kind, and codec-derived
 /// framing state (AAC ADTS template / AVC parameter sets).
-struct EsPlan {
+pub(crate) struct EsPlan {
     pid: u16,
     stream_id: StreamId,
     kind: EsKind,
@@ -238,121 +238,165 @@ impl Package for TsMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-
-        // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
-        let mut plans: Vec<EsPlan> = Vec::new();
-        let mut next_pid = ES_PID_BASE;
-        let (mut n_video, mut n_audio) = (0u8, 0u8);
-        for track in &media.tracks {
-            let Some(kind) = EsKind::from_config(&track.spec.config) else {
-                continue; // uncarriable codec: skip, never fatal.
-            };
-            let stream_id = if kind.is_video() {
-                let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
-                n_video += 1;
-                id
-            } else {
-                let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
-                n_audio += 1;
-                id
-            };
-            let asc = match &track.spec.config {
-                CodecConfig::Aac { esds, .. } => Some(asc_from_esds(esds)?),
-                _ => None,
-            };
-            let avc_sps_pps = match &track.spec.config {
-                CodecConfig::Avc { config, .. } => {
-                    let r = &config.config;
-                    let mut sets = Vec::new();
-                    for sps in &r.sps {
-                        sets.push(sps.0.clone());
-                    }
-                    for pps in &r.pps {
-                        sets.push(pps.0.clone());
-                    }
-                    sets
-                }
-                _ => Vec::new(),
-            };
-            plans.push(EsPlan {
-                pid: next_pid,
-                stream_id,
-                kind,
-                asc,
-                avc_sps_pps,
-            });
-            next_pid += 1;
-        }
-        if plans.is_empty() {
-            return Err(Error::InvalidInput(
-                "no track carries a TS-representable codec (AVC/AAC/AC-3/E-AC-3)",
-            ));
-        }
-
-        // PCR PID: the first video ES, else the first ES.
-        let pcr_pid = plans
-            .iter()
-            .find(|p| p.kind.is_video())
-            .map(|p| p.pid)
-            .unwrap_or(plans[0].pid);
-
-        // ── 2. Build the PSI (PAT + PMT) and packetize it first (PUSI order) ──
-        let mut out: Vec<u8> = Vec::new();
-        let pat = build_pat_section(PMT_PID);
-        for pkt in packetize_section(PAT_PID, &pat) {
-            out.extend_from_slice(&pkt);
-        }
-        let pmt = build_pmt_section(pcr_pid, &plans);
-        for pkt in packetize_section(PMT_PID, &pmt) {
-            out.extend_from_slice(&pkt);
-        }
-
-        // ── 3. Elementary-stream PES → TS packets, tagged by DTS ──
-        // Base DTS = PCR_LEAD_TICKS so the first PCR (DTS − lead) is non-negative.
-        let mut tagged: Vec<TaggedPacket> = Vec::new();
-        let mut plan_idx = 0usize;
-        for track in &media.tracks {
-            if EsKind::from_config(&track.spec.config).is_none() {
-                continue;
-            }
-            let plan = &plans[plan_idx];
-            plan_idx += 1;
-
-            let ts_scale = track.spec.timescale.max(1) as u64;
-            let mut dts_ticks_local: u64 = 0; // in the track's own timescale
-            let mut cc: u8 = 0;
-            for sample in &track.samples {
-                // Rescale the sample's decode/composition time to the 90 kHz TS
-                // clock. composition_offset is (pts − dts) in the track scale.
-                let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
-                let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
-                let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
-
-                let es_payload = build_es_payload(plan, sample)?;
-                let carry_pcr = plan.pid == pcr_pid;
-                packetize_pes(
-                    plan,
-                    &es_payload,
-                    pts90,
-                    dts90,
-                    carry_pcr,
-                    &mut cc,
-                    &mut tagged,
-                );
-
-                dts_ticks_local += sample.duration as u64;
-            }
-        }
-
-        // ── 4. Interleave ES packets by DTS (stable) and append ──
-        tagged.sort_by_key(|t| t.dts);
-        for t in &tagged {
-            out.extend_from_slice(&t.packet);
-        }
-
-        debug_assert_eq!(out.len() % TS_PACKET_SIZE, 0);
-        Ok(out)
+        // Mux every track over its full sample list — one PAT/PMT then the
+        // DTS-interleaved PES for all samples.
+        let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
+        mux_tracks(&media.tracks, &samples)
     }
+}
+
+/// Plan the carriable elementary streams of `tracks` (PID + `stream_type` +
+/// per-codec framing state), skipping tracks whose codec the TS layer cannot
+/// carry. Shared by [`TsMux`] and the classic-HLS segmenter
+/// ([`crate::ts_hls::TsHlsPackager`]) so both assign identical PIDs / PSI.
+///
+/// Returns the plans in track order plus the parallel indices of the planned
+/// tracks within `tracks` (so a caller can select the matching sample slices).
+pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, Vec<usize>)> {
+    let mut plans: Vec<EsPlan> = Vec::new();
+    let mut planned_idx: Vec<usize> = Vec::new();
+    let mut next_pid = ES_PID_BASE;
+    let (mut n_video, mut n_audio) = (0u8, 0u8);
+    for (idx, track) in tracks.iter().enumerate() {
+        let Some(kind) = EsKind::from_config(&track.spec.config) else {
+            continue; // uncarriable codec: skip, never fatal.
+        };
+        let stream_id = if kind.is_video() {
+            let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
+            n_video += 1;
+            id
+        } else {
+            let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
+            n_audio += 1;
+            id
+        };
+        let asc = match &track.spec.config {
+            CodecConfig::Aac { esds, .. } => Some(asc_from_esds(esds)?),
+            _ => None,
+        };
+        let avc_sps_pps = match &track.spec.config {
+            CodecConfig::Avc { config, .. } => {
+                let r = &config.config;
+                let mut sets = Vec::new();
+                for sps in &r.sps {
+                    sets.push(sps.0.clone());
+                }
+                for pps in &r.pps {
+                    sets.push(pps.0.clone());
+                }
+                sets
+            }
+            _ => Vec::new(),
+        };
+        plans.push(EsPlan {
+            pid: next_pid,
+            stream_id,
+            kind,
+            asc,
+            avc_sps_pps,
+        });
+        planned_idx.push(idx);
+        next_pid += 1;
+    }
+    if plans.is_empty() {
+        return Err(Error::InvalidInput(
+            "no track carries a TS-representable codec (AVC/AAC/AC-3/E-AC-3)",
+        ));
+    }
+    Ok((plans, planned_idx))
+}
+
+/// Mux `tracks` into one self-contained MPEG-2 TS byte stream: a leading
+/// PAT (PID `0x0000`) + PMT, then the DTS-interleaved PES packets for the
+/// per-track `samples` (`samples[i]` is the sample slice for `tracks[i]`).
+///
+/// The PSI is (re)emitted at the start of every call, so each invocation yields
+/// an independently decodable stream — this is what lets the classic-HLS
+/// segmenter build one call per `.ts` segment, each opening with PAT/PMT
+/// (ISO/IEC 13818-1 §2.4.4 PSI repetition). `TsMux` calls it once over the whole
+/// input with a zero base DTS.
+pub(crate) fn mux_tracks(tracks: &[Track], samples: &[&[Sample]]) -> Result<Vec<u8>> {
+    let zero = alloc::vec![0u64; tracks.len()];
+    mux_tracks_at(tracks, samples, &zero)
+}
+
+/// Like [`mux_tracks`], but each track's first sample is stamped at decode time
+/// `base_dts_ticks[track_idx]` (in that track's own timescale) instead of 0.
+///
+/// The classic-HLS segmenter uses this so each segment's PES timestamps continue
+/// the previous segment's timeline: concatenating the segments then yields one
+/// monotonically increasing DTS/PTS timeline, so a demuxer recovers each sample's
+/// original duration (DTS delta) — including across segment boundaries — instead
+/// of seeing the clock reset to 0 at each segment.
+pub(crate) fn mux_tracks_at(
+    tracks: &[Track],
+    samples: &[&[Sample]],
+    base_dts_ticks: &[u64],
+) -> Result<Vec<u8>> {
+    debug_assert_eq!(tracks.len(), samples.len());
+    debug_assert_eq!(tracks.len(), base_dts_ticks.len());
+
+    // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
+    let (plans, planned_idx) = plan_elementary_streams(tracks)?;
+
+    // PCR PID: the first video ES, else the first ES.
+    let pcr_pid = plans
+        .iter()
+        .find(|p| p.kind.is_video())
+        .map(|p| p.pid)
+        .unwrap_or(plans[0].pid);
+
+    // ── 2. Build the PSI (PAT + PMT) and packetize it first (PUSI order) ──
+    let mut out: Vec<u8> = Vec::new();
+    let pat = build_pat_section(PMT_PID);
+    for pkt in packetize_section(PAT_PID, &pat) {
+        out.extend_from_slice(&pkt);
+    }
+    let pmt = build_pmt_section(pcr_pid, &plans);
+    for pkt in packetize_section(PMT_PID, &pmt) {
+        out.extend_from_slice(&pkt);
+    }
+
+    // ── 3. Elementary-stream PES → TS packets, tagged by DTS ──
+    // Base DTS = PCR_LEAD_TICKS so the first PCR (DTS − lead) is non-negative.
+    let mut tagged: Vec<TaggedPacket> = Vec::new();
+    for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
+        let track = &tracks[track_idx];
+        let ts_scale = track.spec.timescale.max(1) as u64;
+        // in the track's own timescale, seeded from the caller's base DTS.
+        let mut dts_ticks_local: u64 = base_dts_ticks[track_idx];
+        let mut cc: u8 = 0;
+        for sample in samples[track_idx] {
+            // Rescale the sample's decode/composition time to the 90 kHz TS
+            // clock. composition_offset is (pts − dts) in the track scale.
+            let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
+            let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
+            let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
+
+            let es_payload = build_es_payload(plan, sample)?;
+            let carry_pcr = plan.pid == pcr_pid;
+            packetize_pes(
+                plan,
+                &es_payload,
+                pts90,
+                dts90,
+                carry_pcr,
+                &mut cc,
+                &mut tagged,
+            );
+
+            dts_ticks_local += sample.duration as u64;
+        }
+    }
+
+    // ── 4. Interleave ES packets by DTS (stable) and append ──
+    tagged.sort_by_key(|t| t.dts);
+    for t in &tagged {
+        out.extend_from_slice(&t.packet);
+    }
+
+    debug_assert_eq!(out.len() % TS_PACKET_SIZE, 0);
+    Ok(out)
 }
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
