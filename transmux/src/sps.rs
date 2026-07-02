@@ -342,6 +342,136 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
 }
 
 // ---------------------------------------------------------------------------
+// VvcSpsInfo — H.266 SPS decode (dimensions + PTL)
+// ---------------------------------------------------------------------------
+
+/// Decoded fields from an H.266/VVC sequence parameter set (subset needed by
+/// the transmux pipeline) — ITU-T H.266 §7.3.2.4 + §7.3.3.1.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VvcSpsInfo {
+    /// `sps_chroma_format_idc` (2 bits).
+    pub chroma_format_idc: u8,
+    /// `general_profile_idc` (7 bits) — present iff the SPS carries a PTL.
+    pub general_profile_idc: u8,
+    /// `general_tier_flag` (1 bit).
+    pub general_tier_flag: bool,
+    /// `general_level_idc` (8 bits).
+    pub general_level_idc: u8,
+    /// Coded width (`sps_pic_width_max_in_luma_samples`).
+    pub width: u32,
+    /// Coded height (`sps_pic_height_max_in_luma_samples`).
+    pub height: u32,
+}
+
+/// Decode an H.266/VVC SPS RBSP for the config-relevant fields
+/// (ITU-T H.266 §7.3.2.4 `seq_parameter_set_rbsp()` + §7.3.3.1
+/// `profile_tier_level()`).
+///
+/// `sps_bytes` is the full NAL unit including the 2-byte VVC NAL header. Only
+/// the fields up to `sps_pic_height_max_in_luma_samples` are decoded; the
+/// `general_constraint_info()` block is handled per §7.3.3.2 (only the leading
+/// `gci_present_flag` and byte-alignment are needed to reach the dimensions).
+pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
+    if sps_bytes.len() < 2 {
+        return Err(Error::BufferTooShort {
+            need: 2,
+            have: sps_bytes.len(),
+            what: "VVC SPS header",
+        });
+    }
+
+    let mut r = BitReader::with_unescape(&sps_bytes[2..], "VVC SPS")?;
+
+    // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
+    let _ = r.read_bits(4, "sps_seq_parameter_set_id")?;
+    let _ = r.read_bits(4, "sps_video_parameter_set_id")?;
+    // sps_max_sublayers_minus1 u(3)
+    let sps_max_sublayers_minus1 = r.read_bits(3, "sps_max_sublayers_minus1")? as u8;
+    // sps_chroma_format_idc u(2)
+    let chroma_format_idc = r.read_bits(2, "sps_chroma_format_idc")? as u8;
+    // sps_log2_ctu_size_minus5 u(2)
+    let _ = r.read_bits(2, "sps_log2_ctu_size_minus5")?;
+    // sps_ptl_dpb_hrd_params_present_flag u(1)
+    let ptl_present = r.read_flag("sps_ptl_dpb_hrd_params_present_flag")?;
+
+    let (general_profile_idc, general_tier_flag, general_level_idc) = if ptl_present {
+        decode_vvc_ptl(&mut r, sps_max_sublayers_minus1)?
+    } else {
+        (0, false, 0)
+    };
+
+    // sps_gdr_enabled_flag u(1)
+    let _ = r.read_flag("sps_gdr_enabled_flag")?;
+    // sps_ref_pic_resampling_enabled_flag u(1)
+    let ref_pic_resampling = r.read_flag("sps_ref_pic_resampling_enabled_flag")?;
+    if ref_pic_resampling {
+        // sps_res_change_in_clvs_allowed_flag u(1)
+        let _ = r.read_flag("sps_res_change_in_clvs_allowed_flag")?;
+    }
+    // sps_pic_width_max_in_luma_samples ue(v)
+    let width = r.read_ue("sps_pic_width_max_in_luma_samples")?;
+    // sps_pic_height_max_in_luma_samples ue(v)
+    let height = r.read_ue("sps_pic_height_max_in_luma_samples")?;
+
+    Ok(VvcSpsInfo {
+        chroma_format_idc,
+        general_profile_idc,
+        general_tier_flag,
+        general_level_idc,
+        width: width as u32,
+        height: height as u32,
+    })
+}
+
+/// Decode `profile_tier_level(profileTierPresentFlag=1, MaxNumSubLayersMinus1)`
+/// far enough to skip past it and return profile/tier/level — ITU-T H.266
+/// §7.3.3.1 (+ §7.3.3.2 `general_constraints_info()`).
+fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bool, u8)> {
+    // general_profile_idc u(7), general_tier_flag u(1), general_level_idc u(8)
+    let general_profile_idc = r.read_bits(7, "general_profile_idc")? as u8;
+    let general_tier_flag = r.read_flag("general_tier_flag")?;
+    let general_level_idc = r.read_bits(8, "general_level_idc")? as u8;
+    // ptl_frame_only_constraint_flag u(1), ptl_multilayer_enabled_flag u(1)
+    let _ = r.read_flag("ptl_frame_only_constraint_flag")?;
+    let _ = r.read_flag("ptl_multilayer_enabled_flag")?;
+
+    // general_constraints_info() — §7.3.3.2. gci_present_flag u(1); when 0,
+    // gci_alignment_zero_bit padding follows to a byte boundary.
+    let gci_present = r.read_flag("gci_present_flag")?;
+    if gci_present {
+        return Err(Error::InvalidValue {
+            field: "gci_present_flag",
+            value: 1,
+            reason: "general_constraint_info block not decoded (unsupported in this SPS reader)",
+        });
+    }
+    // gci_alignment_zero_bit until byte-aligned.
+    r.align_to_byte("gci_alignment_zero_bit")?;
+
+    // ptl_sublayer_level_present_flag[i] for i = MaxNumSubLayersMinus1-1 .. 0.
+    let mut sublayer_present = [false; 8];
+    for i in (0..max_sublayers_minus1).rev() {
+        sublayer_present[i as usize] = r.read_flag("ptl_sublayer_level_present_flag[i]")?;
+    }
+    if max_sublayers_minus1 > 0 {
+        // ptl_reserved_zero_bit padding to a byte boundary.
+        r.align_to_byte("ptl_reserved_zero_bit")?;
+    }
+    for i in (0..max_sublayers_minus1).rev() {
+        if sublayer_present[i as usize] {
+            let _ = r.read_bits(8, "sublayer_level_idc[i]")?;
+        }
+    }
+    // ptl_num_sub_profiles u(8)
+    let num_sub_profiles = r.read_bits(8, "ptl_num_sub_profiles")?;
+    for _ in 0..num_sub_profiles {
+        let _ = r.read_bits(32, "general_sub_profile_idc[j]")?;
+    }
+
+    Ok((general_profile_idc, general_tier_flag, general_level_idc))
+}
+
+// ---------------------------------------------------------------------------
 // RFC 6381 helpers
 // ---------------------------------------------------------------------------
 
@@ -437,6 +567,57 @@ fn write_compat_flags(s: &mut String, flags: u32) {
     for &b in &hex[..end] {
         s.push(b as char);
     }
+}
+
+/// Build the RFC 6381 `vvc1.…` codec string for H.266/VVC.
+///
+/// Per the VVC file-format registration (ISO/IEC 14496-15:2022 §11.3.4, the
+/// VVC analogue of the RFC 6381 §3.3 HEVC form):
+/// `vvc1.<general_profile_idc>.<tier><general_level_idc>[.CTA-<constraint…>]`
+/// where the tier prefix is `L` for main tier and `H` for high tier, the level
+/// is the decimal `general_level_idc`, and the constraint suffix (`CTA-` +
+/// hex, dropping trailing zero bytes) is emitted only when constraint bytes are
+/// present. `general_profile_idc` and the level are written in decimal.
+pub fn rfc6381_vvc1(
+    general_profile_idc: u8,
+    general_tier_flag: bool,
+    general_level_idc: u8,
+    general_constraint_info: u64,
+    num_bytes_constraint_info: u8,
+) -> String {
+    let mut s = String::with_capacity(24);
+    s.push_str("vvc1.");
+    write_decimal(&mut s, general_profile_idc);
+    s.push('.');
+    s.push(if general_tier_flag { 'H' } else { 'L' });
+    write_decimal(&mut s, general_level_idc);
+
+    // Constraint suffix: the general_constraint_info payload, MSB-aligned into
+    // its byte block, emitted as `CTA-` + hex with trailing zero bytes dropped.
+    if num_bytes_constraint_info > 0 && general_constraint_info != 0 {
+        // The stored payload is (8*n - 2) bits (the two leading PTL flags are
+        // separate); left-align it into the n-byte block for the string form.
+        let n = num_bytes_constraint_info as usize;
+        let payload_bits = n * 8 - 2;
+        let aligned = general_constraint_info << (n * 8 - payload_bits);
+        let mut bytes = [0u8; 8];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            let shift = (n - 1 - i) * 8;
+            *b = if i < n {
+                ((aligned >> shift) & 0xFF) as u8
+            } else {
+                0
+            };
+        }
+        let last = bytes[..n].iter().rposition(|&b| b != 0);
+        if let Some(end) = last {
+            s.push_str(".CTA-");
+            for &b in &bytes[..=end] {
+                write_hex_byte(&mut s, b);
+            }
+        }
+    }
+    s
 }
 
 /// Build RFC 6381 `mp4a.40.<AOT>` codec string from AAC `AudioObjectType`.

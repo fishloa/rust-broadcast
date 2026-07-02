@@ -507,6 +507,21 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             width: hevc.visual.width,
             height: hevc.visual.height,
         }),
+        SampleEntryVariant::Vvc(vvc) => {
+            // Prefer the SPS-decoded dimensions from the vvcC NAL array (the
+            // authoritative coded geometry); fall back to the sample-entry
+            // visual dims when the SPS is absent or cannot be decoded.
+            let (width, height) = vvc
+                .config
+                .config
+                .dimensions()
+                .unwrap_or((vvc.visual.width, vvc.visual.height));
+            Ok(CodecConfig::Vvc {
+                config: vvc.config.clone(),
+                width,
+                height,
+            })
+        }
         SampleEntryVariant::Av01(av1) => Ok(CodecConfig::Av1 {
             config: av1.config.clone(),
             width: av1.visual.width,
@@ -607,7 +622,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
         | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
-            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
+            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/vvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*)",
         }),
     }
 }

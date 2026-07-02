@@ -15,8 +15,10 @@ Carriage:
 
 VVC NAL header (H.266 §7.3.1.2): 2 bytes — `forbidden_zero_bit(1)`
 `nuh_reserved_zero_bit(1)` `nuh_layer_id(6)` | `nal_unit_type(5)`
-`nuh_temporal_id_plus1(3)`. Key `nal_unit_type`: 14=DCI, **15=VPS, 16=SPS,
-17=PPS**, 7=IDR_W_RADL, 8=IDR_N_LP, 9=CRA.
+`nuh_temporal_id_plus1(3)`. Key `nal_unit_type` (ITU-T H.266 Table 5):
+12=OPI, 13=DCI, 14=VPS, **15=SPS, 16=PPS**, 17=PREFIX_APS, 18=SUFFIX_APS,
+7=IDR_W_RADL, 8=IDR_N_LP, 9=CRA. (An earlier draft had these off by one; the
+shipped code + this line use the verified Table 5 values.)
 
 ## seq_parameter_set_rbsp() — H.266 §7.3.2.4 (subset for config)
 

@@ -92,6 +92,7 @@ pub mod ts_hls;
 pub mod ts_mux;
 pub mod visual_ext;
 pub mod vp9;
+pub mod vvc_config;
 pub mod webm_demux;
 
 pub use aac_asc::{
@@ -193,4 +194,7 @@ pub use ts_hls::{TsHlsOutput, TsHlsPackager};
 pub use ts_mux::TsMux;
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};
+pub use vvc_config::{
+    VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
+};
 pub use webm_demux::{WebmDemux, IR_TIMESCALE};
