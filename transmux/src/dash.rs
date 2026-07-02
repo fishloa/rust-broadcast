@@ -187,6 +187,7 @@ impl DashPackager {
                 config.config.profile_compatibility,
                 config.config.level_indication,
             )),
+            CodecConfig::Hevc { config, .. } => Ok(config.config.rfc6381()),
             CodecConfig::Aac { esds, .. } => {
                 let asc = asc_from_esds(esds)?;
                 Ok(asc.rfc6381())
@@ -263,7 +264,9 @@ impl DashPackager {
                 info.height = Some(h);
                 info.frame_rate = frame_rate_from_samples(&track.samples, info.timescale);
             }
-            CodecConfig::Av1 { width, height, .. } | CodecConfig::Vp9 { width, height, .. } => {
+            CodecConfig::Hevc { width, height, .. }
+            | CodecConfig::Av1 { width, height, .. }
+            | CodecConfig::Vp9 { width, height, .. } => {
                 info.width = Some(*width as u32);
                 info.height = Some(*height as u32);
                 info.frame_rate = frame_rate_from_samples(&track.samples, info.timescale);

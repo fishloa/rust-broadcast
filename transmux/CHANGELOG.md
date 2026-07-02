@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **`CodecConfig::Hevc`** + **complete `Fmp4Demux` codec-config reconstruction**
+  (#467 codec tail): `Fmp4Demux` now reconstructs the IR codec config for every
+  codec the crate can output — `hvc1`/`hev1`→`Hevc`, `av01`→`Av1`, `vp09`→`Vp9`,
+  `Opus`→`Opus`, `fLaC`→`Flac`, `dac3`→`Ac3`, `dec3`→`Eac3`, `ddts`→`Dts` (plus
+  the existing `avc1`/`mp4a`) — was previously deferred to AVC/AAC only. New
+  `Hevc` variant muxes to an `hvc1`+`hvcC` sample entry. Every codec round-trips
+  byte-identically (config box + coded samples) via fragmented-mp4 fixtures.
+  Unknown sample entries skip the track rather than erroring.
 - **RTP spoke** (#469): `RtpPacketizer` (`Package`) and `RtpDepacketizer`
   (`Unpackage`) — de/packetize the `Media` IR ⇄ RTP. H.264 single-NAL / STAP-A
   (SPS+PPS) / **FU-A** fragmentation at MTU (RFC 6184), AAC `AAC-hbr` AU-headers

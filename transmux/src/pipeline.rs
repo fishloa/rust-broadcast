@@ -26,6 +26,7 @@ use crate::avc_config::AVCConfigurationBox;
 use crate::dts::{DtsSpecificBox, DDTS_FOURCC};
 use crate::error::Result;
 use crate::flac::{FlacSpecificBox, DFLA_FOURCC};
+use crate::hevc_config::HEVCConfigurationBox;
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
@@ -44,7 +45,7 @@ use crate::movie_fragment::{
 use crate::mp4esds::EsdsBox;
 use crate::mpegh::MHAC_FOURCC;
 use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
-use crate::sample_entries::{AVCSampleEntry, VisualSampleEntryFields};
+use crate::sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use crate::timing::TimeToSampleBox;
 use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
@@ -71,6 +72,16 @@ pub enum CodecConfig {
     Avc {
         /// The `avcC` decoder configuration record.
         config: AVCConfigurationBox,
+        /// Coded width in pixels.
+        width: u16,
+        /// Coded height in pixels.
+        height: u16,
+    },
+    /// H.265/HEVC video (`hvc1`/`hev1` sample entry with an `hvcC` config box) —
+    /// ISO/IEC 14496-15:2017 §8.4.
+    Hevc {
+        /// The `hvcC` decoder configuration record box.
+        config: HEVCConfigurationBox,
         /// Coded width in pixels.
         width: u16,
         /// Coded height in pixels.
@@ -361,6 +372,40 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
             };
             let entry = SampleEntryVariant::Avc1(AVCSampleEntry {
                 codec_type: *b"avc1",
+                visual,
+                config: config.clone(),
+                extra_boxes: vec![],
+            });
+            (
+                entry,
+                Some(VideoMediaHeaderBox {
+                    version: 0,
+                    flags: 1,
+                    graphicsmode: 0,
+                    opcolor: [0, 0, 0],
+                }),
+                None,
+                *b"vide",
+                b"VideoHandler\0".to_vec(),
+                (*width as u32) << 16,
+                (*height as u32) << 16,
+            )
+        }
+        CodecConfig::Hevc {
+            config,
+            width,
+            height,
+        } => {
+            let visual = VisualSampleEntryFields {
+                data_reference_index: 1,
+                width: *width,
+                height: *height,
+                ..VisualSampleEntryFields::default()
+            };
+            // Always emit `hvc1` (parameter sets in the sample entry) —
+            // ISO/IEC 14496-15:2017 §8.4.1.
+            let entry = SampleEntryVariant::Hevc1(HEVCSampleEntry {
+                codec_type: *b"hvc1",
                 visual,
                 config: config.clone(),
                 extra_boxes: vec![],
