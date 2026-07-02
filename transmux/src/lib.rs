@@ -1,16 +1,41 @@
-//! `transmux` — MPEG-2 TS → CMAF/fMP4 container remux (ISO/IEC 14496-12:2015).
+//! `transmux` — an any-to-any media container muxing hub (ISO/IEC 14496-12,
+//! 13818-1, 23009-1, RFC 8216/3550, [MS-SSTR]).
 //!
-//! A **samples-in** container multiplexer: the caller supplies demuxed *coded*
-//! access units + codec config, and `transmux` produces CMAF initialization and
-//! media segments plus HLS playlists. It parses codec config/parameter headers
-//! (SPS/PPS/VPS, AAC ASC, AC-3/E-AC-3 syncframe BSI) only to build the container
-//! boxes and derive metadata — it never encodes or decodes media; coded samples
-//! pass through opaque. `no_std` + `alloc`.
+//! transmux demuxes any supported container into one neutral in-memory
+//! intermediate representation ([`Media`] / [`Track`]) and muxes from it into any
+//! supported container — the demux and mux spokes meet at the IR, so every
+//! `{input} → {output}` combination composes. It **never encodes or decodes
+//! media**: it parses codec *config/parameter headers* only to build container
+//! boxes and derive metadata; coded samples pass through opaque. `no_std` +
+//! `alloc`.
 //!
-//! See the crate README for the full **feature matrix** (implemented boxes and
-//! codecs plus planned coverage). Key entry points: [`build_init_segment`] and
-//! [`build_media_segment`] (batch), [`Segmenter`] (streaming), [`AvcSps::decode`]
-//! with [`AvcSps::rfc6381`] (codec metadata), and the HLS playlist builders.
+//! The spokes are expressed through the two abstract traits in `broadcast_common`:
+//! [`Unpackage`](broadcast_common::Unpackage) (container → IR) and
+//! [`Package`](broadcast_common::Package) (IR → container), the inverse pair
+//! mirroring `Parse` / `Serialize`.
+//!
+//! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`]), fMP4/CMAF
+//!   ([`Fmp4Demux`]), MPEG Program Stream ([`PsDemux`]), WebM/Matroska
+//!   ([`WebmDemux`]).
+//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
+//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), CMAF-HLS ([`HlsPackager`]),
+//!   TS-segment HLS ([`TsHlsPackager`]), DASH MPD ([`DashPackager`]), low-latency
+//!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
+//!   ([`SmoothPackager`]).
+//! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
+//!   streaming CMAF segmentation ([`Segmenter`]).
+//! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]).
+//! - **RTP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP.
+//!
+//! **Codec config coverage** (header parse → container box; no en/decode):
+//! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8, MPEG-2 video (H.262); AAC,
+//! AC-3, E-AC-3, AC-4, DTS, Opus, FLAC, Vorbis, MPEG-1/2 audio (MP1/2/3), MPEG-H
+//! 3D Audio.
+//!
+//! Lower-level entry points remain: [`build_init_segment`]/[`build_media_segment`]
+//! (batch CMAF), [`AvcSps::decode`] + [`AvcSps::rfc6381`] (codec metadata). See the
+//! crate README for the full **feature matrix** and the `examples/` directory for
+//! runnable end-to-end walkthroughs.
 //!
 //! This crate root also exposes the low-level ISOBMFF framing it is built on:
 //! [`BoxHeader`] (optional 64-bit `largesize` / `uuid` extended type),

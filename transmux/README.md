@@ -1,23 +1,36 @@
-# transmux — MPEG-2 TS → CMAF/fMP4 remux
+# transmux — any-to-any media container muxing hub
 
-Container-layer remux from MPEG-2 Transport Stream to fragmented MP4 / CMAF,
-built to spec (ISO/IEC 14496-12:2015, RFC 8216). **Samples-in**: the caller
-supplies demuxed *encoded* access units + codec config; `transmux` produces the
-initialization and media segments (and the HLS playlists). No transcode, no
-codec bitstream decoding. `no_std` + `alloc`.
+Demux any supported container into one neutral in-memory IR (`Media`/`Track`) and
+mux from it into any supported container — so every `{input} → {output}` composes.
+Built to spec (ISO/IEC 14496-12, 13818-1, 23009-1; RFC 8216/3550; [MS-SSTR]).
+No transcode, no codec bitstream en/decode. `no_std` + `alloc`.
 
-## Scope — container multiplexing only
+The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (container
+→ IR) and **`Package`** (IR → container):
+
+| Demux → IR (`Unpackage`) | IR → mux (`Package`) |
+|---|---|
+| MPEG-2 TS (`TsDemux`) | CMAF/fMP4 (`CmafMux`) · progressive MP4 (`ProgressiveMux`) |
+| fMP4/CMAF (`Fmp4Demux`) | MPEG-2 TS (`TsMux`) |
+| MPEG Program Stream (`PsDemux`) | CMAF-HLS (`HlsPackager`) · TS-HLS (`TsHlsPackager`) |
+| WebM/Matroska (`WebmDemux`) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`) |
+
+Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
+(`Segmenter`) — CENC decrypt (`CencDecryptor`), and RTP de/packetize + SDP
+(`RtpPacketizer`/`RtpDepacketizer`).
+
+## Scope — container muxing only
 
 `transmux` **packages** coded media; it never encodes or decodes it. It parses
-codec *config/parameter headers* (SPS/PPS/VPS, AAC ASC, AC-3/E-AC-3 syncframe
-BSI) only far enough to build the container boxes and derive metadata
-(dimensions, profile, sample rate, `codecs=` MIME). The compressed samples
-themselves are **opaque payloads copied through byte-for-byte** — decode/encode
-is the caller's job (WebCodecs, FFmpeg, hardware). Demux (TS → elementary
-streams) also lives in the caller.
+codec *config/parameter headers* (SPS/PPS/VPS, AAC ASC, syncframe BSI, EBML/box
+config) only far enough to build the container boxes and derive metadata
+(dimensions, profile, sample rate, `codecs=` MIME). Compressed samples are
+**opaque payloads copied through byte-for-byte** — decode/encode is the caller's
+job (WebCodecs, FFmpeg, hardware).
 
 Every box has a symmetric `Parse` / `Serialize` with byte-identical round-trip
-coverage against real fMP4 fixtures.
+coverage against real fixtures; every demux/mux spoke is gated on byte-exact
+round-trips through the IR.
 
 ## Feature matrix
 
@@ -47,10 +60,15 @@ coverage against real fMP4 fixtures.
 | E-AC-3 | `ec-3` | `dec3` + syncframe BSI parse | `ec-3` | ✅ |
 | HE-AAC (SBR/PS) | `mp4a` | explicit-SBR/PS ASC | `mp4a.40.5/29` | ✅ |
 | AC-4 | `ac-4` | `dac4` | `ac-4` | ✅ |
-| MPEG-H 3D | `mha1`/`mhm1` | `mhaC` | — | ✅ |
+| MPEG-H 3D | `mha1`/`mhm1` | `mhaC` (record decode) | — | ✅ |
 | AV1 | `av01` | `av1C` | `av01.…` | ✅ |
 | Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
 | DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` | — | ✅ |
+| **H.266 / VVC** | `vvc1`/`vvi1` | `vvcC` + **SPS/profile_tier_level decode** | `vvc1.…` | ✅ |
+| **VP8** | (WebM `V_VP8`) | keyframe-header dims (RFC 6386) | — | ✅ |
+| **Vorbis** | (WebM `A_VORBIS`) | `CodecPrivate` id-header decode | — | ✅ |
+| **MPEG-2 video (H.262)** | `mp4v` / TS 0x02 | `esds` + sequence-header dims | `mp4v.61` | ✅ |
+| **MPEG-1/2 audio (MP1/2/3)** | `mp4a` / TS 0x03/0x04 | `esds` + frame-header decode | `mp4a.6B/69` | ✅ |
 
 ### Text / captions
 
@@ -68,6 +86,21 @@ coverage against real fMP4 fixtures.
 | **Streaming segmenter** | `Segmenter` — `push` samples → `take_ready` segments, keyframe-cut at a target duration | ✅ |
 | NAL conversion | Annex B ↔ length-prefixed (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216) | ✅ |
+
+### Hub spokes (`Unpackage` / `Package`)
+
+| Spoke | Type | API | Status |
+|---|---|---|---|
+| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config) | ✅ |
+| fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
+| MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
+| WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |
+| CMAF / progressive / TS mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` | ✅ |
+| DASH / LL-DASH / Smooth | `Package` | `DashPackager` · `LlDashPackager` · `SmoothPackager` | ✅ |
+| TS-HLS | `Package` | `TsHlsPackager` | ✅ |
+| Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
+| CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
+| RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
 
 ✅ = implemented + round-trip-tested · ⬜ = planned (issue linked)
 
