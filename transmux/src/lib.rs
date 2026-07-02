@@ -69,6 +69,7 @@ pub mod mpegh;
 pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
+pub mod progressive;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod segmenter;
@@ -109,12 +110,13 @@ pub use flac::{
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
-    Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
-    DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry, HandlerBox,
-    MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox, MovieExtendsBox,
-    MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, OpusSampleEntry, SampleDescriptionBox,
-    SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox, SoundMediaHeaderBox,
-    StblChild, StscEntry, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+    Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
+    DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry,
+    HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, MhaSampleEntry, MovieBox,
+    MovieExtendsBox, MovieHeaderBox, Mp4aSampleEntry, OpaqueBox, OpusSampleEntry,
+    SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox,
+    SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
+    TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, Track};
 pub use movie_fragment::{
@@ -134,6 +136,7 @@ pub use opus::{ChannelMappingTable, OpusSpecificBox, DOPS_FOURCC, OPUS_FOURCC};
 pub use pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
+pub use progressive::ProgressiveMux;
 pub use sample_entries::{AVCSampleEntry, HEVCSampleEntry, VisualSampleEntryFields};
 pub use sample_groups::{
     ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry,

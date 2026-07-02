@@ -1190,6 +1190,181 @@ impl Serialize for ChunkOffsetBox {
 }
 
 // ---------------------------------------------------------------------------
+// ChunkLargeOffsetBox — co64 (ISO/IEC 14496-12:2015 §8.7.5)
+// ---------------------------------------------------------------------------
+
+/// Chunk Large Offset Box (`co64`) — §8.7.5 (64-bit chunk offsets).
+///
+/// The 64-bit sibling of [`ChunkOffsetBox`], used when any chunk offset exceeds
+/// [`u32::MAX`]. Same semantics; each entry is an absolute byte offset into the
+/// file of the first sample in a chunk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct ChunkLargeOffsetBox {
+    pub version: u8,
+    pub flags: u32,
+    pub entries: Vec<u64>,
+}
+
+impl<'a> Parse<'a> for ChunkLargeOffsetBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 16 {
+            return Err(Error::BufferTooShort {
+                need: 16,
+                have: bytes.len(),
+                what: "co64",
+            });
+        }
+        let ver = bytes[8];
+        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let mut entries = Vec::with_capacity(count);
+        let mut off = 16usize;
+        for _ in 0..count {
+            if off + 8 > bytes.len() {
+                break;
+            }
+            entries.push(u64::from_be_bytes([
+                bytes[off],
+                bytes[off + 1],
+                bytes[off + 2],
+                bytes[off + 3],
+                bytes[off + 4],
+                bytes[off + 5],
+                bytes[off + 6],
+                bytes[off + 7],
+            ]));
+            off += 8;
+        }
+        Ok(Self {
+            version: ver,
+            flags,
+            entries,
+        })
+    }
+}
+
+impl Serialize for ChunkLargeOffsetBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 8
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut c = 0usize;
+        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
+        c += 4;
+        buf[c..c + 4].copy_from_slice(b"co64");
+        c += 4;
+        buf[c] = self.version;
+        c += 1;
+        let fb = self.flags.to_be_bytes();
+        buf[c..c + 3].copy_from_slice(&fb[1..]);
+        c += 3;
+        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        c += 4;
+        for entry in &self.entries {
+            buf[c..c + 8].copy_from_slice(&entry.to_be_bytes());
+            c += 8;
+        }
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SyncSampleBox — stss (ISO/IEC 14496-12:2015 §8.6.2)
+// ---------------------------------------------------------------------------
+
+/// Sync Sample Box (`stss`) — §8.6.2.
+///
+/// Lists the 1-based indices of the sync (random-access) samples. If the box is
+/// absent every sample is a sync sample; when present it is the exhaustive list
+/// of random-access points.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SyncSampleBox {
+    pub version: u8,
+    pub flags: u32,
+    /// 1-based sample numbers that are sync samples.
+    pub entries: Vec<u32>,
+}
+
+impl<'a> Parse<'a> for SyncSampleBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < 16 {
+            return Err(Error::BufferTooShort {
+                need: 16,
+                have: bytes.len(),
+                what: "stss",
+            });
+        }
+        let ver = bytes[8];
+        let flags = u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]]);
+        let count = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]) as usize;
+        let mut entries = Vec::with_capacity(count);
+        let mut off = 16usize;
+        for _ in 0..count {
+            if off + 4 > bytes.len() {
+                break;
+            }
+            entries.push(u32::from_be_bytes([
+                bytes[off],
+                bytes[off + 1],
+                bytes[off + 2],
+                bytes[off + 3],
+            ]));
+            off += 4;
+        }
+        Ok(Self {
+            version: ver,
+            flags,
+            entries,
+        })
+    }
+}
+
+impl Serialize for SyncSampleBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        if buf.len() < need {
+            return Err(Error::OutputBufferTooSmall {
+                need,
+                have: buf.len(),
+            });
+        }
+        let mut c = 0usize;
+        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
+        c += 4;
+        buf[c..c + 4].copy_from_slice(b"stss");
+        c += 4;
+        buf[c] = self.version;
+        c += 1;
+        let fb = self.flags.to_be_bytes();
+        buf[c..c + 3].copy_from_slice(&fb[1..]);
+        c += 3;
+        buf[c..c + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());
+        c += 4;
+        for entry in &self.entries {
+            buf[c..c + 4].copy_from_slice(&entry.to_be_bytes());
+            c += 4;
+        }
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // SampleDescriptionBox — stsd (ISO/IEC 14496-12:2015 §8.5.2)
 // ---------------------------------------------------------------------------
 
@@ -1970,6 +2145,8 @@ pub enum StblChild {
     Stsc(SampleToChunkBox),
     Stsz(SampleSizeBox),
     Stco(ChunkOffsetBox),
+    Co64(ChunkLargeOffsetBox),
+    Stss(SyncSampleBox),
     Opaque(Vec<u8>),
 }
 
@@ -2036,6 +2213,24 @@ fn parse_stbl_children(body: &[u8]) -> Vec<StblChild> {
                     entries: Vec::new(),
                 }
             })),
+            b"co64" => {
+                StblChild::Co64(ChunkLargeOffsetBox::parse(box_bytes).unwrap_or_else(|_| {
+                    ChunkLargeOffsetBox {
+                        version: 0,
+                        flags: 0,
+                        entries: Vec::new(),
+                    }
+                }))
+            }
+            b"stss" => {
+                StblChild::Stss(
+                    SyncSampleBox::parse(box_bytes).unwrap_or_else(|_| SyncSampleBox {
+                        version: 0,
+                        flags: 0,
+                        entries: Vec::new(),
+                    }),
+                )
+            }
             _ => StblChild::Opaque(box_bytes.to_vec()),
         });
         off += size;
@@ -2052,6 +2247,8 @@ fn serialize_stbl_children(children: &[StblChild], buf: &mut [u8], off: &mut usi
             StblChild::Stsc(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stsz(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stco(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Co64(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Stss(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Opaque(d) => {
                 let len = d.len();
                 buf[*off..*off + len].copy_from_slice(d);
@@ -2072,6 +2269,8 @@ fn stbl_children_len(children: &[StblChild]) -> usize {
             StblChild::Stsc(b) => b.serialized_len(),
             StblChild::Stsz(b) => b.serialized_len(),
             StblChild::Stco(b) => b.serialized_len(),
+            StblChild::Co64(b) => b.serialized_len(),
+            StblChild::Stss(b) => b.serialized_len(),
             StblChild::Opaque(d) => d.len(),
         };
     }
