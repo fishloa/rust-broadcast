@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace `mp4-emsg` crate are re-exported from the `transmux` crate root so
   callers need no additional dependency. [`build_media_segment`] delegates to the
   new function with an empty event slice (byte-identical output).
+- **fMP4/CMAF conformance validator** (#481): new `validate` module — the fMP4
+  analogue of a TR 101 290 monitor. `validate_init_segment`,
+  `validate_media_segment`, and `validate_cmaf_track` (cross-segment) walk the
+  ISOBMFF box tree and return `Vec<ConformanceIssue>` (`Severity::Error` /
+  `Warning`, each with a stable dotted `code` + spec-cited message) against
+  ISO/IEC 14496-12 (box presence/order, `ftyp`/`moov`/`mvhd`/`trak` tree,
+  `mvex`/`trex` fragmentation marker, `styp`/`moof`/`mfhd`/`traf`/`tfhd`/`tfdt`/
+  `trun`, moof↔mdat pairing, `trun` sample-size/`data_offset` mdat-bounds,
+  zero-duration samples) and ISO/IEC 23000-19 (CMAF — segment brands,
+  single-track fragments, required `tfdt`, contiguous decode timeline, strictly
+  increasing `mfhd.sequence_number`). Malformed input yields issues, never a
+  panic.
 - **HEVC SPS decode verified against real fixture** (#516): `decode_hevc_sps`
   proven correct on the committed `hevc_frag.mp4` hvcC record — asserts exact
   ffprobe oracle values (320×240, Main profile idc=1, 4:2:0, 8-bit, level 60).
