@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ffprobe oracle values (320×240, Main profile idc=1, 4:2:0, 8-bit, level 60).
   Truncated-input negative tests added. `decode_hevc_sps` doc now cites
   ITU-T H.265 §7.3.2.2.1 (syntax) + §7.4.3.2.1 (conformance-window semantics).
+- **HLS discontinuity support** (#453): `MediaSegment::discontinuous` flag and
+  `MediaPlaylist::discontinuity_sequence` field; `MediaPlaylist::to_m3u8()` emits
+  `#EXT-X-DISCONTINUITY` immediately before every flagged segment (RFC 8216 §4.3.4.3)
+  and `#EXT-X-DISCONTINUITY-SEQUENCE:<n>` in the playlist header when `n > 0`
+  (RFC 8216 §4.3.3.3). `Segmenter::mark_discontinuity()` marks the next segment cut
+  as discontinuous (explicit API); `Segmenter::take_ready_with_meta()` returns
+  `(Vec<u8>, SegmentMeta)` pairs carrying the discontinuity flag. Auto-detection of
+  init-segment changes is available via the new
+  `mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)])` helper,
+  which compares consecutive init bytes and sets the flag where they differ.
 - **RTCP control packets** (#514): typed `Parse`/`Serialize` for the RFC 3550 §6 set —
   `SenderReport` (PT 200), `ReceiverReport` (201), `SourceDescription` (202, with
   `SdesChunk`/`SdesItem`/`SdesItemType`), `Bye` (203), `App` (204), the shared

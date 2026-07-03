@@ -11,18 +11,22 @@ fn media_playlist_rfc_valid() {
         version: 3,
         target_duration: 10,
         media_sequence: 0,
+        discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {
                 uri: "seg0.m4s".into(),
                 duration: 9.009,
+                discontinuous: false,
             },
             MediaSegment {
                 uri: "seg1.m4s".into(),
                 duration: 9.009,
+                discontinuous: false,
             },
             MediaSegment {
                 uri: "seg2.m4s".into(),
                 duration: 3.003,
+                discontinuous: false,
             },
         ],
         endlist: true,
@@ -62,9 +66,11 @@ fn media_playlist_invalid_target_duration_reported() {
         version: 3,
         target_duration: 10,
         media_sequence: 0,
+        discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "long.m4s".into(),
             duration: 15.0,
+            discontinuous: false,
         }],
         endlist: true,
         extra_tags: vec![],
