@@ -212,8 +212,7 @@ fn cc_anomaly_legal_duplicate_not_flagged() {
         .collect();
     assert!(
         cc_findings.is_empty(),
-        "legal duplicate should not be flagged: {:?}",
-        cc_findings
+        "legal duplicate should not be flagged: {cc_findings:?}"
     );
 }
 
@@ -248,8 +247,7 @@ fn cc_anomaly_discontinuity_not_flagged() {
         .collect();
     assert!(
         cc_findings.is_empty(),
-        "signalled discontinuity should not be flagged: {:?}",
-        cc_findings
+        "signalled discontinuity should not be flagged: {cc_findings:?}"
     );
 }
 
@@ -360,8 +358,7 @@ fn cc_anomaly_non_payload_does_not_advance_cc() {
         .collect();
     assert!(
         cc_findings.is_empty(),
-        "non-payload packets should not cause CC anomalies: {:?}",
-        cc_findings
+        "non-payload packets should not cause CC anomalies: {cc_findings:?}"
     );
 }
 
@@ -617,8 +614,7 @@ fn pcr_check_discontinuity_not_flagged() {
 
     assert!(
         disc_on_0208.is_empty(),
-        "signalled discontinuity on PID 0x0208 must not be flagged, got {:?}",
-        disc_on_0208,
+        "signalled discontinuity on PID 0x0208 must not be flagged, got {disc_on_0208:?}",
     );
 
     // Also check that the discontinuity PID (0x0208) has no repetition errors.
@@ -630,8 +626,7 @@ fn pcr_check_discontinuity_not_flagged() {
 
     assert!(
         rep_on_0208.is_empty(),
-        "PCR repetition on PID 0x0208 with signalled discontinuity should be clean: {:?}",
-        rep_on_0208,
+        "PCR repetition on PID 0x0208 with signalled discontinuity should be clean: {rep_on_0208:?}",
     );
 }
 
@@ -712,7 +707,6 @@ fn pcr_check_corrupted_pcr_produces_finding() {
     let has_error = pcr_findings.iter().any(|f| f.severity == Severity::Error);
     assert!(
         has_error,
-        "corrupted PCR should produce at least one Error: {:?}",
-        pcr_findings,
+        "corrupted PCR should produce at least one Error: {pcr_findings:?}",
     );
 }

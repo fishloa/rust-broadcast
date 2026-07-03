@@ -233,7 +233,7 @@ fn pat_section_with_crc(pkt: &[u8]) -> Result<&[u8], String> {
 /// Extract and parse a PAT section from a PAT packet.
 fn parse_pat_from_packet(pkt: &[u8]) -> Result<PatSection, String> {
     let section = pat_section_with_crc(pkt)?;
-    PatSection::parse(section).map_err(|e| format!("failed to parse PAT: {:?}", e))
+    PatSection::parse(section).map_err(|e| format!("failed to parse PAT: {e:?}"))
 }
 
 /// Verify the CRC-32 (MPEG-2) trailing a PAT section in a PAT packet.

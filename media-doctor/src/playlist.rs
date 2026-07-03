@@ -81,10 +81,7 @@ pub fn check_playlist(text: &str, report: &mut Report) {
                     Location::new(extinf_line_nums[idx], 0),
                     "hls-extinf-exceeds-target",
                     alloc::format!(
-                        "EXTINF duration {} (rounded to {}) exceeds TARGETDURATION {}",
-                        dur,
-                        rounded,
-                        targetduration_val
+                        "EXTINF duration {dur} (rounded to {rounded}) exceeds TARGETDURATION {targetduration_val}"
                     ),
                 ));
             }

@@ -15,7 +15,7 @@ fn main() {
     match cli {
         Cli::Check(args) => {
             if let Err(e) = run_check(&args) {
-                eprintln!("error: {}", e);
+                eprintln!("error: {e}");
                 process::exit(1);
             }
         }
@@ -39,7 +39,7 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "serde")]
         {
             let json = serde_json::to_string_pretty(&report)?;
-            println!("{}", json);
+            println!("{json}");
         }
         #[cfg(not(feature = "serde"))]
         {
@@ -48,7 +48,7 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
             process::exit(1);
         }
     } else {
-        println!("{}", report);
+        println!("{report}");
     }
     Ok(())
 }

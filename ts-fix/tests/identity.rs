@@ -77,8 +77,7 @@ fn identity_passthrough_byte_identical() {
     // Packet count matches.
     assert_eq!(
         emitted_count, expected_packet_count,
-        "emitted {} packets, expected {}",
-        emitted_count, expected_packet_count
+        "emitted {emitted_count} packets, expected {expected_packet_count}"
     );
 
     // Output is byte-identical to input.

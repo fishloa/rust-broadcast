@@ -85,8 +85,7 @@ fn scte35_unbalanced_fixture() {
     let has_200 = unbal.iter().any(|f| f.message.contains("200"));
     assert!(
         has_200,
-        "at least one unbalanced finding must mention event_id 200, got: {:?}",
-        unbal,
+        "at least one unbalanced finding must mention event_id 200, got: {unbal:?}",
     );
 }
 
@@ -110,7 +109,6 @@ fn real_canonical_splice_insert_parsed_and_flagged() {
     // event_id 0x4800008f = 1207959695
     assert!(
         unbal.iter().any(|f| f.message.contains("1207959695")),
-        "unbalanced finding should reference the real event_id 1207959695: {:?}",
-        unbal,
+        "unbalanced finding should reference the real event_id 1207959695: {unbal:?}",
     );
 }

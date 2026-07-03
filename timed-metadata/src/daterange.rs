@@ -84,7 +84,7 @@ impl DateRange {
         out.push_str(&format!("ID=\"{}\"", self.id));
         out.push_str(&format!(",START-DATE=\"{}\"", self.start_date));
         if let Some(c) = &self.class {
-            out.push_str(&format!(",CLASS=\"{}\"", c));
+            out.push_str(&format!(",CLASS=\"{c}\""));
         }
         if let Some(d) = self.duration {
             out.push_str(&format!(",DURATION={}", fmt_f64(d)));
@@ -155,16 +155,16 @@ fn fmt_f64(v: f64) -> String {
     // Avoid f64::fract() (std-only intrinsic in no_std); use cast comparison instead.
     let trunc = v as i64;
     if v == trunc as f64 {
-        format!("{}", trunc)
+        format!("{trunc}")
     } else {
-        format!("{}", v)
+        format!("{v}")
     }
 }
 
 fn to_hex_upper(b: &[u8]) -> String {
     let mut s = String::with_capacity(b.len() * 2);
     for byte in b {
-        s.push_str(&format!("{:02X}", byte));
+        s.push_str(&format!("{byte:02X}"));
     }
     s
 }

@@ -65,7 +65,7 @@ fn stpp_parse_and_round_trip() {
     // Verify the first entry is Stpp
     let entry = match &stsd.entries[0] {
         SampleEntryVariant::Stpp(s) => s,
-        other => panic!("expected SampleEntryVariant::Stpp, got {:?}", other),
+        other => panic!("expected SampleEntryVariant::Stpp, got {other:?}"),
     };
 
     // Namespace must be non-empty (ffmpeg encodes http://www.w3.org/ns/ttml)

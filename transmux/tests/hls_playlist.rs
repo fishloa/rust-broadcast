@@ -60,8 +60,7 @@ fn media_playlist_rfc_valid() {
     media_doctor::check_playlist(&m3u8, &mut report);
     assert!(
         report.is_empty(),
-        "media playlist must be RFC-valid but got: {}",
-        report,
+        "media playlist must be RFC-valid but got: {report}",
     );
 }
 

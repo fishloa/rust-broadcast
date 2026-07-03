@@ -298,8 +298,7 @@ fn ts_to_cmaf_end_to_end() {
 
     assert!(
         total_adts_frames > 14,
-        "expected more ADTS frames than PES packets (> 14): got {}",
-        total_adts_frames
+        "expected more ADTS frames than PES packets (> 14): got {total_adts_frames}"
     );
 
     // ---- Phase 6: Build CMAF segments ---------------------------------------

@@ -145,9 +145,8 @@ impl Diagnostic for Scte35Check {
                                         Location::new(i, pid),
                                         "scte35-dup-out",
                                         alloc::format!(
-                                            "duplicate open splice_insert: out event_id {} \
+                                            "duplicate open splice_insert: out event_id {eid} \
                                              with no intervening in",
-                                            eid,
                                         ),
                                     ));
                                 } else {
@@ -177,8 +176,7 @@ impl Diagnostic for Scte35Check {
                         Location::new(n_packets.saturating_sub(1), pid),
                         "scte35-unbalanced",
                         alloc::format!(
-                            "unbalanced splice_insert: out event_id {} with no matching in",
-                            eid,
+                            "unbalanced splice_insert: out event_id {eid} with no matching in",
                         ),
                     ));
                 }

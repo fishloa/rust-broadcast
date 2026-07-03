@@ -493,8 +493,7 @@ mod tests {
             let desc = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
             assert_eq!(
                 desc.polarization, expected_pol,
-                "polarization mismatch for offset 0x{:02x}",
-                offset
+                "polarization mismatch for offset 0x{offset:02x}"
             );
         }
     }

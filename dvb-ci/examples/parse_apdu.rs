@@ -12,7 +12,7 @@ fn main() {
         ca_system_ids: vec![0x0500, 0x0B00],
     };
     let wire = info.to_bytes();
-    println!("ca_info APDU   : {:02X?}", wire);
+    println!("ca_info APDU   : {wire:02X?}");
 
     // Route it through the tag dispatcher without knowing the type in advance.
     let any = AnyApdu::parse(&wire).expect("valid APDU");

@@ -55,7 +55,7 @@ fn parse_names_file(path: &Path, section_name: &str) -> Vec<Entry> {
 
         // Section header.
         if line.starts_with('[') {
-            in_section = line == format!("[{}]", section_name);
+            in_section = line == format!("[{section_name}]");
             continue;
         }
 
@@ -113,7 +113,7 @@ fn parse_names_file(path: &Path, section_name: &str) -> Vec<Entry> {
 
 fn parse_hex(s: &str) -> u32 {
     let s = s.strip_prefix("0x").unwrap_or(s);
-    u32::from_str_radix(s, 16).unwrap_or_else(|_| panic!("invalid hex: {}", s))
+    u32::from_str_radix(s, 16).unwrap_or_else(|_| panic!("invalid hex: {s}"))
 }
 
 fn escape_name(name: &str) -> String {

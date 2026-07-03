@@ -100,7 +100,7 @@ fn video_dts_non_decreasing() {
     for au in &aus {
         if let Some(dts) = au.dts {
             if let Some(prev) = prev_dts {
-                assert!(dts >= prev, "DTS regressed: {} < {}", dts, prev);
+                assert!(dts >= prev, "DTS regressed: {dts} < {prev}");
             }
             prev_dts = Some(dts);
         }

@@ -38,10 +38,7 @@ fn main() {
         let scr_ticks = pack.pack_header.scr.ticks();
         let scr_s = pack.pack_header.scr.seconds();
         let mux_rate = pack.pack_header.program_mux_rate * 50;
-        println!(
-            "{:<6} {:<20} {:<15.6} {:<10}",
-            i, scr_ticks, scr_s, mux_rate,
-        );
+        println!("{i:<6} {scr_ticks:<20} {scr_s:<15.6} {mux_rate:<10}",);
 
         if let Some(ref sh) = pack.system_header {
             println!(

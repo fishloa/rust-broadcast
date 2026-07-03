@@ -187,8 +187,7 @@ fn hevc_sps_truncated_returns_error() {
     let result = decode_hevc_sps(truncated);
     assert!(
         result.is_err(),
-        "decode_hevc_sps on a truncated NAL must return Err, got: {:?}",
-        result
+        "decode_hevc_sps on a truncated NAL must return Err, got: {result:?}"
     );
 }
 

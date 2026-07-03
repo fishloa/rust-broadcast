@@ -46,7 +46,7 @@ fn main() {
         // The PAT section bytes: table_id=0x00, transport_stream_id at bytes 3-4.
         if section.len() >= 5 {
             let ts_id = u16::from_be_bytes([section[3], section[4]]);
-            println!("  transport_stream_id={}", ts_id);
+            println!("  transport_stream_id={ts_id}");
         }
     }
 }

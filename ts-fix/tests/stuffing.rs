@@ -85,8 +85,7 @@ fn drop_nulls_removes_all_null_packets() {
     let null_count_after = output.chunks(188).filter(|pkt| is_null_packet(pkt)).count();
     assert_eq!(
         null_count_after, 0,
-        "output should have zero null packets after drop_nulls, found {}",
-        null_count_after
+        "output should have zero null packets after drop_nulls, found {null_count_after}"
     );
 
     // Verify all non-null packets from input are preserved.
@@ -107,8 +106,7 @@ fn drop_nulls_removes_all_null_packets() {
     {
         assert_eq!(
             input_pkt, output_pkt,
-            "packet {} should be byte-identical after drop_nulls",
-            idx
+            "packet {idx} should be byte-identical after drop_nulls"
         );
     }
 }
@@ -173,9 +171,7 @@ fn pad_to_2_0_doubles_packet_count() {
     assert_eq!(
         output_packet_count,
         input_packet_count * 2,
-        "pad_to(2.0) should double packet count: {} input → {} output",
-        input_packet_count,
-        output_packet_count
+        "pad_to(2.0) should double packet count: {input_packet_count} input → {output_packet_count} output"
     );
 
     // Verify output is a valid multiple of 188.
@@ -221,8 +217,7 @@ fn pad_to_inserts_valid_null_packets() {
     for (idx, pkt) in null_packets.iter().enumerate() {
         assert!(
             validate_null_packet(pkt),
-            "null packet {} is not properly formed (PID 0x1FFF, AFC=01, 0xFF padding)",
-            idx
+            "null packet {idx} is not properly formed (PID 0x1FFF, AFC=01, 0xFF padding)"
         );
     }
 }
@@ -256,8 +251,7 @@ fn pad_to_rate_matches_expected_count() {
 
         assert_eq!(
             output_packet_count, expected,
-            "pad_to({}) should produce {} packets, got {}",
-            rate, expected, output_packet_count
+            "pad_to({rate}) should produce {expected} packets, got {output_packet_count}"
         );
     }
 }
@@ -301,8 +295,7 @@ fn pad_to_preserves_input_packets() {
     {
         assert_eq!(
             input_pkt, output_pkt,
-            "packet {} should be byte-identical after pad_to",
-            idx
+            "packet {idx} should be byte-identical after pad_to"
         );
     }
 }
