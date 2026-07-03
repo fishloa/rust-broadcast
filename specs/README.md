@@ -5,10 +5,10 @@ structured markdown under each crate's `docs/` is transcribed from these.
 Kept in-repo so the parsers can always be checked against the spec they
 claim to implement.
 
-These are freely-downloadable deliverables (ETSI, DVB Project, and SCTE —
-all published at no cost), redistributed here for reference. Each publisher
-retains copyright; see <https://www.etsi.org/>, <https://dvb.org/>,
-<https://www.scte.org/>.
+These are freely-downloadable deliverables (ETSI, DVB Project, SCTE, and
+ATSC — all published at no cost), redistributed here for reference. Each
+publisher retains copyright; see <https://www.etsi.org/>, <https://dvb.org/>,
+<https://www.scte.org/>, <https://www.atsc.org/>.
 
 Paid ISO standards (e.g. ISO/IEC 13818-1) are **never** vendored: they are
 consulted locally (gitignored as `specs/iso_iec_*.pdf`) and only the
@@ -34,6 +34,8 @@ provenance-documented hand transcriptions under `*/docs/` are committed.
 | `ansi_scte_35_2023r1_dpi_cueing.pdf` | ANSI/SCTE 35 2023r1 — Digital Program Insertion Cueing Message | `scte35-splice` (#58); tables in `scte35-splice/docs/tables/scte_35/` |
 | `dvb_a001r18_draft_ts_101_154_v02.07.01_av_coding.pdf` | DVB A001r18 (draft TS 101 154 v2.7.1) — AV coding in broadcast/broadband | `dvb-si` (component/AC-4/audio-preselection semantics, #53) |
 | `etsi_ts_103_190_2_v01.03.01_ac4.pdf` | TS 103 190-2 v1.3.1 — AC-4 immersive/personalized audio | `dvb-si` (AC-4 descriptor `ac4_toc` structure §6.2.1 — deferred typing, #102) |
+| `etsi_ts_102_114_v01.06.01_dts_coherent_acoustics.pdf` | TS 102 114 v1.6.1 — DTS Coherent Acoustics core audio | `transmux` DTS-from-TS spoke (frame header/signalling); `dvb-si` DTS descriptors cross-check |
+| `atsc_a342-3_2025_mpegh_system.pdf` | ATSC A/342-3:2025 — Audio: MPEG-H System | `transmux` MPEG-H carriage signalling (TS + fMP4 `mhm1`) |
 
 Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf
@@ -53,6 +55,8 @@ Download URLs (browser User-Agent required; bare `curl` is blocked by ETSI):
 - https://www.etsi.org/deliver/etsi_tr/101200_101299/101211/01.09.01_60/tr_101211v010901p.pdf
 - https://dutchguild.nl/event/13/attachments/82/203/SCTE_35_2023r1.pdf (public mirror; canonical source is the SCTE standards library request form)
 - https://dvb.org/wp-content/uploads/2021/02/A001r18_Use-of-Video-and-Audio-Coding-in-Broadcast-and-Broadband-Applications_Draft_TS_101-154-v271_Nov-2021.pdf
+- https://www.etsi.org/deliver/etsi_ts/102100_102199/102114/01.06.01_60/ts_102114v010601p.pdf
+- https://www.atsc.org/documents/ (A/342 Part 3, "MPEG-H System" — free download, no registration)
 
 ## Consulted locally (gitignored, not redistributed)
 
