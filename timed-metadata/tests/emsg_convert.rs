@@ -5,7 +5,7 @@
 use std::fs;
 
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
-use timed_metadata::convert::{emsg_to_v0, emsg_to_v1, SegmentTiming};
+use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 
 fn read_fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/../fixtures/shared/{}", env!("CARGO_MANIFEST_DIR"), name);

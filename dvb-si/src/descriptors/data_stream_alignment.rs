@@ -121,7 +121,7 @@ impl Serialize for DataStreamAlignmentDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for DataStreamAlignmentDescriptor {
+impl crate::traits::DescriptorDef<'_> for DataStreamAlignmentDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "DATA_STREAM_ALIGNMENT";
 }

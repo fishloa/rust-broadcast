@@ -9,7 +9,7 @@ use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketizer;
-use mpeg_ts::ts::{extract_ts_payload, TsHeader};
+use mpeg_ts::ts::{TsHeader, extract_ts_payload};
 use std::fs;
 use ts_fix::{PidFilter, TsFix};
 

@@ -4,8 +4,8 @@
 //! serializes it, then parses it back to verify round-trip integrity.
 
 use broadcast_common::{Parse, Serialize};
-use scte104::operations::{AnySingleOperation, InjectResponse};
 use scte104::SingleOperationMessage;
+use scte104::operations::{AnySingleOperation, InjectResponse};
 
 fn main() {
     // Build an inject_response single_operation_message.

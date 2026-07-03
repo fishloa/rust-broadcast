@@ -83,11 +83,11 @@ pub use data_unit_id::{
     ID_INVERTED_TELETEXT, ID_MONOCHROME_422_SAMPLES, ID_STUFFING, ID_VPS, ID_WSS,
 };
 pub use error::{Error, Result};
-pub use line_header::{LineHeader, LINE_HEADER_LEN, RESERVED_PREFIX};
+pub use line_header::{LINE_HEADER_LEN, LineHeader, RESERVED_PREFIX};
 pub use payload::{
-    ClosedCaptioningDataField, DataField, DataUnit, DataUnitPayload, MonochromeDataField,
-    TeletextDataField, VpsDataField, WssDataField, CC_FIELD_LEN, FRAMING_CODE_EBU,
-    FRAMING_CODE_INVERTED, MONO_HEADER_LEN, TELETEXT_DATA_UNIT_LENGTH, TELETEXT_FIELD_LEN,
-    TXT_DATA_BLOCK_LEN, VPS_DATA_BLOCK_LEN, VPS_FIELD_LEN, WSS_DATA_BLOCK_MASK, WSS_FIELD_LEN,
-    WSS_RESERVED_TAIL,
+    CC_FIELD_LEN, ClosedCaptioningDataField, DataField, DataUnit, DataUnitPayload,
+    FRAMING_CODE_EBU, FRAMING_CODE_INVERTED, MONO_HEADER_LEN, MonochromeDataField,
+    TELETEXT_DATA_UNIT_LENGTH, TELETEXT_FIELD_LEN, TXT_DATA_BLOCK_LEN, TeletextDataField,
+    VPS_DATA_BLOCK_LEN, VPS_FIELD_LEN, VpsDataField, WSS_DATA_BLOCK_MASK, WSS_FIELD_LEN,
+    WSS_RESERVED_TAIL, WssDataField,
 };

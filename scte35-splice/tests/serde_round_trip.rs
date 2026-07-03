@@ -4,7 +4,7 @@
 
 #![cfg(feature = "serde")]
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::Parse;
 use scte35_splice::SpliceInfoSection;
 

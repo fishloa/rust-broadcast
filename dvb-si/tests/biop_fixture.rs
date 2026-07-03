@@ -9,15 +9,15 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
+use dvb_si::carousel::UnMessage;
 use dvb_si::carousel::biop::message::BindingType;
 use dvb_si::carousel::biop::{
-    Binding, BiopMessage, BiopProfileBody, CarouselFs, ConnBinder, DirectoryMessage, FileMessage,
-    Ior, ModuleInfo, NameComponent, ObjectKind, ObjectLocation, ServiceGatewayInfo, TaggedProfile,
-    Tap, BIOP_DELIVERY_PARA_USE,
+    BIOP_DELIVERY_PARA_USE, Binding, BiopMessage, BiopProfileBody, CarouselFs, ConnBinder,
+    DirectoryMessage, FileMessage, Ior, ModuleInfo, NameComponent, ObjectKind, ObjectLocation,
+    ServiceGatewayInfo, TaggedProfile, Tap,
 };
-use dvb_si::carousel::UnMessage;
 use dvb_si::tables::dsmcc::DsmccSection;
-use mpeg_ts::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Extract reassembled sections for PID 0x00AB from the m6 fixture.
 fn m6_sections_pid_ab() -> Vec<Vec<u8>> {
@@ -416,7 +416,7 @@ fn sgi_serde_json() {
 #[test]
 fn zlib_decompress_round_trip() {
     use dvb_si::carousel::biop::message::decompress_zlib;
-    use flate2::{write::ZlibEncoder, Compression};
+    use flate2::{Compression, write::ZlibEncoder};
     use std::io::Write;
 
     let original = b"BIOP compressed module data ".repeat(20);

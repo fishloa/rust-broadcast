@@ -13,9 +13,9 @@
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use transmux::TsDemux;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::TsDemux;
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ struct Box4<'a> {
 }
 
 /// Iterate the top-level boxes of `buf` (offsets absolute given `base`).
-fn iter_boxes<'a>(buf: &'a [u8], base: usize) -> Vec<Box4<'a>> {
+fn iter_boxes(buf: &[u8], base: usize) -> Vec<Box4<'_>> {
     let mut out = Vec::new();
     let mut off = 0usize;
     while off + 8 <= buf.len() {
@@ -184,7 +184,7 @@ struct RefTrack<'a> {
 }
 
 /// Collect every `trak` in the ref moov with its `hdlr` handler type.
-fn ref_tracks<'a>(mp4: &'a [u8]) -> Vec<RefTrack<'a>> {
+fn ref_tracks(mp4: &[u8]) -> Vec<RefTrack<'_>> {
     let moov = find_box(mp4, 0, b"moov").expect("ref mp4 must have moov");
     let mut tracks = Vec::new();
     for b in iter_boxes(moov.body, moov.offset + moov.header) {

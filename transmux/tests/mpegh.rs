@@ -24,8 +24,8 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::{
-    CmafMux, CodecConfig, Fmp4Demux, MHADecoderConfigurationRecord, SampleDescriptionBox,
-    SampleEntryVariant, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC,
+    CmafMux, CodecConfig, Fmp4Demux, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC,
+    MHADecoderConfigurationRecord, SampleDescriptionBox, SampleEntryVariant,
 };
 
 const FIXTURE: &[u8] = include_bytes!("../../fixtures/mp4/frag/mpegh_stereo.frag.mp4");

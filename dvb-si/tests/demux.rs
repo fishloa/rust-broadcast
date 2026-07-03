@@ -5,7 +5,7 @@
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
-use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
 
 const LONG_FORM_EXTRA: usize = 5;
 const CRC_LEN: usize = 4;

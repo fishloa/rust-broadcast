@@ -47,7 +47,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
 
 /// Per-segment metadata returned alongside the media segment bytes by

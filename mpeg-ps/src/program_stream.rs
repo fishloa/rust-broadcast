@@ -10,9 +10,9 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
 
-use crate::pack_header::{PackHeader, PACK_START_CODE};
-use crate::system_header::{SystemHeader, SYSTEM_HEADER_START_CODE};
 use crate::Result;
+use crate::pack_header::{PACK_START_CODE, PackHeader};
+use crate::system_header::{SYSTEM_HEADER_START_CODE, SystemHeader};
 
 /// `MPEG_program_end_code` — `0x000001B9`.
 const PROGRAM_END_CODE: u32 = 0x0000_01B9;
@@ -107,7 +107,7 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
     ))
 }
 
-fn parse_pes_loop<'a>(data: &'a [u8]) -> Result<(Vec<mpeg_pes::PesPacket<'a>>, usize)> {
+fn parse_pes_loop(data: &[u8]) -> Result<(Vec<mpeg_pes::PesPacket<'_>>, usize)> {
     use crate::error::Error;
 
     let mut packets = Vec::new();

@@ -4,13 +4,13 @@
 //! time_signal_request (≥2 operations), serializes it, then parses it back.
 
 use broadcast_common::{Parse, Serialize};
+use scte104::MultipleOperationMessage;
 use scte104::operations::{
+    AnyOperation, Operation,
     splice_request::{SpliceInsertType, SpliceRequest},
     time_signal_request::TimeSignalRequest,
-    AnyOperation, Operation,
 };
 use scte104::time::Timestamp;
-use scte104::MultipleOperationMessage;
 
 fn main() {
     // Build operations: splice + time_signal.

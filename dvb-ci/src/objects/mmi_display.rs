@@ -184,7 +184,7 @@ impl Serialize for DisplayControl {
     }
 }
 
-impl<'a> ApduDef<'a> for DisplayControl {
+impl ApduDef<'_> for DisplayControl {
     const TAG: ApduTag = tag::DISPLAY_CONTROL;
     const NAME: &'static str = "DISPLAY_CONTROL";
 }
@@ -473,7 +473,7 @@ impl Serialize for DisplayReply {
     }
 }
 
-impl<'a> ApduDef<'a> for DisplayReply {
+impl ApduDef<'_> for DisplayReply {
     const TAG: ApduTag = tag::DISPLAY_REPLY;
     const NAME: &'static str = "DISPLAY_REPLY";
 }
@@ -598,7 +598,7 @@ impl Serialize for KeypadControl {
     }
 }
 
-impl<'a> ApduDef<'a> for KeypadControl {
+impl ApduDef<'_> for KeypadControl {
     const TAG: ApduTag = tag::KEYPAD_CONTROL;
     const NAME: &'static str = "KEYPAD_CONTROL";
 }
@@ -637,7 +637,7 @@ impl Serialize for Keypress {
     }
 }
 
-impl<'a> ApduDef<'a> for Keypress {
+impl ApduDef<'_> for Keypress {
     const TAG: ApduTag = tag::KEYPRESS;
     const NAME: &'static str = "KEYPRESS";
 }
@@ -656,7 +656,7 @@ pub struct SubtitleSegment<'a> {
     pub segment: &'a [u8],
 }
 
-impl<'a> SubtitleSegment<'a> {
+impl SubtitleSegment<'_> {
     /// The `apdu_tag` for this object given [`SubtitleSegment::more`].
     #[must_use]
     pub fn tag(&self) -> ApduTag {
@@ -827,7 +827,7 @@ impl Serialize for DisplayMessage {
     }
 }
 
-impl<'a> ApduDef<'a> for DisplayMessage {
+impl ApduDef<'_> for DisplayMessage {
     const TAG: ApduTag = tag::DISPLAY_MESSAGE;
     const NAME: &'static str = "DISPLAY_MESSAGE";
 }
@@ -883,7 +883,7 @@ impl Serialize for SceneEndMark {
     }
 }
 
-impl<'a> ApduDef<'a> for SceneEndMark {
+impl ApduDef<'_> for SceneEndMark {
     const TAG: ApduTag = tag::SCENE_END_MARK;
     const NAME: &'static str = "SCENE_END_MARK";
 }
@@ -938,7 +938,7 @@ impl Serialize for SceneDoneMessage {
     }
 }
 
-impl<'a> ApduDef<'a> for SceneDoneMessage {
+impl ApduDef<'_> for SceneDoneMessage {
     const TAG: ApduTag = tag::SCENE_DONE;
     const NAME: &'static str = "SCENE_DONE";
 }
@@ -989,7 +989,7 @@ impl Serialize for SceneControl {
     }
 }
 
-impl<'a> ApduDef<'a> for SceneControl {
+impl ApduDef<'_> for SceneControl {
     const TAG: ApduTag = tag::SCENE_CONTROL;
     const NAME: &'static str = "SCENE_CONTROL";
 }
@@ -1009,7 +1009,7 @@ pub struct SubtitleDownload<'a> {
     pub segment: &'a [u8],
 }
 
-impl<'a> SubtitleDownload<'a> {
+impl SubtitleDownload<'_> {
     /// The `apdu_tag` for this object given [`SubtitleDownload::more`].
     #[must_use]
     pub fn tag(&self) -> ApduTag {
@@ -1085,7 +1085,7 @@ impl Serialize for FlushDownload {
     }
 }
 
-impl<'a> ApduDef<'a> for FlushDownload {
+impl ApduDef<'_> for FlushDownload {
     const TAG: ApduTag = tag::FLUSH_DOWNLOAD;
     const NAME: &'static str = "FLUSH_DOWNLOAD";
 }
@@ -1184,7 +1184,7 @@ impl Serialize for DownloadReply {
     }
 }
 
-impl<'a> ApduDef<'a> for DownloadReply {
+impl ApduDef<'_> for DownloadReply {
     const TAG: ApduTag = tag::DOWNLOAD_REPLY;
     const NAME: &'static str = "DOWNLOAD_REPLY";
 }

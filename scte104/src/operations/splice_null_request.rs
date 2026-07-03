@@ -31,7 +31,7 @@ impl Serialize for SpliceNullRequest {
     }
 }
 
-impl<'a> OperationDef<'a> for SpliceNullRequest {
+impl OperationDef<'_> for SpliceNullRequest {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "SPLICE_NULL_REQUEST";
 }

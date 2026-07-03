@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 
-use mpeg_ts::ts::{iter_packets, ScramblingControl};
+use mpeg_ts::ts::{ScramblingControl, iter_packets};
 
 fn main() {
     let path = env::args()

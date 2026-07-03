@@ -1,7 +1,7 @@
 [package]
 name    = "mp4-emsg"
 version = "0.1.2"
-edition = "2021"
+edition = "2024"
 description = "ISO BMFF / DASH Event Message Box (emsg, ISO/IEC 23009-1) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

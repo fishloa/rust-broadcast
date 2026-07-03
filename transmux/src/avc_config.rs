@@ -189,7 +189,7 @@ impl Serialize for AVCDecoderConfigurationRecord {
 
     fn serialized_len(&self) -> usize {
         let mut len = 6usize; // configVersion + profile + compat + level + lengthSize + numSPS
-                              // SPS: each has 2-byte length prefix + data
+        // SPS: each has 2-byte length prefix + data
         for sps in &self.sps {
             len += 2 + sps.0.len();
         }

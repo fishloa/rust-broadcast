@@ -72,7 +72,7 @@ impl Serialize for TimeShiftedEventDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TimeShiftedEventDescriptor {
+impl crate::traits::DescriptorDef<'_> for TimeShiftedEventDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TIME_SHIFTED_EVENT";
 }

@@ -8,8 +8,8 @@ use std::sync::Arc;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::owned::Owned;
-use dvb_si::tables::sdt::{SdtKind, SdtSection, SdtService};
 use dvb_si::tables::RunningStatus;
+use dvb_si::tables::sdt::{SdtKind, SdtSection, SdtService};
 
 /// Build a minimal two-service SDT section through the serializer.
 fn sdt_section() -> Vec<u8> {

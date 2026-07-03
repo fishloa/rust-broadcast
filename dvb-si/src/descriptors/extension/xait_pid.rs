@@ -14,7 +14,7 @@ const XAIT_PID_LEN: usize = 2;
 /// Largest valid transport PID (`xait_PID` is semantically a PID).
 pub const MAX_PID: u16 = 0x1FFF;
 
-impl<'a> ExtensionBodyDef<'a> for XaitPid {
+impl ExtensionBodyDef<'_> for XaitPid {
     const TAG_EXTENSION: u8 = 0x0C;
     const NAME: &'static str = "XAIT_PID";
 }

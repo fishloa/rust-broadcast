@@ -16,8 +16,8 @@
 
 use transmux::hls::{MediaPlaylist, MediaSegment};
 use transmux::{
-    mark_init_discontinuities, AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig,
-    Sample, SegmentMeta, Segmenter, TrackSpec,
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
+    Segmenter, TrackSpec, mark_init_discontinuities,
 };
 
 // ---------------------------------------------------------------------------

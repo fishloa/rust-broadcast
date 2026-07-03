@@ -486,11 +486,11 @@ fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize
 
 /// Parse a compatibilityDescriptor() block at `offset` inside `payload` that
 /// ends at `end`. Returns the parsed descriptor and the position just past it.
-fn parse_compat_block<'a>(
-    payload: &'a [u8],
+fn parse_compat_block(
+    payload: &[u8],
     offset: usize,
     end: usize,
-) -> Result<(CompatibilityDescriptor<'a>, usize)> {
+) -> Result<(CompatibilityDescriptor<'_>, usize)> {
     use crate::compatibility::COMPAT_DESC_LEN_FIELD;
     let (b, _) = payload[offset..]
         .split_first_chunk::<2>()
@@ -959,7 +959,7 @@ mod tests {
         assert_eq!(buf[1], 0x03); // dsmccType
         assert_eq!(u16::from_be_bytes([buf[2], buf[3]]), MESSAGE_ID_DSI);
         assert_eq!(buf[8], 0xFF); // reserved
-                                  // messageLength = bytes after the 12-byte header
+        // messageLength = bytes after the 12-byte header
         let ml = u16::from_be_bytes([buf[10], buf[11]]) as usize;
         assert_eq!(ml, buf.len() - 12);
     }

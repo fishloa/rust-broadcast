@@ -23,7 +23,7 @@ pub struct CpcmDeliverySignalling<'a> {
     pub selector_bytes: &'a [u8],
 }
 
-impl<'a> CpcmDeliverySignalling<'a> {
+impl CpcmDeliverySignalling<'_> {
     /// Attempt to decode the selector bytes as a typed [`CpcmUsi`].
     ///
     /// Returns `Some(Ok(_))` when `cpcm_version == 1` and the selector parses

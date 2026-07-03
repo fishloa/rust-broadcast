@@ -368,7 +368,7 @@ impl Serialize for MosaicDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for MosaicDescriptor {
+impl crate::traits::DescriptorDef<'_> for MosaicDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MOSAIC";
 }

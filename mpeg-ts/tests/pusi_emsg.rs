@@ -5,8 +5,8 @@
 //! - The reassembled bytes are byte-identical to the known-good fixture
 //! - The emsg box parses correctly via `mp4-emsg`
 
-use mpeg_ts::pusi::PusiReassembler;
 use mpeg_ts::OwnedTsPacket;
+use mpeg_ts::pusi::PusiReassembler;
 
 /// Path to the TS fixture: one 188-byte packet, PID 0x0004, PUSI=1,
 /// adaptation-field-stuffed, payload = 98-byte emsg box.

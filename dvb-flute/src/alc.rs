@@ -163,7 +163,7 @@ impl FecPayloadId128 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lct::{LctHeader, LCT_VERSION};
+    use crate::lct::{LCT_VERSION, LctHeader};
     use alloc::vec;
 
     fn lct_with_tsi() -> ([u8; 4], [u8; 4]) {

@@ -100,7 +100,7 @@ fn inner_ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
 /// `NmTsIter::next` restores byte 0 to 0x47 (it simply overwrites it).
 fn build_nm_bbframe(inner_ts: &[u8; TS_PACKET_SIZE]) -> Vec<u8> {
     use dvb_bbframe::crc::crc8;
-    use dvb_bbframe::header::{Bbheader, Matype, Mode, TsGs, BBHEADER_LEN};
+    use dvb_bbframe::header::{BBHEADER_LEN, Bbheader, Matype, Mode, TsGs};
 
     let upl_bits: u16 = 1504; // 188 * 8
     let dfl_bits: u16 = 1504; // one full UP

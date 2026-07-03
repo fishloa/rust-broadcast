@@ -170,11 +170,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
 impl Serialize for MovieHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 {
-            108
-        } else {
-            124
-        }
+        if self.version == 0 { 108 } else { 124 }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -335,11 +331,7 @@ fn matrix_from_bytes(b: &[u8]) -> [i32; 9] {
 impl Serialize for TrackHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 {
-            92
-        } else {
-            104
-        }
+        if self.version == 0 { 92 } else { 104 }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -481,11 +473,7 @@ impl<'a> Parse<'a> for MediaHeaderBox {
 impl Serialize for MediaHeaderBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.version == 0 {
-            32
-        } else {
-            44
-        }
+        if self.version == 0 { 32 } else { 44 }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();

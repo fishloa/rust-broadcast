@@ -1,6 +1,6 @@
 //! Known-vector cross-checks for CRC-32 MPEG-2.
 
-use broadcast_common::crc32_mpeg2::{compute, POLY};
+use broadcast_common::crc32_mpeg2::{POLY, compute};
 
 #[test]
 fn poly_constant_is_expected() {

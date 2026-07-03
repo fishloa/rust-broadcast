@@ -12,9 +12,9 @@
 use std::fs;
 
 use broadcast_common::Parse;
+use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
 use dvb_si::descriptors::video_stream::FrameRateCode;
-use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::pmt::PmtSection;
 
 fn fixture(name: &str) -> Vec<u8> {

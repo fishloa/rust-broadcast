@@ -107,7 +107,7 @@ impl Serialize for VbiTeletextDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for VbiTeletextDescriptor {
+impl crate::traits::DescriptorDef<'_> for VbiTeletextDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "VBI_TELETEXT";
 }

@@ -5,13 +5,13 @@
 //! rejects a bad CRC), so an intact, genuine message is structurally proven;
 //! these tests add the *semantic* assertions on top.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
 use scte35_splice::descriptors::{
     AnySpliceDescriptor, DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
-use scte35_splice::SpliceInfoSection;
 
 fn b64(s: &str) -> Vec<u8> {
     STANDARD.decode(s).unwrap()

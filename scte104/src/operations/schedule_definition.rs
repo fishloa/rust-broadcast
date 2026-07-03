@@ -158,7 +158,7 @@ impl Serialize for ScheduleDefinition {
     }
 }
 
-impl<'a> OperationDef<'a> for ScheduleDefinition {
+impl OperationDef<'_> for ScheduleDefinition {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "SCHEDULE_DEFINITION";
 }

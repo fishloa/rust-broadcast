@@ -11,7 +11,7 @@ use broadcast_common::{Package, Parse, Unpackage};
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::smooth::{SmoothOutput, SmoothPackager, FOURCC_AACL, FOURCC_H264, TFXD_UUID};
+use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, TFXD_UUID};
 use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------

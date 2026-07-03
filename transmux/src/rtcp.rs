@@ -1133,7 +1133,7 @@ impl<'a> Parse<'a> for RtcpPacket {
                     field: "rtcp_pt",
                     value: pt as u64,
                     reason: "not an RFC 3550 §6 core packet type",
-                })
+                });
             }
         })
     }

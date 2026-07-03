@@ -27,7 +27,7 @@
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
-use transmux::pipeline::{build_init_segment, build_media_segment, CodecConfig, FragmentTrackData};
+use transmux::pipeline::{CodecConfig, FragmentTrackData, build_init_segment, build_media_segment};
 use transmux::{Media, Track, TrackSpec, TsDemux};
 
 /// Locate a fixture under the workspace `fixtures/` directory (a sibling of the

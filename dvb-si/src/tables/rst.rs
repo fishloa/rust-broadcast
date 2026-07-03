@@ -135,7 +135,7 @@ impl Serialize for RstSection {
         Ok(len)
     }
 }
-impl<'a> crate::traits::TableDef<'a> for RstSection {
+impl crate::traits::TableDef<'_> for RstSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "RUNNING_STATUS";
 }

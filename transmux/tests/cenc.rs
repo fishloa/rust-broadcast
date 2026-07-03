@@ -9,8 +9,8 @@
 use broadcast_common::{Parse, Serialize};
 use transmux::{
     OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
-    SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox, SchemeInformationBox,
-    SchemeTypeBox, TrackEncryptionBox, SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+    SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox,
+    SampleEncryptionBox, SchemeInformationBox, SchemeTypeBox, TrackEncryptionBox,
 };
 
 fn find_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {

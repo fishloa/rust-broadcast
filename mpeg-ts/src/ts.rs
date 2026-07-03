@@ -1112,11 +1112,7 @@ pub fn extract_ts_payload(pkt: &[u8]) -> Option<&[u8]> {
     match afc {
         0x1 => {
             // payload only: payload starts at byte 4
-            if pkt.len() > 4 {
-                Some(&pkt[4..])
-            } else {
-                None
-            }
+            if pkt.len() > 4 { Some(&pkt[4..]) } else { None }
         }
         0x3 => {
             // adaptation field + payload

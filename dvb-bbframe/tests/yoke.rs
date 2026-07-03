@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use dvb_bbframe::packet::{NmTsIter, NM_UP_SIZE, TS_SYNC_BYTE};
+use dvb_bbframe::packet::{NM_UP_SIZE, NmTsIter, TS_SYNC_BYTE};
 use yoke::Yoke;
 
 /// Build a data field holding two back-to-back NM user packets.

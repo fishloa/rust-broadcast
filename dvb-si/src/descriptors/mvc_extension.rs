@@ -117,7 +117,7 @@ impl Serialize for MvcExtensionDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for MvcExtensionDescriptor {
+impl crate::traits::DescriptorDef<'_> for MvcExtensionDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MVC_EXTENSION";
 }

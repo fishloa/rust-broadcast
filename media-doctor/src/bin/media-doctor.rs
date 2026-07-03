@@ -6,8 +6,8 @@ use std::process;
 use clap::Parser;
 use media_doctor::cli::{CheckArgs, Cli};
 use media_doctor::{
-    run_all, CcAnomalyCheck, Diagnostic, PatPmtVersionCheck, PcrCheck, PtsCheck, Report,
-    Scte35Check, SyncByteCheck,
+    CcAnomalyCheck, Diagnostic, PatPmtVersionCheck, PcrCheck, PtsCheck, Report, Scte35Check,
+    SyncByteCheck, run_all,
 };
 
 fn main() {

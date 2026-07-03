@@ -56,7 +56,7 @@ use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection};
 use mpeg_ts::mux::SectionPacketizer;
-use mpeg_ts::ts::{extract_ts_payload, SectionReassembler, TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_payload};
 
 use crate::ops::{Op, StreamModel};
 

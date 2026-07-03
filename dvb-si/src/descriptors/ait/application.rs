@@ -226,7 +226,7 @@ impl Serialize for ApplicationDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for ApplicationDescriptor {
+impl crate::traits::DescriptorDef<'_> for ApplicationDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "APPLICATION";
 }

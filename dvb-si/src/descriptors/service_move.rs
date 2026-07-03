@@ -78,7 +78,7 @@ impl Serialize for ServiceMoveDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ServiceMoveDescriptor {
+impl crate::traits::DescriptorDef<'_> for ServiceMoveDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_MOVE";
 }

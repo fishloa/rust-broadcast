@@ -79,7 +79,7 @@ impl Serialize for ComponentModeDpi {
     }
 }
 
-impl<'a> OperationDef<'a> for ComponentModeDpi {
+impl OperationDef<'_> for ComponentModeDpi {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "COMPONENT_MODE_DPI";
 }

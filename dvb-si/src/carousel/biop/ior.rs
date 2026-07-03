@@ -358,7 +358,7 @@ pub struct LiteComponent<'a> {
     pub data: &'a [u8],
 }
 
-impl<'a> LiteComponent<'a> {
+impl LiteComponent<'_> {
     fn serialized_len(&self) -> usize {
         COMPONENT_HEADER_LEN + self.data.len()
     }
@@ -395,8 +395,7 @@ impl<'a> BiopProfileBody<'a> {
         if byte_order != BYTE_ORDER_BIG_ENDIAN {
             return Err(Error::ReservedBitsViolation {
                 field: "profile_data_byte_order",
-                reason:
-                    "must be 0x00 (big-endian) per DVB mandatory constraint (TR 101 202 §4.7.3.2)",
+                reason: "must be 0x00 (big-endian) per DVB mandatory constraint (TR 101 202 §4.7.3.2)",
             });
         }
         let lite_components_count = bytes[1] as usize;
@@ -1106,7 +1105,7 @@ pub enum TaggedProfile<'a> {
     },
 }
 
-impl<'a> TaggedProfile<'a> {
+impl TaggedProfile<'_> {
     fn serialized_len(&self) -> usize {
         let data_len = match self {
             Self::Biop(b) => b.serialized_len(),

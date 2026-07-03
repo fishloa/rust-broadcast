@@ -47,10 +47,10 @@ use crate::box_types::{BoxHeader, BoxType, UUID_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox, TrackFragmentHeaderBox,
-    TrackFragmentRunBox, TrunSample, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
+    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
     TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
-    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT,
+    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBox, TrackFragmentHeaderBox,
+    TrackFragmentRunBox, TrunSample,
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox};

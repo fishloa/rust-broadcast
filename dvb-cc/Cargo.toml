@@ -1,7 +1,7 @@
 [package]
 name    = "dvb-cc"
 version = "0.2.1"
-edition = "2021"
+edition = "2024"
 description = "Deprecated shim — use cc-data instead. Closed-caption cc_data() carriage (CEA-608/708), per ETSI TS 101 154 Table B.9."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

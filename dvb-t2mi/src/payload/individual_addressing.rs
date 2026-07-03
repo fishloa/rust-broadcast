@@ -323,7 +323,7 @@ pub struct FunctionEntry<'a> {
     pub body: FunctionBody<'a>,
 }
 
-impl<'a> FunctionEntry<'a> {
+impl FunctionEntry<'_> {
     /// Convert the raw `tag` byte to [`AddressingFunctionTag`], if it is a
     /// known value.
     #[must_use]

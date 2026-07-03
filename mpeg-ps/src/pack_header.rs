@@ -33,7 +33,7 @@ pub struct PackHeader<'a> {
     pub reserved: u8,
 }
 
-impl<'a> PackHeader<'a> {
+impl PackHeader<'_> {
     /// Offset to the byte immediately after this pack header (i.e. where PES data starts).
     #[must_use]
     pub fn header_len(&self) -> usize {

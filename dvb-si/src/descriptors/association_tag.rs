@@ -91,7 +91,7 @@ pub struct AssociationTagDescriptor<'a> {
     pub private_data: &'a [u8],
 }
 
-impl<'a> AssociationTagDescriptor<'a> {
+impl AssociationTagDescriptor<'_> {
     /// The DSI `transaction_id` (`use == 0x0000`): the first 4 selector bytes,
     /// big-endian. `0xFFFFFFFF` means the DSI `transaction_id` is unknown but
     /// all DSI messages on the PID are valid. `None` when `use != 0x0000` or

@@ -79,7 +79,7 @@ impl Serialize for InsertAvailDescriptor {
     }
 }
 
-impl<'a> OperationDef<'a> for InsertAvailDescriptor {
+impl OperationDef<'_> for InsertAvailDescriptor {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "INSERT_AVAIL_DESCRIPTOR";
 }

@@ -113,7 +113,7 @@ impl Serialize for AncillaryDataDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for AncillaryDataDescriptor {
+impl crate::traits::DescriptorDef<'_> for AncillaryDataDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ANCILLARY_DATA";
 }

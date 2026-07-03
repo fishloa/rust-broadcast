@@ -4,9 +4,9 @@
 //! discontinuity reporting driving the segmenter.
 
 use transmux::{
-    concat, parse_box, snap_to_preceding_sync, splice_insert, AVCConfigurationBox,
-    AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media, MovieFragmentBox, Sample,
-    Segmenter, Track, TrackSpec,
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
+    MovieFragmentBox, Sample, Segmenter, Track, TrackSpec, concat, parse_box,
+    snap_to_preceding_sync, splice_insert,
 };
 
 const TIMESCALE: u32 = 90_000;

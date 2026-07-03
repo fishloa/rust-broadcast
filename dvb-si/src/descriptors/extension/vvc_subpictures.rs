@@ -155,9 +155,9 @@ impl Serialize for VvcSubpictures<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::descriptors::extension::test_support::*;
     #[cfg(feature = "serde")]
     use crate::descriptors::extension::ExtensionTag;
+    use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     #[cfg(feature = "serde")]
     use crate::text::DvbText;

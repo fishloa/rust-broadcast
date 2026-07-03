@@ -215,14 +215,18 @@ fn vvc_record_round_trip_and_mutation() {
     assert_eq!(&reser[..], &oracle[4..], "record round-trip byte-identical");
 
     // Sanity: the arrays decoded to typed SPS/PPS NAL types.
-    assert!(record
-        .arrays
-        .iter()
-        .any(|a| a.kind() == VvcNalUnitType::Sps));
-    assert!(record
-        .arrays
-        .iter()
-        .any(|a| a.kind() == VvcNalUnitType::Pps));
+    assert!(
+        record
+            .arrays
+            .iter()
+            .any(|a| a.kind() == VvcNalUnitType::Sps)
+    );
+    assert!(
+        record
+            .arrays
+            .iter()
+            .any(|a| a.kind() == VvcNalUnitType::Pps)
+    );
 
     // Not a raw passthrough: mutate a decoded field → serialized bytes change,
     // and the change is exactly at the max_picture_width field (parses back).

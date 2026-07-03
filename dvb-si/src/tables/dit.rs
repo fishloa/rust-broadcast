@@ -81,7 +81,7 @@ impl Serialize for DitSection {
         Ok(len)
     }
 }
-impl<'a> crate::traits::TableDef<'a> for DitSection {
+impl crate::traits::TableDef<'_> for DitSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "DISCONTINUITY_INFORMATION";
 }

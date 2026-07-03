@@ -257,7 +257,7 @@ mod tests {
             }
         }
 
-        impl<'a> crate::traits::PayloadDef<'a> for NameTestPayload {
+        impl crate::traits::PayloadDef<'_> for NameTestPayload {
             const PACKET_TYPE: u8 = 0x41;
             const NAME: &'static str = "NAME_TEST";
         }

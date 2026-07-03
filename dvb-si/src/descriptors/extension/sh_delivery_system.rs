@@ -2,7 +2,7 @@
 use super::*;
 use alloc::vec::Vec;
 
-impl<'a> ExtensionBodyDef<'a> for ShDeliverySystem {
+impl ExtensionBodyDef<'_> for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
     const NAME: &'static str = "SH_DELIVERY_SYSTEM";
 }

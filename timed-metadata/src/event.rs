@@ -1,7 +1,7 @@
 //! Canonical timed-metadata event (the hub of the hub-and-spoke model).
 use crate::error::Result;
 use alloc::{string::String, vec::Vec};
-use scte35_splice::{commands::AnyCommand, SpliceInfoSection};
+use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
 
 /// A media-timeline instant in 90 kHz ticks, wrap-unrolled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

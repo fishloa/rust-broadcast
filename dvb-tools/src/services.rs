@@ -10,11 +10,11 @@
 use std::collections::HashMap;
 use std::process::ExitCode;
 
+use dvb_si::TableId;
 use dvb_si::collect::{CompleteSdt, CompleteSdtService, SectionSetCollector};
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use dvb_si::tables::RunningStatus;
-use dvb_si::TableId;
 
 use crate::util::{for_each_packet, read_file};
 
@@ -61,8 +61,8 @@ fn collect_event(
 fn service_descriptor_view(service: &CompleteSdtService<'_>) -> (Option<String>, &'static str) {
     let mut name = None;
     let mut type_name = "reserved/unknown";
-    for item in service.descriptors.descriptors() {
-        if let Ok(AnyDescriptor::Service(sd)) = item {
+    for item in service.descriptors.descriptors().iter().flatten() {
+        if let AnyDescriptor::Service(sd) = item {
             name = Some(sd.service_name.to_string());
             type_name = sd.service_type.name();
             break;
@@ -186,8 +186,8 @@ fn absorb_sdt<'a>(sdt: &'a CompleteSdt<'a>, services: &mut HashMap<u16, ServiceR
 
 fn absorb_nit<'a>(nit: &'a dvb_si::collect::CompleteNit<'a>, lcn_map: &mut HashMap<u16, u16>) {
     for ts in &nit.transport_streams {
-        for item in ts.descriptors.descriptors() {
-            if let Ok(AnyDescriptor::LogicalChannel(lcd)) = item {
+        for item in ts.descriptors.descriptors().iter().flatten() {
+            if let AnyDescriptor::LogicalChannel(lcd) = item {
                 for entry in &lcd.entries {
                     lcn_map.insert(entry.service_id, entry.logical_channel_number);
                 }

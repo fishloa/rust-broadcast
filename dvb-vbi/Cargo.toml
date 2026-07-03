@@ -1,7 +1,7 @@
 [package]
 name    = "dvb-vbi"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 description = "VBI data carriage in DVB (ETSI EN 301 775) — the PES data field: VPS, WSS, Closed Captioning, EBU/Inverted Teletext, and monochrome 4:2:2 luminance sample data units."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

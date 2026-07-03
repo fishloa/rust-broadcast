@@ -42,8 +42,8 @@ pub mod profiling;
 pub mod stream_event;
 
 pub use compact::{CompactDas, CompactScte35, CompactSpliceInsert, CompactTimeSignal};
-pub use das_descriptor::{DvbDasDescriptor, EquivalentSegmentationType, DVB_IDENTIFIER};
-pub use profiling::{validate_po_segmentation, PlacementOpportunity, ProfileViolation};
+pub use das_descriptor::{DVB_IDENTIFIER, DvbDasDescriptor, EquivalentSegmentationType};
+pub use profiling::{PlacementOpportunity, ProfileViolation, validate_po_segmentation};
 pub use stream_event::{
-    base64_encode, PrivateData, Scte35Carriage, StreamEventPayload, TimelineType,
+    PrivateData, Scte35Carriage, StreamEventPayload, TimelineType, base64_encode,
 };

@@ -332,7 +332,7 @@ mod tests {
         v.push(0xC0 | 0x01); // version=0, current_next=1
         v.push(0); // section_number
         v.push(0); // last_section_number
-                   // bytes[8..10] = reserved(4) | network_descriptors_length(12)
+        // bytes[8..10] = reserved(4) | network_descriptors_length(12)
         let net_dll = network_desc.len() as u16;
         v.push(0xF0 | ((net_dll >> 8) as u8 & 0x0F));
         v.push((net_dll & 0xFF) as u8);

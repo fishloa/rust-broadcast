@@ -10,10 +10,10 @@
 //! one block per service with one indented line per event.
 use std::process::ExitCode;
 
+use dvb_si::TableId;
 use dvb_si::collect::SectionSetCollector;
 use dvb_si::demux::SiDemux;
 use dvb_si::epg::EpgStore;
-use dvb_si::TableId;
 
 use crate::util::{for_each_packet, read_file};
 

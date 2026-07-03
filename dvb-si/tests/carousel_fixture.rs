@@ -12,7 +12,7 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::{DownloadDataBlock, ModuleReassembler, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::tables::dsmcc::DsmccSection;
-use mpeg_ts::ts::{SectionReassembler, TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Read a TS file and return all reassembled sections for a given PID.
 fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {

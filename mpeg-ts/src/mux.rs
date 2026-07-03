@@ -10,7 +10,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::pid::well_known;
-use crate::ts::{TsHeader, CC_MASK, SECTION_LENGTH_HI_MASK, TS_PACKET_SIZE};
+use crate::ts::{CC_MASK, SECTION_LENGTH_HI_MASK, TS_PACKET_SIZE, TsHeader};
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;

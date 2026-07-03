@@ -77,7 +77,7 @@ impl Serialize for InsertTimeDescriptor {
     }
 }
 
-impl<'a> OperationDef<'a> for InsertTimeDescriptor {
+impl OperationDef<'_> for InsertTimeDescriptor {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "INSERT_TIME_DESCRIPTOR";
 }

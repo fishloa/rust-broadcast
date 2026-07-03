@@ -5,7 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::sps::{
-    decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1, AvcSpsInfo, HevcSpsInfo,
+    AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
 };
 use alloc::string::String;
 use alloc::vec::Vec;

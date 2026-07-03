@@ -155,7 +155,7 @@ impl Serialize for PatSection {
         Ok(len)
     }
 }
-impl<'a> crate::traits::TableDef<'a> for PatSection {
+impl crate::traits::TableDef<'_> for PatSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "PROGRAM_ASSOCIATION";
 }

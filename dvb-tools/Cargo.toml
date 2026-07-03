@@ -2,7 +2,7 @@
 name         = "dvb-tools"
 version      = "8.3.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-broadcast crates."
-edition      = "2021"
+edition      = "2024"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"

@@ -84,7 +84,7 @@ impl<'a> Parse<'a> for FefCompositePayload {
     }
 }
 
-impl<'a> crate::traits::PayloadDef<'a> for FefCompositePayload {
+impl crate::traits::PayloadDef<'_> for FefCompositePayload {
     const PACKET_TYPE: u8 = 0x32;
     const NAME: &'static str = "FEF_COMPOSITE";
 }

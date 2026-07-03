@@ -63,7 +63,7 @@ impl Serialize for DateTimeEnq {
     }
 }
 
-impl<'a> ApduDef<'a> for DateTimeEnq {
+impl ApduDef<'_> for DateTimeEnq {
     const TAG: ApduTag = tag::DATE_TIME_ENQ;
     const NAME: &'static str = "DATE_TIME_ENQ";
 }
@@ -78,7 +78,7 @@ impl<'a> Parse<'a> for DateTime {
                 return Err(Error::InvalidObject {
                     what: "date_time",
                     reason: "body must be 5 or 7 bytes",
-                })
+                });
             }
         };
         let local_offset = if body.len() == 7 {
@@ -112,7 +112,7 @@ impl Serialize for DateTime {
     }
 }
 
-impl<'a> ApduDef<'a> for DateTime {
+impl ApduDef<'_> for DateTime {
     const TAG: ApduTag = tag::DATE_TIME;
     const NAME: &'static str = "DATE_TIME";
 }

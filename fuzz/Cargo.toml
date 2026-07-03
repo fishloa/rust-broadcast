@@ -1,7 +1,7 @@
 [package]
 name         = "rust-dvb-fuzz"
 version      = "0.0.0"
-edition      = "2021"
+edition      = "2024"
 description  = "cargo-fuzz harness for the rust-dvb workspace"
 license      = "MIT OR Apache-2.0"
 publish      = false

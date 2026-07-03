@@ -8,7 +8,7 @@
 //! - 65536 B — stress / theoretical max PSI section payload
 
 use broadcast_common::crc32_mpeg2;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 fn bench_crc32(c: &mut Criterion) {
     let mut group = c.benchmark_group("crc32_mpeg2");

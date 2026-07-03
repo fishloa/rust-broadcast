@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(nal_unit_type(NalCodec::Avc, &[0x65, 0x88]), Some(5));
         assert!(is_keyframe_nal(NalCodec::Avc, &[0x65, 0x88]));
         assert!(!is_keyframe_nal(NalCodec::Avc, &[0x67, 0x42])); // SPS is not VCL keyframe
-                                                                 // Non-IDR slice type 1 (0x41) is not a keyframe.
+        // Non-IDR slice type 1 (0x41) is not a keyframe.
         assert!(!is_keyframe_nal(NalCodec::Avc, &[0x41, 0x9a]));
         // Empty slice → None / false.
         assert_eq!(nal_unit_type(NalCodec::Avc, &[]), None);

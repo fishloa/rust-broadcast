@@ -11,9 +11,9 @@
 #![cfg(feature = "cenc")]
 
 use broadcast_common::Decrypt;
+use transmux::TsDemux;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
-use transmux::TsDemux;
 
 const CENC_MP4: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/cenc.mp4");
 const CLEAR_TS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264/main.ts");

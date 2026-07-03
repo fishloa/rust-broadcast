@@ -23,4 +23,4 @@ pub use biop::{
 pub use messages::{
     Dii, DiiModule, DownloadDataBlock, Dsi, GroupInfo, GroupInfoIndication, UnMessage,
 };
-pub use reassembler::{Module, ModuleKey, ModuleReassembler, DEFAULT_MAX_MODULE_SIZE};
+pub use reassembler::{DEFAULT_MAX_MODULE_SIZE, Module, ModuleKey, ModuleReassembler};

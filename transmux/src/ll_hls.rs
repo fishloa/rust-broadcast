@@ -39,7 +39,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::ll_dash::build_chunk;
-use crate::pipeline::{build_init_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec};
+use crate::pipeline::{CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment};
 
 /// One finished LL-HLS **partial segment** ("part") — RFC 8216bis §4.4.4.9.
 ///
@@ -402,7 +402,7 @@ impl LlHlsSegmenter {
                 .tracks
                 .iter()
                 .zip(&take_ends)
-                .filter(|(t, &end)| end > t.part_start)
+                .filter(|&(t, &end)| end > t.part_start)
                 .map(|(t, &end)| FragmentTrackData {
                     track_id: t.spec.track_id,
                     base_media_decode_time: t.part_base_decode,

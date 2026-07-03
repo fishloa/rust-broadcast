@@ -80,7 +80,7 @@ impl Serialize for VideoWindowDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for VideoWindowDescriptor {
+impl crate::traits::DescriptorDef<'_> for VideoWindowDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "VIDEO_WINDOW";
 }

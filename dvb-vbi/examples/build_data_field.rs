@@ -6,8 +6,8 @@
 /// cargo run -p dvb-vbi --example build_data_field
 /// ```
 use dvb_vbi::{
-    DataField, DataUnit, LineHeader, TeletextDataField, VpsDataField, WssDataField,
-    FRAMING_CODE_EBU,
+    DataField, DataUnit, FRAMING_CODE_EBU, LineHeader, TeletextDataField, VpsDataField,
+    WssDataField,
 };
 
 fn main() {

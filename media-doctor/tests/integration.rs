@@ -387,7 +387,7 @@ fn pat_pmt_version_no_changes() {
     pat_data.push(0x01); // program_number LSB = 1
     pat_data.push(0x01); // reserved(3)=111, PMT PID hi (bits 12:8)
     pat_data.push(0x00); // PMT PID lo (bits 7:0) -> 0x0100
-                         // CRC-32 for the above (placeholder — skip CRC validation for this check)
+    // CRC-32 for the above (placeholder — skip CRC validation for this check)
     pat_data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
 
     // Create one TS packet carrying the PAT with PUSI=1, pointer=0.

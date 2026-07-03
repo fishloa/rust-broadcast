@@ -266,7 +266,7 @@ impl Serialize for LocalTimeOffsetDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for LocalTimeOffsetDescriptor {
+impl crate::traits::DescriptorDef<'_> for LocalTimeOffsetDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "LOCAL_TIME_OFFSET";
 }

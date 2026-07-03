@@ -1,7 +1,7 @@
 [package]
 name    = "dvb-t2mi"
 version = "8.3.0"
-edition = "2021"
+edition = "2024"
 description = "ETSI TS 102 773 DVB-T2 Modulator Interface parser + builder."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

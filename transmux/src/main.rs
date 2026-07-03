@@ -11,7 +11,7 @@
 #[cfg(feature = "cli")]
 fn main() -> std::process::ExitCode {
     use clap::Parser;
-    use transmux::cli::{run, Args};
+    use transmux::cli::{Args, run};
 
     let args = Args::parse();
     match run(args) {

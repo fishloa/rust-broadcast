@@ -2,7 +2,7 @@
 use super::*;
 use alloc::vec::Vec;
 
-impl<'a> ExtensionBodyDef<'a> for TargetRegion {
+impl ExtensionBodyDef<'_> for TargetRegion {
     const TAG_EXTENSION: u8 = 0x09;
     const NAME: &'static str = "TARGET_REGION";
 }

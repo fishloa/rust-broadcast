@@ -38,7 +38,7 @@ impl Serialize for CaInfoEnq {
         super::serialize_empty_apdu(tag::CA_INFO_ENQ, buf)
     }
 }
-impl<'a> ApduDef<'a> for CaInfoEnq {
+impl ApduDef<'_> for CaInfoEnq {
     const TAG: ApduTag = tag::CA_INFO_ENQ;
     const NAME: &'static str = "CA_INFO_ENQ";
 }
@@ -77,7 +77,7 @@ impl Serialize for CaInfo {
     }
 }
 
-impl<'a> ApduDef<'a> for CaInfo {
+impl ApduDef<'_> for CaInfo {
     const TAG: ApduTag = tag::CA_INFO;
     const NAME: &'static str = "CA_INFO";
 }

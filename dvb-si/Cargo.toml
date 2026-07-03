@@ -1,7 +1,7 @@
 [package]
 name         = "dvb-si"
 version      = "8.3.0"
-edition      = "2021"
+edition      = "2024"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

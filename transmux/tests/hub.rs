@@ -20,7 +20,7 @@ use transmux::init_segment::MovieBox;
 use transmux::media::{CmafMux, Fmp4Demux, Media};
 use transmux::movie_fragment::MovieFragmentBox;
 use transmux::pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, TrackSpec,
+    CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
 
 fn fixture() -> Vec<u8> {

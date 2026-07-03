@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
 
-impl<'a> ExtensionBodyDef<'a> for C2BundleDeliverySystem {
+impl ExtensionBodyDef<'_> for C2BundleDeliverySystem {
     const TAG_EXTENSION: u8 = 0x16;
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }

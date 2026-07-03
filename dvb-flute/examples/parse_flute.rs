@@ -7,7 +7,7 @@
 /// ```
 use std::fs;
 
-use dvb_flute::{AlcPacket, ExtFdt, FecPayloadId128, FEC_PAYLOAD_ID_128_LEN, HET_EXT_FDT};
+use dvb_flute::{AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FDT};
 
 fn main() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/flute_fdt.bin");

@@ -101,7 +101,7 @@ impl Serialize for NvodReferenceDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for NvodReferenceDescriptor {
+impl crate::traits::DescriptorDef<'_> for NvodReferenceDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "NVOD_REFERENCE";
 }

@@ -141,7 +141,7 @@ pub struct InvariantTs {
     pub onid: u16,
 }
 
-impl<'a> ExtensionBodyDef<'a> for NetworkChangeNotify {
+impl ExtensionBodyDef<'_> for NetworkChangeNotify {
     const TAG_EXTENSION: u8 = 0x07;
     const NAME: &'static str = "NETWORK_CHANGE_NOTIFY";
 }

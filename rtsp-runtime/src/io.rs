@@ -193,9 +193,14 @@ where
             let events = self
                 .session
                 .handle_data(&std::mem::take(&mut self.read_buf))?;
+            let mut response = None;
             for event in events {
                 match event {
-                    ClientEvent::Response { .. } => return Ok(event),
+                    // Hold the response until every event decoded from this same
+                    // read has been processed: interleaved media frames can arrive
+                    // coalesced *after* the response in one TCP segment, and must be
+                    // buffered rather than dropped by an early return (§10.12).
+                    ClientEvent::Response { .. } => response = Some(event),
                     ClientEvent::AuthRetry { ref request, .. } => {
                         // Write the retried (now-authenticated) request and keep
                         // reading for its response.
@@ -208,6 +213,9 @@ where
                     }
                     ClientEvent::MediaData { .. } => self.pending_media.push_back(event),
                 }
+            }
+            if let Some(response) = response {
+                return Ok(response);
             }
             // Need more bytes from the socket.
             self.fill_from_socket().await?;

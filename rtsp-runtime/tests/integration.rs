@@ -302,9 +302,11 @@ fn gate6_server_transitions_bite() {
     assert!(text.contains("Transport:"));
     assert!(text.contains("interleaved=0-1"));
     assert_eq!(s.state(), SessionState::Ready);
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, ServerEvent::SessionSetup { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ServerEvent::SessionSetup { .. }))
+    );
     let sid = s.session_id().unwrap().to_string();
 
     // PLAY -> Playing.
@@ -327,9 +329,11 @@ fn gate6_server_transitions_bite() {
         SessionState::Init,
         "455 must not change state"
     );
-    assert!(events
-        .iter()
-        .any(|e| matches!(e, ServerEvent::MethodNotValid { .. })));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, ServerEvent::MethodNotValid { .. }))
+    );
 }
 
 // ---------------------------------------------------------------------------

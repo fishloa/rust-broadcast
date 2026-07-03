@@ -100,7 +100,7 @@ mod message;
 mod registry;
 
 pub use error::{Error, Result};
-pub use message::{Parameter, SimulcryptMessage, HEADER_LEN, PARAMETER_HEADER_LEN};
+pub use message::{HEADER_LEN, PARAMETER_HEADER_LEN, Parameter, SimulcryptMessage};
 pub use registry::{
     CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
     EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,

@@ -87,7 +87,7 @@ impl Serialize for PrivateDataSpecifierDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for PrivateDataSpecifierDescriptor {
+impl crate::traits::DescriptorDef<'_> for PrivateDataSpecifierDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PRIVATE_DATA_SPECIFIER";
 }

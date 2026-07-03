@@ -1,7 +1,7 @@
 [package]
 name         = "media-doctor"
 version      = "0.1.0"
-edition      = "2021"
+edition      = "2024"
 description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"

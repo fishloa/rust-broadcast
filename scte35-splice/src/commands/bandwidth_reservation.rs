@@ -33,7 +33,7 @@ impl Serialize for BandwidthReservation {
     }
 }
 
-impl<'a> CommandDef<'a> for BandwidthReservation {
+impl CommandDef<'_> for BandwidthReservation {
     const COMMAND_TYPE: u8 = COMMAND_TYPE;
     const NAME: &'static str = "BANDWIDTH_RESERVATION";
 }

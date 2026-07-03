@@ -8,7 +8,7 @@ use num_enum::TryFromPrimitive;
 
 use crate::crc::crc8;
 use crate::error::Error;
-use crate::issy::{decode_issy_long, decode_issy_short, Issy};
+use crate::issy::{Issy, decode_issy_long, decode_issy_short};
 
 /// Total bytes in a BBHEADER.
 pub const BBHEADER_LEN: usize = 10;

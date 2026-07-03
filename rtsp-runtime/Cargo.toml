@@ -1,7 +1,7 @@
 [package]
 name    = "rtsp-runtime"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 description = "Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest auth, over the rtsp-types + sdp-types codecs; optional tokio (+ rustls) socket adapter."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

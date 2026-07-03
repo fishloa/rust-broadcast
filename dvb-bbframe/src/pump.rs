@@ -14,7 +14,7 @@
 
 use alloc::vec::Vec;
 
-use crate::header::{Bbheader, Mode, TsGs, BBHEADER_LEN};
+use crate::header::{BBHEADER_LEN, Bbheader, Mode, TsGs};
 use crate::packet::{CarryOverExtractor, CarryOverStats, NM_UP_SIZE};
 
 const MAX_PLPS: usize = 256;

@@ -4,8 +4,8 @@
 
 use core::time::Duration;
 use dvb_si::descriptors::DescriptorLoop;
-use dvb_si::tables::eit::EitEvent;
 use dvb_si::tables::RunningStatus;
+use dvb_si::tables::eit::EitEvent;
 
 fn eit_event() -> EitEvent<'static> {
     EitEvent::new(
@@ -202,9 +202,10 @@ fn local_time_offset_decoded_accessors() {
     assert_eq!(e.local_time_offset(), Some(Duration::minutes(-330)));
 
     // Mixed signs can't be represented by one polarity bit.
-    assert!(e
-        .set_offsets(Duration::hours(1), Duration::hours(-1))
-        .is_err());
+    assert!(
+        e.set_offsets(Duration::hours(1), Duration::hours(-1))
+            .is_err()
+    );
 
     let dt = Utc.with_ymd_and_hms(2024, 3, 31, 1, 0, 0).unwrap();
     e.set_time_of_change(dt).unwrap();

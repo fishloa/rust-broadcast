@@ -100,7 +100,7 @@ fn pat_section(entries: &[(u16, u16)]) -> Vec<u8> {
     body.push(0xC1); // version 0, current
     body.push(0x00); // section_number
     body.push(0x00); // last_section_number
-                     // entries
+    // entries
     for &(prog, pid) in entries {
         body.extend_from_slice(&prog.to_be_bytes());
         body.extend_from_slice(&(pid | 0xE000).to_be_bytes());
@@ -130,7 +130,7 @@ fn pmt_section(program_number: u16, pcr_pid: u16, es_list: &[(u8, u16)]) -> Vec<
     body.push(0xC1); // version 0, current
     body.push(0x00); // section_number
     body.push(0x00); // last_section_number
-                     // PCR PID
+    // PCR PID
     body.push(0xE0 | ((pcr_pid >> 8) & 0x0F) as u8);
     body.push((pcr_pid & 0xFF) as u8);
     // program_info_length = 0

@@ -56,7 +56,7 @@ impl Serialize for RelatedContentDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for RelatedContentDescriptor {
+impl crate::traits::DescriptorDef<'_> for RelatedContentDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "RELATED_CONTENT";
 }

@@ -858,11 +858,7 @@ mod tests {
     /// Add odd parity to a 7-bit value (so inputs look like real line-21 bytes).
     fn par(v: u8) -> u8 {
         let ones = (v & 0x7F).count_ones();
-        if ones % 2 == 0 {
-            v | 0x80
-        } else {
-            v & 0x7F
-        }
+        if ones % 2 == 0 { v | 0x80 } else { v & 0x7F }
     }
 
     /// Pop-on caption: RCL, PAC row 15 indent 0, "HI", EOC → on-screen "HI".
@@ -916,7 +912,7 @@ mod tests {
         dec.push_pair(false, par(0x11), par(0x22)); // mid-row Green
         dec.push_pair(false, par(b'B'), par(0x00));
         dec.push_pair(false, par(0x14), par(0x2F)); // EOC
-                                                    // Find the styled cells; "B" must be green.
+        // Find the styled cells; "B" must be green.
         let screen = dec.screen(Cea608Channel::Cc1);
         let mut found_green_b = false;
         for row in screen.rows() {

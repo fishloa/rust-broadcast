@@ -27,10 +27,10 @@
 
 use alloc::collections::btree_map::BTreeMap;
 
-use crate::report::{Finding, Location, Severity};
 use crate::Diagnostic;
 use crate::Report;
-use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+use crate::report::{Finding, Location, Severity};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
 /// 27 MHz clock rate (ticks per second) — ISO/IEC 13818-1 §2.4.2.
 const CLOCK_27MHZ: u64 = 27_000_000;

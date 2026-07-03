@@ -47,7 +47,7 @@ impl Serialize for ProfileEnq {
         super::serialize_empty_apdu(tag::PROFILE_ENQ, buf)
     }
 }
-impl<'a> ApduDef<'a> for ProfileEnq {
+impl ApduDef<'_> for ProfileEnq {
     const TAG: ApduTag = tag::PROFILE_ENQ;
     const NAME: &'static str = "PROFILE_ENQ";
 }
@@ -70,7 +70,7 @@ impl Serialize for ProfileChange {
         super::serialize_empty_apdu(tag::PROFILE_CHANGE, buf)
     }
 }
-impl<'a> ApduDef<'a> for ProfileChange {
+impl ApduDef<'_> for ProfileChange {
     const TAG: ApduTag = tag::PROFILE_CHANGE;
     const NAME: &'static str = "PROFILE_CHANGE";
 }
@@ -111,7 +111,7 @@ impl Serialize for Profile {
     }
 }
 
-impl<'a> ApduDef<'a> for Profile {
+impl ApduDef<'_> for Profile {
     const TAG: ApduTag = tag::PROFILE;
     const NAME: &'static str = "PROFILE";
 }

@@ -202,7 +202,7 @@ impl Serialize for CellFrequencyLinkDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for CellFrequencyLinkDescriptor {
+impl crate::traits::DescriptorDef<'_> for CellFrequencyLinkDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CELL_FREQUENCY_LINK";
 }

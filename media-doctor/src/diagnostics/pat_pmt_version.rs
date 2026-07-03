@@ -13,11 +13,11 @@
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
-use crate::report::{Finding, Location, Severity};
 use crate::Diagnostic;
 use crate::Report;
+use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::SectionReassembler;
-use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
 /// Tracks PAT and PMT version_number changes across the stream.
 ///

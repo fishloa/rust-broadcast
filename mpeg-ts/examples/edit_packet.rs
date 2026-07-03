@@ -7,11 +7,11 @@
 //! Run with:
 //!   cargo run -p mpeg-ts --example edit_packet
 
-use mpeg_ts::ts::{
-    Pcr, TsHeader, TsPacket, ADAPTATION_FLAG, AF_PCR_FLAG, PAYLOAD_FLAG, TS_PACKET_SIZE,
-    TS_SYNC_BYTE,
-};
 use mpeg_ts::OwnedTsPacket;
+use mpeg_ts::ts::{
+    ADAPTATION_FLAG, AF_PCR_FLAG, PAYLOAD_FLAG, Pcr, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
+    TsPacket,
+};
 
 /// Build a 188-byte TS packet with a minimal adaptation field carrying a PCR.
 fn build_pcr_packet(pid: u16, cc: u8, pcr: Pcr) -> [u8; TS_PACKET_SIZE] {

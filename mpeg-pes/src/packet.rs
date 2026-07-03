@@ -1,9 +1,9 @@
 //! PES packet header parsing (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 
+use crate::PACKET_START_CODE_PREFIX;
 use crate::error::{Error, Result};
 use crate::stream_id::StreamId;
 use crate::timestamp::{self, Dts, Pts};
-use crate::PACKET_START_CODE_PREFIX;
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
@@ -490,7 +490,7 @@ pub struct PesHeader<'a> {
     pub header_stuffing_len: usize,
 }
 
-impl<'a> PesHeader<'a> {
+impl PesHeader<'_> {
     /// Number of bytes this header occupies in the serialized `PES_header_data_length`
     /// region (not counting the 3 fixed header bytes — the 2 flag bytes + length byte).
     fn optional_len(&self) -> usize {

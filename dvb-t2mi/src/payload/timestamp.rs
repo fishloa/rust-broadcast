@@ -253,7 +253,7 @@ impl<'a> Parse<'a> for T2TimestampPayload {
     }
 }
 
-impl<'a> crate::traits::PayloadDef<'a> for T2TimestampPayload {
+impl crate::traits::PayloadDef<'_> for T2TimestampPayload {
     const PACKET_TYPE: u8 = 0x20;
     const NAME: &'static str = "TIMESTAMP";
 }

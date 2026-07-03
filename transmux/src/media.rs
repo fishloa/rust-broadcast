@@ -32,7 +32,7 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
-use crate::box_types::{parse_box, BOX_HEADER_MIN_SIZE};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
@@ -41,10 +41,10 @@ use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, Tr
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
-use crate::mpegh::{MHADecoderConfigurationRecord, MHAC_FOURCC};
+use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
 
 /// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
@@ -176,7 +176,7 @@ pub struct Fmp4Demux<'a> {
     _marker: PhantomData<&'a [u8]>,
 }
 
-impl<'a> Fmp4Demux<'a> {
+impl Fmp4Demux<'_> {
     /// Create a new demuxer.
     pub fn new() -> Self {
         Self {

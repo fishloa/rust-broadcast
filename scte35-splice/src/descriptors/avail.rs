@@ -73,7 +73,7 @@ impl Serialize for AvailDescriptor {
     }
 }
 
-impl<'a> SpliceDescriptorDef<'a> for AvailDescriptor {
+impl SpliceDescriptorDef<'_> for AvailDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AVAIL";
 }

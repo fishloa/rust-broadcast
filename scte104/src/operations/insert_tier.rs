@@ -53,7 +53,7 @@ impl Serialize for InsertTier {
     }
 }
 
-impl<'a> OperationDef<'a> for InsertTier {
+impl OperationDef<'_> for InsertTier {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "INSERT_TIER";
 }

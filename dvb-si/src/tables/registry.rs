@@ -276,7 +276,7 @@ mod tests {
         }
     }
 
-    impl<'a> TableDef<'a> for CustomTable {
+    impl TableDef<'_> for CustomTable {
         const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(CUSTOM_TABLE_ID, CUSTOM_TABLE_ID)];
         const NAME: &'static str = "CUSTOM_TABLE";
     }
@@ -306,7 +306,7 @@ mod tests {
         }
     }
 
-    impl<'a> TableDef<'a> for MultiRangeTable {
+    impl TableDef<'_> for MultiRangeTable {
         const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(MULTI_LO, MULTI_LO), (MULTI_MID, MULTI_HI)];
         const NAME: &'static str = "MULTI_RANGE_TABLE";
     }
@@ -332,7 +332,7 @@ mod tests {
         }
     }
 
-    impl<'a> TableDef<'a> for OverridePat {
+    impl TableDef<'_> for OverridePat {
         const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(0x00, 0x00)];
         const NAME: &'static str = "OVERRIDE_PAT";
     }

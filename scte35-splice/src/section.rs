@@ -16,7 +16,7 @@
 //! case) expose the typed command and descriptor loop.
 
 use crate::commands::AnyCommand;
-use crate::descriptors::{parse_loop, SpliceDescriptorIter};
+use crate::descriptors::{SpliceDescriptorIter, parse_loop};
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
 use broadcast_common::{Parse, Serialize};
@@ -232,8 +232,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         if splice_command_length == 0x0FFF {
             return Err(Error::InvalidValue {
                 field: "splice_info_section.splice_command_length",
-                reason:
-                    "0xFFF backwards-compat sentinel is not supported; provide the actual length",
+                reason: "0xFFF backwards-compat sentinel is not supported; provide the actual length",
             });
         }
         // payload = [command_type][command_body(scl)][dll(2)][loop]

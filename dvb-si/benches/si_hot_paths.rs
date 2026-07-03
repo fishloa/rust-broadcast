@@ -6,7 +6,7 @@
 //! - `parse_loop` (descriptor-loop walk) — on synthetic descriptor bytes
 //! - `DvbText::decode` — on representative byte sequences
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::parse_loop;

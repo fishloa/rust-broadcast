@@ -19,8 +19,8 @@ use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio::io::ReadBuf;
 
-use crate::resync::{resync, TS_PACKET_SIZE, TS_SYNC_BYTE};
 use crate::ResyncStats;
+use crate::resync::{TS_PACKET_SIZE, TS_SYNC_BYTE, resync};
 
 /// Read buffer size: 7 × 188 bytes (matches typical DVB UDP payload size).
 const READ_BUF_SIZE: usize = TS_PACKET_SIZE * 7;

@@ -8,28 +8,44 @@
 //! byte-for-byte (the CRC is recomputed on serialize). This is the strongest
 //! authoritative-vector coverage available: the spec's own messages.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 /// (label, base64) for all eight §14 sample messages.
 const SAMPLES: &[(&str, &str)] = &[
-    ("§14.1 time_signal – Placement Opportunity Start",
-     "/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGKNAIAmsnRfg=="),
-    ("§14.2 splice_insert",
-     "/DAvAAAAAAAA///wFAVIAACPf+/+c2nALv4AUsz1AAAAAAAKAAhDVUVJAAABNWLbowo="),
-    ("§14.3 time_signal – Placement Opportunity End",
-     "/DAvAAAAAAAA///wBQb+dGKQoAAZAhdDVUVJSAAAjn+fCAgAAAAALKChijUCAKnMZ1g="),
-    ("§14.4 time_signal – Program Start/End",
-     "/DBIAAAAAAAA///wBQb+ek2ItgAyAhdDVUVJSAAAGH+fCAgAAAAALMvDRBEAAAIXQ1VFSUgAABl/nwgIAAAAACyk26AQAACZcuND"),
-    ("§14.5 time_signal – Program Overlap Start",
-     "/DAvAAAAAAAA///wBQb+rr//ZAAZAhdDVUVJSAAACH+fCAgAAAAALKVs9RcAAJUdsKg="),
-    ("§14.6 time_signal – Program Blackout Override / Program End",
-     "/DBIAAAAAAAA///wBQb+ky44CwAyAhdDVUVJSAAACn+fCAgAAAAALKCh4xgAAAIXQ1VFSUgAAAl/nwgIAAAAACygoYoRAAC0IX6w"),
-    ("§14.7 time_signal – Program End",
-     "/DAvAAAAAAAA///wBQb+rvF8TAAZAhdDVUVJSAAAB3+fCAgAAAAALKVslxEAAMSHai4="),
-    ("§14.8 time_signal – Program Start/End - Placement Opportunity End",
-     "/DBhAAAAAAAA///wBQb+qM1E7QBLAhdDVUVJSAAArX+fCAgAAAAALLLXnTUCAAIXQ1VFSUgAACZ/nwgIAAAAACyy150RAAACF0NVRUlIAAAnf58ICAAAAAAsstezEAAAihiGnw=="),
+    (
+        "§14.1 time_signal – Placement Opportunity Start",
+        "/DA0AAAAAAAA///wBQb+cr0AUAAeAhxDVUVJSAAAjn/PAAGlmbAICAAAAAAsoKGKNAIAmsnRfg==",
+    ),
+    (
+        "§14.2 splice_insert",
+        "/DAvAAAAAAAA///wFAVIAACPf+/+c2nALv4AUsz1AAAAAAAKAAhDVUVJAAABNWLbowo=",
+    ),
+    (
+        "§14.3 time_signal – Placement Opportunity End",
+        "/DAvAAAAAAAA///wBQb+dGKQoAAZAhdDVUVJSAAAjn+fCAgAAAAALKChijUCAKnMZ1g=",
+    ),
+    (
+        "§14.4 time_signal – Program Start/End",
+        "/DBIAAAAAAAA///wBQb+ek2ItgAyAhdDVUVJSAAAGH+fCAgAAAAALMvDRBEAAAIXQ1VFSUgAABl/nwgIAAAAACyk26AQAACZcuND",
+    ),
+    (
+        "§14.5 time_signal – Program Overlap Start",
+        "/DAvAAAAAAAA///wBQb+rr//ZAAZAhdDVUVJSAAACH+fCAgAAAAALKVs9RcAAJUdsKg=",
+    ),
+    (
+        "§14.6 time_signal – Program Blackout Override / Program End",
+        "/DBIAAAAAAAA///wBQb+ky44CwAyAhdDVUVJSAAACn+fCAgAAAAALKCh4xgAAAIXQ1VFSUgAAAl/nwgIAAAAACygoYoRAAC0IX6w",
+    ),
+    (
+        "§14.7 time_signal – Program End",
+        "/DAvAAAAAAAA///wBQb+rvF8TAAZAhdDVUVJSAAAB3+fCAgAAAAALKVslxEAAMSHai4=",
+    ),
+    (
+        "§14.8 time_signal – Program Start/End - Placement Opportunity End",
+        "/DBhAAAAAAAA///wBQb+qM1E7QBLAhdDVUVJSAAArX+fCAgAAAAALLLXnTUCAAIXQ1VFSUgAACZ/nwgIAAAAACyy150RAAACF0NVRUlIAAAnf58ICAAAAAAsstezEAAAihiGnw==",
+    ),
 ];
 
 #[test]

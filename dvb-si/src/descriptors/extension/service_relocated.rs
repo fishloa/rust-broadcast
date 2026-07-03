@@ -1,7 +1,7 @@
 //! Service Relocated Descriptor — ETSI EN 300 468 §6.4.10 (tag_extension 0x0B).
 use super::*;
 
-impl<'a> ExtensionBodyDef<'a> for ServiceRelocated {
+impl ExtensionBodyDef<'_> for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
     const NAME: &'static str = "SERVICE_RELOCATED";
 }

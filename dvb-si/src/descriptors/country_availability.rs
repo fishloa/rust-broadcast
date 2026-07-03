@@ -110,7 +110,7 @@ impl Serialize for CountryAvailabilityDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for CountryAvailabilityDescriptor {
+impl crate::traits::DescriptorDef<'_> for CountryAvailabilityDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "COUNTRY_AVAILABILITY";
 }

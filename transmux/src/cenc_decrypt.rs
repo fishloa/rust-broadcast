@@ -32,7 +32,7 @@ use alloc::vec::Vec;
 use aes::cipher::{KeyIvInit, StreamCipher};
 use broadcast_common::{Decrypt, Parse};
 
-use crate::box_types::{parse_box, BOX_HEADER_MIN_SIZE};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use crate::error::{Error, Result};
 use crate::media::Media;
@@ -419,9 +419,9 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
 /// Supports the progressive (single `moov`/`mdat`, sample layout from
 /// `stsz`/`stsc`/`stco`) layout that ffmpeg's `-cenc_aes_ctr` produces.
 fn demux_protected(file: &[u8]) -> Result<Media> {
+    use crate::AVCConfigurationBox;
     use crate::media::{Media, Track};
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-    use crate::AVCConfigurationBox;
 
     let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let movie_timescale = mvhd_timescale(moov).unwrap_or(1000);

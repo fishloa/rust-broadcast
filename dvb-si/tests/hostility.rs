@@ -15,8 +15,8 @@
 use broadcast_common::Serialize;
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::parse_loop;
-use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::RunningStatus;
+use dvb_si::tables::sdt::{SdtKind, SdtSection};
 
 // ── Deterministic LCG (no deps) ───────────────────────────────────────────────
 

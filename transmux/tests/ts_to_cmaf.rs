@@ -17,6 +17,7 @@ use std::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
+use transmux::StblChild;
 use transmux::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::init_segment::{MovieBox, SampleEntryVariant};
@@ -26,9 +27,8 @@ use transmux::mp4esds::{
     SLConfigDescriptor, StreamType,
 };
 use transmux::pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
-use transmux::StblChild;
 
 // ---- Helpers -----------------------------------------------------------------
 
@@ -358,7 +358,7 @@ fn ts_to_cmaf_end_to_end() {
         .children
         .iter()
         .find_map(|c| {
-            if let StblChild::Stsd(ref s) = c {
+            if let StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None
@@ -371,7 +371,7 @@ fn ts_to_cmaf_end_to_end() {
         .first()
         .expect("stsd must have at least one entry");
     let (vid_avcc, vid_prof, vid_compat, vid_level) = match vid_entry {
-        SampleEntryVariant::Avc1(ref avc1) => (
+        SampleEntryVariant::Avc1(avc1) => (
             &avc1.config.config,
             avc1.config.config.profile_indication,
             avc1.config.config.profile_compatibility,
@@ -407,7 +407,7 @@ fn ts_to_cmaf_end_to_end() {
         .children
         .iter()
         .find_map(|c| {
-            if let StblChild::Stsd(ref s) = c {
+            if let StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None
@@ -420,7 +420,7 @@ fn ts_to_cmaf_end_to_end() {
         .first()
         .expect("stsd must have at least one entry");
     let (aud_esds, aud_chan, aud_rate, aud_ssize) = match aud_entry {
-        SampleEntryVariant::Mp4a(ref mp4a) => {
+        SampleEntryVariant::Mp4a(mp4a) => {
             // esds is in config_boxes as an OpaqueBox('esds', ...), need to re-parse
             let esds_opaque = mp4a
                 .config_boxes

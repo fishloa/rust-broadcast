@@ -376,7 +376,7 @@ impl Serialize for AnnouncementSupportDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for AnnouncementSupportDescriptor {
+impl crate::traits::DescriptorDef<'_> for AnnouncementSupportDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ANNOUNCEMENT_SUPPORT";
 }

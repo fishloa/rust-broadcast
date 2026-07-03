@@ -6,9 +6,9 @@
 
 use broadcast_common::{Parse, Serialize};
 use transmux::rtcp::{
-    App, Bye, CompoundPacket, ReceiverReport, ReportBlock, RtcpPacket, RtcpPacketType, SdesChunk,
-    SdesItem, SdesItemType, SenderReport, SourceDescription, PT_APP, PT_BYE, PT_RECEIVER_REPORT,
-    PT_SENDER_REPORT, PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN,
+    App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
+    PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,
+    RtcpPacketType, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
 
 fn block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
@@ -171,13 +171,15 @@ fn compound_sr_then_sdes() {
 #[test]
 fn compound_not_starting_with_report_rejected() {
     // Construction rejects a non-report leader.
-    assert!(CompoundPacket::new(vec![RtcpPacket::App(App {
-        subtype: 0,
-        ssrc: 1,
-        name: *b"NOPE",
-        data: vec![],
-    })])
-    .is_err());
+    assert!(
+        CompoundPacket::new(vec![RtcpPacket::App(App {
+            subtype: 0,
+            ssrc: 1,
+            name: *b"NOPE",
+            data: vec![],
+        })])
+        .is_err()
+    );
 
     // Parse rejects it too: serialize a lone BYE and parse as compound.
     let bye_bytes = Bye {

@@ -4,8 +4,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::descriptors::DescriptorRegistry;
-use crate::tables::eit;
 use crate::tables::RunningStatus;
+use crate::tables::eit;
 use broadcast_common::Parse;
 use mpeg_ts::section::Section;
 

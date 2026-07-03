@@ -3,7 +3,7 @@ use super::*;
 use alloc::vec;
 use alloc::vec::Vec;
 
-impl<'a> ExtensionBodyDef<'a> for T2DeliverySystem {
+impl ExtensionBodyDef<'_> for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;
     const NAME: &'static str = "T2_DELIVERY_SYSTEM";
 }

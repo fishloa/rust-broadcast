@@ -1,7 +1,7 @@
 //! C2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D).
 use super::*;
 
-impl<'a> ExtensionBodyDef<'a> for C2DeliverySystem {
+impl ExtensionBodyDef<'_> for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
     const NAME: &'static str = "C2_DELIVERY_SYSTEM";
 }

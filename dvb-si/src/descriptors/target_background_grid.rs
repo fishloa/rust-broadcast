@@ -79,7 +79,7 @@ impl Serialize for TargetBackgroundGridDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TargetBackgroundGridDescriptor {
+impl crate::traits::DescriptorDef<'_> for TargetBackgroundGridDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TARGET_BACKGROUND_GRID";
 }

@@ -78,7 +78,7 @@ impl Serialize for ApplicationUsageDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for ApplicationUsageDescriptor {
+impl crate::traits::DescriptorDef<'_> for ApplicationUsageDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "APPLICATION_USAGE";
 }

@@ -34,7 +34,7 @@ mod imp {
     use dvb_ci_runtime::device::RecordingCaDevice;
     use dvb_ci_runtime::event::{MmiEvent, MmiMenu};
     use dvb_ci_runtime::linux::LinuxCaDevice;
-    use dvb_ci_runtime::{trace, CaDevice, Driver, Notification};
+    use dvb_ci_runtime::{CaDevice, Driver, Notification, trace};
 
     const PUMP: Duration = Duration::from_millis(100);
     const READY_TIMEOUT: Duration = Duration::from_secs(10);

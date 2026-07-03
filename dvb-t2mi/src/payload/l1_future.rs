@@ -27,7 +27,7 @@ pub struct L1FuturePayload<'a> {
 
 const L1_FUTURE_HEADER_LEN: usize = 2;
 
-impl<'a> L1FuturePayload<'a> {
+impl L1FuturePayload<'_> {
     /// Parse the "dynamic, next frame" block from `l1_future_data`.
     ///
     /// `num_plp` and `num_aux` must be supplied by the caller from the

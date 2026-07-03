@@ -118,7 +118,7 @@ impl Serialize for SvcExtensionDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SvcExtensionDescriptor {
+impl crate::traits::DescriptorDef<'_> for SvcExtensionDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SVC_EXTENSION";
 }

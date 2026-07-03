@@ -173,7 +173,7 @@ impl Serialize for SpliceRequest {
     }
 }
 
-impl<'a> OperationDef<'a> for SpliceRequest {
+impl OperationDef<'_> for SpliceRequest {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "SPLICE_REQUEST";
 }

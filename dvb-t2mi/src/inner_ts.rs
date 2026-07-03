@@ -24,7 +24,7 @@
 //! ```
 
 use alloc::vec::Vec;
-use dvb_bbframe::header::{Bbheader, Mode, BBHEADER_LEN};
+use dvb_bbframe::header::{BBHEADER_LEN, Bbheader, Mode};
 use dvb_bbframe::packet::{CarryOverExtractor, NM_UP_SIZE};
 
 use crate::payload::AnyPayload;

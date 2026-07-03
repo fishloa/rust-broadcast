@@ -57,7 +57,7 @@ impl Serialize for EncryptedDpi {
     }
 }
 
-impl<'a> OperationDef<'a> for EncryptedDpi {
+impl OperationDef<'_> for EncryptedDpi {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "ENCRYPTED_DPI";
 }

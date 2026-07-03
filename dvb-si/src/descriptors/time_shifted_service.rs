@@ -68,7 +68,7 @@ impl Serialize for TimeShiftedServiceDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TimeShiftedServiceDescriptor {
+impl crate::traits::DescriptorDef<'_> for TimeShiftedServiceDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TIME_SHIFTED_SERVICE";
 }

@@ -6,7 +6,7 @@
 //! event_id 0x4800008F), inlined so the example is self-contained.
 
 use broadcast_common::Parse;
-use scte35_splice::{commands::AnyCommand, SpliceInfoSection};
+use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
 
 #[rustfmt::skip]
 const SPLICE_INSERT: [u8; 50] = [

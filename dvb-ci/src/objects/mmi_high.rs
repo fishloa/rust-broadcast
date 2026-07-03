@@ -60,7 +60,7 @@ impl<'a> Text<'a> {
                     got: t.as_u24(),
                     expected: tag::TEXT_LAST.as_u24(),
                     what: "text component",
-                })
+                });
             }
         };
         let (len_value, len_hdr) = length::decode(&bytes[3..])?;
@@ -528,7 +528,7 @@ impl Serialize for MenuAnsw {
     }
 }
 
-impl<'a> ApduDef<'a> for MenuAnsw {
+impl ApduDef<'_> for MenuAnsw {
     const TAG: ApduTag = tag::MENU_ANSW;
     const NAME: &'static str = "MENU_ANSW";
 }

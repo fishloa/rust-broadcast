@@ -11,8 +11,8 @@
 //! See <https://github.com/fishloa/rust-broadcast/issues/387>
 
 use broadcast_common::traits::Parse;
-use scte35_splice::commands::AnyCommand;
 use scte35_splice::SpliceInfoSection;
+use scte35_splice::commands::AnyCommand;
 use ts_fix::{PcrRestamp, PidFilter, TsFix};
 
 const PKT: usize = 188;

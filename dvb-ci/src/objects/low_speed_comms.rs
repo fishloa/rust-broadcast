@@ -321,7 +321,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
     }
 }
 
-impl<'a> CommsCmd<'a> {
+impl CommsCmd<'_> {
     fn body_len(&self) -> usize {
         1 + match &self.params {
             CommsCmdParams::Connect {
@@ -488,7 +488,7 @@ impl Serialize for CommsReply {
     }
 }
 
-impl<'a> ApduDef<'a> for CommsReply {
+impl ApduDef<'_> for CommsReply {
     const TAG: ApduTag = tag::COMMS_REPLY;
     const NAME: &'static str = "COMMS_REPLY";
 }
@@ -509,7 +509,7 @@ pub struct CommsSend<'a> {
     pub message: &'a [u8],
 }
 
-impl<'a> CommsSend<'a> {
+impl CommsSend<'_> {
     /// The `apdu_tag` for this object given [`CommsSend::more`].
     #[must_use]
     pub fn tag(&self) -> ApduTag {
@@ -587,7 +587,7 @@ pub struct CommsRcv<'a> {
     pub message: &'a [u8],
 }
 
-impl<'a> CommsRcv<'a> {
+impl CommsRcv<'_> {
     /// The `apdu_tag` for this object given [`CommsRcv::more`].
     #[must_use]
     pub fn tag(&self) -> ApduTag {
@@ -670,7 +670,9 @@ mod tests {
         // 9F8C00, body: id(01) + CD[9F8C01 len2 type02 chan07] + retry03 + to1E
         assert_eq!(
             bytes,
-            [0x9F, 0x8C, 0x00, 0x09, 0x01, 0x9F, 0x8C, 0x01, 0x02, 0x02, 0x07, 0x03, 0x1E]
+            [
+                0x9F, 0x8C, 0x00, 0x09, 0x01, 0x9F, 0x8C, 0x01, 0x02, 0x02, 0x07, 0x03, 0x1E
+            ]
         );
         assert_eq!(CommsCmd::parse(&bytes).unwrap(), cmd);
 

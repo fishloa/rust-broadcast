@@ -129,7 +129,7 @@ impl Serialize for PdcDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for PdcDescriptor {
+impl crate::traits::DescriptorDef<'_> for PdcDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PDC";
 }

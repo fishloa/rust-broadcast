@@ -74,7 +74,7 @@ impl Serialize for Mpeg2AacAudioDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for Mpeg2AacAudioDescriptor {
+impl crate::traits::DescriptorDef<'_> for Mpeg2AacAudioDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MPEG2_AAC_AUDIO";
 }

@@ -71,7 +71,7 @@ pub use client::{ClientEvent, ClientSession};
 pub use error::{Error, Result};
 pub use interleaved::InterleavedFrame;
 #[cfg(feature = "tokio")]
-pub use io::{AsyncRtspClient, AsyncRtspServer, RTSPS_DEFAULT_PORT, RTSP_DEFAULT_PORT};
+pub use io::{AsyncRtspClient, AsyncRtspServer, RTSP_DEFAULT_PORT, RTSPS_DEFAULT_PORT};
 pub use server::{ServerEvent, ServerSession};
 pub use state::SessionState;
 pub use transport::{Delivery, LowerTransport, Transport, TransportSpec};

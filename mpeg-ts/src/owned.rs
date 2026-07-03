@@ -10,8 +10,8 @@
 
 use crate::error::{Error, Result};
 use crate::ts::{
-    AdaptationField, AdaptationFieldControl, Pcr, ScramblingControl, TsHeader, ADAPTATION_FLAG,
-    AF_PCR_FLAG, CC_MASK, TS_PACKET_SIZE, TS_SYNC_BYTE,
+    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, Pcr,
+    ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`

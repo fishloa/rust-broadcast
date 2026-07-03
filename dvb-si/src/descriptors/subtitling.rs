@@ -242,7 +242,7 @@ impl Serialize for SubtitlingDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SubtitlingDescriptor {
+impl crate::traits::DescriptorDef<'_> for SubtitlingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SUBTITLING";
 }

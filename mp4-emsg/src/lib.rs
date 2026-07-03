@@ -100,7 +100,7 @@ mod error;
 mod version;
 
 pub use emsg::{
-    EmsgBox, PresentationTime, EMSG_BOX_TYPE, EMSG_FLAGS, FULLBOX_HEADER_LEN, SCTE35_SCHEME_PREFIX,
+    EMSG_BOX_TYPE, EMSG_FLAGS, EmsgBox, FULLBOX_HEADER_LEN, PresentationTime, SCTE35_SCHEME_PREFIX,
     STRING_TERMINATOR,
 };
 pub use error::{Error, Result};

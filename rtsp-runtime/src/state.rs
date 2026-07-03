@@ -10,8 +10,8 @@
 //! (RFC 2326 Appendix A intro). The state-affecting methods are `SETUP`,
 //! `PLAY`, `PAUSE`, `TEARDOWN`, `RECORD`, and `REDIRECT`.
 
-use crate::error::{Error, Result};
 use crate::Method;
+use crate::error::{Error, Result};
 
 /// The lifecycle state of an RTSP session object (RFC 2326 §A.1 / §A.2).
 #[non_exhaustive]
@@ -100,7 +100,7 @@ pub fn client_next_state(current: SessionState, method: &Method) -> Result<Sessi
             return Err(Error::MethodNotValidInState {
                 method: method.clone(),
                 state: current,
-            })
+            });
         }
     };
     Ok(next)
@@ -140,7 +140,7 @@ pub fn server_next_state(current: SessionState, method: &Method) -> Result<Sessi
             return Err(Error::MethodNotValidInState {
                 method: method.clone(),
                 state: current,
-            })
+            });
         }
     };
     Ok(next)

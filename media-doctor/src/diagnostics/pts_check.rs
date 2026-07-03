@@ -25,11 +25,11 @@
 
 use alloc::collections::btree_map::BTreeMap;
 
-use crate::report::{Finding, Location, Severity};
 use crate::Diagnostic;
 use crate::Report;
+use crate::report::{Finding, Location, Severity};
 use mpeg_pes::PesPacket;
-use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
 /// 33-bit PTS/DTS modulus (2^33).
 const PTS_MODULUS: u64 = 1u64 << 33;
@@ -269,9 +269,9 @@ mod tests {
     fn build_pes_with_pts(stream_id: u8, pts_raw: u64, payload: &[u8]) -> Vec<u8> {
         let pts_bytes = mpeg_pes::Pts(pts_raw).to_field_bytes();
         let _hdr_data_len = 5 + payload.len(); // 5-byte PTS + ... well, the hdr data
-                                               // Minimal PES: no header_stuffing, no other flags.
-                                               // flags1 = 0x80 (marker bit, no scrambling, no flags)
-                                               // flags2 = 0x80 (PTS_DTS_flags=10)
+        // Minimal PES: no header_stuffing, no other flags.
+        // flags1 = 0x80 (marker bit, no scrambling, no flags)
+        // flags2 = 0x80 (PTS_DTS_flags=10)
         let hdr_len = 5u8; // PTS only, no stuffing
         let pes_len = 9 + hdr_len as usize + payload.len();
         let mut pes = Vec::with_capacity(pes_len);

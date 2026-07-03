@@ -635,7 +635,7 @@ mod tests {
         // scrambling_sequence_index=0x1ABCD.
         let mut sel = Vec::new();
         sel.extend_from_slice(&0xDEAD_BEEFu32.to_be_bytes()); // delivery_system_id
-                                                              // b4: mode=1(0x10), mis=1(0x08), roll_off=1(0x01) → 0x19
+        // b4: mode=1(0x10), mis=1(0x08), roll_off=1(0x01) → 0x19
         sel.push(0x19);
         // b5: NCR_reference=0, NCR_version=1(0x10), channel_bond=0, polarization=3 → 0x13
         sel.push(0x13);
@@ -645,8 +645,8 @@ mod tests {
         sel.extend_from_slice(&0x0000_0001u32.to_be_bytes()); // frequency
         sel.extend_from_slice(&0x0000_0002u32.to_be_bytes()); // symbol_rate
         sel.push(0x42); // input_stream_identifier (MIS=1)
-                        // scrambling block: reserved(6)=0 | scrambling_sequence_index(18) = 0x1ABCD
-                        // 0x1ABCD >> 16 = 0x01 (& 0x03), mid = 0xAB, lo = 0xCD
+        // scrambling block: reserved(6)=0 | scrambling_sequence_index(18) = 0x1ABCD
+        // 0x1ABCD >> 16 = 0x01 (& 0x03), mid = 0xAB, lo = 0xCD
         sel.extend_from_slice(&[0x01, 0xAB, 0xCD]);
         let bytes = wrap(0x24, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -683,7 +683,7 @@ mod tests {
         // b4: mode=2(0x20), mis=0, roll_off=0 → 0x20
         sel.push(0x20);
         sel.push(0x00); // b5
-                        // b6: scram_sel=0, ts_gs=0, recv_prof=1 → 0x01
+        // b6: scram_sel=0, ts_gs=0, recv_prof=1 → 0x01
         sel.push(0x01);
         sel.extend_from_slice(&[0, 0, 0]); // satellite_id
         sel.extend_from_slice(&[0, 0, 0, 0]); // frequency
@@ -709,7 +709,7 @@ mod tests {
         // S2Xv2 mode 0 (reserved), channel_bond=1, two secondary IDs.
         let mut sel = Vec::new();
         sel.extend_from_slice(&0xFFFF_FFFFu32.to_be_bytes()); // delivery_system_id
-                                                              // b4: mode=0, mis=0, roll_off=0 → 0x00
+        // b4: mode=0, mis=0, roll_off=0 → 0x00
         sel.push(0x00);
         // b5: channel_bond=1(0x04), polarization=0 → 0x04
         sel.push(0x04);
@@ -718,7 +718,7 @@ mod tests {
         sel.extend_from_slice(&[0, 0, 0]); // satellite_id
         sel.extend_from_slice(&[0, 0, 0, 0]); // frequency
         sel.extend_from_slice(&[0, 0, 0, 0]); // symbol_rate
-                                              // channel_bond header: reserved(7)=0 | num_channel_bonds_minus_one(1)=1 → N=2
+        // channel_bond header: reserved(7)=0 | num_channel_bonds_minus_one(1)=1 → N=2
         sel.push(0x01);
         sel.extend_from_slice(&0x1111_1111u32.to_be_bytes()); // id[0]
         sel.extend_from_slice(&0x2222_2222u32.to_be_bytes()); // id[1]
@@ -743,26 +743,26 @@ mod tests {
         // S2Xv2 mode 4 (superframe), SFFI_selector=1, no beamhopping.
         let mut sel = Vec::new();
         sel.extend_from_slice(&0x0000_0002u32.to_be_bytes()); // delivery_system_id
-                                                              // b4: mode=4(0x40), mis=0, roll_off=0 → 0x40
+        // b4: mode=4(0x40), mis=0, roll_off=0 → 0x40
         sel.push(0x40);
         sel.push(0x00); // b5
-                        // b6: no scrambling_selector (mode 4), ts_gs=1(0x20), recv_prof=3(0x03) → 0x23
+        // b6: no scrambling_selector (mode 4), ts_gs=1(0x20), recv_prof=3(0x03) → 0x23
         sel.push(0x23);
         sel.extend_from_slice(&[0, 0, 0]); // satellite_id
         sel.extend_from_slice(&[0, 0, 0, 0]); // frequency
         sel.extend_from_slice(&[0, 0, 0, 0]); // symbol_rate
-                                              // Superframe block:
+        // Superframe block:
         sel.push(0xAB); // sosf_wh_sequence_number
-                        // b1: SFFI_selector=1(0x80), BH=0, reserved=0, ref_scram_hi=0x05 → 0x85
+        // b1: SFFI_selector=1(0x80), BH=0, reserved=0, ref_scram_hi=0x05 → 0x85
         sel.push(0x85);
         sel.push(0x12); // ref_scram_mid
         sel.push(0x34); // ref_scram_lo → ref_scram = 0x051234
-                        // b4: SFFI=0x9(0x90), psi_hi=0x06(0x06) → 0x96
+        // b4: SFFI=0x9(0x90), psi_hi=0x06(0x06) → 0x96
         sel.push(0x96);
         sel.push(0x78); // psi_mid
         sel.push(0x90); // psi_lo → psi = 0x067890
-                        // no beamhopping_time_plan_id
-                        // final: pilots=0x1A(5b)=0b11010, postamble=0x03(3b)=0b011 → 0b11010_011 = 0xD3
+        // no beamhopping_time_plan_id
+        // final: pilots=0x1A(5b)=0b11010, postamble=0x03(3b)=0b011 → 0b11010_011 = 0xD3
         sel.push(0xD3);
         let bytes = wrap(0x24, &sel);
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -791,27 +791,27 @@ mod tests {
         // S2Xv2 mode 5 (superframe + timeslicing), SFFI=0, beam_hopping=1.
         let mut sel = Vec::new();
         sel.extend_from_slice(&0x0000_0003u32.to_be_bytes()); // delivery_system_id
-                                                              // b4: mode=5(0x50), mis=0, roll_off=0 → 0x50
+        // b4: mode=5(0x50), mis=0, roll_off=0 → 0x50
         sel.push(0x50);
         sel.push(0x00); // b5
-                        // b6: mode 5 has no scrambling_selector, so scram bit is reserved→0; ts_gs=0, recv_prof=0
+        // b6: mode 5 has no scrambling_selector, so scram bit is reserved→0; ts_gs=0, recv_prof=0
         sel.push(0x00);
         sel.extend_from_slice(&[0, 0, 0]); // satellite_id
         sel.extend_from_slice(&[0, 0, 0, 0]); // frequency
         sel.extend_from_slice(&[0, 0, 0, 0]); // symbol_rate
-                                              // timeslice_number (mode 5 → has_timeslice)
+        // timeslice_number (mode 5 → has_timeslice)
         sel.push(0x0F);
         // Superframe block:
         sel.push(0x01); // sosf_wh_sequence_number
-                        // b1: SFFI=0, BH=1(0x40), reserved=0, ref_scram_hi=0x0A → 0x4A
+        // b1: SFFI=0, BH=1(0x40), reserved=0, ref_scram_hi=0x0A → 0x4A
         sel.push(0x4A);
         sel.push(0xBC); // ref_scram_mid
         sel.push(0xDE); // ref_scram_lo → ref_scram = 0x0ABCDE
-                        // b4: sffi_or_reserved(4)=0, psi_hi=0x00 → 0x00
+        // b4: sffi_or_reserved(4)=0, psi_hi=0x00 → 0x00
         sel.push(0x00);
         sel.push(0x00); // psi_mid
         sel.push(0xFF); // psi_lo → psi = 0x0000FF
-                        // beamhopping_time_plan_id = 0x1234_5678
+        // beamhopping_time_plan_id = 0x1234_5678
         sel.extend_from_slice(&0x1234_5678u32.to_be_bytes());
         // final: pilots=0x05(5b)=0b00101, postamble=0x07(3b)=0b111 → 0b00101_111 = 0x2F
         sel.push(0x2F);

@@ -54,7 +54,7 @@ pub struct Operation<'a> {
     pub data: AnyOperation<'a>,
 }
 
-impl<'a> Operation<'a> {
+impl Operation<'_> {
     /// Length of the operation body in bytes (does NOT include the 4-byte
     /// opID+data_length prefix).
     #[must_use]
@@ -186,7 +186,7 @@ impl Serialize for AliveRequest {
     }
 }
 
-impl<'a> crate::traits::OperationDef<'a> for AliveRequest {
+impl crate::traits::OperationDef<'_> for AliveRequest {
     const OP_ID: u16 = 0x0003;
     const NAME: &'static str = "ALIVE_REQUEST";
 }
@@ -210,7 +210,7 @@ impl Serialize for AliveResponse {
     }
 }
 
-impl<'a> crate::traits::OperationDef<'a> for AliveResponse {
+impl crate::traits::OperationDef<'_> for AliveResponse {
     const OP_ID: u16 = 0x0004;
     const NAME: &'static str = "ALIVE_RESPONSE";
 }
@@ -245,7 +245,7 @@ impl Serialize for InjectResponse {
     }
 }
 
-impl<'a> crate::traits::OperationDef<'a> for InjectResponse {
+impl crate::traits::OperationDef<'_> for InjectResponse {
     const OP_ID: u16 = 0x0007;
     const NAME: &'static str = "INJECT_RESPONSE";
 }
@@ -285,7 +285,7 @@ impl Serialize for InjectCompleteResponse {
     }
 }
 
-impl<'a> crate::traits::OperationDef<'a> for InjectCompleteResponse {
+impl crate::traits::OperationDef<'_> for InjectCompleteResponse {
     const OP_ID: u16 = 0x0008;
     const NAME: &'static str = "INJECT_COMPLETE_RESPONSE";
 }

@@ -33,7 +33,7 @@
 //! These fields are covered by the build-from-fields round-trip unit tests in
 //! `mpeg-ts/src/ts.rs`.
 
-use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use std::fs;
 
 fn fixture(name: &str) -> Vec<u8> {

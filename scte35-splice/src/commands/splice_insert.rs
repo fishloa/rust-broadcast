@@ -266,7 +266,7 @@ impl Serialize for SpliceInsert {
     }
 }
 
-impl<'a> CommandDef<'a> for SpliceInsert {
+impl CommandDef<'_> for SpliceInsert {
     const COMMAND_TYPE: u8 = COMMAND_TYPE;
     const NAME: &'static str = "SPLICE_INSERT";
 }

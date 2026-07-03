@@ -247,7 +247,7 @@ mod tests {
         let pre0_a = (1 << 3) | 2; // id=1, rendering=2
         let pre0_b = (1 << 6) | (1 << 4); // spoken_subtitles=1, interactivity_enabled=1
         let pre1_a = (2 << 3) | 3; // id=2, rendering=3
-                                   // all flags: ad=1, ss=0, de=1, ie=0, lang=1, text=1, multi=1, futext=1
+        // all flags: ad=1, ss=0, de=1, ie=0, lang=1, text=1, multi=1, futext=1
         let pre1_b = (1 << 7) | (1 << 5) | (1 << 3) | (1 << 2) | (1 << 1) | 1;
         let lang = b"foo";
         let msg_id = 0xABu8;

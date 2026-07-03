@@ -22,7 +22,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use core::any::Any;
 
-use super::{validate_and_split, ExtensionBodyDef, ExtensionDescriptor};
+use super::{ExtensionBodyDef, ExtensionDescriptor, validate_and_split};
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -269,7 +269,7 @@ mod tests {
         payload: Vec<u8>,
     }
 
-    impl<'a> ExtensionBodyDef<'a> for MyExtBody {
+    impl ExtensionBodyDef<'_> for MyExtBody {
         const TAG_EXTENSION: u8 = TEST_TAG_EXTENSION;
         const NAME: &'static str = "MY_EXT_BODY";
     }

@@ -10,8 +10,8 @@ use std::fs;
 use broadcast_common::Parse;
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{
-    iter_packets, AdaptationFieldControl, ScramblingControl, SectionReassembler, TsHeader,
-    TsPacket, TS_PACKET_SIZE,
+    AdaptationFieldControl, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsHeader,
+    TsPacket, iter_packets,
 };
 
 fn fixture_path() -> String {

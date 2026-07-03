@@ -9,8 +9,8 @@
 
 use broadcast_common::Parse;
 use transmux::{
-    build_init_segment, build_media_segment, CodecConfig, EsdsBox, FragmentTrackData, MediaDataBox,
-    MovieBox, MovieFragmentBox, Sample, SampleEntryVariant, StblChild, TrackSpec,
+    CodecConfig, EsdsBox, FragmentTrackData, MediaDataBox, MovieBox, MovieFragmentBox, Sample,
+    SampleEntryVariant, StblChild, TrackSpec, build_init_segment, build_media_segment,
 };
 
 fn fixture() -> Vec<u8> {

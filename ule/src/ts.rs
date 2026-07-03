@@ -18,7 +18,7 @@
 use alloc::vec::Vec;
 
 use crate::sndu::{
-    is_end_indicator, BASE_HEADER_LEN, D_BIT_MASK, END_INDICATOR_LENGTH, LENGTH_MASK, PADDING_BYTE,
+    BASE_HEADER_LEN, D_BIT_MASK, END_INDICATOR_LENGTH, LENGTH_MASK, PADDING_BYTE, is_end_indicator,
 };
 
 /// The number of TS-packet payload bytes when AFC = `01` (payload only): the
