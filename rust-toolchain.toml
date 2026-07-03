@@ -1,0 +1,18 @@
+# Single source of truth for the toolchain CI and local dev build with.
+#
+# Pinned so `cargo` behaves identically on every developer machine and in CI —
+# no floating `stable` that silently moves under us (a stable bump once added a
+# new clippy lint that red-lighted an unrelated PR; see issue #574).
+#
+# This is the workspace MSRV. Keep `channel` in lockstep with `rust-version` in
+# the root Cargo.toml — the two must always name the same version. Raising the
+# MSRV means editing BOTH, is a minor version bump, and goes in the CHANGELOG.
+#
+# GitHub runners ship rustup preinstalled, so every `cargo` invocation in CI
+# picks this up automatically — the workflows do not pin a toolchain themselves
+# (except the nightly fuzz job and the floating-stable canary, which override
+# this via `cargo +nightly` / `cargo +stable`).
+[toolchain]
+channel    = "1.86"
+components = ["clippy", "rustfmt"]
+targets    = ["thumbv7em-none-eabi"]

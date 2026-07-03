@@ -25,10 +25,6 @@ jobs:
     environment: crates-io
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          targets: thumbv7em-none-eabi
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — mpeg-pes tests

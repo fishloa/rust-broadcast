@@ -22,9 +22,6 @@ jobs:
     environment: crates-io
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
       - uses: Swatinem/rust-cache@v2
 
       # dvb-stream is intentionally excluded from the lockstep v-tag publish

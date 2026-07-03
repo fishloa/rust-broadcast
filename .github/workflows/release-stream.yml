@@ -23,9 +23,6 @@ jobs:
     environment: crates-io
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Gate — dvb-stream tests
