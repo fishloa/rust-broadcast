@@ -9,7 +9,7 @@ keywords = ["dvb", "common-interface", "en50221", "cam", "conditional-access"]
 categories = ["multimedia", "hardware-support", "api-bindings"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.81"
+rust-version = "1.85"
 exclude = ["docs/**", "tests/fixtures/**"]
 
 [[bin]]
