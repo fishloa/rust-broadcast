@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   init-segment changes is available via the new
   `mark_init_discontinuities(entries: &mut [(&[u8], &mut MediaSegment)])` helper,
   which compares consecutive init bytes and sets the flag where they differ.
+- **RTMP transport spoke** (#515): `RtmpDemux` (`Unpackage`) / `RtmpMux` (`Package`) ⇄ IR,
+  Adobe RTMP 1.0. De/frames the chunk stream (basic + message headers, all four `fmt`
+  types incl. 2-/3-byte csid and extended timestamp — §5.3.1), reassembles multi-chunk
+  messages honouring Set Chunk Size, and routes Audio (type 8) / Video (type 9) message
+  bodies — which ARE FLV tag bodies — through the FLV spoke (`FlvDemux`/`FlvMux`) to the
+  IR. Also typed `Handshake0/1/2` (§5.2), `ProtocolControl` (SetChunkSize/Abort/Ack/
+  WindowAckSize/SetPeerBandwidth — §5.4), and AMF0 `AmfValue`/`Command` for
+  `connect`/`publish`/`play`/`createStream`/`onMetaData` (§7). AMF0 only (AMF3 noted as
+  out of scope). `no_std` + `alloc`.
 - **RTCP control packets** (#514): typed `Parse`/`Serialize` for the RFC 3550 §6 set —
   `SenderReport` (PT 200), `ReceiverReport` (201), `SourceDescription` (202, with
   `SdesChunk`/`SdesItem`/`SdesItemType`), `Bye` (203), `App` (204), the shared
