@@ -30,7 +30,9 @@
 //!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor);
 //!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
 //!   returning a [`SpliceResult`] with discontinuity points).
-//! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]).
+//! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]); HLS
+//!   Sample-AES + full-segment AES-128 encrypt/decrypt (`sample-aes`,
+//!   [`sample_aes`]).
 //! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP;
 //!   RTCP control packets ([`RtcpPacket`]).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
@@ -79,6 +81,7 @@
 //! | `std`   | yes     | `std::error::Error` impls |
 //! | `serde` | yes     | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC (ISO/IEC 23001-7) AES-CTR sample decryption ([`CencDecryptor`]) via the RustCrypto `aes`/`ctr` crates |
+//! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -126,6 +129,8 @@ pub mod repackage;
 pub mod rtcp;
 pub mod rtmp;
 pub mod rtp;
+#[cfg(feature = "sample-aes")]
+pub mod sample_aes;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod segmenter;
@@ -249,6 +254,12 @@ pub use rtp::{
     DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, KLV_ENCODING_NAME,
     NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
     RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
+};
+#[cfg(feature = "sample-aes")]
+pub use sample_aes::{
+    ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,
+    ac3_encrypt_frame, aes128_decrypt_segment, aes128_encrypt_segment, h264_decrypt_nal,
+    h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,

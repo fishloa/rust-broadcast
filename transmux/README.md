@@ -111,6 +111,7 @@ round-trips through the IR.
 | IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |
 | IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
 | CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
+| HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
 | KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
