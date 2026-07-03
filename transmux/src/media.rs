@@ -408,6 +408,7 @@ impl Package for HlsPackager {
                 uri: format!("{}{}.m4s", self.uri_prefix, t.spec.track_id),
                 duration: ticks as f64 / ts as f64,
                 discontinuous: false,
+                parts: vec![],
             });
         }
         let playlist = MediaPlaylist {
@@ -418,6 +419,7 @@ impl Package for HlsPackager {
             segments,
             endlist: true,
             extra_tags: vec![],
+            low_latency: None,
         };
         Ok(playlist.to_m3u8())
     }

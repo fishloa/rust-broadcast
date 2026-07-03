@@ -113,16 +113,19 @@ fn autodetect_init_change_marks_discontinuity() {
         uri: "s0.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
     let mut seg1 = MediaSegment {
         uri: "s1.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
     let mut seg2 = MediaSegment {
         uri: "s2.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
 
     // init_a → init_b → init_b (change at index 1, stable at index 2)
@@ -162,6 +165,7 @@ fn autodetect_init_change_marks_discontinuity() {
         ],
         endlist: true,
         extra_tags: vec![],
+        low_latency: None,
     };
     let out = pl.to_m3u8();
 
@@ -186,16 +190,19 @@ fn autodetect_init_change_marks_discontinuity() {
         uri: "x0.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
     let mut seg_y = MediaSegment {
         uri: "x1.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
     let mut seg_z = MediaSegment {
         uri: "x2.m4s".into(),
         duration: 1.0,
         discontinuous: false,
+        parts: vec![],
     };
     let mut same: Vec<(&[u8], &mut MediaSegment)> = vec![
         (init_a.as_slice(), &mut seg_x),
@@ -222,6 +229,7 @@ fn autodetect_init_change_marks_discontinuity() {
         ],
         endlist: true,
         extra_tags: vec![],
+        low_latency: None,
     };
     let out_neg = pl_neg.to_m3u8();
     assert!(
@@ -330,6 +338,7 @@ fn explicit_mark_discontinuity_bites() {
             uri: format!("s{i}.m4s"),
             duration: 1.0,
             discontinuous: meta.discontinuous,
+            parts: vec![],
         })
         .collect();
 
@@ -341,6 +350,7 @@ fn explicit_mark_discontinuity_bites() {
         segments: pl_segments,
         endlist: true,
         extra_tags: vec![],
+        low_latency: None,
     };
     let out = pl.to_m3u8();
 
@@ -397,6 +407,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
             segments: segs,
             endlist: false,
             extra_tags: vec![],
+            low_latency: None,
         }
         .to_m3u8()
     }
@@ -405,6 +416,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
         uri: uri.into(),
         duration: 6.0,
         discontinuous: false,
+        parts: vec![],
     };
 
     // Window with no evicted discontinuities: header absent.
@@ -462,25 +474,30 @@ fn discontinuity_tag_placement_immediately_before_extinf() {
                 uri: "s0.m4s".into(),
                 duration: 6.0,
                 discontinuous: false,
+                parts: vec![],
             },
             MediaSegment {
                 uri: "s1.m4s".into(),
                 duration: 6.0,
                 discontinuous: true,
+                parts: vec![],
             },
             MediaSegment {
                 uri: "s2.m4s".into(),
                 duration: 6.0,
                 discontinuous: false,
+                parts: vec![],
             },
             MediaSegment {
                 uri: "s3.m4s".into(),
                 duration: 6.0,
                 discontinuous: true,
+                parts: vec![],
             },
         ],
         endlist: true,
         extra_tags: vec![],
+        low_latency: None,
     };
     let out = pl.to_m3u8();
 

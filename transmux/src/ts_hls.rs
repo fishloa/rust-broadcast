@@ -189,6 +189,7 @@ impl Package for TsHlsPackager {
                 uri: format!("{}{}.ts", self.uri_prefix, i),
                 duration,
                 discontinuous: false,
+                parts: vec![],
             });
         }
 
@@ -200,6 +201,7 @@ impl Package for TsHlsPackager {
             segments: playlist_segments,
             endlist: true,
             extra_tags: vec![],
+            low_latency: None,
         }
         .to_m3u8();
 

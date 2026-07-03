@@ -22,10 +22,52 @@
 //! Use [`Segmenter::mark_discontinuity`](crate::Segmenter::mark_discontinuity)
 //! to mark the next cut as discontinuous; the segmenter also auto-detects
 //! init-segment changes and marks those cuts automatically.
+//!
+//! # Low-Latency HLS (RFC 8216bis)
+//!
+//! Low-Latency HLS (LL-HLS — the HLS 2nd edition draft, *RFC 8216bis*) drives
+//! end-to-end latency below one segment duration by publishing each segment's
+//! **partial segments** ("parts", RFC 8216bis §4.4.4.9) as they are produced,
+//! before the parent segment is complete. This model adds four opt-in playlist
+//! directives, all rendered only when [`MediaPlaylist::low_latency`] is set (so a
+//! plain playlist is byte-for-byte unchanged):
+//!
+//! - **`#EXT-X-SERVER-CONTROL`** (RFC 8216bis §4.4.3.8) — the header carries
+//!   `CAN-BLOCK-RELOAD=YES` (the server supports blocking playlist reload) and
+//!   `PART-HOLD-BACK=<sec>` (how far from the live edge a client may play parts).
+//!   Per the spec, `PART-HOLD-BACK` MUST be at least **three times** the
+//!   part-target duration.
+//! - **`#EXT-X-PART-INF:PART-TARGET=<sec>`** (RFC 8216bis §4.4.3.7) — the header
+//!   declaring the part-target duration.
+//! - **`#EXT-X-PART:DURATION=<sec>,URI="<uri>"[,INDEPENDENT=YES]`**
+//!   (RFC 8216bis §4.4.4.9) — one line per part, emitted before the parent
+//!   segment's `#EXTINF`. `INDEPENDENT=YES` marks a part that begins with an
+//!   independently decodable frame (a sync sample).
+//! - **`#EXT-X-PRELOAD-HINT:TYPE=PART,URI="<next-part-uri>"`**
+//!   (RFC 8216bis §4.4.5.3) — hints the URI of the next, not-yet-available part
+//!   so a client can request it ahead of time.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+
+/// A single partial segment ("part") of a [`MediaSegment`] — RFC 8216bis
+/// §4.4.4.9 (`#EXT-X-PART`).
+///
+/// A part is an independently addressable CMAF chunk (a `moof`+`mdat` fragment)
+/// covering a sub-duration of its parent segment; a client can fetch and play it
+/// before the parent segment is complete. Parts are emitted as `#EXT-X-PART`
+/// lines immediately before the parent segment's `#EXTINF`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartSpec {
+    /// The part URI (e.g. `"seg0.1.m4s"`).
+    pub uri: String,
+    /// The part duration in seconds (e.g. `0.334`).
+    pub duration: f64,
+    /// If `true`, render `,INDEPENDENT=YES` — the part begins with an
+    /// independently decodable frame (a sync sample). RFC 8216bis §4.4.4.9.
+    pub independent: bool,
+}
 
 /// A single media segment in a media playlist.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +79,12 @@ pub struct MediaSegment {
     /// If `true`, emit `#EXT-X-DISCONTINUITY` immediately before this
     /// segment's `#EXTINF` line — RFC 8216 §4.3.4.3.
     pub discontinuous: bool,
+    /// Low-Latency HLS partial segments of this segment (RFC 8216bis §4.4.4.9).
+    /// Rendered as `#EXT-X-PART` lines *before* this segment's `#EXTINF`, but
+    /// only when the playlist is low-latency (see [`MediaPlaylist::low_latency`]).
+    /// Empty for a non-low-latency playlist or a segment whose parts have already
+    /// been coalesced into the full `#EXTINF`.
+    pub parts: Vec<PartSpec>,
 }
 
 /// A media playlist (`#EXTM3U` / `#EXTINF` / ...).
@@ -62,6 +110,45 @@ pub struct MediaPlaylist {
     /// Extra tag lines emitted verbatim before segment entries
     /// (e.g. `#EXT-X-DATERANGE:...`).
     pub extra_tags: Vec<String>,
+    /// Low-Latency HLS configuration (RFC 8216bis). When `Some`, `to_m3u8`
+    /// renders the LL-HLS directives — `#EXT-X-SERVER-CONTROL`,
+    /// `#EXT-X-PART-INF`, each segment's `#EXT-X-PART` lines, and (if set) the
+    /// `#EXT-X-PRELOAD-HINT`. When `None` (the default), none of these appear —
+    /// LL-HLS is strictly opt-in and a plain playlist is unchanged.
+    pub low_latency: Option<LowLatencyConfig>,
+}
+
+/// Low-Latency HLS playlist configuration — RFC 8216bis.
+///
+/// Presence of this config on a [`MediaPlaylist`] switches on the LL-HLS
+/// directives (`#EXT-X-SERVER-CONTROL`, `#EXT-X-PART-INF`, `#EXT-X-PART`,
+/// `#EXT-X-PRELOAD-HINT`); see the module docs for each tag's spec section.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LowLatencyConfig {
+    /// Part-target duration in seconds — the `PART-TARGET` of `#EXT-X-PART-INF`
+    /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s.
+    pub part_target: f64,
+    /// `PART-HOLD-BACK` in seconds — the `#EXT-X-SERVER-CONTROL` attribute
+    /// (RFC 8216bis §4.4.3.8). MUST be at least `3 × part_target`; the renderer
+    /// raises it to that floor if a smaller value is supplied.
+    pub part_hold_back: f64,
+    /// URI of the next, not-yet-available part — rendered as
+    /// `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="<uri>"` (RFC 8216bis §4.4.5.3). When
+    /// `None`, no preload hint is emitted (e.g. an ended playlist).
+    pub preload_hint_part: Option<String>,
+}
+
+impl LowLatencyConfig {
+    /// The `PART-HOLD-BACK` value actually rendered: at least `3 × part_target`
+    /// per RFC 8216bis §4.4.3.8, even if [`Self::part_hold_back`] is smaller.
+    pub fn effective_part_hold_back(&self) -> f64 {
+        let floor = 3.0 * self.part_target;
+        if self.part_hold_back < floor {
+            floor
+        } else {
+            self.part_hold_back
+        }
+    }
 }
 
 impl MediaPlaylist {
@@ -85,6 +172,22 @@ impl MediaPlaylist {
             ));
         }
 
+        // Low-Latency HLS header directives (RFC 8216bis §4.4.3.7/§4.4.3.8),
+        // opt-in via `low_latency`.
+        if let Some(ll) = &self.low_latency {
+            // #EXT-X-SERVER-CONTROL — CAN-BLOCK-RELOAD + PART-HOLD-BACK (>= 3×
+            // part-target, enforced by effective_part_hold_back).
+            s.push_str(&format!(
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK={}\n",
+                format_secs(ll.effective_part_hold_back()),
+            ));
+            // #EXT-X-PART-INF — the part-target duration.
+            s.push_str(&format!(
+                "#EXT-X-PART-INF:PART-TARGET={}\n",
+                format_secs(ll.part_target),
+            ));
+        }
+
         for tag in &self.extra_tags {
             s.push_str(tag);
             s.push('\n');
@@ -94,10 +197,33 @@ impl MediaPlaylist {
             if seg.discontinuous {
                 s.push_str("#EXT-X-DISCONTINUITY\n");
             }
+            // LL-HLS partial segments precede the parent's #EXTINF
+            // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
+            if self.low_latency.is_some() {
+                for part in &seg.parts {
+                    s.push_str(&format!(
+                        "#EXT-X-PART:DURATION={},URI=\"{}\"",
+                        format_secs(part.duration),
+                        part.uri,
+                    ));
+                    if part.independent {
+                        s.push_str(",INDEPENDENT=YES");
+                    }
+                    s.push('\n');
+                }
+            }
             // Format with exactly 3 decimal places per RFC 8216 examples.
             s.push_str(&format!("#EXTINF:{:.3},\n", seg.duration));
             s.push_str(&seg.uri);
             s.push('\n');
+        }
+
+        // LL-HLS preload hint for the next not-yet-available part
+        // (RFC 8216bis §4.4.5.3) — after the segment list, before ENDLIST.
+        if let Some(ll) = &self.low_latency {
+            if let Some(uri) = &ll.preload_hint_part {
+                s.push_str(&format!("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{}\"\n", uri));
+            }
         }
 
         if self.endlist {
@@ -106,6 +232,24 @@ impl MediaPlaylist {
 
         s
     }
+}
+
+/// Format a non-negative seconds value with up to three decimal places, trailing
+/// zeros trimmed (`0.334`, `1.5`, `6`) — the HLS decimal-floating-point form
+/// (RFC 8216bis §4.2). Integer millisecond math (no `std` float-format intrinsic
+/// beyond core `Display`, so it holds under `no_std`+`alloc`).
+fn format_secs(v: f64) -> String {
+    let millis = (v * 1000.0 + 0.5) as u64;
+    let whole = millis / 1000;
+    let frac = millis % 1000;
+    if frac == 0 {
+        return format!("{whole}");
+    }
+    let mut f = format!("{frac:03}");
+    while f.ends_with('0') {
+        f.pop();
+    }
+    format!("{whole}.{f}")
 }
 
 /// A variant stream entry in a master playlist.
@@ -171,9 +315,9 @@ impl MasterPlaylist {
 /// use transmux::hls::{mark_init_discontinuities, MediaSegment};
 /// let init_a = b"moov_a" as &[u8];
 /// let init_b = b"moov_b" as &[u8];
-/// let mut seg0 = MediaSegment { uri: "s0.m4s".into(), duration: 5.0, discontinuous: false };
-/// let mut seg1 = MediaSegment { uri: "s1.m4s".into(), duration: 5.0, discontinuous: false };
-/// let mut seg2 = MediaSegment { uri: "s2.m4s".into(), duration: 5.0, discontinuous: false };
+/// let mut seg0 = MediaSegment { uri: "s0.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![] };
+/// let mut seg1 = MediaSegment { uri: "s1.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![] };
+/// let mut seg2 = MediaSegment { uri: "s2.m4s".into(), duration: 5.0, discontinuous: false, parts: vec![] };
 /// let mut entries: Vec<(&[u8], &mut MediaSegment)> = vec![
 ///     (init_a, &mut seg0),
 ///     (init_b, &mut seg1),
@@ -210,6 +354,7 @@ mod tests {
             uri: uri.into(),
             duration,
             discontinuous: false,
+            parts: vec![],
         }
     }
 
@@ -218,6 +363,7 @@ mod tests {
             uri: uri.into(),
             duration,
             discontinuous: true,
+            parts: vec![],
         }
     }
 
@@ -230,6 +376,7 @@ mod tests {
             segments,
             endlist: true,
             extra_tags: vec![],
+            low_latency: None,
         }
     }
 
@@ -250,6 +397,7 @@ mod tests {
                 "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0"
                     .into(),
             ],
+            low_latency: None,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -273,6 +421,7 @@ mod tests {
             segments: vec![seg("seg.m4s", 6.000)],
             endlist: false,
             extra_tags: vec![],
+            low_latency: None,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -388,6 +537,7 @@ mod tests {
             segments: vec![seg("s5.m4s", 6.0)],
             endlist: false,
             extra_tags: vec![],
+            low_latency: None,
         };
         let out = pl.to_m3u8();
         assert!(

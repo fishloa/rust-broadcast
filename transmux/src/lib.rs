@@ -93,6 +93,7 @@ pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
 pub mod ll_dash;
+pub mod ll_hls;
 pub mod media;
 pub mod movie_fragment;
 pub mod mp4esds;
@@ -157,7 +158,10 @@ pub use flac::{
 };
 pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
-pub use hls::{mark_init_discontinuities, MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
+pub use hls::{
+    mark_init_discontinuities, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment,
+    PartSpec, Variant,
+};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
     DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry,
@@ -168,6 +172,7 @@ pub use init_segment::{
     TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
+pub use ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, Track};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
