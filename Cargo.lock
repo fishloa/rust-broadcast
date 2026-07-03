@@ -1418,6 +1418,7 @@ dependencies = [
  "rtsp-types",
  "rustls",
  "sdp-types",
+ "serde",
  "thiserror",
  "tokio",
  "tokio-rustls",
