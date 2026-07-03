@@ -50,6 +50,7 @@ round-trips through the IR.
 | Random access / index | `sidx`, `mfra`/`tfra`/`mfro` | ✅ |
 | Inband events / refs | `emsg`, `tref` | ✅ |
 | Encryption (CENC) | `senc`/`saiz`/`saio`/`tenc`/`pssh`/`sinf`/`schm`/`frma` | ✅ |
+| Multi-DRM `pssh` init data | Widevine (proto) · PlayReady (PRO/WRMHEADER) · FairPlay (`skd://`) — `drm` module | ✅ |
 | Sample-entry ext | `colr` (HDR), `pasp`, `clap` | ✅ |
 | Live / grouping | `prft`, `sbgp`/`sgpd`, `subs` | ✅ |
 

@@ -5,6 +5,27 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- **Multi-DRM `pssh` init-data generation** (#480): new `drm` module building
+  the system-specific `Data` payloads and convenience `pssh`-box builders on top
+  of the existing `ProtectionSystemSpecificHeaderBox` (ISO/IEC 23001-7 §12.1).
+  - DRM system-ID UUID consts: `WIDEVINE_SYSTEM_ID`, `PLAYREADY_SYSTEM_ID`,
+    `FAIRPLAY_SYSTEM_ID`, `COMMON_SYSTEM_ID`.
+  - **PlayReady**: `playready_wrmheader` (WRMHEADER v4.2.0.0 XML, UTF-16LE at
+    emit), `playready_pro` (the PlayReady Object: `u32` LE length, `u16` LE
+    record count, type-`0x0001` header record), and `playready_pssh`. The
+    critical CENC-UUID ↔ PlayReady LE-GUID byte-swap is exposed as
+    `cenc_kid_to_playready` / `playready_kid_to_cenc`.
+  - **Widevine**: `widevine_pssh_data` (hand-encoded `WidevineCencHeader`
+    protobuf — repeated `key_id`, `provider`, `protection_scheme`; minimal
+    varint + length-delimited encoding, no protobuf crate) and `widevine_pssh`.
+  - **FairPlay**: `fairplay_pssh_data` / `fairplay_pssh` (the `skd://` URI as
+    UTF-8 `Data` — packager convention, not a formal spec).
+  - `ProtectionSystemSpecificHeaderBox` gains `parse_box` (full-box parse) and
+    `to_vec` (whole-box serialize, lengths rebuilt from fields).
+  - No new dependency: base64/UTF-16LE/protobuf helpers are hand-rolled.
+
 ## [0.9.0] - 2026-07-03
 ### Added
 - Release-audit fixes: `rtcp` length uses `saturating_sub` (latent underflow);
