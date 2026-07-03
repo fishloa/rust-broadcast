@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WindowAckSize/SetPeerBandwidth — §5.4), and AMF0 `AmfValue`/`Command` for
   `connect`/`publish`/`play`/`createStream`/`onMetaData` (§7). AMF0 only (AMF3 noted as
   out of scope). `no_std` + `alloc`.
+- **I-frame-only trick-play track derivation** (#477): `trickplay::derive_iframe_track(&Track) -> Result<Track>` — retains only sync samples from a video track and folds each kept sample's duration to span the gap to the next keyframe, conserving the total timeline. `append_iframe_track(&mut Media, usize)` is a convenience that appends the derived track to an existing `Media`. Returns `Error::InvalidInput` when the source has no sync samples. Codec/container-agnostic; works with any `CodecConfig`. Downstream signalling (`EXT-X-I-FRAME-STREAM-INF` / DASH trick-mode) is deferred to a follow-up issue.
 - **RTCP control packets** (#514): typed `Parse`/`Serialize` for the RFC 3550 §6 set —
   `SenderReport` (PT 200), `ReceiverReport` (201), `SourceDescription` (202, with
   `SdesChunk`/`SdesItem`/`SdesItemType`), `Bye` (203), `App` (204), the shared
