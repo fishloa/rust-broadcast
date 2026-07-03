@@ -26,7 +26,9 @@
 //!   streaming CMAF segmentation ([`Segmenter`]); IR timeline conditioning —
 //!   PTS/DTS rebase, offset, 33-bit MPEG wrap-unroll, discontinuity-gap
 //!   insertion ([`rebase_to_zero`] / [`apply_offset`] / [`unroll_33bit_wraps`] /
-//!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor).
+//!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor);
+//!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
+//!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]).
 //! - **RTP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP.
 //!
@@ -118,6 +120,7 @@ pub mod sample_groups;
 pub mod segmenter;
 pub mod segments;
 pub mod smooth;
+pub mod splice;
 pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;
@@ -235,6 +238,7 @@ pub use smooth::{
     SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TfxdBox, FOURCC_AACL,
     FOURCC_H264, SMOOTH_TIMESCALE, TFXD_UUID,
 };
+pub use splice::{concat, snap_to_preceding_sync, splice_insert, SplicePoint, SpliceResult};
 pub use sps::{
     decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a, AvcSpsInfo,
     HevcSpsInfo,
