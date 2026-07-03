@@ -69,6 +69,10 @@ pub fn is_state_neutral(method: &Method) -> bool {
 /// Returns `Err(MethodNotValidInState)` if the method is not listed for the
 /// current state (a client MUST NOT issue such a request). State-neutral methods
 /// return the unchanged current state.
+// NOTE: client_next_state + server_next_state are two hand-written matches
+// mirroring RFC 2326 Appendix A.1/A.2 verbatim. A new SessionState variant
+// (the enum is #[non_exhaustive]) must update BOTH; the wildcard arm returns
+// MethodNotValidInState, so an unhandled combination fails safe, not silently.
 pub fn client_next_state(current: SessionState, method: &Method) -> Result<SessionState> {
     if is_state_neutral(method) {
         return Ok(current);

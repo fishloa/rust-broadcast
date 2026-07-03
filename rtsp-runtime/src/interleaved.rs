@@ -147,6 +147,20 @@ mod tests {
     }
 
     #[test]
+    fn frame_channel_byte_reflects_channel() {
+        // Mutating the channel changes the serialized channel byte (offset 1).
+        let f = InterleavedFrame::new(1u8, vec![9u8, 8, 7]);
+        let bytes = f.to_bytes().unwrap();
+        assert_eq!(bytes[0], MAGIC);
+        assert_eq!(bytes[1], 1, "channel byte must reflect channel 1");
+        assert_eq!(u16::from_be_bytes([bytes[2], bytes[3]]), 3);
+        let (parsed, consumed) = InterleavedFrame::parse(&bytes).unwrap().unwrap();
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(parsed.channel, 1);
+        assert_eq!(parsed.payload, vec![9, 8, 7]);
+    }
+
+    #[test]
     fn two_frames_plus_partial_returns_two_and_remainder() {
         let f0 = InterleavedFrame::new(0, vec![0xAA; 10]);
         let f1 = InterleavedFrame::new(1, vec![0xBB; 4]);
