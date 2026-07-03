@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-subtitle"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 description = "DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES."
 license      = "MIT OR Apache-2.0"
@@ -24,7 +24,7 @@ serde      = { version = "1", optional = true, features = ["derive"] }
 [dev-dependencies]
 serde_json = "1.0"
 # Reassemble subtitle PES from a real TS capture in the integration fixture test.
-mpeg-pes = { path = "../mpeg-pes", version = "0.1" }
+mpeg-pes = { path = "../mpeg-pes", version = "0.2" }
 
 [features]
 default = ["std"]

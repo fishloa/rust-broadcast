@@ -16,7 +16,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-smpte2038 = { path = "../smpte2038", version = "0.1", default-features = false }
+smpte2038 = { path = "../smpte2038", version = "0.2", default-features = false }
 
 [features]
 default = ["std"]

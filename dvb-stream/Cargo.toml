@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-stream"
-version      = "0.2.2"
+version      = "0.3.0"
 edition      = "2024"
 description  = "Async/tokio stream adapters over dvb-si SiDemux and dvb-t2mi T2miPump."
 license      = "MIT OR Apache-2.0"
@@ -19,7 +19,7 @@ all-features = true
 [dependencies]
 dvb-si       = { path = "../dvb-si",   version = "8", default-features = false, features = ["ts", "std"] }
 dvb-t2mi     = { path = "../dvb-t2mi", version = "8", default-features = false, features = ["ts", "std"] }
-mpeg-ts      = { path = "../mpeg-ts",  version = "0.1", default-features = false, features = ["std"] }
+mpeg-ts      = { path = "../mpeg-ts",  version = "0.2", default-features = false, features = ["std"] }
 futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
 

@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci-runtime"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 description = "Pure-Rust EN 50221 DVB Common Interface driver runtime — device I/O, TPDU/SPDU poll loop, and resource state machines over the dvb-ci codecs."
 license      = "MIT OR Apache-2.0"
@@ -21,7 +21,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-dvb-ci     = { path = "../dvb-ci", version = "0.5" }
+dvb-ci     = { path = "../dvb-ci", version = "0.6" }
 dvb-si     = { path = "../dvb-si", version = "8", default-features = false }
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 thiserror  = { version = "2" }

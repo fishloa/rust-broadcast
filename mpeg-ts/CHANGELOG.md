@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
+
 ## [0.1.2] — 2026-07-01
 ### Added
 - `PusiReassembler` — generic PUSI-delimited payload reassembler for non-PSI PID

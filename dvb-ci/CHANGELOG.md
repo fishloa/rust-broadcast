@@ -264,3 +264,8 @@ length fields computed from content and biting round-trip tests.
 Their `apdu_tag`s are retained in `docs/en_50221/apdu-tag-values.md`; until typed
 they parse as `AnyApdu::Unknown` (raw body preserved, lossless round-trip). CI+
 crypto (the CC resource) and the PC-Card hardware transport remain out of scope.
+
+## [0.6.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
+

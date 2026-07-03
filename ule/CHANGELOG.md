@@ -7,7 +7,9 @@ reflects that ULE (RFC 4326) is an IETF standard, not a DVB standard.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 
 ## [0.1.1] — 2026-06-29
 

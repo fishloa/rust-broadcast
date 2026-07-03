@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-flute"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "ALC/LCT/FLUTE/NORM multicast object-delivery wire formats (RFC 5651/5775/6726/5740): LCT headers with flag-driven CCI/TSI/TOI sizing, header-extension chains, ALC + FEC Payload IDs, FLUTE EXT_FDT/EXT_CENC, and NORM messages."
 license      = "MIT OR Apache-2.0"

@@ -1,5 +1,9 @@
 # Changelog
 
+## [8.4.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
+
 ## [8.3.0] - 2026-07-03
 ### Changed
 - Lockstep release with the DVB core crates; no functional changes to `dvb-t2mi`.
