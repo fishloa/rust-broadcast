@@ -113,6 +113,8 @@ round-trips through the IR.
 | CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
+| KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
+| KLV-over-RTP | — | `packetize_klv` / `depacketize_klv` (RFC 6597 `smpte336m`, timestamp-shared fragmentation, marker on last) | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
 | FLV demux/mux | `Unpackage`/`Package` | `FlvDemux` / `FlvMux` (H.264 + AAC, Adobe FLV v10.1 Annex E) | ✅ |
 | I-frame trick-play track | — | `derive_iframe_track` / `append_iframe_track` (sync-sample-only, timeline-conserving) | ✅ |

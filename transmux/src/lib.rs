@@ -107,6 +107,7 @@ pub mod flv;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
+pub mod klv;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
@@ -197,6 +198,11 @@ pub use init_segment::{
     SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use klv::{
+    CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
+    TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
+    ber_length, ber_oid, crc16_ccitt, encode_ber_length, encode_ber_oid,
+};
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, Track};
@@ -240,8 +246,9 @@ pub use rtmp::{
     RtmpError, RtmpMux,
 };
 pub use rtp::{
-    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, NAL_TYPE_IDR, RtpDepacketizer, RtpInput,
-    RtpInputStream, RtpMediaKind, RtpOutput, RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE,
+    DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, KLV_ENCODING_NAME,
+    NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
+    RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
 };
 pub use sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VisualSampleEntryFields,
