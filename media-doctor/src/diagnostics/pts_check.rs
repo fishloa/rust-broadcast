@@ -189,10 +189,8 @@ fn check_pes(
             Location::new(packet_index, pid),
             "pts-forbidden-flags",
             alloc::format!(
-                "Forbidden PTS_DTS_flags == 0b01 on PID 0x{:04X} \
-                 (stream_id 0x{:02X}) — ITU-T H.222.0 §2.4.3.7",
-                pid,
-                stream_id,
+                "Forbidden PTS_DTS_flags == 0b01 on PID 0x{pid:04X} \
+                 (stream_id 0x{stream_id:02X}) — ITU-T H.222.0 §2.4.3.7",
             ),
         ));
     }

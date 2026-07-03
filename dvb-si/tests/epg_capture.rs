@@ -179,7 +179,7 @@ fn eit_with_registry_surfaces_private_descriptor() {
             Ok(AnyDescriptor::Unknown { tag, .. }) => {
                 assert_eq!(*tag, MY_PRIVATE_TAG);
             }
-            other => panic!("expected Unknown (no registry), got {:?}", other),
+            other => panic!("expected Unknown (no registry), got {other:?}"),
         }
     }
 
@@ -200,7 +200,7 @@ fn eit_with_registry_surfaces_private_descriptor() {
                 let concrete = value.downcast_ref::<MyPrivateDesc>().unwrap();
                 assert_eq!(concrete.val, 0x42);
             }
-            other => panic!("expected Other (registry), got {:?}", other),
+            other => panic!("expected Other (registry), got {other:?}"),
         }
     }
 }

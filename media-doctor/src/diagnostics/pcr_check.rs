@@ -136,10 +136,7 @@ impl Diagnostic for PcrCheck {
                     Location::new(i, pid),
                     "pcr-repetition",
                     alloc::format!(
-                        "PCR repetition interval {} ms exceeds limit {} ms on PID 0x{:04X}",
-                        delta_ms,
-                        PCR_REPETITION_LIMIT_MS,
-                        pid,
+                        "PCR repetition interval {delta_ms} ms exceeds limit {PCR_REPETITION_LIMIT_MS} ms on PID 0x{pid:04X}",
                     ),
                 ));
             } else if delta > PCR_WARNING_LIMIT_TICKS {
@@ -148,10 +145,7 @@ impl Diagnostic for PcrCheck {
                     Location::new(i, pid),
                     "pcr-repetition",
                     alloc::format!(
-                        "PCR repetition interval {} ms exceeds recommended {} ms on PID 0x{:04X}",
-                        delta_ms,
-                        PCR_WARNING_LIMIT_MS,
-                        pid,
+                        "PCR repetition interval {delta_ms} ms exceeds recommended {PCR_WARNING_LIMIT_MS} ms on PID 0x{pid:04X}",
                     ),
                 ));
             }
@@ -166,11 +160,8 @@ impl Diagnostic for PcrCheck {
                     Location::new(i, pid),
                     "pcr-discontinuity",
                     alloc::format!(
-                        "PCR delta {} ms exceeds limit {} ms on PID 0x{:04X} \
+                        "PCR delta {delta_ms} ms exceeds limit {PCR_REPETITION_LIMIT_MS} ms on PID 0x{pid:04X} \
                          without discontinuity_indicator",
-                        delta_ms,
-                        PCR_REPETITION_LIMIT_MS,
-                        pid,
                     ),
                 ));
             }

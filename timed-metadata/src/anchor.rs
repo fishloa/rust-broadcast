@@ -33,10 +33,7 @@ pub fn format_rfc3339_ms(epoch_ms: i64) -> String {
     let tod = secs.rem_euclid(86_400);
     let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
     let (y, mo, d) = civil_from_days(days);
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        y, mo, d, h, m, s, ms
-    )
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}.{ms:03}Z")
 }
 
 /// Convert days-since-Unix-epoch to (year, month, day). Hinnant's algorithm.

@@ -99,7 +99,7 @@ fn main() {
                 {
                     for code in character_codes {
                         if let Ok(ch) = char::try_from(u32::from(*code)) {
-                            print!("    '{}'", ch);
+                            print!("    '{ch}'");
                         }
                     }
                     println!();

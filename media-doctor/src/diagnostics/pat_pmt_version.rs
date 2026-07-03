@@ -76,10 +76,8 @@ impl PatPmtVersionCheck {
                     Location::new(0, pid),
                     rule_id,
                     alloc::format!(
-                        "{table_name} version_number changed: {} → {} \
+                        "{table_name} version_number changed: {prev_ver} → {version} \
                          (table_id_ext=0x{table_id_ext:04X})",
-                        prev_ver,
-                        version,
                     ),
                 ));
             }

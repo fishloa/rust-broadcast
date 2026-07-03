@@ -332,8 +332,7 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     let after = count_pid_anomalies(&output, target_pid);
     assert!(
         after < before,
-        "PID {:#05x}: before={before}, after={after}; repair must reduce",
-        target_pid
+        "PID {target_pid:#05x}: before={before}, after={after}; repair must reduce"
     );
 }
 

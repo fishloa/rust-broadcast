@@ -550,7 +550,7 @@ mod tests {
             hdr[2..9].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
             hdr[9] = crc8(&hdr[..9]);
             let result = Bbheader::parse(&hdr).unwrap();
-            assert_eq!(result.matype.ts_gs, expected, "ts_gs=0x{:02b}", ts_gs_val);
+            assert_eq!(result.matype.ts_gs, expected, "ts_gs=0x{ts_gs_val:02b}");
         }
     }
 

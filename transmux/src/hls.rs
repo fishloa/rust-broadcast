@@ -197,7 +197,7 @@ impl MediaPlaylist {
         } else {
             self.version
         };
-        s.push_str(&format!("#EXT-X-VERSION:{}\n", version));
+        s.push_str(&format!("#EXT-X-VERSION:{version}\n"));
         if self.iframes_only {
             s.push_str("#EXT-X-I-FRAMES-ONLY\n");
         }
@@ -260,7 +260,7 @@ impl MediaPlaylist {
         // (RFC 8216bis §4.4.5.3) — after the segment list, before ENDLIST.
         if let Some(ll) = &self.low_latency {
             if let Some(uri) = &ll.preload_hint_part {
-                s.push_str(&format!("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{}\"\n", uri));
+                s.push_str(&format!("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{uri}\"\n"));
             }
         }
 
@@ -356,7 +356,7 @@ impl MasterPlaylist {
                 var.bandwidth, var.codecs,
             ));
             if let Some((w, h)) = var.resolution {
-                s.push_str(&format!(",RESOLUTION={}x{}", w, h));
+                s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
             s.push('\n');
             s.push_str(&var.uri);
@@ -371,10 +371,10 @@ impl MasterPlaylist {
                 iv.bandwidth
             ));
             if let Some(c) = &iv.codecs {
-                s.push_str(&format!(",CODECS=\"{}\"", c));
+                s.push_str(&format!(",CODECS=\"{c}\""));
             }
             if let Some((w, h)) = iv.resolution {
-                s.push_str(&format!(",RESOLUTION={}x{}", w, h));
+                s.push_str(&format!(",RESOLUTION={w}x{h}"));
             }
             s.push_str(&format!(",URI=\"{}\"\n", iv.uri));
         }

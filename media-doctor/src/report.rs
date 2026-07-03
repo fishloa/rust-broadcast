@@ -154,8 +154,7 @@ impl fmt::Display for Report {
             .count();
         writeln!(
             f,
-            "Findings: {} error(s), {} warning(s), {} info(s)",
-            errs, warns, infos
+            "Findings: {errs} error(s), {warns} warning(s), {infos} info(s)"
         )?;
         for (i, finding) in self.findings.iter().enumerate() {
             writeln!(f, "{:>4}. {}", i + 1, finding)?;

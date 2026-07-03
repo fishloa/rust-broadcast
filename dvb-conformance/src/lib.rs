@@ -591,7 +591,7 @@ impl ConformanceMonitor {
                 Indicator::TransportError,
                 Some(pid),
                 t,
-                format!("transport_error_indicator set on PID 0x{:04X}", pid),
+                format!("transport_error_indicator set on PID 0x{pid:04X}"),
             );
         }
 
@@ -625,10 +625,7 @@ impl ConformanceMonitor {
                 Indicator::PmtError2,
                 Some(pid),
                 t,
-                format!(
-                    "scrambling_control_field != 00 on program_map_PID 0x{:04X}",
-                    pid
-                ),
+                format!("scrambling_control_field != 00 on program_map_PID 0x{pid:04X}"),
             );
         }
 
@@ -644,10 +641,7 @@ impl ConformanceMonitor {
                 Indicator::CatError,
                 Some(pid),
                 t,
-                format!(
-                    "scrambled packet on PID 0x{:04X} but no CAT seen on PID 0x0001",
-                    pid
-                ),
+                format!("scrambled packet on PID 0x{pid:04X} but no CAT seen on PID 0x0001"),
             );
         }
 
@@ -851,10 +845,7 @@ impl ConformanceMonitor {
                 Indicator::ContinuityCountError,
                 Some(pid),
                 t,
-                format!(
-                    "second consecutive duplicate on PID 0x{:04X} (cc={})",
-                    pid, cc
-                ),
+                format!("second consecutive duplicate on PID 0x{pid:04X} (cc={cc})"),
             );
         }
         if should_emit_cc {
@@ -862,7 +853,7 @@ impl ConformanceMonitor {
                 Indicator::ContinuityCountError,
                 Some(pid),
                 t,
-                format!("expected cc={}, got {} on PID 0x{:04X}", expected, cc, pid),
+                format!("expected cc={expected}, got {cc} on PID 0x{pid:04X}"),
             );
         }
 
@@ -1098,8 +1089,7 @@ impl ConformanceMonitor {
                 Some(pid),
                 t,
                 format!(
-                    "PCR delta {} ms exceeds limit {} ms on PID 0x{:04X} without discontinuity_indicator",
-                    delta_ms, limit_ms, pid
+                    "PCR delta {delta_ms} ms exceeds limit {limit_ms} ms on PID 0x{pid:04X} without discontinuity_indicator"
                 ),
             );
         }
@@ -1245,10 +1235,7 @@ impl ConformanceMonitor {
                 Indicator::PmtError2,
                 Some(pid),
                 t,
-                format!(
-                    "no PMT section on program_map_PID 0x{:04X} within {} ms",
-                    pid, interval_ms
-                ),
+                format!("no PMT section on program_map_PID 0x{pid:04X} within {interval_ms} ms"),
             );
         }
 
@@ -1274,10 +1261,7 @@ impl ConformanceMonitor {
                 Indicator::PidError,
                 Some(pid),
                 t,
-                format!(
-                    "referenced PID 0x{:04X} absent for > {} s",
-                    pid, period_secs
-                ),
+                format!("referenced PID 0x{pid:04X} absent for > {period_secs} s"),
             );
         }
 
@@ -1325,10 +1309,7 @@ impl ConformanceMonitor {
                 Indicator::SiRepetitionError,
                 Some(pid),
                 t,
-                format!(
-                    "{} repetition interval {} ms exceeds {} ms",
-                    table_name, interval_ms, limit_ms
-                ),
+                format!("{table_name} repetition interval {interval_ms} ms exceeds {limit_ms} ms"),
             );
         }
     }

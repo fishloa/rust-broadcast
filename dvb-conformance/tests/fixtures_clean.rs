@@ -36,8 +36,8 @@ fn read_fixture(name: &str) -> Vec<u8> {
     } else {
         "/dvb-si/"
     };
-    let path = format!("{}{}{}", base, subdir, name);
-    let mut f = File::open(&path).unwrap_or_else(|e| panic!("cannot open {}: {}", path, e));
+    let path = format!("{base}{subdir}{name}");
+    let mut f = File::open(&path).unwrap_or_else(|e| panic!("cannot open {path}: {e}"));
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).unwrap();
     buf

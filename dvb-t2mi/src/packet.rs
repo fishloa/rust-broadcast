@@ -264,7 +264,7 @@ mod tests {
         ];
         for v in valid_types {
             let result = PacketType::try_from(v);
-            assert!(result.is_ok(), "PacketType::try_from({:#04x}) failed", v);
+            assert!(result.is_ok(), "PacketType::try_from({v:#04x}) failed");
         }
     }
 
@@ -308,7 +308,7 @@ mod tests {
             assert_eq!(have, 5);
             assert_eq!(what, "T2MI Header");
         } else {
-            panic!("Expected BufferTooShort, got {:?}", err);
+            panic!("Expected BufferTooShort, got {err:?}");
         }
     }
 
@@ -337,9 +337,7 @@ mod tests {
             let result = Header::parse(&buf);
             assert!(
                 result.is_ok(),
-                "parse failed for packet_type {:#04x}: {:?}",
-                t,
-                result
+                "parse failed for packet_type {t:#04x}: {result:?}"
             );
             assert_eq!(
                 result.unwrap().packet_type,
@@ -364,7 +362,7 @@ mod tests {
         for id in 0..=7 {
             let buf = [0x00u8, 0x00, id, 0x00, 0x00, 0x08];
             let hdr = Header::parse(&buf).unwrap();
-            assert_eq!(hdr.t2mi_stream_id, id, "stream_id mismatch for id={}", id);
+            assert_eq!(hdr.t2mi_stream_id, id, "stream_id mismatch for id={id}");
         }
     }
 
@@ -456,7 +454,7 @@ mod tests {
             let mut buf = [0u8; HEADER_LEN];
             original.serialize_into(&mut buf).unwrap();
             let parsed = Header::parse(&buf).unwrap();
-            assert_eq!(original, parsed, "Round-trip failed for type {:#04x}", t);
+            assert_eq!(original, parsed, "Round-trip failed for type {t:#04x}");
         }
     }
 
