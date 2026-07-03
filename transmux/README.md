@@ -85,8 +85,10 @@ round-trips through the IR.
 | Init segment | `build_init_segment` (ftyp + fragmented-init moov) | ✅ |
 | Media segment (batch) | `build_media_segment` (styp + moof + mdat) from `TrackSpec` / `Sample` | ✅ |
 | **Streaming segmenter** | `Segmenter` — `push` samples → `take_ready` segments, keyframe-cut at a target duration | ✅ |
+| **LL-HLS segmenter** | `LlHlsSegmenter` — `with_part_target` + `take_ready_parts` → partial-segment CMAF chunks (RFC 8216bis §4.4.4.9) before the segment closes | ✅ |
 | NAL conversion | Annex B ↔ length-prefixed (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216); `#EXT-X-DISCONTINUITY` / `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.4.3/§4.3.3.3) | ✅ |
+| LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3) | ✅ |
 
 ### Hub spokes (`Unpackage` / `Package`)
 

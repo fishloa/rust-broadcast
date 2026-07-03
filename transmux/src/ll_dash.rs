@@ -467,7 +467,11 @@ impl Package for LlSegmenter {
 /// `default-base-is-moof` offset resolution) so a segment's chunks concatenate to
 /// the whole-segment coded-sample stream. `with_styp` gates the leading `styp`
 /// (present on the first chunk of a segment only).
-fn build_chunk(
+///
+/// Shared with the LL-HLS **partial-segment** builder
+/// ([`crate::ll_hls`]): an LL-HLS part is exactly this fragment structure scoped
+/// to a sub-duration, so both layers emit byte-compatible `moof`+`mdat`.
+pub(crate) fn build_chunk(
     sequence_number: u32,
     tracks: &[FragmentTrackData<'_>],
     with_styp: bool,

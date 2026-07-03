@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Low-Latency HLS — partial segments + preload hints** (#454, RFC 8216bis):
+  a new [`ll_hls`] module with [`LlHlsSegmenter`], a segmenter that emits each
+  segment's **partial segments** ("parts", RFC 8216bis §4.4.4.9) — independent
+  CMAF `moof`+`mdat` fragments covering a configurable `part_target` sub-duration
+  — before the parent segment closes. [`LlHlsSegmenter::with_part_target`]
+  configures the part target (ms) alongside the segment target;
+  [`LlHlsSegmenter::take_ready_parts`] drains ready [`PartInfo`]s (bytes,
+  duration, `independent`, `segment_seq`, `part_index`) distinct from the full
+  segments drained by [`LlHlsSegmenter::take_ready_segments`]. A part is flagged
+  independent when it begins on a sync sample; a segment's parts concatenate to
+  exactly the whole-segment [`build_media_segment`] media. The playlist model
+  gains an opt-in [`hls::MediaPlaylist::low_latency`] config
+  ([`hls::LowLatencyConfig`]) that renders the LL-HLS directives —
+  `#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=<sec>`
+  (§4.4.3.8, PART-HOLD-BACK held to ≥ 3× part-target),
+  `#EXT-X-PART-INF:PART-TARGET=<sec>` (§4.4.3.7),
+  `#EXT-X-PART:DURATION=<sec>,URI="…"[,INDEPENDENT=YES]` (§4.4.4.9,
+  per [`hls::PartSpec`]), and `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="…"` (§4.4.5.3).
+  A plain playlist (no `low_latency`) renders none of these — LL-HLS is strictly
+  opt-in.
 - **`emsg` emission in media segments** (#455): [`build_media_segment_with_events`]
   emits one or more MPEG-DASH Event Message Boxes (`emsg`, ISO/IEC 14496-12 §8.8 /
   ISO/IEC 23009-1 §5.10.3.3) at the start of each media segment, after `styp` and

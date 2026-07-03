@@ -17,16 +17,19 @@ fn media_playlist_rfc_valid() {
                 uri: "seg0.m4s".into(),
                 duration: 9.009,
                 discontinuous: false,
+                parts: vec![],
             },
             MediaSegment {
                 uri: "seg1.m4s".into(),
                 duration: 9.009,
                 discontinuous: false,
+                parts: vec![],
             },
             MediaSegment {
                 uri: "seg2.m4s".into(),
                 duration: 3.003,
                 discontinuous: false,
+                parts: vec![],
             },
         ],
         endlist: true,
@@ -34,6 +37,7 @@ fn media_playlist_rfc_valid() {
             "#EXT-X-DATERANGE:ID=\"ad-1\",START-DATE=\"2024-01-01T00:00:00.000Z\",DURATION=15.0"
                 .into(),
         ],
+        low_latency: None,
     };
 
     let m3u8 = pl.to_m3u8();
@@ -71,9 +75,11 @@ fn media_playlist_invalid_target_duration_reported() {
             uri: "long.m4s".into(),
             duration: 15.0,
             discontinuous: false,
+            parts: vec![],
         }],
         endlist: true,
         extra_tags: vec![],
+        low_latency: None,
     };
 
     let m3u8 = pl.to_m3u8();
