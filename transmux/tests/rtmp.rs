@@ -12,10 +12,10 @@
 //! 4. AMF0 `connect` command round-trip + member-mutation sensitivity.
 //! 5. RTMP → IR equals FLV → IR (track/sample counts + per-sample sizes).
 
-use broadcast_common::Unpackage;
+use broadcast_common::{Package, Unpackage};
 use transmux::rtmp::{
     self, msg_type, read_chunks, write_chunks, AmfValue, BasicHeader, Command, Handshake0,
-    Handshake1, Handshake2, Message, MessageHeader, ProtocolControl, RtmpDemux,
+    Handshake1, Handshake2, Message, MessageHeader, ProtocolControl, RtmpDemux, RtmpMux,
     HANDSHAKE_PACKET_LEN, RTMP_VERSION,
 };
 use transmux::FlvDemux;
@@ -339,6 +339,35 @@ fn rtmp_demux_matches_flv_demux() {
                 rs.composition_offset, fs.composition_offset,
                 "sample {i} composition offset"
             );
+        }
+    }
+}
+
+/// IR → `RtmpMux` → wire → `RtmpDemux` → IR must preserve the sample set.
+/// A raw-passthrough `RtmpMux` cannot pass: the bytes are re-chunked and the A/V
+/// bodies re-framed as RTMP messages, then de-chunked and FLV-routed back.
+#[test]
+fn rtmp_mux_round_trip_preserves_samples() {
+    let mut flv_demux = FlvDemux::new();
+    let media = flv_demux.unpackage(FLV).expect("FLV → IR");
+
+    let mut mux = RtmpMux::new();
+    let wire = mux.package(&media).expect("IR → RTMP wire");
+    assert!(!wire.is_empty(), "muxed RTMP wire is non-empty");
+
+    let mut demux = RtmpDemux::new();
+    let back = demux.unpackage(&wire).expect("RTMP wire → IR");
+
+    assert_eq!(
+        back.tracks.len(),
+        media.tracks.len(),
+        "track count preserved"
+    );
+    for (b, m) in back.tracks.iter().zip(&media.tracks) {
+        assert_eq!(b.samples.len(), m.samples.len(), "sample count preserved");
+        for (i, (bs, ms)) in b.samples.iter().zip(&m.samples).enumerate() {
+            assert_eq!(bs.data, ms.data, "sample {i} bytes preserved");
+            assert_eq!(bs.is_sync, ms.is_sync, "sample {i} sync flag preserved");
         }
     }
 }
