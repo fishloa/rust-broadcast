@@ -1,12 +1,16 @@
 //! H.264 / H.265 sequence parameter set (SPS) decode.
 //!
 //! Decodes the fields needed by the transmux pipeline — profile / level /
-//! dimensions / chroma / bit-depth — from the raw NAL unit bytes stored in
-//! [`AvcSps`](crate::nalu_types::AvcSps) and [`HevcNalUnit`](crate::nalu_types::HevcNalUnit).
+//! dimensions / chroma / bit-depth / frame rate — from the raw NAL unit bytes
+//! stored in [`AvcSps`](crate::nalu_types::AvcSps) and
+//! [`HevcNalUnit`](crate::nalu_types::HevcNalUnit).
 //!
 //! # Spec citations
 //!
 //! - **H.264 SPS**: ITU-T H.264 §7.3.2.1.1 (sequence parameter set data).
+//! - **H.264 VUI**: ITU-T H.264 §E.1.1 (vui_parameters), §E.2.1 (timing_info
+//!   semantics): `num_units_in_tick` and `time_scale` yield frame rate as
+//!   `time_scale / (2 × num_units_in_tick)`.
 //! - **H.265 SPS + PTL**: ITU-T H.265 §7.3.2.2 (SPS) + §7.3.3 (profile_tier_level).
 //! - **Coded dimensions**: see `fixtures/ts/CODEC-ORACLE.md`.
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
@@ -53,7 +57,7 @@ fn sub_height_c(chroma_format_idc: u8) -> u32 {
 // ---------------------------------------------------------------------------
 
 /// Decoded fields from an H.264/AVC sequence parameter set.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AvcSpsInfo {
     /// `profile_idc` — SPS byte index 1.
     pub profile_idc: u8,
@@ -76,6 +80,22 @@ pub struct AvcSpsInfo {
     pub width: u32,
     /// Coded height in luma samples (after frame cropping).
     pub height: u32,
+    /// `num_units_in_tick` from VUI `timing_info` (ITU-T H.264 §E.1.1).
+    ///
+    /// Present only when `vui_parameters_present_flag` and
+    /// `timing_info_present_flag` are both 1 in the SPS.
+    pub num_units_in_tick: Option<u32>,
+    /// `time_scale` from VUI `timing_info` (ITU-T H.264 §E.1.1).
+    ///
+    /// Present only when `vui_parameters_present_flag` and
+    /// `timing_info_present_flag` are both 1 in the SPS.
+    pub time_scale: Option<u32>,
+    /// Frame rate derived from VUI `timing_info` (ITU-T H.264 §E.2.1):
+    /// `time_scale / (2 × num_units_in_tick)`.
+    ///
+    /// `None` when `vui_parameters_present_flag` or `timing_info_present_flag`
+    /// is 0, or when `num_units_in_tick` is 0.
+    pub fps: Option<f32>,
 }
 
 /// Decode an H.264 SPS RBSP.
@@ -205,6 +225,10 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     let width = (pic_width_in_mbs * 16).saturating_sub(crop_unit_x * (crop_left + crop_right));
     let height = (frame_height_in_mbs * 16).saturating_sub(crop_unit_y * (crop_top + crop_bottom));
 
+    // vui_parameters — ITU-T H.264 §E.1.1.  Walk in syntax order to reach
+    // timing_info; stop reading after timing_info_present_flag.
+    let (num_units_in_tick, time_scale, fps) = parse_avc_vui_timing(&mut r);
+
     Ok(AvcSpsInfo {
         profile_idc,
         constraint_flags,
@@ -216,7 +240,86 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
         frame_mbs_only,
         width: width as u32,
         height: height as u32,
+        num_units_in_tick,
+        time_scale,
+        fps,
     })
+}
+
+/// Walk the H.264 VUI syntax (ITU-T H.264 §E.1.1) in order up to and including
+/// `timing_info_present_flag`.  Returns `(num_units_in_tick, time_scale, fps)`.
+///
+/// All three are `None` when VUI is absent, `timing_info_present_flag` is 0, or
+/// the bit-reader runs out of data before reaching timing_info (e.g. truncated
+/// SPS).  Errors are silently swallowed because VUI is optional and its absence
+/// must not prevent the caller from using the already-decoded mandatory fields.
+fn parse_avc_vui_timing(r: &mut BitReader) -> (Option<u32>, Option<u32>, Option<f32>) {
+    parse_avc_vui_timing_inner(r).unwrap_or((None, None, None))
+}
+
+fn parse_avc_vui_timing_inner(
+    r: &mut BitReader,
+) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
+    // vui_parameters_present_flag  u(1)
+    let vui_present = r.read_flag("vui_parameters_present_flag")?;
+    if !vui_present {
+        return Ok((None, None, None));
+    }
+
+    // aspect_ratio_info_present_flag  u(1) — §E.1.1
+    let ari_present = r.read_flag("aspect_ratio_info_present_flag")?;
+    if ari_present {
+        let aspect_ratio_idc = r.read_bits(8, "aspect_ratio_idc")? as u8;
+        // Extended_SAR = 255 → sar_width u(16), sar_height u(16)
+        if aspect_ratio_idc == 255 {
+            let _ = r.read_bits(16, "sar_width")?;
+            let _ = r.read_bits(16, "sar_height")?;
+        }
+    }
+
+    // overscan_info_present_flag  u(1)
+    let overscan_present = r.read_flag("overscan_info_present_flag")?;
+    if overscan_present {
+        let _ = r.read_flag("overscan_appropriate_flag")?;
+    }
+
+    // video_signal_type_present_flag  u(1)
+    let vst_present = r.read_flag("video_signal_type_present_flag")?;
+    if vst_present {
+        let _ = r.read_bits(3, "video_format")?;
+        let _ = r.read_flag("video_full_range_flag")?;
+        let colour_desc = r.read_flag("colour_description_present_flag")?;
+        if colour_desc {
+            let _ = r.read_bits(8, "colour_primaries")?;
+            let _ = r.read_bits(8, "transfer_characteristics")?;
+            let _ = r.read_bits(8, "matrix_coefficients")?;
+        }
+    }
+
+    // chroma_loc_info_present_flag  u(1)
+    let cli_present = r.read_flag("chroma_loc_info_present_flag")?;
+    if cli_present {
+        let _ = r.read_ue("chroma_sample_loc_type_top_field")?;
+        let _ = r.read_ue("chroma_sample_loc_type_bottom_field")?;
+    }
+
+    // timing_info_present_flag  u(1)
+    let timing_present = r.read_flag("timing_info_present_flag")?;
+    if !timing_present {
+        return Ok((None, None, None));
+    }
+
+    let num_units = r.read_bits(32, "num_units_in_tick")? as u32;
+    let ts = r.read_bits(32, "time_scale")? as u32;
+    let _ = r.read_flag("fixed_frame_rate_flag")?;
+
+    let fps = if num_units > 0 {
+        Some(ts as f32 / (2.0 * num_units as f32))
+    } else {
+        None
+    };
+
+    Ok((Some(num_units), Some(ts), fps))
 }
 
 // ---------------------------------------------------------------------------
@@ -762,6 +865,63 @@ mod tests {
     #[test]
     fn rfc6381_mp4a_aac_lc() {
         assert_eq!(rfc6381_mp4a(2), "mp4a.40.2");
+    }
+
+    /// Positive VUI timing case: a real H.264 High-profile SPS extracted from
+    /// `fixtures/mp4/h264_high.mp4` (ffprobe: `r_frame_rate=25/1`).
+    ///
+    /// The SPS carries `timing_info_present_flag=1` with:
+    /// - `num_units_in_tick = 1`
+    /// - `time_scale        = 50`
+    /// - fps = 50 / (2 × 1) = 25.0
+    ///
+    /// Bytes are the verbatim SPS NAL (including 0x67 header) extracted from
+    /// the Annex-B stream of `h264_high.mp4` via `h264_mp4toannexb`.
+    #[test]
+    fn avc_sps_vui_timing_25fps() {
+        // profile_idc=100 (High), level_idc=13, carries VUI with timing_info.
+        let sps: &[u8] = &[
+            0x67, 0x64, 0x00, 0x0D, 0xAC, 0xD9, 0x41, 0x41, 0xFB, 0x01, 0x10, 0x00, 0x00, 0x03,
+            0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xF1, 0x42, 0x99, 0x60,
+        ];
+        let info = decode_avc_sps(sps).unwrap();
+
+        // Regression: width/height/profile unchanged by VUI parse.
+        assert_eq!(info.profile_idc, 100);
+        assert_eq!(info.level_idc, 13);
+
+        // VUI timing fields.
+        assert_eq!(info.num_units_in_tick, Some(1));
+        assert_eq!(info.time_scale, Some(50));
+        let fps = info.fps.expect("fps must be Some for this SPS");
+        assert!(
+            (fps - 25.0_f32).abs() < 0.001,
+            "expected 25.0 fps, got {fps}"
+        );
+    }
+
+    /// Negative VUI timing case: a hand-built High-profile SPS whose VUI has
+    /// `timing_info_present_flag=0`.  All three timing fields must be `None`.
+    ///
+    /// This SPS is from the `decode_high_sps_with_scaling_lists` test below
+    /// (parsed inline — it has VUI but no timing_info block).
+    #[test]
+    fn avc_sps_no_timing_info_yields_none() {
+        // Same SPS used in decode_high_sps_with_scaling_lists below.
+        // That SPS has vui_parameters_present_flag=1 but timing_info_present_flag=0.
+        let sps: &[u8] = &[
+            0x67, 0x64, 0x00, 0x0D, 0xAD, 0xC8, 0xBF, 0xFE, 0x03, 0xC1, 0x41, 0xF9,
+        ];
+        let info = decode_avc_sps(sps).unwrap();
+        assert_eq!(
+            info.num_units_in_tick, None,
+            "no timing_info → num_units_in_tick must be None"
+        );
+        assert_eq!(
+            info.time_scale, None,
+            "no timing_info → time_scale must be None"
+        );
+        assert_eq!(info.fps, None, "no timing_info → fps must be None");
     }
 
     #[test]
