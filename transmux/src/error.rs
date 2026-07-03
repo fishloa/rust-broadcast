@@ -96,4 +96,9 @@ pub enum Error {
     /// ([`PsDemux`](crate::PsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
     #[error("program stream: {0}")]
     Ps(#[from] mpeg_ps::Error),
+
+    /// An `emsg` (Event Message Box, ISO/IEC 23009-1 §5.10.3.3) could not be
+    /// serialized (e.g. the box would exceed the 4-byte `size` field range).
+    #[error("emsg serialize: {0}")]
+    EmsgSerialize(#[from] mp4_emsg::Error),
 }

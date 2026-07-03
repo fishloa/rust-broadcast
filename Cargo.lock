@@ -1795,6 +1795,7 @@ dependencies = [
  "broadcast-common",
  "ctr",
  "media-doctor",
+ "mp4-emsg",
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
