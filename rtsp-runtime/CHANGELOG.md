@@ -4,7 +4,6 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
 
 ### Added
 - Pre-release hardening (release audit): `tests/label_coverage.rs` #204 drift-guard
@@ -29,7 +28,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New `Error::Io` / `Error::Tls` variants for the async adapter's failure
   surface.
 
-## [0.1.0]
+## [0.1.0] - 2026-07-03
 
 Initial release — the sans-IO RTSP 1.0 ([RFC 2326](https://www.rfc-editor.org/rfc/rfc2326))
 session engine.
