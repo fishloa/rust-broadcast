@@ -9,7 +9,7 @@ keywords = ["dvb", "subtitle", "subtitling", "broadcast", "mpeg-ts"]
 categories = ["parser-implementations", "multimedia", "no-std"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.85"
+rust-version = "1.86"
 exclude = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]

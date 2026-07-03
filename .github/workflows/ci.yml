@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        rust: [stable, "1.85"] # 1.85 == workspace rust-version (MSRV; edition2024 dep floor)
+        rust: [stable, "1.86"] # 1.86 == workspace rust-version (MSRV; icu/idna edition2024 floor)
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -27,7 +27,7 @@ jobs:
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
       # versions (some newer transitive crates require edition2024 / Cargo 1.85).
       # dvb-stream is excluded from the core matrix: it depends on tokio whose
-      # MSRV moves faster than the workspace 1.85 pin; it has its own CI job
+      # MSRV moves faster than the workspace 1.86 pin; it has its own CI job
       # below (stable-only). dvb-tools and dvb-conformance are excluded because
       # they are feature-forcing leaf crates that would mask regressions in
       # the library crates' bare --no-default-features build.
@@ -49,7 +49,7 @@ jobs:
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
       # ts/serde; dvb-stream always depends on tokio which has a faster-moving
-      # MSRV than the workspace 1.85 lock. Including any of them would — via
+      # MSRV than the workspace 1.86 lock. Including any of them would — via
       # workspace feature unification — force those features on and mask a
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
@@ -148,7 +148,7 @@ jobs:
         run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
 
   # dvb-stream is versioned and released independently from the lockstep
-  # v-tag publish (tokio's MSRV moves faster than workspace 1.85). It is
+  # v-tag publish (tokio's MSRV moves faster than workspace 1.86). It is
   # tested on stable only in this dedicated job.
   dvb-stream:
     name: dvb-stream (stable)

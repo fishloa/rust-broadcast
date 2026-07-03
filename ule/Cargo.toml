@@ -9,7 +9,7 @@ keywords = ["ule", "rfc4326", "mpeg-ts", "encapsulation", "broadcast"]
 categories = ["parser-implementations", "network-programming", "no-std"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.85"
+rust-version = "1.86"
 exclude = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]
