@@ -67,4 +67,13 @@ pub enum Error {
     /// The request required a request URI but none was set.
     #[error("request URI required but not set")]
     MissingRequestUri,
+
+    /// A socket IO operation failed in the async adapter (feature `tokio`).
+    #[error("socket IO error: {0}")]
+    Io(String),
+
+    /// A TLS operation failed in the async adapter (feature `tls`): bad server
+    /// name, handshake, or certificate configuration (`rtsps://`, RFC 2326 §19).
+    #[error("TLS error: {0}")]
+    Tls(String),
 }

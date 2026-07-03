@@ -25,9 +25,14 @@
 //!   method against the server state table (`455` otherwise), allocating a
 //!   session on SETUP, and negotiating `Transport`.
 //!
-//! An optional `tokio` (+ `tls` for `rtsps://`) socket adapter that drives real
-//! connections over this same core is planned for a later release; the features
-//! are declared but currently unused.
+//! An optional `tokio` socket adapter (feature `tokio`) drives real connections
+//! over this same core: the `io::AsyncRtspClient` and `io::AsyncRtspServer`
+//! types own a `tokio::net::TcpStream`, move the bytes the session
+//! produces/consumes, and surface the same [`ClientEvent`]/[`ServerEvent`]s.
+//! With the `tls` feature the adapter also speaks `rtsps://` (RTSP over TLS,
+//! default port 322) by wrapping the stream in a `tokio-rustls` session before
+//! the RTSP exchange. Both are generic over the stream type, so identical logic
+//! runs over TCP and TLS.
 //!
 //! # Module map
 //!
@@ -41,6 +46,9 @@
 //!   (§14; `docs/auth.md`).
 //! - [`client`] — [`ClientSession`] and [`ClientEvent`].
 //! - [`server`] — [`ServerSession`] and [`ServerEvent`].
+//! - `io` (feature `tokio`) — the async socket adapter `AsyncRtspClient` /
+//!   `AsyncRtspServer`, with `rtsps://` TLS entry points under the `tls`
+//!   feature.
 //! - [`error`] — the [`Error`] enum and [`Result`] alias.
 //!
 //! Methods, status codes, and their state effects are catalogued in
@@ -52,6 +60,8 @@ pub mod auth;
 pub mod client;
 pub mod error;
 pub mod interleaved;
+#[cfg(feature = "tokio")]
+pub mod io;
 pub mod server;
 pub mod state;
 pub mod transport;
@@ -60,6 +70,8 @@ pub use auth::{Authenticator, Credentials};
 pub use client::{ClientEvent, ClientSession};
 pub use error::{Error, Result};
 pub use interleaved::InterleavedFrame;
+#[cfg(feature = "tokio")]
+pub use io::{AsyncRtspClient, AsyncRtspServer, RTSPS_DEFAULT_PORT, RTSP_DEFAULT_PORT};
 pub use server::{ServerEvent, ServerSession};
 pub use state::SessionState;
 pub use transport::{Delivery, LowerTransport, Transport, TransportSpec};

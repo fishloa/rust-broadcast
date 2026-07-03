@@ -4,6 +4,27 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Async socket adapter** (feature `tokio`) — `io::AsyncRtspClient` /
+  `io::AsyncRtspServer` (RFC 2326 transport). Each owns a
+  `tokio::net::TcpStream`, writes the request/response bytes the sans-IO session
+  produces, reads the peer's reply — buffering fragmented reads until a full
+  RTSP message or interleaved `$`-frame parses (§10.12) — feeds it through
+  `handle_data`/`handle_request`, and returns the `ClientEvent`/`ServerEvent`s.
+  The client answers Digest `401` challenges transparently and pulls interleaved
+  media with `recv_interleaved`; the server sends media with `send_interleaved`.
+  Both are generic over the stream type (`AsyncRead + AsyncWrite + Unpin`).
+- **`rtsps://` over TLS** (feature `tls`) — `AsyncRtspClient::connect_tls` /
+  `AsyncRtspServer::accept_tls` wrap the TCP stream in a `tokio-rustls` session
+  before the RTSP exchange (default port **322**). `default_tls_client_config`
+  builds a `rustls::ClientConfig` trusting the `webpki-roots` bundle; a custom
+  config can trust a self-signed camera cert.
+- New `Error::Io` / `Error::Tls` variants for the async adapter's failure
+  surface.
+
 ## [0.1.0]
 
 Initial release — the sans-IO RTSP 1.0 ([RFC 2326](https://www.rfc-editor.org/rfc/rfc2326))
@@ -40,11 +61,5 @@ session engine.
 - **Structured errors** (`Error`) and an optional `serde` feature on the public
   wire/event types.
 - Message parse/serialize delegated to `rtsp-types`; SDP to `sdp-types`.
-
-### Unreleased / planned
-
-- A `tokio` (+ `tls` for `rtsps://`) socket adapter driving real connections over
-  this same sans-IO core. The `tokio` and `tls` Cargo features are declared but
-  currently carry no adapter code.
 
 [0.1.0]: https://github.com/fishloa/rust-broadcast/releases
