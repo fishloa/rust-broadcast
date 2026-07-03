@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **`emsg` emission in media segments** (#455): [`build_media_segment_with_events`]
+  emits one or more MPEG-DASH Event Message Boxes (`emsg`, ISO/IEC 14496-12 §8.8 /
+  ISO/IEC 23009-1 §5.10.3.3) at the start of each media segment, after `styp` and
+  before `moof` (DASH-IF IOP Part 10 §6.1 placement). Both version 0
+  (`PresentationTime::Delta`, segment-relative) and version 1
+  (`PresentationTime::Absolute`, representation-relative) are supported. The
+  primary consumer is SCTE 35 in-band splice signalling (`urn:scte:scte35:2013:bin`,
+  ANSI/SCTE 214-3). [`EmsgBox`], [`PresentationTime`], and [`EmsgVersion`] from the
+  workspace `mp4-emsg` crate are re-exported from the `transmux` crate root so
+  callers need no additional dependency. [`build_media_segment`] delegates to the
+  new function with an empty event slice (byte-identical output).
 - **HEVC SPS decode verified against real fixture** (#516): `decode_hevc_sps`
   proven correct on the committed `hevc_frag.mp4` hvcC record — asserts exact
   ffprobe oracle values (320×240, Main profile idc=1, 4:2:0, 8-bit, level 60).

@@ -187,7 +187,8 @@ pub use nal::{access_unit_is_keyframe, is_keyframe_nal, nal_unit_type, NalCodec}
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, OpusSpecificBox, DOPS_FOURCC, OPUS_FOURCC};
 pub use pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+    build_init_segment, build_media_segment, build_media_segment_with_events, CodecConfig, EmsgBox,
+    EmsgVersion, FragmentTrackData, PresentationTime, Sample, TrackSpec,
 };
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;

@@ -49,9 +49,11 @@ use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+
 use crate::timing::TimeToSampleBox;
 use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
 use crate::vvc_config::VvcConfigurationBox;
+pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 // --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
 /// Sample flags for a sync sample (I-frame): `sample_depends_on = 2` (does not
@@ -1011,9 +1013,44 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
 /// per-track samples. Each `trun.data_offset` is computed from the finished
 /// `moof` size (the tracks' sample data are concatenated into a single `mdat`
 /// in track order, resolved against the `default-base-is-moof` base).
+///
+/// Delegates to [`build_media_segment_with_events`] with an empty `emsgs`
+/// slice (identical output).
 pub fn build_media_segment(
     sequence_number: u32,
     tracks: &[FragmentTrackData<'_>],
+) -> Result<Vec<u8>> {
+    build_media_segment_with_events(sequence_number, tracks, &[])
+}
+
+/// Build one CMAF media segment (`styp` + one or more `emsg` boxes + `moof` +
+/// `mdat`), optionally carrying inband timed-metadata events.
+///
+/// # Box order
+///
+/// Per **ISO/IEC 14496-12 §8.8** (movie fragments) and the DASH-IF Interoperability
+/// Point Part 10 §6.1 (Events and Timed Metadata in MPEG-DASH / CMAF), each
+/// [`EmsgBox`] must appear **at the start of the segment**, after the `styp`
+/// segment-type box but *before* the `moof`.  The boxes in `emsgs` are emitted
+/// in the order given.  A common consumer is SCTE 35 in-band ad-insertion
+/// signalling (`scheme_id_uri = "urn:scte:scte35:2013:bin"`, ANSI/SCTE 214-3 /
+/// DASH-IF Part 10 §7.3).
+///
+/// # Timing
+///
+/// [`PresentationTime::Delta`] (version 0) expresses the event time relative to
+/// the segment's earliest presentation time in `timescale` ticks.
+/// [`PresentationTime::Absolute`] (version 1) expresses an absolute
+/// representation-timeline position, per ISO/IEC 23009-1 §5.10.3.3.
+///
+/// # Empty slice
+///
+/// When `emsgs` is empty this function produces byte-identical output to
+/// [`build_media_segment`].
+pub fn build_media_segment_with_events(
+    sequence_number: u32,
+    tracks: &[FragmentTrackData<'_>],
+    emsgs: &[EmsgBox<'_>],
 ) -> Result<Vec<u8>> {
     let styp = SegmentTypeBox {
         major_brand: *b"msdh",
@@ -1101,10 +1138,26 @@ pub fn build_media_segment(
 
     let mdat = MediaDataBox { data: mdat_data };
 
-    let total = styp.serialized_len() + moof.serialized_len() + mdat.serialized_len();
+    // Serialize each emsg box to an owned Vec so we know its exact size before
+    // allocating the output buffer.  The `?` coerces `mp4_emsg::Error` to
+    // `crate::error::Error` via the `From` impl in `error.rs`.
+    let emsg_vecs: Vec<Vec<u8>> = emsgs
+        .iter()
+        .map(|e| Ok(e.to_vec()?))
+        .collect::<Result<_>>()?;
+    let emsg_total: usize = emsg_vecs.iter().map(|v| v.len()).sum();
+
+    let total = styp.serialized_len() + emsg_total + moof.serialized_len() + mdat.serialized_len();
     let mut out = vec![0u8; total];
     let mut c = 0usize;
     c += styp.serialize_into(&mut out[c..])?;
+    // ISO/IEC 14496-12 §8.8 + DASH-IF IOP Part 10 §6.1: each `emsg` box
+    // follows `styp` and precedes `moof` so DASH clients can process events
+    // before media decoding begins.
+    for ev in &emsg_vecs {
+        out[c..c + ev.len()].copy_from_slice(ev);
+        c += ev.len();
+    }
     c += moof.serialize_into(&mut out[c..])?;
     c += mdat.serialize_into(&mut out[c..])?;
     out.truncate(c);
