@@ -120,6 +120,7 @@ pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
+pub mod validate;
 pub mod visual_ext;
 pub mod vp9;
 pub mod vvc_config;
@@ -238,6 +239,9 @@ pub use trickplay::{append_iframe_track, derive_iframe_track};
 pub use ts_demux::TsDemux;
 pub use ts_hls::{TsHlsOutput, TsHlsPackager};
 pub use ts_mux::TsMux;
+pub use validate::{
+    validate_cmaf_track, validate_init_segment, validate_media_segment, ConformanceIssue, Severity,
+};
 pub use visual_ext::{CleanApertureBox, ColourInformationBox, NclxColourInfo, PixelAspectRatioBox};
 pub use vp9::{Vp9ConfigurationBox, Vp9SampleEntry, VP09_FOURCC, VPCC_FOURCC};
 pub use vvc_config::{
