@@ -9,7 +9,7 @@ keywords = ["mpeg", "program-stream", "mpeg-ps", "vob", "demux"]
 categories = ["parser-implementations", "multimedia", "no-std"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-rust-version = "1.81"
+rust-version = "1.85"
 exclude = ["docs/**", "tests/fixtures/**"]
 
 [package.metadata.docs.rs]

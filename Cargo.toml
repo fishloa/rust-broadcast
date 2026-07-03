@@ -8,4 +8,4 @@ authors = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fishloa/rust-broadcast"
-rust-version = "1.81"
+rust-version = "1.85"
