@@ -22,6 +22,10 @@
 //!   access unit.
 //! - **SDP** (RFC 4566 + `fmtp`): `sprop-parameter-sets` carries base64 SPS,PPS
 //!   for video; `config` carries the hex AudioSpecificConfig for audio.
+//! - **KLV** (RFC 6597, `smpte336m`): a SMPTE ST 336 KLV unit ([`crate::klv`])
+//!   carried directly after the fixed header — no payload header — fragmented
+//!   across sequential packets sharing one timestamp, marker on the last
+//!   ([`packetize_klv`] / [`depacketize_klv`]).
 //!
 //! See `transmux/docs/rtp/rtp-payload-formats.md` for the full transcription.
 //!
@@ -62,6 +66,11 @@ pub const DEFAULT_AUDIO_PT: u8 = 97;
 pub const DEFAULT_MTU: usize = 1400;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
+
+/// Default dynamic payload type for a KLV metadata stream (RFC 6597).
+pub const DEFAULT_KLV_PT: u8 = 98;
+/// RFC 6597 SDP encoding name for SMPTE ST 336 KLV.
+pub const KLV_ENCODING_NAME: &str = "smpte336m";
 
 // --- H.264 NAL / packetization (RFC 6184 §5.2, §5.6, §5.7, §5.8) -----------
 
@@ -910,6 +919,84 @@ fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader> {
         timestamp: u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]),
         ssrc: u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]),
     })
+}
+
+// ---------------------------------------------------------------------------
+// KLV-over-RTP (RFC 6597) — SMPTE ST 336 KLV units
+// ---------------------------------------------------------------------------
+
+/// Packetize one KLV unit ([`crate::klv`]) into RTP packets (RFC 6597).
+///
+/// The KLV unit bytes are placed directly after the 12-byte fixed header (no
+/// payload header). A unit larger than the MTU payload budget is fragmented in
+/// sequential byte order across packets that **share `timestamp`**; the marker
+/// bit is set only on the final (or only) packet, signalling a complete KLV
+/// unit. `seq_start` is the sequence number of the first packet.
+///
+/// Returns at least one packet; `klv_unit` must be non-empty.
+pub fn packetize_klv(
+    klv_unit: &[u8],
+    pt: u8,
+    seq_start: u16,
+    timestamp: u32,
+    ssrc: u32,
+    mtu: usize,
+) -> Result<Vec<Vec<u8>>> {
+    if klv_unit.is_empty() {
+        return Err(Error::InvalidInput("cannot packetize an empty KLV unit"));
+    }
+    // Payload budget per packet: MTU minus the fixed RTP header.
+    let per_packet = mtu
+        .checked_sub(RTP_HEADER_LEN)
+        .filter(|&b| b > 0)
+        .ok_or(Error::InvalidInput("MTU too small for KLV-over-RTP"))?;
+
+    let total = klv_unit.len();
+    let num_frags = total.div_ceil(per_packet).max(1);
+    let mut seq = SeqCounter::new(seq_start);
+    let mut packets = Vec::with_capacity(num_frags);
+    for f in 0..num_frags {
+        let start = f * per_packet;
+        let end = (start + per_packet).min(total);
+        let is_last = f == num_frags - 1;
+        // All fragments of one KLV unit share the timestamp; marker on the last.
+        let mut pkt = rtp_header(pt, is_last, seq.next(), timestamp, ssrc);
+        pkt.extend_from_slice(&klv_unit[start..end]);
+        packets.push(pkt);
+    }
+    Ok(packets)
+}
+
+/// Reassemble KLV units from a stream of RTP packets (RFC 6597).
+///
+/// Fragments are concatenated in arrival order; a KLV unit is complete at the
+/// packet whose marker bit is set (or, defensively, at a timestamp change).
+/// Returns one `Vec<u8>` per reassembled KLV unit.
+pub fn depacketize_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+    let mut units: Vec<Vec<u8>> = Vec::new();
+    let mut cur: Vec<u8> = Vec::new();
+    let mut cur_ts: Option<u32> = None;
+
+    for pkt in packets {
+        let hdr = parse_rtp_header(pkt)?;
+        // A timestamp change with buffered bytes ends the previous unit (a
+        // dropped final/marker packet still flushes the accumulated fragments).
+        if let Some(ts) = cur_ts {
+            if ts != hdr.timestamp && !cur.is_empty() {
+                units.push(core::mem::take(&mut cur));
+            }
+        }
+        cur_ts = Some(hdr.timestamp);
+        cur.extend_from_slice(&pkt[RTP_HEADER_LEN..]);
+        if hdr.marker {
+            units.push(core::mem::take(&mut cur));
+            cur_ts = None;
+        }
+    }
+    if !cur.is_empty() {
+        units.push(cur);
+    }
+    Ok(units)
 }
 
 // ---------------------------------------------------------------------------

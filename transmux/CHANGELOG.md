@@ -25,6 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `ProtectionSystemSpecificHeaderBox` gains `parse_box` (full-box parse) and
     `to_vec` (whole-box serialize, lengths rebuilt from fields).
   - No new dependency: base64/UTF-16LE/protobuf helpers are hand-rolled.
+- **KLV timed metadata + KLV-over-RTP** (#478): a new `klv` module implements
+  SMPTE ST 336 KLV framing (via MISB ST 0601 + RFC 6597) and the MISB ST 0601
+  UAS Datalink Local Set.
+  - **BER length** codec (`encode_ber_length` / `ber_length`): short form
+    (`< 128`) and long form (`0x80 | N` + `N` big-endian bytes), round-trippable;
+    indefinite form rejected.
+  - **BER-OID tag** codec (`encode_ber_oid` / `ber_oid`) for Local Set item keys.
+  - **`KlvItem`** — a 16-byte `UniversalLabel` key + value, with `Parse`/
+    `Serialize` (the wire length is *computed*, never echoed).
+  - **`UasLocalSet`** / **`LocalSetItem`** — the MISB ST 0601 packet (`UAS_LS_KEY`
+    Universal Label wrapping BER-OID-tagged items): `precision_timestamp()`
+    (tag 2, u64 BE µs since the POSIX epoch), `serialize_with_checksum()` +
+    `verify_checksum()` (tag 1 = CRC-16/CCITT, poly `0x1021`, init `0xFFFF`, over
+    the whole packet incl. the UL key), and `crc16_ccitt`.
+  - **KLV-over-RTP** (`rtp::packetize_klv` / `rtp::depacketize_klv`, RFC 6597,
+    `smpte336m`): a KLV unit placed directly after the fixed header (no payload
+    header), fragmented across sequential packets sharing one timestamp with the
+    marker bit on the final fragment; new `DEFAULT_KLV_PT` / `KLV_ENCODING_NAME`.
 
 ## [0.9.0] - 2026-07-03
 ### Added
