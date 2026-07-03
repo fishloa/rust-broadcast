@@ -99,7 +99,7 @@ round-trips through the IR.
 
 | Spoke | Type | API | Status |
 |---|---|---|---|
-| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config) | ✅ |
+| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3) | ✅ |
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
 | WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |

@@ -9,14 +9,18 @@
 //!
 //! Pipeline: TS packet layer ([`mpeg_ts`]) → follow PAT → PMT → per-PID PES
 //! reassembly ([`mpeg_pes`]) → codec-config recovery (H.264 SPS/PPS → `avcC`,
-//! MPEG-2 video `sequence_header()` → `esds`, ADTS → AudioSpecificConfig →
+//! H.265 VPS/SPS/PPS → `hvcC`, MPEG-2 video `sequence_header()` → `esds`,
+//! ADTS → AudioSpecificConfig →
 //! `esds`, MPEG-1/2 audio frame header → `esds`, AC-3/E-AC-3 syncframe BSI →
 //! `dac3`/`dec3`) → length-prefixed video / raw audio samples.
 //!
-//! HEVC and DTS elementary streams are recognized in the PMT but not yet carried
-//! into the IR: the TS elementary-stream config recovery for HEVC (in-band
-//! VPS/SPS/PPS → `hvcC`) and DTS-ES (→ `ddts`) is not yet implemented, so such
-//! tracks are skipped — never fatal (issue #467).
+//! HEVC (H.265) elementary streams are carried into the IR: the in-band
+//! VPS/SPS/PPS NAL units are gathered from the Annex-B access units, decoded
+//! into an `hvcC` [`HEVCConfigurationBox`], and emitted as a `hvc1`
+//! [`CodecConfig::Hevc`] track — identical to the config `Fmp4Demux` recovers
+//! from an fMP4 `hvcC` (issue #467). DTS elementary streams are still recognized
+//! in the PMT but not carried (the TS DTS-ES → `ddts` recovery is not yet implemented) — such
+//! tracks are skipped, never fatal.
 //!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //!
@@ -42,13 +46,14 @@ use crate::ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
+use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, Track};
 use crate::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType as EsdsStreamType,
 };
 use crate::mpeg_legacy::MpegAudioFrameHeader;
-use crate::nalu_types::{AvcPps, AvcSps};
+use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
@@ -111,6 +116,25 @@ const H264_NAL_SPS: u8 = 7;
 const H264_NAL_PPS: u8 = 8;
 /// Mask for the H.264 5-bit `nal_unit_type` in the NAL header byte.
 const H264_NAL_TYPE_MASK: u8 = 0x1F;
+
+/// H.265 `nal_unit_type` for VPS (`VPS_NUT`) — ITU-T H.265 Table 7-1 (type 32).
+const H265_NAL_VPS: u8 = 32;
+/// H.265 `nal_unit_type` for SPS (`SPS_NUT`) — ITU-T H.265 Table 7-1 (type 33).
+const H265_NAL_SPS: u8 = 33;
+/// H.265 `nal_unit_type` for PPS (`PPS_NUT`) — ITU-T H.265 Table 7-1 (type 34).
+const H265_NAL_PPS: u8 = 34;
+/// `configurationVersion` for an `hvcC` record (ISO/IEC 14496-15:2017 §8.3.3.1.1).
+const HVCC_CONFIGURATION_VERSION: u8 = 1;
+/// `constantFrameRate = 0` (not-constant / unspecified) — §8.3.3.1.2.
+const HVCC_CONSTANT_FRAME_RATE_UNSPEC: u8 = 0;
+/// `numTemporalLayers = 1` when unknown from the ES (single temporal layer).
+const HVCC_NUM_TEMPORAL_LAYERS: u8 = 1;
+/// `parallelismType = 0` (mixed/unknown) — §8.3.3.1.2.
+const HVCC_PARALLELISM_TYPE_UNKNOWN: u8 = 0;
+/// `avgFrameRate = 0` (unspecified) — §8.3.3.1.2.
+const HVCC_AVG_FRAME_RATE_UNSPEC: u16 = 0;
+/// `min_spatial_segmentation_idc = 0` (no constraint) — §8.3.3.1.2.
+const HVCC_MIN_SPATIAL_SEGMENTATION_UNSPEC: u16 = 0;
 
 /// `esds` `objectTypeIndication` for MPEG-4 Audio (ISO/IEC 14496-1 Table 5).
 const OTI_MPEG4_AUDIO: u8 = 0x40;
@@ -452,17 +476,16 @@ fn push_access_unit(es: &mut ElementaryStream, pes_bytes: &[u8]) {
 fn build_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     match es.codec {
         Codec::H264 => build_h264_track(es, track_id),
+        Codec::Hevc => build_h265_track(es, track_id),
         Codec::Mpeg2Video => build_mpeg2_video_track(es, track_id),
         Codec::MpegAudio(is_mpeg2) => build_mpeg_audio_track(es, track_id, is_mpeg2),
         Codec::Aac => build_aac_track(es, track_id),
         Codec::Ac3 => build_ac3_track(es, track_id),
         Codec::Eac3 => build_eac3_track(es, track_id),
-        // HEVC / DTS are recognized in the PMT but the hub IR
-        // ([`CodecConfig`]) does not yet carry an HEVC video or a DTS-from-ES
-        // audio config, so no track is built (issue #467: skip, do not fail).
-        // Their in-band config recovery lands with the matching `CodecConfig`
-        // variants (follow-up).
-        Codec::Hevc | Codec::Dts => None,
+        // DTS is recognized in the PMT but the hub IR ([`CodecConfig`]) does not
+        // yet carry a DTS-from-ES audio config, so no track is built (issue #467:
+        // skip, do not fail). DTS-from-TS remains unimplemented (no fixture).
+        Codec::Dts => None,
     }
 }
 
@@ -620,6 +643,132 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             track_id,
             timescale: VIDEO_TIMESCALE,
             config: CodecConfig::Avc {
+                config,
+                width,
+                height,
+            },
+        },
+        samples,
+        start_decode_time.unwrap_or(0),
+    ))
+}
+
+/// Recover H.265/HEVC config + build video samples (Annex B → length-prefixed).
+///
+/// Gathers the first in-band VPS/SPS/PPS from the Annex-B access units, decodes
+/// the SPS ([`crate::sps::decode_hevc_sps`]) for the coded geometry + PTL /
+/// chroma / bit-depth fields, assembles an `hvcC`
+/// ([`HEVCDecoderConfigurationRecord`], ISO/IEC 14496-15:2017 §8.3.3) with one
+/// NAL array per parameter-set type, and emits a [`CodecConfig::Hevc`] track
+/// (identical to the config `Fmp4Demux` recovers from an fMP4 `hvcC`).
+///
+/// Per-sample `is_sync` marks an IRAP access unit (HEVC NAL types 16..=23), via
+/// the shared [`crate::nal::is_keyframe_nal`] helper. Returns `None` when no
+/// SPS (or no VPS/PPS) is present, so the config cannot be built (skip, never
+/// fatal — issue #467).
+fn build_h265_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
+    let mut vps: Option<Vec<u8>> = None;
+    let mut sps: Option<Vec<u8>> = None;
+    let mut pps: Option<Vec<u8>> = None;
+    let mut is_irap: Vec<bool> = Vec::with_capacity(es.access_units.len());
+    for au in &es.access_units {
+        let mut irap = false;
+        for nal in iter_annexb_nals(&au.data) {
+            match crate::nal::nal_unit_type(crate::nal::NalCodec::Hevc, nal) {
+                Some(H265_NAL_VPS) if vps.is_none() => vps = Some(nal.to_vec()),
+                Some(H265_NAL_SPS) if sps.is_none() => sps = Some(nal.to_vec()),
+                Some(H265_NAL_PPS) if pps.is_none() => pps = Some(nal.to_vec()),
+                _ => {}
+            }
+            // IRAP (random-access) classification via the shared helper (single
+            // source of truth across the demuxers — issue #517).
+            if crate::nal::is_keyframe_nal(crate::nal::NalCodec::Hevc, nal) {
+                irap = true;
+            }
+        }
+        is_irap.push(irap);
+    }
+    let sps_nal = sps?;
+    // Decode the SPS for geometry + profile/tier/level/chroma/bit-depth. Without
+    // it the hvcC PTL fields cannot be filled — skip the track (never fatal).
+    let info = crate::sps::decode_hevc_sps(&sps_nal).ok()?;
+    let width = info.width.min(u16::MAX as u32) as u16;
+    let height = info.height.min(u16::MAX as u32) as u16;
+
+    // Assemble the hvcC NAL arrays: one array per parameter-set type present
+    // (VPS 32, SPS 33, PPS 34), in that spec-conventional order. Each carries
+    // the raw NAL unit (with its 2-byte NAL header), array_completeness = true.
+    let mut arrays: Vec<HevcNalArray> = Vec::new();
+    if let Some(vps_nal) = vps {
+        arrays.push(HevcNalArray::new(
+            true,
+            H265_NAL_VPS,
+            alloc::vec![HevcNalUnit::new(vps_nal)],
+        ));
+    }
+    arrays.push(HevcNalArray::new(
+        true,
+        H265_NAL_SPS,
+        alloc::vec![HevcNalUnit::new(sps_nal)],
+    ));
+    if let Some(pps_nal) = pps {
+        arrays.push(HevcNalArray::new(
+            true,
+            H265_NAL_PPS,
+            alloc::vec![HevcNalUnit::new(pps_nal)],
+        ));
+    }
+
+    let record = HEVCDecoderConfigurationRecord {
+        configuration_version: HVCC_CONFIGURATION_VERSION,
+        general_profile_space: info.general_profile_space,
+        general_tier_flag: info.general_tier_flag,
+        general_profile_idc: info.general_profile_idc,
+        general_profile_compatibility_flags: info.general_profile_compatibility_flags,
+        general_constraint_indicator_flags: info.general_constraint_indicator_flags,
+        general_level_idc: info.general_level_idc,
+        min_spatial_segmentation_idc: HVCC_MIN_SPATIAL_SEGMENTATION_UNSPEC,
+        parallelism_type: HVCC_PARALLELISM_TYPE_UNKNOWN,
+        chroma_format_idc: info.chroma_format_idc,
+        // hvcC stores bit_depth_{luma,chroma}_minus8; the SPS decode returns the
+        // absolute bit depth (minus8 + 8), so subtract 8 back out (saturating —
+        // an ES reporting < 8 would be malformed).
+        bit_depth_luma_minus8: info.bit_depth_luma.saturating_sub(8),
+        bit_depth_chroma_minus8: info.bit_depth_chroma.saturating_sub(8),
+        avg_frame_rate: HVCC_AVG_FRAME_RATE_UNSPEC,
+        constant_frame_rate: HVCC_CONSTANT_FRAME_RATE_UNSPEC,
+        num_temporal_layers: HVCC_NUM_TEMPORAL_LAYERS,
+        temporal_id_nested: false,
+        length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+        arrays,
+    };
+    let config = HEVCConfigurationBox::new(record);
+
+    let ordered = decode_order(&es.access_units);
+    let durations = durations_from_dts(&ordered);
+    let samples: Vec<Sample> = ordered
+        .iter()
+        .enumerate()
+        .map(|(pos, &(i, pts, dts))| {
+            let composition_offset = (pts - dts) as i32;
+            Sample::from_annexb(
+                &es.access_units[i].data,
+                durations[pos],
+                is_irap[i],
+                composition_offset,
+            )
+        })
+        .collect();
+
+    // Absolute decode-time anchor: the first sample's DTS in decode order,
+    // already 33-bit-unwrapped by `decode_order`, in the 90 kHz media timescale
+    // (the #476 anchor — mirrors the AVC path).
+    let start_decode_time = ordered.first().map(|&(_, _, dts)| dts.max(0) as u64);
+    Some(Track::new_at(
+        TrackSpec {
+            track_id,
+            timescale: VIDEO_TIMESCALE,
+            config: CodecConfig::Hevc {
                 config,
                 width,
                 height,
