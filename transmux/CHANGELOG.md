@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per [`hls::PartSpec`]), and `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="…"` (§4.4.5.3).
   A plain playlist (no `low_latency`) renders none of these — LL-HLS is strictly
   opt-in.
+- **IR timeline conditioning — PTS/DTS rebase & anchor** (#476): new `rebase`
+  module of transforms over the `Media` IR, plus the absolute decode-time anchor
+  they operate on. `rebase_to_zero` re-origins each track to decode time 0 (per
+  track); `apply_offset(delta_ticks)` shifts every track's anchor by a signed
+  delta (saturating at 0 on underflow); `unroll_33bit_wraps` undoes MPEG-2
+  Systems 33-bit timestamp wraps (ISO/IEC 13818-1 §2.4.3.6; `MPEG_TS_WRAP` =
+  `2^33`) so a timeline crossing the boundary is monotonic; and
+  `insert_discontinuity_gap(track, at, gap_ticks)` extends the timeline by a gap
+  for splice/gap conditioning. `Fmp4Demux` now populates the anchor from the
+  first movie fragment's `tfdt` `baseMediaDecodeTime` (ISO/IEC 14496-12:2015
+  §8.8.12) and `TsDemux` from the first sample's DTS (rescaled into each track's
+  media timescale); FLV/WebM/MPEG-PS/RTMP/RTP carry no absolute anchor and leave
+  it 0. Pairs with #475 (splice/concat) as the next consumer. All four transforms
+  and the muxer wiring are re-exported from the crate root.
 - **`emsg` emission in media segments** (#455): [`build_media_segment_with_events`]
   emits one or more MPEG-DASH Event Message Boxes (`emsg`, ISO/IEC 14496-12 §8.8 /
   ISO/IEC 23009-1 §5.10.3.3) at the start of each media segment, after `styp` and
@@ -91,6 +105,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composition offset) + AAC (AACAUDIODATA, ASC seq-header); reuses `CodecConfig::Avc`/`Aac`.
   ms timescale, lossless timing round-trip. Skips spurious empty sequence-header tags;
   trusts the ASC over contradictory `onMetaData`.
+
+### Changed
+- **`Track` gains a `start_decode_time: u64` field** (#476): the absolute decode
+  time of the track's first sample, in the track's media timescale — the
+  fragment `tfdt` `baseMediaDecodeTime` (ISO/IEC 14496-12:2015 §8.8.12) anchor
+  that `Sample` relative timing lacked. `Track::new` still defaults it to 0 (all
+  existing callers compile); `Track::new_at(spec, samples, start)` and
+  `Track::with_start_decode_time(start)` set it. This is an additive struct-field
+  change → a **minor** version bump.
+- **`CmafMux` now writes `Track::start_decode_time` as the first segment's
+  `base_media_decode_time`** (#476), replacing the previously hardcoded `0`. A
+  rebase/offset transform is therefore observable in the muxed `tfdt`.
 
 ## [0.8.0] — 2026-07-02
 ### Added

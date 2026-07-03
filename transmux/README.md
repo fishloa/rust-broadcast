@@ -17,8 +17,11 @@ The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (conta
 | RTMP chunk stream (`RtmpDemux`) | RTMP chunk stream (`RtmpMux`) |
 
 Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
-(`Segmenter`) — CENC decrypt (`CencDecryptor`), and RTP de/packetize + SDP
-(`RtpPacketizer`/`RtpDepacketizer`).
+(`Segmenter`), IR timeline conditioning — PTS/DTS rebase-to-zero / offset /
+33-bit MPEG wrap-unroll / discontinuity-gap insertion (`rebase_to_zero`,
+`apply_offset`, `unroll_33bit_wraps`, `insert_discontinuity_gap`, over each
+`Track::start_decode_time` anchor) — CENC decrypt (`CencDecryptor`), and RTP
+de/packetize + SDP (`RtpPacketizer`/`RtpDepacketizer`).
 
 ## Scope — container muxing only
 
@@ -102,6 +105,7 @@ round-trips through the IR.
 | DASH / LL-DASH / Smooth | `Package` | `DashPackager` · `LlDashPackager` · `SmoothPackager` | ✅ |
 | TS-HLS | `Package` | `TsHlsPackager` | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
+| IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |
 | CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |

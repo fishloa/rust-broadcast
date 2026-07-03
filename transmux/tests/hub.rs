@@ -178,7 +178,9 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
         .iter()
         .map(|t| FragmentTrackData {
             track_id: t.spec.track_id,
-            base_media_decode_time: 0,
+            // CmafMux now anchors each fragment at the track's start_decode_time
+            // (the demuxed tfdt), so the byte-transparent equivalent must too.
+            base_media_decode_time: t.start_decode_time,
             samples: &t.samples,
         })
         .collect();

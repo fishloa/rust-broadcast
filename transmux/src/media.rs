@@ -71,12 +71,51 @@ pub struct Track {
     pub spec: TrackSpec,
     /// The track's coded access units, in decode order.
     pub samples: Vec<Sample>,
+    /// Absolute decode time of the track's **first** sample, in this track's
+    /// media timescale ([`TrackSpec::timescale`]) ticks.
+    ///
+    /// [`Sample`] timing is stored *relatively* (per-sample [`Sample::duration`];
+    /// a sample's DTS is the running sum of preceding durations, its PTS is
+    /// `DTS + composition_offset`). This field is the missing absolute anchor:
+    /// the DTS the first sample sits at on the presentation timeline. It maps
+    /// directly onto the fragment `tfdt` `baseMediaDecodeTime`
+    /// (ISO/IEC 14496-12:2015 §8.8.12) that [`CmafMux`] writes for the first
+    /// media segment.
+    ///
+    /// Demuxers that recover an absolute timeline populate it ([`Fmp4Demux`]
+    /// from the first movie fragment's `tfdt`; [`TsDemux`](crate::ts_demux::TsDemux)
+    /// from the first sample's DTS). Demuxers whose source carries no absolute anchor
+    /// (FLV, WebM, MPEG Program Stream, RTMP, RTP) leave it `0`. It is the
+    /// input to the timeline transforms in [`crate::rebase`] (rebase-to-zero,
+    /// offset, 33-bit MPEG wrap-unroll — ISO/IEC 13818-1 33-bit timestamps).
+    pub start_decode_time: u64,
 }
 
 impl Track {
-    /// Create a track from its spec and samples.
+    /// Create a track from its spec and samples, anchored at decode time `0`.
     pub fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
-        Self { spec, samples }
+        Self {
+            spec,
+            samples,
+            start_decode_time: 0,
+        }
+    }
+
+    /// Create a track from its spec and samples, anchored at an absolute
+    /// `start_decode_time` (in the track's media timescale).
+    pub fn new_at(spec: TrackSpec, samples: Vec<Sample>, start_decode_time: u64) -> Self {
+        Self {
+            spec,
+            samples,
+            start_decode_time,
+        }
+    }
+
+    /// Set the absolute [`start_decode_time`](Self::start_decode_time) anchor,
+    /// returning `self` (builder style).
+    pub fn with_start_decode_time(mut self, start_decode_time: u64) -> Self {
+        self.start_decode_time = start_decode_time;
+        self
     }
 
     /// Track ID (1-based, unique within the movie).
@@ -150,6 +189,10 @@ impl<'a> Fmp4Demux<'a> {
 struct TrackBuilder {
     spec: TrackSpec,
     samples: Vec<Sample>,
+    /// Absolute decode-time anchor, taken from the **first** movie fragment's
+    /// `tfdt` seen for this track (`None` until that fragment is absorbed; a
+    /// stream with no `tfdt` at all yields a `0` anchor).
+    start_decode_time: Option<u64>,
 }
 
 impl<'a> Unpackage for Fmp4Demux<'a> {
@@ -173,6 +216,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 builders.push(TrackBuilder {
                     spec,
                     samples: Vec::new(),
+                    start_decode_time: None,
                 });
             }
         }
@@ -207,6 +251,9 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 Track {
                     spec: b.spec,
                     samples: b.samples,
+                    // First-fragment tfdt baseMediaDecodeTime; 0 when the stream
+                    // carried no tfdt at all (ISO/IEC 14496-12:2015 §8.8.12).
+                    start_decode_time: b.start_decode_time.unwrap_or(0),
                 }
             })
             .collect();
@@ -235,6 +282,13 @@ fn absorb_fragment(
             // skip it (well-formed CMAF declares every track in the init moov).
             continue;
         };
+        // The absolute decode-time anchor is the baseMediaDecodeTime of the
+        // FIRST fragment seen for this track (ISO/IEC 14496-12:2015 §8.8.12).
+        if builder.start_decode_time.is_none() {
+            if let Some(tfdt) = &traf.tfdt {
+                builder.start_decode_time = Some(tfdt.base_media_decode_time());
+            }
+        }
         for trun in &traf.trun {
             // data_offset is measured from the start of the moof box when
             // default-base-is-moof is set (the base transmux emits and the
@@ -335,13 +389,16 @@ impl Package for CmafMux {
         };
         let mut out = build_init_segment(&specs, movie_timescale)?;
 
-        // base_media_decode_time = 0 for each track's single-segment fragment.
+        // Each track's single-segment fragment is anchored at the track's
+        // absolute decode time (its `tfdt` baseMediaDecodeTime, ISO/IEC
+        // 14496-12:2015 §8.8.12) — the anchor a demuxer populated and the
+        // `crate::rebase` transforms condition.
         let fragments: Vec<FragmentTrackData<'_>> = media
             .tracks
             .iter()
             .map(|t| FragmentTrackData {
                 track_id: t.spec.track_id,
-                base_media_decode_time: 0,
+                base_media_decode_time: t.start_decode_time,
                 samples: &t.samples,
             })
             .collect();

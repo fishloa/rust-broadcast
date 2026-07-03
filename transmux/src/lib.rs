@@ -23,7 +23,10 @@
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
 //!   ([`SmoothPackager`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
-//!   streaming CMAF segmentation ([`Segmenter`]).
+//!   streaming CMAF segmentation ([`Segmenter`]); IR timeline conditioning —
+//!   PTS/DTS rebase, offset, 33-bit MPEG wrap-unroll, discontinuity-gap
+//!   insertion ([`rebase_to_zero`] / [`apply_offset`] / [`unroll_33bit_wraps`] /
+//!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor).
 //! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]).
 //! - **RTP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP.
 //!
@@ -105,6 +108,7 @@ pub mod opus;
 pub mod pipeline;
 pub mod progressive;
 pub mod ps_demux;
+pub mod rebase;
 pub mod repackage;
 pub mod rtcp;
 pub mod rtmp;
@@ -198,6 +202,9 @@ pub use pipeline::{
 };
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
+pub use rebase::{
+    apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps, MPEG_TS_WRAP,
+};
 pub use repackage::{Repackage, RepackageOutput};
 pub use rtcp::{
     App, Bye, CommonHeader, CompoundPacket, ReceiverReport, ReportBlock, RtcpPacket,

@@ -670,10 +670,10 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
             // A placeholder AVC config: the RTP wire has no config; the SDP does.
             // We only need identity + samples for round-trip use, so build a
             // minimal AVC spec (never serialized to a container here).
-            crate::media::Track {
-                spec: placeholder_spec(t.id),
-                samples,
-            }
+            // RTP carries no absolute decode-time anchor (the RTP timestamp is a
+            // random-offset clock, not a presentation timeline), so leave the
+            // start_decode_time at 0; use Track::new to default it.
+            crate::media::Track::new(placeholder_spec(t.id), samples)
         })
         .collect();
     Media::new(ir_tracks, 0)
