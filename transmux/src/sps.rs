@@ -250,9 +250,35 @@ pub struct HevcSpsInfo {
     pub height: u32,
 }
 
-/// Decode an H.265 SPS RBSP (NAL unit body after the 2-byte NAL header).
+/// Decode an H.265/HEVC SPS RBSP and return the config-relevant fields.
 ///
-/// `sps_bytes` is the full NAL unit including the 2-byte NAL header.
+/// `sps_bytes` is the full NAL unit including the 2-byte NAL header
+/// (`nal_unit_header()` — ITU-T H.265 §7.3.1.2). Decoding starts at byte
+/// index 2 (the first byte of `seq_parameter_set_rbsp()`).
+///
+/// # Spec citations
+///
+/// - **Syntax**: ITU-T H.265 §7.3.2.2.1 `seq_parameter_set_rbsp()`.
+/// - **Semantics**: ITU-T H.265 §7.4.3.2.1 — definitions of
+///   `pic_width_in_luma_samples`, `pic_height_in_luma_samples`,
+///   `conformance_window_flag` / `conf_win_{left,right,top,bottom}_offset`,
+///   and the SubWidthC / SubHeightC multipliers (Table 6-1) used to convert
+///   the chroma-sample offsets to luma-sample crop amounts.
+/// - **profile_tier_level**: ITU-T H.265 §7.3.3 + §7.4.4.
+///
+/// # Conformance-window crop
+///
+/// The returned `width` and `height` are the *display* dimensions after
+/// subtracting the conformance-window offsets (§7.4.3.2.1):
+///
+/// ```text
+/// SubWidthC  = 2 for chroma_format_idc 1 (4:2:0) or 2 (4:2:2), 1 otherwise
+/// SubHeightC = 2 for chroma_format_idc 1 (4:2:0),               1 otherwise
+/// width  = pic_width_in_luma_samples
+///            - SubWidthC  * (conf_win_left_offset + conf_win_right_offset)
+/// height = pic_height_in_luma_samples
+///            - SubHeightC * (conf_win_top_offset  + conf_win_bottom_offset)
+/// ```
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     if sps_bytes.len() < 2 {
         return Err(Error::BufferTooShort {

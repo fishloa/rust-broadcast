@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **HEVC SPS decode verified against real fixture** (#516): `decode_hevc_sps`
+  proven correct on the committed `hevc_frag.mp4` hvcC record — asserts exact
+  ffprobe oracle values (320×240, Main profile idc=1, 4:2:0, 8-bit, level 60).
+  Truncated-input negative tests added. `decode_hevc_sps` doc now cites
+  ITU-T H.265 §7.3.2.2.1 (syntax) + §7.4.3.2.1 (conformance-window semantics).
 - **RTCP control packets** (#514): typed `Parse`/`Serialize` for the RFC 3550 §6 set —
   `SenderReport` (PT 200), `ReceiverReport` (201), `SourceDescription` (202, with
   `SdesChunk`/`SdesItem`/`SdesItemType`), `Bye` (203), `App` (204), the shared
