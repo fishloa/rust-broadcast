@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [8.3.0] - 2026-07-03
 
 ### Added
 - `StreamType::is_video()`, `is_audio()`, `is_subtitle()`, `is_data()` predicate

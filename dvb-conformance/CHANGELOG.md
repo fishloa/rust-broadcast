@@ -1,5 +1,9 @@
 # Changelog
 
+## [8.3.0] - 2026-07-03
+### Changed
+- Lockstep release with the DVB core crates; no functional changes to `dvb-conformance`.
+
 ## [8.2.1] — 2026-07-02
 
 ### Changed
