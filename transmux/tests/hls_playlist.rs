@@ -38,6 +38,7 @@ fn media_playlist_rfc_valid() {
                 .into(),
         ],
         low_latency: None,
+        iframes_only: false,
     };
 
     let m3u8 = pl.to_m3u8();
@@ -80,6 +81,7 @@ fn media_playlist_invalid_target_duration_reported() {
         endlist: true,
         extra_tags: vec![],
         low_latency: None,
+        iframes_only: false,
     };
 
     let m3u8 = pl.to_m3u8();
@@ -110,6 +112,7 @@ fn master_playlist_structure() {
                 uri: "v800/index.m3u8".into(),
             },
         ],
+        iframe_variants: vec![],
     };
 
     let m3u8 = pl.to_m3u8();

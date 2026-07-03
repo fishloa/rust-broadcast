@@ -202,6 +202,7 @@ impl Package for TsHlsPackager {
             endlist: true,
             extra_tags: vec![],
             low_latency: None,
+            iframes_only: false,
         }
         .to_m3u8();
 

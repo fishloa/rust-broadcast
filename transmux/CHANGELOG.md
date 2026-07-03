@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Trick-play manifest signalling — HLS + DASH** (#477): playlist and MPD
+  APIs for signalling an I-frame-only (trick-play / scrubbing) rendition
+  derived by `derive_iframe_track`.
+  - **HLS `#EXT-X-I-FRAME-STREAM-INF`** (RFC 8216 §4.3.4.2): new
+    `IFrameVariant` struct + `MasterPlaylist::iframe_variants: Vec<IFrameVariant>`;
+    `to_m3u8` renders each as a single `#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=…,URI="…"`
+    tag line (URI is an attribute, not a following line — unlike `EXT-X-STREAM-INF`).
+    Zero iframe variants → no tag emitted (strict opt-in).
+  - **HLS `#EXT-X-I-FRAMES-ONLY`** (RFC 8216 §4.3.3.6): new
+    `MediaPlaylist::iframes_only: bool`; when `true`, emits the tag in the
+    header block and bumps the rendered version to ≥ 4 as required by the spec.
+    Defaults `false` — existing playlists are byte-for-byte unchanged.
+  - **DASH trick-mode `AdaptationSet`** (ISO/IEC 23009-1 §5.8.5.8): new
+    `TrickModeAdaptationSet` + `TrickModeRepr` structs, `DashPackager::trick_mode:
+    Option<TrickModeAdaptationSet>`. When set, `package()` emits an additional
+    `AdaptationSet` with `<SupplementalProperty
+    schemeIdUri="urn:mpeg:dash:trickmode:2016" value="<main-id>"/>` and
+    `maxPlayoutRate`/`codingDependency="false"`. The scheme URI is the named
+    constant `TRICKMODE_SCHEME`. Defaults `None` — existing MPDs unchanged.
+  - All changes are additive; no existing public API is modified.
 - **HEVC (H.265) elementary streams TS → IR** (#467): `TsDemux` now carries
   `stream_type 0x24` HEVC video into the neutral `Media` IR. The in-band
   VPS/SPS/PPS NAL units are gathered from the Annex-B access units, the SPS is
