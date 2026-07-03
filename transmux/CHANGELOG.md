@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **HLS Sample-AES + full-segment AES-128 encryption** (#479): new `sample_aes`
+  module (feature `sample-aes`) implementing Apple's HLS-native content
+  protection — distinct from CENC — per Apple's "MPEG-2 Stream Encryption Format
+  for HTTP Live Streaming" (`transmux/docs/drm/hls-sample-aes.md`) and RFC 8216
+  §4.3.2.4. All crypto stays feature-gated; the default `no_std` core build pulls
+  none.
+  - **AES-128 full segment** (`METHOD=AES-128`): `aes128_encrypt_segment` /
+    `aes128_decrypt_segment` — AES-128-CBC over the whole segment with PKCS#7
+    padding.
+  - **H.264 SAMPLE-AES**: `h264_encrypt_nal` / `h264_decrypt_nal` — encrypts only
+    NAL types 1 and 5 longer than 48 bytes, with a 32-byte clear leader and the
+    16-byte-block / ≤144-byte-skip (~10%) pattern; emulation-prevention bytes are
+    stripped before encryption and re-inserted after; IV reset per NAL.
+  - **AAC / AC-3 / E-AC-3 SAMPLE-AES**: `aac_encrypt_frame`/`aac_decrypt_frame`
+    (ADTS header + 16-byte leader clear) and `ac3_encrypt_frame`/
+    `ac3_decrypt_frame` (16-byte leader clear), 16-byte CBC blocks, `<16` trailer
+    clear.
+  - **`EXT-X-KEY` rendering**: `ExtXKey` (`METHOD`/`URI`/`IV`/`KEYFORMAT`/
+    `KEYFORMATVERSIONS`) with `HlsEncryptionMethod` (`AES-128` / `SAMPLE-AES`),
+    `ExtXKey::fairplay_sample_aes` (`skd://` + `com.apple.streamingkeydelivery`),
+    `ExtXKey::aes128`, and `iv_from_sequence_number` (implicit IV = media
+    sequence number as a 128-bit big-endian integer).
+  - AES-128-CBC pinned by a NIST SP 800-38A F.2 known-answer test; the block
+    cipher is the RustCrypto `aes` crate driven by the new `cbc` mode crate (the
+    only added dependency).
 - **Multi-DRM `pssh` init-data generation** (#480): new `drm` module building
   the system-specific `Data` payloads and convenience `pssh`-box builders on top
   of the existing `ProtectionSystemSpecificHeaderBox` (ISO/IEC 23001-7 §12.1).
