@@ -106,7 +106,7 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivateDesc {
     }
 }
 
-impl<'a> dvb_si::traits::DescriptorDef<'a> for MyPrivateDesc {
+impl dvb_si::traits::DescriptorDef<'_> for MyPrivateDesc {
     const TAG: u8 = MY_PRIVATE_TAG;
     const NAME: &'static str = "MY_PRIVATE";
 }

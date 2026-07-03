@@ -73,7 +73,7 @@ impl Serialize for DeleteControlWord {
     }
 }
 
-impl<'a> OperationDef<'a> for DeleteControlWord {
+impl OperationDef<'_> for DeleteControlWord {
     const OP_ID: u16 = DELETE_OP_ID;
     const NAME: &'static str = "DELETE_CONTROL_WORD";
 }
@@ -125,7 +125,7 @@ impl Serialize for UpdateControlWord {
     }
 }
 
-impl<'a> OperationDef<'a> for UpdateControlWord {
+impl OperationDef<'_> for UpdateControlWord {
     const OP_ID: u16 = UPDATE_OP_ID;
     const NAME: &'static str = "UPDATE_CONTROL_WORD";
 }

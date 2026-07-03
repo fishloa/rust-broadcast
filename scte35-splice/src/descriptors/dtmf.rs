@@ -100,7 +100,7 @@ impl Serialize for DtmfDescriptor {
     }
 }
 
-impl<'a> SpliceDescriptorDef<'a> for DtmfDescriptor {
+impl SpliceDescriptorDef<'_> for DtmfDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "DTMF";
 }

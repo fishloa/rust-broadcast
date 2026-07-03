@@ -65,7 +65,7 @@ pub struct BatSection<'a> {
     pub transport_streams: Vec<BatTransportStream<'a>>,
 }
 
-impl<'a> BatSection<'a> {
+impl BatSection<'_> {
     /// Walk the bouquet_descriptors looking for the first bouquet_name_descriptor
     /// (tag 0x47). Returns the decoded UTF-8 name, or `None` if not present.
     pub fn bouquet_name(&self) -> Option<String> {

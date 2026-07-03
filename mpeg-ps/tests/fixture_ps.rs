@@ -1,8 +1,8 @@
 use std::fs;
 
 use broadcast_common::Parse;
-use mpeg_ps::program_stream;
 use mpeg_ps::SystemHeader;
+use mpeg_ps::program_stream;
 
 // Fixture: ffmpeg -f lavfi -i testsrc2=duration=1:size=352x288:rate=25 -f lavfi -i sine=frequency=440:duration=1 -c:v mpeg2video -c:a mp2 -f vob -y mpeg-ps/tests/fixtures/ffmpeg-mpeg2-ps.mpg
 

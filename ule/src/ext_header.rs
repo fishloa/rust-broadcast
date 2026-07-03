@@ -569,7 +569,8 @@ mod tests {
         for &(raw, expected_label) in optional_constants {
             let t = OptionalHType::from_u8(raw);
             assert_ne!(
-                t.name(), "optional",
+                t.name(),
+                "optional",
                 "optional H_TYPE constant 0x{raw:02X} maps to the default fallback label — add a named arm"
             );
             assert_eq!(

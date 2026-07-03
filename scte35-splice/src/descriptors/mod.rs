@@ -17,7 +17,7 @@ pub mod segmentation;
 pub mod segmentation_enums;
 pub mod time;
 
-pub use any::{parse_loop, AnySpliceDescriptor, SpliceDescriptorIter};
+pub use any::{AnySpliceDescriptor, SpliceDescriptorIter, parse_loop};
 pub use audio::{AudioComponent, AudioDescriptor};
 pub use avail::AvailDescriptor;
 pub use dtmf::DtmfDescriptor;

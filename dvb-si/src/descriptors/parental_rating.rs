@@ -93,7 +93,7 @@ impl Serialize for ParentalRatingDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ParentalRatingDescriptor {
+impl crate::traits::DescriptorDef<'_> for ParentalRatingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PARENTAL_RATING";
 }

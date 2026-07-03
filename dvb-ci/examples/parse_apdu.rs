@@ -3,8 +3,8 @@
 //! Run with: `cargo run -p dvb-ci --example parse_apdu`
 
 use broadcast_common::Serialize;
-use dvb_ci::objects::ca_info::CaInfo;
 use dvb_ci::AnyApdu;
+use dvb_ci::objects::ca_info::CaInfo;
 
 fn main() {
     // A ca_info() APDU (9F 80 31) advertising two CA_system_ids: 0x0500, 0x0B00.

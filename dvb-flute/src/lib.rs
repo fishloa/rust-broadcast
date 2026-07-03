@@ -85,24 +85,24 @@ mod lct_ext;
 mod norm;
 
 pub use alc::{
-    AlcPacket, FecPayloadId128, FEC_PAYLOAD_ID_128_LEN, HET_EXT_FTI as ALC_HET_EXT_FTI, PSI_SPI,
+    AlcPacket, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FTI as ALC_HET_EXT_FTI, PSI_SPI,
 };
 pub use error::{Error, Result};
-pub use ext::{chain_len, parse_chain, serialize_chain, HeaderExtension, FIXED_HET_MIN, WORD};
+pub use ext::{FIXED_HET_MIN, HeaderExtension, WORD, chain_len, parse_chain, serialize_chain};
 pub use flute::{
     CencAlgorithm, ExtCenc, ExtFdt, FDT_INSTANCE_ID_MAX, FLUTE_VERSION, HET_EXT_CENC, HET_EXT_FDT,
     TOI_FDT,
 };
-pub use lct::{LctHeader, FIXED_HEADER_LEN, LCT_VERSION};
+pub use lct::{FIXED_HEADER_LEN, LCT_VERSION, LctHeader};
 pub use lct_ext::{
-    ExtTime, LctExtType, HET_EXT_AUTH as LCT_HET_EXT_AUTH, HET_EXT_NOP, HET_EXT_TIME, USE_ERT,
+    ExtTime, HET_EXT_AUTH as LCT_HET_EXT_AUTH, HET_EXT_NOP, HET_EXT_TIME, LctExtType, USE_ERT,
     USE_SCT_HIGH, USE_SCT_LOW, USE_SLC,
 };
 pub use norm::{
-    NormAckType, NormCmd, NormCmdType, NormCommonHeader, NormData, NormFeedback, NormInfo,
-    NormMessageType, SenderWord, COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN,
-    HET_EXT_AUTH as NORM_HET_EXT_AUTH, HET_EXT_CC, HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE,
-    NORM_FLAG_EXPLICIT, NORM_FLAG_FILE, NORM_FLAG_INFO, NORM_FLAG_REPAIR, NORM_FLAG_STREAM,
-    NORM_FLAG_UNRELIABLE, NORM_INFO_FIXED_LEN, NORM_NODE_ANY, NORM_NODE_NONE, NORM_VERSION,
-    SENDER_WORD_LEN,
+    COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN, HET_EXT_AUTH as NORM_HET_EXT_AUTH, HET_EXT_CC,
+    HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE, NORM_FLAG_EXPLICIT, NORM_FLAG_FILE,
+    NORM_FLAG_INFO, NORM_FLAG_REPAIR, NORM_FLAG_STREAM, NORM_FLAG_UNRELIABLE, NORM_INFO_FIXED_LEN,
+    NORM_NODE_ANY, NORM_NODE_NONE, NORM_VERSION, NormAckType, NormCmd, NormCmdType,
+    NormCommonHeader, NormData, NormFeedback, NormInfo, NormMessageType, SENDER_WORD_LEN,
+    SenderWord,
 };

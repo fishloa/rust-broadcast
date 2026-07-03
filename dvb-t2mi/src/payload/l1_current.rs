@@ -74,7 +74,7 @@ pub struct L1CurrentPayload<'a> {
 
 const L1_CURRENT_HEADER_LEN: usize = 2;
 
-impl<'a> L1CurrentPayload<'a> {
+impl L1CurrentPayload<'_> {
     /// Parse the L1-pre block from the first 21 bytes of `l1_current_data`.
     ///
     /// # Errors

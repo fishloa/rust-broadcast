@@ -65,7 +65,7 @@ impl Serialize for Mpeg4AudioDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for Mpeg4AudioDescriptor {
+impl crate::traits::DescriptorDef<'_> for Mpeg4AudioDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MPEG4_AUDIO";
 }

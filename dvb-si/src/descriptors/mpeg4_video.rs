@@ -65,7 +65,7 @@ impl Serialize for Mpeg4VideoDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for Mpeg4VideoDescriptor {
+impl crate::traits::DescriptorDef<'_> for Mpeg4VideoDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MPEG4_VIDEO";
 }

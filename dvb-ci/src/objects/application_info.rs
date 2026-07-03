@@ -100,7 +100,7 @@ impl Serialize for ApplicationInfoEnq {
         super::serialize_empty_apdu(tag::APPLICATION_INFO_ENQ, buf)
     }
 }
-impl<'a> ApduDef<'a> for ApplicationInfoEnq {
+impl ApduDef<'_> for ApplicationInfoEnq {
     const TAG: ApduTag = tag::APPLICATION_INFO_ENQ;
     const NAME: &'static str = "APPLICATION_INFO_ENQ";
 }
@@ -123,7 +123,7 @@ impl Serialize for EnterMenu {
         super::serialize_empty_apdu(tag::ENTER_MENU, buf)
     }
 }
-impl<'a> ApduDef<'a> for EnterMenu {
+impl ApduDef<'_> for EnterMenu {
     const TAG: ApduTag = tag::ENTER_MENU;
     const NAME: &'static str = "ENTER_MENU";
 }

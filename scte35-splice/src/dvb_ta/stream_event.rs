@@ -146,7 +146,7 @@ pub struct PrivateData<'a> {
     pub bytes: &'a [u8],
 }
 
-impl<'a> StreamEventPayload<'a> {
+impl StreamEventPayload<'_> {
     /// Length in bytes of the region counted by `DVB_data_length`: the fields
     /// after `DVB_data_length` up to (but excluding) `private_data_length`.
     fn dvb_data_len(&self) -> usize {
@@ -444,7 +444,7 @@ mod tests {
         assert_eq!(bytes[1], 0xE2);
         assert_eq!(bytes[2], 0x07); // temi_component_tag
         assert_eq!(bytes[3], 0x10); // temi_timeline_id
-                                    // private_data_length = 4 + 2 = 6.
+        // private_data_length = 4 + 2 = 6.
         assert_eq!(bytes[4], 6);
         assert_eq!(&bytes[5..9], &[0x00, 0x00, 0x00, 0x28]);
         assert_eq!(&bytes[9..11], &pd);

@@ -1,7 +1,7 @@
 //! Tests for [`dvb_si::descriptors::DescriptorRegistry`] — runtime registration
 //! of client private descriptor types with dyn escape hatch.
 
-use dvb_si::descriptors::{parse_loop, AnyDescriptor, DescriptorRegistry};
+use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, parse_loop};
 use dvb_si::traits::DescriptorDef;
 
 // ---------------------------------------------------------------------------
@@ -40,7 +40,7 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivate {
 
 const MY_PRIVATE_TAG: u8 = 0xA7;
 
-impl<'a> DescriptorDef<'a> for MyPrivate {
+impl DescriptorDef<'_> for MyPrivate {
     const TAG: u8 = MY_PRIVATE_TAG;
     const NAME: &'static str = "MY_PRIVATE";
 }
@@ -74,7 +74,7 @@ impl<'a> broadcast_common::Parse<'a> for MyPrivate2 {
     }
 }
 
-impl<'a> DescriptorDef<'a> for MyPrivate2 {
+impl DescriptorDef<'_> for MyPrivate2 {
     const TAG: u8 = MY_PRIVATE_TAG; // same tag as MyPrivate
     const NAME: &'static str = "MY_PRIVATE2";
 }
@@ -163,7 +163,7 @@ fn custom_registration_overrides_builtin() {
         }
     }
 
-    impl<'a> DescriptorDef<'a> for MyShortEventOverride {
+    impl DescriptorDef<'_> for MyShortEventOverride {
         const TAG: u8 = 0x4D; // same as ShortEvent
         const NAME: &'static str = "MY_SHORT_EVENT_OVERRIDE";
     }

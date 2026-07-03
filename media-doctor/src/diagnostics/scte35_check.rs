@@ -18,11 +18,11 @@ use alloc::collections::btree_map::{BTreeMap, Entry};
 
 use broadcast_common::Parse;
 
-use crate::report::{Finding, Location, Severity};
 use crate::Diagnostic;
 use crate::Report;
+use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::SectionReassembler;
-use mpeg_ts::ts::{TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
 /// `table_id` of a SCTE-35 `splice_info_section` (ANSI/SCTE 35 §9.6.1).
 const SCTE35_TABLE_ID: u8 = 0xFC;
@@ -207,8 +207,8 @@ mod tests {
     /// header and CRC32).
     fn make_splice_insert_section(event_id: u32, out_of_network: bool, cancel: bool) -> Vec<u8> {
         use broadcast_common::Serialize;
-        use scte35_splice::commands::SpliceInsert;
         use scte35_splice::SpliceInfoSection;
+        use scte35_splice::commands::SpliceInsert;
 
         let si = SpliceInsert {
             splice_event_id: event_id,

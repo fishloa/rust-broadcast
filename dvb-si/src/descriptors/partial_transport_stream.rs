@@ -109,7 +109,7 @@ impl Serialize for PartialTransportStreamDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for PartialTransportStreamDescriptor {
+impl crate::traits::DescriptorDef<'_> for PartialTransportStreamDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "PARTIAL_TRANSPORT_STREAM";
 }

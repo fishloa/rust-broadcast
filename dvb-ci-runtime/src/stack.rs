@@ -17,8 +17,8 @@ use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
 use dvb_ci::resource::{
-    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
-    RESOURCE_MANAGER,
+    APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
+    RESOURCE_MANAGER, ResourceId,
 };
 use dvb_si::tables::pmt::PmtSection;
 
@@ -375,8 +375,8 @@ mod tests {
     use crate::transport::DEFAULT_POLL_INTERVAL;
     use broadcast_common::Serialize;
     use dvb_ci::resource::RESOURCE_MANAGER;
-    use dvb_ci::spdu::{tags as spdu_tags, OpenSessionRequest};
-    use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+    use dvb_ci::spdu::{OpenSessionRequest, tags as spdu_tags};
+    use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
 
     fn ser<S: Serialize>(s: &S) -> Vec<u8> {
         let mut b = vec![0u8; s.serialized_len()];
@@ -446,9 +446,10 @@ mod tests {
         let a = s.handle(Event::Tick {
             elapsed: DEFAULT_POLL_INTERVAL,
         });
-        assert!(a
-            .iter()
-            .any(|x| matches!(x, Action::Write(w) if w.first() == Some(&tpdu_tags::DATA_LAST))));
+        assert!(
+            a.iter()
+                .any(|x| matches!(x, Action::Write(w) if w.first() == Some(&tpdu_tags::DATA_LAST)))
+        );
     }
 
     // --- #334: the auto-descramble (query -> reply -> ok) sequence ---
@@ -552,8 +553,8 @@ mod tests {
             }),
         )));
         pump_sbs(&mut s); // flush profile_change + the first create_session
-                          // The module accepts each create_session → its session opens (+ on_open
-                          // enq); each acceptance frees the link so the next create_session flushes.
+        // The module accepts each create_session → its session opens (+ on_open
+        // enq); each acceptance frees the link so the next create_session flushes.
         for (nb, res) in [
             (2u16, APPLICATION_INFORMATION),
             (3, CONDITIONAL_ACCESS_SUPPORT),
@@ -718,9 +719,11 @@ mod tests {
                 CaPmtListManagement::Last,
             ]
         );
-        assert!(all_ca_pmts(&acts)
-            .iter()
-            .all(|c| c.cmd_id == CaPmtCmdId::OkDescrambling));
+        assert!(
+            all_ca_pmts(&acts)
+                .iter()
+                .all(|c| c.cmd_id == CaPmtCmdId::OkDescrambling)
+        );
     }
 
     #[test]

@@ -40,7 +40,7 @@ impl Serialize for TimeSignal {
     }
 }
 
-impl<'a> CommandDef<'a> for TimeSignal {
+impl CommandDef<'_> for TimeSignal {
     const COMMAND_TYPE: u8 = COMMAND_TYPE;
     const NAME: &'static str = "TIME_SIGNAL";
 }

@@ -13,9 +13,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use super::{
-    ior::{Ior, NameComponent},
     BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
     BYTE_ORDER_BIG_ENDIAN, COMPRESSED_MODULE_DESCRIPTOR_TAG,
+    ior::{Ior, NameComponent},
 };
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
@@ -368,11 +368,11 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; 4], usize, usize)> {
 
 /// Parse the `serviceContextList` and return the typed entries plus the
 /// position after the list.
-fn parse_service_context_list<'a>(
-    bytes: &'a [u8],
+fn parse_service_context_list(
+    bytes: &[u8],
     pos: usize,
     end: usize,
-) -> Result<(Vec<ServiceContext<'a>>, usize)> {
+) -> Result<(Vec<ServiceContext<'_>>, usize)> {
     if pos + SERVICE_CONTEXT_COUNT_FIELD > end {
         return Err(Error::BufferTooShort {
             need: pos + SERVICE_CONTEXT_COUNT_FIELD,
@@ -1621,7 +1621,7 @@ pub struct ModuleInfo<'a> {
     pub user_info: &'a [u8],
 }
 
-impl<'a> ModuleInfo<'a> {
+impl ModuleInfo<'_> {
     /// Iterate over descriptors in the `userInfo` loop.
     ///
     /// Each item is `(tag: u8, data: &[u8])`.
@@ -2122,7 +2122,7 @@ mod tests {
     #[cfg(feature = "flate2")]
     #[test]
     fn zlib_round_trip() {
-        use flate2::{write::ZlibEncoder, Compression};
+        use flate2::{Compression, write::ZlibEncoder};
         use std::io::Write;
 
         let original = b"Hello, compressed BIOP world! ".repeat(10);

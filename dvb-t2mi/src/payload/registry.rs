@@ -270,7 +270,7 @@ mod tests {
         }
     }
 
-    impl<'a> crate::traits::PayloadDef<'a> for TestPayload {
+    impl crate::traits::PayloadDef<'_> for TestPayload {
         const PACKET_TYPE: u8 = TEST_PACKET_TYPE;
         const NAME: &'static str = "TEST_PAYLOAD";
     }
@@ -325,7 +325,7 @@ mod tests {
             }
         }
 
-        impl<'a> crate::traits::PayloadDef<'a> for OverridePayload {
+        impl crate::traits::PayloadDef<'_> for OverridePayload {
             const PACKET_TYPE: u8 = OVERRIDE_PT;
             const NAME: &'static str = "OVERRIDE";
         }

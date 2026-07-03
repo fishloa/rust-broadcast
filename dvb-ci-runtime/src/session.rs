@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use broadcast_common::{Parse, Serialize};
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
-    tags, CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,
-    OpenSessionResponse, SessionNumber, SessionStatus,
+    CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,
+    OpenSessionResponse, SessionNumber, SessionStatus, tags,
 };
 
 fn ser<S: Serialize>(s: &S) -> Vec<u8> {

@@ -7,7 +7,7 @@
 use std::fs;
 
 use dvb_flute::{
-    AlcPacket, ExtFdt, FecPayloadId128, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, HET_EXT_FDT, TOI_FDT,
+    AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, TOI_FDT,
 };
 
 fn fixture() -> Vec<u8> {

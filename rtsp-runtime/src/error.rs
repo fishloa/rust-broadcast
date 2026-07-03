@@ -8,8 +8,8 @@
 //! interleaved framing (§10.12 — [`docs/interleaved-framing.md`](../docs/interleaved-framing.md)),
 //! and authentication (§14 — [`docs/auth.md`](../docs/auth.md)).
 
-use crate::state::SessionState;
 use crate::Method;
+use crate::state::SessionState;
 
 /// Result alias for the engine's fallible operations.
 pub type Result<T> = core::result::Result<T, Error>;

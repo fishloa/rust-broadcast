@@ -78,11 +78,11 @@ mod descriptor;
 mod error;
 
 pub use anc::{
-    AncDataPacket, AncPacket, ANC_PES_HEADER_DATA_LENGTH, ANC_STREAM_ID, PACKET_START_CODE_PREFIX,
+    ANC_PES_HEADER_DATA_LENGTH, ANC_STREAM_ID, AncDataPacket, AncPacket, PACKET_START_CODE_PREFIX,
     STUFFING_BYTE,
 };
 pub use descriptor::{
-    AncDataDescriptor, ANC_DATA_DESCRIPTOR_TAG, ANC_STREAM_TYPE, VANC_FORMAT_IDENTIFIER,
+    ANC_DATA_DESCRIPTOR_TAG, ANC_STREAM_TYPE, AncDataDescriptor, VANC_FORMAT_IDENTIFIER,
     VANC_FORMAT_IDENTIFIER_BYTES,
 };
 pub use error::{Error, Result};

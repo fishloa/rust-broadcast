@@ -101,9 +101,7 @@ impl HierarchyType {
             Self::ExtensionBitstream => "Extension bitstream",
             Self::PrivateStream => "Private Stream",
             Self::MultiViewProfile => "Multi-view Profile",
-            Self::CombinedScalabilityOrMvHevc => {
-                "Combined Scalability or MV-HEVC sub-partition"
-            }
+            Self::CombinedScalabilityOrMvHevc => "Combined Scalability or MV-HEVC sub-partition",
             Self::MvcOrMvcdVideoSubBitstream => {
                 "MVC video sub-bitstream or MVCD video sub-bitstream"
             }
@@ -216,7 +214,7 @@ impl Serialize for HierarchyDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for HierarchyDescriptor {
+impl crate::traits::DescriptorDef<'_> for HierarchyDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "HIERARCHY";
 }
@@ -283,7 +281,10 @@ mod tests {
             HierarchyType::SpatialScalability.name(),
             "Spatial Scalability"
         );
-        assert_eq!(HierarchyType::BaseLayerOrMvcBaseView.name(), "Base layer or MVC base view sub-bitstream or AVC video sub-bitstream of MVC or HEVC temporal video sub-bitstream or HEVC base sub-partition or Base layer of MVCD base view sub-bitstream or AVC video sub-bitstream of MVCD or VVC temporal video sub-bitstream or EVC temporal video sub-bitstream");
+        assert_eq!(
+            HierarchyType::BaseLayerOrMvcBaseView.name(),
+            "Base layer or MVC base view sub-bitstream or AVC video sub-bitstream of MVC or HEVC temporal video sub-bitstream or HEVC base sub-partition or Base layer of MVCD base view sub-bitstream or AVC video sub-bitstream of MVCD or VVC temporal video sub-bitstream or EVC temporal video sub-bitstream"
+        );
     }
 
     #[test]

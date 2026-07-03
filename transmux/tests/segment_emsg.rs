@@ -18,8 +18,8 @@
 //! - ANSI/SCTE 214-3 / DASH-IF Part 10 §7.3: SCTE 35 binary scheme
 //!   `urn:scte:scte35:2013:bin`.
 
-use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime, EMSG_BOX_TYPE};
-use transmux::{build_media_segment, build_media_segment_with_events, FragmentTrackData, Sample};
+use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
+use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
 /// The SCTE 35 scheme URI for binary `splice_info_section` delivery
 /// (ANSI/SCTE 214-3 / DASH-IF IOP Part 10 §7.3).
@@ -46,7 +46,7 @@ fn minimal_tracks() -> Vec<Sample> {
     }]
 }
 
-fn minimal_frag<'a>(samples: &'a [Sample]) -> Vec<FragmentTrackData<'a>> {
+fn minimal_frag(samples: &[Sample]) -> Vec<FragmentTrackData<'_>> {
     vec![FragmentTrackData {
         track_id: 1,
         base_media_decode_time: 0,

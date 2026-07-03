@@ -72,7 +72,7 @@ impl Serialize for FmcDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for FmcDescriptor {
+impl crate::traits::DescriptorDef<'_> for FmcDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "FMC";
 }

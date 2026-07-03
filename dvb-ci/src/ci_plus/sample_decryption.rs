@@ -839,7 +839,7 @@ mod tests {
         let bytes = s.to_bytes();
         assert_eq!(bytes[7], 0x00); // ts_flag == 0
         assert_eq!(bytes[8], 0x02); // number_of_Sample_Tracks
-                                    // track0: reserved(3)+PID 0x0100 => 0x01 0x00, n_records=01.
+        // track0: reserved(3)+PID 0x0100 => 0x01 0x00, n_records=01.
         assert_eq!(&bytes[9..11], &[0x01, 0x00]);
         assert_eq!(bytes[11], 0x01);
         assert_eq!(SdStart::parse(&bytes).unwrap(), s);

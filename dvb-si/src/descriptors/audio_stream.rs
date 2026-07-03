@@ -76,7 +76,7 @@ impl Serialize for AudioStreamDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for AudioStreamDescriptor {
+impl crate::traits::DescriptorDef<'_> for AudioStreamDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AUDIO_STREAM";
 }

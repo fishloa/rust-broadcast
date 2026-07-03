@@ -231,7 +231,11 @@ impl fmt::Display for FefSubPartPayload<'_> {
         write!(
             f,
             "FEF SubPart {{ fef_idx: {}, tx_id: 0x{:04X}, subpart_idx: {}, variety: {:?}, length: {} }}",
-            self.fef_idx, self.tx_identifier, self.subpart_idx, self.subpart_variety, self.subpart_length
+            self.fef_idx,
+            self.tx_identifier,
+            self.subpart_idx,
+            self.subpart_variety,
+            self.subpart_length
         )
     }
 }
@@ -250,14 +254,14 @@ mod tests {
         buf[0] = 0x02; // fef_idx
         buf[1] = 0x00;
         buf[2] = 0x01; // tx_id = 1
-                       // bytes 3-6 = rfu1 = 0
+        // bytes 3-6 = rfu1 = 0
         buf[7] = 0x00;
         buf[8] = 0x05; // subpart_idx = 5
         buf[9] = 0x00;
         buf[10] = 0x01; // variety = IQ
-                        // byte 11 = rfu2 = 0
-                        // byte 12 top 2 = rfu2 = 0, bottom 6 = subpart top = 0
-                        // byte 13 = subpart mid = 0x10
+        // byte 11 = rfu2 = 0
+        // byte 12 top 2 = rfu2 = 0, bottom 6 = subpart top = 0
+        // byte 13 = subpart mid = 0x10
         buf[13] = 0x10;
         // byte 14 = subpart bot = 0
         // subpart_data starts at offset 15

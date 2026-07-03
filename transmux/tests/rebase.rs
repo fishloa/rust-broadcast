@@ -25,10 +25,10 @@ use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::media::{CmafMux, Fmp4Demux, Media, Track};
 use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{
-    build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
+    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
 use transmux::rebase::{
-    apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps, MPEG_TS_WRAP,
+    MPEG_TS_WRAP, apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps,
 };
 
 /// A minimal but real AVC track spec (track_id=1, 90 kHz) so `build_init_segment`

@@ -223,7 +223,7 @@ impl Serialize for VideoStreamDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for VideoStreamDescriptor {
+impl crate::traits::DescriptorDef<'_> for VideoStreamDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "VIDEO_STREAM";
 }

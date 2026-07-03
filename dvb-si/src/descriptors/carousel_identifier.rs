@@ -140,7 +140,7 @@ pub enum FormatSpecifier<'a> {
     },
 }
 
-impl<'a> FormatSpecifier<'a> {
+impl FormatSpecifier<'_> {
     /// The wire `FormatId` byte for this variant.
     #[must_use]
     pub fn format_id(&self) -> u8 {

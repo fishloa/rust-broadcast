@@ -242,7 +242,7 @@ mod tests {
         // iso_639 = "eng"
         // subtitle_purpose = 0x10, tts_suitability = 0x01
         let b3 = (0x10 << 2) | 0x01; // = 0x41
-                                     // font_flag=1, qualifier_flag=1, reserved_zero=0, profile_count=2
+        // font_flag=1, qualifier_flag=1, reserved_zero=0, profile_count=2
         let b4 = 0x80 | 0x40 | 0x02; // = 0xC2
         let sel = [
             b'e', b'n', b'g', // iso_639

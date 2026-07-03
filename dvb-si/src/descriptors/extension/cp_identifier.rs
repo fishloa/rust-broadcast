@@ -5,7 +5,7 @@
 use super::*;
 use alloc::vec::Vec;
 
-impl<'a> ExtensionBodyDef<'a> for CpIdentifier {
+impl ExtensionBodyDef<'_> for CpIdentifier {
     const TAG_EXTENSION: u8 = 0x03;
     const NAME: &'static str = "CP_IDENTIFIER";
 }

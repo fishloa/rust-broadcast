@@ -9,7 +9,7 @@
 
 use std::fs;
 
-use media_doctor::{check_playlist, Report};
+use media_doctor::{Report, check_playlist};
 
 fn read_fixture(name: &str) -> String {
     let path = format!("{}/../fixtures/hls/{}", env!("CARGO_MANIFEST_DIR"), name);

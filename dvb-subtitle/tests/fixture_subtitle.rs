@@ -19,8 +19,8 @@ fn m6_bytes() -> Vec<u8> {
 
 const PKT: usize = 188;
 const SUBTITLE_PID: u16 = 0x008C; // component in m6-single.ts carrying DVB subtitle
-                                  // DVB subtitle is carried in private_stream_1 with data_identifier 0x20; the same
-                                  // PID also multiplexes padding_stream (0xBE) PES, which are not subtitle.
+// DVB subtitle is carried in private_stream_1 with data_identifier 0x20; the same
+// PID also multiplexes padding_stream (0xBE) PES, which are not subtitle.
 const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
 const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
 

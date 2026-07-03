@@ -157,9 +157,6 @@ mod tests {
     fn descriptor_length_getter_matches_payload() {
         let raw: Vec<u8> = vec![TAG, 0x07, b'F', b'R', b'A', b'N', b'C', b'E', b'2'];
         let desc = NetworkNameDescriptor::parse(&raw).unwrap();
-        assert_eq!(
-            desc.serialized_len() - 2,
-            desc.network_name.raw().len() as usize
-        );
+        assert_eq!(desc.serialized_len() - 2, { desc.network_name.raw().len() });
     }
 }

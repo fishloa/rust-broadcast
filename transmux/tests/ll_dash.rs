@@ -528,7 +528,7 @@ mod xml {
         pos: usize,
     }
 
-    impl<'a> Parser<'a> {
+    impl Parser<'_> {
         fn parse_element(&mut self) -> Option<Element> {
             self.skip_ws();
             if !self.starts_with("<") || self.starts_with("</") {

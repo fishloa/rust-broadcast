@@ -160,8 +160,8 @@ pub(crate) fn descriptor_body<'a>(
     Ok(&bytes[HEADER_LEN..end])
 }
 
-pub use ait::{parse_ait_loop, AitDescriptorIter, AitDescriptorLoop, AnyAitDescriptor};
-pub use any::{parse_loop, AnyDescriptor, DescriptorIter, DescriptorLoop};
+pub use ait::{AitDescriptorIter, AitDescriptorLoop, AnyAitDescriptor, parse_ait_loop};
+pub use any::{AnyDescriptor, DescriptorIter, DescriptorLoop, parse_loop};
 pub use extension::registry::{ExtensionObject, ExtensionRegistry, RegisteredExtension};
 pub use registry::{
     DescriptorObject, DescriptorRegistry, ExtIterItem, ExtRegistryIter, RegistryIter,

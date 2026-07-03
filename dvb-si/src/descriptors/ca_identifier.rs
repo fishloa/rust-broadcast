@@ -81,7 +81,7 @@ impl Serialize for CaIdentifierDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for CaIdentifierDescriptor {
+impl crate::traits::DescriptorDef<'_> for CaIdentifierDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CA_IDENTIFIER";
 }

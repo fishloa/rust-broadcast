@@ -235,7 +235,7 @@ impl MpegAudioFrameHeader {
             _ => {
                 return Err(Error::InvalidInput(
                     "MPEG audio frame header: reserved version ID",
-                ))
+                ));
             }
         };
         let layer = match ((h >> 17) & 0x3) as u8 {
@@ -245,7 +245,7 @@ impl MpegAudioFrameHeader {
             _ => {
                 return Err(Error::InvalidInput(
                     "MPEG audio frame header: reserved layer",
-                ))
+                ));
             }
         };
         let bitrate_index = ((h >> 12) & 0xF) as usize;

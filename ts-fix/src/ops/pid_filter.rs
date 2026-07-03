@@ -23,7 +23,7 @@ use alloc::collections::BTreeSet;
 use broadcast_common::traits::Parse;
 use dvb_si::tables::pat::PatSection;
 use dvb_si::tables::pmt::PmtSection;
-use mpeg_ts::ts::{extract_ts_payload, SectionReassembler, TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_payload};
 
 use crate::ops::{Op, StreamModel};
 

@@ -54,7 +54,7 @@ impl Serialize for TimeSignalRequest {
     }
 }
 
-impl<'a> OperationDef<'a> for TimeSignalRequest {
+impl OperationDef<'_> for TimeSignalRequest {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "TIME_SIGNAL_REQUEST";
 }

@@ -536,7 +536,7 @@ impl<'a> DescriptorLoop<'a> {
     }
 }
 
-impl<'a> core::ops::Deref for DescriptorLoop<'a> {
+impl core::ops::Deref for DescriptorLoop<'_> {
     /// Derefs to the raw wire bytes — `len()`/indexing are **byte counts for
     /// serialization, not entry counts**. To count entries, use
     /// [`DescriptorLoop::iter`].
@@ -626,7 +626,7 @@ mod tests {
         let trunc = DescriptorLoop::new(&[0x40, 0x01, 0xAA, 0x6A, 0x05]);
         let tags: Vec<u8> = trunc.raw_tags().map(|(t, _)| t).collect();
         assert_eq!(tags, vec![0x40]); // the truncated 0x6A entry is dropped by raw_tags
-                                      // ...but contains_tag still sees the truncated tag.
+        // ...but contains_tag still sees the truncated tag.
         assert!(trunc.contains_tag(0x6A));
     }
 
@@ -716,7 +716,7 @@ mod tests {
             }
         }
 
-        impl<'a> DescriptorDef<'a> for MyTag0xA7 {
+        impl DescriptorDef<'_> for MyTag0xA7 {
             const TAG: u8 = 0xA7;
             const NAME: &'static str = "MY_TAG_0xA7";
         }

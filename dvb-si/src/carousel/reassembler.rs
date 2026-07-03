@@ -404,7 +404,7 @@ mod tests {
         let modules: Vec<_> = (0..5).map(|i| module(i, 1, 0)).collect();
         r.note_dii(&dii(1, 4, modules));
         assert_eq!(r.pending(), 3); // first three announcements; rest skipped
-                                    // Completing one frees a slot...
+        // Completing one frees a slot...
         assert!(r.feed_ddb(&ddb(1, 0, 0, 0, &[0xAA])).is_some());
         assert_eq!(r.pending(), 2);
         // ...so a re-announcement of a skipped module now fits.

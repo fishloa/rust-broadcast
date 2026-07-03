@@ -191,7 +191,7 @@ fn encode_enable_byte(enable: Option<CaEnable>) -> u8 {
     }
 }
 
-impl<'a> ApduDef<'a> for CaPmtReply {
+impl ApduDef<'_> for CaPmtReply {
     const TAG: ApduTag = tag::CA_PMT_REPLY;
     const NAME: &'static str = "CA_PMT_REPLY";
 }

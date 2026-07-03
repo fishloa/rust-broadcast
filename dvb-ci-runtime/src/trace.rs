@@ -12,7 +12,7 @@ use crate::device::LinkEvent;
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::tags as spdu_tags;
 use dvb_ci::tag::ApduTag;
-use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
 
 /// Name of a TPDU tag (§A.4), or `"tpdu(0xXX)"` for an unknown one.
 fn tpdu_name(tag: u8) -> &'static str {

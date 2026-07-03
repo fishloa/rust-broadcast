@@ -10,7 +10,7 @@
 //! ```
 
 use mp4_emsg::PresentationTime;
-use timed_metadata::{convert::EmsgConfig, TimeAnchor, Timeline};
+use timed_metadata::{TimeAnchor, Timeline, convert::EmsgConfig};
 
 fn main() {
     // Real Unified Streaming splice: ID 2002, out-of-network, break_duration 24 s.

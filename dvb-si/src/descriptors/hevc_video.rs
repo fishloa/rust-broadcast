@@ -242,7 +242,7 @@ impl Serialize for HevcVideoDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for HevcVideoDescriptor {
+impl crate::traits::DescriptorDef<'_> for HevcVideoDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "HEVC_VIDEO";
 }

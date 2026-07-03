@@ -19,9 +19,9 @@
 //! Vorbis channels/sample_rate from the `CodecPrivate` identification header
 //! (Vorbis I §4.2.2) — never hardcoded into the parse.
 
+use transmux::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::Media;
 
 /// VP8+Opus fixture (video track 0, audio track 1).
 const VP8_FIXTURE: &str = concat!(

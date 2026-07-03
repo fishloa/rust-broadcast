@@ -34,9 +34,9 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::{crc32_mpeg2, Package, Parse};
+use broadcast_common::{Package, Parse, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
-use mpeg_ts::ts::{Pcr, TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
@@ -535,7 +535,7 @@ fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
     body.push(VERSION_CURRENT_NEXT);
     body.push(0); // section_number
     body.push(0); // last_section_number
-                  // reserved(3) + PCR_PID(13).
+    // reserved(3) + PCR_PID(13).
     body.push(PID_RESERVED_HI | ((pcr_pid >> 8) as u8 & !PID_RESERVED_HI));
     body.push((pcr_pid & 0xFF) as u8);
     // reserved(4) + program_info_length(12) = 0 (no program descriptors).

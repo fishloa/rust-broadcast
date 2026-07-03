@@ -193,7 +193,7 @@ mod tests {
     /// Wrap an SPDU as a module→host `T_Data_Last` R_TPDU (+ trailing T_SB,
     /// data_available clear) on transport connection `tcid`.
     fn r_data(tcid: u8, spdu: &[u8]) -> Vec<u8> {
-        use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+        use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
         let mut v = vec![tpdu_tags::DATA_LAST, (1 + spdu.len()) as u8, tcid];
         v.extend_from_slice(spdu);
         v.extend_from_slice(&[tpdu_tags::SB, 0x02, tcid, SbValue::new(false).0]);
@@ -212,7 +212,7 @@ mod tests {
     /// A standalone module→host `T_SB` (data_available clear) ack — flushes one
     /// queued host write per turn (#337).
     fn sb() -> Vec<u8> {
-        use dvb_ci::tpdu::{tags as tpdu_tags, SbValue};
+        use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
         vec![tpdu_tags::SB, 0x02, 0x01, SbValue::new(false).0]
     }
 

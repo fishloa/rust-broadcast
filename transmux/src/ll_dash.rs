@@ -61,13 +61,12 @@ use crate::dash::DashPackager;
 use crate::error::{Error, Result};
 use crate::media::Media;
 use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
-    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
-    TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
+    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
     TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
-    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT,
+    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
 };
-use crate::pipeline::{build_init_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec};
+use crate::pipeline::{CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
 use broadcast_common::{Package, Serialize};
 
@@ -345,7 +344,7 @@ impl LlSegmenter {
                 .tracks
                 .iter()
                 .zip(&take_counts)
-                .filter(|(_, &n)| n > 0)
+                .filter(|&(_, &n)| n > 0)
                 .map(|(t, &n)| FragmentTrackData {
                     track_id: t.spec.track_id,
                     base_media_decode_time: t.base_decode,

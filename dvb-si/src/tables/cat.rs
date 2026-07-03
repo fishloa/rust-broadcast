@@ -7,8 +7,8 @@
 //!
 //! A single-section table per CAS standard.
 
-use crate::descriptors::ca::CaDescriptor;
 use crate::descriptors::DescriptorLoop;
+use crate::descriptors::ca::CaDescriptor;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -58,7 +58,7 @@ pub struct CatSection<'a> {
     pub descriptors: DescriptorLoop<'a>,
 }
 
-impl<'a> CatSection<'a> {
+impl CatSection<'_> {
     /// Typed view of the CA descriptors (tag 0x09) in the descriptor loop.
     /// Non-CA descriptors are skipped; a truncated trailing descriptor returns
     /// an error.

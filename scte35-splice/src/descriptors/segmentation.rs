@@ -134,7 +134,7 @@ pub struct SegmentationDescriptor<'a> {
     pub sub_segments: Option<(u8, u8)>,
 }
 
-impl<'a> Default for SegmentationDescriptor<'a> {
+impl Default for SegmentationDescriptor<'_> {
     fn default() -> Self {
         Self {
             identifier: CUEI,

@@ -106,7 +106,7 @@ impl Serialize for CloseMmi {
     }
 }
 
-impl<'a> ApduDef<'a> for CloseMmi {
+impl ApduDef<'_> for CloseMmi {
     const TAG: ApduTag = tag::CLOSE_MMI;
     const NAME: &'static str = "CLOSE_MMI";
 }

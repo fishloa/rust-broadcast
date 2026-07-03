@@ -12,10 +12,10 @@
 //! client's `Transport` back (a minimal negotiation: the first offered spec is
 //! accepted, else `461 Unsupported Transport`).
 
-use rtsp_types::{headers, Message, Method, Request, Response, StatusCode, Version};
+use rtsp_types::{Message, Method, Request, Response, StatusCode, Version, headers};
 
 use crate::error::{Error, Result};
-use crate::state::{server_next_state, SessionState};
+use crate::state::{SessionState, server_next_state};
 use crate::transport::Transport;
 
 /// A message body type: owned bytes.
@@ -265,9 +265,11 @@ mod tests {
         assert!(text.contains("200"));
         assert!(text.contains("Session:"));
         assert!(text.contains("Transport:"));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, ServerEvent::SessionSetup { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::SessionSetup { .. }))
+        );
     }
 
     #[test]
@@ -278,8 +280,10 @@ mod tests {
             .unwrap();
         assert_eq!(s.state(), SessionState::Init);
         assert!(String::from_utf8_lossy(&resp).contains("455"));
-        assert!(events
-            .iter()
-            .any(|e| matches!(e, ServerEvent::MethodNotValid { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ServerEvent::MethodNotValid { .. }))
+        );
     }
 }

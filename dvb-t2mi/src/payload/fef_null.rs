@@ -221,7 +221,7 @@ impl<'a> Parse<'a> for FefNullPayload {
     }
 }
 
-impl<'a> crate::traits::PayloadDef<'a> for FefNullPayload {
+impl crate::traits::PayloadDef<'_> for FefNullPayload {
     const PACKET_TYPE: u8 = 0x30;
     const NAME: &'static str = "FEF_NULL";
 }

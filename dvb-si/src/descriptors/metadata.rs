@@ -125,8 +125,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
             if body.len() < pos + 4 {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
-                    reason:
-                        "metadata_descriptor too short for metadata_application_format_identifier",
+                    reason: "metadata_descriptor too short for metadata_application_format_identifier",
                 });
             }
             let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
@@ -231,8 +230,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
                 if body.len() < pos + dci_len {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
-                        reason:
-                            "metadata_descriptor too short for dec_config_identification_record",
+                        reason: "metadata_descriptor too short for dec_config_identification_record",
                     });
                 }
                 let dci = &body[pos..pos + dci_len];
@@ -245,8 +243,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
                 if body.len() < pos + 1 {
                     return Err(Error::InvalidDescriptor {
                         tag: TAG,
-                        reason:
-                            "metadata_descriptor too short for decoder_config_metadata_service_id",
+                        reason: "metadata_descriptor too short for decoder_config_metadata_service_id",
                     });
                 }
                 let dcm = body[pos];

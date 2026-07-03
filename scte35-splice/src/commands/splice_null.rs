@@ -32,7 +32,7 @@ impl Serialize for SpliceNull {
     }
 }
 
-impl<'a> CommandDef<'a> for SpliceNull {
+impl CommandDef<'_> for SpliceNull {
     const COMMAND_TYPE: u8 = COMMAND_TYPE;
     const NAME: &'static str = "SPLICE_NULL";
 }

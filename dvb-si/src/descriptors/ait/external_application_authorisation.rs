@@ -45,8 +45,7 @@ impl<'a> Parse<'a> for ExternalApplicationAuthorisationDescriptor {
         if body.len() % ENTRY_LEN != 0 {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason:
-                    "external_application_authorisation_descriptor length must be a multiple of 7",
+                reason: "external_application_authorisation_descriptor length must be a multiple of 7",
             });
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
@@ -101,7 +100,7 @@ impl Serialize for ExternalApplicationAuthorisationDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for ExternalApplicationAuthorisationDescriptor {
+impl crate::traits::DescriptorDef<'_> for ExternalApplicationAuthorisationDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "EXTERNAL_APPLICATION_AUTHORISATION";
 }

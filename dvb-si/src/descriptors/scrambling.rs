@@ -120,7 +120,7 @@ impl Serialize for ScramblingDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ScramblingDescriptor {
+impl crate::traits::DescriptorDef<'_> for ScramblingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SCRAMBLING";
 }

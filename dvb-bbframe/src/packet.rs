@@ -22,7 +22,7 @@
 
 use alloc::vec::Vec;
 
-use crate::header::{Bbheader, Mode, BBHEADER_LEN};
+use crate::header::{BBHEADER_LEN, Bbheader, Mode};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
 pub const NM_UP_SIZE: usize = 188;
@@ -680,7 +680,7 @@ mod tests {
             // MATYPE-1: TS=0b11 → 0xC0, SIS=1 → 0x20, CCM=1 → 0x10, ISSYI=0, NPD=0, EXT=0
             h[0] = 0xF0;
             h[1] = 0x00; // ISI=0
-                         // UPL=0 (ignored in HEM)
+            // UPL=0 (ignored in HEM)
             h[2] = 0x00;
             h[3] = 0x00;
             h[4] = (dfl_bits >> 8) as u8;

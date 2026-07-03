@@ -104,7 +104,7 @@ impl Serialize for LogicalChannelDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for LogicalChannelDescriptor {
+impl crate::traits::DescriptorDef<'_> for LogicalChannelDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "LOGICAL_CHANNEL";
 }

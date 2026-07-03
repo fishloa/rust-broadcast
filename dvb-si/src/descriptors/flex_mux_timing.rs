@@ -75,7 +75,7 @@ impl Serialize for FlexMuxTimingDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for FlexMuxTimingDescriptor {
+impl crate::traits::DescriptorDef<'_> for FlexMuxTimingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "FLEX_MUX_TIMING";
 }

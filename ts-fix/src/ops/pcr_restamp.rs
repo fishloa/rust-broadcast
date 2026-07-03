@@ -57,7 +57,7 @@
 use alloc::collections::BTreeMap;
 
 use mpeg_ts::owned::OwnedTsPacket;
-use mpeg_ts::ts::{Pcr, TsPacket, TS_PACKET_SIZE};
+use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsPacket};
 
 use crate::ops::{Op, StreamModel};
 

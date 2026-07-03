@@ -3,16 +3,16 @@
 //! Round-trip is the crate's primary, fabrication-proof correctness oracle.
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{
     AnyCommand, BandwidthReservation, PrivateCommand, SpliceInsert, SpliceNull, SpliceSchedule,
     SpliceScheduleEvent, TimeSignal,
 };
 use scte35_splice::descriptors::{
-    AudioComponent, AudioDescriptor, AvailDescriptor, DtmfDescriptor, SegmentationDescriptor,
-    SegmentationTypeId, SegmentationUpidType, TimeDescriptor, CUEI,
+    AudioComponent, AudioDescriptor, AvailDescriptor, CUEI, DtmfDescriptor, SegmentationDescriptor,
+    SegmentationTypeId, SegmentationUpidType, TimeDescriptor,
 };
 use scte35_splice::time::{BreakDuration, SpliceTime};
-use scte35_splice::SpliceInfoSection;
 
 /// Serialize a section, parse it back, assert equality and byte-identity.
 fn section_round_trip(section: &SpliceInfoSection) {
@@ -211,7 +211,7 @@ fn encrypted_section_round_trips_raw() {
 /// 33-bit `pts_adjustment` wrap boundary (§9.6.1: carry ignored on overflow).
 #[test]
 fn pts_adjustment_33bit_wrap_boundary() {
-    use scte35_splice::time::{pts_add_wrapping, PTS_MAX, PTS_MODULUS};
+    use scte35_splice::time::{PTS_MAX, PTS_MODULUS, pts_add_wrapping};
 
     // The maximum 33-bit pts_adjustment round-trips through the section.
     let mut s = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);

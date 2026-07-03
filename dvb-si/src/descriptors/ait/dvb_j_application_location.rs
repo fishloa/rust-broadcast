@@ -95,8 +95,7 @@ impl Serialize for DvbJApplicationLocationDescriptor<'_> {
         if self.classpath_extension.len() > u8::MAX as usize {
             return Err(Error::InvalidDescriptor {
                 tag: TAG,
-                reason:
-                    "dvb_j_application_location_descriptor classpath_extension exceeds 255 bytes",
+                reason: "dvb_j_application_location_descriptor classpath_extension exceeds 255 bytes",
             });
         }
         let body_len = self.serialized_len() - HEADER_LEN;

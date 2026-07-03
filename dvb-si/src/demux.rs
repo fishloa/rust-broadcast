@@ -535,7 +535,7 @@ impl SiDemux {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
+    use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
 
     /// Wrap section bytes in a single PUSI TS packet on `pid`, with a
     /// pointer_field of 0 and 0xFF stuffing tail. Section must fit one packet.
@@ -721,8 +721,8 @@ mod tests {
 
     #[test]
     fn table_section_with_empty_registry_matches_table_section() {
-        use crate::tables::registry::TableRegistry;
         use crate::tables::AnyTableSection;
+        use crate::tables::registry::TableRegistry;
 
         let mut demux = SiDemux::builder().build();
         let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
@@ -738,8 +738,8 @@ mod tests {
 
     #[test]
     fn table_section_with_custom_registry_yields_other() {
-        use crate::tables::registry::TableRegistry;
         use crate::tables::AnyTableSection;
+        use crate::tables::registry::TableRegistry;
         use crate::traits::TableDef;
         use broadcast_common::Parse;
 
@@ -765,7 +765,7 @@ mod tests {
             }
         }
 
-        impl<'a> TableDef<'a> for PrivateTable {
+        impl TableDef<'_> for PrivateTable {
             const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(PRIVATE_TID, PRIVATE_TID)];
             const NAME: &'static str = "PRIVATE_TABLE";
         }

@@ -110,7 +110,7 @@ impl Serialize for TimeDescriptor {
     }
 }
 
-impl<'a> SpliceDescriptorDef<'a> for TimeDescriptor {
+impl SpliceDescriptorDef<'_> for TimeDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TIME";
 }

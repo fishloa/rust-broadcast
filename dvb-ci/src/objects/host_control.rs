@@ -64,7 +64,7 @@ impl Serialize for Tune {
     }
 }
 
-impl<'a> ApduDef<'a> for Tune {
+impl ApduDef<'_> for Tune {
     const TAG: ApduTag = tag::TUNE;
     const NAME: &'static str = "TUNE";
 }
@@ -126,7 +126,7 @@ impl Serialize for Replace {
     }
 }
 
-impl<'a> ApduDef<'a> for Replace {
+impl ApduDef<'_> for Replace {
     const TAG: ApduTag = tag::REPLACE;
     const NAME: &'static str = "REPLACE";
 }
@@ -166,7 +166,7 @@ impl Serialize for ClearReplace {
     }
 }
 
-impl<'a> ApduDef<'a> for ClearReplace {
+impl ApduDef<'_> for ClearReplace {
     const TAG: ApduTag = tag::CLEAR_REPLACE;
     const NAME: &'static str = "CLEAR_REPLACE";
 }
@@ -194,7 +194,7 @@ impl Serialize for AskRelease {
     }
 }
 
-impl<'a> ApduDef<'a> for AskRelease {
+impl ApduDef<'_> for AskRelease {
     const TAG: ApduTag = tag::ASK_RELEASE;
     const NAME: &'static str = "ASK_RELEASE";
 }
@@ -214,7 +214,9 @@ mod tests {
         let bytes = t.to_bytes();
         assert_eq!(
             bytes,
-            [0x9F, 0x84, 0x00, 0x08, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]
+            [
+                0x9F, 0x84, 0x00, 0x08, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
+            ]
         );
         assert_eq!(Tune::parse(&bytes).unwrap(), t);
         let mut other = t;

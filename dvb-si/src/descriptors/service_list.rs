@@ -87,7 +87,7 @@ impl Serialize for ServiceListDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ServiceListDescriptor {
+impl crate::traits::DescriptorDef<'_> for ServiceListDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_LIST";
 }

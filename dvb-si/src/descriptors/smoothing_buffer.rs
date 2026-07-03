@@ -79,7 +79,7 @@ impl Serialize for SmoothingBufferDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SmoothingBufferDescriptor {
+impl crate::traits::DescriptorDef<'_> for SmoothingBufferDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SMOOTHING_BUFFER";
 }

@@ -11,9 +11,9 @@
 
 use std::path::PathBuf;
 
-use transmux::nal::{access_unit_is_keyframe, is_keyframe_nal, nal_unit_type, NalCodec};
-use transmux::pipeline::CodecConfig;
 use transmux::TsDemux;
+use transmux::nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type};
+use transmux::pipeline::CodecConfig;
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")

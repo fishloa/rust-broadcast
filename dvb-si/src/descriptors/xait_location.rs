@@ -103,7 +103,7 @@ impl Serialize for XaitLocationDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for XaitLocationDescriptor {
+impl crate::traits::DescriptorDef<'_> for XaitLocationDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "XAIT_LOCATION";
 }

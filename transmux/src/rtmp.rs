@@ -1183,7 +1183,7 @@ pub struct RtmpDemux<'a> {
     _marker: core::marker::PhantomData<&'a [u8]>,
 }
 
-impl<'a> RtmpDemux<'a> {
+impl RtmpDemux<'_> {
     /// Create a new demuxer.
     pub fn new() -> Self {
         Self {

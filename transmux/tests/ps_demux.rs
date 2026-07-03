@@ -18,9 +18,9 @@
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
+use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::PsDemux;
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
 

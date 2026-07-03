@@ -518,7 +518,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TerrestrialDeliverySystemDescriptor {
+impl crate::traits::DescriptorDef<'_> for TerrestrialDeliverySystemDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TERRESTRIAL_DELIVERY_SYSTEM";
 }

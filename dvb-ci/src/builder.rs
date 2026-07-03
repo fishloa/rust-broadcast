@@ -17,7 +17,7 @@
 //! [`CaPmt`]: crate::objects::ca_pmt::CaPmt
 
 use crate::objects::ca_pmt::{
-    CaPmt, CaPmtCmdId, CaPmtListManagement, CaPmtStream, CA_DESCRIPTOR_TAG,
+    CA_DESCRIPTOR_TAG, CaPmt, CaPmtCmdId, CaPmtListManagement, CaPmtStream,
 };
 use alloc::vec::Vec;
 use broadcast_common::Serialize;

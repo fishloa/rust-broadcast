@@ -21,8 +21,8 @@ use dvb_ci::objects::mmi_display::{
 use dvb_ci::objects::mmi_high::{Enq, List, Menu};
 use dvb_ci::objects::resource_manager::{Profile, ProfileChange, ProfileEnq};
 use dvb_ci::resource::{
-    ResourceId, APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
-    RESOURCE_MANAGER,
+    APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, DATE_TIME, HOST_CONTROL, MMI,
+    RESOURCE_MANAGER, ResourceId,
 };
 use dvb_ci::tag::{self, ApduTag};
 

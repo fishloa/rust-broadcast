@@ -9,7 +9,7 @@ use dvb_si::tables::pmt::{PmtSection, PmtStream};
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::tdt::TdtSection;
 use mpeg_ts::mux::SectionPacketizer;
-use mpeg_ts::ts::{TsHeader, TS_PACKET_SIZE};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
 
 use crate::{Config, ConformanceMonitor, Indicator};
 

@@ -73,9 +73,9 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         let metadata_application_format_identifier = if metadata_application_format == 0xFFFF {
             if body.len() < pos + 4 {
                 return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
-                    });
+                    tag: TAG,
+                    reason: "metadata_pointer_descriptor too short for metadata_application_format_identifier",
+                });
             }
             let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
             pos += 4;
@@ -125,8 +125,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
             if body.len() < pos + 1 {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
-                    reason:
-                        "metadata_pointer_descriptor too short for metadata_locator_record_length",
+                    reason: "metadata_pointer_descriptor too short for metadata_locator_record_length",
                 });
             }
             let rec_len = body[pos] as usize;
@@ -164,8 +163,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
             if body.len() < pos + 4 {
                 return Err(Error::InvalidDescriptor {
                     tag: TAG,
-                    reason:
-                        "metadata_pointer_descriptor too short for transport_stream_location+id",
+                    reason: "metadata_pointer_descriptor too short for transport_stream_location+id",
                 });
             }
             let tsl = u16::from_be_bytes([body[pos], body[pos + 1]]);

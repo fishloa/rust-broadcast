@@ -409,7 +409,7 @@ fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
     }
 }
 
-impl<'r, 'a> Iterator for RegistryIter<'r, 'a> {
+impl<'a> Iterator for RegistryIter<'_, 'a> {
     type Item = crate::Result<AnyDescriptor<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -497,7 +497,7 @@ impl<'r, 'a> ExtRegistryIter<'r, 'a> {
     }
 }
 
-impl<'r, 'a> Iterator for ExtRegistryIter<'r, 'a> {
+impl<'a> Iterator for ExtRegistryIter<'_, 'a> {
     type Item = crate::Result<ExtIterItem<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -581,7 +581,7 @@ mod tests {
         }
     }
 
-    impl<'a> DescriptorDef<'a> for PdsEacem {
+    impl DescriptorDef<'_> for PdsEacem {
         const TAG: u8 = 0x83;
         const NAME: &'static str = "PDS_EACEM";
     }
@@ -606,7 +606,7 @@ mod tests {
         }
     }
 
-    impl<'a> DescriptorDef<'a> for PdsNordig {
+    impl DescriptorDef<'_> for PdsNordig {
         const TAG: u8 = 0x83;
         const NAME: &'static str = "PDS_NORDIG";
     }
@@ -631,7 +631,7 @@ mod tests {
         }
     }
 
-    impl<'a> DescriptorDef<'a> for PdsAgnostic {
+    impl DescriptorDef<'_> for PdsAgnostic {
         const TAG: u8 = 0x84;
         const NAME: &'static str = "PDS_AGNOSTIC";
     }
@@ -740,7 +740,7 @@ mod tests {
             }
         }
 
-        impl<'a> DescriptorDef<'a> for Agnostic83 {
+        impl DescriptorDef<'_> for Agnostic83 {
             const TAG: u8 = 0x83;
             const NAME: &'static str = "AGNOSTIC_83";
         }
@@ -882,7 +882,7 @@ mod tests {
             }
         }
 
-        impl<'a> crate::descriptors::extension::ExtensionBodyDef<'a> for MyCustomExt {
+        impl crate::descriptors::extension::ExtensionBodyDef<'_> for MyCustomExt {
             const TAG_EXTENSION: u8 = 0x42;
             const NAME: &'static str = "MY_CUSTOM_EXT";
         }

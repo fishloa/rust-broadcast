@@ -5,14 +5,13 @@
 //! compact encoding round-trip, and the DSM-CC stream-event wrap + base-64.
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
 use scte35_splice::descriptors::AnySpliceDescriptor;
 use scte35_splice::dvb_ta::{
-    base64_encode, CompactDas, CompactScte35, CompactSpliceInsert, DvbDasDescriptor,
-    EquivalentSegmentationType, PlacementOpportunity, Scte35Carriage, StreamEventPayload,
-    TimelineType,
+    CompactDas, CompactScte35, CompactSpliceInsert, DvbDasDescriptor, EquivalentSegmentationType,
+    PlacementOpportunity, Scte35Carriage, StreamEventPayload, TimelineType, base64_encode,
 };
-use scte35_splice::SpliceInfoSection;
 
 /// The §5.3.5.11 example UPID URI.
 const EXAMPLE_UPID: &[u8] = b"urn:com.broadcaster:112210F47DE98115";
@@ -130,8 +129,10 @@ fn placement_opportunity_classifies_the_spec_block() {
         assert_eq!(po.segmentation_type_id().to_u8(), id);
     }
     // A non-PO type is rejected.
-    assert!(PlacementOpportunity::from_segmentation_type_id(
-        scte35_splice::descriptors::SegmentationTypeId::ProgramStart
-    )
-    .is_none());
+    assert!(
+        PlacementOpportunity::from_segmentation_type_id(
+            scte35_splice::descriptors::SegmentationTypeId::ProgramStart
+        )
+        .is_none()
+    );
 }

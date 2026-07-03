@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
-use broadcast_common::{crc32_mpeg2, Parse, Serialize};
+use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 
 /// `packet_start_code_prefix` — `0x000001`.
 pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
@@ -159,7 +159,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
     }
 }
 
-fn parse_es_loop<'a>(data: &'a [u8], single_flag: bool) -> Result<Vec<EsMapEntry<'a>>> {
+fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> {
     let mut entries = Vec::new();
     let mut pos = 0;
     while pos + 4 <= data.len() {
@@ -354,9 +354,11 @@ mod tests {
         assert_eq!(parsed.elementary_stream_map.len(), 1);
         assert_eq!(parsed.elementary_stream_map[0].stream_type, 0x02);
         assert_eq!(parsed.elementary_stream_map[0].elementary_stream_id, 0xE0);
-        assert!(parsed.elementary_stream_map[0]
-            .stream_id_extension
-            .is_none());
+        assert!(
+            parsed.elementary_stream_map[0]
+                .stream_id_extension
+                .is_none()
+        );
         assert_eq!(
             parsed.elementary_stream_map[0].descriptors,
             &[0x0A, 0x04, b'H', b'E', b'L', b'L']

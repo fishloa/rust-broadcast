@@ -39,7 +39,7 @@ use crate::init_segment::{
     StscEntry, SyncSampleBox,
 };
 use crate::media::Media;
-use crate::pipeline::{build_init_segment, Sample};
+use crate::pipeline::{Sample, build_init_segment};
 use crate::segments::{FileTypeBox, MediaDataBox};
 use crate::timing::{CompositionOffsetBox, CttsEntry, SttsEntry, TimeToSampleBox};
 

@@ -1,7 +1,7 @@
 [package]
 name         = "scte35-splice"
 version      = "1.0.1"
-edition      = "2021"
+edition      = "2024"
 description  = "ANSI/SCTE 35 splice information (DPI cueing) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

@@ -476,10 +476,12 @@ mod tests {
         assert_eq!(parsed.oui, oui);
         assert_eq!(parsed.common_descriptors.raw(), common_descs);
         assert_eq!(parsed.platforms.len(), 1);
-        assert!(parsed.platforms[0]
-            .compatibility_descriptor
-            .descriptors
-            .is_empty());
+        assert!(
+            parsed.platforms[0]
+                .compatibility_descriptor
+                .descriptors
+                .is_empty()
+        );
     }
 
     #[test]
@@ -535,10 +537,12 @@ mod tests {
         assert_eq!(buf, buf2, "byte-exact re-serialize");
         let re = UntSection::parse(&buf).unwrap();
         assert_eq!(re.platforms.len(), 1);
-        assert!(re.platforms[0]
-            .compatibility_descriptor
-            .descriptors
-            .is_empty());
+        assert!(
+            re.platforms[0]
+                .compatibility_descriptor
+                .descriptors
+                .is_empty()
+        );
         assert_eq!(re.platforms[0].target_operational_pairs.len(), 1);
         assert_eq!(
             re.platforms[0].target_operational_pairs[0].0.raw(),

@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use broadcast_common::{Parse, Serialize};
-use dvb_ci::tpdu::{create_t_c, tags, CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject};
+use dvb_ci::tpdu::{CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject, create_t_c, tags};
 
 /// Length of a standalone/appended `T_SB` object: `tag · 0x02 · t_c_id · SB`.
 const SB_OBJECT_LEN: usize = 4;
@@ -335,7 +335,7 @@ impl Transport {
                 return Out {
                     error: Some(TransportError::Malformed),
                     ..Out::default()
-                }
+                };
             }
         };
         if r.t_c_id != self.tcid {
@@ -473,9 +473,11 @@ mod tests {
         );
         assert_eq!(after_sb.writes[0][0], tags::DATA_LAST);
         // It carries the profile_enq payload.
-        assert!(after_sb.writes[0]
-            .windows(4)
-            .any(|w| w == [0x9F, 0x80, 0x10, 0x00]));
+        assert!(
+            after_sb.writes[0]
+                .windows(4)
+                .any(|w| w == [0x9F, 0x80, 0x10, 0x00])
+        );
     }
 
     #[test]

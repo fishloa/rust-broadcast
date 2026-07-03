@@ -7,7 +7,7 @@
 /// cargo run -p dvb-flute --example build_lct
 /// ```
 use dvb_flute::{
-    AlcPacket, ExtFdt, FecPayloadId128, LctHeader, FLUTE_VERSION, HET_EXT_FDT, LCT_VERSION,
+    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader,
 };
 
 fn main() {

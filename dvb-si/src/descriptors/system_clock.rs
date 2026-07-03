@@ -76,7 +76,7 @@ impl Serialize for SystemClockDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SystemClockDescriptor {
+impl crate::traits::DescriptorDef<'_> for SystemClockDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SYSTEM_CLOCK";
 }

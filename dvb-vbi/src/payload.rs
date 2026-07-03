@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 
 use crate::data_unit_id::DataUnitId;
 use crate::error::{Error, Result};
-use crate::line_header::{LineHeader, LINE_HEADER_LEN};
+use crate::line_header::{LINE_HEADER_LEN, LineHeader};
 
 /// Size in bytes of the EBU/Inverted Teletext `txt_data_block` (336 bits, §4.5).
 pub const TXT_DATA_BLOCK_LEN: usize = 42;

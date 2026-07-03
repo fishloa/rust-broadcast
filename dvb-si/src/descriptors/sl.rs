@@ -62,7 +62,7 @@ impl Serialize for SlDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SlDescriptor {
+impl crate::traits::DescriptorDef<'_> for SlDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SL";
 }

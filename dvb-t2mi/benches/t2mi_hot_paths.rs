@@ -5,7 +5,7 @@
 
 #![cfg(feature = "ts")]
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, Throughput};
+use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 use dvb_t2mi::pump::T2miPump;
 
 // ── Fixture (shared /fixtures/dvb-t2mi/) ────────────────────────────

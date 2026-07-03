@@ -1,7 +1,7 @@
 //! Stateful conversion session: holds the wall-clock anchor and unrolls 33-bit
 //! PTS wrap across a stream of events.
 use crate::anchor::TimeAnchor;
-use crate::convert::{scte35_to_daterange, scte35_to_emsg, EmsgConfig};
+use crate::convert::{EmsgConfig, scte35_to_daterange, scte35_to_emsg};
 use crate::daterange::DateRange;
 use crate::error::{Error, Result};
 use crate::event::{MediaTime, TimedEvent};

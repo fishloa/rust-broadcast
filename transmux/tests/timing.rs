@@ -10,7 +10,7 @@
 //! original box body (excluding the 8-byte box header).
 
 use broadcast_common::{Parse, Serialize};
-use transmux::{box_iter, CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox};
+use transmux::{CompositionOffsetBox, EditListBox, SegmentIndexBox, TimeToSampleBox, box_iter};
 
 /// Navigate a container hierarchy by following child boxes with the given
 /// four-CC sequence. Returns the body of the final box in the chain.

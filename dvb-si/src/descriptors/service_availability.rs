@@ -108,7 +108,7 @@ impl Serialize for ServiceAvailabilityDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ServiceAvailabilityDescriptor {
+impl crate::traits::DescriptorDef<'_> for ServiceAvailabilityDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SERVICE_AVAILABILITY";
 }

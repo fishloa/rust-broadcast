@@ -10,7 +10,7 @@
 //! Run with:
 //!   cargo run -p mpeg-pes --example build_pes_header
 
-use mpeg_pes::{Escr, PesPacket, TrickMode, PACKET_START_CODE_PREFIX};
+use mpeg_pes::{Escr, PACKET_START_CODE_PREFIX, PesPacket, TrickMode};
 
 /// Encode a 33-bit value into a 5-byte PTS field with the given 4-bit prefix.
 /// Duplicated here because `mpeg_pes::timestamp::write` is `pub(crate)`.

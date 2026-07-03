@@ -286,7 +286,7 @@ impl Serialize for SpliceSchedule {
     }
 }
 
-impl<'a> CommandDef<'a> for SpliceSchedule {
+impl CommandDef<'_> for SpliceSchedule {
     const COMMAND_TYPE: u8 = COMMAND_TYPE;
     const NAME: &'static str = "SPLICE_SCHEDULE";
 }

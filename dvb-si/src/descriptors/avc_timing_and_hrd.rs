@@ -197,7 +197,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for AvcTimingAndHrdDescriptor {
+impl crate::traits::DescriptorDef<'_> for AvcTimingAndHrdDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AVC_TIMING_AND_HRD";
 }

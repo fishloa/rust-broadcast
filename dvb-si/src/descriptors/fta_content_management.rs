@@ -168,7 +168,7 @@ impl Serialize for FtaContentManagementDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for FtaContentManagementDescriptor {
+impl crate::traits::DescriptorDef<'_> for FtaContentManagementDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "FTA_CONTENT_MANAGEMENT";
 }

@@ -14,7 +14,7 @@ pub fn scte35_to_daterange(ev: &TimedEvent, anchor: &TimeAnchor) -> Result<DateR
     let raw = match &ev.source {
         SourcePayload::Scte35 { raw } => raw.clone(),
         SourcePayload::Emsg { .. } => {
-            return Err(Error::AttrParse("event is not SCTE-35-sourced".to_string()))
+            return Err(Error::AttrParse("event is not SCTE-35-sourced".to_string()));
         }
     };
 

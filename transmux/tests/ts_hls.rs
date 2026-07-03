@@ -52,11 +52,7 @@ fn payload_offset(pkt: &[u8]) -> usize {
     if !has_payload {
         return TS;
     }
-    if has_af {
-        4 + 1 + pkt[4] as usize
-    } else {
-        4
-    }
+    if has_af { 4 + 1 + pkt[4] as usize } else { 4 }
 }
 
 /// Reassemble the first complete single-packet PSI section carried on `pid`.

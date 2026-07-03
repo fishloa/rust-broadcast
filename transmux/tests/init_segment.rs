@@ -185,7 +185,7 @@ fn moov_navigation_reaches_avc1_and_mp4a() {
         .children
         .iter()
         .find_map(|c| {
-            if let transmux::StblChild::Stsd(ref s) = c {
+            if let transmux::StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None
@@ -219,7 +219,7 @@ fn moov_navigation_reaches_avc1_and_mp4a() {
         .children
         .iter()
         .find_map(|c| {
-            if let transmux::StblChild::Stsd(ref s) = c {
+            if let transmux::StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None

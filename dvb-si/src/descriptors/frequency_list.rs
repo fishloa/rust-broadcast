@@ -237,7 +237,7 @@ impl Serialize for FrequencyListDescriptor {
         Ok(need)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for FrequencyListDescriptor {
+impl crate::traits::DescriptorDef<'_> for FrequencyListDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "FREQUENCY_LIST";
 }

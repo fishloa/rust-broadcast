@@ -31,8 +31,9 @@ use dvb_si::{
     },
     table_id::TableId,
     tables::{
-        ait::ControlCode, int::IntActionType, pmt::StreamType, protection_message::ReferenceType,
-        rct::LinkType, rnt::CridAuthorityPolicy, unt::UntActionType, RunningStatus,
+        RunningStatus, ait::ControlCode, int::IntActionType, pmt::StreamType,
+        protection_message::ReferenceType, rct::LinkType, rnt::CridAuthorityPolicy,
+        unt::UntActionType,
     },
 };
 use std::collections::{BTreeMap, BTreeSet};

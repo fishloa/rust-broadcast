@@ -24,7 +24,7 @@
 use broadcast_common::Package;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::{parse_box, CmafMux, Media};
+use transmux::{CmafMux, Media, parse_box};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
 const FIXTURE: &str = concat!(

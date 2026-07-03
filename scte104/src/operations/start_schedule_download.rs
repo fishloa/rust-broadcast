@@ -80,7 +80,7 @@ impl Serialize for StartScheduleDownload {
     }
 }
 
-impl<'a> OperationDef<'a> for StartScheduleDownload {
+impl OperationDef<'_> for StartScheduleDownload {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "START_SCHEDULE_DOWNLOAD";
 }

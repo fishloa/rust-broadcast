@@ -438,7 +438,9 @@ mod tests {
         // tag(3) + len(1) + domLen(1=3) + objLen(1=2) + dom(3) + obj(2); body = 7 = 0x07.
         assert_eq!(
             bytes,
-            [0x9F, 0x80, 0x00, 0x07, 0x03, 0x02, 0x01, 0x02, 0x03, 0xAA, 0xBB]
+            [
+                0x9F, 0x80, 0x00, 0x07, 0x03, 0x02, 0x01, 0x02, 0x03, 0xAA, 0xBB
+            ]
         );
         assert_eq!(RequestStart::parse(&bytes).unwrap(), req);
         let other = RequestStart {

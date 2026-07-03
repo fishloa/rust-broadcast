@@ -128,7 +128,7 @@ mod tests {
         let mut bytes = Vec::with_capacity(n);
         bytes.extend_from_slice(&size.to_be_bytes()); // size
         bytes.extend_from_slice(b"test"); // type
-                                          // Fill the rest (starting at offset 8) with a counter pattern.
+        // Fill the rest (starting at offset 8) with a counter pattern.
         for i in 8..n {
             bytes.push((i & 0xFF) as u8);
         }

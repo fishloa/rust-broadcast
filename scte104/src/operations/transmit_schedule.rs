@@ -52,7 +52,7 @@ impl Serialize for TransmitSchedule {
     }
 }
 
-impl<'a> OperationDef<'a> for TransmitSchedule {
+impl OperationDef<'_> for TransmitSchedule {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "TRANSMIT_SCHEDULE";
 }

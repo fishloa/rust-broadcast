@@ -37,9 +37,11 @@ async fn plain_tcp_full_session() {
         for _ in 0..5 {
             let events = srv.next_request().await.unwrap().expect("request");
             states.push(srv.state());
-            assert!(events
-                .iter()
-                .any(|e| matches!(e, ServerEvent::RequestAccepted { .. })));
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, ServerEvent::RequestAccepted { .. }))
+            );
         }
         states
     });

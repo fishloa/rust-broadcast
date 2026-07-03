@@ -60,7 +60,7 @@
 //! - **`track.mfhd.sequence`** (WARNING) — `mfhd.sequence_number` should be
 //!   strictly increasing across segments (§8.8.5).
 
-use crate::box_types::{parse_box, BoxRef};
+use crate::box_types::{BoxRef, parse_box};
 use crate::movie_fragment::{
     MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox,
     TrackFragmentRunBox,

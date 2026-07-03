@@ -1,7 +1,7 @@
 //! Integration tests for [`dvb_si::descriptors::parse_loop`] and the
 //! macro-generated [`dvb_si::descriptors::AnyDescriptor`] dispatcher.
 
-use dvb_si::descriptors::{parse_loop, AnyDescriptor};
+use dvb_si::descriptors::{AnyDescriptor, parse_loop};
 
 /// Completeness: every dispatched README-matrix tag routes to a typed parser
 /// (never falls through to `Unknown`).

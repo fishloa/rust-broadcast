@@ -140,7 +140,7 @@ impl Serialize for TdtSection {
         Ok(len)
     }
 }
-impl<'a> crate::traits::TableDef<'a> for TdtSection {
+impl crate::traits::TableDef<'_> for TdtSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "TIME_AND_DATE";
 }

@@ -640,7 +640,7 @@ mod tests {
             }
         }
 
-        impl<'a> PayloadDef<'a> for TestPrivatePayload {
+        impl PayloadDef<'_> for TestPrivatePayload {
             const PACKET_TYPE: u8 = 0x00;
             const NAME: &'static str = "TEST_PRIVATE";
         }
@@ -704,7 +704,7 @@ mod tests {
             }
         }
 
-        impl<'a> PayloadDef<'a> for PrivatePayload {
+        impl PayloadDef<'_> for PrivatePayload {
             const PACKET_TYPE: u8 = 0x42;
             const NAME: &'static str = "PRIVATE_0X42";
         }

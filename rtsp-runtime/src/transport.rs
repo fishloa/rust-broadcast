@@ -156,7 +156,7 @@ impl TransportSpec {
                 other => {
                     return Err(Error::TransportParse(format!(
                         "unknown lower-transport {other:?}"
-                    )))
+                    )));
                 }
             },
         };

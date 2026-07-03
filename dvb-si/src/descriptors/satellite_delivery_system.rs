@@ -427,7 +427,7 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for SatelliteDeliverySystemDescriptor {
+impl crate::traits::DescriptorDef<'_> for SatelliteDeliverySystemDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "SATELLITE_DELIVERY_SYSTEM";
 }

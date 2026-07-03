@@ -54,7 +54,7 @@ fn dummy_es_packet(pid: u16, cc: u8) -> [u8; 188] {
     pkt[1] = ((pid >> 8) as u8) & 0x1F; // PUSI=0, TEI=0, transport_priority=0
     pkt[2] = (pid & 0xFF) as u8;
     pkt[3] = 0x10 | (cc & 0x0F); // adaptation_field_control=01 (payload only), CC
-                                 // payload: fill with a recognisable pattern
+    // payload: fill with a recognisable pattern
     for (i, b) in pkt[4..].iter_mut().enumerate() {
         *b = (i as u8).wrapping_add(pid as u8);
     }

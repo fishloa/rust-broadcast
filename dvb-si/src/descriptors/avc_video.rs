@@ -114,7 +114,7 @@ impl Serialize for AvcVideoDescriptor {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for AvcVideoDescriptor {
+impl crate::traits::DescriptorDef<'_> for AvcVideoDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AVC_VIDEO";
 }

@@ -609,8 +609,8 @@ fn event_to_epg(e: &crate::collect::CompleteEitEvent<'_>) -> EpgEvent {
 fn extract_short_event(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
 ) -> (Option<String>, Option<String>) {
-    for desc in descriptors {
-        if let Ok(crate::descriptors::AnyDescriptor::ShortEvent(se)) = desc {
+    for desc in descriptors.iter().flatten() {
+        if let crate::descriptors::AnyDescriptor::ShortEvent(se) = desc {
             return (
                 Some(se.event_name.decode().into_owned()),
                 Some(se.text.decode().into_owned()),
@@ -682,8 +682,8 @@ fn extract_extended(
 fn extract_content(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
 ) -> Vec<ContentNibble> {
-    for desc in descriptors {
-        if let Ok(crate::descriptors::AnyDescriptor::Content(ct)) = desc {
+    for desc in descriptors.iter().flatten() {
+        if let crate::descriptors::AnyDescriptor::Content(ct) = desc {
             return ct
                 .entries
                 .iter()
@@ -701,8 +701,8 @@ fn extract_content(
 fn extract_ratings(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
 ) -> Vec<Rating> {
-    for desc in descriptors {
-        if let Ok(crate::descriptors::AnyDescriptor::ParentalRating(pr)) = desc {
+    for desc in descriptors.iter().flatten() {
+        if let crate::descriptors::AnyDescriptor::ParentalRating(pr) = desc {
             return pr
                 .entries
                 .iter()
@@ -720,8 +720,8 @@ fn extract_crids(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
 ) -> Vec<Crid> {
     use crate::descriptors::content_identifier::CridLocation;
-    for desc in descriptors {
-        if let Ok(crate::descriptors::AnyDescriptor::ContentIdentifier(ci)) = desc {
+    for desc in descriptors.iter().flatten() {
+        if let crate::descriptors::AnyDescriptor::ContentIdentifier(ci) = desc {
             return ci
                 .entries
                 .iter()
@@ -744,8 +744,8 @@ fn extract_crids(
 fn extract_service_name(
     descriptors: &[crate::Result<crate::descriptors::AnyDescriptor<'_>>],
 ) -> Option<String> {
-    for desc in descriptors {
-        if let Ok(crate::descriptors::AnyDescriptor::Service(svc)) = desc {
+    for desc in descriptors.iter().flatten() {
+        if let crate::descriptors::AnyDescriptor::Service(svc) = desc {
             return Some(svc.service_name.decode().into_owned());
         }
     }
@@ -972,8 +972,8 @@ mod tests {
 
     #[test]
     fn extended_text_chaining_per_spec_6_2_15() {
-        use crate::descriptors::extended_event::ExtendedEventDescriptor;
         use crate::descriptors::AnyDescriptor;
+        use crate::descriptors::extended_event::ExtendedEventDescriptor;
         use crate::text::{DvbText, LangCode};
 
         // Fragment 1: descriptor_number=2, last_descriptor_number=3

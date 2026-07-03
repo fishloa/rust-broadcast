@@ -24,12 +24,12 @@
 
 use std::collections::HashMap;
 
-use rtsp_types::{headers, Message, Method, Request, StatusCode, Version};
+use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials};
 use crate::error::{Error, Result};
 use crate::interleaved::{self, MAGIC};
-use crate::state::{client_next_state, SessionState};
+use crate::state::{SessionState, client_next_state};
 use crate::transport::Transport;
 
 /// A message body type: owned bytes.

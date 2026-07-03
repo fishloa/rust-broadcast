@@ -105,9 +105,9 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         let metadata_application_format_identifier = if metadata_application_format == 0xFFFF {
             if body.len() < pos + 4 {
                 return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "content_labeling_descriptor too short for metadata_application_format_identifier",
-                    });
+                    tag: TAG,
+                    reason: "content_labeling_descriptor too short for metadata_application_format_identifier",
+                });
             }
             let id = u32::from_be_bytes([body[pos], body[pos + 1], body[pos + 2], body[pos + 3]]);
             pos += 4;
@@ -131,9 +131,9 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         let (content_reference_id_record, _) = if content_reference_id_record_flag {
             if body.len() < pos + 1 {
                 return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "content_labeling_descriptor too short for content_reference_id_record_length",
-                    });
+                    tag: TAG,
+                    reason: "content_labeling_descriptor too short for content_reference_id_record_length",
+                });
             }
             let rec_len = body[pos] as usize;
             pos += 1;

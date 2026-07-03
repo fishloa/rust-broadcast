@@ -8,7 +8,7 @@ use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{base64_decode, hex_decode};
 use transmux::{
-    Media, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketizer, NAL_TYPE_IDR,
+    Media, NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketizer,
     VIDEO_CLOCK_RATE,
 };
 

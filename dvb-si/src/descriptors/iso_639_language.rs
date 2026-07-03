@@ -167,7 +167,7 @@ impl Serialize for Iso639LanguageDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for Iso639LanguageDescriptor {
+impl crate::traits::DescriptorDef<'_> for Iso639LanguageDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "ISO_639_LANGUAGE";
 }

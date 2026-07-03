@@ -80,7 +80,7 @@ impl Serialize for ScheduleComponentMode {
     }
 }
 
-impl<'a> OperationDef<'a> for ScheduleComponentMode {
+impl OperationDef<'_> for ScheduleComponentMode {
     const OP_ID: u16 = OP_ID;
     const NAME: &'static str = "SCHEDULE_COMPONENT_MODE";
 }

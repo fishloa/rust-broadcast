@@ -111,7 +111,7 @@ impl Serialize for NordigLogicalChannelV1 {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for NordigLogicalChannelV1 {
+impl crate::traits::DescriptorDef<'_> for NordigLogicalChannelV1 {
     const TAG: u8 = TAG_V1;
     const NAME: &'static str = "NORDIG_LOGICAL_CHANNEL_V1";
 }
@@ -292,7 +292,7 @@ impl Serialize for NordigLogicalChannelV2 {
     }
 }
 
-impl<'a> crate::traits::DescriptorDef<'a> for NordigLogicalChannelV2 {
+impl crate::traits::DescriptorDef<'_> for NordigLogicalChannelV2 {
     const TAG: u8 = TAG_V2;
     const NAME: &'static str = "NORDIG_LOGICAL_CHANNEL_V2";
 }

@@ -309,7 +309,7 @@ impl Serialize for CellListDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for CellListDescriptor {
+impl crate::traits::DescriptorDef<'_> for CellListDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "CELL_LIST";
 }

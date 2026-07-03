@@ -23,9 +23,9 @@ use crate::ac4::{Ac4SpecificBox, DAC4_FOURCC};
 use crate::annexb::annexb_to_length_prefixed;
 use crate::av1::{Av1ConfigurationBox, Av1SampleEntry};
 use crate::avc_config::AVCConfigurationBox;
-use crate::dts::{DtsSpecificBox, DDTS_FOURCC};
+use crate::dts::{DDTS_FOURCC, DtsSpecificBox};
 use crate::error::Result;
-use crate::flac::{FlacSpecificBox, DFLA_FOURCC};
+use crate::flac::{DFLA_FOURCC, FlacSpecificBox};
 use crate::hevc_config::HEVCConfigurationBox;
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
@@ -36,15 +36,14 @@ use crate::init_segment::{
     TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
-    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
-    TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
+    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
     TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
-    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT,
+    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
 };
 use crate::mp4esds::EsdsBox;
 use crate::mpegh::MHAC_FOURCC;
-use crate::opus::{OpusSpecificBox, DOPS_FOURCC};
+use crate::opus::{DOPS_FOURCC, OpusSpecificBox};
 use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };

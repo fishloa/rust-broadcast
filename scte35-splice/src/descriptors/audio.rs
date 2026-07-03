@@ -129,7 +129,7 @@ impl Serialize for AudioDescriptor {
     }
 }
 
-impl<'a> SpliceDescriptorDef<'a> for AudioDescriptor {
+impl SpliceDescriptorDef<'_> for AudioDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "AUDIO";
 }

@@ -23,8 +23,8 @@
 
 use std::path::PathBuf;
 
-use transmux::cli::{detect_container, run_bytes, Args, Container, Opts, Output, OutputFormat};
-use transmux::{validate_init_segment, validate_media_segment, Severity};
+use transmux::cli::{Args, Container, Opts, Output, OutputFormat, detect_container, run_bytes};
+use transmux::{Severity, validate_init_segment, validate_media_segment};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures")

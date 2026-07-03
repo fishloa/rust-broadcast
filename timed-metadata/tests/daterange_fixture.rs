@@ -4,10 +4,10 @@ use std::fs;
 
 use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
+use timed_metadata::TimeAnchor;
 use timed_metadata::convert::scte35_to_daterange;
 use timed_metadata::daterange::{DateRange, Scte35Cue};
 use timed_metadata::event::TimedEvent;
-use timed_metadata::TimeAnchor;
 
 fn read_fixture(name: &str) -> String {
     let path = format!(

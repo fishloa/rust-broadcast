@@ -68,7 +68,7 @@ impl Serialize for MultiplexBufferDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for MultiplexBufferDescriptor {
+impl crate::traits::DescriptorDef<'_> for MultiplexBufferDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MULTIPLEX_BUFFER";
 }

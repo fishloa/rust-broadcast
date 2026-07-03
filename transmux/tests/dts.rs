@@ -9,8 +9,8 @@
 
 use broadcast_common::{Parse, Serialize};
 use transmux::{
-    box_iter, build_init_segment, CodecConfig, DtsSpecificBox, SampleEntryVariant, TrackSpec,
-    DDTS_BODY_LEN, DTSC_FOURCC,
+    CodecConfig, DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox, SampleEntryVariant, TrackSpec,
+    box_iter, build_init_segment,
 };
 
 // ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ fn stsd_round_trip_dts_entry() {
         .children
         .iter()
         .find_map(|c| {
-            if let StblChild::Stsd(ref s) = c {
+            if let StblChild::Stsd(s) = c {
                 Some(s)
             } else {
                 None

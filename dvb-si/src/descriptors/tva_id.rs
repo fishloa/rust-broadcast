@@ -181,7 +181,7 @@ impl Serialize for TvaIdDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TvaIdDescriptor {
+impl crate::traits::DescriptorDef<'_> for TvaIdDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TVA_ID";
 }

@@ -218,7 +218,7 @@ pub struct FlvDemux<'a> {
     _marker: PhantomData<&'a [u8]>,
 }
 
-impl<'a> FlvDemux<'a> {
+impl FlvDemux<'_> {
     /// Create a new demuxer.
     pub fn new() -> Self {
         Self {

@@ -47,7 +47,7 @@ impl<'a> Parse<'a> for P2BiasPayload {
     }
 }
 
-impl<'a> crate::traits::PayloadDef<'a> for P2BiasPayload {
+impl crate::traits::PayloadDef<'_> for P2BiasPayload {
     const PACKET_TYPE: u8 = 0x12;
     const NAME: &'static str = "P2_BIAS";
 }

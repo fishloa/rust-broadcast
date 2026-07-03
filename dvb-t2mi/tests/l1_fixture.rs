@@ -5,8 +5,8 @@
 //! and assert ground-truth decoded field values verified from the wire bytes.
 #![cfg(feature = "ts")]
 
-use dvb_t2mi::payload::fef_null::S1Field;
 use dvb_t2mi::payload::AnyPayload;
+use dvb_t2mi::payload::fef_null::S1Field;
 use dvb_t2mi::payload::{
     GuardInterval, L1Modulation, PilotPattern, PlpPayloadType, PlpType, T2Version,
     TxInputStreamType,

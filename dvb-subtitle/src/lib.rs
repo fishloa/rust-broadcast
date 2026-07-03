@@ -80,22 +80,22 @@ pub use segments::region_composition::{
 pub use segments::stuffing::StuffingSegment;
 
 // Implement SegmentDef for each type
-impl<'a> SegmentDef<'a> for DisplayDefinitionSegment {
+impl SegmentDef<'_> for DisplayDefinitionSegment {
     const SEGMENT_TYPE: u8 = segments::display_definition::SEGMENT_TYPE;
     const NAME: &'static str = "DISPLAY_DEFINITION";
 }
 
-impl<'a> SegmentDef<'a> for PageCompositionSegment {
+impl SegmentDef<'_> for PageCompositionSegment {
     const SEGMENT_TYPE: u8 = segments::page_composition::SEGMENT_TYPE;
     const NAME: &'static str = "PAGE_COMPOSITION";
 }
 
-impl<'a> SegmentDef<'a> for RegionCompositionSegment {
+impl SegmentDef<'_> for RegionCompositionSegment {
     const SEGMENT_TYPE: u8 = segments::region_composition::SEGMENT_TYPE;
     const NAME: &'static str = "REGION_COMPOSITION";
 }
 
-impl<'a> SegmentDef<'a> for ClutDefinitionSegment {
+impl SegmentDef<'_> for ClutDefinitionSegment {
     const SEGMENT_TYPE: u8 = segments::clut_definition::SEGMENT_TYPE;
     const NAME: &'static str = "CLUT_DEFINITION";
 }
@@ -105,17 +105,17 @@ impl<'a> SegmentDef<'a> for ObjectDataSegment<'a> {
     const NAME: &'static str = "OBJECT_DATA";
 }
 
-impl<'a> SegmentDef<'a> for EndOfDisplaySetSegment {
+impl SegmentDef<'_> for EndOfDisplaySetSegment {
     const SEGMENT_TYPE: u8 = segments::end_of_display_set::SEGMENT_TYPE;
     const NAME: &'static str = "END_OF_DISPLAY_SET";
 }
 
-impl<'a> SegmentDef<'a> for DisparitySignallingSegment {
+impl SegmentDef<'_> for DisparitySignallingSegment {
     const SEGMENT_TYPE: u8 = segments::disparity_signalling::SEGMENT_TYPE;
     const NAME: &'static str = "DISPARITY_SIGNALLING";
 }
 
-impl<'a> SegmentDef<'a> for AlternativeClutSegment {
+impl SegmentDef<'_> for AlternativeClutSegment {
     const SEGMENT_TYPE: u8 = segments::alternative_clut::SEGMENT_TYPE;
     const NAME: &'static str = "ALTERNATIVE_CLUT";
 }

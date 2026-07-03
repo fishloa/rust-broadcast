@@ -67,7 +67,7 @@ impl Serialize for MaximumBitrateDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for MaximumBitrateDescriptor {
+impl crate::traits::DescriptorDef<'_> for MaximumBitrateDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "MAXIMUM_BITRATE";
 }

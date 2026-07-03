@@ -14,11 +14,11 @@
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Unpackage};
+use transmux::TsDemux;
 use transmux::hevc_config::HEVCDecoderConfigurationRecord;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::validate::{validate_init_segment, validate_media_segment, Severity};
-use transmux::TsDemux;
+use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
 

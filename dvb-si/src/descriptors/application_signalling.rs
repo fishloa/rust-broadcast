@@ -142,7 +142,7 @@ impl Serialize for ApplicationSignallingDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ApplicationSignallingDescriptor {
+impl crate::traits::DescriptorDef<'_> for ApplicationSignallingDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "APPLICATION_SIGNALLING";
 }

@@ -62,7 +62,7 @@ impl Serialize for ExternalEsIdDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for ExternalEsIdDescriptor {
+impl crate::traits::DescriptorDef<'_> for ExternalEsIdDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "EXTERNAL_ES_ID";
 }

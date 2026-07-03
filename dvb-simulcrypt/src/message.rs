@@ -200,7 +200,7 @@ impl<'a> Parse<'a> for SimulcryptMessage<'a> {
     }
 }
 
-impl<'a> Serialize for SimulcryptMessage<'a> {
+impl Serialize for SimulcryptMessage<'_> {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {

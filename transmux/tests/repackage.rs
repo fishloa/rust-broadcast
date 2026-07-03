@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use broadcast_common::Unpackage;
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{parse_box, MovieFragmentBox, Repackage, TsDemux};
+use transmux::{MovieFragmentBox, Repackage, TsDemux, parse_box};
 
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
 

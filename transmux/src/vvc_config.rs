@@ -335,8 +335,7 @@ impl<'a> Parse<'a> for VvcDecoderConfigurationRecord {
             return Err(Error::InvalidValue {
                 field: "LengthSizeMinusOne",
                 value: length_size_minus_one as u64,
-                reason:
-                    "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2022 §11.3.2.1)",
+                reason: "must be 0, 1, or 3 (value 2 is invalid per ISO/IEC 14496-15:2022 §11.3.2.1)",
             });
         }
         let ptl_present = r.flag("ptl_present_flag")?;

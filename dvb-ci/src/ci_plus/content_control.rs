@@ -338,7 +338,7 @@ pub struct SacDatatype<'a> {
 // datatype_id(1) + datatype_length(2).
 const SAC_DATATYPE_HEADER: usize = 3;
 
-impl<'a> SacDatatype<'a> {
+impl SacDatatype<'_> {
     /// Serialized length of this datatype (header + value).
     #[must_use]
     pub fn serialized_len(&self) -> usize {

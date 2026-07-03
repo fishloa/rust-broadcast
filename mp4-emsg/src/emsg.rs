@@ -442,7 +442,7 @@ mod tests {
         let out = b.to_vec().unwrap();
 
         assert_eq!(out[8], 1); // version 1
-                               // Body: integers first.
+        // Body: integers first.
         let mut off = 12;
         assert_eq!(&out[off..off + 4], &1000u32.to_be_bytes());
         off += 4;

@@ -10,7 +10,7 @@
 //!   pix_fmt=yuv420p  level=60
 
 use broadcast_common::Parse;
-use transmux::{decode_hevc_sps, rfc6381_hvc1, HEVCDecoderConfigurationRecord};
+use transmux::{HEVCDecoderConfigurationRecord, decode_hevc_sps, rfc6381_hvc1};
 
 /// SPS `nal_unit_type` for H.265 (ITU-T H.265 Table 7-1).
 const HEVC_SPS_NUT: u8 = 33;

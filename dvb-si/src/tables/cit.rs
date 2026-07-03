@@ -80,7 +80,7 @@ pub struct CitSection<'a> {
     pub crid_entries: Vec<CridEntry<'a>>,
 }
 
-impl<'a> CitSection<'a> {
+impl CitSection<'_> {
     /// Resolve a prepend string by its `prepend_string_index`.
     ///
     /// Returns `None` if `index` is out of range. The block is a sequence of

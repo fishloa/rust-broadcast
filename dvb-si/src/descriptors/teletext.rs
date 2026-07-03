@@ -161,7 +161,7 @@ impl Serialize for TeletextDescriptor {
         Ok(len)
     }
 }
-impl<'a> crate::traits::DescriptorDef<'a> for TeletextDescriptor {
+impl crate::traits::DescriptorDef<'_> for TeletextDescriptor {
     const TAG: u8 = TAG;
     const NAME: &'static str = "TELETEXT";
 }

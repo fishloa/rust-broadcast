@@ -1736,7 +1736,7 @@ impl Serialize for SatSection {
         Ok(len)
     }
 }
-impl<'a> crate::traits::TableDef<'a> for SatSection {
+impl crate::traits::TableDef<'_> for SatSection {
     const TABLE_ID_RANGES: &'static [(u8, u8)] = &[(TABLE_ID, TABLE_ID)];
     const NAME: &'static str = "SATELLITE_ACCESS";
 }

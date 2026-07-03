@@ -7,8 +7,8 @@
 use broadcast_common::{Parse, Serialize};
 
 use transmux::{
-    box_iter, build_init_segment, Ac3SpecificBox, Ac3SyncframeInfo, CodecConfig, Ec3SpecificBox,
-    Ec3SyncframeInfo, TrackSpec,
+    Ac3SpecificBox, Ac3SyncframeInfo, CodecConfig, Ec3SpecificBox, Ec3SyncframeInfo, TrackSpec,
+    box_iter, build_init_segment,
 };
 
 // Oracle bytes from DOLBY-ORACLE.md

@@ -32,8 +32,8 @@ use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio::io::ReadBuf;
 
-use crate::resync::{resync, TS_PACKET_SIZE, TS_SYNC_BYTE};
 use crate::ResyncStats;
+use crate::resync::{TS_PACKET_SIZE, TS_SYNC_BYTE, resync};
 
 /// Read buffer size: 7 × 188 bytes = 1316 bytes (one UDP/RTP payload
 /// as used in DVB multicast delivery per ETSI TR 101 290 §B).
