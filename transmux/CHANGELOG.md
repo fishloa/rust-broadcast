@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **`transmux` command-line packager + `cli` feature** (#482): a new opt-in
+  `cli` feature (`clap` + `std`) builds a `transmux` binary that wires the
+  existing demux and mux spokes into an any-to-any packager — `transmux <in>
+  -o <out> -f <format>`. The input container is autodetected from its leading
+  bytes (MPEG-TS `0x47`+188, MP4/CMAF `ftyp`/`styp`/`moov`/`moof`, MPEG-PS
+  `00 00 01 BA`, WebM/EBML `1A 45 DF A3`, FLV `"FLV"`), demuxed to the neutral
+  [`Media`] IR, then packaged into `cmaf` / `hls` / `ts-hls` / `dash` / `ts` /
+  `progressive` (selected by `-f/--format` or inferred from the output
+  extension). Flags: positional `<IN>` or `-i/--input`, `-o/--output`,
+  `-f/--format`, `--segment-duration`, `--ll` (LL-DASH), `--tracks`, and (under
+  the `cenc` feature) `--decrypt`/`--key`. Follows `docs/CLI-STANDARD.md` (clap
+  derive, named flags, auto `--help`/`--version`). The library itself stays
+  `no_std` and gains no dependencies; only the `cli` feature/binary pulls
+  `clap`+`std`. New public module [`cli`] with a testable
+  [`cli::run_bytes`] core and [`cli::detect_container`].
 - **Low-Latency HLS — partial segments + preload hints** (#454, RFC 8216bis):
   a new [`ll_hls`] module with [`LlHlsSegmenter`], a segmenter that emits each
   segment's **partial segments** ("parts", RFC 8216bis §4.4.4.9) — independent

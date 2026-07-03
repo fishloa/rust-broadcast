@@ -20,12 +20,20 @@ mpeg-pes   = { path = "../mpeg-pes", version = "0.1", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.1", default-features = false }
 aes        = { version = "0.8", default-features = false, optional = true }
 ctr        = { version = "0.9", default-features = false, optional = true }
+clap       = { version = "4.5", features = ["derive"], optional = true }
+
+[[bin]]
+name = "transmux"
+required-features = ["cli"]
 
 [features]
 default = ["std", "serde", "cenc"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std"]
 serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde"]
 cenc   = ["dep:aes", "dep:ctr"]
+# `cli` builds the `transmux` command-line packager (std + clap). The library
+# itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
+cli    = ["dep:clap", "std"]
 
 [dev-dependencies]
 media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }

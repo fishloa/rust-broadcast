@@ -73,6 +73,7 @@
 //! | `std`   | yes     | `std::error::Error` impls |
 //! | `serde` | yes     | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC (ISO/IEC 23001-7) AES-CTR sample decryption ([`CencDecryptor`]) via the RustCrypto `aes`/`ctr` crates |
+//! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -89,6 +90,8 @@ pub mod box_types;
 pub mod cenc;
 #[cfg(feature = "cenc")]
 pub mod cenc_decrypt;
+#[cfg(feature = "cli")]
+pub mod cli;
 pub mod dash;
 pub mod dts;
 pub mod error;
