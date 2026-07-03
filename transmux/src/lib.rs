@@ -99,6 +99,7 @@ pub mod cenc_decrypt;
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod dash;
+pub mod drm;
 pub mod dts;
 pub mod error;
 pub mod flac;
@@ -167,6 +168,12 @@ pub use cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 pub use dash::{
     DashPackager, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
     TrickModeAdaptationSet, TrickModeRepr,
+};
+pub use drm::{
+    COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
+    cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,
+    playready_kid_value_decode, playready_pro, playready_pssh, playready_wrmheader, widevine_pssh,
+    widevine_pssh_data,
 };
 pub use dts::{
     DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC, DtsSpecificBox,

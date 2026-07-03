@@ -368,6 +368,29 @@ pub struct ProtectionSystemSpecificHeaderBox {
 }
 
 impl ProtectionSystemSpecificHeaderBox {
+    /// Parse a `pssh` box from full box bytes (8-byte box header + FullBox
+    /// version/flags + body).
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() < BOX_HDR + FULL_HDR {
+            return Err(Error::BufferTooShort {
+                need: BOX_HDR + FULL_HDR,
+                have: bytes.len(),
+                what: "pssh header",
+            });
+        }
+        let version = bytes[8];
+        Self::parse_body(&bytes[BOX_HDR + FULL_HDR..], version)
+    }
+
+    /// Serialize the whole box (header + FullBox + body) into a fresh `Vec`,
+    /// rebuilding every length from the typed fields (no raw echo).
+    pub fn to_vec(&self) -> Result<Vec<u8>> {
+        let mut buf = alloc::vec![0u8; self.serialized_len()];
+        let n = self.serialize_into(&mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
     /// Parse a `pssh` box from FullBox body bytes.
     pub fn parse_body(bytes: &[u8], version: u8) -> Result<Self> {
         if bytes.len() < 16 + 4 {
