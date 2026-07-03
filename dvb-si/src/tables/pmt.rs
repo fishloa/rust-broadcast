@@ -299,6 +299,165 @@ impl StreamType {
         }
     }
 
+    /// Returns `true` if this stream_type carries a video elementary stream.
+    ///
+    /// Covers the video-coded stream types defined in Rec. ITU-T H.222.0 |
+    /// ISO/IEC 13818-1 Table 2-34 (2021 edition):
+    ///
+    /// | Variant | Value | Spec |
+    /// |---------|-------|------|
+    /// | `Mpeg1Video` | 0x01 | ISO/IEC 11172-2 |
+    /// | `Mpeg2Video` | 0x02 | ITU-T H.262 / ISO/IEC 13818-2 |
+    /// | `Mpeg4Video` | 0x10 | ISO/IEC 14496-2 |
+    /// | `H264` | 0x1B | ITU-T H.264 / ISO/IEC 14496-10 |
+    /// | `AuxiliaryVideo` | 0x1E | ISO/IEC 23002-3 |
+    /// | `Svc` | 0x1F | H.264 Annex G |
+    /// | `Mvc` | 0x20 | H.264 Annex H |
+    /// | `Jpeg2000` | 0x21 | ITU-T T.800 / ISO/IEC 15444-1 |
+    /// | `AdditionalViewH262` | 0x22 | H.262 stereoscopic 3D |
+    /// | `AdditionalViewH264` | 0x23 | H.264 stereoscopic 3D |
+    /// | `Hevc` | 0x24 | ITU-T H.265 / ISO/IEC 23008-2 |
+    /// | `HevcTemporalSubset` | 0x25 | H.265 Annex A |
+    /// | `Mvcd` | 0x26 | H.264 Annex I |
+    /// | `HevcAnnexG` | 0x28 | H.265 Annex G |
+    /// | `HevcAnnexGTemporal` | 0x29 | H.265 Annex G |
+    /// | `HevcAnnexH` | 0x2A | H.265 Annex H |
+    /// | `HevcAnnexHTemporal` | 0x2B | H.265 Annex H |
+    /// | `MctsHevc` | 0x31 | H.265 / ISO/IEC 23008-2 |
+    /// | `JpegXs` | 0x32 | ISO/IEC 21122-2 |
+    /// | `Vvc` | 0x33 | ITU-T H.266 / ISO/IEC 23090-3 |
+    /// | `VvcTemporalSubset` | 0x34 | H.266 Annex A |
+    /// | `Evc` | 0x35 | ISO/IEC 23094-1 |
+    ///
+    /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
+    /// identify the payload — AC-3, H.264, DVB subtitle, teletext, and others
+    /// all share 0x06 and are disambiguated by component/registration descriptors
+    /// per ETSI TS 101 154. `is_video` returns `false` for `PesPrivateData`;
+    /// callers must inspect the ES_info descriptor loop to resolve the actual
+    /// content type.
+    #[must_use]
+    pub fn is_video(self) -> bool {
+        matches!(
+            self,
+            Self::Mpeg1Video
+                | Self::Mpeg2Video
+                | Self::Mpeg4Video
+                | Self::H264
+                | Self::AuxiliaryVideo
+                | Self::Svc
+                | Self::Mvc
+                | Self::Jpeg2000
+                | Self::AdditionalViewH262
+                | Self::AdditionalViewH264
+                | Self::Hevc
+                | Self::HevcTemporalSubset
+                | Self::Mvcd
+                | Self::HevcAnnexG
+                | Self::HevcAnnexGTemporal
+                | Self::HevcAnnexH
+                | Self::HevcAnnexHTemporal
+                | Self::MctsHevc
+                | Self::JpegXs
+                | Self::Vvc
+                | Self::VvcTemporalSubset
+                | Self::Evc
+        )
+    }
+
+    /// Returns `true` if this stream_type carries an audio elementary stream.
+    ///
+    /// Covers the audio-coded stream types defined in Rec. ITU-T H.222.0 |
+    /// ISO/IEC 13818-1 Table 2-34 (2021 edition):
+    ///
+    /// | Variant | Value | Spec |
+    /// |---------|-------|------|
+    /// | `Mpeg1Audio` | 0x03 | ISO/IEC 11172-3 |
+    /// | `Mpeg2Audio` | 0x04 | ISO/IEC 13818-3 |
+    /// | `AacAdts` | 0x0F | ISO/IEC 13818-7 (AAC in ADTS) |
+    /// | `AacLatm` | 0x11 | ISO/IEC 14496-3 (AAC in LATM) |
+    /// | `Iso14496_3Audio` | 0x1C | ISO/IEC 14496-3 (raw, no transport syntax) |
+    /// | `MhasAudioMain` | 0x2D | ISO/IEC 23008-3 MHAS main |
+    /// | `MhasAudioAux` | 0x2E | ISO/IEC 23008-3 MHAS auxiliary |
+    /// | `Ac3` | 0x81 | ATSC A/52 (AC-3) |
+    /// | `EAc3` | 0x87 | ATSC A/52B (E-AC-3 / Dolby Digital Plus) |
+    ///
+    /// **Note on `PesPrivateData` (0x06):** this stream_type alone does *not*
+    /// identify the payload — AC-3 carried over DVB uses 0x06 with an
+    /// AC-3/enhanced AC-3 descriptor per ETSI TS 101 154. `is_audio` returns
+    /// `false` for `PesPrivateData`; callers must inspect the ES_info descriptor
+    /// loop to resolve the actual content type.
+    #[must_use]
+    pub fn is_audio(self) -> bool {
+        matches!(
+            self,
+            Self::Mpeg1Audio
+                | Self::Mpeg2Audio
+                | Self::AacAdts
+                | Self::AacLatm
+                | Self::Iso14496_3Audio
+                | Self::MhasAudioMain
+                | Self::MhasAudioAux
+                | Self::Ac3
+                | Self::EAc3
+        )
+    }
+
+    /// Returns `true` if this stream_type unambiguously carries subtitle/text
+    /// content.
+    ///
+    /// Only `Iso14496_17Text` (0x1D, ISO/IEC 14496-17 timed text) is
+    /// unambiguously identified as subtitle/text by the stream_type byte alone.
+    ///
+    /// **Note on `PesPrivateData` (0x06):** DVB bitmap subtitles (ETSI EN 300 743)
+    /// and DVB teletext (ETSI EN 300 472) both use stream_type 0x06 and are
+    /// identified by subtitling / teletext descriptors in the ES_info loop per
+    /// ETSI TS 101 154. `is_subtitle` returns `false` for `PesPrivateData`;
+    /// callers must inspect the ES_info descriptor loop to resolve the actual
+    /// content type.
+    #[must_use]
+    pub fn is_subtitle(self) -> bool {
+        matches!(self, Self::Iso14496_17Text)
+    }
+
+    /// Returns `true` if this stream_type carries data, private sections,
+    /// signalling, or metadata — i.e. neither video, audio, nor subtitle.
+    ///
+    /// This includes:
+    ///
+    /// | Variant | Value | Notes |
+    /// |---------|-------|-------|
+    /// | `Reserved` | 0x00 | ITU-T / ISO reserved |
+    /// | `PrivateSections` | 0x05 | private_sections (H.222.0 §2.4.4.10) |
+    /// | `PesPrivateData` | 0x06 | descriptor-dependent; see note below |
+    /// | `Mheg` | 0x07 | MHEG interactive |
+    /// | `DsmCc` | 0x08 | DSM-CC (H.222.0 Annex A) |
+    /// | `H222_1` | 0x09 | H.222.1 |
+    /// | `Iso13818_6TypeA`–`TypeD` | 0x0A–0x0D | ISO/IEC 13818-6 carousel/download |
+    /// | `Auxiliary` | 0x0E | H.222.0 auxiliary |
+    /// | `SlFlexMuxPes` | 0x12 | SL/FlexMux in PES |
+    /// | `SlFlexMuxSections` | 0x13 | SL/FlexMux in sections |
+    /// | `SyncDownload` | 0x14 | ISO/IEC 13818-6 Synchronized Download Protocol |
+    /// | `MetadataPes`–`MetadataSyncDownload` | 0x15–0x19 | metadata streams |
+    /// | `Ipmp` | 0x1A | IPMP (ISO/IEC 13818-11) |
+    /// | `Temi` | 0x27 | Timeline and External Media Information |
+    /// | `GreenAccessUnits` | 0x2C | green access units |
+    /// | `QualityAccessUnits` | 0x2F | quality access units |
+    /// | `MediaOrchestration` | 0x30 | Media Orchestration |
+    /// | `IpmpHigh` | 0x7F | IPMP (H.222.0 Table 2-34) |
+    /// | `Scte35` | 0x86 | SCTE-35 splice_info_section |
+    /// | `ReservedRange(_)` | 0x36–0x7E | reserved, treated conservatively as data |
+    /// | `UserPrivate(_)` | 0x80–0xFF | user private, treated conservatively as data |
+    ///
+    /// **Note on `PesPrivateData` (0x06):** this stream_type is shared by many
+    /// DVB content types — AC-3 audio, E-AC-3, DVB subtitles, teletext, and
+    /// others — all identified via descriptors per ETSI TS 101 154. This
+    /// predicate conservatively classifies 0x06 as data/unknown. Callers that
+    /// need to classify 0x06 streams must inspect the ES_info descriptor loop.
+    #[must_use]
+    pub fn is_data(self) -> bool {
+        !self.is_video() && !self.is_audio() && !self.is_subtitle()
+    }
+
     /// Human-readable spec display name.
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -825,6 +984,161 @@ mod tests {
         assert_eq!(StreamType::from_u8(0x24).name(), "HEVC/H.265");
         assert_eq!(StreamType::from_u8(0x00).name(), "Reserved");
         assert_eq!(StreamType::from_u8(0x81).name(), "AC-3");
+    }
+
+    // ── StreamType classifier predicates (#522) ────────────────────────────
+
+    #[test]
+    fn stream_type_is_video_known_types() {
+        // Each video stream_type must be recognised.
+        for (byte, label) in [
+            (0x01_u8, "Mpeg1Video"),
+            (0x02, "Mpeg2Video"),
+            (0x10, "Mpeg4Video"),
+            (0x1B, "H264"),
+            (0x1E, "AuxiliaryVideo"),
+            (0x1F, "Svc"),
+            (0x20, "Mvc"),
+            (0x21, "Jpeg2000"),
+            (0x22, "AdditionalViewH262"),
+            (0x23, "AdditionalViewH264"),
+            (0x24, "Hevc"),
+            (0x25, "HevcTemporalSubset"),
+            (0x26, "Mvcd"),
+            (0x28, "HevcAnnexG"),
+            (0x29, "HevcAnnexGTemporal"),
+            (0x2A, "HevcAnnexH"),
+            (0x2B, "HevcAnnexHTemporal"),
+            (0x31, "MctsHevc"),
+            (0x32, "JpegXs"),
+            (0x33, "Vvc"),
+            (0x34, "VvcTemporalSubset"),
+            (0x35, "Evc"),
+        ] {
+            let st = StreamType::from_u8(byte);
+            assert!(st.is_video(), "{label} (0x{byte:02X}) should be is_video");
+            assert!(
+                !st.is_audio(),
+                "{label} (0x{byte:02X}) must not be is_audio"
+            );
+            assert!(
+                !st.is_subtitle(),
+                "{label} (0x{byte:02X}) must not be is_subtitle"
+            );
+            assert!(!st.is_data(), "{label} (0x{byte:02X}) must not be is_data");
+        }
+    }
+
+    #[test]
+    fn stream_type_is_audio_known_types() {
+        for (byte, label) in [
+            (0x03_u8, "Mpeg1Audio"),
+            (0x04, "Mpeg2Audio"),
+            (0x0F, "AacAdts"),
+            (0x11, "AacLatm"),
+            (0x1C, "Iso14496_3Audio"),
+            (0x2D, "MhasAudioMain"),
+            (0x2E, "MhasAudioAux"),
+            (0x81, "Ac3"),
+            (0x87, "EAc3"),
+        ] {
+            let st = StreamType::from_u8(byte);
+            assert!(st.is_audio(), "{label} (0x{byte:02X}) should be is_audio");
+            assert!(
+                !st.is_video(),
+                "{label} (0x{byte:02X}) must not be is_video"
+            );
+            assert!(
+                !st.is_subtitle(),
+                "{label} (0x{byte:02X}) must not be is_subtitle"
+            );
+            assert!(!st.is_data(), "{label} (0x{byte:02X}) must not be is_data");
+        }
+    }
+
+    #[test]
+    fn stream_type_is_subtitle_known_types() {
+        let st = StreamType::from_u8(0x1D); // Iso14496_17Text
+        assert!(st.is_subtitle(), "Iso14496_17Text should be is_subtitle");
+        assert!(!st.is_video(), "Iso14496_17Text must not be is_video");
+        assert!(!st.is_audio(), "Iso14496_17Text must not be is_audio");
+        assert!(!st.is_data(), "Iso14496_17Text must not be is_data");
+    }
+
+    #[test]
+    fn stream_type_pes_private_data_is_data() {
+        // 0x06 is descriptor-dependent; the conservative classification is is_data.
+        let st = StreamType::from_u8(0x06);
+        assert!(
+            st.is_data(),
+            "PesPrivateData (0x06) should classify as is_data"
+        );
+        assert!(!st.is_video(), "PesPrivateData must not be is_video");
+        assert!(!st.is_audio(), "PesPrivateData must not be is_audio");
+        assert!(!st.is_subtitle(), "PesPrivateData must not be is_subtitle");
+    }
+
+    #[test]
+    fn stream_type_data_known_types() {
+        for (byte, label) in [
+            (0x00_u8, "Reserved"),
+            (0x05, "PrivateSections"),
+            (0x06, "PesPrivateData"),
+            (0x07, "Mheg"),
+            (0x08, "DsmCc"),
+            (0x09, "H222_1"),
+            (0x0A, "Iso13818_6TypeA"),
+            (0x0B, "Iso13818_6TypeB"),
+            (0x0C, "Iso13818_6TypeC"),
+            (0x0D, "Iso13818_6TypeD"),
+            (0x0E, "Auxiliary"),
+            (0x12, "SlFlexMuxPes"),
+            (0x13, "SlFlexMuxSections"),
+            (0x14, "SyncDownload"),
+            (0x15, "MetadataPes"),
+            (0x16, "MetadataSections"),
+            (0x17, "MetadataDataCarousel"),
+            (0x18, "MetadataObjectCarousel"),
+            (0x19, "MetadataSyncDownload"),
+            (0x1A, "Ipmp"),
+            (0x27, "Temi"),
+            (0x2C, "GreenAccessUnits"),
+            (0x2F, "QualityAccessUnits"),
+            (0x30, "MediaOrchestration"),
+            (0x7F, "IpmpHigh"),
+            (0x86, "Scte35"),
+        ] {
+            let st = StreamType::from_u8(byte);
+            assert!(st.is_data(), "{label} (0x{byte:02X}) should be is_data");
+            assert!(
+                !st.is_video(),
+                "{label} (0x{byte:02X}) must not be is_video"
+            );
+            assert!(
+                !st.is_audio(),
+                "{label} (0x{byte:02X}) must not be is_audio"
+            );
+            assert!(
+                !st.is_subtitle(),
+                "{label} (0x{byte:02X}) must not be is_subtitle"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_type_classifier_partition_all_bytes() {
+        // Every byte value is covered by exactly one predicate.
+        for byte in 0u8..=0xFF {
+            let st = StreamType::from_u8(byte);
+            let n = u8::from(st.is_video())
+                + u8::from(st.is_audio())
+                + u8::from(st.is_subtitle())
+                + u8::from(st.is_data());
+            assert_eq!(
+                n, 1,
+                "stream_type 0x{byte:02X} must be in exactly one category, got {n}"
+            );
+        }
     }
 
     /// Regression test for #181: non-zero section_number/last_section_number must
