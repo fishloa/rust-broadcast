@@ -9,28 +9,28 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
 
+# The toolchain is pinned once in rust-toolchain.toml (channel = the workspace
+# MSRV, 1.86, plus the clippy/rustfmt components and the bare-metal target).
+# GitHub runners ship rustup preinstalled, so every `cargo` call below picks it
+# up automatically — no job pins a toolchain itself. The only exceptions are the
+# nightly fuzz build and the non-blocking canary, which deliberately override the
+# file with `cargo +nightly` / `cargo +stable`. See issue #574.
+
 jobs:
   test:
-    name: test (${{ matrix.rust }})
+    name: test (MSRV 1.86)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        rust: [stable, "1.86"] # 1.86 == workspace rust-version (MSRV; icu/idna edition2024 floor)
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       # --locked: the committed Cargo.lock pins MSRV-compatible dependency
       # versions (some newer transitive crates require edition2024 / Cargo 1.85).
-      # dvb-stream is excluded from the core matrix: it depends on tokio whose
-      # MSRV moves faster than the workspace 1.86 pin; it has its own CI job
-      # below (stable-only). dvb-tools and dvb-conformance are excluded because
-      # they are feature-forcing leaf crates that would mask regressions in
-      # the library crates' bare --no-default-features build.
+      # dvb-stream is excluded from the core build/test: it depends on tokio and
+      # is feature-forcing; it has its own job below. dvb-tools and
+      # dvb-conformance are excluded because they are feature-forcing leaf crates
+      # that would mask regressions in the library crates' bare
+      # --no-default-features build.
       - name: Build (all features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked
       # Examples are a published docs surface (they show on docs.rs and double as
@@ -48,9 +48,8 @@ jobs:
         run: cargo test --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --all-features --locked --doc
       # Exclude the feature-forcing leaf crates here. dvb-tools (binary) needs
       # dvb-si's ts/serde/chrono + dvb-t2mi's ts; dvb-conformance needs dvb-si's
-      # ts/serde; dvb-stream always depends on tokio which has a faster-moving
-      # MSRV than the workspace 1.86 lock. Including any of them would — via
-      # workspace feature unification — force those features on and mask a
+      # ts/serde; dvb-stream always depends on tokio. Including any of them would
+      # — via workspace feature unification — force those features on and mask a
       # regression in the library crates' bare --no-default-features build.
       - name: Build (no default features)
         run: cargo build --workspace --exclude dvb-tools --exclude dvb-conformance --exclude dvb-stream --no-default-features --locked
@@ -70,9 +69,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       # Deliberate column alignment (TableId / DescriptorTag discriminants)
       # is protected by #[rustfmt::skip]; everything else is rustfmt-clean.
@@ -86,7 +82,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Docs are warning-clean: bit-range notation is backticked (`[7:4]`)
       # so it can't be mistaken for intra-doc links. Keep it that way.
@@ -99,16 +94,14 @@ jobs:
   # its default `std` feature off. This is per-crate (no workspace feature
   # unification) and links without the std runtime — the only check that
   # genuinely enforces #![no_std] (the `--no-default-features` host lane above
-  # does not, since std is present on the host). dvb-tools/dvb-stream are
-  # std-only applications and are intentionally not built here.
+  # does not, since std is present on the host). The bare-metal target is
+  # provided by rust-toolchain.toml. dvb-tools/dvb-stream are std-only
+  # applications and are intentionally not built here.
   no-std:
     name: no_std (thumbv7em-none-eabi)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabi
       - uses: Swatinem/rust-cache@v2
       - name: Build each library crate for bare-metal (no_std)
         run: |
@@ -121,7 +114,8 @@ jobs:
   # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
   # and so are never built by the jobs above — they rot silently when a crate's
   # parse API changes. This job builds every libfuzzer target on nightly (build
-  # only, no run) so a broken target fails CI. RUSTFLAGS="-D warnings" is unset
+  # only, no run) so a broken target fails CI. `cargo +nightly` overrides the
+  # pinned toolchain from rust-toolchain.toml. RUSTFLAGS="-D warnings" is unset
   # here: cargo-fuzz injects sanitizer/coverage codegen flags and we only need a
   # compile smoke, not a warning gate (the library warning gate is the lint job).
   fuzz:
@@ -148,16 +142,14 @@ jobs:
         run: cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
 
   # dvb-stream is versioned and released independently from the lockstep
-  # v-tag publish (tokio's MSRV moves faster than workspace 1.86). It is
-  # tested on stable only in this dedicated job.
+  # v-tag publish and is feature-forcing (tokio), so it is excluded from the
+  # core `test` job's workspace build and gets its own here — still on the
+  # pinned MSRV toolchain from rust-toolchain.toml.
   dvb-stream:
-    name: dvb-stream (stable)
+    name: dvb-stream
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - name: Build
@@ -175,3 +167,23 @@ jobs:
         run: cargo doc -p dvb-stream --all-features --no-deps --locked
         env:
           RUSTDOCFLAGS: "-D warnings"
+
+  # Non-blocking early-warning canary: run clippy on the *floating* latest
+  # stable so a new lint (or rustc change) surfaces here as a soft failure
+  # instead of red-lighting a real PR the day upstream stable moves. This never
+  # gates merges (continue-on-error) and is the counterweight to pinning the
+  # gate jobs at the MSRV: `cargo +stable` overrides rust-toolchain.toml. When
+  # it goes red, fix the lints and bump rust-toolchain.toml + Cargo.toml in one
+  # deliberate PR (see issue #574).
+  clippy-canary:
+    name: clippy (latest stable, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy on latest stable
+        run: cargo +stable clippy --workspace --all-features --all-targets --locked -- -D warnings
