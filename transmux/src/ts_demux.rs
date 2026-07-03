@@ -1722,15 +1722,12 @@ impl StreamingTsDemux {
         }
         self.try_promote_ready();
 
-        loop {
-            let Some(&next_pid) = self
-                .codec_order
-                .iter()
-                .chain(self.data_order.iter())
-                .find(|p| !self.resolved.contains(p))
-            else {
-                break;
-            };
+        while let Some(&next_pid) = self
+            .codec_order
+            .iter()
+            .chain(self.data_order.iter())
+            .find(|p| !self.resolved.contains(p))
+        {
             match self.streams.get(&next_pid).and_then(|s| s.track.as_ref()) {
                 Some(TrackState::Probing { .. }) => {
                     self.resolved.insert(next_pid);
