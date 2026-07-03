@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **HEVC (H.265) elementary streams TS → IR** (#467): `TsDemux` now carries
+  `stream_type 0x24` HEVC video into the neutral `Media` IR. The in-band
+  VPS/SPS/PPS NAL units are gathered from the Annex-B access units, the SPS is
+  decoded (`decode_hevc_sps`) for coded geometry + profile/tier/level/chroma/
+  bit-depth, and an `hvcC` `HEVCDecoderConfigurationRecord` is assembled into a
+  `hvc1` `CodecConfig::Hevc` track — identical to the config `Fmp4Demux`
+  recovers from an fMP4 `hvcC`, so `{HEVC-in-TS} → IR → {any}` composes.
+  Per-sample `is_sync` marks IRAP access units (HEVC NAL types 16..=23). Both
+  8-bit (Main) and 10-bit (Main 10) streams are supported. DTS-from-TS remains
+  unimplemented (no `CodecConfig` DTS-from-ES variant). Additive change.
 - **`AvcSpsInfo` VUI timing fields** (#523): `decode_avc_sps` now parses the H.264
   VUI `timing_info` block (ITU-T H.264 §E.1.1) and exposes three new optional
   fields on `AvcSpsInfo` — `num_units_in_tick: Option<u32>`, `time_scale:
@@ -150,6 +160,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composition offset) + AAC (AACAUDIODATA, ASC seq-header); reuses `CodecConfig::Avc`/`Aac`.
   ms timescale, lossless timing round-trip. Skips spurious empty sequence-header tags;
   trusts the ASC over contradictory `onMetaData`.
+
+### Fixed
+- **HEVC sample-entry visual dimensions** (#467): `HEVCSampleEntry::bare_parse`
+  read `width`/`height` (and the following visual fields) from the wrong byte
+  offsets, so `Fmp4Demux` recovered `0×0` dimensions for `hvc1`/`hev1` tracks.
+  Corrected to the ISO/IEC 14496-12 §12.1.3 `VisualSampleEntry` layout (width at
+  `body[24]`), matching the AVC entry and `VisualSampleEntryFields::parse_body`.
 
 ### Changed
 - **`Track` gains a `start_decode_time: u64` field** (#476): the absolute decode

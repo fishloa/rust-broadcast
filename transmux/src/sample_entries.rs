@@ -523,17 +523,21 @@ impl HEVCSampleEntry {
         }
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[8..];
+        // SampleEntry: reserved(6) + data_reference_index(2) = body[0..7].
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
-        let width = u16::from_be_bytes([body[16], body[17]]);
-        let height = u16::from_be_bytes([body[18], body[19]]);
-        let horizontal_resolution = u32::from_be_bytes([body[20], body[21], body[22], body[23]]);
-        let vertical_resolution = u32::from_be_bytes([body[24], body[25], body[26], body[27]]);
-        let data_size = u32::from_be_bytes([body[28], body[29], body[30], body[31]]);
-        let frame_count = u16::from_be_bytes([body[32], body[33]]);
+        // VisualSampleEntry (§12.1.3): 16 reserved bytes (pre_defined(16) +
+        // reserved(16) + pre_defined[3]) precede width → width at body[24]
+        // (matching `VisualSampleEntryFields::parse_body` and the AVC entry).
+        let width = u16::from_be_bytes([body[24], body[25]]);
+        let height = u16::from_be_bytes([body[26], body[27]]);
+        let horizontal_resolution = u32::from_be_bytes([body[28], body[29], body[30], body[31]]);
+        let vertical_resolution = u32::from_be_bytes([body[32], body[33], body[34], body[35]]);
+        let data_size = u32::from_be_bytes([body[36], body[37], body[38], body[39]]);
+        let frame_count = u16::from_be_bytes([body[40], body[41]]);
         let mut compressorname = [0u8; 32];
-        compressorname.copy_from_slice(&body[34..66]);
-        let depth = u16::from_be_bytes([body[72], body[73]]);
-        let predefined = u16::from_be_bytes([body[74], body[75]]);
+        compressorname.copy_from_slice(&body[42..74]);
+        let depth = u16::from_be_bytes([body[74], body[75]]);
+        let predefined = u16::from_be_bytes([body[76], body[77]]);
         let visual = VisualSampleEntryFields {
             data_reference_index,
             width,
