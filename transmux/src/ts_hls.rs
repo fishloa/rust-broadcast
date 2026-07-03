@@ -24,9 +24,11 @@
 //! The playlist is a VOD media playlist: `#EXTM3U`, `#EXT-X-VERSION`,
 //! `#EXT-X-TARGETDURATION` (≥ every `#EXTINF`), `#EXT-X-MEDIA-SEQUENCE`, one
 //! `#EXTINF` + `.ts` URI per segment, and a trailing `#EXT-X-ENDLIST`
-//! (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY` is **not** emitted: this packager
-//! produces a single continuous timeline from one contiguous IR, so no
-//! discontinuity marker is warranted.
+//! (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3) and
+//! `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.3.3) are forwarded from the
+//! underlying [`MediaPlaylist`] when the [`MediaSegment::discontinuous`] flag
+//! is set; this packager itself produces a single continuous timeline from one
+//! contiguous IR, so it does not set the flag on any generated segment.
 //!
 //! # Spec
 //!
@@ -186,6 +188,7 @@ impl Package for TsHlsPackager {
             playlist_segments.push(MediaSegment {
                 uri: format!("{}{}.ts", self.uri_prefix, i),
                 duration,
+                discontinuous: false,
             });
         }
 
@@ -193,6 +196,7 @@ impl Package for TsHlsPackager {
             version: self.version,
             target_duration: target_duration.max(1),
             media_sequence: self.media_sequence,
+            discontinuity_sequence: 0,
             segments: playlist_segments,
             endlist: true,
             extra_tags: vec![],

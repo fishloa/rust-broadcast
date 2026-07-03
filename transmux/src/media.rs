@@ -407,12 +407,14 @@ impl Package for HlsPackager {
             segments.push(MediaSegment {
                 uri: format!("{}{}.m4s", self.uri_prefix, t.spec.track_id),
                 duration: ticks as f64 / ts as f64,
+                discontinuous: false,
             });
         }
         let playlist = MediaPlaylist {
             version: self.version,
             target_duration: target_secs,
             media_sequence: self.media_sequence,
+            discontinuity_sequence: 0,
             segments,
             endlist: true,
             extra_tags: vec![],

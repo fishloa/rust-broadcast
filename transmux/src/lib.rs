@@ -154,7 +154,7 @@ pub use flac::{
 };
 pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
-pub use hls::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
+pub use hls::{mark_init_discontinuities, MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
     DataInformationBox, DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, EditBox, FlacSampleEntry,
@@ -208,7 +208,7 @@ pub use sample_groups::{
     ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox, SbgpEntry, SgpdEntry,
     SubSampleDescriptor, SubSampleInformationBox, SubsEntry, GROUPING_TYPE_ROLL,
 };
-pub use segmenter::Segmenter;
+pub use segmenter::{SegmentMeta, Segmenter};
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use smooth::{
     SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TfxdBox, FOURCC_AACL,

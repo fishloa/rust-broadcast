@@ -13,6 +13,11 @@
 //! - [`Segmenter::push`] — feed one [`Sample`] for a track, in decode order.
 //! - [`Segmenter::take_ready`] — drain media segments finished so far.
 //! - [`Segmenter::flush`] — finalize the trailing partial segment at end-of-stream.
+//! - [`Segmenter::mark_discontinuity`] — mark the *next* cut as discontinuous
+//!   (RFC 8216 §4.3.4.3).
+//! - [`Segmenter::take_ready_with_meta`] — like `take_ready` but also returns
+//!   per-segment [`SegmentMeta`] that carries the discontinuity flag for HLS
+//!   playlist assembly.
 //!
 //! Segments are cut on the **anchor track** (the first video track, or the first
 //! track if audio-only): when a sync sample arrives *and* the anchor's buffered
@@ -21,6 +26,22 @@
 //! every video segment begins on a random-access point, as CMAF requires, and no
 //! sample is dropped or reordered — the concatenation of all segments carries the
 //! full input stream with contiguous per-track decode times.
+//!
+//! # Discontinuity detection
+//!
+//! A media-timeline discontinuity (RFC 8216 §4.3.4.3) is signalled in two ways:
+//!
+//! 1. **Explicit**: call [`Segmenter::mark_discontinuity`] before the next
+//!    [`Segmenter::push`] call that triggers a segment cut. The *next* segment
+//!    that is cut will be marked discontinuous.
+//!
+//! 2. **Auto-detect**: when the init segment bytes change between two consecutive
+//!    cuts (e.g. because the codec config, `EXT-X-MAP`, or track layout changed),
+//!    the segmenter automatically marks the later segment as discontinuous.
+//!
+//! Both mechanisms set the [`SegmentMeta::discontinuous`] flag returned by
+//! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
+//! [`crate::hls::MediaSegment::discontinuous`].
 
 use alloc::vec::Vec;
 
@@ -28,6 +49,20 @@ use crate::error::{Error, Result};
 use crate::pipeline::{
     build_init_segment, build_media_segment, CodecConfig, FragmentTrackData, Sample, TrackSpec,
 };
+
+/// Per-segment metadata returned alongside the media segment bytes by
+/// [`Segmenter::take_ready_with_meta`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentMeta {
+    /// `true` when this segment is a media-timeline discontinuity — the
+    /// caller should emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3)
+    /// immediately before this segment's `#EXTINF` line in the HLS playlist.
+    ///
+    /// Set either by [`Segmenter::mark_discontinuity`] (explicit) or
+    /// automatically when the init segment bytes differ from those of the
+    /// preceding cut (init-change auto-detect).
+    pub discontinuous: bool,
+}
 
 /// Per-track accumulation state for the segment currently being built.
 struct TrackState {
@@ -69,8 +104,14 @@ pub struct Segmenter {
     anchor_pending_dur: u64,
     /// `sequence_number` of the next media segment (`moof` `mfhd`), 1-based.
     next_seq: u32,
-    /// Media segments finished but not yet taken by the caller.
-    ready: Vec<Vec<u8>>,
+    /// Media segments finished but not yet taken by the caller (bytes + meta).
+    ready: Vec<(Vec<u8>, SegmentMeta)>,
+    /// Explicit discontinuity: when `true` the *next* cut is marked discontinuous.
+    /// Reset to `false` after each cut.
+    pending_discontinuity: bool,
+    /// The init-segment bytes from the last cut (or the initial build), used to
+    /// auto-detect init changes.  `None` before the first segment is cut.
+    last_init: Option<Vec<u8>>,
 }
 
 impl Segmenter {
@@ -130,6 +171,8 @@ impl Segmenter {
             anchor_pending_dur: 0,
             next_seq: 1,
             ready: Vec::new(),
+            pending_discontinuity: false,
+            last_init: None,
         })
     }
 
@@ -187,9 +230,28 @@ impl Segmenter {
         Ok(())
     }
 
+    /// Mark the *next* segment cut as a media-timeline discontinuity
+    /// (RFC 8216 §4.3.4.3). The flag is consumed at the next segment boundary
+    /// and reset; call this again before each discontinuous cut.
+    pub fn mark_discontinuity(&mut self) {
+        self.pending_discontinuity = true;
+    }
+
     /// Remove and return every media segment finished since the last call, in
     /// order. Each element is a complete `styp`+`moof`+`mdat` segment.
+    ///
+    /// Use [`take_ready_with_meta`](Self::take_ready_with_meta) to also
+    /// retrieve per-segment metadata (including the discontinuity flag).
     pub fn take_ready(&mut self) -> Vec<Vec<u8>> {
+        self.ready.drain(..).map(|(bytes, _meta)| bytes).collect()
+    }
+
+    /// Remove and return every media segment finished since the last call,
+    /// together with their [`SegmentMeta`]. The segments are in playlist order.
+    ///
+    /// The [`SegmentMeta::discontinuous`] flag indicates whether
+    /// `#EXT-X-DISCONTINUITY` should precede this segment's `#EXTINF` line.
+    pub fn take_ready_with_meta(&mut self) -> Vec<(Vec<u8>, SegmentMeta)> {
         core::mem::take(&mut self.ready)
     }
 
@@ -213,6 +275,26 @@ impl Segmenter {
             build_media_segment(self.next_seq, &frags)?
         }; // immutable borrow of `self.tracks` ends here, before the mutation below
 
+        // Determine the discontinuity flag for this segment:
+        // - explicit (`mark_discontinuity` was called), OR
+        // - auto-detect: init bytes differ from those of the previous cut.
+        let current_init = build_init_segment(
+            &self
+                .tracks
+                .iter()
+                .map(|t| t.spec.clone())
+                .collect::<Vec<_>>(),
+            self.movie_timescale,
+        )?;
+        let init_changed = self
+            .last_init
+            .as_ref()
+            .map(|prev| prev != &current_init)
+            .unwrap_or(false); // first segment: no previous init to compare
+        let discontinuous = self.pending_discontinuity || init_changed;
+        self.last_init = Some(current_init);
+        self.pending_discontinuity = false;
+
         self.next_seq += 1;
         for t in &mut self.tracks {
             let dur: u64 = t.pending.iter().map(|s| s.duration as u64).sum();
@@ -220,7 +302,7 @@ impl Segmenter {
             t.pending.clear();
         }
         self.anchor_pending_dur = 0;
-        self.ready.push(seg);
+        self.ready.push((seg, SegmentMeta { discontinuous }));
         Ok(())
     }
 }
