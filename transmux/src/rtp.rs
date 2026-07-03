@@ -674,6 +674,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
                     duration: 0,
                     is_sync: true,
                     composition_offset: 0,
+                    source_timing: None,
                 })
                 .collect();
             // A placeholder AVC config: the RTP wire has no config; the SDP does.

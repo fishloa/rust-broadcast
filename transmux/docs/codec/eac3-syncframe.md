@@ -519,3 +519,14 @@ Syntax Word size
  phsflginu = 0 
  ecplinu = 0;
 ```
+## Semantic clauses (verified against ETSI TS 102 366 V1.4.1, added for #556)
+
+- **§E.1.3.1.3 frmsiz — Frame size — 11 bits:** "The frmsiz field indicates a
+  value one less than the overall size of the coded syncframe in 16-bit words.
+  That is, this field may assume a value ranging from 0 to 2 047, and these
+  values correspond to syncframe sizes ranging from 1 to 2 048."
+  (`words_per_syncframe = frmsiz + 1`, §E.1.3.2.28.)
+- **§E.1.3.1.2 substreamid (context):** "Dependent substreams shall
+  immediately follow the independent substream with which they are
+  associated." Independent substreams 1..7 may exist (multi-program);
+  dependent substreams are assigned IDs 0..7 sequentially.

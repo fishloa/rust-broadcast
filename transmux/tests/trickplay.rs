@@ -72,6 +72,7 @@ fn synthetic_track() -> Track {
             duration: SYNTHETIC_SAMPLE_DURATION,
             is_sync: i == 0 || i == SYNTHETIC_SYNC2_INDEX,
             composition_offset: 0,
+            source_timing: None,
         })
         .collect();
     Track::new(synthetic_spec(), samples)
@@ -251,6 +252,7 @@ fn no_sync_samples_returns_error() {
             duration: 100,
             is_sync: false,
             composition_offset: 0,
+            source_timing: None,
         })
         .collect();
     let src = Track::new(synthetic_spec(), samples);

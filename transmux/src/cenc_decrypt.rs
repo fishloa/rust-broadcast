@@ -474,6 +474,7 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
                 duration: 0,
                 is_sync: true,
                 composition_offset: 0,
+                source_timing: None,
             });
         }
 

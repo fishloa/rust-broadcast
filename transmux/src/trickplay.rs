@@ -63,6 +63,7 @@
 //!     duration: 100,
 //!     is_sync: i == 0 || i == 4,
 //!     composition_offset: 0,
+//!     source_timing: None,
 //! }).collect();
 //!
 //! let src = Track::new(spec, samples);
@@ -143,6 +144,9 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
             duration: folded_duration,
             is_sync: true,
             composition_offset: src_sample.composition_offset,
+            // The derived sample opens where `src_sample` did — its source
+            // timing anchor (if any) still applies.
+            source_timing: src_sample.source_timing,
         });
     }
 

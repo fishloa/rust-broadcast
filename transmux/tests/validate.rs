@@ -107,6 +107,7 @@ fn video_samples(data: &[u8]) -> Vec<Sample> {
             duration: ts.sample_duration.unwrap_or(3000),
             is_sync: i == 0,
             composition_offset: ts.sample_composition_time_offset.unwrap_or(0),
+            source_timing: None,
         });
         cursor += size;
     }

@@ -290,6 +290,7 @@ fn ts_to_cmaf_end_to_end() {
                     duration: 1024,
                     is_sync: true,
                     composition_offset: 0,
+                    source_timing: None,
                 });
                 total_adts_frames += 1;
             }

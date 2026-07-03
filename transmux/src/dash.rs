@@ -293,6 +293,9 @@ impl DashPackager {
             // registration uses the bare codec name.
             CodecConfig::Vp8 { .. } => Ok(CODECS_VP8.to_string()),
             CodecConfig::Vorbis { .. } => Ok(CODECS_VORBIS.to_string()),
+            // Opaque PES data track: no RFC 6381 codec string can be derived
+            // without decoding the payload (mirrors the fMP4 mux rejection).
+            CodecConfig::Data { .. } => Err(Error::UnsupportedCodec { codec: "Data" }),
         }
     }
 
@@ -430,6 +433,10 @@ impl DashPackager {
                 info.audio_sampling_rate = Some(*sample_rate);
                 info.audio_channels = Some(*channels);
             }
+            // Opaque PES data track: no video/audio presentation parameters to
+            // resolve (unreachable in practice — `codec_string` above already
+            // errors for `Data`, short-circuiting this function via `?`).
+            CodecConfig::Data { .. } => {}
         }
 
         Ok(info)
