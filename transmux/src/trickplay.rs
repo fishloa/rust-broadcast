@@ -17,7 +17,7 @@
 //! ## Future signalling work (not implemented here)
 //!
 //! - **HLS**: The derived track would be signalled in the master playlist via
-//!   `EXT-X-I-FRAME-STREAM-INF` (RFC 8216 §4.4.6.3). That tag references a
+//!   `EXT-X-I-FRAME-STREAM-INF` (RFC 8216 §4.3.4.2). That tag references a
 //!   separate I-frame media playlist whose segments each carry one keyframe.
 //!
 //! - **DASH**: The derived track would be placed in an `AdaptationSet` with a

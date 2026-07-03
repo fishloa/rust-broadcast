@@ -16,12 +16,13 @@
 //!
 //! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`]), fMP4/CMAF
 //!   ([`Fmp4Demux`]), MPEG Program Stream ([`PsDemux`]), WebM/Matroska
-//!   ([`WebmDemux`]).
+//!   ([`WebmDemux`]), FLV ([`FlvDemux`]), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
 //!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), CMAF-HLS ([`HlsPackager`]),
 //!   TS-segment HLS ([`TsHlsPackager`]), DASH MPD ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
-//!   ([`SmoothPackager`]).
+//!   ([`SmoothPackager`]), RTMP ([`RtmpMux`]), low-latency HLS
+//!   ([`LlHlsSegmenter`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); IR timeline conditioning —
 //!   PTS/DTS rebase, offset, 33-bit MPEG wrap-unroll, discontinuity-gap
@@ -30,7 +31,12 @@
 //!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
 //!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC (`cenc`, AES-CTR) decrypt ([`CencDecryptor`]).
-//! - **RTP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP.
+//! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP;
+//!   RTCP control packets ([`RtcpPacket`]).
+//! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
+//!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
+//! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
+//!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]).
 //!
 //! **Codec config coverage** (header parse → container box; no en/decode):
 //! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8, MPEG-2 video (H.262); AAC,
