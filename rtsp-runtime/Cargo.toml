@@ -1,0 +1,44 @@
+[package]
+name    = "rtsp-runtime"
+version = "0.1.0"
+edition = "2021"
+description = "Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest auth, over the rtsp-types + sdp-types codecs; optional tokio (+ rustls) socket adapter."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["rtsp", "streaming", "rtp", "sans-io", "onvif"]
+categories = ["multimedia", "network-programming", "api-bindings"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.81"
+exclude = ["docs/**", "tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+rtsp-types = "0.1"
+sdp-types  = "0.1"
+http-auth  = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
+thiserror  = "2"
+log        = "0.4"
+serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+# `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
+tokio         = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "time"] }
+tokio-rustls  = { version = "0.26", optional = true }
+rustls        = { version = "0.23", optional = true }
+webpki-roots  = { version = "0.26", optional = true }
+
+[features]
+default = []
+# Derive serde on the public wire/event types.
+serde = ["dep:serde"]
+# Real-socket client + server IO over the sans-IO core (pulls tokio).
+tokio = ["dep:tokio"]
+# `rtsps://` (RTSP over TLS) on top of the tokio adapter.
+tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
+
+[dev-dependencies]
+tokio     = { version = "1", features = ["full"] }
+sdp-types = "0.1"
