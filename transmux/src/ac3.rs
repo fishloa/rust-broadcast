@@ -15,6 +15,14 @@
 //! [`Ec3SpecificBox`] via `into_dec3()`.
 //!
 //! Both parsers scan for the `0x0B77` syncword.
+//!
+//! # Syncframe splitting (issue #556)
+//!
+//! [`split_ac3_syncframes`] / [`split_eac3_syncframes`] split a concatenated
+//! PES payload (which may carry several syncframes back to back) into
+//! individual access units, using the frame length recovered from each
+//! syncframe's own bit stream information rather than assuming one PES
+//! payload equals one syncframe.
 
 use crate::error::{Error, Result};
 use alloc::vec;
@@ -23,6 +31,75 @@ use broadcast_common::{Parse, Serialize};
 
 // AC-3 syncword (big-endian).
 const AC3_SYNCWORD: u16 = 0x0B77;
+
+/// Bytes per "word" in the AC-3 Table 4.13 frame-size table caption ("1 word
+/// = 16 bits") — ETSI TS 102 366 §4.4.1.4 / Table 4.13.
+const BYTES_PER_WORD: usize = 2;
+
+/// Samples per AC-3/E-AC-3 audio block (`audblk()`) — ETSI TS 102 366 §3.1
+/// (Definitions): "audio block: set of 512 audio samples consisting of 256
+/// samples of the preceding audio block, and 256 new time samples. NOTE 1: A
+/// new audio block occurs every 256 audio samples." (Verified against the
+/// spec; excerpt appended to `docs/codec/ac3-syncframe.md`.)
+pub(crate) const SAMPLES_PER_AUDIO_BLOCK: u32 = 256;
+
+/// AC-3 blocks per syncframe — ETSI TS 102 366 §4.3.0 `syncframe()`:
+/// `for(blk = 0; blk < 6; blk++) { audblk(); }`.
+const AC3_BLOCKS_PER_SYNCFRAME: u32 = 6;
+
+/// Samples per AC-3 syncframe: `AC3_BLOCKS_PER_SYNCFRAME` ×
+/// `SAMPLES_PER_AUDIO_BLOCK` = 1536 — stated directly in ETSI TS 102 366
+/// §7.2.1.2: "each AC-3 syncframe contains 1 536 samples of audio per
+/// channel" (excerpt appended to `docs/codec/ac3-syncframe.md`).
+pub const AC3_SAMPLES_PER_SYNCFRAME: u32 = AC3_BLOCKS_PER_SYNCFRAME * SAMPLES_PER_AUDIO_BLOCK;
+
+/// `strmtyp` value marking a dependent-substream E-AC-3 syncframe — ETSI TS
+/// 102 366 Annex E §E.1.2.2 `bsi()`: `if(strmtyp == 0x1) /* if dependent
+/// stream */`.
+const EAC3_STRMTYP_DEPENDENT: u8 = 1;
+
+/// AC-3 frame-size table — ETSI TS 102 366 Table 4.13 ("Frame size code table
+/// (1 word = 16 bits)"), indexed by `frmsizecod` (0..=37; 38..=63 reserved).
+/// Each row is `[words @ fscod 32 kHz, words @ fscod 44.1 kHz, words @ fscod
+/// 48 kHz]`, matching the doc's column order.
+#[rustfmt::skip]
+const AC3_FRAME_SIZE_WORDS: [[u16; 3]; 38] = [
+    [  96,   69,   64], [  96,   70,   64],
+    [ 120,   87,   80], [ 120,   88,   80],
+    [ 144,  104,   96], [ 144,  105,   96],
+    [ 168,  121,  112], [ 168,  122,  112],
+    [ 192,  139,  128], [ 192,  140,  128],
+    [ 240,  174,  160], [ 240,  175,  160],
+    [ 288,  208,  192], [ 288,  209,  192],
+    [ 336,  243,  224], [ 336,  244,  224],
+    [ 384,  278,  256], [ 384,  279,  256],
+    [ 480,  348,  320], [ 480,  349,  320],
+    [ 576,  417,  384], [ 576,  418,  384],
+    [ 672,  487,  448], [ 672,  488,  448],
+    [ 768,  557,  512], [ 768,  558,  512],
+    [ 960,  696,  640], [ 960,  697,  640],
+    [1152,  835,  768], [1152,  836,  768],
+    [1344,  975,  896], [1344,  976,  896],
+    [1536, 1114, 1024], [1536, 1115, 1024],
+    [1728, 1253, 1152], [1728, 1254, 1152],
+    [1920, 1393, 1280], [1920, 1394, 1280],
+];
+
+/// Words-per-syncframe for `(fscod, frmsizecod)` — Table 4.13. `fscod == 3`
+/// (reserved, Table 4.1) or `frmsizecod > 37` (reserved, Table 4.13) yield
+/// `None`.
+fn ac3_frame_words(fscod: u8, frmsizecod: u8) -> Option<u16> {
+    let row = AC3_FRAME_SIZE_WORDS.get(frmsizecod as usize)?;
+    // Table 4.1: fscod 0 = 48 kHz, 1 = 44.1 kHz, 2 = 32 kHz — Table 4.13's
+    // columns are ordered 32/44.1/48 kHz, so map fscod to the matching index.
+    let col = match fscod {
+        0 => 2, // 48 kHz
+        1 => 1, // 44.1 kHz
+        2 => 0, // 32 kHz
+        _ => return None,
+    };
+    Some(row[col])
+}
 
 // ---------------------------------------------------------------------------
 // AC-3 syncframe BSI — §4.3.1 syncinfo + §4.3.2 bsi
@@ -125,6 +202,40 @@ impl Ac3SyncframeInfo {
     pub fn channel_count(&self) -> u8 {
         acmod_channels(self.acmod)
     }
+
+    /// Coded length of this syncframe in bytes:
+    /// `words_per_syncframe(fscod, frmsizecod) * 2` (Table 4.13 — "1 word =
+    /// 16 bits"). `None` for a reserved `fscod`/`frmsizecod`.
+    pub fn frame_len_bytes(&self) -> Option<usize> {
+        ac3_frame_words(self.fscod, self.frmsizecod).map(|w| w as usize * BYTES_PER_WORD)
+    }
+}
+
+/// Split a concatenated AC-3 PES payload into individual syncframes, using
+/// the frame length recovered from each syncframe's own BSI (Table 4.13)
+/// rather than assuming one PES payload equals one syncframe. Stops at the
+/// first bad sync word / truncated tail so a partial trailing frame does not
+/// lose the earlier ones (mirrors `ts_demux::split_adts_frames`).
+pub fn split_ac3_syncframes(payload: &[u8]) -> Vec<&[u8]> {
+    let mut frames = Vec::new();
+    let mut off = 0usize;
+    while off + 2 <= payload.len() {
+        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+            break;
+        }
+        let Ok(info) = Ac3SyncframeInfo::parse_at(payload, off) else {
+            break;
+        };
+        let Some(len) = info.frame_len_bytes() else {
+            break;
+        };
+        if len == 0 || off + len > payload.len() {
+            break;
+        }
+        frames.push(&payload[off..off + len]);
+        off += len;
+    }
+    frames
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +354,70 @@ impl Ec3SyncframeInfo {
     pub fn channel_count(&self) -> u8 {
         acmod_channels(self.acmod)
     }
+
+    /// Samples encoded by this access unit: `numblks` audio blocks ×
+    /// `SAMPLES_PER_AUDIO_BLOCK` samples/block.
+    pub fn samples_per_frame(&self) -> u32 {
+        self.numblks as u32 * SAMPLES_PER_AUDIO_BLOCK
+    }
+}
+
+/// One split E-AC-3 access unit: an independent syncframe's bytes, with any
+/// immediately-following dependent-substream syncframes (`strmtyp == 0x1`,
+/// Annex E §E.1.2.2) concatenated onto it, plus the independent frame's
+/// parsed syncframe info (used for the access unit's duration).
+#[derive(Debug, Clone)]
+pub struct Ec3SplitFrame {
+    /// Concatenated coded bytes: the independent frame followed by any
+    /// dependent frames belonging to the same access unit.
+    pub data: Vec<u8>,
+    /// The independent frame's parsed syncframe info.
+    pub info: Ec3SyncframeInfo,
+}
+
+/// Split a concatenated E-AC-3 PES payload into access units: each
+/// independent syncframe (`strmtyp != 0x1`) starts a new access unit; a
+/// dependent-substream syncframe (`strmtyp == 0x1`) immediately following is
+/// concatenated into that access unit (Annex E §E.1.2.2 `bsi()`). Stops at the
+/// first bad sync word / truncated tail (mirrors [`split_ac3_syncframes`]).
+///
+/// Frame length is `(frmsiz + 1) * 2` bytes — ETSI TS 102 366 §E.1.3.1.3:
+/// "The frmsiz field indicates a value one less than the overall size of the
+/// coded syncframe in 16-bit words" (excerpt appended to
+/// `docs/codec/eac3-syncframe.md`).
+///
+/// Multi-program E-AC-3 (independent substreams with `substreamid` 1..=7,
+/// §E.1.3.1.2) is not disentangled: every independent frame starts a new
+/// access unit in stream order (single-program streams are unaffected).
+pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
+    let mut out: Vec<Ec3SplitFrame> = Vec::new();
+    let mut off = 0usize;
+    while off + 2 <= payload.len() {
+        if u16::from_be_bytes([payload[off], payload[off + 1]]) != AC3_SYNCWORD {
+            break;
+        }
+        let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
+            break;
+        };
+        let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
+        if len == 0 || off + len > payload.len() {
+            break;
+        }
+        let frame_bytes = &payload[off..off + len];
+        if info.strmtyp == EAC3_STRMTYP_DEPENDENT {
+            if let Some(last) = out.last_mut() {
+                last.data.extend_from_slice(frame_bytes);
+                off += len;
+                continue;
+            }
+        }
+        out.push(Ec3SplitFrame {
+            data: frame_bytes.to_vec(),
+            info,
+        });
+        off += len;
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

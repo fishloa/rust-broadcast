@@ -173,6 +173,7 @@ fn synthetic_cuts_are_exact_and_lossless() {
                     duration: VID_DUR,
                     is_sync,
                     composition_offset: 0,
+                    source_timing: None,
                 },
             )
             .unwrap();
@@ -238,6 +239,7 @@ fn single_segment_is_byte_identical_to_batch_builder() {
             duration: 3000,
             is_sync: i % 6 == 0,
             composition_offset: 0,
+            source_timing: None,
         })
         .collect();
     let aud: Vec<Sample> = (0..20)

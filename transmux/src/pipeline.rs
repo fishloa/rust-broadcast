@@ -280,6 +280,22 @@ pub enum CodecConfig {
         /// Sampling rate in Hz (`audio_sample_rate`, Vorbis I §4.2.2).
         sample_rate: u32,
     },
+    /// Opaque PES data track (DVB subtitles EN 300 743, teletext EN 300 472,
+    /// SMPTE 2038 ANC, ID3/KLV metadata, …): the demuxer does not decode the
+    /// payload; each sample is one verbatim PES payload. `stream_type` per
+    /// ISO/IEC 13818-1 Table 2-34; `descriptors` is the raw PMT ES_info
+    /// descriptor loop so consumers can classify (e.g. with dvb-si's parsers).
+    ///
+    /// Carried in the IR for `{TS} → IR → {TS}` / inspection; there is no
+    /// ISOBMFF sample entry for an opaque PES stream in this crate (out of
+    /// scope), so it does not participate in the fMP4 mux path (mirrors
+    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]).
+    Data {
+        /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
+        stream_type: u8,
+        /// The raw PMT ES_info descriptor-loop bytes for this stream.
+        descriptors: Vec<u8>,
+    },
 }
 
 impl CodecConfig {
@@ -311,6 +327,18 @@ pub struct TrackSpec {
     pub config: CodecConfig,
 }
 
+/// Explicit per-sample timestamps recovered from the source container, in the
+/// source's own clock — for TS/PES sources the 33-bit-unwrapped 90 kHz PES
+/// clock (ISO/IEC 13818-1 §2.4.3.7). `None` when the source carries no
+/// per-sample timestamps or the sample's time was synthesized.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTiming {
+    /// Decode timestamp (90 kHz for TS sources), unwrapped.
+    pub dts: u64,
+    /// Presentation timestamp (90 kHz for TS sources), unwrapped.
+    pub pts: u64,
+}
+
 /// A single coded sample (access unit) fed to [`build_media_segment`].
 #[derive(Debug, Clone)]
 pub struct Sample {
@@ -323,6 +351,11 @@ pub struct Sample {
     pub is_sync: bool,
     /// Composition time offset (`pts − dts`) in media-timescale ticks.
     pub composition_offset: i32,
+    /// Explicit source-container timestamps, when the source carries them
+    /// per-sample (see [`SourceTiming`]). All mux paths in this crate ignore
+    /// this field — fMP4 output timing stays duration-based
+    /// ([`FragmentTrackData::base_media_decode_time`] + running `duration` sum).
+    pub source_timing: Option<SourceTiming>,
 }
 
 impl Sample {
@@ -339,6 +372,7 @@ impl Sample {
             duration,
             is_sync,
             composition_offset,
+            source_timing: None,
         }
     }
 
@@ -349,7 +383,15 @@ impl Sample {
             duration,
             is_sync: true,
             composition_offset: 0,
+            source_timing: None,
         }
+    }
+
+    /// Attach explicit [`SourceTiming`] recovered from the source container,
+    /// returning `self` (builder style).
+    pub fn with_source_timing(mut self, t: SourceTiming) -> Self {
+        self.source_timing = Some(t);
+        self
     }
 }
 
@@ -905,6 +947,11 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         }
         CodecConfig::Vorbis { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Vorbis" });
+        }
+        // Opaque PES data track: no ISOBMFF sample entry in this crate — the
+        // fMP4 mux path is out of scope (mirrors Vp8/Vorbis above).
+        CodecConfig::Data { .. } => {
+            return Err(crate::error::Error::UnsupportedCodec { codec: "Data" });
         }
     };
 

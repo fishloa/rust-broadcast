@@ -43,6 +43,7 @@ fn minimal_tracks() -> Vec<Sample> {
         duration: 3000,
         is_sync: true,
         composition_offset: 0,
+        source_timing: None,
     }]
 }
 

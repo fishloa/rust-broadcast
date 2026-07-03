@@ -430,11 +430,13 @@ fn minimal_video_media() -> transmux::media::Media {
             duration: 3000,
             is_sync: i == 0,
             composition_offset: 0,
+            source_timing: None,
         })
         .collect();
     let track = Track::new(spec, samples);
     Media {
         tracks: vec![track],
         movie_timescale: 90000,
+        pcr: vec![],
     }
 }

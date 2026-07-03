@@ -22,6 +22,24 @@
 //! in the PMT but not carried (the TS DTS-ES → `ddts` recovery is not yet implemented) — such
 //! tracks are skipped, never fatal.
 //!
+//! Every video and audio sample additionally carries a [`SourceTiming`]
+//! recovered from the PES clock (issue #556): video/AAC/MPEG-audio samples get the unwrapped
+//! PTS/DTS of the access unit they were decoded from (with per-frame
+//! interpolation when a PES payload splits into several frames); AC-3/E-AC-3
+//! elementary streams are additionally split into individual syncframes
+//! (rather than one zero-duration `Sample` per PES access unit — see
+//! [`crate::ac3`]) so real durations and exact PES-boundary timestamps
+//! survive into the IR.
+//!
+//! PMT `stream_type` 0x06 (PES private data — DVB subtitles/teletext/SMPTE
+//! 2038/etc.) and 0x15 (metadata in PES) are carried as opaque
+//! [`CodecConfig::Data`] tracks (issue #557): the demuxer does not decode the
+//! payload, each `Sample` is one verbatim PES payload, and `descriptors`
+//! preserves the raw PMT ES_info descriptor loop for the caller to classify.
+//! Data tracks are ordered after every codec track, in PMT order. The
+//! demuxer also collects every PCR observation from the TS adaptation fields
+//! into [`Media`]'s `pcr` field.
+//!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //!
 //! # Spec
@@ -32,6 +50,7 @@
 //!   (DVB user-private AC-3/E-AC-3/DTS assignments).
 //! - **PES-over-TS reassembly + PTS/DTS**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7
 //!   (via [`mpeg_pes`], 33-bit @ 90 kHz).
+//! - **PCR**: ISO/IEC 13818-1 §2.4.3.4 (adaptation field) / §2.4.3.5 (PCR encoding).
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -42,19 +61,22 @@ use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 use crate::aac_asc::{AudioSpecificConfig, parse_adts_header};
-use crate::ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo};
+use crate::ac3::{
+    AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SyncframeInfo, split_ac3_syncframes,
+    split_eac3_syncframes,
+};
 use crate::annexb::iter_annexb_nals;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
-use crate::media::{Media, Track};
+use crate::media::{Media, PcrSample, Track};
 use crate::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
     SLConfigDescriptor, StreamType as EsdsStreamType,
 };
 use crate::mpeg_legacy::MpegAudioFrameHeader;
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
-use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::pipeline::{CodecConfig, Sample, SourceTiming, TrackSpec};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -105,6 +127,11 @@ const STREAM_TYPE_DTS_82: u8 = 0x82;
 const STREAM_TYPE_DTS_85: u8 = 0x85;
 /// DTS (user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_DTS_8A: u8 = 0x8A;
+/// PES packets carrying private data (DVB subtitles EN 300 743, teletext
+/// EN 300 472, SMPTE 2038 ANC, …) — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_PES_PRIVATE: u8 = 0x06;
+/// ISO/IEC 15938-1 metadata carried in PES packets — ISO/IEC 13818-1 Table 2-34.
+const STREAM_TYPE_METADATA_PES: u8 = 0x15;
 
 // ── Codec-config recovery constants ─────────────────────────────────────────
 
@@ -183,6 +210,10 @@ enum Codec {
     Ac3,
     Eac3,
     Dts,
+    /// Opaque PES data stream (stream_type 0x06/0x15 — issue #557); the field
+    /// is the PMT `stream_type` itself, carried through into
+    /// [`CodecConfig::Data`].
+    Data(u8),
 }
 
 impl Codec {
@@ -199,6 +230,7 @@ impl Codec {
             STREAM_TYPE_AC3 => Some(Codec::Ac3),
             STREAM_TYPE_EAC3 => Some(Codec::Eac3),
             STREAM_TYPE_DTS_82 | STREAM_TYPE_DTS_85 | STREAM_TYPE_DTS_8A => Some(Codec::Dts),
+            STREAM_TYPE_PES_PRIVATE | STREAM_TYPE_METADATA_PES => Some(Codec::Data(stream_type)),
             _ => None,
         }
     }
@@ -208,6 +240,10 @@ impl Codec {
 /// units in wire (decode) order.
 struct ElementaryStream {
     codec: Codec,
+    /// Raw PMT ES_info descriptor-loop bytes for this stream (ISO/IEC
+    /// 13818-1 §2.4.4.8); only meaningful for [`Codec::Data`] streams, carried
+    /// verbatim into [`CodecConfig::Data::descriptors`].
+    descriptors: Vec<u8>,
     /// PES reassembly buffer for this PID.
     assembler: PesAssembler,
     /// Access units: `(coded bytes, pts, dts)` — Annex B for video, raw frames
@@ -258,8 +294,9 @@ impl<'a> TsDemux<'a> {
         let mut pat_reasm = SectionReassembler::default();
         let mut pmt_reasm: BTreeMap<u16, SectionReassembler> = BTreeMap::new();
         let mut pmt_pids: Vec<u16> = Vec::new();
-        // Ordered elementary-stream table: (pid, codec), PMT order preserved.
-        let mut es_defs: Vec<(u16, Codec)> = Vec::new();
+        // Ordered elementary-stream table: (pid, codec, ES_info descriptors),
+        // PMT order preserved.
+        let mut es_defs: Vec<(u16, Codec, Vec<u8>)> = Vec::new();
         let mut es_seen: alloc::collections::BTreeSet<u16> = alloc::collections::BTreeSet::new();
 
         for pkt in iter_ts_packets(input) {
@@ -282,9 +319,9 @@ impl<'a> TsDemux<'a> {
             } else if let Some(reasm) = pmt_reasm.get_mut(&pid) {
                 reasm.feed(payload, pusi);
                 while let Some(section) = reasm.pop_section() {
-                    for (es_pid, codec) in parse_pmt(&section)? {
+                    for (es_pid, codec, descriptors) in parse_pmt(&section)? {
                         if es_seen.insert(es_pid) {
-                            es_defs.push((es_pid, codec));
+                            es_defs.push((es_pid, codec, descriptors));
                         }
                     }
                 }
@@ -293,9 +330,10 @@ impl<'a> TsDemux<'a> {
 
         // ── Pass 2: per-ES PES reassembly into access units ──
         let mut streams: BTreeMap<u16, ElementaryStream> = BTreeMap::new();
-        for &(pid, codec) in &es_defs {
-            streams.entry(pid).or_insert_with(|| ElementaryStream {
-                codec,
+        for (pid, codec, descriptors) in &es_defs {
+            streams.entry(*pid).or_insert_with(|| ElementaryStream {
+                codec: *codec,
+                descriptors: descriptors.clone(),
                 assembler: PesAssembler::new(),
                 access_units: Vec::new(),
             });
@@ -320,9 +358,19 @@ impl<'a> TsDemux<'a> {
         }
 
         // ── Pass 3: build tracks (config recovery + samples in decode order) ──
+        // Codec tracks first, then data tracks (issue #557), each group in PMT
+        // order; track_id numbering continues across both groups.
         let mut tracks: Vec<Track> = Vec::new();
         let mut track_id: u32 = 1;
-        for &(pid, _) in &es_defs {
+        let codec_pids = es_defs
+            .iter()
+            .filter(|(_, codec, _)| !matches!(codec, Codec::Data(_)))
+            .map(|(pid, _, _)| *pid);
+        let data_pids = es_defs
+            .iter()
+            .filter(|(_, codec, _)| matches!(codec, Codec::Data(_)))
+            .map(|(pid, _, _)| *pid);
+        for pid in codec_pids.chain(data_pids) {
             let Some(es) = streams.get(&pid) else {
                 continue;
             };
@@ -337,7 +385,10 @@ impl<'a> TsDemux<'a> {
             }
         }
 
-        Ok(Media::new(tracks, VIDEO_TIMESCALE))
+        // ── PCR timeline (issue #557) — every adaptation-field PCR, in packet order.
+        let pcr = collect_pcr(input);
+
+        Ok(Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr))
     }
 }
 
@@ -360,6 +411,35 @@ fn iter_ts_packets(data: &[u8]) -> impl Iterator<Item = TsPacket<'_>> {
         .filter_map(|chunk| TsPacket::parse(chunk).ok())
 }
 
+/// Collect every PCR observation from `data`'s TS adaptation fields, in
+/// packet order (ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5). `packet_index` is the
+/// 0-based index of the 188-byte packet within `data` (i.e. `byte_offset /
+/// 188`), counted over every chunk regardless of whether it parses, so it
+/// stays a stable position reference even across malformed packets. Packets
+/// with no adaptation field, no PCR, or an unparseable adaptation field are
+/// skipped (never fatal).
+fn collect_pcr(data: &[u8]) -> Vec<PcrSample> {
+    let mut out = Vec::new();
+    for (idx, chunk) in data.chunks_exact(TS_PACKET_SIZE).enumerate() {
+        let Ok(pkt) = TsPacket::parse(chunk) else {
+            continue;
+        };
+        let Some(Ok(af)) = pkt.adaptation_field() else {
+            continue;
+        };
+        let Some(pcr) = af.pcr else {
+            continue;
+        };
+        out.push(PcrSample {
+            pcr_27mhz: pcr.as_27mhz(),
+            pid: pkt.header.pid,
+            packet_index: idx as u64,
+            discontinuity: af.discontinuity_indicator,
+        });
+    }
+    out
+}
+
 /// Parse a PAT section, returning every `program_map_PID` it lists (network
 /// entries — `program_number == 0` — are skipped). ISO/IEC 13818-1 §2.4.4.3.
 fn parse_pat(section: &[u8]) -> Result<Vec<u16>> {
@@ -380,9 +460,13 @@ fn parse_pat(section: &[u8]) -> Result<Vec<u16>> {
     Ok(pids)
 }
 
-/// Parse a PMT section, returning `(elementary_PID, codec)` for every stream
-/// whose `stream_type` maps to a supported codec. ISO/IEC 13818-1 §2.4.4.8.
-fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec)>> {
+/// Parse a PMT section, returning `(elementary_PID, codec, ES_info
+/// descriptors)` for every stream whose `stream_type` maps to a supported
+/// codec. ISO/IEC 13818-1 §2.4.4.8. `descriptors` is the raw ES_info
+/// descriptor-loop bytes for that stream (empty when `ES_info_length` is 0);
+/// consumers that don't need it (every codec but [`Codec::Data`]) simply
+/// ignore it.
+fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec, Vec<u8>)>> {
     if section.first().copied() != Some(TABLE_ID_PMT) {
         return Ok(Vec::new());
     }
@@ -406,8 +490,11 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec)>> {
         let es_pid = (((body[off + 1] & PID_HI_MASK) as u16) << 8) | body[off + 2] as u16;
         let es_info_length =
             (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
+        let desc_start = off + 5;
+        let desc_end = (desc_start + es_info_length).min(body.len());
         if let Some(codec) = Codec::from_stream_type(stream_type) {
-            out.push((es_pid, codec));
+            let descriptors = body[desc_start..desc_end].to_vec();
+            out.push((es_pid, codec, descriptors));
         }
         off += 5 + es_info_length;
     }
@@ -450,18 +537,33 @@ fn push_access_unit(es: &mut ElementaryStream, pes_bytes: &[u8]) {
     if pes.payload.is_empty() {
         return;
     }
+    // Fallback when this PES carries neither PTS nor DTS: the previous access
+    // unit's already-resolved timestamps (or `(0, 0)` for the very first AU in
+    // the stream, when nothing has ever been seen). Falling back to the
+    // *previous* value rather than a hardcoded 0 matters for opaque PES data
+    // streams (issue #557), whose sparse "heartbeat" access units can
+    // legitimately carry no PES header timing at all: defaulting such an AU to
+    // literal 0 would hand `unwrap_ts` a fake near-zero raw timestamp, which a
+    // real subsequent AU (anywhere in the 33-bit range) would then look like a
+    // spurious backward wrap relative to.
+    let fallback = es
+        .access_units
+        .last()
+        .map(|au| (au.pts, au.dts))
+        .unwrap_or((0, 0));
     let (pts, dts) = pes
         .header
         .as_ref()
         .map(|h| {
             let pts = h.pts.map(|p| p.0);
             let dts = h.dts.map(|d| d.0);
-            // DTS defaults to PTS when absent; PTS defaults to DTS; else 0.
-            let pts = pts.or(dts).unwrap_or(0);
+            // DTS defaults to PTS when absent; PTS defaults to DTS; else the
+            // fallback above.
+            let pts = pts.or(dts).unwrap_or(fallback.0);
             let dts = dts.unwrap_or(pts);
             (pts, dts)
         })
-        .unwrap_or((0, 0));
+        .unwrap_or(fallback);
     es.access_units.push(AccessUnit {
         data: pes.payload.to_vec(),
         pts,
@@ -486,6 +588,7 @@ fn build_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         // yet carry a DTS-from-ES audio config, so no track is built (issue #467:
         // skip, do not fail). DTS-from-TS remains unimplemented (no fixture).
         Codec::Dts => None,
+        Codec::Data(stream_type) => build_data_track(es, track_id, stream_type),
     }
 }
 
@@ -506,25 +609,42 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
     prev_unwrapped + delta
 }
 
-/// Sort access-unit indices into decode order (ascending unwrapped DTS) and
-/// return, per index, the unwrapped `(pts, dts)`. Preserves input order for
-/// equal DTS (stable). Timestamps are unwrapped across the 33-bit 90 kHz wrap
-/// using the stream (wire) order.
-fn decode_order(units: &[AccessUnit]) -> Vec<(usize, i128, i128)> {
+/// Unwrap every access unit's `(pts, dts)` across the 33-bit 90 kHz wrap, in
+/// wire (stream) order — the shared basis for both [`decode_order`] (video,
+/// which additionally reorders by DTS) and the audio/data track builders
+/// (which need no reordering: PES access units already arrive in
+/// presentation/decode order for those elementary streams).
+fn unwrap_all(units: &[AccessUnit]) -> Vec<(i128, i128)> {
     if units.is_empty() {
         return Vec::new();
     }
     let mut unwrapped: Vec<(i128, i128)> = Vec::with_capacity(units.len());
+    // A raw value of exactly 0 before any genuine (non-placeholder) value has
+    // been observed is always `push_access_unit`'s fallback for a PES with no
+    // header timing at all (never a real 90 kHz wire timestamp landing on
+    // tick 0 in practice) — e.g. a sparse opaque-data-stream "heartbeat" AU
+    // preceding the very first timestamped one (issue #557). Until a genuine
+    // value appears, don't run wrap-jump detection against it (a large
+    // forward jump away from a placeholder zero is not a wrap): just
+    // re-baseline on whatever arrives.
+    let mut dts_seen_real = units[0].dts != 0;
+    let mut pts_seen_real = units[0].pts != 0;
     let (mut prev_dts_raw, mut prev_dts_uw) = (units[0].dts, units[0].dts as i128);
     let (mut prev_pts_raw, mut prev_pts_uw) = (units[0].pts, units[0].pts as i128);
-    for (i, au) in units.iter().enumerate() {
-        let (dts_uw, pts_uw) = if i == 0 {
-            (units[0].dts as i128, units[0].pts as i128)
+    unwrapped.push((prev_pts_uw, prev_dts_uw));
+
+    for au in &units[1..] {
+        let dts_uw = if dts_seen_real {
+            unwrap_ts(prev_dts_uw, prev_dts_raw, au.dts)
         } else {
-            (
-                unwrap_ts(prev_dts_uw, prev_dts_raw, au.dts),
-                unwrap_ts(prev_pts_uw, prev_pts_raw, au.pts),
-            )
+            dts_seen_real = au.dts != 0;
+            au.dts as i128
+        };
+        let pts_uw = if pts_seen_real {
+            unwrap_ts(prev_pts_uw, prev_pts_raw, au.pts)
+        } else {
+            pts_seen_real = au.pts != 0;
+            au.pts as i128
         };
         prev_dts_raw = au.dts;
         prev_dts_uw = dts_uw;
@@ -532,12 +652,36 @@ fn decode_order(units: &[AccessUnit]) -> Vec<(usize, i128, i128)> {
         prev_pts_uw = pts_uw;
         unwrapped.push((pts_uw, dts_uw));
     }
+    unwrapped
+}
+
+/// Sort access-unit indices into decode order (ascending unwrapped DTS) and
+/// return, per index, the unwrapped `(pts, dts)`. Preserves input order for
+/// equal DTS (stable). Timestamps are unwrapped across the 33-bit 90 kHz wrap
+/// using the stream (wire) order.
+fn decode_order(units: &[AccessUnit]) -> Vec<(usize, i128, i128)> {
+    let unwrapped = unwrap_all(units);
+    if unwrapped.is_empty() {
+        return Vec::new();
+    }
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| unwrapped[i].1); // stable sort by unwrapped DTS
     order
         .into_iter()
         .map(|i| (i, unwrapped[i].0, unwrapped[i].1))
         .collect()
+}
+
+/// Interpolated 90 kHz PES-clock timestamp for a sample `elapsed_samples`
+/// into a source access unit anchored at the unwrapped `anchor_uw` PTS/DTS
+/// (ISO/IEC 13818-1 §2.4.3.7): `anchor + elapsed_samples * 90000 /
+/// sample_rate`, floored (u128 math to avoid overflow on a full 33-bit
+/// anchor). `elapsed_samples == 0` returns `anchor` exactly — the PES-boundary
+/// sample's timestamp is never touched by interpolation (issue #556).
+fn interpolate_ts(anchor_uw: i128, elapsed_samples: u64, sample_rate: u32) -> u64 {
+    let base = anchor_uw.max(0) as u128;
+    let offset = (elapsed_samples as u128 * VIDEO_TIMESCALE as u128) / sample_rate.max(1) as u128;
+    (base + offset) as u64
 }
 
 /// Per-sample duration from decode-ordered unwrapped DTS deltas; the final
@@ -632,6 +776,10 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
                 is_idr[i],
                 composition_offset,
             )
+            .with_source_timing(SourceTiming {
+                pts: pts.max(0) as u64,
+                dts: dts.max(0) as u64,
+            })
         })
         .collect();
 
@@ -757,6 +905,10 @@ fn build_h265_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
                 is_irap[i],
                 composition_offset,
             )
+            .with_source_timing(SourceTiming {
+                pts: pts.max(0) as u64,
+                dts: dts.max(0) as u64,
+            })
         })
         .collect();
 
@@ -857,6 +1009,10 @@ fn build_mpeg2_video_track(es: &ElementaryStream, track_id: u32) -> Option<Track
             duration: durations[pos],
             is_sync: is_sync[i],
             composition_offset: (pts - dts) as i32,
+            source_timing: Some(SourceTiming {
+                pts: pts.max(0) as u64,
+                dts: dts.max(0) as u64,
+            }),
         })
         .collect();
 
@@ -936,10 +1092,24 @@ fn build_mpeg_audio_track(es: &ElementaryStream, track_id: u32, is_mpeg2: bool) 
         }),
     });
 
+    // One sample per MPEG audio frame, with interpolated per-frame timing when
+    // a PES access unit carries more than one frame (issue #556): the first
+    // frame in each AU carries the AU's unwrapped PTS/DTS exactly, subsequent
+    // frames are interpolated from the elapsed sample count.
+    let unwrapped = unwrap_all(&es.access_units);
     let mut samples: Vec<Sample> = Vec::new();
-    for au in &es.access_units {
+    for (au, &(pts_uw, dts_uw)) in es.access_units.iter().zip(unwrapped.iter()) {
+        let mut elapsed = 0u64;
         for frame in split_mpeg_audio_frames(&au.data) {
-            samples.push(Sample::from_raw(frame.to_vec(), samples_per_frame));
+            samples.push(
+                Sample::from_raw(frame.to_vec(), samples_per_frame).with_source_timing(
+                    SourceTiming {
+                        pts: interpolate_ts(pts_uw, elapsed, sample_rate),
+                        dts: interpolate_ts(dts_uw, elapsed, sample_rate),
+                    },
+                ),
+            );
+            elapsed += samples_per_frame as u64;
         }
     }
     if samples.is_empty() {
@@ -1018,15 +1188,24 @@ fn build_aac_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
 
     // One sample per ADTS frame, with its 7-byte header stripped (raw AAC AU).
     // Audio AUs are all sync samples; duration is 1024 samples @ the ES rate.
+    // Interpolated per-frame timing when a PES AU carries more than one ADTS
+    // frame (issue #556): the first frame carries the AU's unwrapped PTS/DTS
+    // exactly, subsequent frames are interpolated from the elapsed samples.
+    let unwrapped = unwrap_all(&es.access_units);
     let mut samples: Vec<Sample> = Vec::new();
-    for au in &es.access_units {
+    for (au, &(pts_uw, dts_uw)) in es.access_units.iter().zip(unwrapped.iter()) {
+        let mut elapsed = 0u64;
         for frame in split_adts_frames(&au.data) {
             if frame.len() > ADTS_HEADER_SIZE {
-                samples.push(Sample::from_raw(
-                    frame[ADTS_HEADER_SIZE..].to_vec(),
-                    AAC_SAMPLES_PER_FRAME,
-                ));
+                samples.push(
+                    Sample::from_raw(frame[ADTS_HEADER_SIZE..].to_vec(), AAC_SAMPLES_PER_FRAME)
+                        .with_source_timing(SourceTiming {
+                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
+                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
+                        }),
+                );
             }
+            elapsed += AAC_SAMPLES_PER_FRAME as u64;
         }
     }
     if samples.is_empty() {
@@ -1049,7 +1228,13 @@ fn build_aac_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     ))
 }
 
-/// Recover AC-3 config (syncframe BSI → `dac3`) + one raw sample per PES AU.
+/// Recover AC-3 config (syncframe BSI → `dac3`) and split each PES payload
+/// into individual syncframes (issue #556: a 44.1 kHz AC-3 cadence never
+/// divides the 90 kHz PES clock, so one Sample per PES AU with `duration = 0`
+/// cannot reproduce PES PTS exactly). Each syncframe gets `duration =
+/// `[`AC3_SAMPLES_PER_SYNCFRAME`] and interpolated per-syncframe timing: the
+/// first syncframe in a PES AU carries that AU's unwrapped PTS/DTS exactly,
+/// subsequent syncframes are interpolated from the elapsed sample count.
 fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let info = es
         .access_units
@@ -1058,11 +1243,26 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let sample_rate = info.sample_rate;
     let channel_count = info.channel_count() as u16;
     let config = info.into_dac3();
-    let samples: Vec<Sample> = es
-        .access_units
-        .iter()
-        .map(|au| Sample::from_raw(au.data.clone(), 0))
-        .collect();
+
+    let unwrapped = unwrap_all(&es.access_units);
+    let mut samples: Vec<Sample> = Vec::new();
+    for (au, &(pts_uw, dts_uw)) in es.access_units.iter().zip(unwrapped.iter()) {
+        let mut elapsed = 0u64;
+        for frame in split_ac3_syncframes(&au.data) {
+            samples.push(
+                Sample::from_raw(frame.to_vec(), AC3_SAMPLES_PER_SYNCFRAME).with_source_timing(
+                    SourceTiming {
+                        pts: interpolate_ts(pts_uw, elapsed, sample_rate),
+                        dts: interpolate_ts(dts_uw, elapsed, sample_rate),
+                    },
+                ),
+            );
+            elapsed += AC3_SAMPLES_PER_SYNCFRAME as u64;
+        }
+    }
+    if samples.is_empty() {
+        return None;
+    }
     Some(Track::new_at(
         TrackSpec {
             track_id,
@@ -1079,7 +1279,12 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     ))
 }
 
-/// Recover E-AC-3 config (syncframe BSI → `dec3`) + one raw sample per PES AU.
+/// Recover E-AC-3 config (syncframe BSI → `dec3`) and split each PES payload
+/// into individual access units (issue #556): each independent syncframe
+/// (`strmtyp != 0x1`) starts a new access unit; a dependent-substream
+/// syncframe immediately following is concatenated into it
+/// ([`split_eac3_syncframes`]). `duration = numblks * 256` from the
+/// independent frame; timing is interpolated the same way as AC-3.
 fn build_eac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let info = es
         .access_units
@@ -1088,11 +1293,25 @@ fn build_eac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let sample_rate = info.sample_rate;
     let channel_count = info.channel_count() as u16;
     let config = info.into_dec3();
-    let samples: Vec<Sample> = es
-        .access_units
-        .iter()
-        .map(|au| Sample::from_raw(au.data.clone(), 0))
-        .collect();
+
+    let unwrapped = unwrap_all(&es.access_units);
+    let mut samples: Vec<Sample> = Vec::new();
+    for (au, &(pts_uw, dts_uw)) in es.access_units.iter().zip(unwrapped.iter()) {
+        let mut elapsed = 0u64;
+        for split in split_eac3_syncframes(&au.data) {
+            let duration = split.info.samples_per_frame();
+            samples.push(
+                Sample::from_raw(split.data, duration).with_source_timing(SourceTiming {
+                    pts: interpolate_ts(pts_uw, elapsed, sample_rate),
+                    dts: interpolate_ts(dts_uw, elapsed, sample_rate),
+                }),
+            );
+            elapsed += duration as u64;
+        }
+    }
+    if samples.is_empty() {
+        return None;
+    }
     Some(Track::new_at(
         TrackSpec {
             track_id,
@@ -1106,6 +1325,56 @@ fn build_eac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         },
         samples,
         audio_start_decode_time(es, sample_rate),
+    ))
+}
+
+/// Build an opaque PES data track (issue #557): one Sample per PES access
+/// unit, verbatim payload bytes, `timescale = 90 kHz`, `is_sync = true`,
+/// `composition_offset = 0`, with `source_timing` from the unwrapped PES
+/// PTS/DTS. `duration` is the delta to the next AU's unwrapped PTS (the last
+/// sample reuses the previous duration — mirrors [`durations_from_dts`], but
+/// on PTS since these streams are not guaranteed to carry a distinct DTS).
+fn build_data_track(es: &ElementaryStream, track_id: u32, stream_type: u8) -> Option<Track> {
+    if es.access_units.is_empty() {
+        return None;
+    }
+    let unwrapped = unwrap_all(&es.access_units);
+    let n = unwrapped.len();
+    let mut durations = alloc::vec![0u32; n];
+    for i in 0..n {
+        let dur = if i + 1 < n {
+            (unwrapped[i + 1].0 - unwrapped[i].0).max(0) as u64
+        } else if i > 0 {
+            durations[i - 1] as u64
+        } else {
+            0
+        };
+        durations[i] = dur as u32;
+    }
+    let samples: Vec<Sample> = es
+        .access_units
+        .iter()
+        .zip(unwrapped.iter())
+        .enumerate()
+        .map(|(i, (au, &(pts_uw, dts_uw)))| {
+            Sample::from_raw(au.data.clone(), durations[i]).with_source_timing(SourceTiming {
+                pts: pts_uw.max(0) as u64,
+                dts: dts_uw.max(0) as u64,
+            })
+        })
+        .collect();
+    let start_decode_time = unwrapped.first().map(|&(_, dts)| dts.max(0) as u64);
+    Some(Track::new_at(
+        TrackSpec {
+            track_id,
+            timescale: VIDEO_TIMESCALE,
+            config: CodecConfig::Data {
+                stream_type,
+                descriptors: es.descriptors.clone(),
+            },
+        },
+        samples,
+        start_decode_time.unwrap_or(0),
     ))
 }
 

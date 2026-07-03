@@ -923,3 +923,12 @@ The following constraints shall be imposed upon the encoded bit stream by the AC
 
 - 1) The combined size of the syncinfo fields, the bsi fields, block 0 and block 1 combined, shall not exceed 5/8 of the syncframe.
 - 2) The combined size of the block 5 mantissa data, the auxiliary data fields, and the errorcheck fields shall not exceed the final 3/8 of the syncframe.
+## Semantic clauses (verified against ETSI TS 102 366 V1.4.1, added for #556)
+
+- **§3.1 Definitions — audio block:** "audio block: set of 512 audio samples
+  consisting of 256 samples of the preceding audio block, and 256 new time
+  samples. NOTE 1: A new audio block occurs every 256 audio samples.
+  NOTE 2: Each audio sample is represented in two audio blocks."
+- **§7.2.1.2 Input sample rate:** "The input sample rate is locked to the
+  output bit rate so that each AC-3 syncframe contains 1 536 samples of audio
+  per channel."

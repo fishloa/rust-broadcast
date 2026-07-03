@@ -179,6 +179,7 @@ mod tests {
             duration,
             is_sync: true,
             composition_offset: 0,
+            source_timing: None,
         }
     }
 

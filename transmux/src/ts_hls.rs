@@ -333,6 +333,7 @@ mod tests {
             duration: dur,
             is_sync: sync,
             composition_offset: 0,
+            source_timing: None,
         }
     }
 

@@ -513,6 +513,7 @@ fn build_media(
                 duration,
                 is_sync: sync[i],
                 composition_offset: 0,
+                source_timing: None,
             });
         }
 

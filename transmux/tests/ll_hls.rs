@@ -95,6 +95,7 @@ fn vsample(is_sync: bool, byte: u8) -> Sample {
         duration: VID_DUR,
         is_sync,
         composition_offset: 0,
+        source_timing: None,
     }
 }
 

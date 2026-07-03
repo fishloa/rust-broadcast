@@ -210,7 +210,7 @@ pub use klv::{
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
-pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, Track};
+pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, Track};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
@@ -230,8 +230,8 @@ pub use nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type}
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
-    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Sample, TrackSpec,
-    build_init_segment, build_media_segment, build_media_segment_with_events,
+    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Sample, SourceTiming,
+    TrackSpec, build_init_segment, build_media_segment, build_media_segment_with_events,
 };
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;

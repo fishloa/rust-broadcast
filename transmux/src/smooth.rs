@@ -892,6 +892,7 @@ mod tests {
             duration: 1,
             is_sync: sync,
             composition_offset: 0,
+            source_timing: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
         let groups = segment_samples(&samples, 1, 2);

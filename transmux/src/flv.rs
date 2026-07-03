@@ -367,6 +367,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 duration,
                                 is_sync: frame_type == FRAME_TYPE_KEYFRAME,
                                 composition_offset: composition_time,
+                                source_timing: None,
                             });
                         }
                         avc_packet_type::END_OF_SEQUENCE => {}
@@ -407,6 +408,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 duration,
                                 is_sync: true,
                                 composition_offset: 0,
+                                source_timing: None,
                             });
                         }
                         _ => {}
@@ -818,6 +820,7 @@ fn codec_name(c: &CodecConfig) -> &'static str {
         CodecConfig::Dts { .. } => "DTS",
         CodecConfig::Vp8 { .. } => "VP8",
         CodecConfig::Vorbis { .. } => "Vorbis",
+        CodecConfig::Data { .. } => "Data",
     }
 }
 

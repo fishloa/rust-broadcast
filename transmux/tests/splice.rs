@@ -44,6 +44,7 @@ fn sample(tag: u8, index: usize, duration: u32, is_sync: bool) -> Sample {
         duration,
         is_sync,
         composition_offset: 0,
+        source_timing: None,
     }
 }
 

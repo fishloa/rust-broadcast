@@ -5,6 +5,70 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- **Per-sample source-container timing** (#556): `Sample` gains
+  `source_timing: Option<SourceTiming>` (`SourceTiming { pts, dts }`, the
+  33-bit-unwrapped 90 kHz PES clock for TS sources) and a
+  `with_source_timing` builder; every in-crate `Sample` constructor/literal
+  updated. All mux paths (`build_media_segment`/`CmafMux`) ignore the field —
+  fMP4 output timing stays duration-based.
+  - `TsDemux` now sets `source_timing` on every video (H.264/HEVC/MPEG-2) and
+    audio (AC-3/E-AC-3/AAC/MPEG audio) sample it emits: the first frame taken
+    from a PES access unit carries that PES's unwrapped PTS/DTS exactly;
+    subsequent frames split out of the same PES payload get interpolated
+    timing (`pes_pts + i * samples_per_frame * 90000 / sample_rate`, floored,
+    `u128` math).
+  - **AC-3 syncframe splitting**: `ts_demux` now splits each PES payload into
+    individual AC-3 syncframes (`ac3::split_ac3_syncframes`, using the
+    Table 4.13 frame-size table — ETSI TS 102 366 §4.4.1.4 — via the new
+    `Ac3SyncframeInfo::frame_len_bytes()`) instead of emitting one
+    zero-duration `Sample` per PES access unit. Every syncframe gets
+    `duration = AC3_SAMPLES_PER_SYNCFRAME` (1536 = 6 blocks × 256
+    samples/block, §4.3.0 `syncframe()`).
+  - **E-AC-3 syncframe splitting**: `ac3::split_eac3_syncframes` splits each
+    PES payload into access units; a dependent-substream syncframe
+    (`strmtyp == 0x1`, Annex E §E.1.2.2 `bsi()`) is concatenated into the
+    preceding independent syncframe's access unit. `duration = numblks * 256`
+    from the independent frame.
+  - A previously TS-sourced AC-3/E-AC-3 track muxed through `CmafMux` no
+    longer produces all-zero `trun` sample durations.
+- **Opaque PES data tracks** (#557): PMT `stream_type` 0x06 (PES private
+  data — DVB subtitles/teletext/SMPTE 2038/etc.) and 0x15 (metadata in PES)
+  are now carried into the IR as a new `CodecConfig::Data { stream_type,
+  descriptors }` variant (`descriptors` is the raw PMT ES_info
+  descriptor-loop bytes) instead of being silently dropped. Mirrors the
+  existing `CodecConfig::Vp8`/`Vorbis` WebM-only precedent: carried in the IR
+  for inspection / `{TS} → IR → {TS}`, but has no ISOBMFF sample entry, so
+  `build_trak`/`CmafMux` reject it with the same `Error::UnsupportedCodec`
+  every other site that dispatches exhaustively on `CodecConfig` (`dash.rs`
+  RFC 6381 codec string, `flv.rs` codec name, `splice.rs` codec kind) gained
+  a matching `Data` arm.
+  - `TsDemux` builds one Data track per opaque PES elementary stream: one
+    `Sample` per PES access unit (verbatim payload bytes), `timescale =
+    90_000`, `is_sync = true`, `composition_offset = 0`, `source_timing` from
+    the unwrapped PES PTS/DTS, `duration` = the delta to the next access
+    unit's unwrapped PTS (last sample reuses the previous duration). Data
+    tracks are ordered after every codec track, in PMT order.
+- **PCR timeline** (#557): `Media` gains `pub pcr: Vec<PcrSample>`
+  (`PcrSample { pcr_27mhz, pid, packet_index, discontinuity }`, ISO/IEC
+  13818-1 §2.4.3.4/§2.4.3.5) and a `with_pcr` builder; empty for every
+  demuxer except `TsDemux`, which now collects every PCR observation from
+  every TS packet's adaptation field (via `mpeg_ts::ts::TsPacket::
+  adaptation_field()`), in packet order.
+### Fixed
+- `TsDemux`'s 33-bit PES-clock wrap-unroll (`unwrap_ts`/`decode_order`/the
+  new `unwrap_all`) could misread a stream's first *genuine* PTS/DTS as a
+  spurious backward wrap when an earlier access unit on the same elementary
+  stream carried no PES header timing at all (its PTS/DTS default to a
+  placeholder `0`) — most commonly hit by opaque PES data streams (#557),
+  whose access units are sometimes sparse "heartbeat" PES packets with no
+  timing. `push_access_unit` now falls back to the *previous* access unit's
+  resolved timestamps (rather than a hardcoded `0`) when a PES carries
+  neither PTS nor DTS, and the wrap-unroll itself defers wrap-jump detection
+  until each of the PTS/DTS channels has seen its first genuine (non-`0`)
+  value.
+
 ## [0.10.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

@@ -273,12 +273,14 @@ fn explicit_mark_discontinuity_bites() {
             duration: 45_000,
             is_sync: true,
             composition_offset: 0,
+            source_timing: None,
         };
         let non_sync = Sample {
             data: vec![0u8; 4],
             duration: 45_000,
             is_sync: false,
             composition_offset: 0,
+            source_timing: None,
         };
         s.push(1, sync).unwrap();
         s.push(1, non_sync).unwrap();
@@ -290,6 +292,7 @@ fn explicit_mark_discontinuity_bites() {
         duration: 45_000,
         is_sync: true,
         composition_offset: 0,
+        source_timing: None,
     };
 
     // Fill segment 0's buffer (90_000 ticks pending).
@@ -310,6 +313,7 @@ fn explicit_mark_discontinuity_bites() {
         duration: 45_000,
         is_sync: false,
         composition_offset: 0,
+        source_timing: None,
     };
     seg.push(1, non_sync).unwrap();
     // Now trigger the cut for segment 1 — must be discontinuous.
