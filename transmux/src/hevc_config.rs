@@ -116,6 +116,9 @@ impl HEVCDecoderConfigurationRecord {
             bit_depth_chroma: self.bit_depth_chroma_minus8 + 8,
             width: 0,
             height: 0,
+            num_units_in_tick: None,
+            time_scale: None,
+            fps: None,
         })
     }
 }

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **HEVC SPS VUI timing fields** (#546): `HevcSpsInfo` gains three new fields —
+  `num_units_in_tick: Option<u32>`, `time_scale: Option<u32>`, and
+  `fps: Option<f32>` — mirroring the AVC equivalents added in #523.
+  `decode_hevc_sps` now walks the full HEVC SPS syntax (ITU-T H.265 §7.3.2.2.1)
+  past the mandatory fields to parse `vui_parameters()` (§E.2.1) and extract
+  `vui_num_units_in_tick`/`vui_time_scale`.  Frame rate is derived as
+  `vui_time_scale / vui_num_units_in_tick` (no factor-of-2 — HEVC, unlike H.264,
+  expresses the tick rate directly).  All three fields are `None` when
+  `vui_parameters_present_flag` or `vui_timing_info_present_flag` is 0, or when
+  the SPS is truncated before the VUI.  The `Eq` derive is dropped from
+  `HevcSpsInfo` (now `PartialEq` only) to accommodate the `f32` field, matching
+  the pattern established for `AvcSpsInfo`.
 - **HLS Sample-AES + full-segment AES-128 encryption** (#479): new `sample_aes`
   module (feature `sample-aes`) implementing Apple's HLS-native content
   protection — distinct from CENC — per Apple's "MPEG-2 Stream Encryption Format
