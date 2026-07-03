@@ -93,11 +93,22 @@ Total channels = CHS + (1 if LFF ∈ {1,2} else 0).
 | 0b0110 | 11025 | | 0b1110 | invalid |
 | 0b0111 | 22050 | | 0b1111 | invalid |
 
-## Table 5-7: RATE → targeted bit rate (kbit/s), partial
+## Table 5-7: RATE → targeted bit rate (kbit/s)
 
-`0..=0b01101` → 32,56,64,96,112,128,192,224,256,320,384,448,512,576; higher codes
-add up to 4096; `0b11101` = open (variable). Only needed for the `ddts`
-`max_bitrate`/`avg_bitrate` hint on the mux side.
+| RATE | kbit/s | RATE | kbit/s | RATE | kbit/s |
+|-----:|-------:|-----:|-------:|-----:|-------:|
+| 0b00000 | 32  | 0b01001 | 320 | 0b10010 | 1152 |
+| 0b00001 | 56  | 0b01010 | 384 | 0b10011 | 1280 |
+| 0b00010 | 64  | 0b01011 | 448 | 0b10100 | 1344 |
+| 0b00011 | 96  | 0b01100 | 512 | 0b10101 | 1408 |
+| 0b00100 | 112 | 0b01101 | 576 | 0b10110 | 1411.2 |
+| 0b00101 | 128 | 0b01110 | 640 | 0b10111 | 1472 |
+| 0b00110 | 192 | 0b01111 | 768 | 0b11000 | 1536 |
+| 0b00111 | 224 | 0b10000 | 960 | 0b11101 | open (variable) |
+| 0b01000 | 256 | 0b10001 | 1024 | other | invalid |
+
+Only needed for the `ddts` `max_bitrate`/`avg_bitrate` hint on the mux side
+(× 1000 → bits/s; `0` for the open code).
 
 ## Demux derivation (what TS→IR needs)
 

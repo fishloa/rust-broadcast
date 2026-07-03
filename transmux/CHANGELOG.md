@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **DTS Transport-Stream spoke** (#560): DTS is no longer dropped on the TS
+  side.
+  - **TS → IR demux**: PMT `stream_type` `0x82`/`0x85`/`0x8A` now resolves a
+    `CodecConfig::Dts` track instead of being silently skipped. The new
+    `dts::DtsCoreFrameInfo::from_es` parses a DTS **core substream** frame
+    header (ETSI TS 102 114 §5.3/§5.4, sync `0x7FFE8001`) — sample rate
+    (Table 5-5), channel count (Table 5-4 + LFE), samples/frame
+    (`32×(NBLKS+1)`) — and `into_ddts()` builds a core-only `ddts`
+    `DtsSpecificBox` from it (§E.2.2.3.2, Tables E-2/E-3), mirroring the
+    existing AC-3/E-AC-3 recovery path. Each PES access unit is split into
+    individual core frames (`dts::split_dts_core_frames`, using each frame's
+    own `FSIZE`) and emitted as one `Sample` with interpolated per-frame
+    `SourceTiming`, the same pattern as E-AC-3 syncframe splitting (#556).
+  - **IR → TS mux**: new `EsKind::Dts` (`stream_type` `0x82`, ETSI TS 101 154
+    §G) — a `CodecConfig::Dts` track is now emitted to TS (PES payload
+    passthrough) instead of being dropped.
 - **Event-driven streaming TS demuxer** (#555): `StreamingTsDemux` is a new
   incremental MPEG-2 TS demux core — `feed()` accepts bytes of any size or
   alignment (down to one byte at a time; resynchronises via

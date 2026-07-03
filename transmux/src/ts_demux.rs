@@ -18,7 +18,8 @@
 //! H.265 VPS/SPS/PPS → `hvcC`, MPEG-2 video `sequence_header()` → `esds`,
 //! ADTS → AudioSpecificConfig →
 //! `esds`, MPEG-1/2 audio frame header → `esds`, AC-3/E-AC-3 syncframe BSI →
-//! `dac3`/`dec3`) → length-prefixed video / raw audio samples.
+//! `dac3`/`dec3`, DTS core-frame header → `ddts`) → length-prefixed video /
+//! raw audio samples.
 //!
 //! Config recovery happens incrementally, access unit by access unit, and is
 //! **single-shot and permanent**: the first successfully-recovered config for
@@ -32,18 +33,20 @@
 //! VPS/SPS/PPS NAL units are gathered from the Annex-B access units, decoded
 //! into an `hvcC` [`HEVCConfigurationBox`], and emitted as a `hvc1`
 //! [`CodecConfig::Hevc`] track — identical to the config `Fmp4Demux` recovers
-//! from an fMP4 `hvcC` (issue #467). DTS elementary streams are still recognized
-//! in the PMT but not carried (the TS DTS-ES → `ddts` recovery is not yet implemented) — such
-//! tracks are skipped, never fatal.
+//! from an fMP4 `hvcC` (issue #467). DTS elementary streams (stream_type
+//! `0x82`/`0x85`/`0x8A`) are carried: the core-substream frame header
+//! (`0x7FFE8001` sync) is parsed into a core-only `ddts` [`CodecConfig::Dts`]
+//! track, mirroring the AC-3/E-AC-3 recovery path (issue #560, see
+//! [`crate::dts`]).
 //!
 //! Every video and audio sample additionally carries a [`SourceTiming`]
 //! recovered from the PES clock (issue #556): video/AAC/MPEG-audio samples get the unwrapped
 //! PTS/DTS of the access unit they were decoded from (with per-frame
-//! interpolation when a PES payload splits into several frames); AC-3/E-AC-3
-//! elementary streams are additionally split into individual syncframes
-//! (rather than one zero-duration `Sample` per PES access unit — see
-//! [`crate::ac3`]) so real durations and exact PES-boundary timestamps
-//! survive into the IR. Video/data-track sample durations are resolved
+//! interpolation when a PES payload splits into several frames); AC-3/E-AC-3/DTS
+//! elementary streams are additionally split into individual syncframes/core
+//! frames (rather than one zero-duration `Sample` per PES access unit — see
+//! [`crate::ac3`] / [`crate::dts`]) so real durations and exact PES-boundary
+//! timestamps survive into the IR. Video/data-track sample durations are resolved
 //! **one access unit behind**: the timestamp delta to the *next* access unit
 //! (33-bit-unwrapped DTS for video, PTS for data — ISO/IEC 13818-1 §2.4.3.7)
 //! finalizes the *previous* sample's duration, with the final sample of a
@@ -88,6 +91,7 @@ use crate::ac3::{
 };
 use crate::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use crate::dts::{DtsCoreFrameInfo, split_dts_core_frames};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
@@ -507,14 +511,13 @@ enum ConfigProbe {
     Aac,
     Ac3,
     Eac3,
+    /// DTS core substream (issue #560): resolves from the first frame whose
+    /// header parses — see [`crate::dts::DtsCoreFrameInfo`].
+    Dts,
     /// Opaque PES data (#557): the config (`stream_type` + descriptors) is
     /// already fully known from the PMT, so this probe finalizes on the very
     /// first access unit — no header scan needed.
     Data,
-    /// DTS (recognized in the PMT but not decoded from TS — issue #467): the
-    /// hub IR carries no DTS-from-ES audio config, so this probe never
-    /// resolves; access units are dropped silently (skip, never fatal).
-    Never,
 }
 
 fn initial_probe(codec: Codec) -> ConfigProbe {
@@ -533,7 +536,7 @@ fn initial_probe(codec: Codec) -> ConfigProbe {
         Codec::Aac => ConfigProbe::Aac,
         Codec::Ac3 => ConfigProbe::Ac3,
         Codec::Eac3 => ConfigProbe::Eac3,
-        Codec::Dts => ConfigProbe::Never,
+        Codec::Dts => ConfigProbe::Dts,
         Codec::Data(_) => ConfigProbe::Data,
     }
 }
@@ -555,6 +558,7 @@ enum AudioKind {
     Aac,
     Ac3,
     Eac3,
+    Dts,
     MpegAudio { samples_per_frame: u32 },
 }
 
@@ -852,6 +856,19 @@ fn emit_audio_au(
                 elapsed += duration as u64;
             }
         }
+        AudioKind::Dts => {
+            for frame in split_dts_core_frames(au_data) {
+                events.push_back(DemuxEvent::Sample {
+                    track_id,
+                    sample: Sample::from_raw(frame.data.to_vec(), frame.samples)
+                        .with_source_timing(SourceTiming {
+                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
+                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
+                        }),
+                });
+                elapsed += frame.samples as u64;
+            }
+        }
         AudioKind::MpegAudio { samples_per_frame } => {
             for frame in split_mpeg_audio_frames(au_data) {
                 events.push_back(DemuxEvent::Sample {
@@ -937,7 +954,6 @@ fn finalize_probe(
         .last()
         .expect("finalize_probe is only called after pushing the latest AU");
     match probe {
-        ConfigProbe::Never => None,
         ConfigProbe::Data => {
             let Codec::Data(stream_type) = codec else {
                 unreachable!("ConfigProbe::Data is only created for Codec::Data")
@@ -1253,6 +1269,28 @@ fn finalize_probe(
                 },
             ))
         }
+        ConfigProbe::Dts => {
+            let info = backlog
+                .iter()
+                .find_map(|au| DtsCoreFrameInfo::from_es(&au.data).ok())?;
+            let sample_rate = info.sample_rate;
+            let channel_count = info.channels as u16;
+            let config = info.into_ddts();
+            Some((
+                CodecConfig::Dts {
+                    config,
+                    codec_fourcc: crate::dts::DTSC_FOURCC,
+                    channel_count,
+                    sample_rate,
+                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                },
+                sample_rate,
+                LiveKind::Audio {
+                    sample_rate,
+                    kind: AudioKind::Dts,
+                },
+            ))
+        }
     }
 }
 
@@ -1565,12 +1603,6 @@ impl StreamingTsDemux {
                         self.data_order.push(es_pid);
                     } else {
                         self.codec_order.push(es_pid);
-                    }
-                    // DTS is statically known to never resolve a track (issue
-                    // #467) — mark it resolved immediately so it never blocks
-                    // a later-ranked PID's promotion.
-                    if codec == Codec::Dts {
-                        self.resolved.insert(es_pid);
                     }
                     let mut stream = StreamState {
                         codec,

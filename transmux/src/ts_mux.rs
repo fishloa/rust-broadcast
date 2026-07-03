@@ -30,7 +30,7 @@
 //!   §2.4.4.8 — long-form sections with a trailing `CRC_32`
 //!   ([`broadcast_common::crc32_mpeg2`]).
 //! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
-//!   (AC-3 / E-AC-3 user-private assignments) — mirrors [`TsDemux`](crate::TsDemux).
+//!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`TsDemux`](crate::TsDemux).
 
 use alloc::vec::Vec;
 
@@ -85,6 +85,8 @@ const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
 const STREAM_TYPE_AC3: u8 = 0x81;
 /// E-AC-3 (user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_EAC3: u8 = 0x87;
+/// DTS (canonical DVB assignment, user-private) — ETSI TS 101 154 §G.
+const STREAM_TYPE_DTS: u8 = 0x82;
 
 // ── PES / stream_id constants (ISO/IEC 13818-1 §2.4.3.6, Table 2-22) ────────
 
@@ -156,6 +158,8 @@ enum EsKind {
     Ac3,
     /// E-AC-3 audio.
     Eac3,
+    /// DTS audio (core substream, passed through verbatim).
+    Dts,
 }
 
 impl EsKind {
@@ -166,6 +170,7 @@ impl EsKind {
             EsKind::Aac => STREAM_TYPE_AAC_ADTS,
             EsKind::Ac3 => STREAM_TYPE_AC3,
             EsKind::Eac3 => STREAM_TYPE_EAC3,
+            EsKind::Dts => STREAM_TYPE_DTS,
         }
     }
 
@@ -182,6 +187,7 @@ impl EsKind {
             CodecConfig::Aac { .. } => Some(EsKind::Aac),
             CodecConfig::Ac3 { .. } => Some(EsKind::Ac3),
             CodecConfig::Eac3 { .. } => Some(EsKind::Eac3),
+            CodecConfig::Dts { .. } => Some(EsKind::Dts),
             _ => None,
         }
     }
@@ -448,7 +454,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
             out.extend_from_slice(&sample.data);
             Ok(out)
         }
-        EsKind::Ac3 | EsKind::Eac3 => Ok(sample.data.clone()),
+        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts => Ok(sample.data.clone()),
     }
 }
 
@@ -833,6 +839,7 @@ mod tests {
         assert_eq!(EsKind::Aac.stream_type(), 0x0F);
         assert_eq!(EsKind::Ac3.stream_type(), 0x81);
         assert_eq!(EsKind::Eac3.stream_type(), 0x87);
+        assert_eq!(EsKind::Dts.stream_type(), 0x82);
     }
 
     #[test]
