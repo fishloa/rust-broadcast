@@ -232,7 +232,7 @@ impl CommonHeader {
 /// serialized length (header included) is `total_len` bytes. `total_len` is a
 /// multiple of 4 for every RTCP packet this codec emits.
 fn length_words_minus_one(total_len: usize) -> u16 {
-    (total_len / WORD_LEN - 1) as u16
+    (total_len / WORD_LEN).saturating_sub(1) as u16
 }
 
 // ---------------------------------------------------------------------------

@@ -77,6 +77,7 @@ const LL_DASH_AVAILABILITY_START: &str = "1970-01-01T00:00:00Z";
 
 /// The input container as recognised by [`detect_container`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Container {
     /// MPEG-2 Transport Stream → [`TsDemux`].
     MpegTs,
@@ -108,6 +109,7 @@ broadcast_common::impl_spec_display!(Container);
 /// The output packaging format selected by `-f/--format` (or inferred from the
 /// output path extension).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OutputFormat {
     /// CMAF/fMP4 single init+media segment → [`CmafMux`].
     Cmaf,

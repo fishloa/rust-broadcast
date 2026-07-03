@@ -238,7 +238,7 @@ impl AVCSampleEntry {
         use crate::avc_config::AVCConfigurationBox;
         if bytes.len() < 8 + 78 + 8 {
             return Err(Error::BufferTooShort {
-                need: 8 + 80 + 8,
+                need: 8 + 78 + 8,
                 have: bytes.len(),
                 what: "avc1 bare",
             });

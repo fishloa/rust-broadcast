@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Release-audit fixes: `rtcp` length uses `saturating_sub` (latent underflow);
+  `avc1` bare-parse error `need` matches its guard; `cli::Container`/`OutputFormat`
+  gain `#[non_exhaustive]`; new `RtmpError::UnknownControlMsgType` (was a misleading
+  `BadControlLength{need:0}`); added an `RtmpMux` full-chain IR round-trip test.
 - **Trick-play manifest signalling — HLS + DASH** (#477): playlist and MPD
   APIs for signalling an I-frame-only (trick-play / scrubbing) rendition
   derived by `derive_iframe_track`.

@@ -173,6 +173,9 @@ pub enum RtmpError {
         /// Bytes it had.
         have: usize,
     },
+    /// A protocol control chunk carried a message type id this codec does not
+    /// recognise (§5.4).
+    UnknownControlMsgType(u8),
     /// An AMF0 value used a marker this crate does not decode (§7 / AMF0 §2).
     UnsupportedAmf0Marker(u8),
     /// A reassembled message declared a length that never completed.
@@ -212,6 +215,9 @@ impl fmt::Display for RtmpError {
                 f,
                 "RTMP control message type {msg_type} bad length: need {need}, have {have}"
             ),
+            RtmpError::UnknownControlMsgType(t) => {
+                write!(f, "RTMP unknown protocol-control message type {t}")
+            }
             RtmpError::UnsupportedAmf0Marker(m) => {
                 write!(f, "RTMP unsupported AMF0 marker 0x{m:02X}")
             }
@@ -637,11 +643,7 @@ impl ProtocolControl {
                     limit_type: body[4],
                 })
             }
-            other => Err(RtmpError::BadControlLength {
-                msg_type: other,
-                need: 0,
-                have: body.len(),
-            }),
+            other => Err(RtmpError::UnknownControlMsgType(other)),
         }
     }
 }
