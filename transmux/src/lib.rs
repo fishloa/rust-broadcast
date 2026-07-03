@@ -14,9 +14,10 @@
 //! [`Package`](broadcast_common::Package) (IR → container), the inverse pair
 //! mirroring `Parse` / `Serialize`.
 //!
-//! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`]), fMP4/CMAF
-//!   ([`Fmp4Demux`]), MPEG Program Stream ([`PsDemux`]), WebM/Matroska
-//!   ([`WebmDemux`]), FLV ([`FlvDemux`]), RTMP ([`RtmpDemux`]).
+//! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
+//!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
+//!   fMP4/CMAF ([`Fmp4Demux`]), MPEG Program Stream ([`PsDemux`]),
+//!   WebM/Matroska ([`WebmDemux`]), FLV ([`FlvDemux`]), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
 //!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), CMAF-HLS ([`HlsPackager`]),
 //!   TS-segment HLS ([`TsHlsPackager`]), DASH MPD ([`DashPackager`]), low-latency
@@ -288,7 +289,7 @@ pub use timing::{
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 pub use trickplay::{append_iframe_track, derive_iframe_track};
-pub use ts_demux::TsDemux;
+pub use ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
 pub use ts_hls::{TsHlsOutput, TsHlsPackager};
 pub use ts_mux::TsMux;
 pub use validate::{

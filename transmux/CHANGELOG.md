@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Event-driven streaming TS demuxer** (#555): `StreamingTsDemux` is a new
+  incremental MPEG-2 TS demux core — `feed()` accepts bytes of any size or
+  alignment (down to one byte at a time; resynchronises via
+  `mpeg_ts::resync::TsResync`), `poll_event()` drains `DemuxEvent`s
+  (`TrackAdded`/`TrackUpdated`/`Sample`/`Pcr`/`Discontinuity`) as they become
+  known, and `finish()` flushes trailing partial access units. `TsDemux` is
+  now a thin batch wrapper over it (feed the whole buffer, `finish()`, fold
+  the event stream into a `Media`) — there is no separate whole-buffer demux
+  implementation; every existing `TsDemux` behaviour (per-sample
+  `SourceTiming`, AC-3/E-AC-3 syncframe splitting, opaque `Data` tracks, PCR
+  collection, 33-bit wrap-unroll) is produced by the streaming core.
+  Codec-config recovery is single-shot and incremental (mirrors the old
+  whole-file `find_map` scans, applied access-unit-by-access-unit); track IDs
+  and `TrackAdded` order still follow PMT declaration order (codec tracks
+  first, then data tracks, each group in PMT order), independent of which
+  PID's config happens to resolve first. Memory is bounded independent of
+  stream length (per-PID PES/PSI reassembly state, one pending sample per
+  live video/data track, small per-PID config-recovery backlogs, and a
+  FIFO-capped pre-PMT `unattributed`-payload buffer for PIDs whose own packets
+  arrive before their PMT registration completes — so a full-multiplex live
+  feed with unrelated-service PIDs that never appear in the followed PMT stays
+  bounded regardless of stream length; see the `StreamingTsDemux` doc comment
+  for details.
 - **Per-sample source-container timing** (#556): `Sample` gains
   `source_timing: Option<SourceTiming>` (`SourceTiming { pts, dts }`, the
   33-bit-unwrapped 90 kHz PES clock for TS sources) and a
