@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Pre-release hardening (release audit): `tests/label_coverage.rs` #204 drift-guard
+  (SessionState/LowerTransport/Delivery labelled; Error/ClientEvent/ServerEvent skipped),
+  named `DEFAULT_SESSION_SEED`, and field-mutation round-trip bites for Transport /
+  InterleavedFrame.
 
 - **Async socket adapter** (feature `tokio`) — `io::AsyncRtspClient` /
   `io::AsyncRtspServer` (RFC 2326 transport). Each owns a

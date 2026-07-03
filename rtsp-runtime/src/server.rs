@@ -50,6 +50,11 @@ pub enum ServerEvent {
     },
 }
 
+/// Arbitrary default seed for allocated RTSP `Session` ids; callers may
+/// override it with [`ServerSession::with_session_seed`]. Not
+/// security-sensitive — session ids are opaque handles.
+const DEFAULT_SESSION_SEED: u64 = 0x1234_5678;
+
 /// A driveable RTSP server session (RFC 2326 §A.2).
 #[derive(Debug)]
 pub struct ServerSession {
@@ -74,7 +79,7 @@ impl ServerSession {
             state: SessionState::Init,
             session_id: None,
             session_timeout: None,
-            next_session_seed: 0x1234_5678,
+            next_session_seed: DEFAULT_SESSION_SEED,
             negotiated_transport: None,
             server_header: "rtsp-runtime".to_string(),
         }

@@ -396,6 +396,25 @@ mod tests {
     }
 
     #[test]
+    fn constructed_spec_serializes_fields() {
+        // Build from typed fields (not parsed), serialize, and assert the
+        // mutated field appears — rules out a fixture-only round-trip.
+        let spec = TransportSpec {
+            interleaved: Some((2, 3)),
+            delivery: Some(Delivery::Unicast),
+            lower_transport: Some(LowerTransport::Tcp),
+            ..Default::default()
+        };
+        let t = Transport::single(spec);
+        let s = t.to_header_value();
+        assert!(s.contains("interleaved=2-3"), "serialized: {s}");
+        assert!(s.contains("unicast"), "serialized: {s}");
+        // round-trips back to the same typed value
+        let back = Transport::parse(&s).unwrap();
+        assert_eq!(back.first().unwrap().interleaved, Some((2, 3)));
+    }
+
+    #[test]
     fn rejects_non_rtp() {
         assert!(Transport::parse("XYZ/AVP").is_err());
     }
