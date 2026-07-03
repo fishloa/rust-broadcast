@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **`AvcSpsInfo` VUI timing fields** (#523): `decode_avc_sps` now parses the H.264
+  VUI `timing_info` block (ITU-T H.264 §E.1.1) and exposes three new optional
+  fields on `AvcSpsInfo` — `num_units_in_tick: Option<u32>`, `time_scale:
+  Option<u32>`, and `fps: Option<f32>` (= `time_scale / (2 × num_units_in_tick)`).
+  All three are `None` when `vui_parameters_present_flag` or
+  `timing_info_present_flag` is 0.  The VUI is walked in syntax order
+  (aspect_ratio_info → overscan_info → video_signal_type → chroma_loc_info →
+  timing_info) with no new dependencies.  Additive change; existing callers are
+  unaffected.
 - **`transmux` command-line packager + `cli` feature** (#482): a new opt-in
   `cli` feature (`clap` + `std`) builds a `transmux` binary that wires the
   existing demux and mux spokes into an any-to-any packager — `transmux <in>
