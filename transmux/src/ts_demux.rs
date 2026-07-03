@@ -14,8 +14,9 @@
 //! `dac3`/`dec3`) → length-prefixed video / raw audio samples.
 //!
 //! HEVC and DTS elementary streams are recognized in the PMT but not yet carried
-//! into the IR (the hub [`CodecConfig`] enum has no HEVC-video /
-//! DTS-from-ES-audio variant) — such tracks are skipped, never fatal (issue #467).
+//! into the IR: the TS elementary-stream config recovery for HEVC (in-band
+//! VPS/SPS/PPS → `hvcC`) and DTS-ES (→ `ddts`) is not yet implemented, so such
+//! tracks are skipped — never fatal (issue #467).
 //!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //!

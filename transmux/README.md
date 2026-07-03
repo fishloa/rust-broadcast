@@ -90,6 +90,8 @@ round-trips through the IR.
 | **Streaming segmenter** | `Segmenter` — `push` samples → `take_ready` segments, keyframe-cut at a target duration | ✅ |
 | **LL-HLS segmenter** | `LlHlsSegmenter` — `with_part_target` + `take_ready_parts` → partial-segment CMAF chunks (RFC 8216bis §4.4.4.9) before the segment closes | ✅ |
 | NAL conversion | Annex B ↔ length-prefixed (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) | ✅ |
+| NAL keyframe classification | `nal_unit_type` / `is_keyframe_nal` / `access_unit_is_keyframe` (`NalCodec` AVC/HEVC/VVC) | ✅ |
+| RTCP control packets | `RtcpPacket` — SR/RR/SDES/BYE/APP + `CompoundPacket` (RFC 3550 §6) | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216); `#EXT-X-DISCONTINUITY` / `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.4.3/§4.3.3.3) | ✅ |
 | LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3) | ✅ |
 
@@ -111,6 +113,8 @@ round-trips through the IR.
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
+| FLV demux/mux | `Unpackage`/`Package` | `FlvDemux` / `FlvMux` (H.264 + AAC, Adobe FLV v10.1 Annex E) | ✅ |
+| I-frame trick-play track | — | `derive_iframe_track` / `append_iframe_track` (sync-sample-only, timeline-conserving) | ✅ |
 
 ✅ = implemented + round-trip-tested · ⬜ = planned (issue linked)
 
