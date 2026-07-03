@@ -14,7 +14,7 @@ use mpeg_pes::PesAssembler;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::media::CmafMux;
-use transmux::pipeline::{CodecConfig, Sample, SourceTiming, TrackSpec};
+use transmux::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDemux};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -579,10 +579,13 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
 }
 
 #[test]
-fn data_track_excluded_from_cmaf_like_vp8_vorbis() {
-    // Synthetic media: a lone CodecConfig::Data track vs. the pre-existing
-    // CodecConfig::Vp8 precedent — both must fail identically.
-    let data_media = Media::new(
+fn data_track_skipped_by_cmaf_unlike_vp8() {
+    // Issue #576: a `CodecConfig::Data` track has no ISOBMFF sample entry in
+    // this crate, but — unlike the genuinely-unsupported WebM-native VP8 —
+    // the fMP4/CMAF mux SKIPS it gracefully rather than erroring, so a TS
+    // multiplex mixing carriable and opaque streams still produces a valid
+    // CMAF init segment for its carriable tracks.
+    let data_only = Media::new(
         vec![Track::new(
             TrackSpec {
                 track_id: 1,
@@ -590,6 +593,7 @@ fn data_track_excluded_from_cmaf_like_vp8_vorbis() {
                 config: CodecConfig::Data {
                     stream_type: 0x06,
                     descriptors: vec![],
+                    carriage: DataCarriage::Pes,
                 },
             },
             vec![Sample::from_raw(vec![1, 2, 3], 0)],
@@ -611,17 +615,28 @@ fn data_track_excluded_from_cmaf_like_vp8_vorbis() {
         90_000,
     );
 
-    let data_err = CmafMux::default().package(&data_media).unwrap_err();
-    let vp8_err = CmafMux::default().package(&vp8_media).unwrap_err();
-    match (data_err, vp8_err) {
-        (Error::UnsupportedCodec { codec: dc }, Error::UnsupportedCodec { codec: vc }) => {
-            assert_eq!(dc, "Data");
-            assert_eq!(vc, "VP8");
-        }
-        other => panic!("expected UnsupportedCodec for both Data and Vp8, got {other:?}"),
-    }
+    // A Media of ONLY a Data track has nothing left to mux once it is
+    // skipped — still an error, but no longer "Data is unsupported"; the
+    // skip logic itself never returns `UnsupportedCodec { codec: "Data" }`.
+    let data_err = CmafMux::default().package(&data_only).unwrap_err();
+    assert!(
+        !matches!(data_err, Error::UnsupportedCodec { codec: "Data" }),
+        "a Data-only Media must no longer fail with UnsupportedCodec(\"Data\") \
+         — Data is skipped, not rejected: {data_err:?}"
+    );
 
-    // And confirm the same behaviour on a real demuxed Data track.
+    // VP8 is unrelated to this issue (a genuinely out-of-scope WebM-native
+    // codec) and must still fail exactly as before.
+    let vp8_err = CmafMux::default().package(&vp8_media).unwrap_err();
+    assert!(
+        matches!(vp8_err, Error::UnsupportedCodec { codec: "VP8" }),
+        "VP8 must still fail exactly as before, got {vp8_err:?}"
+    );
+
+    // Confirm the skip (not a hard error) on the real demuxed m6-single.ts
+    // Data tracks too: this excerpt carries no video (see the module docs),
+    // so once every Data track is skipped nothing carriable remains — still
+    // an error, but "no carriable track", never "Data is unsupported".
     let ts = read_fixture("m6-single.ts");
     let media = demux(&ts);
     assert!(
@@ -633,8 +648,8 @@ fn data_track_excluded_from_cmaf_like_vp8_vorbis() {
     );
     let err = CmafMux::default().package(&media).unwrap_err();
     assert!(
-        matches!(err, Error::UnsupportedCodec { codec: "Data" }),
-        "packaging a Media with a Data track must fail exactly like Vp8/Vorbis, got {err:?}"
+        !matches!(err, Error::UnsupportedCodec { codec: "Data" }),
+        "packaging an all-Data Media must never fail with UnsupportedCodec(\"Data\"), got {err:?}"
     );
 }
 

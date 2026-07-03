@@ -52,25 +52,42 @@
 //! finalizes the *previous* sample's duration, with the final sample of a
 //! finished stream reusing the previous duration ([`finish`](StreamingTsDemux::finish)).
 //!
-//! PMT `stream_type` 0x06 (PES private data — DVB subtitles/teletext/SMPTE
-//! 2038/etc.) and 0x15 (metadata in PES) are carried as opaque
-//! [`CodecConfig::Data`] tracks (issue #557): the demuxer does not decode the
-//! payload, each `Sample` is one verbatim PES payload, and `descriptors`
-//! preserves the raw PMT ES_info descriptor loop for the caller to classify.
-//! The demuxer also collects every PCR observation from the TS adaptation
-//! fields, both into [`Media`]'s `pcr` field (batch) and as
+//! Any PMT `stream_type` that is not a decoded codec is carried losslessly as
+//! an opaque [`CodecConfig::Data`] track (issues #557/#576) rather than
+//! silently dropped — `stream_type` 0x06 (PES private data — DVB
+//! subtitles/teletext/SMPTE 2038/etc.) and 0x15 (metadata in PES) were the
+//! first examples; every other unrecognised `stream_type` follows the same
+//! path. `descriptors` preserves the raw PMT ES_info descriptor loop for the
+//! caller to classify. ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits
+//! `stream_type` into two carriage families, and the two are reassembled
+//! completely differently (PES-reassembling a section stream, or vice versa,
+//! silently yields nothing): most `stream_type`s (including every
+//! unrecognised one) are PES-packetized and each `Sample` is one verbatim PES
+//! payload; a fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14`
+//! DSM-CC synchronized download, `0x86` SCTE-35/ANSI-scoped) carry PSI/private
+//! *sections* directly on the PID (§2.4.4) — each reassembled via
+//! [`mpeg_ts::ts::SectionReassembler`] instead of a PES assembler, and each
+//! complete section becomes one `Sample` with no PTS/DTS
+//! (`source_timing: None`, since sections carry no timestamp at all).
+//! [`CodecConfig::Data`]'s `carriage` field ([`DataCarriage`]) records which
+//! family a track uses. The demuxer also collects every PCR observation from
+//! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
 //! [`DemuxEvent::Pcr`] (streaming).
 //!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
+//! [`DataCarriage`]: crate::pipeline::DataCarriage
 //!
 //! # Spec
 //!
 //! - **PAT / PMT section syntax**: ITU-T H.222.0 (= ISO/IEC 13818-1) §2.4.4.3 /
 //!   §2.4.4.8 — see `docs/codec/ts-demux-13818-1.md`.
-//! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
-//!   (DVB user-private AC-3/E-AC-3/DTS assignments).
+//! - **stream_type → codec / carriage**: ISO/IEC 13818-1 §2.4.4.8, Table 2-34
+//!   (PES- vs section-carried `stream_type`s) + ETSI TS 101 154 §G (DVB
+//!   user-private AC-3/E-AC-3/DTS assignments).
 //! - **PES-over-TS reassembly + PTS/DTS**: ISO/IEC 13818-1 §2.4.3.6 / §2.4.3.7
 //!   (via [`mpeg_pes`], 33-bit @ 90 kHz).
+//! - **PSI/private section reassembly**: ISO/IEC 13818-1 §2.4.4, via
+//!   [`mpeg_ts::ts::SectionReassembler`].
 //! - **PCR**: ISO/IEC 13818-1 §2.4.3.4 (adaptation field) / §2.4.3.5 (PCR encoding).
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
@@ -102,7 +119,7 @@ use crate::mp4esds::{
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal::{NalCodec, is_keyframe_nal, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
-use crate::pipeline::{CodecConfig, Sample, SourceTiming, TrackSpec};
+use crate::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -164,11 +181,27 @@ const STREAM_TYPE_DTS_82: u8 = 0x82;
 const STREAM_TYPE_DTS_85: u8 = 0x85;
 /// DTS (user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_DTS_8A: u8 = 0x8A;
-/// PES packets carrying private data (DVB subtitles EN 300 743, teletext
-/// EN 300 472, SMPTE 2038 ANC, …) — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_PES_PRIVATE: u8 = 0x06;
-/// ISO/IEC 15938-1 metadata carried in PES packets — ISO/IEC 13818-1 Table 2-34.
-const STREAM_TYPE_METADATA_PES: u8 = 0x15;
+// ── Section-carried stream_types (ISO/IEC 13818-1 Table 2-34) — issue #576 ──
+//
+// These stream_types carry PSI/private *sections* directly on their PID, not
+// PES packets: PES-reassembling them silently yields nothing (no PES start
+// code is ever present), so `data_carriage` routes them to a
+// [`mpeg_ts::ts::SectionReassembler`] instead.
+
+/// ISO/IEC 13818-1 `private_sections` carried directly (not in PES packets).
+const STREAM_TYPE_PRIVATE_SECTIONS: u8 = 0x05;
+/// ISO/IEC 13818-6 DSM-CC Type A (Multiprotocol Encapsulation), sectioned.
+const STREAM_TYPE_DSMCC_TYPE_A: u8 = 0x0A;
+/// ISO/IEC 13818-6 DSM-CC Type B (Type B), sectioned.
+const STREAM_TYPE_DSMCC_TYPE_B: u8 = 0x0B;
+/// ISO/IEC 13818-6 DSM-CC Type C (data or object carousel), sectioned.
+const STREAM_TYPE_DSMCC_TYPE_C: u8 = 0x0C;
+/// ISO/IEC 13818-6 DSM-CC Type D, sectioned.
+const STREAM_TYPE_DSMCC_TYPE_D: u8 = 0x0D;
+/// ISO/IEC 13818-6 DSM-CC synchronized download protocol, sectioned.
+const STREAM_TYPE_DSMCC_SYNC_DOWNLOAD: u8 = 0x14;
+/// SCTE-35 / ANSI-scoped applications (splice information table), sectioned.
+const STREAM_TYPE_SCTE35: u8 = 0x86;
 
 // ── Codec-config recovery constants ─────────────────────────────────────────
 
@@ -254,29 +287,50 @@ enum Codec {
     Ac3,
     Eac3,
     Dts,
-    /// Opaque PES data stream (stream_type 0x06/0x15 — issue #557); the field
-    /// is the PMT `stream_type` itself, carried through into
-    /// [`CodecConfig::Data`].
+    /// Opaque data stream (issue #557/#576): any `stream_type` this demuxer
+    /// does not decode to a typed codec — carried losslessly instead of
+    /// dropped. The field is the PMT `stream_type` itself, carried through
+    /// into [`CodecConfig::Data`]; [`data_carriage`] classifies it as PES- or
+    /// section-carried.
     Data(u8),
 }
 
 impl Codec {
-    /// Map a PMT `stream_type` to a supported [`Codec`], or `None` if the demuxer
-    /// does not carry it (skipped, never fatal — issue #467).
-    fn from_stream_type(stream_type: u8) -> Option<Self> {
+    /// Map a PMT `stream_type` to a [`Codec`] — a decoded codec when this
+    /// demuxer understands it, else an opaque [`Codec::Data`] carrying the
+    /// `stream_type` verbatim (issue #576: every PMT-listed elementary stream
+    /// gets a track, never silently dropped). ISO/IEC 13818-1 Table 2-34.
+    fn from_stream_type(stream_type: u8) -> Self {
         match stream_type {
-            STREAM_TYPE_MPEG2_VIDEO => Some(Codec::Mpeg2Video),
-            STREAM_TYPE_MPEG1_AUDIO => Some(Codec::MpegAudio(false)),
-            STREAM_TYPE_MPEG2_AUDIO => Some(Codec::MpegAudio(true)),
-            STREAM_TYPE_AVC => Some(Codec::H264),
-            STREAM_TYPE_HEVC => Some(Codec::Hevc),
-            STREAM_TYPE_AAC_ADTS => Some(Codec::Aac),
-            STREAM_TYPE_AC3 => Some(Codec::Ac3),
-            STREAM_TYPE_EAC3 => Some(Codec::Eac3),
-            STREAM_TYPE_DTS_82 | STREAM_TYPE_DTS_85 | STREAM_TYPE_DTS_8A => Some(Codec::Dts),
-            STREAM_TYPE_PES_PRIVATE | STREAM_TYPE_METADATA_PES => Some(Codec::Data(stream_type)),
-            _ => None,
+            STREAM_TYPE_MPEG2_VIDEO => Codec::Mpeg2Video,
+            STREAM_TYPE_MPEG1_AUDIO => Codec::MpegAudio(false),
+            STREAM_TYPE_MPEG2_AUDIO => Codec::MpegAudio(true),
+            STREAM_TYPE_AVC => Codec::H264,
+            STREAM_TYPE_HEVC => Codec::Hevc,
+            STREAM_TYPE_AAC_ADTS => Codec::Aac,
+            STREAM_TYPE_AC3 => Codec::Ac3,
+            STREAM_TYPE_EAC3 => Codec::Eac3,
+            STREAM_TYPE_DTS_82 | STREAM_TYPE_DTS_85 | STREAM_TYPE_DTS_8A => Codec::Dts,
+            _ => Codec::Data(stream_type),
         }
+    }
+}
+
+/// Classify a [`Codec::Data`] `stream_type` as PES- or section-carried
+/// (ISO/IEC 13818-1 §2.4.4.8 / Table 2-34) — see [`DataCarriage`]. A fixed set
+/// of `stream_type`s carry PSI/private sections directly; every other
+/// `stream_type` (the historical 0x06/0x15 carriage, plus any unrecognised
+/// value) is PES-packetized.
+fn data_carriage(stream_type: u8) -> DataCarriage {
+    match stream_type {
+        STREAM_TYPE_PRIVATE_SECTIONS
+        | STREAM_TYPE_DSMCC_TYPE_A
+        | STREAM_TYPE_DSMCC_TYPE_B
+        | STREAM_TYPE_DSMCC_TYPE_C
+        | STREAM_TYPE_DSMCC_TYPE_D
+        | STREAM_TYPE_DSMCC_SYNC_DOWNLOAD
+        | STREAM_TYPE_SCTE35 => DataCarriage::Sections,
+        _ => DataCarriage::Pes,
     }
 }
 
@@ -411,11 +465,12 @@ fn parse_pat(section: &[u8]) -> Result<Vec<u16>> {
 }
 
 /// Parse a PMT section, returning `(elementary_PID, codec, ES_info
-/// descriptors)` for every stream whose `stream_type` maps to a supported
-/// codec. ISO/IEC 13818-1 §2.4.4.8. `descriptors` is the raw ES_info
-/// descriptor-loop bytes for that stream (empty when `ES_info_length` is 0);
-/// consumers that don't need it (every codec but [`Codec::Data`]) simply
-/// ignore it.
+/// descriptors)` for every elementary stream listed (issue #576: every
+/// PMT-listed ES becomes a track — typed when the `stream_type` maps to a
+/// decoded codec, else opaque [`Codec::Data`]). ISO/IEC 13818-1 §2.4.4.8.
+/// `descriptors` is the raw ES_info descriptor-loop bytes for that stream
+/// (empty when `ES_info_length` is 0); consumers that don't need it (every
+/// codec but [`Codec::Data`]) simply ignore it.
 fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec, Vec<u8>)>> {
     if section.first().copied() != Some(TABLE_ID_PMT) {
         return Ok(Vec::new());
@@ -442,10 +497,9 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec, Vec<u8>)>> {
             (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
         let desc_start = off + 5;
         let desc_end = (desc_start + es_info_length).min(body.len());
-        if let Some(codec) = Codec::from_stream_type(stream_type) {
-            let descriptors = body[desc_start..desc_end].to_vec();
-            out.push((es_pid, codec, descriptors));
-        }
+        let codec = Codec::from_stream_type(stream_type);
+        let descriptors = body[desc_start..desc_end].to_vec();
+        out.push((es_pid, codec, descriptors));
         off += 5 + es_info_length;
     }
     Ok(out)
@@ -589,6 +643,10 @@ enum LiveKind {
         pending: Option<PendingOneBehind>,
         last_duration: u32,
     },
+    /// Opaque section data (#576): each reassembled PSI/private section is
+    /// emitted immediately as one `Sample` — sections carry no PTS/DTS, so
+    /// there is no one-behind duration lookahead (every duration is `0`).
+    Section,
 }
 
 struct LiveTrack {
@@ -680,11 +738,30 @@ impl WrapState {
     }
 }
 
+/// A PID's reassembly engine: PES access units, or PSI/private sections
+/// (issue #576) — chosen once at PID discovery from [`data_carriage`] (a
+/// decoded [`Codec`] or a PES-carried [`Codec::Data`] always gets
+/// [`Carrier::Pes`]).
+enum Carrier {
+    Pes(PesAssembler),
+    Section(SectionReassembler),
+}
+
+/// The reassembly engine a newly-discovered `codec` should use.
+fn initial_carrier(codec: Codec) -> Carrier {
+    match codec {
+        Codec::Data(stream_type) if data_carriage(stream_type) == DataCarriage::Sections => {
+            Carrier::Section(SectionReassembler::default())
+        }
+        _ => Carrier::Pes(PesAssembler::new()),
+    }
+}
+
 /// Per-PID (elementary stream) engine state.
 struct StreamState {
     codec: Codec,
     descriptors: Vec<u8>,
-    assembler: PesAssembler,
+    carrier: Carrier,
     /// Previous access unit's resolved `(pts, dts)` — the fallback used when
     /// a PES carries neither (mirrors the old `push_access_unit` fallback).
     fallback: (u64, u64),
@@ -936,6 +1013,14 @@ fn push_live_au(
         LiveKind::Audio { sample_rate, kind } => {
             emit_audio_au(kind, *sample_rate, data, pts_uw, dts_uw, track_id, events);
         }
+        LiveKind::Section => {
+            // Sections carry no PTS/DTS (`pts_uw`/`dts_uw` are dummy zeros
+            // from `on_completed_section`) — emit immediately, no lookahead.
+            events.push_back(DemuxEvent::Sample {
+                track_id,
+                sample: Sample::from_raw(data.to_vec(), 0),
+            });
+        }
     }
 }
 
@@ -958,16 +1043,22 @@ fn finalize_probe(
             let Codec::Data(stream_type) = codec else {
                 unreachable!("ConfigProbe::Data is only created for Codec::Data")
             };
+            let carriage = data_carriage(stream_type);
+            let kind = match carriage {
+                DataCarriage::Pes => LiveKind::Data {
+                    pending: None,
+                    last_duration: 0,
+                },
+                DataCarriage::Sections => LiveKind::Section,
+            };
             Some((
                 CodecConfig::Data {
                     stream_type,
                     descriptors: descriptors.to_vec(),
+                    carriage,
                 },
                 VIDEO_TIMESCALE,
-                LiveKind::Data {
-                    pending: None,
-                    last_duration: 0,
-                },
+                kind,
             ))
         }
         ConfigProbe::H264 { sps, pps } => {
@@ -1394,6 +1485,20 @@ fn on_completed_pes(stream: &mut StreamState, pes_bytes: &[u8], events: &mut Vec
     advance_track(stream, pes.payload.to_vec(), pts_uw, dts_uw, events);
 }
 
+/// Drive one reassembled PSI/private section through [`advance_track`]
+/// (issue #576) — sections carry no PTS/DTS at all, so `pts_uw`/`dts_uw` are
+/// dummy zeros (never read by [`LiveKind::Section`]'s immediate-emit push).
+fn on_completed_section(
+    stream: &mut StreamState,
+    section: &[u8],
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    if section.is_empty() {
+        return;
+    }
+    advance_track(stream, section.to_vec(), 0, 0, events);
+}
+
 /// One incremental demux event from [`StreamingTsDemux`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -1607,7 +1712,7 @@ impl StreamingTsDemux {
                     let mut stream = StreamState {
                         codec,
                         descriptors,
-                        assembler: PesAssembler::new(),
+                        carrier: initial_carrier(codec),
                         fallback: (0, 0),
                         has_any: false,
                         wrap: WrapState::default(),
@@ -1623,8 +1728,24 @@ impl StreamingTsDemux {
                         for (buf_pusi, buf_payload) in buffered {
                             self.unattributed_bytes =
                                 self.unattributed_bytes.saturating_sub(buf_payload.len());
-                            if let Some(completed) = stream.assembler.feed(buf_pusi, &buf_payload) {
+                            let mut completed_pes: Option<Vec<u8>> = None;
+                            let mut sections: Vec<Vec<u8>> = Vec::new();
+                            match &mut stream.carrier {
+                                Carrier::Pes(assembler) => {
+                                    completed_pes = assembler.feed(buf_pusi, &buf_payload);
+                                }
+                                Carrier::Section(reasm) => {
+                                    reasm.feed(&buf_payload, buf_pusi);
+                                    while let Some(s) = reasm.pop_section() {
+                                        sections.push(s.to_vec());
+                                    }
+                                }
+                            }
+                            if let Some(completed) = completed_pes {
                                 on_completed_pes(&mut stream, &completed, &mut self.events);
+                            }
+                            for s in sections {
+                                on_completed_section(&mut stream, &s, &mut self.events);
                             }
                         }
                     }
@@ -1636,8 +1757,24 @@ impl StreamingTsDemux {
         }
 
         if let Some(stream) = self.streams.get_mut(&pid) {
-            if let Some(completed) = stream.assembler.feed(pusi, payload) {
+            let mut completed_pes: Option<Vec<u8>> = None;
+            let mut sections: Vec<Vec<u8>> = Vec::new();
+            match &mut stream.carrier {
+                Carrier::Pes(assembler) => {
+                    completed_pes = assembler.feed(pusi, payload);
+                }
+                Carrier::Section(reasm) => {
+                    reasm.feed(payload, pusi);
+                    while let Some(s) = reasm.pop_section() {
+                        sections.push(s.to_vec());
+                    }
+                }
+            }
+            if let Some(completed) = completed_pes {
                 on_completed_pes(stream, &completed, &mut self.events);
+            }
+            for s in sections {
+                on_completed_section(stream, &s, &mut self.events);
             }
         } else if pid != NULL_PACKET_PID {
             self.unattributed
@@ -1748,7 +1885,14 @@ impl StreamingTsDemux {
     /// final one-behind pending sample for every live video/data track.
     pub fn finish(&mut self) {
         for stream in self.streams.values_mut() {
-            if let Some(completed) = stream.assembler.flush() {
+            // Only a PES assembler has a trailing partial payload to flush; a
+            // trailing partial (incomplete) section is genuinely undecodable
+            // and is simply dropped by `SectionReassembler` itself.
+            let completed = match &mut stream.carrier {
+                Carrier::Pes(assembler) => assembler.flush(),
+                Carrier::Section(_) => None,
+            };
+            if let Some(completed) = completed {
                 on_completed_pes(stream, &completed, &mut self.events);
             }
         }
@@ -1786,6 +1930,7 @@ impl StreamingTsDemux {
                         flush_one_behind(pending, *last_duration, live.track_id, &mut self.events);
                     }
                     LiveKind::Audio { .. } => {}
+                    LiveKind::Section => {}
                 }
             }
         }
@@ -1870,6 +2015,45 @@ impl<'a> Unpackage for TsDemux<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every section-carried `stream_type` (Table 2-34) classifies as
+    /// [`DataCarriage::Sections`]; the historical PES-carried 0x06/0x15 and
+    /// any unrecognised `stream_type` classify as [`DataCarriage::Pes`]
+    /// (issue #576).
+    #[test]
+    fn data_carriage_classifies_every_known_stream_type() {
+        assert_eq!(data_carriage(0x06), DataCarriage::Pes, "PES private data");
+        assert_eq!(data_carriage(0x15), DataCarriage::Pes, "metadata in PES");
+        assert_eq!(data_carriage(0x7F), DataCarriage::Pes, "unrecognised → PES");
+
+        for &st in &[
+            STREAM_TYPE_PRIVATE_SECTIONS,
+            STREAM_TYPE_DSMCC_TYPE_A,
+            STREAM_TYPE_DSMCC_TYPE_B,
+            STREAM_TYPE_DSMCC_TYPE_C,
+            STREAM_TYPE_DSMCC_TYPE_D,
+            STREAM_TYPE_DSMCC_SYNC_DOWNLOAD,
+            STREAM_TYPE_SCTE35,
+        ] {
+            assert_eq!(
+                data_carriage(st),
+                DataCarriage::Sections,
+                "stream_type {st:#04X} must be section-carried"
+            );
+        }
+    }
+
+    /// Any `stream_type` not mapped to a decoded codec becomes opaque
+    /// [`Codec::Data`] (never `None`/dropped — issue #576).
+    #[test]
+    fn from_stream_type_unknown_becomes_opaque_data() {
+        assert_eq!(Codec::from_stream_type(STREAM_TYPE_AVC), Codec::H264);
+        assert_eq!(Codec::from_stream_type(0x7F), Codec::Data(0x7F));
+        assert_eq!(
+            Codec::from_stream_type(STREAM_TYPE_SCTE35),
+            Codec::Data(STREAM_TYPE_SCTE35)
+        );
+    }
 
     /// Bytes of TS payload each crafted payload-only packet contributes
     /// (188 − 4-byte TS header, adaptation_field_control = payload-only).

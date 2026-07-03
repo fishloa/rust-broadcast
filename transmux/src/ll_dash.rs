@@ -193,6 +193,19 @@ impl LlSegmenter {
             }
         }
 
+        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
+        // this crate (issue #557/#576) — omit them entirely rather than
+        // erroring on the first chunk.
+        let tracks: Vec<TrackSpec> = tracks
+            .into_iter()
+            .filter(|t| !t.config.is_opaque_data())
+            .collect();
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput(
+                "ll segmenter needs at least one carriable (non-Data) track",
+            ));
+        }
+
         let anchor = tracks
             .iter()
             .position(|t| matches!(t.config, CodecConfig::Avc { .. }))

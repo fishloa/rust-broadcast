@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- **Lossless carriage of ANY MPEG-2 TS elementary stream** (#576): TS→IR→TS
+  is no longer limited to a hardcoded stream_type allowlist.
+  - `CodecConfig::Data` gains a `carriage: DataCarriage` field
+    (`Pes`/`Sections`, with `name()`/`Display`) recording whether the
+    elementary stream carries PES packets or PSI/private sections
+    (ISO/IEC 13818-1 §2.4.4.8 / Table 2-34).
+  - **TS → IR demux**: `Codec::from_stream_type` now returns an opaque
+    `CodecConfig::Data` for **every** `stream_type` it does not decode to a
+    typed codec (never `None`/dropped). A fixed section-carried set (`0x05`
+    private_sections, `0x0A`-`0x0D` DSM-CC, `0x14` DSM-CC synchronized
+    download, `0x86` SCTE-35/ANSI-scoped) is reassembled via a
+    `mpeg_ts::ts::SectionReassembler` instead of a PES assembler — each
+    complete section becomes one `Sample` with no PTS/DTS
+    (`source_timing: None`); every other stream_type (including the
+    pre-existing `0x06`/`0x15` carriage) is PES-reassembled as before.
+  - **IR → TS mux**: `EsKind::Data { stream_type, carriage }` re-emits the
+    preserved `stream_type` verbatim; a PES-carried Data track is wrapped in
+    a `private_stream_1` (`0xBD`) PES packet, payload pass-through; a
+    section-carried Data track's samples are re-emitted directly via
+    `mpeg_ts::mux::SectionPacketizer`, never PES-wrapped. `build_pmt_section`
+    now writes each ES's preserved `ES_info` descriptor bytes into the PMT
+    (previously always empty) so a receiver can identify a carried stream
+    (e.g. its DVB subtitling/teletext descriptor); `program_info` stays
+    empty. The classic TS-HLS packager (`TsHlsPackager`, built on the same
+    `ts_mux` machinery) carries every such stream for free, re-emitting a
+    complete PMT (every ES + its descriptors) at the start of every segment.
+  - Fixed a latent packet-interleaving bug in `TsMux`/`TsHlsPackager`
+    (`ts_mux::mux_tracks_at`) exposed by this change: the global
+    packet-interleave sort previously keyed on the on-wire, 33-bit-wrapped
+    DTS, which could reorder a single track's own packets against each other
+    once its cumulative decode time crossed the wrap point (only reachable
+    once an opaque `CodecConfig::Data` track — whose recovered per-sample
+    durations are untrusted input — could reach the TS mux path at all). The
+    interleave key is now a separate, never-wrapped monotonic value.
+  - **fMP4/CMAF mux**: `CodecConfig::Data` tracks have no ISOBMFF sample
+    entry, so `build_init_segment` (and therefore `CmafMux`, `ProgressiveMux`,
+    `Segmenter`, `LlSegmenter`, `LlHlsSegmenter`) now **skips** them
+    gracefully instead of failing the whole mux with `UnsupportedCodec` — a
+    TS multiplex mixing carriable and opaque streams now produces a valid
+    fMP4/CMAF output for its carriable (video/audio) tracks.
 - **DTS Transport-Stream spoke** (#560): DTS is no longer dropped on the TS
   side.
   - **TS → IR demux**: PMT `stream_type` `0x82`/`0x85`/`0x8A` now resolves a

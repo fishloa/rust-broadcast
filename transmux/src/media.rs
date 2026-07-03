@@ -411,6 +411,20 @@ impl Package for CmafMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
+        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
+        // this crate (issue #557/#576) — omit them from the fMP4/CMAF mux
+        // path entirely (init segment AND media segment) rather than
+        // erroring, so a TS multiplex mixing carriable and opaque streams
+        // still produces a valid CMAF output for its carriable tracks.
+        // `select_tracks_by` itself errors if nothing carriable remains.
+        let filtered;
+        let media: &Media = if media.tracks.iter().any(|t| t.spec.config.is_opaque_data()) {
+            filtered = media.select_tracks_by(|t| !t.spec.config.is_opaque_data())?;
+            &filtered
+        } else {
+            media
+        };
+
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = if media.movie_timescale == 0 {
             DEFAULT_MOVIE_TIMESCALE
