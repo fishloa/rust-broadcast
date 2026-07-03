@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `StreamType::is_video()`, `is_audio()`, `is_subtitle()`, `is_data()` predicate
+  methods on the PMT stream_type enum (ISO/IEC 13818-1 Table 2-34 classification).
+  `PesPrivateData` (0x06) conservatively classifies as `is_data`; descriptor-loop
+  inspection is required to resolve the true content type (ETSI TS 101 154).
+  Closes #522.
+
 ## [8.2.1] — 2026-07-02
 
 ### Changed
