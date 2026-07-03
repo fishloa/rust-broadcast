@@ -41,6 +41,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   media timescale); FLV/WebM/MPEG-PS/RTMP/RTP carry no absolute anchor and leave
   it 0. Pairs with #475 (splice/concat) as the next consumer. All four transforms
   and the muxer wiring are re-exported from the crate root.
+- **IR timeline splice / concatenation → SSAI** (#475): new `splice` module
+  joining two `Media` timelines into one monotonic decode timeline for
+  server-side ad insertion. `concat(a, b)` appends `b` after `a` on a shared
+  timeline — matching tracks pairwise (by `track_id`, else by index; errors on
+  incompatible track sets / codecs / timescales), rebasing each `b` track so its
+  first sample's decode time meets `a`'s end decode time
+  (`start_decode_time + Σ durations`), contiguous with no gap or overlap, sample
+  bytes preserved verbatim. `splice_insert(base, ad, at_ticks)` plays `base` up
+  to the splice, inserts `ad`, then resumes the base shifted forward by `ad`'s
+  duration. A splice boundary must fall on a random-access point: the inserted
+  content's first sample must be a sync sample, and `splice_insert` snaps
+  `at_ticks` to the nearest **preceding** sync sample of the base video track via
+  the testable `snap_to_preceding_sync` helper. Both return a `SpliceResult`
+  (`media` + `discontinuity_points: Vec<SplicePoint>` — track id, sample index,
+  and presentation time of each join) so a downstream HLS packager / `Segmenter`
+  can emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3) on exactly the join
+  segments. Timeline model cites the ISO/IEC 14496-12 §8.8.12 `tfdt`
+  `baseMediaDecodeTime`. SCTE-35-driven point *selection* (deciding where to
+  splice from cue messages) is a follow-up. `concat`, `splice_insert`,
+  `snap_to_preceding_sync`, `SplicePoint`, and `SpliceResult` are re-exported
+  from the crate root.
 - **`emsg` emission in media segments** (#455): [`build_media_segment_with_events`]
   emits one or more MPEG-DASH Event Message Boxes (`emsg`, ISO/IEC 14496-12 §8.8 /
   ISO/IEC 23009-1 §5.10.3.3) at the start of each media segment, after `styp` and

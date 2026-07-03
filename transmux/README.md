@@ -106,6 +106,7 @@ round-trips through the IR.
 | TS-HLS | `Package` | `TsHlsPackager` | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |
+| IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
 | CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
