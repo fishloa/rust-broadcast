@@ -14,6 +14,7 @@ The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (conta
 | fMP4/CMAF (`Fmp4Demux`) | MPEG-2 TS (`TsMux`) |
 | MPEG Program Stream (`PsDemux`) | CMAF-HLS (`HlsPackager`) · TS-HLS (`TsHlsPackager`) |
 | WebM/Matroska (`WebmDemux`) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`) |
+| RTMP chunk stream (`RtmpDemux`) | RTMP chunk stream (`RtmpMux`) |
 
 Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
 (`Segmenter`) — CENC decrypt (`CencDecryptor`), and RTP de/packetize + SDP
@@ -101,6 +102,7 @@ round-trips through the IR.
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
+| RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
 
 ✅ = implemented + round-trip-tested · ⬜ = planned (issue linked)
 

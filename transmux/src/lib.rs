@@ -106,6 +106,7 @@ pub mod progressive;
 pub mod ps_demux;
 pub mod repackage;
 pub mod rtcp;
+pub mod rtmp;
 pub mod rtp;
 pub mod sample_entries;
 pub mod sample_groups;
@@ -196,6 +197,11 @@ pub use rtcp::{
     APP_NAME_LEN, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT, PT_SOURCE_DESCRIPTION,
     REPORT_BLOCK_LEN, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE,
     SDES_PRIV, SDES_TOOL,
+};
+pub use rtmp::{
+    AmfValue, BasicHeader, Command, Handshake0, Handshake1, Handshake2, Message, MessageHeader,
+    ProtocolControl, RtmpDemux, RtmpError, RtmpMux, DEFAULT_CHUNK_SIZE, HANDSHAKE_PACKET_LEN,
+    RTMP_VERSION,
 };
 pub use rtp::{
     RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacketizer, RtpStream,
