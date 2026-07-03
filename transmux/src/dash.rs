@@ -45,6 +45,15 @@ pub const PROFILE_ISOFF_LIVE: &str = "urn:mpeg:dash:profile:isoff-live:2011";
 /// (ISO/IEC 23009-1 §5.8.5.4 / 23001-8).
 const AUDIO_CHANNEL_SCHEME: &str = "urn:mpeg:dash:23003:3:audio_channel_configuration:2011";
 
+/// `schemeIdUri` for the DASH trick-mode `SupplementalProperty`
+/// (ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5).
+///
+/// A trick-mode `AdaptationSet` carries
+/// `<SupplementalProperty schemeIdUri="urn:mpeg:dash:trickmode:2016" value="<id>"/>`
+/// to declare that it is a trick-play rendition referencing the main video
+/// `AdaptationSet` identified by `value`.
+pub const TRICKMODE_SCHEME: &str = "urn:mpeg:dash:trickmode:2016";
+
 /// MIME type carried on a video `AdaptationSet` (`video/mp4`).
 const MIME_VIDEO: &str = "video/mp4";
 /// MIME type carried on an audio `AdaptationSet` (`audio/mp4`).
@@ -113,6 +122,58 @@ fn is_audio(config: &CodecConfig) -> bool {
     )
 }
 
+/// A DASH trick-mode `AdaptationSet` descriptor — ISO/IEC 23009-1 §5.8.5.8.
+///
+/// A trick-mode adaptation set is a sparse, I-frame-only video rendition
+/// intended for timeline scrubbing. It references the main video
+/// `AdaptationSet` via a `SupplementalProperty`:
+///
+/// ```xml
+/// <SupplementalProperty
+///     schemeIdUri="urn:mpeg:dash:trickmode:2016"
+///     value="<main_adaptation_set_id>"/>
+/// ```
+///
+/// It also carries `maxPlayoutRate` and `codingDependency="false"` on the
+/// `AdaptationSet` element (DASH-IF IOP §3.3.5).
+///
+/// To render a trick-mode set, pass one [`TrickModeAdaptationSet`] value in
+/// [`DashPackager::trick_mode`].
+#[derive(Debug, Clone)]
+pub struct TrickModeAdaptationSet {
+    /// The `@id` attribute of this trick-mode `AdaptationSet` (must be unique
+    /// in the Period).
+    pub id: String,
+    /// The `@id` of the main video `AdaptationSet` this rendition references
+    /// (the `value` attribute of `SupplementalProperty`).
+    pub main_adaptation_set_id: String,
+    /// The `maxPlayoutRate` attribute on the `AdaptationSet` (e.g. `8` for 8×
+    /// fast-forward). Typically 2–16.
+    pub max_playout_rate: u32,
+    /// The trick-mode `Representation` — one track's parameters (codecs,
+    /// bandwidth, resolution) as resolved by the caller.
+    pub repr: TrickModeRepr,
+}
+
+/// Presentation parameters for a trick-mode `Representation`.
+#[derive(Debug, Clone)]
+pub struct TrickModeRepr {
+    /// Representation `@id`.
+    pub id: String,
+    /// RFC 6381 codec string (e.g. `"avc1.64001e"`).
+    pub codecs: String,
+    /// Bandwidth in bits per second.
+    pub bandwidth: u64,
+    /// Coded width in pixels (`None` to omit).
+    pub width: Option<u32>,
+    /// Coded height in pixels (`None` to omit).
+    pub height: Option<u32>,
+    /// `SegmentTemplate@timescale`.
+    pub timescale: u32,
+    /// `SegmentTemplate@duration` (total sample-duration sum in timescale units).
+    pub total_duration: u64,
+}
+
 /// Render an MPEG-DASH MPD (ISO/IEC 23009-1) describing a [`Media`].
 ///
 /// Groups the media's tracks into one video and one audio
@@ -126,6 +187,13 @@ fn is_audio(config: &CodecConfig) -> bool {
 /// [`minimum_update_period`](DashPackager::minimum_update_period) (both are
 /// emitted verbatim as ISO-8601 / xs:duration strings when present, and omitted
 /// otherwise — kept deliberately simple).
+///
+/// # Trick-mode signalling
+///
+/// Set [`DashPackager::trick_mode`] to emit an additional trick-mode
+/// `AdaptationSet` alongside the regular video set. The trick-mode set carries
+/// `<SupplementalProperty schemeIdUri="urn:mpeg:dash:trickmode:2016"
+/// value="<id>"/>` (ISO/IEC 23009-1 §5.8.5.8) and `codingDependency="false"`.
 #[derive(Debug, Clone)]
 pub struct DashPackager {
     /// The MPD `profiles` attribute (ISO/IEC 23009-1 §5.3.1.2).
@@ -142,6 +210,11 @@ pub struct DashPackager {
     pub availability_start_time: Option<String>,
     /// Optional `MPD@minimumUpdatePeriod` (xs:duration), live only.
     pub minimum_update_period: Option<String>,
+    /// Optional trick-mode adaptation set (ISO/IEC 23009-1 §5.8.5.8).
+    ///
+    /// When `Some`, `package` emits an additional `AdaptationSet` after the
+    /// regular video/audio sets, carrying the trick-mode descriptor.
+    pub trick_mode: Option<TrickModeAdaptationSet>,
 }
 
 impl Default for DashPackager {
@@ -154,6 +227,7 @@ impl Default for DashPackager {
             media_template: String::from("chunk-stream$RepresentationID$-$Number$.m4s"),
             availability_start_time: None,
             minimum_update_period: None,
+            trick_mode: None,
         }
     }
 }
@@ -409,6 +483,11 @@ impl DashPackager {
             self.write_adaptation_set(&mut w, kind, &set);
         }
 
+        // Trick-mode AdaptationSet — ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5.
+        if let Some(tm) = &self.trick_mode {
+            self.write_trick_adaptation_set(&mut w, tm);
+        }
+
         w.close("Period");
         w.close("MPD");
         w.finish()
@@ -467,6 +546,69 @@ impl DashPackager {
 
             w.close("Representation");
         }
+
+        w.close("AdaptationSet");
+    }
+
+    /// Write a trick-mode `AdaptationSet` — ISO/IEC 23009-1 §5.8.5.8.
+    ///
+    /// Emits:
+    /// ```xml
+    /// <AdaptationSet id="<id>" contentType="video" mimeType="video/mp4"
+    ///                maxPlayoutRate="<n>" codingDependency="false">
+    ///   <SupplementalProperty
+    ///       schemeIdUri="urn:mpeg:dash:trickmode:2016"
+    ///       value="<main_id>"/>
+    ///   <Representation …/>
+    ///   <SegmentTemplate …/>
+    /// </AdaptationSet>
+    /// ```
+    fn write_trick_adaptation_set(&self, w: &mut XmlWriter, tm: &TrickModeAdaptationSet) {
+        let mut as_attrs = alloc::vec![
+            ("id", tm.id.clone()),
+            ("contentType", "video".to_string()),
+            ("mimeType", MIME_VIDEO.to_string()),
+            ("maxPlayoutRate", tm.max_playout_rate.to_string()),
+            ("codingDependency", "false".to_string()),
+        ];
+        // segmentAlignment not required by spec for trick-mode but keep consistent.
+        as_attrs.push(("segmentAlignment", "true".to_string()));
+        w.open("AdaptationSet", &as_attrs);
+
+        // SupplementalProperty declaring the trick-mode relationship.
+        // schemeIdUri = TRICKMODE_SCHEME (urn:mpeg:dash:trickmode:2016),
+        // value = the @id of the main video AdaptationSet.
+        w.empty(
+            "SupplementalProperty",
+            &[
+                ("schemeIdUri", TRICKMODE_SCHEME.to_string()),
+                ("value", tm.main_adaptation_set_id.clone()),
+            ],
+        );
+
+        let r = &tm.repr;
+        let mut rattrs = alloc::vec![
+            ("id", r.id.clone()),
+            ("mimeType", MIME_VIDEO.to_string()),
+            ("codecs", r.codecs.clone()),
+            ("bandwidth", r.bandwidth.to_string()),
+        ];
+        if let (Some(w_px), Some(h_px)) = (r.width, r.height) {
+            rattrs.push(("width", w_px.to_string()));
+            rattrs.push(("height", h_px.to_string()));
+        }
+        w.open("Representation", &rattrs);
+        w.empty(
+            "SegmentTemplate",
+            &[
+                ("timescale", r.timescale.to_string()),
+                ("duration", r.total_duration.to_string()),
+                ("startNumber", self.start_number.to_string()),
+                ("initialization", self.init_template.clone()),
+                ("media", self.media_template.clone()),
+            ],
+        );
+        w.close("Representation");
 
         w.close("AdaptationSet");
     }

@@ -164,7 +164,10 @@ pub use cenc::{
 };
 #[cfg(feature = "cenc")]
 pub use cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
-pub use dash::{DashPackager, MediaKind, MPD_NAMESPACE, PROFILE_ISOFF_LIVE};
+pub use dash::{
+    DashPackager, MediaKind, TrickModeAdaptationSet, TrickModeRepr, MPD_NAMESPACE,
+    PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
+};
 pub use dts::{
     DtsSpecificBox, DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC,
 };
@@ -175,8 +178,8 @@ pub use flac::{
 pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{
-    mark_init_discontinuities, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment,
-    PartSpec, Variant,
+    mark_init_discontinuities, IFrameVariant, LowLatencyConfig, MasterPlaylist, MediaPlaylist,
+    MediaSegment, PartSpec, Variant,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,

@@ -3,6 +3,26 @@
 //! Produces `#EXTM3U`-formatted media and master playlists from structured
 //! data, suitable for VOD and live CMAF workflows.
 //!
+//! # Trick-play (I-frame-only) signalling
+//!
+//! HLS supports two complementary tags for trick-play (timeline scrubbing /
+//! thumbnail extraction) renditions; both are strictly opt-in so existing
+//! playlists are byte-for-byte unchanged:
+//!
+//! - **`#EXT-X-I-FRAME-STREAM-INF`** (RFC 8216 §4.3.4.2) — a master-playlist
+//!   tag declaring an I-frame-only rendition.  Unlike `#EXT-X-STREAM-INF` the
+//!   URI is an *attribute* on the tag line itself, not a following line.  Add
+//!   one [`IFrameVariant`] per rendition to [`MasterPlaylist::iframe_variants`];
+//!   `to_m3u8` renders each as
+//!   `#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=<n>[,CODECS="<c>"][,RESOLUTION=<w>x<h>],URI="<uri>"`.
+//!
+//! - **`#EXT-X-I-FRAMES-ONLY`** (RFC 8216 §4.3.3.6) — a media-playlist tag
+//!   declaring that every segment carries a single I-frame.  Set
+//!   [`MediaPlaylist::iframes_only`] to `true`; `to_m3u8` emits the tag in
+//!   the header block (after the version line).  RFC 8216 §4.3.3.6 requires
+//!   protocol version ≥ 4 when this tag is present; the renderer enforces
+//!   this by emitting `max(self.version, 4)`.
+//!
 //! # Discontinuity support
 //!
 //! The playlist model supports RFC 8216 discontinuity signalling:
@@ -116,6 +136,11 @@ pub struct MediaPlaylist {
     /// `#EXT-X-PRELOAD-HINT`. When `None` (the default), none of these appear —
     /// LL-HLS is strictly opt-in and a plain playlist is unchanged.
     pub low_latency: Option<LowLatencyConfig>,
+    /// If `true`, emit `#EXT-X-I-FRAMES-ONLY` (RFC 8216 §4.3.3.6) in the
+    /// header block, declaring that every segment in this playlist carries a
+    /// single I-frame (a trick-play / thumbnail rendition).  When `true` the
+    /// rendered version is at least 4 (RFC 8216 §4.3.3.6 requirement).
+    pub iframes_only: bool,
 }
 
 /// Low-Latency HLS playlist configuration — RFC 8216bis.
@@ -159,10 +184,23 @@ impl MediaPlaylist {
     /// `#EXT-X-DISCONTINUITY` immediately before the `#EXTINF` of every
     /// segment whose [`MediaSegment::discontinuous`] flag is `true`
     /// (RFC 8216 §4.3.4.3).
+    ///
+    /// When [`Self::iframes_only`] is `true`, emits `#EXT-X-I-FRAMES-ONLY`
+    /// (RFC 8216 §4.3.3.6) in the header block and renders version ≥ 4 as
+    /// required by that section.
     pub fn to_m3u8(&self) -> String {
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
-        s.push_str(&format!("#EXT-X-VERSION:{}\n", self.version));
+        // RFC 8216 §4.3.3.6: EXT-X-I-FRAMES-ONLY requires protocol version >= 4.
+        let version = if self.iframes_only {
+            self.version.max(4)
+        } else {
+            self.version
+        };
+        s.push_str(&format!("#EXT-X-VERSION:{}\n", version));
+        if self.iframes_only {
+            s.push_str("#EXT-X-I-FRAMES-ONLY\n");
+        }
         s.push_str(&format!("#EXT-X-TARGETDURATION:{}\n", self.target_duration));
         s.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", self.media_sequence));
         if self.discontinuity_sequence > 0 {
@@ -265,6 +303,26 @@ pub struct Variant {
     pub uri: String,
 }
 
+/// An I-frame-only rendition entry for a master playlist — RFC 8216 §4.3.4.2
+/// (`#EXT-X-I-FRAME-STREAM-INF`).
+///
+/// Unlike [`Variant`] / `#EXT-X-STREAM-INF`, the URI is an *attribute* on the
+/// tag line itself (not on a following line).  Rendered as:
+/// ```text
+/// #EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=<n>[,CODECS="<c>"][,RESOLUTION=<w>x<h>],URI="<uri>"
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct IFrameVariant {
+    /// `BANDWIDTH` in bits per second (required).
+    pub bandwidth: u32,
+    /// `CODECS` RFC 6381 string (e.g. `"hvc1.1.6.L93.B0"`).  `None` to omit.
+    pub codecs: Option<String>,
+    /// `RESOLUTION` as `(width, height)`.  `None` to omit.
+    pub resolution: Option<(u32, u32)>,
+    /// URI of the I-frame-only media playlist.
+    pub uri: String,
+}
+
 /// A master playlist (`#EXTM3U` / `#EXT-X-STREAM-INF` / ...).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MasterPlaylist {
@@ -272,10 +330,21 @@ pub struct MasterPlaylist {
     pub version: u8,
     /// Ordered list of variant streams.
     pub variants: Vec<Variant>,
+    /// Ordered list of I-frame-only renditions (RFC 8216 §4.3.4.2).
+    ///
+    /// Each entry is rendered as an `#EXT-X-I-FRAME-STREAM-INF` line with the
+    /// URI as an attribute (not a following line).  An empty `Vec` (the
+    /// default) produces no such lines.
+    pub iframe_variants: Vec<IFrameVariant>,
 }
 
 impl MasterPlaylist {
     /// Render this master playlist as an RFC 8216 `#EXTM3U` string.
+    ///
+    /// After the regular `#EXT-X-STREAM-INF` variant lines, emits one
+    /// `#EXT-X-I-FRAME-STREAM-INF` line per entry in
+    /// [`Self::iframe_variants`] (RFC 8216 §4.3.4.2).  The URI is rendered
+    /// as an attribute on the tag line itself — *not* on a following line.
     pub fn to_m3u8(&self) -> String {
         let mut s = String::new();
         s.push_str("#EXTM3U\n");
@@ -292,6 +361,22 @@ impl MasterPlaylist {
             s.push('\n');
             s.push_str(&var.uri);
             s.push('\n');
+        }
+
+        // I-frame-only renditions — RFC 8216 §4.3.4.2.
+        // URI is an attribute on the tag line, not a following URI line.
+        for iv in &self.iframe_variants {
+            s.push_str(&format!(
+                "#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH={}",
+                iv.bandwidth
+            ));
+            if let Some(c) = &iv.codecs {
+                s.push_str(&format!(",CODECS=\"{}\"", c));
+            }
+            if let Some((w, h)) = iv.resolution {
+                s.push_str(&format!(",RESOLUTION={}x{}", w, h));
+            }
+            s.push_str(&format!(",URI=\"{}\"\n", iv.uri));
         }
 
         s
@@ -377,6 +462,7 @@ mod tests {
             endlist: true,
             extra_tags: vec![],
             low_latency: None,
+            iframes_only: false,
         }
     }
 
@@ -398,6 +484,7 @@ mod tests {
                     .into(),
             ],
             low_latency: None,
+            iframes_only: false,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -422,6 +509,7 @@ mod tests {
             endlist: false,
             extra_tags: vec![],
             low_latency: None,
+            iframes_only: false,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -447,6 +535,7 @@ mod tests {
                     uri: "v800/index.m3u8".into(),
                 },
             ],
+            iframe_variants: vec![],
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -467,6 +556,7 @@ mod tests {
                 resolution: None,
                 uri: "v1k/index.m3u8".into(),
             }],
+            iframe_variants: vec![],
         };
         let out = pl.to_m3u8();
         assert!(!out.contains("RESOLUTION"));
@@ -538,6 +628,7 @@ mod tests {
             endlist: false,
             extra_tags: vec![],
             low_latency: None,
+            iframes_only: false,
         };
         let out = pl.to_m3u8();
         assert!(
