@@ -100,17 +100,12 @@ async fn interleaved_media_over_tcp() {
         // SETUP then PLAY.
         srv.next_request().await.unwrap().expect("SETUP");
         srv.next_request().await.unwrap().expect("PLAY");
-        // Frame 1: sent whole.
+        // Two interleaved frames sent whole over the real socket. (Split-read
+        // reassembly across TCP read boundaries is covered deterministically by
+        // the `interleaved::tests::two_frames_plus_partial_returns_two_and_remainder`
+        // unit test; forcing a split here with a timing sleep raced under load.)
         srv.send_interleaved(0, &p1).await.unwrap();
-        // Frame 2: sent split across two socket writes to exercise reassembly.
-        // Grab the raw stream and write a partial header + tail, then the rest.
-        let frame = rtsp_runtime::InterleavedFrame::new(0, p2.clone());
-        let bytes = frame.to_bytes().unwrap();
-        let split = 3; // mid-header split
-        srv.stream_mut().write_all(&bytes[..split]).await.unwrap();
-        // Small yield so the two writes land in separate reads on the client.
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        srv.stream_mut().write_all(&bytes[split..]).await.unwrap();
+        srv.send_interleaved(0, &p2).await.unwrap();
         srv.stream_mut().flush().await.unwrap();
         // Keep the connection open until the client has read both frames.
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
