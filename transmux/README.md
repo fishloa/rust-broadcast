@@ -162,6 +162,46 @@ let mime = sps.rfc6381()?;             // e.g. "avc1.4D400D" for WebCodecs / MSE
 `tests/ts_to_cmaf.rs` demonstrates the full path end-to-end: demux a real
 H.264+AAC TS, synthesise `avcC`/`esds`, and emit byte-identical-config CMAF.
 
+## Command-line packager (`cli` feature)
+
+The optional `cli` feature builds a `transmux` binary that wires the demux and
+mux spokes into an any-to-any packager: it autodetects the input container from
+its leading bytes, runs it through the [`Media`] hub IR, and writes the chosen
+output format. The library itself stays `no_std`; only this feature pulls
+`clap` + `std`. It follows the workspace CLI standard
+([`docs/CLI-STANDARD.md`](../docs/CLI-STANDARD.md)) — clap derive, named flags,
+auto `--help`/`--version`.
+
+```console
+$ cargo install transmux --features cli      # or: cargo run -p transmux --features cli --
+
+# TS → CMAF (autodetected input; format inferred from the .cmaf extension)
+$ transmux in.ts -o out.cmaf
+
+# MP4 → CMAF-HLS, 4-second segments
+$ transmux in.mp4 -o out.m3u8 -f hls --segment-duration 4
+
+# WebM → progressive single-file MP4
+$ transmux in.webm -o out.mp4 -f progressive
+
+# PS → DASH MPD (low-latency chunked variant)
+$ transmux in.ps -o out.mpd -f dash --ll
+```
+
+| Flag | Meaning |
+|---|---|
+| `<IN>` / `-i, --input <PATH>` | input file (container autodetected) |
+| `-o, --output <PATH>` | output file / playlist / manifest path |
+| `-f, --format <FMT>` | `cmaf` \| `hls` \| `ts-hls` \| `dash` \| `ts` \| `progressive` (else inferred from the output extension) |
+| `--segment-duration <SECS>` | target segment duration (default 6) |
+| `--ll` | low-latency variant where supported (LL-DASH) |
+| `--tracks <IDS>` | restrict to these track IDs (comma-separated) |
+| `--decrypt` / `--key <KID:KEY>` | decrypt CENC input (requires the `cenc` feature) |
+
+Input autodetect signatures: MPEG-TS (`0x47` sync at 0 and +188), MP4/CMAF
+(`ftyp`/`styp`/`moov`/`moof` box at offset 4), MPEG-PS (`00 00 01 BA`),
+WebM/Matroska (EBML `1A 45 DF A3`), FLV (`"FLV"`).
+
 ## Spec grounding
 
 Every layout cites its source (ISO/IEC 14496-12 boxes; 14496-1 §7.2.6 esds;
