@@ -534,6 +534,19 @@ fn durations_from_dts(ordered: &[(usize, i128, i128)]) -> Vec<u32> {
     durs
 }
 
+/// Absolute decode-time anchor for an audio track: the first access unit's
+/// DTS (in the 90 kHz PES clock, [`VIDEO_TIMESCALE`]) rescaled to the audio
+/// track's own media timescale (`sample_rate` ticks/s). Audio access units are
+/// not reordered, so the first AU carries the earliest DTS.
+fn audio_start_decode_time(es: &ElementaryStream, sample_rate: u32) -> u64 {
+    let Some(first) = es.access_units.first() else {
+        return 0;
+    };
+    // dts is in 90 kHz ticks: anchor = dts * sample_rate / 90000 (u128 to avoid
+    // overflow on a full 33-bit dts).
+    (first.dts as u128 * sample_rate as u128 / VIDEO_TIMESCALE as u128) as u64
+}
+
 /// Recover H.264 config + build video samples (Annex B → length-prefixed).
 fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let mut sps: Option<Vec<u8>> = None;
@@ -598,7 +611,10 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         })
         .collect();
 
-    Some(Track::new(
+    // Absolute decode-time anchor: the first sample's DTS in decode order,
+    // already 33-bit-unwrapped by `decode_order`, in the 90 kHz media timescale.
+    let start_decode_time = ordered.first().map(|&(_, _, dts)| dts.max(0) as u64);
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: VIDEO_TIMESCALE,
@@ -609,6 +625,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         },
         samples,
+        start_decode_time.unwrap_or(0),
     ))
 }
 
@@ -693,7 +710,9 @@ fn build_mpeg2_video_track(es: &ElementaryStream, track_id: u32) -> Option<Track
         })
         .collect();
 
-    Some(Track::new(
+    // Absolute decode-time anchor: first-in-decode-order unwrapped DTS (90 kHz).
+    let start_decode_time = ordered.first().map(|&(_, _, dts)| dts.max(0) as u64);
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: VIDEO_TIMESCALE,
@@ -704,6 +723,7 @@ fn build_mpeg2_video_track(es: &ElementaryStream, track_id: u32) -> Option<Track
             },
         },
         samples,
+        start_decode_time.unwrap_or(0),
     ))
 }
 
@@ -776,7 +796,7 @@ fn build_mpeg_audio_track(es: &ElementaryStream, track_id: u32, is_mpeg2: bool) 
         return None;
     }
 
-    Some(Track::new(
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: sample_rate,
@@ -789,6 +809,7 @@ fn build_mpeg_audio_track(es: &ElementaryStream, track_id: u32, is_mpeg2: bool) 
             },
         },
         samples,
+        audio_start_decode_time(es, sample_rate),
     ))
 }
 
@@ -862,7 +883,7 @@ fn build_aac_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         return None;
     }
 
-    Some(Track::new(
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: sample_rate,
@@ -874,6 +895,7 @@ fn build_aac_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         },
         samples,
+        audio_start_decode_time(es, sample_rate),
     ))
 }
 
@@ -891,7 +913,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         .iter()
         .map(|au| Sample::from_raw(au.data.clone(), 0))
         .collect();
-    Some(Track::new(
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: sample_rate,
@@ -903,6 +925,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         },
         samples,
+        audio_start_decode_time(es, sample_rate),
     ))
 }
 
@@ -920,7 +943,7 @@ fn build_eac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         .iter()
         .map(|au| Sample::from_raw(au.data.clone(), 0))
         .collect();
-    Some(Track::new(
+    Some(Track::new_at(
         TrackSpec {
             track_id,
             timescale: sample_rate,
@@ -932,6 +955,7 @@ fn build_eac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         },
         samples,
+        audio_start_decode_time(es, sample_rate),
     ))
 }
 
