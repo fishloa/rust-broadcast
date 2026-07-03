@@ -36,13 +36,14 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
+use mpeg_ts::mux::SectionPacketizer;
 use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
-use crate::pipeline::{CodecConfig, Sample};
+use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
@@ -88,12 +89,18 @@ const STREAM_TYPE_EAC3: u8 = 0x87;
 /// DTS (canonical DVB assignment, user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_DTS: u8 = 0x82;
 
+/// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.8).
+const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
+
 // ── PES / stream_id constants (ISO/IEC 13818-1 §2.4.3.6, Table 2-22) ────────
 
 /// Base `stream_id` for video elementary streams (`1110 xxxx`, 0xE0–0xEF).
 const STREAM_ID_VIDEO_BASE: u8 = 0xE0;
 /// Base `stream_id` for audio elementary streams (`110x xxxx`, 0xC0–0xDF).
 const STREAM_ID_AUDIO_BASE: u8 = 0xC0;
+/// `private_stream_1` — the default `stream_id` for a PES-carried opaque
+/// [`CodecConfig::Data`] elementary stream (issue #576), Table 2-22.
+const STREAM_ID_PRIVATE_1: u8 = 0xBD;
 /// PES `packet_start_code_prefix` (§2.4.3.6).
 const PES_START_CODE: [u8; 3] = [0x00, 0x00, 0x01];
 /// Fixed bytes preceding the PES optional-header payload: 3 (marker/flags(1) +
@@ -160,6 +167,14 @@ enum EsKind {
     Eac3,
     /// DTS audio (core substream, passed through verbatim).
     Dts,
+    /// Opaque data (issue #576): the preserved PMT `stream_type` +
+    /// [`DataCarriage`] of a [`CodecConfig::Data`] track.
+    Data {
+        /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34), carried verbatim.
+        stream_type: u8,
+        /// PES- or section-carried — selects how samples are re-emitted.
+        carriage: DataCarriage,
+    },
 }
 
 impl EsKind {
@@ -171,6 +186,7 @@ impl EsKind {
             EsKind::Ac3 => STREAM_TYPE_AC3,
             EsKind::Eac3 => STREAM_TYPE_EAC3,
             EsKind::Dts => STREAM_TYPE_DTS,
+            EsKind::Data { stream_type, .. } => stream_type,
         }
     }
 
@@ -179,8 +195,24 @@ impl EsKind {
         matches!(self, EsKind::Avc)
     }
 
-    /// Classify a track's [`CodecConfig`], or `None` if the muxer cannot carry it
-    /// in a TS (skipped, never fatal — mirrors [`TsDemux`](crate::TsDemux)).
+    /// Whether this elementary stream is re-emitted as PSI/private sections
+    /// rather than PES (issue #576) — see [`DataCarriage::Sections`].
+    fn is_section_carried(self) -> bool {
+        matches!(
+            self,
+            EsKind::Data {
+                carriage: DataCarriage::Sections,
+                ..
+            }
+        )
+    }
+
+    /// Classify a track's [`CodecConfig`] into the elementary-stream kind the
+    /// TS muxer emits it as. Every [`CodecConfig`] this crate knows is
+    /// carriable in a TS: decoded codecs get their canonical `stream_type`,
+    /// and [`CodecConfig::Data`] carries its preserved `stream_type` +
+    /// `carriage` straight through (issue #576) — only a config this muxer
+    /// has never heard of (there is none today) would return `None`.
     fn from_config(config: &CodecConfig) -> Option<Self> {
         match config {
             CodecConfig::Avc { .. } => Some(EsKind::Avc),
@@ -188,6 +220,14 @@ impl EsKind {
             CodecConfig::Ac3 { .. } => Some(EsKind::Ac3),
             CodecConfig::Eac3 { .. } => Some(EsKind::Eac3),
             CodecConfig::Dts { .. } => Some(EsKind::Dts),
+            CodecConfig::Data {
+                stream_type,
+                carriage,
+                ..
+            } => Some(EsKind::Data {
+                stream_type: *stream_type,
+                carriage: *carriage,
+            }),
             _ => None,
         }
     }
@@ -205,12 +245,18 @@ pub(crate) struct EsPlan {
     /// lacks them so every TS video AU is independently decodable. Empty for
     /// non-AVC streams.
     avc_sps_pps: Vec<Vec<u8>>,
+    /// Preserved PMT ES_info descriptor-loop bytes for this stream (issue
+    /// #576) — non-empty only for an [`EsKind::Data`] track sourced from a
+    /// [`CodecConfig::Data`] (the IR carries no descriptors for decoded
+    /// codecs today, so their ES_info loop stays empty).
+    descriptors: Vec<u8>,
 }
 
-/// A single TS packet queued for output, tagged with the DTS of the access unit
-/// it belongs to so the muxer can interleave elementary streams by decode time.
+/// A single TS packet queued for output, tagged with a monotonic (never
+/// 33-bit-wrapped — see [`rescale_for_ordering`]) decode-order key so the
+/// muxer can interleave elementary streams by decode time.
 struct TaggedPacket {
-    dts: u64,
+    sort_key: u64,
     packet: [u8; TS_PACKET_SIZE],
 }
 
@@ -267,14 +313,30 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         let Some(kind) = EsKind::from_config(&track.spec.config) else {
             continue; // uncarriable codec: skip, never fatal.
         };
-        let stream_id = if kind.is_video() {
-            let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
-            n_video += 1;
-            id
-        } else {
-            let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
-            n_audio += 1;
-            id
+        // `stream_id` families (ISO/IEC 13818-1 Table 2-22): video and audio
+        // get the next sequential ID in their `0xEx`/`0xCx` family; an opaque
+        // PES-carried Data stream always gets the fixed `private_stream_1`
+        // (issue #576); a section-carried Data stream emits no PES at all, so
+        // its `stream_id` is never serialized (value irrelevant).
+        let stream_id = match kind {
+            EsKind::Avc => {
+                let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
+                n_video += 1;
+                id
+            }
+            EsKind::Data {
+                carriage: DataCarriage::Pes,
+                ..
+            } => StreamId(STREAM_ID_PRIVATE_1),
+            EsKind::Data {
+                carriage: DataCarriage::Sections,
+                ..
+            } => StreamId(0),
+            _ => {
+                let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
+                n_audio += 1;
+                id
+            }
         };
         let asc = match &track.spec.config {
             CodecConfig::Aac { esds, .. } => Some(asc_from_esds(esds)?),
@@ -294,19 +356,24 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             }
             _ => Vec::new(),
         };
+        let descriptors = match &track.spec.config {
+            CodecConfig::Data { descriptors, .. } => descriptors.clone(),
+            _ => Vec::new(),
+        };
         plans.push(EsPlan {
             pid: next_pid,
             stream_id,
             kind,
             asc,
             avc_sps_pps,
+            descriptors,
         });
         planned_idx.push(idx);
         next_pid += 1;
     }
     if plans.is_empty() {
         return Err(Error::InvalidInput(
-            "no track carries a TS-representable codec (AVC/AAC/AC-3/E-AC-3)",
+            "no track carries a TS-representable codec (AVC/AAC/AC-3/E-AC-3/DTS/Data)",
         ));
     }
     Ok((plans, planned_idx))
@@ -345,10 +412,14 @@ pub(crate) fn mux_tracks_at(
     // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
     let (plans, planned_idx) = plan_elementary_streams(tracks)?;
 
-    // PCR PID: the first video ES, else the first ES.
+    // PCR PID: the first video ES, else the first non-section-carried ES (a
+    // section-carried Data stream is packetized without an adaptation field
+    // at all — issue #576 — so it can never itself carry the PCR), else
+    // (only if every ES is section-carried) the first ES regardless.
     let pcr_pid = plans
         .iter()
         .find(|p| p.kind.is_video())
+        .or_else(|| plans.iter().find(|p| !p.kind.is_section_carried()))
         .map(|p| p.pid)
         .unwrap_or(plans[0].pid);
 
@@ -372,31 +443,55 @@ pub(crate) fn mux_tracks_at(
         // in the track's own timescale, seeded from the caller's base DTS.
         let mut dts_ticks_local: u64 = base_dts_ticks[track_idx];
         let mut cc: u8 = 0;
+        // Section-carried Data samples are already whole PSI/private
+        // sections (issue #576) — packetized directly, never PES-wrapped.
+        // The packetizer's own continuity_counter (independent of `cc`
+        // above, which only tracks the PES path) persists across samples.
+        let mut section_packetizer = SectionPacketizer::new(plan.pid);
         for sample in samples[track_idx] {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
             let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
-            let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
-            let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
+            // The interleave key: monotonic by construction (`dts_ticks_local`
+            // only ever grows), UNLIKE `dts90` — which wraps at the 33-bit
+            // field per §2.4.3.7, so using it to order packets would reorder
+            // a single track's own packets against each other once its
+            // cumulative decode time (however implausible the recovered
+            // per-sample durations) crosses that wrap point (issue #576: an
+            // opaque Data(Pes) track's recovered durations are exactly the
+            // kind of untrusted input that can do this).
+            let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale);
 
-            let es_payload = build_es_payload(plan, sample)?;
-            let carry_pcr = plan.pid == pcr_pid;
-            packetize_pes(
-                plan,
-                &es_payload,
-                pts90,
-                dts90,
-                carry_pcr,
-                &mut cc,
-                &mut tagged,
-            );
+            if plan.kind.is_section_carried() {
+                for pkt in section_packetizer.packetize(&[sample.data.as_slice()]) {
+                    tagged.push(TaggedPacket {
+                        sort_key,
+                        packet: pkt,
+                    });
+                }
+            } else {
+                let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
+                let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
+                let es_payload = build_es_payload(plan, sample)?;
+                let carry_pcr = plan.pid == pcr_pid;
+                packetize_pes(
+                    plan,
+                    &es_payload,
+                    pts90,
+                    dts90,
+                    carry_pcr,
+                    &mut cc,
+                    sort_key,
+                    &mut tagged,
+                );
+            }
 
             dts_ticks_local += sample.duration as u64;
         }
     }
 
-    // ── 4. Interleave ES packets by DTS (stable) and append ──
-    tagged.sort_by_key(|t| t.dts);
+    // ── 4. Interleave ES packets by decode order (stable) and append ──
+    tagged.sort_by_key(|t| t.sort_key);
     for t in &tagged {
         out.extend_from_slice(&t.packet);
     }
@@ -421,6 +516,22 @@ fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
     rescale(ticks as u64, timescale)
 }
 
+/// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock,
+/// rounding to nearest, **without** reducing modulo the 33-bit timestamp
+/// field — used only as [`TaggedPacket`]'s interleave-order key, never
+/// written to the wire (that is [`rescale`]'s job, which must wrap at 2^33
+/// per §2.4.3.7). `ticks` (a track's own cumulative decode time, summed only
+/// from non-negative sample durations) is monotonically non-decreasing by
+/// construction; this function preserves that so the global interleave sort
+/// never reorders one track's own packets against each other, even once its
+/// cumulative decode time would cross the 33-bit wrap point (issue #576: an
+/// opaque `CodecConfig::Data` track's recovered durations are untrusted
+/// input that can otherwise do exactly that).
+fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
+    let scaled = (ticks as u128 * TS_CLOCK_HZ as u128 + timescale as u128 / 2) / timescale as u128;
+    scaled.min(u64::MAX as u128) as u64
+}
+
 /// Recover the [`AudioSpecificConfig`] from an AAC `esds` box's
 /// DecoderSpecificInfo (the inverse of the [`TsDemux`](crate::TsDemux) build).
 fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> {
@@ -438,7 +549,10 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 /// Build the elementary-stream PES payload for one sample:
 /// video → length-prefixed NAL back to Annex B (prepending SPS/PPS/AUD only when
 /// absent so the stream stays self-decodable); AAC → the raw frame re-wrapped in
-/// an ADTS header; other audio → the raw frame verbatim.
+/// an ADTS header; other audio, and a PES-carried opaque [`CodecConfig::Data`]
+/// sample (issue #576) → the raw frame/payload verbatim. Never called for a
+/// section-carried `EsKind::Data` — those samples are whole PSI sections,
+/// packetized directly by the caller instead ([`SectionPacketizer`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
         EsKind::Avc => build_annexb_au(&sample.data, sample.is_sync, &plan.avc_sps_pps),
@@ -454,7 +568,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
             out.extend_from_slice(&sample.data);
             Ok(out)
         }
-        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts => Ok(sample.data.clone()),
+        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts | EsKind::Data { .. } => Ok(sample.data.clone()),
     }
 }
 
@@ -534,6 +648,13 @@ fn build_pat_section(pmt_pid: u16) -> Vec<u8> {
 
 /// Build a PMT section listing every planned elementary stream, with its
 /// trailing CRC_32. ISO/IEC 13818-1 §2.4.4.8.
+///
+/// Each ES's `ES_info` descriptor loop carries its [`EsPlan::descriptors`]
+/// verbatim (issue #576) — non-empty for an [`EsKind::Data`] track sourced
+/// from a [`CodecConfig::Data`] (so a receiver can identify a carried opaque
+/// stream, e.g. its DVB subtitling/teletext descriptor); every decoded codec
+/// carries none in the IR today, so its loop stays empty. `program_info`
+/// stays empty (no program-level descriptors are modelled).
 fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
     let mut body = Vec::new();
     // table_id_extension = program_number, then version/cni + section numbers.
@@ -548,13 +669,15 @@ fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
     body.push(INFO_RESERVED_HI);
     body.push(0);
     // Elementary-stream loop: stream_type(1) + reserved/elementary_PID(2) +
-    // reserved/ES_info_length(2) with no per-ES descriptors.
+    // reserved/ES_info_length(2) + descriptor()×ES_info_length.
     for p in plans {
         body.push(p.kind.stream_type());
         body.push(PID_RESERVED_HI | ((p.pid >> 8) as u8 & !PID_RESERVED_HI));
         body.push((p.pid & 0xFF) as u8);
-        body.push(INFO_RESERVED_HI);
-        body.push(0);
+        let es_info_length = p.descriptors.len().min(MAX_ES_INFO_LENGTH);
+        body.push(INFO_RESERVED_HI | ((es_info_length >> 8) as u8 & !INFO_RESERVED_HI));
+        body.push((es_info_length & 0xFF) as u8);
+        body.extend_from_slice(&p.descriptors[..es_info_length]);
     }
     finish_section(TABLE_ID_PMT, body)
 }
@@ -617,9 +740,12 @@ fn packetize_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
 
 /// Packetize one PES payload (already framed as its `stream_id` payload) into
 /// 188-byte TS packets on `plan.pid`, appended to `tagged` (each tagged with
-/// `dts`). The first packet sets PUSI and — when `carry_pcr` — an adaptation
-/// field with the PCR; the final packet is stuffed via an adaptation field so
-/// the PES ends exactly on a packet boundary. ISO/IEC 13818-1 §2.4.3.
+/// `sort_key`, the interleave-order key — see [`rescale_for_ordering`], NOT
+/// the on-wire `dts90`). The first packet sets PUSI and — when `carry_pcr` —
+/// an adaptation field with the PCR; the final packet is stuffed via an
+/// adaptation field so the PES ends exactly on a packet boundary.
+/// ISO/IEC 13818-1 §2.4.3.
+#[allow(clippy::too_many_arguments)]
 fn packetize_pes(
     plan: &EsPlan,
     es_payload: &[u8],
@@ -627,6 +753,7 @@ fn packetize_pes(
     dts90: u64,
     carry_pcr: bool,
     cc: &mut u8,
+    sort_key: u64,
     tagged: &mut Vec<TaggedPacket>,
 ) {
     let pes = build_pes_bytes(plan, es_payload, pts90, dts90);
@@ -705,7 +832,7 @@ fn packetize_pes(
 
         *cc = (*cc + 1) & 0x0F;
         tagged.push(TaggedPacket {
-            dts: dts90,
+            sort_key,
             packet: pkt,
         });
         first = false;
@@ -840,6 +967,38 @@ mod tests {
         assert_eq!(EsKind::Ac3.stream_type(), 0x81);
         assert_eq!(EsKind::Eac3.stream_type(), 0x87);
         assert_eq!(EsKind::Dts.stream_type(), 0x82);
+        // Opaque Data (issue #576): the preserved stream_type round-trips
+        // verbatim regardless of carriage.
+        assert_eq!(
+            EsKind::Data {
+                stream_type: 0x06,
+                carriage: DataCarriage::Pes,
+            }
+            .stream_type(),
+            0x06
+        );
+        assert_eq!(
+            EsKind::Data {
+                stream_type: 0x86,
+                carriage: DataCarriage::Sections,
+            }
+            .stream_type(),
+            0x86
+        );
+        assert!(
+            EsKind::Data {
+                stream_type: 0x86,
+                carriage: DataCarriage::Sections,
+            }
+            .is_section_carried()
+        );
+        assert!(
+            !EsKind::Data {
+                stream_type: 0x06,
+                carriage: DataCarriage::Pes,
+            }
+            .is_section_carried()
+        );
     }
 
     #[test]
@@ -859,10 +1018,44 @@ mod tests {
             kind: EsKind::Avc,
             asc: None,
             avc_sps_pps: Vec::new(),
+            descriptors: Vec::new(),
         }];
         let pmt = build_pmt_section(ES_PID_BASE, &plans);
         assert_eq!(crc32_mpeg2::compute(&pmt), 0);
         assert_eq!(pmt[0], TABLE_ID_PMT);
+    }
+
+    #[test]
+    fn pmt_section_carries_es_info_descriptors() {
+        // A Data ES's preserved descriptors must appear verbatim in the
+        // PMT's ES_info loop (issue #576), and the CRC must still be valid.
+        let descriptors = alloc::vec![0x59, 0x02, 0xAA, 0xBB]; // fake tag+len+body
+        let plans = alloc::vec![EsPlan {
+            pid: ES_PID_BASE,
+            stream_id: StreamId(0),
+            kind: EsKind::Data {
+                stream_type: 0x06,
+                carriage: DataCarriage::Pes,
+            },
+            asc: None,
+            avc_sps_pps: Vec::new(),
+            descriptors: descriptors.clone(),
+        }];
+        let pmt = build_pmt_section(ES_PID_BASE, &plans);
+        assert_eq!(crc32_mpeg2::compute(&pmt), 0);
+        // Locate the ES_info bytes: body starts at offset 8 (section header),
+        // program_info_length is 0, so the ES loop starts right after the
+        // 4-byte PCR_PID + program_info_length prefix.
+        let es_loop_start = 8 + 4;
+        assert_eq!(pmt[es_loop_start], 0x06, "stream_type");
+        let es_info_length =
+            (((pmt[es_loop_start + 3] & 0x0F) as usize) << 8) | pmt[es_loop_start + 4] as usize;
+        assert_eq!(es_info_length, descriptors.len());
+        let desc_start = es_loop_start + 5;
+        assert_eq!(
+            &pmt[desc_start..desc_start + es_info_length],
+            &descriptors[..]
+        );
     }
 
     #[test]

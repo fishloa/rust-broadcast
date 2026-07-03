@@ -144,6 +144,20 @@ impl Segmenter {
             }
         }
 
+        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
+        // this crate (issue #557/#576) — the segmenter omits them entirely
+        // (both the init `moov` and every cut media segment) rather than
+        // erroring on the first cut.
+        let tracks: Vec<TrackSpec> = tracks
+            .into_iter()
+            .filter(|t| !t.config.is_opaque_data())
+            .collect();
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput(
+                "segmenter needs at least one carriable (non-Data) track",
+            ));
+        }
+
         // Anchor = first video track; else first track (audio-only).
         let anchor = tracks
             .iter()

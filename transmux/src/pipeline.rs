@@ -69,6 +69,39 @@ const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0
 /// `tkhd` flags: track_enabled | in_movie | in_preview.
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 
+/// Whether a [`CodecConfig::Data`] elementary stream carries PES packets or
+/// PSI/private sections on its PID.
+///
+/// ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits `stream_type` into two
+/// carriage families: most types (subtitles, teletext, SMPTE 2038 ANC,
+/// metadata, and any unrecognised value) are PES-packetized (§2.4.3.6); a
+/// fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14` DSM-CC
+/// synchronized download, `0x86` SCTE-35/ANSI-scoped) are carried as raw
+/// PSI-style sections instead (§2.4.4), with no PES header at all.
+/// Reassembling a section stream with a PES parser (or vice versa) silently
+/// yields nothing, so a demuxer/muxer must dispatch on this before touching
+/// the payload — see `crate::ts_demux` / `crate::ts_mux` (issue #576).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataCarriage {
+    /// The elementary stream is PES-packetized (ISO/IEC 13818-1 §2.4.3.6).
+    Pes,
+    /// The elementary stream carries PSI/private sections directly on its
+    /// PID (ISO/IEC 13818-1 §2.4.4), with no PES header at all.
+    Sections,
+}
+
+impl DataCarriage {
+    /// A short label for this carriage kind.
+    pub fn name(&self) -> &'static str {
+        match self {
+            DataCarriage::Pes => "pes",
+            DataCarriage::Sections => "sections",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(DataCarriage);
+
 /// Per-track codec configuration for the initialization segment.
 #[derive(Debug, Clone)]
 pub enum CodecConfig {
@@ -280,21 +313,30 @@ pub enum CodecConfig {
         /// Sampling rate in Hz (`audio_sample_rate`, Vorbis I §4.2.2).
         sample_rate: u32,
     },
-    /// Opaque PES data track (DVB subtitles EN 300 743, teletext EN 300 472,
-    /// SMPTE 2038 ANC, ID3/KLV metadata, …): the demuxer does not decode the
-    /// payload; each sample is one verbatim PES payload. `stream_type` per
-    /// ISO/IEC 13818-1 Table 2-34; `descriptors` is the raw PMT ES_info
-    /// descriptor loop so consumers can classify (e.g. with dvb-si's parsers).
+    /// Opaque data track (issue #557/#576): a PMT-listed elementary stream
+    /// whose `stream_type` is not a codec this crate decodes (DVB subtitles
+    /// EN 300 743, teletext EN 300 472, SMPTE 2038 ANC, ID3/KLV metadata,
+    /// SCTE-35, DSM-CC, private sections, and any other/unrecognised
+    /// `stream_type`) — carried losslessly rather than dropped. `stream_type`
+    /// per ISO/IEC 13818-1 Table 2-34; `descriptors` is the raw PMT ES_info
+    /// descriptor loop so consumers can classify it (e.g. with dvb-si's
+    /// parsers); `carriage` records whether the samples are PES payloads or
+    /// whole PSI/private sections — see [`DataCarriage`].
     ///
     /// Carried in the IR for `{TS} → IR → {TS}` / inspection; there is no
-    /// ISOBMFF sample entry for an opaque PES stream in this crate (out of
+    /// ISOBMFF sample entry for an opaque stream in this crate (out of
     /// scope), so it does not participate in the fMP4 mux path (mirrors
-    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]).
+    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]) — the fMP4/CMAF mux
+    /// omits such tracks entirely rather than erroring (issue #576).
     Data {
         /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
         stream_type: u8,
         /// The raw PMT ES_info descriptor-loop bytes for this stream.
         descriptors: Vec<u8>,
+        /// Whether this elementary stream carries PES packets or PSI/private
+        /// sections (ISO/IEC 13818-1 §2.4.4.8) — determines how a demuxer
+        /// reassembles it and how a muxer re-emits it.
+        carriage: DataCarriage,
     },
 }
 
@@ -313,6 +355,15 @@ impl CodecConfig {
                 | CodecConfig::MpegAudio { .. }
                 | CodecConfig::Vorbis { .. }
         )
+    }
+
+    /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
+    /// PMT-carried elementary stream with no ISOBMFF sample entry in this
+    /// crate. The fMP4/CMAF mux path (init segment + every packager built on
+    /// it) omits such tracks entirely rather than erroring — mirrors how the
+    /// TS mux path, unlike this one, *can* carry them verbatim.
+    pub(crate) fn is_opaque_data(&self) -> bool {
+        matches!(self, CodecConfig::Data { .. })
     }
 }
 
@@ -432,6 +483,14 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     let mut trak_boxes = Vec::with_capacity(tracks.len());
     let mut trex = Vec::with_capacity(tracks.len());
     for t in tracks {
+        // Opaque data tracks have no ISOBMFF sample entry in this crate
+        // (issue #557/#576) — omit them from the fMP4/CMAF mux path entirely
+        // rather than erroring, so a Media containing e.g. a DVB
+        // subtitle/DSM-CC/SCTE-35 track still produces a valid init segment
+        // for its carriable (video/audio) tracks.
+        if t.config.is_opaque_data() {
+            continue;
+        }
         trak_boxes.push(build_trak(t)?);
         trex.push(TrackExtendsBox {
             version: 0,
