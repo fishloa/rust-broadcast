@@ -1,6 +1,6 @@
 [package]
 name    = "ule"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "ULE (Unidirectional Lightweight Encapsulation, RFC 4326 + RFC 5163) — IP over MPEG-2 TS: SNDU encapsulation, extension-header chains, and TS-packet de-fragmentation."
 license      = "MIT OR Apache-2.0"

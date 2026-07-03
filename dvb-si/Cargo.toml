@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-si"
-version      = "8.3.0"
+version      = "8.4.0"
 edition      = "2024"
 description  = "ETSI EN 300 468 DVB Service Information parser + builder. MPEG-2 PSI included."
 license      = "MIT OR Apache-2.0"
@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common  = { path = "../broadcast-common", version = "8", default-features = false }
-mpeg-ts     = { path = "../mpeg-ts",    version = "0.1", default-features = false }
+mpeg-ts     = { path = "../mpeg-ts",    version = "0.2", default-features = false }
 thiserror = { version = "2", default-features = false }
 num_enum = { version = "0.7", default-features = false }
 libm = "0.2"

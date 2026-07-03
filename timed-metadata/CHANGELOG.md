@@ -2,7 +2,9 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 
 ## [0.1.2] — 2026-07-01
 ### Added

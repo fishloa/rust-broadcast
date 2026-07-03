@@ -28,6 +28,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - New `Error::Io` / `Error::Tls` variants for the async adapter's failure
   surface.
 
+## [0.2.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
+
 ## [0.1.0] - 2026-07-03
 
 Initial release — the sans-IO RTSP 1.0 ([RFC 2326](https://www.rfc-editor.org/rfc/rfc2326))

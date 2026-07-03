@@ -1,6 +1,6 @@
 [package]
 name         = "mpeg-ts"
-version      = "0.1.2"
+version      = "0.2.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -22,7 +22,7 @@ std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 serde  = ["dep:serde"]
 
 [dev-dependencies]
-mp4-emsg = { path = "../mp4-emsg", version = "0.1", default-features = false }
+mp4-emsg = { path = "../mp4-emsg", version = "0.2", default-features = false }
 
 [[test]]
 name = "label_coverage"

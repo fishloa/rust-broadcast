@@ -1,6 +1,6 @@
 [package]
 name    = "smpte2038"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 description = "SMPTE ST 2038:2021 carriage of ANC (ST 291-1 ancillary) data packets in an MPEG-2 Transport Stream — anc_data_descriptor + ANC data PES packet."
 license      = "MIT OR Apache-2.0"

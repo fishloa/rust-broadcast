@@ -5,7 +5,9 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-07-03
+### Changed
+- Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 ### Added
 - **HEVC SPS VUI timing fields** (#546): `HevcSpsInfo` gains three new fields —
   `num_units_in_tick: Option<u32>`, `time_scale: Option<u32>`, and

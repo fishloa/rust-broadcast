@@ -16,7 +16,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-ule = { path = "../ule", version = "0.1", default-features = false }
+ule = { path = "../ule", version = "0.2", default-features = false }
 
 [features]
 default = ["std"]
