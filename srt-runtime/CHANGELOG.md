@@ -6,6 +6,44 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Sans-IO HSv5 Caller-Listener handshake state machine** (§4.3.1, issue
+  #598), driving the existing packet codecs from #565 — no raw handshake
+  bytes are hand-encoded:
+  - `caller::CallerHandshake` — `start()` builds the INDUCTION handshake
+    (Version 4, `Extension Field` `2` per §4.3.1.1's legacy UDT socket-type
+    quirk); `feed()` consumes the Listener's INDUCTION response (validating
+    Version 5 + the `0x4A17` SRT magic code), builds the CONCLUSION handshake
+    (captured SYN Cookie, HSREQ + optional Stream ID / Group Membership
+    extensions), then consumes the Listener's CONCLUSION response to reach
+    `CallerHandshakeState::Connected` with a `handshake_sm::NegotiatedParams`.
+  - `listener::ListenerHandshake` — the mirror: replies to INDUCTION with a
+    cookie (`handshake_sm::derive_cookie` is a ready-made, non-standardized
+    derivation helper — the draft specifies only the semantic inputs, not a
+    wire algorithm); validates the Caller's CONCLUSION (`Handshake Type`,
+    `Version`, the echoed SYN Cookie, and every extension block), replying
+    with HSRSP + optional Group on success or a Table 7 rejection packet
+    (`Handshake Type` = `1000 + code`) on failure.
+  - `handshake_sm::RejectionReason` — the full §4.3 Table 7 Handshake
+    Rejection Reason set, with `name()` + `Display` (issue #204 convention).
+  - `handshake_sm::HandshakeConfig` / `NegotiatedParams` / `HandshakeOutput` —
+    the negotiation input/output and driven-engine event type. Latency is
+    negotiated as the greater of both parties' TSBPD delay (§4.3.1.2); flags
+    as the bitwise AND of both parties' advertised `SRT Flags`.
+  - Timeouts/retransmits are modeled as caller-driven `tick()` calls — no
+    wall-clock read anywhere in the crate.
+  - `tests/handshake_round_trip.rs` — a full in-memory Caller<->Listener
+    handshake (no sockets, no bytes touching a network) reaching `Connected`
+    on both sides with cross-matching negotiated version/latency/socket
+    ids/Stream ID/Group; plus a forged-cookie rejection path asserting the
+    Table 7 wire encoding on the rejection packet actually sent.
+  - `tests/no_panic.rs` extended to feed arbitrary parsed handshake packets
+    into both engines at every state that accepts inbound packets.
+  - Explicit non-goals, unchanged from `0.1.0`: the Rendezvous handshake
+    (§4.3.2), ARQ/loss, TSBPD delivery, congestion control, AES key-wrap/
+    unwrap crypto, and a `tokio` socket adapter.
+
 ## [0.1.0] - 2026-07-04
 
 Initial scaffold — SRT ([`draft-sharabayko-srt-01`](https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-01))
