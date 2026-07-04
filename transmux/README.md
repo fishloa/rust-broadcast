@@ -101,7 +101,7 @@ round-trips through the IR.
 
 | Spoke | Type | API | Status |
 |---|---|---|---|
-| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped. Every track carries `TrackSpec::source_pid` + `es_info_descriptors` (verbatim PMT ES_info) for player track-selection/labeling | ✅ |
+| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped. `is_sync` marks IDR **and** open-GOP RAPs (recovery-point SEI / SPS-led I-frame) so `Segmenter` anchors broadcast H.264. Every track carries `TrackSpec::source_pid` + `es_info_descriptors` (verbatim PMT ES_info) for player track-selection/labeling | ✅ |
 | TS demux (streaming) | `feed`/`poll_event`/`finish` | `StreamingTsDemux` (event-driven incremental core; `TsDemux` is a batch wrapper over it) | ✅ |
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | Progressive MP4 demux | `Unpackage` | `ProgressiveDemux` (non-fragmented `moov` sample tables: `stts`/`ctts`/`stss`/`stsz`/`stsc`+`stco`/`co64` → IR; `sidx` v0/v1) | ✅ |

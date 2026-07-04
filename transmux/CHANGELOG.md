@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-04
+
 ### Fixed
 - **Open-GOP AVC access units now anchor segmentation, not just IDR** (#595).
   Broadcast H.264 is frequently open-GOP — no IDR (NAL type 5) at all; each
