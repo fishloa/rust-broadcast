@@ -37,6 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   populated from the SPS. (Verified against `fixtures/ts/h264/high*.ts`.)
 
 ### Added
+- **Streaming/incremental classic-HLS segmentation for live input** (#571):
+  `TsHlsPackager::package` needs the whole `Media` up front, which does not
+  fit an unbounded live feed. `StreamingTsHlsSegmenter` is the incremental
+  analogue, mirroring `Segmenter`'s CMAF push/flush model: `push(track_id,
+  sample)` buffers one coded sample at a time and returns a finished `.ts`
+  `TsSegment` whenever the anchor track crosses a keyframe past the target
+  duration (byte-identical to the corresponding `TsHlsPackager::package`
+  segment for the same input), `finish()` flushes the trailing partial
+  segment, and `playlist()` renders a rolling media playlist over a
+  configurable sliding window — advancing `#EXT-X-MEDIA-SEQUENCE` and
+  `#EXT-X-DISCONTINUITY-SEQUENCE` as older segments roll off, and omitting
+  `#EXT-X-ENDLIST` until `finish` has been called. `mark_discontinuity()`
+  marks the next cut as an `#EXT-X-DISCONTINUITY` (e.g. on an upstream
+  PID/PCR reset). The batch packager and the streaming segmenter now share
+  one anchor-selection/cut-decision/duration implementation so the two paths
+  cannot silently drift apart.
 - **Origin PID + PMT ES_info descriptors on every TS-demuxed track** (#582):
   a DVB player track-picker can now select/label tracks by PID and by
   ES_info descriptor (ISO-639 language `0x0A`, DVB subtitling `0x59`, E-AC-3

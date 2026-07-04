@@ -26,7 +26,8 @@
 //!   ([`SmoothPackager`]), RTMP ([`RtmpMux`]), low-latency HLS
 //!   ([`LlHlsSegmenter`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
-//!   streaming CMAF segmentation ([`Segmenter`]); IR timeline conditioning —
+//!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
+//!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —
 //!   PTS/DTS rebase, offset, 33-bit MPEG wrap-unroll, discontinuity-gap
 //!   insertion ([`rebase_to_zero`] / [`apply_offset`] / [`unroll_33bit_wraps`] /
 //!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor);
@@ -293,7 +294,7 @@ pub use timing::{
 };
 pub use trickplay::{append_iframe_track, derive_iframe_track};
 pub use ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
-pub use ts_hls::{TsHlsOutput, TsHlsPackager};
+pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::TsMux;
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
