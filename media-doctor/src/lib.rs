@@ -30,11 +30,17 @@
 
 extern crate alloc;
 
+mod container_codec;
 mod diagnostics;
 mod playlist;
 mod report;
 
+pub use container_codec::check_container_codec;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
+pub use diagnostics::codec_signalling::CodecSignallingCheck;
+pub use diagnostics::fps_cadence::FpsCadenceCheck;
+pub use diagnostics::interlace::InterlaceCheck;
+pub use diagnostics::param_sets::ParamSetsCheck;
 pub use diagnostics::pat_pmt_version::PatPmtVersionCheck;
 pub use diagnostics::pcr_check::PcrCheck;
 pub use diagnostics::pts_check::PtsCheck;
