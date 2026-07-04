@@ -137,7 +137,7 @@ standard.
 
 ### Spec grounding (the project's defining discipline)
 
-- ETSI PDFs are vendored in `specs/`; their syntax tables are machine-extracted into reviewable markdown in `dvb-si/docs/` by `tools/dvb-si-audit/` (deterministic pdfplumber pipeline — see its README to regenerate).
+- Vendored spec PDFs (ETSI/ISO/ITU-T/SCTE/ATSC/DVB) + non-redistributable test media live in the **private git submodule `private/`** (repo `rust-broadcast-private`) — PDFs at `private/specs/*.pdf`, fixtures at `private/fixtures/…`. Run `git submodule update --init private` to fetch (maintainers only; public/CI clones skip it and dependent tests skip cleanly). The public `specs/` dir holds only freely-redistributable text specs (RFCs, etc.) + manifests. Syntax tables are machine-extracted into reviewable markdown in `dvb-si/docs/` by `tools/dvb-si-audit/` (deterministic pdfplumber pipeline — see its README to regenerate).
 - **Every layout is cited**: module doc comments name the spec, section, and tag/table_id (e.g. `//! Network Name Descriptor — ETSI EN 300 468 §6.2.28 (tag 0x40)`). When implementing or changing a layout, read the corresponding `dvb-si/docs/` transcription first and cite it.
 - **No magic numbers** outside `#[cfg(test)]`: every hex literal is a named constant or enum.
 - Every field in a section's syntax appears in the parsed struct (spec fidelity).
