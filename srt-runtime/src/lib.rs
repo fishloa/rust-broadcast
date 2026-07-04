@@ -40,7 +40,7 @@
 //! them.
 //!
 //! **Explicit follow-ups, not attempted here:**
-//! - TSBPD delivery timing, congestion control (§4.4-§4.7, §5).
+//! - Congestion control (§5).
 //! - Wiring [`crypto`] into the handshake state machines / a per-connection
 //!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
 //!   *primitives* only.
@@ -75,6 +75,8 @@
 //!   NAK loss-list coding).
 //! - [`arq`] — [`arq::Sender`] / [`arq::Receiver`] (§4.8 ARQ, §4.10 RTT),
 //!   [`arq::seq`] (wrap-safe sequence arithmetic), [`arq::rtt::RttEstimator`].
+//! - [`tsbpd`] — [`tsbpd::TsbpdScheduler`]: sans-IO TSBPD delivery timing and
+//!   too-late packet drop (§4.5/§4.6).
 //! - [`handshake_sm`] — shared handshake types: [`handshake_sm::HandshakeConfig`],
 //!   [`handshake_sm::NegotiatedParams`], [`handshake_sm::HandshakeOutput`],
 //!   [`handshake_sm::RejectionReason`] (§4.3, Table 7).
@@ -101,6 +103,7 @@ pub mod handshake_sm;
 pub mod listener;
 pub mod packet;
 pub mod rendezvous;
+pub mod tsbpd;
 
 pub use caller::{CallerHandshake, CallerHandshakeState};
 pub use error::{Error, Result};

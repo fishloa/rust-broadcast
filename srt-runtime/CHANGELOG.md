@@ -8,6 +8,32 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO TSBPD delivery scheduler + too-late packet drop** (§4.5/§4.6/§4.7
+  of `draft-sharabayko-srt-01`; curated at `specs/rules/srt-tsbpd.md`, issue
+  #607):
+  - `tsbpd::TsbpdScheduler` — receiver-side delivery scheduler: `feed_data`
+    accepts a packet's sequence number and 32-bit timestamp, computes its
+    `PktTsbpdTime` per the rule-9 formula; `tick` releases packets in
+    sequence order when their play time has arrived.
+  - `PktTsbpdTime = TsbpdTimeBase + PKT_TIMESTAMP + TsbpdDelay + Drift` with
+    spec-cited constants: minimum `TsbpdDelay` 120 ms (rule 10),
+    `TLPKTDROP_THRESHOLD` default `1.25 × TsbpdDelay` (rule 19).
+  - Too-late drop on arrival: a packet whose `PktTsbpdTime` is already past
+    `(now - TLPKTDROP_THRESHOLD)` is dropped immediately.
+  - Too-late drop via release loop: buffered packets past the drop threshold
+    are dropped when the gap ahead of them is filled (rule 21 pseudocode).
+  - 32-bit timestamp wrapping handled via lossless u64 arithmetic — no
+    wrapping-period TsbpdTimeBase adjustment (rule 16 is separate, driven by
+    the handshake layer, not implemented here).
+  - Sans-IO (`core::time::Duration`) throughout — no wall-clock read in the
+    crate.
+  - `tests/tsbpd_delivery.rs` — 12 integration tests: ordered/out-of-order
+    delivery, withholding until play time, too-late drop on arrival, drop
+    chain after gap fill, timestamp wrap, disabled drop, gap blocking,
+    custom threshold, drift inclusion, gradual tick, duplicate suppression.
+  - Explicit non-goals: drift estimation (§4.7), fake-ACK on receiver skip
+    (rule 22), sender-side TLPKTDROP (rule 18-20), wrapping-period
+    TsbpdTimeBase adjustment (rule 16).
 - **Sans-IO ARQ (Automatic Repeat reQuest) reliability engine** (§4.8
   Acknowledgement and Lost Packet Handling, §4.8.1 ACKs/ACKACKs, §4.8.2 NAKs,
   §4.10 Round-Trip Time Estimation; issue #606), driving the existing
