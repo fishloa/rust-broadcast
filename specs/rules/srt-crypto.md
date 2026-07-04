@@ -1,0 +1,388 @@
+# SRT (draft-sharabayko-srt-01) — encryption rules
+
+Curated crypto rules for `srt-runtime`'s AES-CTR encrypt/decrypt path. Source:
+`specs/ietf_draft_sharabayko_srt_01.txt` (line cites below), **§6 "Encryption"**
+(L3701-3982: §6.1 Overview L3708, §6.1.5 Key Material Exchange L3788, §6.2
+Encryption Process L3876, §6.3 Decryption Process L3928), plus the directly
+cited external-algorithm references (RFC 3394, RFC 8018, RFC 2104, FIPS 197,
+NIST SP 800-38A) and the two Security Considerations bullets on key hygiene
+(§8, L4165-4174).
+
+This note is the **crypto layer only**. It assumes the wire layout of the Key
+Material message (`KEKI`/`Cipher`/`SE`/`SLen`/`KLen`/`Salt`/`ICV`/`xSEK`/
+`oSEK` fields, and the wrap-length formula) as already curated in
+[`srt-rules.md`](srt-rules.md) §"Key Material message — §3.2.2" — not
+duplicated here, only referenced. Likewise the data-packet `KK` (Key-based
+Encryption Flag) field is defined in `srt-rules.md` §"Data packet — §3.1".
+
+**No test vectors or worked byte examples appear anywhere in §6** — the draft
+is descriptive/formulaic only (no sample passphrase, salt, SEK, or ciphertext
+bytes to reproduce). This is noted explicitly rather than fabricated.
+
+## §6.1 Overview
+
+### Cipher, mode, scope — §6.1, §6.1.1 (L3710-3726)
+
+- Cipher: **AES** `[AES]` (FIPS 197) in **counter mode (AES-CTR)**
+  `[SP800-38A]` (L3710-3712). `[AES]` and `[SP800-38A]` are external
+  references the draft does not restate — see "External references" below.
+- Chosen because AES-CTR permits **random-access decryption** (no need for
+  stream start) and **tolerates packet loss** (L3712-3716).
+- **Encryption scope** (L3720-3726): SRT encrypts **only the payload of SRT
+  data packets** (§3.1); **the header is left unencrypted** — specifically so
+  the unencrypted **Packet Sequence Number** field can keep the sender/
+  receiver cipher counters in sync. **No padding** is required (CTR is a
+  stream cipher).
+
+### AES counter construction — §6.1.2 (L3728-3746)
+
+> "The counter for AES-CTR is the size of the cipher's block, i.e. 128
+> bits." (L3730-3731)
+
+The 128-bit sequence the counter is derived from, verbatim (L3731-3739):
+
+- **a block counter in the least significant 16 bits** which counts the
+  blocks in a packet (L3733-3734);
+- **a packet index, based on the packet sequence number in the SRT header,
+  in the next 32 bits** (L3736-3737);
+- **eighty zeroed bits** (L3739) — i.e. the remaining 128 − 16 − 32 = 80
+  bits, most-significant.
+
+Bit layout (MSB→LSB), 128 bits total:
+
+| Bits | Width | Content |
+|---|---|---|
+| `[127:48]` | 80 | zeroed |
+| `[47:16]` | 32 | packet index (from Packet Sequence Number) |
+| `[15:0]` | 16 | block counter (within-packet AES-block index) |
+
+Then (L3741-3746), verbatim:
+
+> "The upper 112 bits of this sequence are XORed with an Initialization
+> Vector (IV) to produce a unique counter for each crypto block. The IV is
+> derived from the Salt provided in the Keying Material (Section 3.2.2):
+>
+> IV = MSB(112, Salt): Most significant 112 bits of the salt."
+
+So §6.1.2's own IV definition is: **IV = the most-significant 112 bits of the
+128-bit Salt field** (Salt itself is defined as 128 bits — see §6.2.1 below —
+so this is literally the top 112 of its 128 bits, discarding the low 16).
+This 112-bit IV is XORed against the upper 112 bits of the {80-zero |
+32-bit packet index | (block counter left untouched in the low 16)} sequence
+to form the final 128-bit CTR counter for each AES block.
+
+### ⚠ Conflicting IV formula in §6.2.2 / §6.3.2 (L3915, L3971)
+
+The encryption- and decryption-process sections restate IV with a
+**textually different formula**, verbatim:
+
+> "IV = (MSB(112, Salt) << 2) XOR (PktSeqNo)" (L3915, identically repeated
+> at L3971)
+
+where "PktSeqNo is the value of the Packet Sequence Number field of the SRT
+data packet." (L3925, L3981/3982 — same sentence, once per occurrence).
+
+This is **not algebraically the same construction** as §6.1.2's plain
+`IV = MSB(112, Salt)`: it left-shifts the 112-bit salt-derived value by 2
+bits and XORs the *raw* Packet Sequence Number field directly into IV,
+rather than (as §6.1.2 describes) building a separate 128-bit
+{zeros|packet-index|block-counter} word and XORing the two 112-bit
+quantities together at the counter stage. **Both formulas are transcribed
+verbatim above/below because the draft itself contains both, unreconciled**
+— this is exactly the ambiguity the brief warned implementations get wrong.
+`srt-runtime` MUST pick one interpretation deliberately (cross-checked
+against the reference implementation `[SRTSRC]`, out of scope for this spec
+note) and document which formula it implements; do not silently average or
+guess.
+
+### Stream Encrypting Key (SEK) — §6.1.3 (L3757-3764)
+
+- "The key used for AES-CTR encryption is called the 'Stream Encrypting Key'
+  (SEK)." (L3759-3760)
+- **Used for up to 2^25 packets** with further rekeying (L3760).
+- Generated by the sender via a **PRNG** (pseudo-random number generator)
+  (L3761).
+- Transmitted within the stream **wrapped with the KEK** using AES key wrap
+  (L3762-3764) — see §6.1.5.
+- Connection-oriented rationale: no need to periodically retransmit the SEK
+  since no new party can join an in-progress stream (L3766-3768); keying
+  material travels in the handshake, and again briefly during rekeying
+  (L3768-3770).
+
+### Key Encrypting Key (KEK) — §6.1.4 (L3772-3786)
+
+- KEK is derived from a **secret (passphrase) shared** between sender and
+  receiver (L3774-3775); it gates access to the SEK, which gates access to
+  the payload (L3775-3777).
+- **"The KEK has to be at least as long as the SEK."** (L3777-3778)
+- KEK generation function: **PBKDF2** `[RFC8018]` (password-based key
+  derivation), using: the passphrase, **2048 iterations**, **HMAC-SHA1**
+  `[RFC2104]` as the keyed-hash, and a key-length value (KLen) (L3780-3783).
+  `[RFC8018]` and `[RFC2104]` are external references — see below.
+
+### Key Material Exchange — §6.1.5 (L3788-3825)
+
+- The KEK is used to produce an **AES key-wrap `[RFC3394]`** of the SEK,
+  carried in a **Key Material (KM) message** sent by the connection
+  **initiator** (caller, or rendezvous initiator, §4.3) to the **responder**
+  (listener) (L3790-3793).
+- The KM message carries: **key length**, the **salt** (a PBKDF2 argument),
+  the **protocol in use** (e.g. AES-256), and the **AES counter** state
+  (which changes on rekey, §6.1.6) (L3794-3797).
+- The responder unwraps to recover the SEK; the wrap's known padding
+  template is how the responder confirms it holds the correct KEK
+  (L3799-3802). The SEK itself is random and cannot be predicted
+  (L3802-3803).
+- **KLen is decided by the initiator**; the responder learns it from the KM
+  message, not independently (L3813-3816).
+- The responder **echoes the same KM message back** to prove it derived the
+  same SEK; if it does not, it lacks the SEK and **all subsequently received
+  encrypted packets from the initiator are undecryptable and dropped**
+  (L3818-3823). **All data packets sent by a responder that never confirmed
+  a KM are unencrypted** (L3824-3825).
+
+### KM Refresh — §6.1.6 (L3827-3874)
+
+- The SEK is regenerated ("for cryptographic reasons") after a
+  pre-determined packet count; refresh period is implementation-defined
+  (L3829-3831).
+- The receiver identifies which SEK (odd/even) encrypted a given packet via
+  the data-packet **`KK` field** (§3.1) (L3831-3833; cross-ref
+  `srt-rules.md`).
+- Two governing variables (L3835-3843):
+  - **KM Refresh Period** — packet count before switching to the new SEK.
+  - **KM Pre-Announcement Period** — how many packets *before* switchover
+    the new key is announced; the same count is used *after* switchover to
+    decide when to decommission the old key.
+- **Recommended values**, verbatim (L3845-3849): **KM Refresh Period = 2^25
+  packets**; **KM Pre-Announcement Period = 4000 packets** — i.e. the new
+  key is generated/wrapped/sent at **`2^25 − 4000`** packets, and the old key
+  is decommissioned at **`2^25 + 4000`** packets.
+- Odd/even alternation mechanics (L3851-3860): sender keeps transmitting
+  with the current key (say, odd, key #1) while the receiver receives,
+  decrypts and unwraps the new key (even, key #2) and confirms
+  comprehension; only once the sender reaches the `2^25`th packet on the odd
+  key does it start sending with the even key — transparently, packet to
+  packet.
+- **Both keys are valid in parallel for `2 × Pre-Announcement Period`**
+  (e.g. 4000 packets before the switch + 4000 after) specifically to
+  tolerate **retransmitted packets** arriving late under the old key
+  (L3869-3874); each packet's `KK` field tells the receiver which key to
+  apply regardless of arrival order.
+
+## §6.2 Encryption Process
+
+### §6.2.1 Generating the Stream Encrypting Key (L3878-3904)
+
+Verbatim key-generation formulas (sender side):
+
+```
+SEK  = PRNG(KLen)
+Salt = PRNG(128)
+KEK  = PBKDF2(passphrase, LSB(64,Salt), Iter, KLen)
+```
+(L3883-3885)
+
+where, verbatim (L3889-3900):
+
+- PBKDF2 is the **PKCS#5 Password Based Key Derivation Function** `[RFC8018]`;
+- passphrase is the pre-shared passphrase;
+- Salt is a field of the KM message;
+- `LSB(n, v)` is the function taking the **n least-significant bits** of `v`;
+- **`Iter = 2048`** — number of PBKDF2 iterations (L3898);
+- KLen is a field of the KM message.
+
+Key wrap, verbatim (L3902-3904):
+
+```
+Wrap = AESkw(KEK, SEK)
+```
+
+where `AESkw(KEK, SEK)` is "the key wrapping function `[RFC3394]`" — AES Key
+Wrap per RFC 3394 (external algorithm, not restated in the draft; see below).
+
+So concretely: **Salt is 128 bits** (`PRNG(128)`, L3884); PBKDF2's salt
+argument is only the **low 64 bits of that 128-bit Salt** (`LSB(64,Salt)`,
+L3885/L3941) — the high 64 bits of Salt are *not* fed to PBKDF2 (they instead
+feed the IV construction above, per §6.1.2/§6.2.2).
+
+### §6.2.2 Encrypting the Payload (L3906-3926)
+
+Verbatim:
+
+```
+EncryptedPayload = AES_CTR_Encrypt(SEK, IV, UnencryptedPayload)
+```
+(L3911)
+
+```
+IV = (MSB(112, Salt) << 2) XOR (PktSeqNo)
+```
+(L3915 — see the "conflicting IV formula" callout above)
+
+"PktSeqNo is the value of the Packet Sequence Number field of the SRT data
+packet." (L3925)
+
+## §6.3 Decryption Process
+
+### §6.3.1 Restoring the Stream Encrypting Key (L3930-3960)
+
+- The receiver **MUST know the passphrase** used by the sender; everything
+  else needed is extracted from the Keying Material message (L3932-3935).
+- The KM message carries the **AES-wrapped `[RFC3394]` SEK** (L3937-3938).
+
+Verbatim KEK re-derivation (receiver side — identical formula to §6.2.1):
+
+```
+KEK = PBKDF2(passphrase, LSB(64,Salt), Iter, KLen)
+```
+(L3941), with the same `PBKDF2`/passphrase/`Salt`/`LSB`/`Iter=2048`/`KLen`
+definitions repeated verbatim at L3945-3956 (identical wording to
+L3889-3900).
+
+Verbatim unwrap:
+
+```
+SEK = AESkuw(KEK, Wrap)
+```
+(L3958)
+
+"where `AESkuw(KEK, Wrap)` is the key unwrapping function." (L3960) — the
+inverse of RFC 3394 AES Key Wrap; the draft names it but does not restate
+the algorithm (see below).
+
+### §6.3.2 Decrypting the Payload (L3962-3982)
+
+Verbatim — same shape as encryption, `AES_CTR_Encrypt` reused for decryption
+(CTR mode is self-inverse: XOR-with-keystream both ways):
+
+```
+DecryptedPayload = AES_CTR_Encrypt(SEK, IV, EncryptedPayload)
+```
+(L3967)
+
+```
+IV = (MSB(112, Salt) << 2) XOR (PktSeqNo)
+```
+(L3971 — identical formula and caveat as §6.2.2/L3915)
+
+"PktSeqNo is the value of the Packet Sequence Number field of the SRT data
+packet." (L3981-3982)
+
+## §8 Security Considerations — key-hygiene bullets that constrain the crypto path (L4165-4174)
+
+- **"The SEK must be changed at an appropriate refresh interval to avoid the
+  risk associated with the use of security keys over a long period of
+  time."** (L4168-4170) — reinforces §6.1.6's mandatory-in-practice KM
+  refresh.
+- **"The shared secret for KEK generation must be carefully configured by a
+  security officer responsible for security policies, enforcing encryption,
+  and limiting key size selection."** (L4172-4174) — passphrase provisioning
+  and KLen selection are operational/policy concerns, not wire-format
+  concerns; `srt-runtime` has no spec-mandated default passphrase or KLen.
+
+## External references the draft defers to (not restated — do not fabricate)
+
+The draft names these but gives no algorithmic detail beyond what's quoted
+above; treat their internals as out of scope for this crate's spec docs and
+implement against the referenced standard directly:
+
+| Reference | What it's cited for | Citing line(s) |
+|---|---|---|
+| `[AES]` = FIPS 197 (NIST, Nov 2001) | AES block cipher itself | L3710, L4239-4242 (bibliography) |
+| `[SP800-38A]` (Dworkin, NIST, Dec 2001) | AES-CTR mode definition | L3710, L1096 (Key Material `Cipher=2`), L4343-4345 (bibliography) |
+| `[RFC3394]` (Schaad & Housley, Sep 2002) | AES Key Wrap algorithm (`AESkw`/`AESkuw`) | L3790, L3902-3904, L3937, L3958, L4298-4300 (bibliography) |
+| `[RFC8018]` (PKCS#5 v2.1, Jan 2017) | PBKDF2 password-based key derivation | L3781, L3889, L3945, L4317-4320 (bibliography) |
+| `[RFC2104]` (HMAC, Feb 1997) | HMAC-SHA1 as PBKDF2's keyed-hash | L3782, L4288-4291 (bibliography) |
+
+No test vectors for any of the above are reproduced in this draft's §6, so
+none are transcribed here — see the "No test vectors" note at the top.
+
+## Sans-IO encrypt path — ordered operations
+
+Per-connection / per-rekey (initiator side):
+
+1. Generate `Salt = PRNG(128)` (L3884).
+2. Generate `SEK = PRNG(KLen)` (L3883), `KLen` chosen by the initiator
+   (L3813-3816; wire encoding per `srt-rules.md`'s `KLen/4` field, values
+   `{4,6,8}` → 16/24/32 bytes, MUST match the handshake Encryption Field).
+3. Derive `KEK = PBKDF2(passphrase, LSB(64,Salt), Iter=2048, KLen)`
+   (L3885/L3898).
+4. Wrap: `Wrap = AESkw(KEK, SEK)` (RFC 3394) (L3902-3904).
+5. Populate and send the Key Material message (KEKI, Salt, wrapped SEK,
+   `Cipher`, `SE`, `KK` — wire layout in `srt-rules.md` §3.2.2) as a
+   handshake extension (`SRT_CMD_KMREQ`) or, on rekey, a User-Defined
+   control packet.
+6. Wait for/verify the responder's echoed KM confirmation (L3818-3823)
+   before relying on the responder decrypting correctly (does not block
+   sending — the draft only says undecrypted packets get dropped
+   responder-side if confirmation never arrives).
+
+Per data packet (both initial send and after rekey):
+
+7. Take the packet's Packet Sequence Number (`PktSeqNo`, 31-bit field per
+   §3.1) as it will appear in the unencrypted header.
+8. Compute the counter/IV per the (draft-internal, see caveat above)
+   formula — either the §6.1.2 construction (128-bit
+   `{80×0 | 32-bit packet index | 16-bit block counter}` XORed at its upper
+   112 bits with `IV = MSB(112,Salt)`) or the §6.2.2/§6.3.2 restated
+   `IV = (MSB(112,Salt) << 2) XOR (PktSeqNo)` — `srt-runtime` must pick and
+   document one, verified against real captures/reference implementation.
+9. Encrypt: `EncryptedPayload = AES_CTR_Encrypt(SEK, IV, UnencryptedPayload)`
+   (L3911), incrementing the low-16-bit block counter per AES block within
+   the packet's payload (L3733-3734).
+10. Set the data packet's `KK` flag to indicate odd/even key currently in
+    use (L3831-3833).
+11. On reaching `2^25 − 4000` packets under the active key: generate the
+    next SEK (repeat steps 1-5 for the *other* parity), start announcing it
+    while continuing to encrypt with the current key (L3845-3849,
+    L3851-3860).
+12. On reaching `2^25` packets under the active key: switch active key to
+    the newly-announced one; keep the old key alive until
+    `2^25 + 4000` packets for late/retransmitted traffic, then decommission
+    it (L3848-3849, L3859-3860, L3869-3874).
+
+## Sans-IO decrypt path — ordered operations
+
+Per received Key Material message (responder or rekey receipt):
+
+1. Require the pre-shared `passphrase` be already known locally
+   (L3932-3934) — no wire mechanism conveys it.
+2. Read `Salt` and `KLen` from the KM message.
+3. Derive `KEK = PBKDF2(passphrase, LSB(64,Salt), Iter=2048, KLen)`
+   (L3941/L3954 — identical formula to the encrypt path).
+4. Unwrap: `SEK = AESkuw(KEK, Wrap)` (inverse RFC 3394 key wrap) (L3958).
+   A wrap-integrity failure (bad ICV / wrong KEK) means "it does not have
+   the SEK" (L3820-3823) — treat as a structured error, not a panic.
+5. Store the recovered SEK keyed by its parity (odd/even, from the KM
+   message's `KK` field per `srt-rules.md` §3.2.2), retaining **both**
+   parities simultaneously during the `±4000`-packet transition window
+   (L3869-3874).
+6. Echo the KM message back to the initiator to confirm successful
+   unwrap (L3818-3820) (transport-level responsibility, not the crypto
+   primitive itself).
+
+Per received data packet:
+
+7. Read the packet's `KK` field (§3.1) to select which stored SEK (odd or
+   even) applies (L3831-3833).
+8. Take `PktSeqNo` from the unencrypted header.
+9. Compute IV/counter with the **same formula chosen for the encrypt path**
+   (step 8 above) — sender and receiver must agree on one interpretation.
+10. Decrypt: `DecryptedPayload = AES_CTR_Encrypt(SEK, IV, EncryptedPayload)`
+    (L3967) — CTR-mode decrypt reuses the encrypt primitive.
+11. If the referenced SEK is unknown/not yet unwrapped (e.g. new key
+    announced but not yet confirmed, or old key already decommissioned),
+    the packet cannot be decrypted and per L3821-3824 must be **dropped**,
+    not surfaced as corrupt plaintext.
+
+## Fidelity notes
+
+- Every formula and numeric constant in this file is quoted or paraphrased
+  directly from the source lines cited inline; none are inferred or
+  invented. The one place two *different* verbatim formulas exist for the
+  same named quantity (IV, §6.1.2 vs §6.2.2/§6.3.2) is flagged rather than
+  silently reconciled — see the "⚠ Conflicting IV formula" section above.
+- This draft (§6) contains **no numeric test vectors** — unlike
+  `nal-avcc-hvcc-rules.md` or `mp4-esds-rules.md` in this same directory,
+  there is nothing byte-exact to reproduce here.
