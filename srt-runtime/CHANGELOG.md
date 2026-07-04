@@ -8,6 +8,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO TSBPD delivery scheduler + too-late packet drop** (§4.5/§4.6/§4.7
+  of `draft-sharabayko-srt-01`; curated at `specs/rules/srt-tsbpd.md`, issue
+  #607):
+  - `tsbpd::TsbpdScheduler` — receiver-side delivery scheduler: `feed_data`
+    accepts a packet's sequence number and 32-bit timestamp, computes its
+    `PktTsbpdTime` per the rule-9 formula; `tick` releases packets in
+    sequence order when their play time has arrived.
+  - `PktTsbpdTime = TsbpdTimeBase + PKT_TIMESTAMP + TsbpdDelay + Drift` with
+    spec-cited constants: minimum `TsbpdDelay` 120 ms (rule 10),
+    `TLPKTDROP_THRESHOLD` default `1.25 × TsbpdDelay` (rule 19).
+  - Too-late drop on arrival: a packet whose `PktTsbpdTime` is already past
+    `(now - TLPKTDROP_THRESHOLD)` is dropped immediately.
+  - Too-late drop via release loop: buffered packets past the drop threshold
+    are dropped when the gap ahead of them is filled (rule 21 pseudocode).
+  - 32-bit timestamp wrapping handled via lossless u64 arithmetic — no
+    wrapping-period TsbpdTimeBase adjustment (rule 16 is separate, driven by
+    the handshake layer, not implemented here).
+  - Sans-IO (`core::time::Duration`) throughout — no wall-clock read in the
+    crate.
+  - `tests/tsbpd_delivery.rs` — 12 integration tests: ordered/out-of-order
+    delivery, withholding until play time, too-late drop on arrival, drop
+    chain after gap fill, timestamp wrap, disabled drop, gap blocking,
+    custom threshold, drift inclusion, gradual tick, duplicate suppression.
+  - Explicit non-goals: drift estimation (§4.7), fake-ACK on receiver skip
+    (rule 22), sender-side TLPKTDROP (rule 18-20), wrapping-period
+    TsbpdTimeBase adjustment (rule 16).
+- **Sans-IO LiveCC packet pacing controller** (§5.1 SRT Packet Pacing and Live
+  Congestion Control; issue #610, curated at `specs/rules/srt-livecc.md`):
+  - `livecc::LiveCC` — sender-side pacing state: computes the inter-packet send
+    period (`PKT_SND_PERIOD`) from the running EWMA average payload size
+    (`AvgPayloadSize`) and the configured maximum bandwidth (`MAX_BW`), per the
+    `§5.1.2` formulas.
+  - `livecc::MaxBwConfig` — three bandwidth-configuration modes (`MAXBW_SET`,
+    `INPUTBW_SET`, `INPUTBW_ESTIMATED`) plus `Infinite` (unbounded), per
+    `§5.1.1`.
+  - `on_data_packet` — updates the `AvgPayloadSize` EWMA (`7/8 * old + 1/8 *
+    packet`, L3219).
+  - `on_ack_received` — computes `PKT_SND_PERIOD = PktSize * 1000000 / MAX_BW`
+    (L3234), returning `Duration::ZERO` for infinite bandwidth.
+  - Initial `AvgPayloadSize` capped at 1456 bytes (L3222-3223); default
+    `MAXBW_SET` at 1 Gbps (L3122-3123).
+  - `tests/livecc_pacing.rs` — integration tests that assert hand-computed
+    `PKT_SND_PERIOD` constants for known payload and bandwidth values; EWMA
+    step-by-step convergence; all three bandwidth modes; runtime mode switching.
 - **Sans-IO ARQ (Automatic Repeat reQuest) reliability engine** (§4.8
   Acknowledgement and Lost Packet Handling, §4.8.1 ACKs/ACKACKs, §4.8.2 NAKs,
   §4.10 Round-Trip Time Estimation; issue #606), driving the existing

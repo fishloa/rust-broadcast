@@ -8,19 +8,32 @@
 //! # Scope of this release
 //!
 //! This release adds a sans-IO **ARQ (Automatic Repeat reQuest) reliability
-//! engine** (§4.8/§4.8.1/§4.8.2/§4.10), a **Rendezvous handshake state
-//! machine** (§4.3.2, curated at `specs/rules/srt-rendezvous.md`), and the
-//! **HSv5 Caller-Listener handshake state machine** (§4.3.1) on top of the
-//! packet codecs (§3, Packet Structure — the 16-byte SRT header, the data
-//! packet §3.1, and every control packet type in §3.2, including Handshake
-//! with its extension messages: Handshake Extension §3.2.1.1, Key Material
-//! §3.2.1.2/§3.2.2, Stream ID §3.2.1.3, Group Membership §3.2.1.4).
+//! engine** (§4.8/§4.8.1/§4.8.2/§4.10), a **TSBPD delivery scheduler**
+//! (§4.5/§4.6/§4.7, curated at `specs/rules/srt-tsbpd.md`), a **LiveCC packet
+//! pacing controller** (§5.1, curated at `specs/rules/srt-livecc.md`), a
+//! **Rendezvous handshake state machine** (§4.3.2, curated at
+//! `specs/rules/srt-rendezvous.md`), and the **HSv5 Caller-Listener handshake
+//! state machine** (§4.3.1) on top of the packet codecs (§3, Packet Structure
+//! — the 16-byte SRT header, the data packet §3.1, and every control packet
+//! type in §3.2, including Handshake with its extension messages: Handshake
+//! Extension §3.2.1.1, Key Material §3.2.1.2/§3.2.2, Stream ID §3.2.1.3, Group
+//! Membership §3.2.1.4).
 //!
 //! - [`arq::Sender`] / [`arq::Receiver`] drive the loss-detection, ACK/NAK/
 //!   ACKACK exchange, and RTT/RTTVar estimation (§4.8, §4.10) over the
 //!   existing [`packet`] codecs — see the `arq` module doc for the full rule
 //!   mapping and its explicit non-goals (TLPKTDROP, RTO/congestion control,
 //!   send-queue overflow sizing).
+//! - [`tsbpd::TsbpdScheduler`] drives receiver-side delivery timing (§4.5,
+//!   rule 9's `PktTsbpdTime` formula) and too-late packet drop (§4.6,
+//!   `TLPKTDROP_THRESHOLD`) — see the `tsbpd` module doc for the full rule
+//!   mapping and its explicit non-goals (drift estimation, sender-side
+//!   TLPKTDROP, wrapping-period `TsbpdTimeBase` adjustment).
+//! - [`livecc::LiveCC`] drives sender-side packet pacing (§5.1): the
+//!   `PKT_SND_PERIOD` inter-packet send interval computed from a running EWMA
+//!   of `AvgPayloadSize` and the configured `MAX_BW` (§5.1.1's `MAXBW_SET` /
+//!   `INPUTBW_SET` / `INPUTBW_ESTIMATED` modes) — see the `livecc` module doc
+//!   for the full formula mapping.
 //! - [`caller::CallerHandshake`] / [`listener::ListenerHandshake`] drive the
 //!   induction → conclusion exchange (§4.3.1.1/§4.3.1.2): building the wire
 //!   packets via the existing [`packet`] codecs, validating the peer's
@@ -40,7 +53,8 @@
 //! them.
 //!
 //! **Explicit follow-ups, not attempted here:**
-//! - TSBPD delivery timing, congestion control (§4.4-§4.7, §5).
+//! - Congestion control beyond LiveCC packet pacing (§5.2's window-based
+//!   congestion control and the rest of §5).
 //! - Wiring [`crypto`] into the handshake state machines / a per-connection
 //!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
 //!   *primitives* only.
@@ -75,6 +89,10 @@
 //!   NAK loss-list coding).
 //! - [`arq`] — [`arq::Sender`] / [`arq::Receiver`] (§4.8 ARQ, §4.10 RTT),
 //!   [`arq::seq`] (wrap-safe sequence arithmetic), [`arq::rtt::RttEstimator`].
+//! - [`tsbpd`] — [`tsbpd::TsbpdScheduler`]: sans-IO TSBPD delivery timing and
+//!   too-late packet drop (§4.5/§4.6).
+//! - [`livecc`] — [`livecc::LiveCC`] / [`livecc::MaxBwConfig`]: sans-IO LiveCC
+//!   packet pacing (§5.1).
 //! - [`handshake_sm`] — shared handshake types: [`handshake_sm::HandshakeConfig`],
 //!   [`handshake_sm::NegotiatedParams`], [`handshake_sm::HandshakeOutput`],
 //!   [`handshake_sm::RejectionReason`] (§4.3, Table 7).
@@ -99,8 +117,10 @@ pub mod crypto;
 pub mod error;
 pub mod handshake_sm;
 pub mod listener;
+pub mod livecc;
 pub mod packet;
 pub mod rendezvous;
+pub mod tsbpd;
 
 pub use caller::{CallerHandshake, CallerHandshakeState};
 pub use error::{Error, Result};
