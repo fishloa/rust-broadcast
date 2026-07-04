@@ -68,7 +68,7 @@ round-trips through the IR.
 | MPEG-H 3D | `mha1`/`mhm1` | `mhaC` (record decode) | — | ✅ |
 | AV1 | `av01` | `av1C` | `av01.…` | ✅ |
 | Opus / FLAC / VP9 | `Opus`/`fLaC`/`vp09` | `dOps`/`dfLa`/`vpcC` | — | ✅ |
-| DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` | — | ✅ |
+| DTS | `dtsc`/`dtsh`/`dtsl`/`dtse` | `ddts` + core-substream frame-header parse (TS) | `dtsc` | ✅ |
 | **H.266 / VVC** | `vvc1`/`vvi1` | `vvcC` + **SPS/profile_tier_level decode** | `vvc1.…` | ✅ |
 | **VP8** | (WebM `V_VP8`) | keyframe-header dims (RFC 6386) | — | ✅ |
 | **Vorbis** | (WebM `A_VORBIS`) | `CodecPrivate` id-header decode | — | ✅ |
@@ -100,7 +100,8 @@ round-trips through the IR.
 
 | Spoke | Type | API | Status |
 |---|---|---|---|
-| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3) | ✅ |
+| TS demux | `Unpackage` | `TsDemux` (PAT→PMT, PES, in-band config: H.264 `avcC` · H.265 `hvcC` · MPEG-2 video `esds` · AAC/MPEG audio `esds` · AC-3/E-AC-3 · DTS core `ddts`); every other `stream_type` carried as an opaque `Data` track (PES or reassembled sections) — nothing dropped | ✅ |
+| TS demux (streaming) | `feed`/`poll_event`/`finish` | `StreamingTsDemux` (event-driven incremental core; `TsDemux` is a batch wrapper over it) | ✅ |
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
 | WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |

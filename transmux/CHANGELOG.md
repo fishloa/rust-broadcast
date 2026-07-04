@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-07-04
+
+### Breaking
+- **New public API surface is additive but two changes are source-breaking**
+  (0.x minor bump per Cargo SemVer): `CodecConfig::Data` gained a `carriage:
+  DataCarriage` field (external construct/match sites must add it), and `Sample`
+  gained a `source_timing: Option<SourceTiming>` field (external struct literals
+  must set it — use the `Sample::from_*` builders + `with_source_timing`). The
+  new `DataCarriage` enum is `#[non_exhaustive]`.
+
 ### Added
 - **Lossless carriage of ANY MPEG-2 TS elementary stream** (#576): TS→IR→TS
   is no longer limited to a hardcoded stream_type allowlist.
