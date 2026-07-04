@@ -8,6 +8,47 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO ARQ (Automatic Repeat reQuest) reliability engine** (§4.8
+  Acknowledgement and Lost Packet Handling, §4.8.1 ACKs/ACKACKs, §4.8.2 NAKs,
+  §4.10 Round-Trip Time Estimation; issue #606), driving the existing
+  ACK/NAK/ACKACK/Data packet codecs — no wire format is re-encoded:
+  - `arq::Sender` — buffers every sent data packet (rule 1); `on_nak`
+    records a NAK's loss-list entries for prioritized retransmission (rules
+    5, 15, 16, 18); `tick` drains the pending retransmit queue, setting the
+    `R` flag and incrementing the resend counter; `on_ack` frees every
+    packet acknowledged by the ACK's `n + 1` cumulative semantics (rule 8)
+    and, for a Full ACK only, updates RTT/RTTVar from the ACK's carried
+    value (rule 33) and returns the ACKACK reply (rules 3, 9).
+  - `arq::Receiver` — tracks arrivals and a cumulative ack point;
+    `feed_data` detects newly-opened sequence gaps and returns an immediate
+    NAK (rules 4, 14) plus the sequence numbers that became
+    in-order-deliverable as a result (`FeedOutcome::delivered`); `tick`
+    emits a Full ACK every 10 ms (rule 11), a Light ACK once 64 packets have
+    arrived since the last ACK (rule 12), and a periodic NAK once
+    `NAKInterval = max((RTT + 4*RTTVar)/2, 20ms)` has elapsed and the loss
+    list is non-empty (rules 21-22) — never a NAK when nothing is lost;
+    `on_ackack` matches an ACKACK against its outstanding Full ACK and
+    updates RTT/RTTVar from the measured round trip (rules 26-30).
+  - `arq::rtt::RttEstimator` — the rule 29-31 RTT/RTTVar EWMA (`RTT = 7/8 *
+    RTT + 1/8 * rtt`, `RTTVar = 3/4 * RTTVar + 1/4 * abs(RTT - rtt)`,
+    microseconds, initial 100 ms / 50 ms), shared by both roles.
+  - `arq::seq` — wrap-safe 31-bit sequence-number arithmetic (circular
+    comparison/increment, comparable to RFC 1982 serial number arithmetic;
+    the draft does not itself specify a comparison algorithm, so this is
+    implementation-defined, documented as such).
+  - Timing is entirely caller-driven (`now: core::time::Duration` passed to
+    every `tick`/`feed_data`/`on_data`/`on_ack`/`on_ackack` call) — no
+    wall-clock read anywhere in the crate.
+  - `tests/arq_recovery.rs` — an in-memory `Sender`<->`Receiver` wiring (no
+    sockets) that drops two packets in transit, asserts the receiver's NAK
+    triggers sender retransmission, all packets are ultimately delivered in
+    order, the ACK/ACKACK exchange advances the sender's acknowledged
+    sequence and frees its send buffer, RTT converges toward an injected
+    30 ms round trip on both sides, and a zero-loss run never emits a
+    spurious NAK (from either the immediate or periodic path).
+  - Explicit non-goals, unchanged from prior releases: TLPKTDROP fake-ACK
+    skip handling, RTO-based/congestion-control retransmission, send-queue
+    overflow sizing, TSBPD delivery timing.
 - **Sans-IO HSv5 Caller-Listener handshake state machine** (§4.3.1, issue
   #598), driving the existing packet codecs from #565 — no raw handshake
   bytes are hand-encoded:

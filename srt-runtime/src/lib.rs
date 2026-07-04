@@ -7,13 +7,19 @@
 //!
 //! # Scope of this release
 //!
-//! This release adds a sans-IO **HSv5 Caller-Listener handshake state
-//! machine** (§4.3.1) on top of the packet codecs shipped in `0.1.0` (§3,
-//! Packet Structure — the 16-byte SRT header, the data packet §3.1, and every
-//! control packet type in §3.2, including Handshake with its extension
-//! messages: Handshake Extension §3.2.1.1, Key Material §3.2.1.2/§3.2.2,
-//! Stream ID §3.2.1.3, Group Membership §3.2.1.4).
+//! This release adds a sans-IO **ARQ (Automatic Repeat reQuest) reliability
+//! engine** (§4.8/§4.8.1/§4.8.2/§4.10) on top of the packet codecs and the
+//! **HSv5 Caller-Listener handshake state machine** (§4.3.1) shipped
+//! previously (§3, Packet Structure — the 16-byte SRT header, the data
+//! packet §3.1, and every control packet type in §3.2, including Handshake
+//! with its extension messages: Handshake Extension §3.2.1.1, Key Material
+//! §3.2.1.2/§3.2.2, Stream ID §3.2.1.3, Group Membership §3.2.1.4).
 //!
+//! - [`arq::Sender`] / [`arq::Receiver`] drive the loss-detection, ACK/NAK/
+//!   ACKACK exchange, and RTT/RTTVar estimation (§4.8, §4.10) over the
+//!   existing [`packet`] codecs — see the `arq` module doc for the full rule
+//!   mapping and its explicit non-goals (TLPKTDROP, RTO/congestion control,
+//!   send-queue overflow sizing).
 //! - [`caller::CallerHandshake`] / [`listener::ListenerHandshake`] drive the
 //!   induction → conclusion exchange (§4.3.1.1/§4.3.1.2): building the wire
 //!   packets via the existing [`packet`] codecs, validating the peer's
@@ -22,7 +28,7 @@
 //! **Explicit follow-ups, not attempted here:**
 //! - The Rendezvous handshake (§4.3.2, WAVEAHAND/AGREEMENT) — only
 //!   Caller-Listener (§4.3.1) is implemented.
-//! - ARQ / loss handling, TSBPD delivery, congestion control (§4-§5).
+//! - TSBPD delivery timing, congestion control (§4.4-§4.7, §5).
 //! - Actual AES key-wrap/unwrap **crypto** (§6) — [`packet::KeyMaterial`]
 //!   carries the wrapped-key bytes opaquely, and the handshake negotiates the
 //!   `Encryption Field` without acting on it.
@@ -53,6 +59,8 @@
 //! - [`packet`] — [`packet::SrtPacket`], the data/control packet types, and
 //!   their sub-structures (handshake extensions, Key Material, ACK variants,
 //!   NAK loss-list coding).
+//! - [`arq`] — [`arq::Sender`] / [`arq::Receiver`] (§4.8 ARQ, §4.10 RTT),
+//!   [`arq::seq`] (wrap-safe sequence arithmetic), [`arq::rtt::RttEstimator`].
 //! - [`handshake_sm`] — shared handshake types: [`handshake_sm::HandshakeConfig`],
 //!   [`handshake_sm::NegotiatedParams`], [`handshake_sm::HandshakeOutput`],
 //!   [`handshake_sm::RejectionReason`] (§4.3, Table 7).
@@ -67,6 +75,7 @@
 
 extern crate alloc;
 
+pub mod arq;
 pub mod caller;
 pub mod error;
 pub mod handshake_sm;
