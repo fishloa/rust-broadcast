@@ -8,6 +8,36 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO Rendezvous handshake state machine** (§4.3.2, issue #609, curated
+  at `specs/rules/srt-rendezvous.md`), reusing the same shared
+  `handshake_sm` types and packet codecs as the Caller-Listener flow:
+  - `rendezvous::RendezvousHandshake` — a single, symmetric engine: both
+    peers run the same code. `start()` sends WAVEAHAND (Version 5, this
+    side's own cookie); the **cookie contest** (greater cookie wins) resolves
+    each side's `rendezvous::RendezvousRole` (`Initiator`/`Responder`) at
+    runtime from the first inbound message's cookie. Drives the
+    `Waving -> Attention -> Initiated -> Connected` states (Parallel
+    Handshake Flow, §4.3.2.2) with the full Initiator/Responder transition
+    tables, including the idempotent missing-packet recovery rules
+    (§4.3.2.2: a Responder stuck in `Initiated` always re-sends HSRSP on a
+    repeated HSREQ; may promote to `Connected` on non-handshake traffic via
+    `on_recovery_trigger()`, modeling "as if it had received AGREEMENT").
+    The Serial flow (§4.3.2.1) is handled by the same engine, not a separate
+    state — see the module docs' "Serial vs Parallel flow" note for why.
+  - Identical cookies are surfaced as `RejectionReason::RdvCookie` (Table 7
+    code `1009`, "rendezvous cookie collision") rather than an internal
+    retry loop.
+  - `tests/rendezvous_round_trip.rs` — two `RendezvousHandshake` peers wired
+    together in memory (no sockets), both reaching `Connected` with
+    cross-matching negotiated socket ids and the greater-of-both latency;
+    a deterministic cookie tie-break test; and a malformed-extension-mid-flow
+    test asserting a structured rejection, never a panic.
+  - `tests/no_panic.rs` extended to fuzz the Rendezvous engine at Waving,
+    Attention, and Initiated.
+  - Explicit non-goals, unchanged: ARQ/loss, TSBPD delivery, congestion
+    control, AES key-wrap/unwrap crypto, a `tokio` socket adapter, and the
+    Version-4 legacy Rendezvous path.
+
 - **Sans-IO HSv5 Caller-Listener handshake state machine** (§4.3.1, issue
   #598), driving the existing packet codecs from #565 — no raw handshake
   bytes are hand-encoded:
@@ -40,9 +70,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     Table 7 wire encoding on the rejection packet actually sent.
   - `tests/no_panic.rs` extended to feed arbitrary parsed handshake packets
     into both engines at every state that accepts inbound packets.
-  - Explicit non-goals, unchanged from `0.1.0`: the Rendezvous handshake
-    (§4.3.2), ARQ/loss, TSBPD delivery, congestion control, AES key-wrap/
-    unwrap crypto, and a `tokio` socket adapter.
+  - Explicit non-goals, unchanged from `0.1.0`: ARQ/loss, TSBPD delivery,
+    congestion control, AES key-wrap/unwrap crypto, and a `tokio` socket
+    adapter. (The Rendezvous handshake, §4.3.2, is no longer a non-goal —
+    see above.)
 
 ## [0.1.0] - 2026-07-04
 

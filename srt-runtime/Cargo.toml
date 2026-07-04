@@ -2,7 +2,7 @@
 name    = "srt-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + a sans-IO HSv5 Caller-Listener handshake state machine, no_std. ARQ/loss, TSBPD, crypto, and a tokio adapter are planned follow-ups."
+description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, no_std. ARQ/loss, TSBPD, crypto, and a tokio adapter are planned follow-ups."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["srt", "packet", "sans-io", "transport", "streaming"]

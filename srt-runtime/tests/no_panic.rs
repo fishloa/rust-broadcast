@@ -12,6 +12,7 @@ use srt_runtime::packet::{
     ControlPacket, DataPacket, GroupMembershipExtension, HandshakeExtensions, HsExtMessage,
     KeyMaterial, NakPacket,
 };
+use srt_runtime::rendezvous::RendezvousHandshake;
 use srt_runtime::{HandshakeConfig, SrtPacket};
 
 struct XorShift(u64);
@@ -139,8 +140,80 @@ fn no_panic_on_arbitrary_input() {
                 ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
             let _ = listener_awaiting_conclusion.feed(&good_induction_request(2));
             let _ = listener_awaiting_conclusion.feed(&ctrl);
+
+            // Rendezvous engine (§4.3.2): fuzz every reachable state —
+            // Waving (fresh, never even started against real input),
+            // Attention (after a real WAVEAHAND), and Initiated (after a
+            // real WAVEAHAND + a real role-appropriate CONCLUSION).
+            let mut rdv_waving =
+                RendezvousHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+            rdv_waving.start().unwrap();
+            let _ = rdv_waving.feed(&ctrl);
+
+            let mut rdv_attention =
+                RendezvousHandshake::new(1, 0xFFFF_FFFF, HandshakeConfig::default());
+            rdv_attention.start().unwrap();
+            let _ = rdv_attention.feed(&good_peer_wavehand(2, 0));
+            let _ = rdv_attention.feed(&ctrl);
+
+            let mut rdv_initiated =
+                RendezvousHandshake::new(1, 0xFFFF_FFFF, HandshakeConfig::default());
+            rdv_initiated.start().unwrap();
+            let _ = rdv_initiated.feed(&good_peer_wavehand(2, 0));
+            let _ = rdv_initiated.feed(&good_peer_empty_conclusion(2, 0));
+            let _ = rdv_initiated.feed(&ctrl);
         }
     }
+}
+
+/// A well-formed peer WAVEAHAND (§4.3.2, L2156-2165) with a cookie guaranteed
+/// lower than the fuzz-target's own (`0xFFFF_FFFF`), so the fuzz-target
+/// always resolves to Initiator — used only to advance a
+/// [`RendezvousHandshake`] fuzz target past `Waving` before feeding it fuzzed
+/// bytes.
+fn good_peer_wavehand(peer_socket_id: u32, peer_cookie: u32) -> ControlPacket<'static> {
+    use srt_runtime::packet::{
+        EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    };
+    ControlPacket::Handshake(HandshakePacket {
+        timestamp: 0,
+        dest_socket_id: 0,
+        version: 5,
+        encryption_field: EncryptionField::NoEncryption,
+        extension_field: HandshakeExtensionFlags(0),
+        initial_seq_number: 0,
+        mtu: 1500,
+        max_flow_window_size: 8192,
+        handshake_type: HandshakeType::Wavehand,
+        srt_socket_id: peer_socket_id,
+        syn_cookie: peer_cookie,
+        peer_ip: [0; 4],
+        extensions: HandshakeExtensions(&[]),
+    })
+}
+
+/// A well-formed peer CONCLUSION with no extensions — used only to advance an
+/// Initiator [`RendezvousHandshake`] fuzz target from `Attention` to
+/// `Initiated` (§4.3.2.2, L2312-2318) before feeding it fuzzed bytes.
+fn good_peer_empty_conclusion(peer_socket_id: u32, peer_cookie: u32) -> ControlPacket<'static> {
+    use srt_runtime::packet::{
+        EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    };
+    ControlPacket::Handshake(HandshakePacket {
+        timestamp: 0,
+        dest_socket_id: 1,
+        version: 5,
+        encryption_field: EncryptionField::NoEncryption,
+        extension_field: HandshakeExtensionFlags(0),
+        initial_seq_number: 0,
+        mtu: 1500,
+        max_flow_window_size: 8192,
+        handshake_type: HandshakeType::Conclusion,
+        srt_socket_id: peer_socket_id,
+        syn_cookie: peer_cookie,
+        peer_ip: [0; 4],
+        extensions: HandshakeExtensions(&[]),
+    })
 }
 
 /// A well-formed Caller INDUCTION, used only to advance a fuzz-target
