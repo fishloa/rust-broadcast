@@ -52,6 +52,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TrackSpec::new(track_id, timescale, config)` — the new constructor
     every non-TS demuxer/transform now builds a spec with; `.with_source(pid,
     descriptors)` attaches TS provenance (builder style).
+- **Progressive (non-fragmented) MP4 demux** (#561): `ProgressiveDemux`
+  (`Unpackage<Input = &[u8]>`) parses a single-file, non-fragmented `.mp4` —
+  `moov` sample tables, no `moof` — into the crate's `Media` IR, the
+  file-on-disk counterpart to the fragmented `Fmp4Demux` and the demux side
+  of the existing `ProgressiveMux`. Reuses `Fmp4Demux`'s `stsd` →
+  `CodecConfig` reconstruction verbatim; per-sample decode duration and
+  composition offset come from `stts`/`ctts` (ISO/IEC 14496-12:2015
+  §8.6.1.2/§8.6.1.3, v0 unsigned / v1 signed), sync flags from `stss`
+  (§8.6.2, absent ⇒ all sync), and each sample's coded bytes are sliced
+  directly out of the input via `stsc` + `stco`/`co64` chunk offsets
+  (§8.7.4/§8.7.5, already file-absolute) and `stsz` sizes (§8.7.3). Verified
+  against `fixtures/transmux/h264_aac_prog.mp4` (real interleaved,
+  multi-chunk H.264 High + AAC-LC capture) with sample counts/PTS/DTS/sync
+  flags cross-checked against `ffprobe -show_packets -ignore_editlist 1`,
+  and a demux → `CmafMux` → `Fmp4Demux` round-trip proving byte-identical
+  sample data and preserved codec config.
 
 ### Internal
 - `tests/label_coverage.rs` drift-guard (#580): fails CI if any new public

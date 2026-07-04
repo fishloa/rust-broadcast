@@ -532,7 +532,11 @@ impl Package for HlsPackager {
 // ---------------------------------------------------------------------------
 
 /// Find a top-level box by four-CC, returning its full bytes (header + body).
-fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+///
+/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`],
+/// which walks the same top-level `moov` box before descending into sample
+/// tables instead of movie fragments.
+pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut offset = 0usize;
     while offset + BOX_HEADER_MIN_SIZE <= data.len() {
         let (bx, consumed) = parse_box(&data[offset..]).ok()?;
@@ -553,7 +557,12 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 }
 
 /// Rebuild a [`TrackSpec`] from a parsed `trak` box (identity + codec config).
-fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
+///
+/// `pub(crate)`: the single shared stsd → [`CodecConfig`] reconstruction path,
+/// reused verbatim by [`crate::progressive_demux::ProgressiveDemux`] (issue
+/// #561) so progressive and fragmented demux never diverge on codec-config
+/// recovery.
+pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     let track_id = trak.tkhd.track_id;
     let mdia = trak
         .mdia
@@ -752,7 +761,9 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
 /// MPEG-2 video takes width/height from the `sequence_header()`, MPEG audio
 /// takes its layer from the first frame header. A no-op for other codecs and
 /// when the header cannot be decoded (the provisional values then stand).
-fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample]) {
+///
+/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`].
+pub(crate) fn refine_legacy_config(config: &mut CodecConfig, samples: &[Sample]) {
     let Some(first) = samples.first() else {
         return;
     };
