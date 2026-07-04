@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- PCR-discontinuity detection + repair (#562):
+  - `discontinuity::detect_pcr_discontinuities` + `PcrDiscontinuity` — scan a TS
+    buffer for PCR jumps on every PCR-bearing PID, classified as **flagged**
+    (`discontinuity_indicator == 1`, ISO/IEC 13818-1 §2.4.3.5 — a legal
+    system-time-base change) or **unflagged** (ETSI TR 101 290 v1.4.1 §5.2.2
+    Table 5.0b indicator 2.3b `PCR_discontinuity_indicator_error` — a genuine
+    defect). The 2.3b threshold is reused verbatim from
+    `dvb_conformance::ConformanceMonitor`, never re-derived.
+  - `TsFixBuilder::honor_pcr_discontinuity()` — new **honor** repair mode: sets
+    `discontinuity_indicator` on genuine, unflagged PCR breaks without
+    rewriting any timestamp byte (only the AF flags bit changes). CLI flag
+    `--honor-pcr-discontinuity`.
+  - `restamp_pcr` (Interpolate mode) now classifies every observed forward
+    jump against the same TR 101 290 2.3b threshold instead of a bare
+    modulus-half heuristic: a genuine, unflagged break is never adopted as a
+    "sane" observation, and the PID's anchor is permanently frozen onto its
+    pre-break rate from that point on, so the restamped output stays on one
+    continuous PCR timeline across (and past) the break. `FromBitrate` mode
+    already shipped this guarantee for free.
+  - New `dvb-conformance` dependency (path, workspace-pinned).
+
 ## [0.2.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

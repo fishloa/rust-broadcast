@@ -12,6 +12,7 @@
 //! | PID filter / service extract | [`filter_pids`](TsFixBuilder::filter_pids) | Keep specified PIDs or extract a single programme by `program_number`. |
 //! | PAT/PMT regeneration | [`regen_psi`](TsFixBuilder::regen_psi) | Rebuild PAT from observed PMT PIDs on flush. |
 //! | PCR restamp | [`restamp_pcr`](TsFixBuilder::restamp_pcr) | Recompute PCR values on the PCR PID (§2.4.3.5). |
+//! | PCR-discontinuity honor | [`honor_pcr_discontinuity`](TsFixBuilder::honor_pcr_discontinuity) | Set `discontinuity_indicator` on genuine, unflagged PCR breaks (TR 101 290 §5.2.2 2.3b) without rewriting values. |
 //! | Stuffing | [`stuffing`](TsFixBuilder::stuffing) | Drop null packets or pad to a target packet rate. |
 //!
 //! # Forward compatibility
@@ -50,6 +51,7 @@
 
 extern crate alloc;
 
+pub mod discontinuity;
 pub mod error;
 pub mod pes;
 
@@ -129,9 +131,10 @@ impl TsFixBuilder {
     /// pass-through**: every packet is emitted unchanged.
     ///
     /// The engine applies operations in the canonical ordering:
-    /// filter_pids → regen_psi → repair_continuity → restamp_pcr → stuffing.
-    /// The `build()` method sorts ops by this order regardless of the order
-    /// in which builder methods were called.
+    /// filter_pids → regen_psi → repair_continuity → restamp_pcr →
+    /// honor_pcr_discontinuity → stuffing. The `build()` method sorts ops by
+    /// this order regardless of the order in which builder methods were
+    /// called.
     pub fn build(mut self) -> Result<TsFix, Error> {
         // If no ops were configured, install the identity no-op so the engine
         // always has something to call.  This keeps `engine::Engine::push`
@@ -245,6 +248,39 @@ impl TsFixBuilder {
         self.ops.push((
             OpKind::PcrRestamp,
             alloc::boxed::Box::new(ops::pcr_restamp::PcrRestampOp::new(cfg)),
+        ));
+        self
+    }
+
+    /// Enable PCR-discontinuity **honor** mode (#562).
+    ///
+    /// The alternative to [`restamp_pcr`](Self::restamp_pcr): leaves every
+    /// timestamp byte — including the PCR field itself — untouched, and
+    /// instead sets `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5) on
+    /// packets where a genuine, unflagged PCR break exists.
+    ///
+    /// "Genuine, unflagged" means the PCR delta exceeds the ETSI TR 101 290
+    /// v1.4.1 §5.2.2 Table 5.0b indicator 2.3b
+    /// (`PCR_discontinuity_indicator_error`) threshold with
+    /// `discontinuity_indicator == 0` — reused verbatim from
+    /// [`dvb_conformance::ConformanceMonitor`], never re-derived here. A
+    /// packet that already carries `discontinuity_indicator == 1` is a legal
+    /// break and is left alone.
+    ///
+    /// # Example — flag genuine PCR defects without rewriting values
+    ///
+    /// ```rust,no_run
+    /// use ts_fix::TsFix;
+    ///
+    /// let mut engine = TsFix::builder()
+    ///     .honor_pcr_discontinuity()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn honor_pcr_discontinuity(mut self) -> Self {
+        self.ops.push((
+            OpKind::PcrHonor,
+            alloc::boxed::Box::new(ops::pcr_honor::PcrHonorOp::new()),
         ));
         self
     }

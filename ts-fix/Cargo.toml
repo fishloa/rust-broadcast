@@ -16,12 +16,13 @@ broadcast-common = { path = "../broadcast-common", version = "8", default-featur
 mpeg-ts   = { path = "../mpeg-ts",  version = "0.2", default-features = false }
 mpeg-pes  = { path = "../mpeg-pes", version = "0.2", default-features = false }
 dvb-si    = { path = "../dvb-si",   version = "8",   default-features = false }
+dvb-conformance = { path = "../dvb-conformance", version = "8", default-features = false }
 thiserror = { version = "2",        default-features = false }
 clap      = { version = "4.5",      features = ["derive"] }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "thiserror/std"]
+std     = ["broadcast-common/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "dvb-conformance/std", "thiserror/std"]
 
 [[bin]]
 name = "ts-fix"

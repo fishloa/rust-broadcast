@@ -19,6 +19,8 @@
 use alloc::boxed::Box;
 
 pub(crate) mod continuity;
+pub(crate) mod pcr_conformance;
+pub(crate) mod pcr_honor;
 pub(crate) mod pcr_restamp;
 pub(crate) mod pid_filter;
 pub(crate) mod psi_regen;
@@ -100,13 +102,15 @@ pub(crate) trait Op: Send {
 pub(crate) type BoxedOp = Box<dyn Op>;
 
 /// Canonical operation-kind discriminant used by the builder to enforce
-/// engine ordering (filter → regen_psi → cc_repair → pcr_restamp → stuffing).
+/// engine ordering (filter → regen_psi → cc_repair → pcr_restamp/pcr_honor →
+/// stuffing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum OpKind {
     PidFilter,
     PsiRegen,
     Continuity,
     PcrRestamp,
+    PcrHonor,
     Stuffing,
     Identity,
 }

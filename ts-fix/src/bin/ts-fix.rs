@@ -21,8 +21,9 @@ use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
     version,
     about = "MPEG-2 TS repair / remux engine (ISO/IEC 13818-1 §2.4)",
     long_about = "Reads an input .ts file, applies repair operations, writes the repaired stream.\n\
-                   Operations are applied in the engine's canonical order (continuity → filter → \n\
-                   psi-regen → stuffing) regardless of flag order.  All operations are opt-in."
+                   Operations are applied in the engine's canonical order (filter → psi-regen → \n\
+                   continuity → restamp-pcr/honor-pcr-discontinuity → stuffing) regardless of \n\
+                   flag order.  All operations are opt-in."
 )]
 struct Cli {
     /// Input TS file path.
@@ -72,7 +73,7 @@ struct Cli {
     /// PCR restamp — interpolate between observed PCRs.
     #[arg(
         long = "restamp-pcr-interpolate",
-        conflicts_with = "restamp_pcr_bitrate",
+        conflicts_with_all = ["restamp_pcr_bitrate", "honor_pcr_discontinuity"],
         help = "Interpolate PCRs between observed anchors (preserves first PCR)"
     )]
     restamp_pcr_interpolate: bool,
@@ -81,10 +82,19 @@ struct Cli {
     #[arg(
         long = "restamp-pcr-bitrate",
         value_name = "BPS",
-        conflicts_with = "restamp_pcr_interpolate",
+        conflicts_with_all = ["restamp_pcr_interpolate", "honor_pcr_discontinuity"],
         help = "Recompute PCRs from a fixed bitrate in bits/sec (e.g. 27000000)"
     )]
     restamp_pcr_bitrate: Option<u64>,
+
+    /// PCR-discontinuity honor mode — flag genuine unflagged breaks, don't rewrite values.
+    #[arg(
+        long = "honor-pcr-discontinuity",
+        conflicts_with_all = ["restamp_pcr_interpolate", "restamp_pcr_bitrate"],
+        help = "Set discontinuity_indicator on genuine, unflagged PCR breaks (TR 101 290 §5.2.2 2.3b) \
+                without rewriting any timestamp"
+    )]
+    honor_pcr_discontinuity: bool,
 
     /// Regenerate PAT/PMT from observed stream state.
     #[arg(
@@ -146,6 +156,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.restamp_pcr(PcrRestamp::interpolate());
     } else if let Some(bps) = cli.restamp_pcr_bitrate {
         builder = builder.restamp_pcr(PcrRestamp::from_bitrate(bps));
+    } else if cli.honor_pcr_discontinuity {
+        builder = builder.honor_pcr_discontinuity();
     }
 
     if cli.drop_nulls {
