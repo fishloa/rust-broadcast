@@ -1,0 +1,33 @@
+[package]
+name    = "srt-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs — data + control packet parse/serialize, no_std. Handshake state machine, ARQ/loss, crypto, and a tokio adapter are planned follow-ups."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["srt", "packet", "sans-io", "transport", "streaming"]
+categories = ["parser-implementations", "multimedia", "network-programming", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`. The packet codecs themselves are fully no_std.
+std = ["broadcast-common/std", "thiserror/std"]
+# Derive serde on the public wire types.
+serde = ["dep:serde"]
