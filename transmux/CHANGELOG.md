@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Open-GOP AVC access units now anchor segmentation, not just IDR** (#595).
+  Broadcast H.264 is frequently open-GOP — no IDR (NAL type 5) at all; each
+  GOP opens instead with SPS(7)/PPS(8) + a non-IDR I-slice, usually announced
+  by a `recovery_point` SEI (ITU-T H.264 Annex D.1.7/D.2.7). `is_keyframe_nal`
+  only matched IDR, so `TsDemux`/`StreamingTsDemux` set `Sample.is_sync` to
+  `false` on every access unit of such a stream, and `Segmenter` never found
+  an anchor — it buffered the entire input into one giant segment.
+  `transmux::nal` gains `recovery_point_sei` (parses a type-6 SEI NAL's
+  `sei_message()` `payloadType`s) and `access_unit_is_rap`, which recognises
+  an AVC access unit as a random-access point on IDR **or** a
+  `recovery_point` SEI **or** (pragmatic open-GOP fallback) an SPS in the
+  access unit; HEVC/VVC keyframe detection is unchanged (their IRAP range
+  already covers CRA/BLA). `video_sample_bytes` in `ts_demux.rs` now sets
+  `is_sync` via this access-unit-level check for AVC, so both `TsDemux` and
+  `StreamingTsDemux` benefit. Segments opened this way are non-IDR — correct
+  for open-GOP decode and DASH-IF/CMAF-acceptable, but not a strict
+  ISO/IEC 14496-12 "clean" sync sample. `is_keyframe_nal`/
+  `access_unit_is_keyframe` keep their strict IDR-only meaning for existing
+  callers.
+
 ## [0.13.0] - 2026-07-04
 
 ### Added
