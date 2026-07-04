@@ -117,6 +117,7 @@ use crate::mp4esds::{
     SLConfigDescriptor, StreamType as EsdsStreamType,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
+use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
 use crate::nal::{NalCodec, access_unit_is_rap, is_keyframe_nal, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
@@ -181,6 +182,12 @@ const STREAM_TYPE_DTS_82: u8 = 0x82;
 const STREAM_TYPE_DTS_85: u8 = 0x85;
 /// DTS (user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_DTS_8A: u8 = 0x8A;
+/// MPEG-H 3D Audio main stream (MHAS, ISO/IEC 23008-3) — ISO/IEC 13818-1
+/// Table 2-34 / ETSI TS 101 154 §6.8 (issue #579). §6.8 additionally allows
+/// `0x2E` for an auxiliary (non-main) multi-stream MPEG-H component
+/// (§6.8.7) — out of scope here; only the single/main-stream `0x2D` is
+/// recognised.
+const STREAM_TYPE_MPEGH: u8 = 0x2D;
 // ── Section-carried stream_types (ISO/IEC 13818-1 Table 2-34) — issue #576 ──
 //
 // These stream_types carry PSI/private *sections* directly on their PID, not
@@ -255,6 +262,26 @@ const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
 
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
+
+/// `MHADecoderConfigurationRecord.reference_channel_layout` placeholder for
+/// TS carriage: the real CICP `ChannelConfiguration` is a field *inside* the
+/// opaque `mpegh3daConfig()` bitstream (ISO/IEC 23008-3 §5, paid) that this
+/// crate does not decode (config passthrough only — issue #579 scope), and
+/// MPEG-2 TS carries no equivalent systems-layer field for it (unlike the
+/// ISOBMFF `mhaC` box, whose `referenceChannelLayout` byte is authored
+/// out-of-band by the muxer). `0` marks "not derived", mirroring this file's
+/// existing `HVCC_*_UNSPEC` placeholders for fields it likewise cannot
+/// recover from the elementary stream alone.
+const MPEGH_REFERENCE_CHANNEL_LAYOUT_UNSPECIFIED: u8 = 0;
+/// `CodecConfig::MpegH.channel_count` placeholder — same rationale as
+/// [`MPEGH_REFERENCE_CHANNEL_LAYOUT_UNSPECIFIED`]: MPEG-2 TS carriage (PMT
+/// `stream_type`/`MPEG-H_3dAudio_descriptor`) signals no channel count.
+const MPEGH_CHANNEL_COUNT_UNSPECIFIED: u16 = 0;
+/// `CodecConfig::MpegH.sample_rate` placeholder — same rationale. Samples
+/// are still timed correctly: [`LiveKind::MpegH`] anchors durations on the
+/// 90 kHz TS clock ([`VIDEO_TIMESCALE`]) rather than an audio sample count,
+/// so an unknown `sample_rate` here never affects timing.
+const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
 const VIDEO_TIMESCALE: u32 = 90_000;
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
@@ -287,6 +314,9 @@ enum Codec {
     Ac3,
     Eac3,
     Dts,
+    /// MPEG-H 3D Audio main stream, MHAS-formatted (issue #579) — see
+    /// [`crate::mpegh`].
+    MpegH,
     /// Opaque data stream (issue #557/#576): any `stream_type` this demuxer
     /// does not decode to a typed codec — carried losslessly instead of
     /// dropped. The field is the PMT `stream_type` itself, carried through
@@ -311,6 +341,7 @@ impl Codec {
             STREAM_TYPE_AC3 => Codec::Ac3,
             STREAM_TYPE_EAC3 => Codec::Eac3,
             STREAM_TYPE_DTS_82 | STREAM_TYPE_DTS_85 | STREAM_TYPE_DTS_8A => Codec::Dts,
+            STREAM_TYPE_MPEGH => Codec::MpegH,
             _ => Codec::Data(stream_type),
         }
     }
@@ -568,6 +599,10 @@ enum ConfigProbe {
     /// DTS core substream (issue #560): resolves from the first frame whose
     /// header parses — see [`crate::dts::DtsCoreFrameInfo`].
     Dts,
+    /// MPEG-H 3D Audio (issue #579): resolves from the first access unit
+    /// whose MHAS packets contain a `PACTYP_MPEGH3DACFG` — see
+    /// [`crate::mpegh::find_mpegh3da_config`].
+    MpegH,
     /// Opaque PES data (#557): the config (`stream_type` + descriptors) is
     /// already fully known from the PMT, so this probe finalizes on the very
     /// first access unit — no header scan needed.
@@ -591,6 +626,7 @@ fn initial_probe(codec: Codec) -> ConfigProbe {
         Codec::Ac3 => ConfigProbe::Ac3,
         Codec::Eac3 => ConfigProbe::Eac3,
         Codec::Dts => ConfigProbe::Dts,
+        Codec::MpegH => ConfigProbe::MpegH,
         Codec::Data(_) => ConfigProbe::Data,
     }
 }
@@ -640,6 +676,16 @@ enum LiveKind {
     Audio { sample_rate: u32, kind: AudioKind },
     /// Opaque PES data (#557): one `Sample` per access unit.
     Data {
+        pending: Option<PendingOneBehind>,
+        last_duration: u32,
+    },
+    /// MPEG-H 3D Audio (issue #579): one opaque `Sample` per MHAS access
+    /// unit — no MHAS bitstream decode, so (like [`LiveKind::Data`]) there
+    /// is no intrinsic per-sample duration to split on; duration is the
+    /// one-behind PTS delta. `is_sync` is set from whether the access unit's
+    /// MHAS packets contain a `PACTYP_MPEGH3DACFG` (a random-access point,
+    /// ETSI TS 101 154 §6.8.4.1), not hardcoded `true`.
+    MpegH {
         pending: Option<PendingOneBehind>,
         last_duration: u32,
     },
@@ -1012,6 +1058,24 @@ fn push_live_au(
         }
         LiveKind::Audio { sample_rate, kind } => {
             emit_audio_au(kind, *sample_rate, data, pts_uw, dts_uw, track_id, events);
+        }
+        LiveKind::MpegH {
+            pending,
+            last_duration,
+        } => {
+            let is_sync = find_mpegh3da_config(data).is_some();
+            advance_one_behind(
+                pending,
+                last_duration,
+                data.to_vec(),
+                is_sync,
+                0,
+                pts_uw,
+                dts_uw,
+                true,
+                track_id,
+                events,
+            );
         }
         LiveKind::Section => {
             // Sections carry no PTS/DTS (`pts_uw`/`dts_uw` are dummy zeros
@@ -1392,6 +1456,38 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::Dts,
+                },
+            ))
+        }
+        ConfigProbe::MpegH => {
+            // Scan the backlog for the first access unit whose MHAS packets
+            // carry a PACTYP_MPEGH3DACFG (issue #579) — mirrors the
+            // Ac3/Eac3/Dts `find_map` header scans above, just over MHAS
+            // packets instead of a sync-frame header.
+            let config_bytes = backlog
+                .iter()
+                .find_map(|au| find_mpegh3da_config(&au.data))?;
+            // ATSC A/342-3 §5.2.2.1 / ISO/IEC 23008-3 §5.3.2: the
+            // `mpegh3daConfig()` bitstream's leading byte *is*
+            // `mpegh3daProfileLevelIndication` — the same value the
+            // `MHADecoderConfigurationRecord` duplicates as its own field.
+            let profile_level_indication = *config_bytes.first()?;
+            let config = MHADecoderConfigurationRecord::new(
+                profile_level_indication,
+                MPEGH_REFERENCE_CHANNEL_LAYOUT_UNSPECIFIED,
+                config_bytes.to_vec(),
+            );
+            Some((
+                CodecConfig::MpegH {
+                    config,
+                    channel_count: MPEGH_CHANNEL_COUNT_UNSPECIFIED,
+                    sample_rate: MPEGH_SAMPLE_RATE_UNSPECIFIED,
+                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
+                },
+                VIDEO_TIMESCALE,
+                LiveKind::MpegH {
+                    pending: None,
+                    last_duration: 0,
                 },
             ))
         }
@@ -1935,6 +2031,10 @@ impl StreamingTsDemux {
                         flush_one_behind(pending, *last_duration, live.track_id, &mut self.events);
                     }
                     LiveKind::Data {
+                        pending,
+                        last_duration,
+                    }
+                    | LiveKind::MpegH {
                         pending,
                         last_duration,
                     } => {

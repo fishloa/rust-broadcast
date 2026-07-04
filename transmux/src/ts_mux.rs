@@ -88,9 +88,50 @@ const STREAM_TYPE_AC3: u8 = 0x81;
 const STREAM_TYPE_EAC3: u8 = 0x87;
 /// DTS (canonical DVB assignment, user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_DTS: u8 = 0x82;
+/// MPEG-H 3D Audio main stream (MHAS) — ISO/IEC 13818-1 Table 2-34 / ETSI
+/// TS 101 154 §6.8 (issue #579).
+const STREAM_TYPE_MPEGH: u8 = 0x2D;
 
 /// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.8).
 const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
+
+// ── MPEG-H_3dAudio_descriptor (ISO/IEC 13818-1 §2.6.106, ETSI TS 101 154
+// §4.1.8.31) ─────────────────────────────────────────────────────────────
+
+/// `extension_descriptor` tag (ISO/IEC 13818-1 Table 2-45) — the umbrella
+/// descriptor under which post-2013 additions, including MPEG-H signalling,
+/// register a second-level `extension_descriptor_tag`.
+const DESCRIPTOR_TAG_EXTENSION: u8 = 0x3F;
+/// `MPEGH_3dAudio_descriptor`'s `extension_descriptor_tag`. ISO/IEC 13818-1
+/// §2.6.106 (which registers this value) is paid and not vendored; the value
+/// `0x08` is taken from the real Fraunhofer MPEG-H-in-TS fixture's ES_info
+/// bytes (`3F 04 08 10 7F C1` — see `transmux/docs/codec/mpegh-ts-101154.md`),
+/// real DVB-conformant broadcast content from the format's own originator.
+const MPEGH_3DAUDIO_EXTENSION_TAG: u8 = 0x08;
+/// Body length (bytes after `descriptor_length`) of the
+/// `MPEGH_3dAudio_descriptor` this muxer emits: the sum of one
+/// `extension_descriptor_tag` byte and one `mpegh3daProfileLevelIndication`
+/// byte. ETSI TS 101 154 §4.1.8.31 documents `mpegh3daProfileLevelIndication`
+/// as the field that "shall be signalled" — the only part of the
+/// descriptor's body this crate has spec grounding for. The real fixture's
+/// descriptor carries 2 further bytes (`7F C1`) this crate cannot ground
+/// (the full syntax is in the paid ISO/IEC 13818-1 §2.6.106) and therefore
+/// does not reproduce; a shorter, correctly-length-prefixed descriptor is
+/// spec-legal (§2.6.10 defines the generic `descriptor_length`-bounded
+/// extension mechanism precisely so a decoder skips exactly that many
+/// bytes).
+const MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN: u8 = 2;
+
+/// Build the `MPEG-H_3dAudio_descriptor` ES_info entry carrying
+/// `mpegh3daProfileLevelIndication` (issue #579).
+fn mpegh_3daudio_descriptor(profile_level_indication: u8) -> Vec<u8> {
+    alloc::vec![
+        DESCRIPTOR_TAG_EXTENSION,
+        MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
+        MPEGH_3DAUDIO_EXTENSION_TAG,
+        profile_level_indication,
+    ]
+}
 
 // ── PES / stream_id constants (ISO/IEC 13818-1 §2.4.3.6, Table 2-22) ────────
 
@@ -167,6 +208,8 @@ enum EsKind {
     Eac3,
     /// DTS audio (core substream, passed through verbatim).
     Dts,
+    /// MPEG-H 3D Audio (MHAS, passed through verbatim) — issue #579.
+    MpegH,
     /// Opaque data (issue #576): the preserved PMT `stream_type` +
     /// [`DataCarriage`] of a [`CodecConfig::Data`] track.
     Data {
@@ -186,6 +229,7 @@ impl EsKind {
             EsKind::Ac3 => STREAM_TYPE_AC3,
             EsKind::Eac3 => STREAM_TYPE_EAC3,
             EsKind::Dts => STREAM_TYPE_DTS,
+            EsKind::MpegH => STREAM_TYPE_MPEGH,
             EsKind::Data { stream_type, .. } => stream_type,
         }
     }
@@ -220,6 +264,7 @@ impl EsKind {
             CodecConfig::Ac3 { .. } => Some(EsKind::Ac3),
             CodecConfig::Eac3 { .. } => Some(EsKind::Eac3),
             CodecConfig::Dts { .. } => Some(EsKind::Dts),
+            CodecConfig::MpegH { .. } => Some(EsKind::MpegH),
             CodecConfig::Data {
                 stream_type,
                 carriage,
@@ -358,6 +403,13 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         };
         let descriptors = match &track.spec.config {
             CodecConfig::Data { descriptors, .. } => descriptors.clone(),
+            // MPEG-H's ES_info descriptor is synthesized fresh from the
+            // typed `mpegh3daProfileLevelIndication` field, rather than a
+            // raw byte loop preserved from demux (issue #579; ETSI
+            // TS 101 154 §4.1.8.31).
+            CodecConfig::MpegH { config, .. } => {
+                mpegh_3daudio_descriptor(config.mpegh3da_profile_level_indication)
+            }
             _ => Vec::new(),
         };
         plans.push(EsPlan {
@@ -568,7 +620,9 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
             out.extend_from_slice(&sample.data);
             Ok(out)
         }
-        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts | EsKind::Data { .. } => Ok(sample.data.clone()),
+        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts | EsKind::MpegH | EsKind::Data { .. } => {
+            Ok(sample.data.clone())
+        }
     }
 }
 
@@ -967,6 +1021,7 @@ mod tests {
         assert_eq!(EsKind::Ac3.stream_type(), 0x81);
         assert_eq!(EsKind::Eac3.stream_type(), 0x87);
         assert_eq!(EsKind::Dts.stream_type(), 0x82);
+        assert_eq!(EsKind::MpegH.stream_type(), 0x2D);
         // Opaque Data (issue #576): the preserved stream_type round-trips
         // verbatim regardless of carriage.
         assert_eq!(
@@ -1066,5 +1121,22 @@ mod tests {
         // sync byte + PUSI bit.
         assert_eq!(pkts[0][0], 0x47);
         assert_ne!(pkts[0][1] & 0x40, 0, "PUSI must be set on the first packet");
+    }
+
+    #[test]
+    fn mpegh_3daudio_descriptor_carries_profile_level() {
+        let bytes = mpegh_3daudio_descriptor(0x0B);
+        assert_eq!(
+            bytes,
+            alloc::vec![
+                DESCRIPTOR_TAG_EXTENSION,
+                MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
+                MPEGH_3DAUDIO_EXTENSION_TAG,
+                0x0B,
+            ]
+        );
+        // Mutating the profile-level must change the descriptor bytes (not a
+        // fixed/cached template).
+        assert_ne!(bytes, mpegh_3daudio_descriptor(0x10));
     }
 }

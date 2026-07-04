@@ -21,6 +21,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   emitted units reproduces the input from its first start code. Complements the
   existing per-NAL `annexb::iter_annexb_nals` and the private, one-shot AUD-only
   splitter in `ps_demux`.
+- **MPEG-H 3D Audio MPEG-2 TS carriage** (#579): `ts_demux.rs` recognises PMT
+  `stream_type 0x2D` (ISO/IEC 13818-1 Table 2-34 / ETSI TS 101 154 §6.8) as
+  MPEG-H Audio, parses the MHAS elementary-stream packet framing
+  (`transmux::mpegh`'s new packet walker — the three-tier "escaped value"
+  header coding, empirically verified against a real Fraunhofer
+  MPEG-H-in-TS fixture; see `transmux/docs/codec/mpegh-ts-101154.md`) to
+  locate the `PACTYP_MPEGH3DACFG` packet's opaque `mpegh3daConfig()` payload,
+  and builds a `CodecConfig::MpegH` track from it — one opaque `Sample` per
+  MHAS access unit, `is_sync` set from whether the access unit is a
+  random-access point (ETSI TS 101 154 §6.8.4.1). `ts_mux.rs` gains
+  `EsKind::MpegH` (stream_type `0x2D`, MHAS passthrough) and synthesizes the
+  PMT `MPEG-H_3dAudio_descriptor` (`0x3F` extension descriptor) from the
+  track's `mpegh3daProfileLevelIndication`. `referenceChannelLayout` /
+  `channel_count` / `sample_rate` are not derivable from TS-layer signalling
+  alone (would require decoding the opaque `mpegh3daConfig()` bitstream,
+  ISO/IEC 23008-3, paid) and are left as documented `0`/"unspecified"
+  placeholders; sample timing is unaffected (durations anchor on the 90 kHz
+  TS clock, not an audio sample count). No MPEG-H audio bitstream decode —
+  config/sample passthrough only, mirroring the existing AC-3/DTS TS
+  carriage and the crate's existing ISOBMFF `mha1`/`mhaC` support. Gated on
+  the private `private/fixtures/ts/mpegh-cicp01-baseline.ts` fixture
+  (`transmux/tests/mpegh_ts.rs`, skips cleanly when the private submodule
+  isn't checked out).
 
 ## [0.14.0] - 2026-07-04
 
