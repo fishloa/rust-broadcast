@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-07-04
 ### Added
 - PCR-discontinuity detection + repair (#562):
   - `discontinuity::detect_pcr_discontinuities` + `PcrDiscontinuity` — scan a TS

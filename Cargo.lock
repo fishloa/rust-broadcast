@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "aes",
  "broadcast-common",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "ts-fix"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "clap",
