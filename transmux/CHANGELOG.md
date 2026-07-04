@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-04
+
 ### Breaking
 - `TrackSpec` gains two fields, `source_pid: Option<u16>` and
   `es_info_descriptors: Vec<u8>` (#582) — external struct literals must be

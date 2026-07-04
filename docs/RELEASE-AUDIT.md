@@ -56,6 +56,21 @@ Run an adversarial, read-only auditor per new crate AND per new module added to 
 
 ---
 
+## 3.5 Documentation-accuracy audit (docs match the CODE, not just build clean)
+
+The gate suite proves docs *compile* (examples build, doctests run, rustdoc is warning-free) — it does **not** prove they are *accurate*. A README coverage table can be green-building and still silently omit a shipped feature (real incident: transmux 0.12.0 shipped ProgressiveDemux / streaming TS-HLS / `source_pid` while the README listed none of them). For **every crate with a non-empty `[Unreleased]`**, verify — reading the source as ground truth, not the prose:
+
+- **README coverage/feature tables ⇄ actual public API.** Cross-check against `lib.rs` `pub use`/`pub mod` + the crate-root `//!`. Every new public spoke / codec / transform / CLI flag added since the last release appears; nothing listed is absent or renamed. No stale "planned/⬜" row for something now implemented.
+- **CHANGELOG `[Unreleased]` ⇄ the real diff.** Every user-visible change since the last tag (`git diff <last-tag>..HEAD` per crate) has an entry; every entry describes something that actually happened; breaking changes are under a `### Breaking` heading. Issue/PR refs present.
+- **Examples exercise the CURRENT API.** Not just "compiles" — the example must use present-day signatures/constructors (e.g. after a `#[non_exhaustive]` + constructor migration, examples use the constructor, not a stale literal) and demonstrate a real path; fixture-driven examples actually run.
+- **Crate-root `//!` overview + quickstart** reflect the current surface (docs.rs lands here).
+- **Spec citations** in new/changed module docs point to the correct spec + section (spot-check the modules touched this release).
+- **Cargo.toml metadata** (`description`/`keywords`/`categories`) still accurate for what the crate now does.
+
+Fix everything found in the staging PR (per [[never-leave-found-bugs-unfixed]]) — a stale README is a release defect, not a nicety.
+
+---
+
 ## 4. Per-release checklist (the staging steps after audits are green)
 
 Per [`RELEASE-DOCS.md`](RELEASE-DOCS.md): version bumps (lockstep together; bump every inter-crate ref) → CHANGELOG `[Unreleased]` cut to a dated heading → `docs/release-notes/vX.Y.Z.md` → README coverage → crate-root `//!` (incl. CLI `--help` text for new tool features) → Cargo.toml + `[package.metadata.docs.rs]` sweep → branch → PR (`Closes #n`) → **all CI checks SUCCESS (not just mergeStateStatus)** → merge → version-tag push (release CI gates + publishes) → post-publish verify docs.rs built green + every crate live on crates.io.
