@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **DASH MPD generation — `$Time$`/`SegmentTimeline` addressing + live/content
+  extensions** (#566), extending the existing `DashPackager`:
+  - `Addressing` (`Number` default / `Timeline`) + `DashPackager::segments`
+    (`Vec<TrackSegments>`, caller-supplied per-track segment durations, e.g.
+    from `Segmenter`): `Addressing::Timeline` emits `$Time$` addressing with
+    an explicit `<SegmentTimeline>` of run-length-encoded `<S t= d= r=>`
+    entries (ISO/IEC 23009-1 §5.3.9.6); `Addressing::Number` now also accepts
+    `segments` to use a real per-segment nominal `@duration` instead of the
+    whole-track total, while staying unchanged when `segments` is empty.
+  - Live-profile MPD attributes: `DashPackager::publish_time`,
+    `time_shift_buffer_depth`, and `suggested_presentation_delay` (alongside
+    the existing `availability_start_time`/`minimum_update_period`),
+    ISO/IEC 23009-1 §5.3.1.2 Table 3.
+  - Every `AdaptationSet` now carries a `Role` (`urn:mpeg:dash:role:2011`,
+    `main`, §5.8.5.5) and, when every `Representation` agrees, an inherited
+    `@lang` resolved from a TS-sourced audio track's
+    `ISO_639_language_descriptor` (ETSI EN 300 468 §6.2.19) in
+    `TrackSpec::es_info_descriptors`.
+  - `DashPackager::content_protection` (`Vec<ContentProtectionSystem>`) — a
+    `<ContentProtection>` hook (§5.8.4.1), optionally carrying
+    `cenc:default_KID` (ISO/IEC 23001-7); full CENC `pssh` carriage remains a
+    separate epic.
+  - `DashPackager::inband_event_streams` (`Vec<InbandEventStream>`) —
+    `<InbandEventStream>` (§5.3.3 / §5.10.3.3) on the video `AdaptationSet`
+    for an inband `emsg` scheme/value.
+
 ## [0.12.0] - 2026-07-04
 
 ### Breaking

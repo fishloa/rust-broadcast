@@ -16,9 +16,38 @@
 //! - **`Representation`** (§5.3.5) — one per [`Track`], with
 //!   `@id`, `@bandwidth`, RFC 6381 `@codecs`, and per-kind geometry / audio
 //!   parameters.
-//! - **`SegmentTemplate`** (§5.3.9.4) — number-based addressing with
-//!   `initialization` + `media` templates (`$RepresentationID$`, `$Number$`),
-//!   `timescale`, `duration`, and `startNumber`.
+//! - **`SegmentTemplate`** (§5.3.9.4) — two mutually-exclusive addressing modes
+//!   ([`Addressing`], §5.3.9.4.4 Table 16 / L1628): `$Number$` with a constant
+//!   nominal `@duration`, or `$Time$` with an explicit child
+//!   **`SegmentTimeline`** (§5.3.9.6) of `<S t= d= r=>` runs. Both carry
+//!   `initialization` + `media` templates (`$RepresentationID$` plus the
+//!   addressing identifier) and `timescale`.
+//!
+//! # Live (`dynamic`) presentations (§5.3.1.2 Table 3)
+//!
+//! [`DashPackager::dynamic`] switches `MPD@type` to `dynamic`; the live-only
+//! attributes ([`DashPackager::availability_start_time`],
+//! [`DashPackager::publish_time`], [`DashPackager::minimum_update_period`],
+//! [`DashPackager::time_shift_buffer_depth`],
+//! [`DashPackager::suggested_presentation_delay`]) are emitted verbatim
+//! (caller-supplied ISO-8601 / xs:duration strings) when present, and omitted
+//! otherwise. `mediaPresentationDuration` (VOD-only, §5.3.1.2) is never emitted
+//! for a dynamic MPD.
+//!
+//! # AdaptationSet content (§5.3.3)
+//!
+//! Every regular `AdaptationSet` carries a `Role` (§5.8.5.5,
+//! `urn:mpeg:dash:role:2011`, value `main`) and, when every `Representation` in
+//! the set agrees on one, an inherited `@lang` — for a TS-sourced audio track,
+//! resolved from its `ISO_639_language_descriptor` (ETSI EN 300 468 §6.2.19) in
+//! [`crate::pipeline::TrackSpec::es_info_descriptors`]. Two opt-in extension
+//! points round out the manifest: [`DashPackager::content_protection`] emits a
+//! bare `<ContentProtection>` identification element per system (§5.8.4.1,
+//! optionally `cenc:default_KID` per ISO/IEC 23001-7 — full CENC `pssh`
+//! carriage is a separate epic), and [`DashPackager::inband_event_streams`]
+//! emits `<InbandEventStream>` (§5.3.3 / §5.10.3.3) on the video
+//! `AdaptationSet` for an inband `emsg` scheme the caller flags (mp4-emsg's
+//! [`crate::EmsgBox`] already carries the wire box; this only advertises it).
 //!
 //! The MPD is emitted with a tiny hand-rolled XML writer; the crate stays
 //! dependency-free (like `HlsPackager`).
@@ -63,6 +92,102 @@ const MIME_AUDIO: &str = "audio/mp4";
 const CODECS_VP8: &str = "vp8";
 /// RFC 6381 `codecs` string for Vorbis (WebM codec registration).
 const CODECS_VORBIS: &str = "vorbis";
+
+/// `schemeIdUri` for the DASH `Role` element (ISO/IEC 23009-1 §5.8.5.5, Table 24
+/// — the `urn:mpeg:dash:role:2011` scheme).
+const ROLE_SCHEME: &str = "urn:mpeg:dash:role:2011";
+/// `Role@value` this packager emits on every regular `AdaptationSet`
+/// (ISO/IEC 23009-1 §5.8.5.5 Table 24) — the IR has no alternate-audio /
+/// commentary / dub track-role modelling yet, so every rendition is "main".
+const ROLE_MAIN: &str = "main";
+
+/// XML namespace declared on `MPD` when a [`ContentProtectionSystem`] carries a
+/// `default_kid` (ISO/IEC 23001-7 Common Encryption, `cenc:default_KID`).
+const CENC_NAMESPACE: &str = "urn:mpeg:cenc:2013";
+
+/// `ISO_639_language_descriptor` tag — ETSI EN 300 468 §6.2.19.
+const ISO_639_LANGUAGE_DESCRIPTOR_TAG: u8 = 0x0A;
+
+/// Segment addressing mode for `SegmentTemplate` (ISO/IEC 23009-1 §5.3.9.4.4
+/// Table 16 / §5.3.9.6) — the two modes are mutually exclusive on one template
+/// (§5.3.9.4.4 L1628).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Addressing {
+    /// `$Number$` substitution with a constant nominal `SegmentTemplate@duration`
+    /// (§5.3.9.4.4): start of segment N = `(N - startNumber) * @duration`; only
+    /// the last segment may have a different actual duration (L1688).
+    #[default]
+    Number,
+    /// `$Time$` substitution with an explicit child `<SegmentTimeline>`
+    /// (§5.3.9.6): each `<S t= d= r=>` gives the exact start time and duration
+    /// of a run of segments, so segment durations need not be constant.
+    Timeline,
+}
+
+impl Addressing {
+    /// The spec-token label for this addressing mode.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Addressing::Number => "number",
+            Addressing::Timeline => "timeline",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Addressing);
+
+/// Per-`Representation` segment durations for `$Time$`/`SegmentTimeline`
+/// addressing, and/or the `$Number$` nominal `@duration` — supplied by the
+/// caller from its own segmentation (e.g. [`crate::segmenter::Segmenter`]):
+/// one duration per emitted media segment, **in the representation's own
+/// media `@timescale` ticks** (`TrackSpec::timescale`), in segment order.
+///
+/// A segment's `SegmentTimeline` start time (`S@t`, and the `$Time$`
+/// substitution) is the cumulative sum of the *preceding* entries in this
+/// list — exactly a segment's `tfdt.baseMediaDecodeTime`
+/// (ISO/IEC 14496-12:2015 §8.8.12) whenever the representation's decode
+/// timeline starts at zero, which every segmenter in this crate
+/// ([`crate::segmenter::Segmenter`], [`crate::ll_dash::LlSegmenter`])
+/// guarantees.
+#[derive(Debug, Clone)]
+pub struct TrackSegments {
+    /// The [`crate::pipeline::TrackSpec::track_id`] these durations belong to.
+    pub track_id: u32,
+    /// Segment durations, in decode/segment order, in this track's timescale.
+    pub durations: Vec<u64>,
+}
+
+/// A `ContentProtection` element to attach to every regular `AdaptationSet`
+/// (ISO/IEC 23009-1 §5.8.4.1) — a **hook**, not full CENC: it renders the bare
+/// identification element (`schemeIdUri` + optional `value` +
+/// optional `cenc:default_KID`, ISO/IEC 23001-7 Common Encryption); carrying a
+/// full `<cenc:pssh>` payload is a separate epic.
+#[derive(Debug, Clone)]
+pub struct ContentProtectionSystem {
+    /// `ContentProtection@schemeIdUri` (ISO/IEC 23009-1 §5.8.4.1) — e.g. a DRM
+    /// system ID URN (`urn:uuid:...`) or `urn:mpeg:dash:mp4protection:2011`
+    /// for the generic CENC scheme signalling element.
+    pub scheme_id_uri: String,
+    /// Optional `ContentProtection@value` (scheme-defined, e.g. `"cenc"`).
+    pub value: Option<String>,
+    /// Optional default key ID (ISO/IEC 23001-7 `cenc:default_KID`), rendered
+    /// as the canonical dashed hex UUID form.
+    pub default_kid: Option<[u8; 16]>,
+}
+
+/// An `InbandEventStream` element (ISO/IEC 23009-1 §5.3.3 / §5.10.3.3) —
+/// announces a `emsg` scheme/value the client should process inband. Emitted
+/// on the video `AdaptationSet` (the common real-world placement for
+/// SCTE-35/ID3 event boxes riding the video track's fragments; the IR has no
+/// separate event-track modelling).
+#[derive(Debug, Clone)]
+pub struct InbandEventStream {
+    /// `InbandEventStream@schemeIdUri` — must match the `emsg.scheme_id_uri`
+    /// of the boxes it announces (DASH-IF IOP; ISO/IEC 23009-1 §5.10.3.3.4).
+    pub scheme_id_uri: String,
+    /// Optional `InbandEventStream@value`.
+    pub value: Option<String>,
+}
 
 /// The media kind of a track's `AdaptationSet`.
 ///
@@ -200,16 +325,47 @@ pub struct DashPackager {
     pub profiles: String,
     /// If `true`, emit `type="dynamic"` (live); otherwise `type="static"` (VOD).
     pub dynamic: bool,
+    /// Segment addressing mode (ISO/IEC 23009-1 §5.3.9.4.4 / §5.3.9.6). Default
+    /// [`Addressing::Number`] — unchanged single-nominal-duration behaviour.
+    /// [`Addressing::Timeline`] requires a matching, non-empty
+    /// [`TrackSegments`] entry in [`Self::segments`] for every track.
+    pub addressing: Addressing,
+    /// Per-track segment durations (see [`TrackSegments`]). Used for
+    /// `SegmentTimeline` generation under [`Addressing::Timeline`]; also
+    /// overrides the [`Addressing::Number`] nominal `@duration` (the first
+    /// entry) when present, instead of the whole-track total.
+    pub segments: Vec<TrackSegments>,
     /// `SegmentTemplate@startNumber` (1-based, ISO/IEC 23009-1 §5.3.9.4.4).
     pub start_number: u64,
     /// `initialization` template (contains `$RepresentationID$`).
     pub init_template: String,
-    /// `media` template (contains `$RepresentationID$` and `$Number$`).
+    /// `media` template for [`Addressing::Number`] (contains
+    /// `$RepresentationID$` and `$Number$`).
     pub media_template: String,
-    /// Optional `MPD@availabilityStartTime` (ISO-8601 UTC), live only.
+    /// `media` template for [`Addressing::Timeline`] (contains
+    /// `$RepresentationID$` and `$Time$`).
+    pub media_template_time: String,
+    /// Optional `MPD@availabilityStartTime` (ISO-8601 UTC), live only
+    /// (ISO/IEC 23009-1 §5.3.1.2 Table 3).
     pub availability_start_time: Option<String>,
-    /// Optional `MPD@minimumUpdatePeriod` (xs:duration), live only.
+    /// Optional `MPD@publishTime` (ISO-8601 UTC), live only (§5.3.1.2 Table 3).
+    pub publish_time: Option<String>,
+    /// Optional `MPD@minimumUpdatePeriod` (xs:duration), live only
+    /// (§5.3.1.2 Table 3).
     pub minimum_update_period: Option<String>,
+    /// Optional `MPD@timeShiftBufferDepth` (xs:duration), live only — the
+    /// depth of the live-edge time-shift buffer (§5.3.1.2 Table 3).
+    pub time_shift_buffer_depth: Option<String>,
+    /// Optional `MPD@suggestedPresentationDelay` (xs:duration), live only —
+    /// the client's recommended distance behind the live edge (§5.3.1.2
+    /// Table 3).
+    pub suggested_presentation_delay: Option<String>,
+    /// `ContentProtection` hooks (§5.8.4.1) emitted on every regular
+    /// `AdaptationSet`. Empty by default (no protection signalled).
+    pub content_protection: Vec<ContentProtectionSystem>,
+    /// `InbandEventStream` elements (§5.3.3 / §5.10.3.3) emitted on the video
+    /// `AdaptationSet`. Empty by default (no inband events signalled).
+    pub inband_event_streams: Vec<InbandEventStream>,
     /// Optional trick-mode adaptation set (ISO/IEC 23009-1 §5.8.5.8).
     ///
     /// When `Some`, `package` emits an additional `AdaptationSet` after the
@@ -222,11 +378,19 @@ impl Default for DashPackager {
         Self {
             profiles: PROFILE_ISOFF_LIVE.to_string(),
             dynamic: false,
+            addressing: Addressing::Number,
+            segments: Vec::new(),
             start_number: 1,
             init_template: String::from("init-stream$RepresentationID$.m4s"),
             media_template: String::from("chunk-stream$RepresentationID$-$Number$.m4s"),
+            media_template_time: String::from("chunk-stream$RepresentationID$-$Time$.m4s"),
             availability_start_time: None,
+            publish_time: None,
             minimum_update_period: None,
+            time_shift_buffer_depth: None,
+            suggested_presentation_delay: None,
+            content_protection: Vec::new(),
+            inband_event_streams: Vec::new(),
             trick_mode: None,
         }
     }
@@ -241,6 +405,12 @@ struct ReprInfo {
     timescale: u32,
     /// Sum of sample durations, in the track's timescale (SegmentTemplate@duration).
     total_duration: u64,
+    /// Per-segment durations for this track, if the caller supplied a matching
+    /// [`TrackSegments`] entry (see [`DashPackager::segments`]).
+    segment_durations: Option<Vec<u64>>,
+    /// `@lang` resolved from the track's `ISO_639_language_descriptor`
+    /// (audio only — see [`lang_from_es_info`]).
+    lang: Option<String>,
     // Video geometry.
     width: Option<u32>,
     height: Option<u32>,
@@ -300,7 +470,7 @@ impl DashPackager {
     }
 
     /// Resolve every presentation parameter for one track.
-    fn repr_info(track: &Track) -> Result<ReprInfo> {
+    fn repr_info(&self, track: &Track) -> Result<ReprInfo> {
         let config = &track.spec.config;
         let timescale = track.spec.timescale.max(1);
         let total_duration: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
@@ -324,6 +494,21 @@ impl DashPackager {
         let kind = MediaKind::of(config);
         let codecs = Self::codec_string(config)?;
 
+        let segment_durations = self
+            .segments
+            .iter()
+            .find(|s| s.track_id == track.spec.track_id)
+            .map(|s| s.durations.clone());
+
+        // `@lang` (ISO/IEC 23009-1 §5.3.3.2 inherited attribute) — resolved from
+        // the TS PMT ES_info descriptor loop (issue #582) for audio tracks only;
+        // `transmux` does not otherwise decode SI descriptors.
+        let lang = if kind == MediaKind::Audio {
+            lang_from_es_info(&track.spec.es_info_descriptors)
+        } else {
+            None
+        };
+
         let mut info = ReprInfo {
             id: track.spec.track_id.to_string(),
             kind,
@@ -331,6 +516,8 @@ impl DashPackager {
             bandwidth,
             timescale,
             total_duration,
+            segment_durations,
+            lang,
             width: None,
             height: None,
             frame_rate: None,
@@ -457,12 +644,33 @@ impl DashPackager {
             ),
             ("minBufferTime", "PT2.0S".to_string()),
         ];
+        // `xmlns:cenc` (ISO/IEC 23001-7) only when a ContentProtection system
+        // actually carries a `default_KID` in that namespace.
+        if self
+            .content_protection
+            .iter()
+            .any(|c| c.default_kid.is_some())
+        {
+            mpd_attrs.push(("xmlns:cenc", CENC_NAMESPACE.to_string()));
+        }
         if self.dynamic {
+            // Live-only attributes (ISO/IEC 23009-1 §5.3.1.2 Table 3), each
+            // emitted verbatim (caller-supplied ISO-8601 / xs:duration) when
+            // present and omitted otherwise.
             if let Some(ast) = &self.availability_start_time {
                 mpd_attrs.push(("availabilityStartTime", ast.clone()));
             }
+            if let Some(pt) = &self.publish_time {
+                mpd_attrs.push(("publishTime", pt.clone()));
+            }
             if let Some(mup) = &self.minimum_update_period {
                 mpd_attrs.push(("minimumUpdatePeriod", mup.clone()));
+            }
+            if let Some(tsbd) = &self.time_shift_buffer_depth {
+                mpd_attrs.push(("timeShiftBufferDepth", tsbd.clone()));
+            }
+            if let Some(spd) = &self.suggested_presentation_delay {
+                mpd_attrs.push(("suggestedPresentationDelay", spd.clone()));
             }
         } else {
             // VOD: advertise the presentation duration (longest track), in
@@ -501,13 +709,45 @@ impl DashPackager {
     }
 
     fn write_adaptation_set(&self, w: &mut XmlWriter, kind: MediaKind, set: &[&ReprInfo]) {
-        let attrs = alloc::vec![
+        let mut attrs = alloc::vec![
             ("contentType", kind.name().to_string()),
             ("mimeType", kind.mime_type().to_string()),
             ("segmentAlignment", "true".to_string()),
             ("startWithSAP", "1".to_string()),
         ];
+        // `@lang` (ISO/IEC 23009-1 §5.3.3.2, an inherited xml:lang-style
+        // attribute) — only when every Representation in the set agrees.
+        if let Some(lang) = common_lang(set) {
+            attrs.push(("lang", lang));
+        }
         w.open("AdaptationSet", &attrs);
+
+        // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
+        // "main" (no alternate/commentary modelling in the IR).
+        w.empty(
+            "Role",
+            &[
+                ("schemeIdUri", ROLE_SCHEME.to_string()),
+                ("value", ROLE_MAIN.to_string()),
+            ],
+        );
+
+        // ContentProtection hooks (§5.8.4.1).
+        for cp in &self.content_protection {
+            write_content_protection(w, cp);
+        }
+
+        // InbandEventStream (§5.3.3 / §5.10.3.3) — advertised on the video
+        // AdaptationSet only (see module docs for the placement rationale).
+        if kind == MediaKind::Video {
+            for ies in &self.inband_event_streams {
+                let mut ies_attrs = alloc::vec![("schemeIdUri", ies.scheme_id_uri.clone())];
+                if let Some(v) = &ies.value {
+                    ies_attrs.push(("value", v.clone()));
+                }
+                w.empty("InbandEventStream", &ies_attrs);
+            }
+        }
 
         for r in set {
             let mut rattrs = alloc::vec![
@@ -540,21 +780,64 @@ impl DashPackager {
                 }
             }
 
-            w.empty(
-                "SegmentTemplate",
-                &[
-                    ("timescale", r.timescale.to_string()),
-                    ("duration", r.total_duration.to_string()),
-                    ("startNumber", self.start_number.to_string()),
-                    ("initialization", self.init_template.clone()),
-                    ("media", self.media_template.clone()),
-                ],
-            );
+            self.write_segment_template(w, r);
 
             w.close("Representation");
         }
 
         w.close("AdaptationSet");
+    }
+
+    /// Write one Representation's `SegmentTemplate` (ISO/IEC 23009-1
+    /// §5.3.9.4.4), dispatching on [`Self::addressing`]:
+    ///
+    /// - [`Addressing::Number`] — `$Number$`, a self-closing element carrying
+    ///   a single nominal `@duration` (the first entry of
+    ///   [`ReprInfo::segment_durations`] when supplied, else the whole-track
+    ///   total — the packager's original single-segment behaviour).
+    /// - [`Addressing::Timeline`] — `$Time$`, with a child `<SegmentTimeline>`
+    ///   (§5.3.9.6) built from [`ReprInfo::segment_durations`] (required; see
+    ///   [`Package::package`](broadcast_common::Package::package) validation).
+    ///   A multi-segment Representation carries `@duration` XOR
+    ///   `SegmentTimeline`, never both (§5.3.9.2.2 L1381), so `@duration` is
+    ///   omitted here.
+    fn write_segment_template(&self, w: &mut XmlWriter, r: &ReprInfo) {
+        match self.addressing {
+            Addressing::Number => {
+                let duration = match &r.segment_durations {
+                    Some(durs) if !durs.is_empty() => durs[0],
+                    _ => r.total_duration,
+                };
+                w.empty(
+                    "SegmentTemplate",
+                    &[
+                        ("timescale", r.timescale.to_string()),
+                        ("duration", duration.to_string()),
+                        ("startNumber", self.start_number.to_string()),
+                        ("initialization", self.init_template.clone()),
+                        ("media", self.media_template.clone()),
+                    ],
+                );
+            }
+            Addressing::Timeline => {
+                // Validated non-empty in `package()` before `render()` runs.
+                let durations = r
+                    .segment_durations
+                    .as_ref()
+                    .expect("Addressing::Timeline requires segment_durations (validated earlier)");
+                w.open(
+                    "SegmentTemplate",
+                    &[
+                        ("timescale", r.timescale.to_string()),
+                        ("startNumber", self.start_number.to_string()),
+                        ("initialization", self.init_template.clone()),
+                        ("media", self.media_template_time.clone()),
+                    ],
+                );
+                write_segment_timeline(w, durations);
+                w.close("SegmentTemplate");
+            }
+        }
     }
 
     /// Write a trick-mode `AdaptationSet` — ISO/IEC 23009-1 §5.8.5.8.
@@ -632,7 +915,20 @@ impl broadcast_common::Package for DashPackager {
         }
         let mut reprs = Vec::with_capacity(media.tracks.len());
         for t in &media.tracks {
-            reprs.push(Self::repr_info(t)?);
+            reprs.push(self.repr_info(t)?);
+        }
+        // Addressing::Timeline needs an explicit, non-empty duration list per
+        // track (ISO/IEC 23009-1 §5.3.9.6) — there is no whole-track fallback
+        // for $Time$/SegmentTimeline the way there is for $Number$.
+        if self.addressing == Addressing::Timeline {
+            for r in &reprs {
+                if r.segment_durations.as_ref().is_none_or(Vec::is_empty) {
+                    return Err(Error::InvalidInput(
+                        "Addressing::Timeline requires a non-empty TrackSegments entry \
+                         in DashPackager::segments for every track",
+                    ));
+                }
+            }
         }
         Ok(self.render(&reprs))
     }
@@ -721,6 +1017,125 @@ fn div_round(num: u64, den: u64) -> u64 {
 /// (`PT<sec>.<tenth>S`, one decimal place; integer-only for `no_std`).
 fn xs_duration_tenths(tenths: u64) -> String {
     format!("PT{}.{}S", tenths / 10, tenths % 10)
+}
+
+/// Extract the first `ISO_639_language_code` from a track's raw PMT ES_info
+/// descriptor loop (verbatim TLV bytes carried on
+/// [`crate::pipeline::TrackSpec::es_info_descriptors`], issue #582), by
+/// walking the descriptor loop for tag `0x0A`
+/// (`ISO_639_language_descriptor`, ETSI EN 300 468 §6.2.19: repeated
+/// `ISO_639_language_code` (3 bytes) + `audio_type` (1 byte)). Returns `None`
+/// for a non-TS source (empty descriptor bytes) or when no such descriptor is
+/// present — `transmux` does not otherwise decode SI descriptors (that's
+/// `dvb-si`'s job); this is the one field `@lang` needs.
+fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
+    let mut i = 0usize;
+    while i + 2 <= descriptors.len() {
+        let tag = descriptors[i];
+        let len = descriptors[i + 1] as usize;
+        let body_start = i + 2;
+        let body_end = body_start + len;
+        if body_end > descriptors.len() {
+            break;
+        }
+        if tag == ISO_639_LANGUAGE_DESCRIPTOR_TAG && len >= 4 {
+            let code = &descriptors[body_start..body_start + 3];
+            if code.iter().all(u8::is_ascii_alphabetic) {
+                if let Ok(s) = core::str::from_utf8(code) {
+                    return Some(s.to_ascii_lowercase());
+                }
+            }
+        }
+        i = body_end;
+    }
+    None
+}
+
+/// The `@lang` shared by every Representation in `set`, or `None` if they
+/// disagree (mixed-language grouping) or none carry one.
+fn common_lang(set: &[&ReprInfo]) -> Option<String> {
+    let first = set.first()?.lang.clone()?;
+    if set
+        .iter()
+        .all(|r| r.lang.as_deref() == Some(first.as_str()))
+    {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+/// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1).
+fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
+    let mut attrs = alloc::vec![("schemeIdUri", cp.scheme_id_uri.clone())];
+    if let Some(v) = &cp.value {
+        attrs.push(("value", v.clone()));
+    }
+    if let Some(kid) = &cp.default_kid {
+        attrs.push(("cenc:default_KID", format_kid(kid)));
+    }
+    w.empty("ContentProtection", &attrs);
+}
+
+/// Format a 16-byte key ID as the canonical dashed-hex UUID form
+/// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, ISO/IEC 23001-7 `cenc:default_KID`).
+fn format_kid(kid: &[u8; 16]) -> String {
+    let hex = hex_lower(kid);
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// Lowercase hex encoding of `bytes`.
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Write a `<SegmentTimeline>` (ISO/IEC 23009-1 §5.3.9.6) from a flat list of
+/// per-segment durations (in the representation's own `@timescale`), in
+/// segment order, starting at `t=0` (the packager's decode timelines all
+/// start at zero — see [`TrackSegments`]).
+///
+/// Consecutive equal durations are run-length-encoded into a single `<S>`
+/// with `@r` = repeat count minus one (§5.3.9.6 L1746: "`S` = a run of
+/// contiguous equal-duration segments"). `@t` is emitted only on the first
+/// `<S>` — every later run's start time is the spec-default derivation
+/// (`prev S@t + prev@d * (prev@r+1)`, L1791), which this list satisfies by
+/// construction (no gaps/discontinuities are modelled here).
+fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
+    w.open("SegmentTimeline", &[]);
+    let mut t: u64 = 0;
+    let mut idx = 0usize;
+    let mut first = true;
+    while idx < durations.len() {
+        let d = durations[idx];
+        let mut run = 1usize;
+        while idx + run < durations.len() && durations[idx + run] == d {
+            run += 1;
+        }
+        let mut attrs: Vec<(&str, String)> = Vec::new();
+        if first {
+            attrs.push(("t", t.to_string()));
+            first = false;
+        }
+        attrs.push(("d", d.to_string()));
+        if run > 1 {
+            attrs.push(("r", (run - 1).to_string()));
+        }
+        w.empty("S", &attrs);
+        t += d * run as u64;
+        idx += run;
+    }
+    w.close("SegmentTimeline");
 }
 
 // ---------------------------------------------------------------------------
