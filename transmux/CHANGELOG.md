@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`nal::caption_cc_data`** — extract ATSC A/53 caption SEI (in-band
+  CEA-608/708 carriage) from an H.264/HEVC access unit (#599, follow-up to
+  #595's SEI machinery). Walks every NAL, finds each
+  `user_data_registered_itu_t_t35` SEI message (H.264 type 6 / HEVC
+  prefix/suffix types 39/40, `payloadType` 4) matching the ATSC A/53 §6.2.3
+  signature (country `0xB5`, provider `0x0031`, `user_identifier` `"GA94"`,
+  `user_data_type_code` `0x03`), and returns the concatenated
+  `MPEG_cc_data()` bytes (`cc_data()` + trailing `marker_bits`) in AU order —
+  the same wire form the PES-carried `cc_data()` path already produces, ready
+  for `cc_data::CcData::parse`. Reuses `recovery_point_sei`'s SEI RBSP /
+  EBSP-unescape / `payloadType`-varint walk (issue #595). Works on IR sample
+  bytes (length-prefixed or Annex B); no `ts_demux.rs` change. Validated
+  against a real ATSC A/53 caption SEI captured byte-for-byte from
+  `samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`
+  (fetched on demand into `.test-streams/`, see
+  `tools/fetch-test-streams.sh transformers-eia608-h264`) plus a full
+  `TsDemux` round trip on the same capture.
+
 ## [0.14.0] - 2026-07-04
 
 ### Fixed

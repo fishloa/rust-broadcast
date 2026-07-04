@@ -37,6 +37,8 @@
 //! non-IDR: correct for open-GOP decode and DASH-IF/CMAF-acceptable, but not a
 //! "closed GOP" clean random-access point in the strict sense.
 
+use alloc::vec::Vec;
+
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
@@ -66,6 +68,10 @@ const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 const HEVC_IRAP_FIRST: u8 = 16;
 /// Last HEVC IRAP `nal_unit_type` (`RSV_IRAP_VCL23`) — Table 7-1.
 const HEVC_IRAP_LAST: u8 = 23;
+/// HEVC `nal_unit_type` for a prefix SEI NAL unit (`PREFIX_SEI_NUT`) — Table 7-1.
+const HEVC_NAL_SEI_PREFIX: u8 = 39;
+/// HEVC `nal_unit_type` for a suffix SEI NAL unit (`SUFFIX_SEI_NUT`) — Table 7-1.
+const HEVC_NAL_SEI_SUFFIX: u8 = 40;
 
 // ── VVC (ITU-T H.266 §7.3.1.2, Table 5) ─────────────────────────────────────
 
@@ -310,6 +316,180 @@ pub fn access_unit_is_rap(codec: NalCodec, au: &[u8], length_prefixed: bool) -> 
     }
 }
 
+// ── ATSC A/53 caption SEI (issue #599) ──────────────────────────────────────
+
+/// SEI `payloadType` for `user_data_registered_itu_t_t35` — ITU-T H.264 Annex D
+/// Table D-1 (syntax D.1.6, semantics D.2.6) / ITU-T H.265 Annex D (same
+/// registry: the SEI `payloadType` namespace is shared across H.264/H.265/H.266).
+const SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
+
+/// `itu_t_t35_country_code` for the United States (ITU-T T.35 country code
+/// table) — the fixed first byte of an ATSC caption SEI payload.
+const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
+
+/// `itu_t_t35_provider_code` identifying ATSC as the T.35 payload provider
+/// (registered with the SMPTE RA). Well-established industry convention for
+/// H.264/H.265 caption SEI (matches e.g. ffmpeg's `ff_alloc_a53_sei`); ATSC
+/// A/53 Part 4 itself only specifies the MPEG-2 `user_data()` embedding
+/// (§6.2.2/§6.2.3, no ITU-T T.35 wrapper — MPEG-2 has no SEI mechanism), so
+/// this and the two constants below are the H.264/H.265 SEI-specific framing
+/// that carries the same `ATSC_user_data()` payload (Table 6.7/6.8) inside it.
+const ATSC_T35_PROVIDER_CODE: u16 = 0x0031;
+
+/// `user_identifier` selecting `ATSC_user_data()` — ATSC A/53 Part 4 §6.2.3
+/// Table 6.7, value `0x47413934` (`"GA94"`).
+const ATSC_USER_IDENTIFIER_GA94: u32 = 0x4741_3934;
+
+/// `user_data_type_code` selecting `MPEG_cc_data()` (i.e. `cc_data()` plus a
+/// trailing `marker_bits` byte) — ATSC A/53 Part 4 §6.2.3 Table 6.9/6.10.
+const ATSC_USER_DATA_TYPE_CODE_CC_DATA: u8 = 0x03;
+
+/// Length in bytes of the T.35/ATSC header preceding `MPEG_cc_data()`:
+/// `itu_t_t35_country_code`(1) + `itu_t_t35_provider_code`(2) +
+/// `user_identifier`(4) + `user_data_type_code`(1).
+const ATSC_T35_HEADER_LEN: usize = 8;
+
+/// Whether `nal` is a SEI NAL unit for `codec` (AVC type 6; HEVC prefix/suffix
+/// types 39/40). VVC has no caption SEI convention defined here, so it never
+/// matches.
+fn is_sei_nal(codec: NalCodec, nal: &[u8]) -> bool {
+    match codec {
+        NalCodec::Avc => nal_unit_type(codec, nal) == Some(AVC_NAL_SEI),
+        NalCodec::Hevc => matches!(
+            nal_unit_type(codec, nal),
+            Some(HEVC_NAL_SEI_PREFIX) | Some(HEVC_NAL_SEI_SUFFIX)
+        ),
+        NalCodec::Vvc => false,
+    }
+}
+
+/// If `payload` (one SEI message's `sei_payload()` bytes, already
+/// EBSP-unescaped) is an ATSC A/53 caption SEI — `itu_t_t35_country_code`
+/// 0xB5, provider 0x0031, `user_identifier` "GA94", `user_data_type_code`
+/// 0x03 (§6.2.3 Tables 6.7-6.10) — append its `MPEG_cc_data()` bytes
+/// (`cc_data()` + trailing `marker_bits`, sized from the `cc_count` in the
+/// embedded `cc_data()` header) to `out`. Anything else — wrong signature,
+/// too short, or a declared `cc_count` that doesn't fit in the payload — is
+/// silently ignored: SEI is non-VCL, so a message that doesn't match is
+/// simply not a recognised caption carrier rather than an error.
+fn append_if_atsc_cc_data(payload: &[u8], out: &mut Vec<u8>) {
+    if payload.len() < ATSC_T35_HEADER_LEN {
+        return;
+    }
+    if payload[0] != ITU_T_T35_COUNTRY_CODE_USA {
+        return;
+    }
+    let provider_code = u16::from_be_bytes([payload[1], payload[2]]);
+    if provider_code != ATSC_T35_PROVIDER_CODE {
+        return;
+    }
+    let user_identifier = u32::from_be_bytes([payload[3], payload[4], payload[5], payload[6]]);
+    if user_identifier != ATSC_USER_IDENTIFIER_GA94 {
+        return;
+    }
+    if payload[7] != ATSC_USER_DATA_TYPE_CODE_CC_DATA {
+        return;
+    }
+    let cc = &payload[ATSC_T35_HEADER_LEN..];
+    // cc_data() header (ETSI TS 101 154 Table B.9): byte0 low 5 bits = cc_count,
+    // byte1 reserved; cc_count triplets of 3 bytes each; 1 trailing marker byte.
+    const CC_DATA_HEADER_LEN: usize = 2;
+    const CC_TRIPLET_LEN: usize = 3;
+    const CC_DATA_MARKER_LEN: usize = 1;
+    const CC_COUNT_MASK: u8 = 0x1F;
+    if cc.len() < CC_DATA_HEADER_LEN {
+        return;
+    }
+    let cc_count = usize::from(cc[0] & CC_COUNT_MASK);
+    let total = CC_DATA_HEADER_LEN + cc_count * CC_TRIPLET_LEN + CC_DATA_MARKER_LEN;
+    if cc.len() < total {
+        return;
+    }
+    out.extend_from_slice(&cc[..total]);
+}
+
+/// Walk every `sei_message()` in one SEI NAL (§7.3.2.3 `sei_rbsp()` for AVC;
+/// the equivalent HEVC/H.265 Annex D grammar), appending the `MPEG_cc_data()`
+/// bytes of any ATSC A/53 caption message ([`append_if_atsc_cc_data`]) found
+/// to `out`, in the order they appear in the NAL.
+///
+/// Reuses the `payloadType`/`payloadSize` varint walk and EBSP-unescape from
+/// [`recovery_point_sei`] (issue #595) — real broadcast SEI NALs commonly pack
+/// several `sei_message()`s (e.g. `buffering_period`/`pic_timing`/caption)
+/// into one NAL, so every message is checked. Stops silently (no panic) on a
+/// truncated or malformed NAL, matching that function's convention.
+fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u8>) {
+    if !is_sei_nal(codec, nal) {
+        return;
+    }
+    let mut bytes = EbspBytes::new(&nal[codec.header_len()..]).peekable();
+    loop {
+        let Some(payload_type) = read_sei_varint(&mut bytes) else {
+            return;
+        };
+        let Some(payload_size) = read_sei_varint(&mut bytes) else {
+            return;
+        };
+        let payload_size = payload_size as usize;
+        if payload_type == SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
+            let payload: Vec<u8> = (&mut bytes).take(payload_size).collect();
+            if payload.len() != payload_size {
+                // Truncated mid-payload: no more bytes to find further
+                // messages either.
+                return;
+            }
+            append_if_atsc_cc_data(&payload, out);
+        } else {
+            for _ in 0..payload_size {
+                if bytes.next().is_none() {
+                    return;
+                }
+            }
+        }
+        // No more sei_message()s to try (whatever remains, if anything, is
+        // rbsp_trailing_bits).
+        if bytes.peek().is_none() {
+            return;
+        }
+    }
+}
+
+/// Extract every ATSC A/53 caption SEI's `MPEG_cc_data()` bytes from an access
+/// unit, concatenated in AU order (issue #599).
+///
+/// `au` is one access unit — a 4-byte **length-prefixed** buffer when
+/// `length_prefixed` is `true` (the form [`crate::pipeline::Sample::data`]
+/// uses for AVC/HEVC), otherwise an **Annex B** byte stream. Walks every NAL,
+/// finds each `user_data_registered_itu_t_t35` SEI message (H.264 type 6 /
+/// HEVC prefix/suffix types 39/40, `payloadType` 4) matching the ATSC A/53
+/// signature (§6.2.3: country 0xB5, provider 0x0031, `user_identifier`
+/// "GA94", `user_data_type_code` 0x03), and appends its `MPEG_cc_data()`
+/// bytes — ready to feed straight into [`cc_data::CcData::parse`](https://docs.rs/cc-data)
+/// (the crate `timed-metadata`'s `Cea608CueExtractor`/`Cea708CueExtractor`
+/// consume) exactly as the PES-carried `cc_data()` path does.
+///
+/// Non-caption SEI messages (`recovery_point`, `pic_timing`,
+/// `buffering_period`, …) and non-SEI NALs are ignored. A malformed
+/// length-prefixed buffer, an empty AU, or an AU with no caption SEI all
+/// yield an empty `Vec` rather than an error — "no captions in this AU" is
+/// the expected common case, not a failure. VVC always yields empty: no
+/// caption SEI convention is defined for it here.
+pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec<u8> {
+    let mut out = Vec::new();
+    if length_prefixed {
+        if let Ok(nals) = iter_length_prefixed_nals(au) {
+            for nal in nals {
+                append_atsc_cc_data_from_sei_nal(codec, nal, &mut out);
+            }
+        }
+    } else {
+        for nal in iter_annexb_nals(au) {
+            append_atsc_cc_data_from_sei_nal(codec, nal, &mut out);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,5 +677,162 @@ mod tests {
         let trail = [0x00, 0x00, 0x01, 0x02, 0x01]; // type 1 (TRAIL_R)
         assert!(!access_unit_is_keyframe(NalCodec::Hevc, &trail, false));
         assert!(!access_unit_is_rap(NalCodec::Hevc, &trail, false));
+    }
+
+    // ── ATSC A/53 caption SEI (issue #599) ──────────────────────────────────
+
+    /// One complete H.264 SEI NAL, byte-for-byte extracted from the real
+    /// `samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`
+    /// capture (first `user_data_registered_itu_t_t35` SEI in the stream):
+    /// `00 00 01` start code, NAL header `06` (SEI), `payloadType` `04`
+    /// (user_data_registered_itu_t_t35), `payloadSize` `0x47` (71), the
+    /// 71-byte payload — T.35 header (country `0xB5`, provider `0x0031`,
+    /// `"GA94"`, type `0x03`) + a 63-byte `MPEG_cc_data()` (`cc_count` = 20) —
+    /// then the real stream's trailing bytes through the NAL's actual
+    /// `rbsp_trailing_bits` stop byte (`0x80`): a second, uninteresting
+    /// `sei_message()` this encoder packs into the same NAL. Extending the
+    /// fixture that far (rather than cutting it exactly at the T.35 payload
+    /// boundary) matters: [`iter_annexb_nals`] strips trailing `zero_byte`
+    /// padding from a NAL (real `rbsp_trailing_bits` always ends non-zero),
+    /// and this capture's raw bytes happen to end the T.35 payload on `00 00`
+    /// — cutting there would make the fixture *look* real while silently
+    /// exercising a code path the real stream never hits.
+    #[rustfmt::skip]
+    const REAL_A53_SEI_NAL: [u8; 82] = [
+        0x00, 0x00, 0x01, 0x06, 0x04, 0x47, 0xb5, 0x00, 0x31, 0x47, 0x41, 0x39,
+        0x34, 0x03, 0xd4, 0xff, 0xfc, 0x80, 0x80, 0xfd, 0x80, 0x80, 0xfa, 0x00,
+        0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00,
+        0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00,
+        0x00, 0xfa, 0x47, 0x01, 0xe1, 0x12, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa,
+        0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa,
+        0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xff, 0x80,
+    ];
+
+    /// The expected `MPEG_cc_data()` bytes: `REAL_A53_SEI_NAL`'s last 63 bytes
+    /// (everything after the 8-byte T.35/`GA94`/type-code header).
+    #[rustfmt::skip]
+    const REAL_A53_CC_DATA: [u8; 63] = [
+        0xd4, 0xff, 0xfc, 0x80, 0x80, 0xfd, 0x80, 0x80, 0xfa, 0x00, 0x00, 0xfa,
+        0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa,
+        0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa,
+        0x47, 0x01, 0xe1, 0x12, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00,
+        0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00, 0xfa, 0x00, 0x00,
+        0xfa, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn caption_cc_data_extracts_real_atsc_a53_sei() {
+        let extracted = caption_cc_data(NalCodec::Avc, &REAL_A53_SEI_NAL, false);
+        assert_eq!(extracted, REAL_A53_CC_DATA);
+    }
+
+    #[test]
+    fn caption_cc_data_finds_sei_alongside_other_nals() {
+        // A non-IDR slice before the SEI, and another after — the extractor
+        // must not be thrown off by surrounding VCL NALs, and must return
+        // exactly the caption bytes (not, e.g., duplicated).
+        let mut au = alloc::vec::Vec::new();
+        au.extend_from_slice(&[0x00, 0x00, 0x01, 0x41, 0x9a]); // non-IDR slice
+        au.extend_from_slice(&REAL_A53_SEI_NAL);
+        au.extend_from_slice(&[0x00, 0x00, 0x01, 0x41, 0x9b]); // non-IDR slice
+        let extracted = caption_cc_data(NalCodec::Avc, &au, false);
+        assert_eq!(extracted, REAL_A53_CC_DATA);
+    }
+
+    #[test]
+    fn caption_cc_data_length_prefixed_matches_annexb() {
+        let lp = crate::annexb::annexb_to_length_prefixed(&REAL_A53_SEI_NAL);
+        let extracted = caption_cc_data(NalCodec::Avc, &lp, true);
+        assert_eq!(extracted, REAL_A53_CC_DATA);
+    }
+
+    #[test]
+    fn caption_cc_data_ignores_non_caption_sei() {
+        // recovery_point SEI (payloadType 6) — a real, common SEI message —
+        // must not be mistaken for a caption SEI (bites the payloadType
+        // discrimination, not just the T.35 signature check).
+        let recovery_point = [0x00, 0x00, 0x01, 0x06, 0x06, 0x00];
+        assert!(caption_cc_data(NalCodec::Avc, &recovery_point, false).is_empty());
+
+        // pic_timing SEI (payloadType 1) with an arbitrary payload.
+        let pic_timing = [0x00, 0x00, 0x01, 0x06, 0x01, 0x02, 0xAA, 0xBB];
+        assert!(caption_cc_data(NalCodec::Avc, &pic_timing, false).is_empty());
+
+        // user_data_registered_itu_t_t35 (payloadType 4) but the wrong
+        // provider/country signature (not ATSC/GA94) — must not match.
+        let wrong_signature = [
+            0x00, 0x00, 0x01, 0x06, // start code + SEI header
+            0x04, 0x08, // payloadType 4, payloadSize 8
+            0xB5, 0x00, 0x99, b'X', b'X', b'X', b'X', 0x03, // wrong provider
+        ];
+        assert!(caption_cc_data(NalCodec::Avc, &wrong_signature, false).is_empty());
+    }
+
+    #[test]
+    fn caption_cc_data_rejects_declared_cc_count_overrunning_payload() {
+        // A syntactically-valid T.35/GA94 header whose cc_data() declares
+        // more triplets (cc_count) than fit in the SEI payload — must be
+        // ignored, not read out of bounds / truncated silently as if valid.
+        let truncated = [
+            0x00, 0x00, 0x01, 0x06, // start code + SEI header
+            0x04, 0x0A, // payloadType 4, payloadSize 10
+            0xB5, 0x00, 0x31, 0x47, 0x41, 0x39, 0x34, 0x03, // T.35 + GA94 + type 0x03
+            0x9F, 0xFF, // cc_data() header: cc_count = 31 (needs 96 more bytes, has 0)
+        ];
+        assert!(caption_cc_data(NalCodec::Avc, &truncated, false).is_empty());
+    }
+
+    #[test]
+    fn caption_cc_data_hevc_prefix_and_suffix_sei() {
+        // Re-wrap the real payload's T.35 body in a 2-byte HEVC SEI header
+        // (prefix type 39, then suffix type 40) instead of the 1-byte AVC
+        // header — proves the codec dispatch, not just the AVC path.
+        let t35_and_cc_data = &REAL_A53_SEI_NAL[6..]; // payload bytes only (after payloadSize)
+        for (label, nal_type) in [
+            ("prefix", HEVC_NAL_SEI_PREFIX),
+            ("suffix", HEVC_NAL_SEI_SUFFIX),
+        ] {
+            let mut au = alloc::vec::Vec::new();
+            au.extend_from_slice(&[0x00, 0x00, 0x01]);
+            au.push(nal_type << HEVC_NAL_TYPE_SHIFT); // HEVC NAL header byte 0
+            au.push(0x01); // HEVC NAL header byte 1 (layer_id/temporal_id, arbitrary)
+            au.push(0x04); // payloadType 4
+            au.push(0x47); // payloadSize 71
+            au.extend_from_slice(t35_and_cc_data);
+            let extracted = caption_cc_data(NalCodec::Hevc, &au, false);
+            assert_eq!(extracted, REAL_A53_CC_DATA, "HEVC {label} SEI");
+        }
+    }
+
+    #[test]
+    fn caption_cc_data_vvc_is_always_empty() {
+        // No caption SEI convention is defined for VVC here — even a byte
+        // sequence that would match on AVC/HEVC must yield nothing.
+        let extracted = caption_cc_data(NalCodec::Vvc, &REAL_A53_SEI_NAL, false);
+        assert!(extracted.is_empty());
+    }
+
+    #[test]
+    fn caption_cc_data_no_panic_on_arbitrary_and_truncated_bytes() {
+        // A grab-bag of adversarial inputs: empty, single bytes, runs of
+        // 0xFF (pathological SEI varints), a truncated real SEI NAL at every
+        // possible cut point, and a malformed length-prefixed declaration.
+        // None of these may panic; every one is expected to yield "no
+        // captions found" (possibly non-empty in a way we don't assert here —
+        // the property under test is "doesn't panic", not a specific value).
+        for codec in [NalCodec::Avc, NalCodec::Hevc, NalCodec::Vvc] {
+            let _ = caption_cc_data(codec, &[], false);
+            let _ = caption_cc_data(codec, &[], true);
+            let _ = caption_cc_data(codec, &[0x06], false);
+            let _ = caption_cc_data(codec, &[0xFF; 32], false);
+            let _ = caption_cc_data(codec, &[0x00, 0x00, 0x01, 0x06, 0xFF, 0xFF, 0xFF], false);
+            for cut in 0..=REAL_A53_SEI_NAL.len() {
+                let _ = caption_cc_data(codec, &REAL_A53_SEI_NAL[..cut], false);
+            }
+            // Malformed length-prefixed buffer: declares a length past the
+            // end of the buffer.
+            let bad_lp = [0x00, 0x00, 0x00, 0x63, 0x06, 0x04];
+            let _ = caption_cc_data(codec, &bad_lp, true);
+        }
     }
 }
