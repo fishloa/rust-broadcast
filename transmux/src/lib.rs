@@ -176,8 +176,8 @@ pub use cenc::{
 #[cfg(feature = "cenc")]
 pub use cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
 pub use dash::{
-    DashPackager, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
-    TrickModeAdaptationSet, TrickModeRepr,
+    Addressing, ContentProtectionSystem, DashPackager, InbandEventStream, MPD_NAMESPACE, MediaKind,
+    PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
