@@ -18,7 +18,7 @@
 //!   for (..SPS..) { unsigned int(16) len; bit(8*len) nalu; }
 //!   unsigned int(8)  numOfPictureParameterSets;
 //!   for (..PPS..) { unsigned int(16) len; bit(8*len) nalu; }
-//!   if (profile∈{100,110,122,144}) {
+//!   if (profile∈{100,110,122,244}) {
 //!     bit(6) reserved; unsigned int(2) chroma_format;
 //!     bit(5) reserved; unsigned int(3) bit_depth_luma_minus8;
 //!     bit(5) reserved; unsigned int(3) bit_depth_chroma_minus8;
@@ -27,15 +27,23 @@
 //!   }
 //! }
 //! ```
+//!
+//! # profile_idc 244, not 144 (#563)
+//!
+//! Early drafts of ISO/IEC 14496-15 (and some still-circulating transcriptions)
+//! list this condition as `profile_idc∈{100,110,122,144}`. `144` was the
+//! placeholder profile number assigned to the not-yet-finalized "High 4:4:4"
+//! profile before ITU-T H.264 Amendment 3 (2005) finalized it as **profile_idc
+//! 244**, "High 4:4:4 Predictive Profile" (H.264 Table A-1); no encoder ever
+//! emits SPS profile_idc 144. Real muxers (verified against an `ffmpeg -c copy`
+//! remux of `fixtures/ts/h264/high444.ts`, profile_idc 244) write the
+//! chroma_format/bit_depth extension for profile_idc 244, not 144.
 
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
-
-/// Profiles that trigger the high-profile extension (chroma_format, bit depths).
-const HIGH_PROFILE_IDS: [u8; 4] = [100, 110, 122, 144];
 
 /// `lengthSizeMinusOne` must be 0, 1, or 3 (value 2 is invalid).
 const VALID_LENGTH_SIZES: [u8; 3] = [0, 1, 3];
@@ -62,20 +70,23 @@ pub struct AVCDecoderConfigurationRecord {
     pub sps: Vec<AvcSps>,
     /// Picture parameter sets (PPS).
     pub pps: Vec<AvcPps>,
-    /// High-profile extension: chroma_format_idc (only present for profile 100/110/122/144).
+    /// High-profile extension: chroma_format_idc (only present for profile 100/110/122/244).
     pub chroma_format: Option<u8>,
     /// High-profile extension: bit_depth_luma_minus8.
     pub bit_depth_luma_minus8: Option<u8>,
     /// High-profile extension: bit_depth_chroma_minus8.
     pub bit_depth_chroma_minus8: Option<u8>,
-    /// High-profile extension: SPS ext (only present for profile 100/110/122/144).
+    /// High-profile extension: SPS ext (only present for profile 100/110/122/244).
     pub sps_ext: Vec<AvcSpsExt>,
 }
 
 impl AVCDecoderConfigurationRecord {
-    /// True when the profile requires the high-profile extension fields.
+    /// True when the profile requires the high-profile extension fields
+    /// (chroma_format, bit depths) — ISO/IEC 14496-15 §5.3.3.1.2. Shared with
+    /// the TS demuxer's avcC populator via `sps::is_high_profile` so serialize
+    /// and demux agree on the exact set (incl. 244 = High 4:4:4 Predictive; #563).
     fn has_high_profile_ext(profile: u8) -> bool {
-        HIGH_PROFILE_IDS.contains(&profile)
+        crate::sps::is_high_profile(profile)
     }
 }
 
@@ -132,7 +143,7 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
             pps.push(AvcPps(nalu));
         }
 
-        // High-profile extensions (optional, for profile 100/110/122/144)
+        // High-profile extensions (optional, for profile 100/110/122/244)
         let mut chroma_format = None;
         let mut bit_depth_luma_minus8 = None;
         let mut bit_depth_chroma_minus8 = None;
@@ -543,13 +554,15 @@ mod tests {
     }
 
     #[test]
-    fn test_avc_config_profile_144_gets_ext() {
-        // profile=144 (High 4:4:4 Predictive) must also have the high-profile ext
+    fn test_avc_config_profile_244_gets_ext() {
+        // profile=244 (High 4:4:4 Predictive, ITU-T H.264 Table A-1) must get the
+        // high-profile ext. `144` (the pre-Amendment-3 placeholder number, never
+        // emitted by real encoders) must NOT — see the module doc (#563).
         let mut body = vec![
             0x01,
-            0x90,
+            0xF4,
             0x00,
-            0x1E,        // configVersion=1, profile=144, compat=0, level=30
+            0x1E,        // configVersion=1, profile=244, compat=0, level=30
             0xFC | 0x03, // lenSize=3
             0xE0,        // numSPS=0
             0x00,        // numPPS=0
@@ -561,9 +574,29 @@ mod tests {
         body.push(0x00); // numSPSExt=0
 
         let record = AVCDecoderConfigurationRecord::parse(&body).unwrap();
-        assert_eq!(record.profile_indication, 144);
+        assert_eq!(record.profile_indication, 244);
         assert_eq!(record.chroma_format, Some(1));
         assert_eq!(record.bit_depth_luma_minus8, Some(0));
         assert_eq!(record.bit_depth_chroma_minus8, Some(0));
+    }
+
+    #[test]
+    fn test_avc_config_profile_144_no_ext() {
+        // profile=144 is NOT a real H.264 profile_idc (see module doc, #563) —
+        // it must NOT be treated as requiring the high-profile extension.
+        let body = vec![
+            0x01,
+            0x90,
+            0x00,
+            0x1E,        // configVersion=1, profile=144, compat=0, level=30
+            0xFC | 0x03, // lenSize=3
+            0xE0,        // numSPS=0
+            0x00,        // numPPS=0
+        ];
+        let record = AVCDecoderConfigurationRecord::parse(&body).unwrap();
+        assert_eq!(record.profile_indication, 144);
+        assert_eq!(record.chroma_format, None);
+        assert_eq!(record.bit_depth_luma_minus8, None);
+        assert_eq!(record.bit_depth_chroma_minus8, None);
     }
 }

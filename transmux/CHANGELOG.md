@@ -25,6 +25,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `CodecConfig` — exhaustive external `match`/`if let` sites need a
     trailing `_ =>` (or `other =>`) arm.
 
+### Fixed
+- **`avcC` high-profile extension gate + population** (#563, #582): the
+  `AVCDecoderConfigurationRecord` extension gate
+  (chroma_format/bit_depth_luma_minus8/bit_depth_chroma_minus8) checked
+  `profile_idc ∈ {100,110,122,144}`; `144` was a pre-Amendment-3 placeholder,
+  finalized by ITU-T H.264 as **profile_idc 244** ("High 4:4:4 Predictive").
+  Fixed to the shared `sps::is_high_profile` set. Additionally, `TsDemux` had
+  hardcoded those three fields to `None` when recovering `avcC` from a TS AVC
+  stream, so High 10/4:2:2/4:4:4 lost chroma/bit-depth end-to-end — now
+  populated from the SPS. (Verified against `fixtures/ts/h264/high*.ts`.)
+
 ### Added
 - **Origin PID + PMT ES_info descriptors on every TS-demuxed track** (#582):
   a DVB player track-picker can now select/label tracks by PID and by
@@ -48,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   issue #204 convention), mirroring the guard already run in `dvb-si` and
   other crates. `ColourType` (`src/visual_ext.rs`) gained `name()` +
   `Display` as part of closing the existing gap the guard found.
+- **H.264/HEVC profile-matrix hardening test** (#563):
+  `tests/sps_profile_matrix.rs` — table-driven, ffprobe-oracle-backed
+  coverage of `decode_avc_sps`/`decode_hevc_sps` + the `TsDemux` → `CmafMux`
+  TS→IR→fMP4 path across Baseline/Main/High/High10/High422/High444/
+  High-1080-cropped/interlaced + HEVC Main/Main10 (profile/level/dims/
+  chroma/bit-depth/interlace/fps vs real fixtures).
 
 ## [0.11.0] - 2026-07-04
 
