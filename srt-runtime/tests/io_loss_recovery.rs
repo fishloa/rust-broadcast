@@ -119,7 +119,10 @@ async fn loss_recovery_through_io_layer() {
             .expect("relay server-side bind");
         let dropped_seqs = Arc::new(Mutex::new(Vec::new()));
         let relay_dropped = Arc::clone(&dropped_seqs);
-        tokio::spawn(run_relay(
+        // Keep the relay's `JoinHandle` so it is explicitly aborted at the end
+        // of the test — a spawned task left running could keep the
+        // current-thread runtime from shutting down cleanly.
+        let relay_handle = tokio::spawn(run_relay(
             client_side,
             server_side,
             listener_addr,
@@ -135,7 +138,7 @@ async fn loss_recovery_through_io_layer() {
         let mut caller = SrtSocket::connect(relay_addr, caller_config)
             .await
             .expect("caller connect");
-        let mut receiver = jh.await.expect("join listener");
+        let receiver = jh.await.expect("join listener");
 
         // --- Send N distinct payloads; a deterministic subset is dropped in transit ---
         let payloads: Vec<Vec<u8>> = (0..NUM_PAYLOADS)
@@ -148,21 +151,40 @@ async fn loss_recovery_through_io_layer() {
             })
             .collect();
 
+        // Drive the receiver CONCURRENTLY with the caller's sends (as a real
+        // SRT deployment does): the receiver task keeps producing NAKs and the
+        // caller's driver keeps servicing retransmits throughout, and — via
+        // the driver task's periodic tick — recovery still completes after the
+        // caller's last send. The receive task owns `receiver` and drops it on
+        // return (aborting its driver task).
+        let recv_task = tokio::spawn(async move {
+            let mut received: Vec<Vec<u8>> = Vec::with_capacity(NUM_PAYLOADS);
+            let mut receiver = receiver;
+            while received.len() < NUM_PAYLOADS {
+                match receiver.recv().await.expect("receiver recv") {
+                    Some(payload) => received.push(payload),
+                    None => break,
+                }
+            }
+            received
+        });
+
         for payload in &payloads {
             caller.send(payload).await.expect("caller send");
-            // Give the loss detection / NAK / retransmit round trip room to
-            // run between sends (localhost RTT is sub-millisecond).
+            // Localhost RTT is sub-millisecond; a small gap keeps the loss /
+            // NAK / retransmit round trip flowing while sending.
             tokio::time::sleep(Duration::from_millis(8)).await;
         }
 
-        // --- Receive all N payloads ---
-        let mut received: Vec<Vec<u8>> = Vec::with_capacity(NUM_PAYLOADS);
-        while received.len() < NUM_PAYLOADS {
-            match receiver.recv().await.expect("receiver recv") {
-                Some(payload) => received.push(payload),
-                None => break,
-            }
-        }
+        // Wait for the receiver to collect everything (recovery of the last
+        // dropped packet may complete slightly after the final send, driven
+        // by the caller driver's periodic tick).
+        let received = recv_task.await.expect("join receiver task");
+
+        // Deterministic teardown: stop the relay and the caller's driver task
+        // so the runtime has nothing left running.
+        relay_handle.abort();
+        drop(caller);
 
         // Sanity: confirm the relay actually exercised the drop path — a
         // test that never drops anything would trivially pass even with
