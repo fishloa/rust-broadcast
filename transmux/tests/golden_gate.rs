@@ -28,6 +28,11 @@
 //! `timed-metadata` crate, not as a transmux mux spoke), so there is nothing
 //! for this harness to produce yet.
 
+// This harness drives `transmux::cli::run_bytes`, which only exists under the
+// `cli` feature; gate the whole test file so `--no-default-features` builds
+// (e.g. the MSRV job) don't fail to compile on the missing `transmux::cli`.
+#![cfg(feature = "cli")]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
