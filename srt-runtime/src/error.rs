@@ -131,4 +131,21 @@ pub enum Error {
         /// Why the call is not valid there.
         reason: &'static str,
     },
+    /// A real-socket I/O failure surfaced by [`crate::io`]'s tokio adapter
+    /// (feature `tokio`, which implies `std`). Carries the OS
+    /// [`std::io::ErrorKind`] — so e.g. a bind failure (`AddrInUse`) is
+    /// distinguishable from a mid-connection reset (`ConnectionReset`) — plus
+    /// a fixed `context` naming the failing call site (`"bind"`, `"connect"`,
+    /// `"recv"`, `"send"`, …). `std::io::Error` itself is not
+    /// `Clone`/`PartialEq`/`Eq` (this enum derives all three), so only its
+    /// `kind()` is kept rather than the full error.
+    #[cfg(feature = "std")]
+    #[error("io error during {context}: {kind:?}")]
+    Io {
+        /// The `std::io::Error::kind()` of the underlying OS error.
+        kind: std::io::ErrorKind,
+        /// Which call site failed (e.g. `"bind"`, `"connect"`, `"recv"`,
+        /// `"send"`).
+        context: &'static str,
+    },
 }

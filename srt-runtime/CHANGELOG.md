@@ -6,6 +6,56 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tokio UDP adapter (`io.rs`) — loss recovery now genuinely works end-to-end**
+  (release-audit findings S1–S4). The adapter previously could not recover lost
+  packets over a real socket; the driver loop, packet pacing, dest-socket-id,
+  and error mapping were all wrong.
+  - **Background driver task per connection (S2 root cause).** `SrtSocket` is now
+    a handle over a background task that runs a `tokio::select!` loop
+    (socket RX / application-send / periodic `tokio::time::interval` tick). The
+    old pull-based `send`/`recv` only advanced the protocol while the app was
+    inside a call, so a fire-and-forget sender went dormant and never drained
+    inbound NAKs or emitted retransmissions — loss recovery deadlocked. The
+    periodic tick arm keeps retransmit/ACK/NAK progressing regardless of
+    application call timing. Retransmits (drained from the NAK loss list by
+    `arq::Sender::tick`) are queued ahead of new first-time data each cycle,
+    preserving the spec's loss-list-before-first-transmission priority
+    (`draft-sharabayko-srt-01` §4.8.2, rules 5/15/16).
+  - **Single in-order delivery cursor.** Delivery is now driven solely by the
+    TSBPD scheduler; the ARQ receiver drives reliability (loss detection / NAK /
+    ACK point) only. Previously both cursors delivered from one staging map and
+    raced, reordering retransmitted packets. TLPKTDROP is disabled in the
+    adapter so a NAK-recovered gap is waited for, not skipped — `recv` delivers
+    every payload in order.
+  - **LiveCC pacing applied to DATA packets only (S1).** `PKT_SND_PERIOD` (§5.1)
+    now paces original/retransmitted DATA packets and never throttles
+    ACK/NAK/ACKACK/Keep-Alive control feedback (which loss recovery rides on).
+    `LiveCC` is fed payload sizes at each data send and the send period is read
+    where a data packet is actually emitted, instead of being misapplied once
+    per flush to every datagram.
+  - **Correct peer socket id + real SYN cookie (S3).** Outgoing packets now use
+    the peer's *negotiated SRT Socket ID* (`NegotiatedParams::peer_socket_id`)
+    as `dest_socket_id`, not its initial sequence number. The listener's SYN
+    cookie is derived via `handshake_sm::derive_cookie` from the peer address, a
+    1-minute time bucket, and a per-listener random secret (§4.3.1.1), replacing
+    the hard-coded `0xC0FFEE42` constant.
+  - **I/O errors preserve context (S4).** A new `Error::Io { kind, context }`
+    variant carries the `std::io::ErrorKind` and the failing call site
+    (`bind`/`connect`/`recv`/`send`/…), so e.g. a bind failure is
+    distinguishable from a mid-connection reset — replacing the previous
+    flatten-everything-to-`InvalidField{reason:"io error"}`.
+  - New `tests/io_loss_recovery.rs`: a loss-injecting UDP relay drops a
+    deterministic subset of first-time DATA packets between caller and listener;
+    the test sends 40 payloads and asserts all arrive in order, byte-identical,
+    proving NAK→retransmit recovery *through `io.rs`* (wrapped in a 15 s
+    `tokio::time::timeout`).
+
+- **`#[non_exhaustive]` on forward-evolving public types** (release-audit
+  dimension F): `livecc::MaxBwConfig`, `arq::FeedOutcome`, `tsbpd::TickOutcome`,
+  and `rendezvous::RendezvousRole`.
+
 ### Added
 
 - **Tokio UDP socket adapter** (feature `tokio`, issue #611): real-socket async

@@ -37,6 +37,7 @@ const MAX_GAP_EXPANSION: u32 = 1 << 16;
 
 /// Outcome of one [`Receiver::feed_data`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct FeedOutcome {
     /// Sequence numbers that became cumulatively in-order-deliverable as a
     /// result of this packet's arrival — includes `seq` itself when it was
