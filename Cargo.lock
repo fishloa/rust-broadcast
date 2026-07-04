@@ -1840,6 +1840,7 @@ name = "timed-metadata"
 version = "0.2.0"
 dependencies = [
  "broadcast-common",
+ "cc-data",
  "chrono",
  "mp4-emsg",
  "scte35-splice",

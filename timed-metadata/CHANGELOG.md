@@ -2,6 +2,27 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+### Added
+- **`webvtt`** module (feature `cc-data`, off by default): converts CEA-608/708
+  closed captions to WebVTT cues (#568). `Cea608CueExtractor` /
+  `Cea708CueExtractor` wrap `cc-data`'s decode-only 608/CC1 and 708-service
+  models and derive cue start/end boundaries by diffing the decoded displayed
+  text after each fed access-unit frame (pop-on boundaries land exactly on
+  EOC/erase since `cc-data` only mutates the *displayed* buffer on those
+  commands; roll-up/paint-on boundaries are best-effort per visible-text
+  change — documented as a known simplification). `Cue` + `write_document` /
+  `write_segment` (always available, no `cc-data` dependency) render W3C
+  WebVTT §4 cue blocks and RFC 8216 §3.5 HLS segmented output with
+  `X-TIMESTAMP-MAP=MPEGTS:<n>,LOCAL:00:00:00.000`, reusing `Timeline`'s
+  33-bit PTS wrap-unroll. Lossy by design: no cue `line`/`position`/`align`
+  settings and no inline styling (`<i>`/`<u>`/`<c>`) are emitted in this first
+  pass — see the module docs for the full list of documented losses.
+  Validated against a synthetic-but-spec-real CEA-608 CC1 fixture
+  (`fixtures/cc/cea608_cc1_synthetic.txt`, CTA-608-E control/PAC/char codes)
+  covering pop-on, roll-up, and paint-on; emitted WebVTT additionally
+  cross-checked against `ffmpeg` when available.
+
 ## [0.2.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

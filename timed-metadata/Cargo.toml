@@ -18,12 +18,18 @@ rustdoc-args = ["--cfg", "docsrs"]
 scte35-splice = { path = "../scte35-splice", version = "1", default-features = false }
 mp4-emsg      = { path = "../mp4-emsg",      version = "0.2", default-features = false }
 broadcast-common    = { path = "../broadcast-common",    version = "8", default-features = false }
+cc-data       = { path = "../cc-data",       version = "0.3", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }
 chrono        = { version = "0.4", default-features = false, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [features]
 default = ["std", "serde", "chrono"]
-std    = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std"]
-serde  = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde"]
-chrono = ["dep:chrono", "chrono/alloc"]
+std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std"]
+serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde"]
+chrono  = ["dep:chrono", "chrono/alloc"]
+# CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
+# `Cea708CueExtractor`), layered on `cc-data`'s decode-only 608/708 model.
+# Not in `default`: pulls in the whole caption-decode crate, which most
+# SCTE-35/emsg/DATERANGE-only consumers of this crate don't need.
+cc-data = ["dep:cc-data", "cc-data/decode"]
