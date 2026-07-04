@@ -1968,6 +1968,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 
