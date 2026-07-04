@@ -49,6 +49,38 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - Explicit non-goals, unchanged from prior releases: TLPKTDROP fake-ACK
     skip handling, RTO-based/congestion-control retransmission, send-queue
     overflow sizing, TSBPD delivery timing.
+- **§6 SRT payload encryption primitives** (issue #608), behind a new
+  non-default `crypto` feature (zero new dependencies for the default/no_std
+  packet-codec core):
+  - `crypto::aes_ctr_apply` — AES-CTR payload encrypt/decrypt (self-inverse).
+    The per-packet counter (`crypto::packet_counter`) is derived from the Key
+    Material `Salt` and the data packet's Packet Sequence Number per the
+    §6.2.2/§6.3.2 formula `IV = (MSB(112, Salt) << 2) XOR PktSeqNo` — the
+    draft gives a second, textually different formula in §6.1.2 that this
+    crate deliberately does *not* implement; both are transcribed and the
+    conflict documented in `specs/rules/srt-crypto.md` and the `crypto`
+    module doc.
+  - `crypto::wrap_sek` / `crypto::unwrap_sek` — RFC 3394 AES key wrap/unwrap
+    of the SEK under the KEK (§6.1.5/§6.2.1/§6.3.1), split as
+    `(icv, wrapped)` to match `packet::KeyMaterial`'s `icv`/`x_sek`/`o_sek`
+    fields; supports wrapping one or two concatenated SEKs (`KK` = even/odd
+    vs. both).
+  - `crypto::derive_kek` — KEK derivation from a pre-shared passphrase via
+    PBKDF2 (HMAC-SHA1, 2048 iterations) per §6.1.4/§6.2.1/§6.3.1, salted with
+    the Key Material `Salt`'s low 64 bits (`LSB(64,Salt)`).
+  - `crypto::select_sek` — picks the even/odd SEK for a data packet from its
+    `KK` field (`packet::EncryptionKeyField`).
+  - AES-128/192/256 (`KLen` 16/24/32 bytes) supported throughout, selected by
+    key length at runtime.
+  - Uses the `aes`/`ctr`/`aes-kw`/`pbkdf2`/`hmac`/`sha1` RustCrypto crates
+    (all `no_std`) — no hand-rolled crypto.
+  - `tests/crypto_vectors.rs` — external ground truth, not spec-vector-free
+    self-checks: the RFC 3394 §4.1 worked key-wrap vector (byte-exact wrap
+    *and* unwrap), the NIST SP 800-38A Appendix F.5.1 CTR-AES128 vector
+    (byte-exact both directions), and an SRT-specific SEK+Salt+PktSeqNo
+    payload round-trip including a wrong-SEK-does-not-recover negative case.
+    `draft-sharabayko-srt-01` §6 has no test vectors of its own
+    (`specs/rules/srt-crypto.md`).
 - **Sans-IO HSv5 Caller-Listener handshake state machine** (§4.3.1, issue
   #598), driving the existing packet codecs from #565 — no raw handshake
   bytes are hand-encoded:
