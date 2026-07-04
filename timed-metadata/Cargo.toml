@@ -23,6 +23,14 @@ thiserror     = { version = "2", default-features = false }
 chrono        = { version = "0.4", default-features = false, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
+[dev-dependencies]
+# Real/synthetic SEI-carried-caption fixture test (issue #599): demuxes a TS
+# capture into IR samples and extracts A/53 caption SEI, proving the SEI
+# carriage path converges on the same `Cea608CueExtractor`/`Cea708CueExtractor`
+# as the PES `cc_data()` path (#568). Test-only: the library itself has no
+# transmux dependency.
+transmux = { path = "../transmux", version = "0.14", default-features = false }
+
 [features]
 default = ["std", "serde", "chrono"]
 std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std"]

@@ -1847,6 +1847,7 @@ dependencies = [
  "scte35-splice",
  "serde",
  "thiserror",
+ "transmux",
 ]
 
 [[package]]
@@ -1967,6 +1968,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "serde",
+ "serde_json",
  "thiserror",
 ]
 

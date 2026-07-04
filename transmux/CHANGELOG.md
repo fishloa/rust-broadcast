@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Streaming Annex B → access-unit splitter** (`au::AccessUnitSplitter`,
+  `au::split_access_units`) (#601). An IP-camera SoC encoder emits a continuous
+  Annex B byte stream (ITU-T H.264 Annex B) with no TS/PES framing; the on-camera
+  LL-HLS origin path needs to cut it into access units incrementally as bytes
+  arrive. The new splitter buffers pushed bytes and emits each complete access
+  unit at the next AU boundary — an access-unit delimiter (AVC 9 / HEVC `AUD_NUT`
+  35 / VVC `AUD_NUT` 20), a VCL NAL that is the first slice of a new picture
+  (AVC `first_mb_in_slice`==0 / HEVC `first_slice_segment_in_pic_flag`==1), or a
+  non-VCL NAL following a VCL (H.264 §7.4.1.2.4). Codec-aware (AVC/HEVC; VVC on
+  AUD/non-VCL boundaries only), `no_std`, and byte-exact: concatenating the
+  emitted units reproduces the input from its first start code. Complements the
+  existing per-NAL `annexb::iter_annexb_nals` and the private, one-shot AUD-only
+  splitter in `ps_demux`.
+- **MPEG-H 3D Audio MPEG-2 TS carriage** (#579): `ts_demux.rs` recognises PMT
+  `stream_type 0x2D` (ISO/IEC 13818-1 Table 2-34 / ETSI TS 101 154 §6.8) as
+  MPEG-H Audio, parses the MHAS elementary-stream packet framing
+  (`transmux::mpegh`'s new packet walker — the three-tier "escaped value"
+  header coding, empirically verified against a real Fraunhofer
+  MPEG-H-in-TS fixture; see `transmux/docs/codec/mpegh-ts-101154.md`) to
+  locate the `PACTYP_MPEGH3DACFG` packet's opaque `mpegh3daConfig()` payload,
+  and builds a `CodecConfig::MpegH` track from it — one opaque `Sample` per
+  MHAS access unit, `is_sync` set from whether the access unit is a
+  random-access point (ETSI TS 101 154 §6.8.4.1). `ts_mux.rs` gains
+  `EsKind::MpegH` (stream_type `0x2D`, MHAS passthrough) and synthesizes the
+  PMT `MPEG-H_3dAudio_descriptor` (`0x3F` extension descriptor) from the
+  track's `mpegh3daProfileLevelIndication`. `referenceChannelLayout` /
+  `channel_count` / `sample_rate` are not derivable from TS-layer signalling
+  alone (would require decoding the opaque `mpegh3daConfig()` bitstream,
+  ISO/IEC 23008-3, paid) and are left as documented `0`/"unspecified"
+  placeholders; sample timing is unaffected (durations anchor on the 90 kHz
+  TS clock, not an audio sample count). No MPEG-H audio bitstream decode —
+  config/sample passthrough only, mirroring the existing AC-3/DTS TS
+  carriage and the crate's existing ISOBMFF `mha1`/`mhaC` support. Gated on
+  the private `private/fixtures/ts/mpegh-cicp01-baseline.ts` fixture
+  (`transmux/tests/mpegh_ts.rs`, skips cleanly when the private submodule
+  isn't checked out).
+- **`nal::caption_cc_data`** — extract ATSC A/53 caption SEI (in-band
+  CEA-608/708 carriage) from an H.264/HEVC access unit (#599, follow-up to
+  #595's SEI machinery). Walks every NAL, finds each
+  `user_data_registered_itu_t_t35` SEI message (H.264 type 6 / HEVC
+  prefix/suffix types 39/40, `payloadType` 4) matching the ATSC A/53 §6.2.3
+  signature (country `0xB5`, provider `0x0031`, `user_identifier` `"GA94"`,
+  `user_data_type_code` `0x03`), and returns the concatenated
+  `MPEG_cc_data()` bytes (`cc_data()` + trailing `marker_bits`) in AU order —
+  the same wire form the PES-carried `cc_data()` path already produces, ready
+  for `cc_data::CcData::parse`. Reuses `recovery_point_sei`'s SEI RBSP /
+  EBSP-unescape / `payloadType`-varint walk (issue #595). Works on IR sample
+  bytes (length-prefixed or Annex B); no `ts_demux.rs` change. Validated
+  against a real ATSC A/53 caption SEI captured byte-for-byte from
+  `samples.ffmpeg.org/ffmpeg-bugs/trac/ticket2885/transformers_EIA608_H264.ts`
+  (fetched on demand into `.test-streams/`, see
+  `tools/fetch-test-streams.sh transformers-eia608-h264`) plus a full
+  `TsDemux` round trip on the same capture.
+- **Player-validated golden gate** (#569): `tests/golden_gate.rs` packages the
+  real `fixtures/ts/h264_aac.ts` fixture through `transmux::cli::run_bytes`
+  (the same code path the `transmux` binary uses) into CMAF/fMP4, progressive
+  MP4, classic TS-HLS (segment + `.m3u8` playlist), and DASH MPD, then hands
+  each artefact to an **independent** decoder — `ffprobe` — asserting it
+  parses cleanly and reports the same track count / codec / dimensions /
+  sample-rate as the source fixture's own `ffprobe` identification. Every
+  other transmux test proves round-trip symmetry against the crate's own
+  parsers only; this closes that self-referential gap with an external
+  oracle. DASH falls back to a structural MPD check + per-segment `ffprobe`
+  when the local `ffprobe` build lacks the `dash` demuxer (common — it needs
+  libxml2); TS-HLS additionally resolves the whole playlist through
+  `ffprobe`'s `hls` demuxer when present. `ffprobe` availability (and
+  specific demuxers) is probed at runtime and each case skips cleanly with a
+  printed reason when the tool is absent, so `cargo test` stays green without
+  ffmpeg installed. A `mutated_cmaf_output_fails_the_gate` self-test proves
+  the oracle bites (a truncated artefact must fail `ffprobe`, not pass). New
+  non-blocking `golden-gate` CI job (`.github/workflows/ci.yml`) installs
+  ffmpeg and runs the harness.
+
 ## [0.14.0] - 2026-07-04
 
 ### Fixed
