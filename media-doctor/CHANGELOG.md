@@ -5,6 +5,39 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- Codec-level signalling-vs-bitstream cross-validation checks (issue #567), reusing
+  `transmux`'s SPS/NAL/ADTS decoders — no duplicated parsing:
+  - `CodecSignallingCheck`: flags a PMT-declared H.264/HEVC/AAC-ADTS PID
+    (`stream_type` `0x1B`/`0x24`/`0x0F`) whose elementary stream never once looks
+    like that codec's framing (no Annex B NAL / no ADTS sync anywhere) —
+    `codec-signalling-mismatch`.
+  - `FpsCadenceCheck`: flags an AVC/HEVC track whose VUI-declared frame rate
+    disagrees (>10%) with the measured PES-timestamp sample cadence —
+    `fps-cadence-mismatch`.
+  - `ParamSetsCheck`: flags an IDR (AVC) / IRAP (HEVC) access unit that appears
+    on the wire before its PID's SPS+PPS have been observed —
+    `missing-parameter-sets`.
+  - `InterlaceCheck`: surfaces AVC `frame_mbs_only_flag == 0` (interlaced coding
+    tools) — `avc-interlaced-content` (Info; TS/PMT signalling carries no
+    progressive/interlace container claim to compare against).
+  - `check_container_codec` — a new ISOBMFF/CMAF codec-level check (fragmented via
+    `Fmp4Demux`, progressive via `ProgressiveDemux`) for MP4/CMAF input: `avcC`/
+    `hvcC` profile/level/chroma vs the record's own embedded SPS
+    (`avcc-sps-mismatch`/`hvcc-sps-mismatch`), sample-entry `width`/`height` vs the
+    SPS-decoded coded dimensions (`container-sps-dimension-mismatch`), AVC
+    `frame_mbs_only_flag == 0` (`avc-interlaced-content`, mirroring `InterlaceCheck`),
+    and an Annex B start code left in place of a sample's 4-byte NAL length prefix
+    on an AVC/HEVC track (`length-prefix-violation`).
+  - The CLI `check` command now sniffs its input (`0x47` TS sync at packet 0/1)
+    and runs the TS diagnostic set (v1 + the new codec checks above) for a TS
+    file, or `check_container_codec` for an ISOBMFF/CMAF file — one command,
+    no new flag.
+- Dependency on `transmux` (path, `default-features = false`) for the SPS/NAL/ADTS
+  decoders and the `Media`/`Fmp4Demux`/`ProgressiveDemux`/`TsDemux` IR reused by
+  the checks above.
+
 ## [0.2.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
