@@ -6,11 +6,13 @@
 //! needed for this smoke-level gate), seeded from a fixed constant, so the
 //! test is reproducible.
 
-use srt_runtime::SrtPacket;
+use srt_runtime::caller::CallerHandshake;
+use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
     ControlPacket, DataPacket, GroupMembershipExtension, HandshakeExtensions, HsExtMessage,
     KeyMaterial, NakPacket,
 };
+use srt_runtime::{HandshakeConfig, SrtPacket};
 
 struct XorShift(u64);
 
@@ -85,7 +87,7 @@ fn no_panic_on_arbitrary_input() {
         // exercises the per-block decode helpers and the reserved-field
         // validation on the way in.
         if let Ok(ctrl) = ControlPacket::parse(input) {
-            match ctrl {
+            match &ctrl {
                 ControlPacket::Handshake(h) => {
                     for (i, block) in h.extensions.iter().enumerate() {
                         if let Ok(b) = block {
@@ -114,6 +116,77 @@ fn no_panic_on_arbitrary_input() {
                 }
                 _ => {}
             }
+
+            // Feed the (possibly malformed) parsed packet into fresh handshake
+            // state machines at every state that accepts inbound handshake
+            // packets. `Err` (or `Rejected`) is expected and fine; a panic is
+            // not — this is the SM-level analogue of the parser fuzz above.
+            let mut caller_awaiting_induction = CallerHandshake::new(1, HandshakeConfig::default());
+            caller_awaiting_induction.start().unwrap();
+            let _ = caller_awaiting_induction.feed(&ctrl);
+
+            let mut caller_awaiting_conclusion =
+                CallerHandshake::new(1, HandshakeConfig::default());
+            caller_awaiting_conclusion.start().unwrap();
+            let _ = caller_awaiting_conclusion.feed(&good_induction_response(2));
+            let _ = caller_awaiting_conclusion.feed(&ctrl);
+
+            let mut listener_idle =
+                ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+            let _ = listener_idle.feed(&ctrl);
+
+            let mut listener_awaiting_conclusion =
+                ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+            let _ = listener_awaiting_conclusion.feed(&good_induction_request(2));
+            let _ = listener_awaiting_conclusion.feed(&ctrl);
         }
     }
+}
+
+/// A well-formed Caller INDUCTION, used only to advance a fuzz-target
+/// [`ListenerHandshake`] to `AwaitingConclusion` before feeding it fuzzed
+/// bytes.
+fn good_induction_request(caller_socket_id: u32) -> ControlPacket<'static> {
+    use srt_runtime::packet::{
+        EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    };
+    ControlPacket::Handshake(HandshakePacket {
+        timestamp: 0,
+        dest_socket_id: 0,
+        version: 4,
+        encryption_field: EncryptionField::NoEncryption,
+        extension_field: HandshakeExtensionFlags(2),
+        initial_seq_number: 0,
+        mtu: 1500,
+        max_flow_window_size: 8192,
+        handshake_type: HandshakeType::Induction,
+        srt_socket_id: caller_socket_id,
+        syn_cookie: 0,
+        peer_ip: [0; 4],
+        extensions: HandshakeExtensions(&[]),
+    })
+}
+
+/// A well-formed Listener INDUCTION response, used only to advance a
+/// fuzz-target [`CallerHandshake`] to `AwaitingConclusionResponse` before
+/// feeding it fuzzed bytes.
+fn good_induction_response(listener_socket_id: u32) -> ControlPacket<'static> {
+    use srt_runtime::packet::{
+        EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    };
+    ControlPacket::Handshake(HandshakePacket {
+        timestamp: 0,
+        dest_socket_id: 1,
+        version: 5,
+        encryption_field: EncryptionField::NoEncryption,
+        extension_field: HandshakeExtensionFlags(0x4A17),
+        initial_seq_number: 0,
+        mtu: 1500,
+        max_flow_window_size: 8192,
+        handshake_type: HandshakeType::Induction,
+        srt_socket_id: listener_socket_id,
+        syn_cookie: 0xC0FF_EE00,
+        peer_ip: [0; 4],
+        extensions: HandshakeExtensions(&[]),
+    })
 }

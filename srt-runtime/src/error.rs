@@ -111,4 +111,24 @@ pub enum Error {
         /// How many bytes were left over.
         extra: usize,
     },
+    /// The handshake state machine (`crate::caller`/`crate::listener`) was
+    /// fed a control packet that is not a Handshake packet
+    /// (`draft-sharabayko-srt-01` §3.2.1) — only Handshake packets
+    /// participate in the exchange modeled there.
+    #[error("expected a Handshake control packet, got {actual}")]
+    UnexpectedControlPacket {
+        /// The `Control Type` label of the packet actually fed.
+        actual: &'static str,
+    },
+    /// A handshake state-machine call happened in a state where the draft's
+    /// flow (`draft-sharabayko-srt-01` §4.3.1) does not expect it — a driver
+    /// bug (e.g. calling `start()` twice, or `feed()` after `Connected`),
+    /// not a peer protocol failure.
+    #[error("handshake call not valid in state {state}: {reason}")]
+    HandshakeOutOfSequence {
+        /// The state the handshake was in.
+        state: &'static str,
+        /// Why the call is not valid there.
+        reason: &'static str,
+    },
 }
