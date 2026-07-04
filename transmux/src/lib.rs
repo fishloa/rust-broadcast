@@ -95,6 +95,7 @@ pub mod aac_asc;
 pub mod ac3;
 pub mod ac4;
 pub mod annexb;
+pub mod au;
 pub mod av1;
 pub mod avc_config;
 pub mod bitreader;
@@ -164,6 +165,7 @@ pub use annexb::{
     NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
     length_prefixed_to_annexb,
 };
+pub use au::{AccessUnitSplitter, split_access_units};
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use box_types::{BoxHeader, BoxIter, BoxRef, BoxType, FullBoxHeader, box_iter, parse_box};

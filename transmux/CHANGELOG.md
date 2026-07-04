@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Streaming Annex B → access-unit splitter** (`au::AccessUnitSplitter`,
+  `au::split_access_units`) (#601). An IP-camera SoC encoder emits a continuous
+  Annex B byte stream (ITU-T H.264 Annex B) with no TS/PES framing; the on-camera
+  LL-HLS origin path needs to cut it into access units incrementally as bytes
+  arrive. The new splitter buffers pushed bytes and emits each complete access
+  unit at the next AU boundary — an access-unit delimiter (AVC 9 / HEVC `AUD_NUT`
+  35 / VVC `AUD_NUT` 20), a VCL NAL that is the first slice of a new picture
+  (AVC `first_mb_in_slice`==0 / HEVC `first_slice_segment_in_pic_flag`==1), or a
+  non-VCL NAL following a VCL (H.264 §7.4.1.2.4). Codec-aware (AVC/HEVC; VVC on
+  AUD/non-VCL boundaries only), `no_std`, and byte-exact: concatenating the
+  emitted units reproduces the input from its first start code. Complements the
+  existing per-NAL `annexb::iter_annexb_nals` and the private, one-shot AUD-only
+  splitter in `ps_demux`.
+
 ## [0.14.0] - 2026-07-04
 
 ### Fixed
