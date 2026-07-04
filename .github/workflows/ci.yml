@@ -187,3 +187,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: clippy on latest stable
         run: cargo +stable clippy --workspace --all-features --all-targets --locked -- -D warnings
+
+  # Player-validated golden gate (issue #569): every other transmux test
+  # proves round-trip symmetry against our own parsers only. This job packages
+  # a real fixture through transmux's CMAF/progressive-MP4/TS-HLS/DASH outputs
+  # (`transmux/tests/golden_gate.rs`) and hands them to an INDEPENDENT decoder
+  # (`ffprobe`) to confirm they are well-formed and report the expected
+  # codec/dimensions/track-count. Non-blocking to start (continue-on-error,
+  # like clippy-canary above) because external-tool availability/behaviour
+  # varies across runner images; promote to required once stable. Uses the
+  # pinned toolchain from rust-toolchain.toml — no dtolnay step needed, this
+  # only needs `cargo test`, not a different channel.
+  golden-gate:
+    name: golden gate (ffprobe, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ffmpeg (provides ffprobe)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Golden gate (transmux, all features)
+        run: cargo test -p transmux --test golden_gate --all-features --locked

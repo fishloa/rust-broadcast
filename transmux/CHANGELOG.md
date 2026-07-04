@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Player-validated golden gate** (#569): `tests/golden_gate.rs` packages the
+  real `fixtures/ts/h264_aac.ts` fixture through `transmux::cli::run_bytes`
+  (the same code path the `transmux` binary uses) into CMAF/fMP4, progressive
+  MP4, classic TS-HLS (segment + `.m3u8` playlist), and DASH MPD, then hands
+  each artefact to an **independent** decoder — `ffprobe` — asserting it
+  parses cleanly and reports the same track count / codec / dimensions /
+  sample-rate as the source fixture's own `ffprobe` identification. Every
+  other transmux test proves round-trip symmetry against the crate's own
+  parsers only; this closes that self-referential gap with an external
+  oracle. DASH falls back to a structural MPD check + per-segment `ffprobe`
+  when the local `ffprobe` build lacks the `dash` demuxer (common — it needs
+  libxml2); TS-HLS additionally resolves the whole playlist through
+  `ffprobe`'s `hls` demuxer when present. `ffprobe` availability (and
+  specific demuxers) is probed at runtime and each case skips cleanly with a
+  printed reason when the tool is absent, so `cargo test` stays green without
+  ffmpeg installed. A `mutated_cmaf_output_fails_the_gate` self-test proves
+  the oracle bites (a truncated artefact must fail `ffprobe`, not pass). New
+  non-blocking `golden-gate` CI job (`.github/workflows/ci.yml`) installs
+  ffmpeg and runs the harness.
+
 ## [0.14.0] - 2026-07-04
 
 ### Fixed
