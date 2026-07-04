@@ -230,7 +230,10 @@ pub use mpegh::{
     MHA1_FOURCC, MHA2_FOURCC, MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHAC_RECORD_FIXED_LEN,
     MHADecoderConfigurationRecord, MHM1_FOURCC, MHM2_FOURCC,
 };
-pub use nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type};
+pub use nal::{
+    NalCodec, access_unit_is_keyframe, access_unit_is_rap, is_keyframe_nal, nal_unit_type,
+    recovery_point_sei,
+};
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{

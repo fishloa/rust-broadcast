@@ -117,7 +117,7 @@ use crate::mp4esds::{
     SLConfigDescriptor, StreamType as EsdsStreamType,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
-use crate::nal::{NalCodec, is_keyframe_nal, nal_unit_type};
+use crate::nal::{NalCodec, access_unit_is_rap, is_keyframe_nal, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
 
@@ -853,13 +853,13 @@ fn flush_one_behind(
 fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
     match codec {
         VideoCodec::H264 => {
-            let mut idr = false;
-            for nal in iter_annexb_nals(au_data) {
-                if is_keyframe_nal(NalCodec::Avc, nal) {
-                    idr = true;
-                }
-            }
-            (annexb_to_length_prefixed(au_data), idr)
+            // Random-access anchor: IDR OR an open-GOP RAP signal (a
+            // recovery-point SEI, or pragmatically an SPS in the AU) —
+            // issue #595. Broadcast H.264 is frequently open-GOP and never
+            // codes an IDR at all, so IDR-only detection would never anchor
+            // a segment.
+            let is_rap = access_unit_is_rap(NalCodec::Avc, au_data, false);
+            (annexb_to_length_prefixed(au_data), is_rap)
         }
         VideoCodec::Hevc => {
             let mut irap = false;
