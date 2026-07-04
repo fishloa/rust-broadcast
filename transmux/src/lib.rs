@@ -16,7 +16,8 @@
 //!
 //! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
-//!   fMP4/CMAF ([`Fmp4Demux`]), MPEG Program Stream ([`PsDemux`]),
+//!   fMP4/CMAF ([`Fmp4Demux`]), progressive (non-fragmented) MP4
+//!   ([`ProgressiveDemux`] — issue #561), MPEG Program Stream ([`PsDemux`]),
 //!   WebM/Matroska ([`WebmDemux`]), FLV ([`FlvDemux`]), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
 //!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), CMAF-HLS ([`HlsPackager`]),
@@ -124,6 +125,7 @@ pub mod nalu_types;
 pub mod opus;
 pub mod pipeline;
 pub mod progressive;
+pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rebase;
 pub mod repackage;
@@ -235,6 +237,7 @@ pub use pipeline::{
     TrackSpec, build_init_segment, build_media_segment, build_media_segment_with_events,
 };
 pub use progressive::ProgressiveMux;
+pub use progressive_demux::ProgressiveDemux;
 pub use ps_demux::PsDemux;
 pub use rebase::{
     MPEG_TS_WRAP, apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps,
