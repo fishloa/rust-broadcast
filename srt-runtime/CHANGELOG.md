@@ -8,6 +8,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Tokio UDP socket adapter** (feature `tokio`, issue #611): real-socket async
+  SRT connection over UDP that drives the existing sans-IO engines end-to-end:
+  [`io::SrtSocket`] (caller `connect` / listener `accept`) and
+  [`io::SrtListener`] (UDP bind + accept loop). Handshake (caller/listener) →
+  ARQ data transfer with retransmit/ACK/NAK → TSBPD-ordered delivery with
+  LiveCC pacing, all behind a single `send`/`recv` async interface. Behind a
+  new non-default `tokio` feature (implies `std`); the sans-IO core stays
+  `no_std` without it.
+  - `io::SrtSocket::connect` — bind + HSv5 caller handshake to remote peer.
+  - `io::SrtListener::bind` / `accept` — listen for incoming SRT Callers.
+  - `SrtSocket::send` / `recv` — async application payload transfer.
+  - `tests/io_loopback.rs` — full loopback integration test: listener binds
+    ephemeral 127.0.0.1 port, caller connects, sends N≥20 distinct payloads,
+    receiver gets ALL N in order (byte-identical), wrapped in
+    `tokio::time::timeout` for fail-fast on deadlock.
+
 - **Sans-IO TSBPD delivery scheduler + too-late packet drop** (§4.5/§4.6/§4.7
   of `draft-sharabayko-srt-01`; curated at `specs/rules/srt-tsbpd.md`, issue
   #607):

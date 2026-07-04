@@ -122,6 +122,10 @@ pub mod packet;
 pub mod rendezvous;
 pub mod tsbpd;
 
+#[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
+pub mod io;
+
 pub use caller::{CallerHandshake, CallerHandshakeState};
 pub use error::{Error, Result};
 pub use handshake_sm::{HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason};
