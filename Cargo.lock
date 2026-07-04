@@ -1847,6 +1847,7 @@ dependencies = [
  "scte35-splice",
  "serde",
  "thiserror",
+ "transmux",
 ]
 
 [[package]]

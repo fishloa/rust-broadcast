@@ -4,6 +4,19 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Added
+- **SEI-carried caption input wired to `webvtt`** (#599, follow-up to #568):
+  the `Cea608CueExtractor`/`Cea708CueExtractor` API is unchanged — it already
+  consumed carriage-agnostic `cc_data::CcTriplet` slices — but this release
+  proves and tests the second carriage source, `transmux::nal::caption_cc_data`
+  (ATSC A/53 caption SEI in H.264/HEVC access units), converges on the exact
+  same cues as the PES `cc_data()` path (#568): the same committed
+  `fixtures/cc/cea608_cc1_synthetic.txt` frames, re-wrapped in an SEI NAL
+  instead of fed raw, produce byte-identical `Cue`s. Also validated against a
+  real ATSC A/53 caption SEI capture (dev-dependency on `transmux` for its
+  `TsDemux` + `caption_cc_data`, test-only), decoded text cross-checked
+  against an independent `ffmpeg`-derived oracle.
+
 ## [0.3.0] - 2026-07-04
 ### Added
 - **`webvtt`** module (feature `cc-data`, off by default): converts CEA-608/708
