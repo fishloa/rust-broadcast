@@ -12,7 +12,12 @@ regardless of registration order:
 | Continuity repair | `.repair_continuity()` | Renumber per-PID continuity counters to correct monotonic sequences (mod 16) respecting payload-bearing rules (§2.4.3.3). |
 | PID filter / service extract | `.filter_pids(PidFilter)` | Keep only specified PIDs — or track the live PAT/PMT to extract a single programme by `program_number`. |
 | PAT/PMT regeneration | `.regen_psi()` | Rebuild the PAT from observed PMT PIDs on flush; useful after filtering. |
+| PCR restamp | `.restamp_pcr(PcrRestamp)` | Recompute PCR values on the PCR PID onto one continuous timeline (§2.4.3.5), including across a genuine unflagged break (TR 101 290 §5.2.2 2.3b). |
+| PCR-discontinuity honor | `.honor_pcr_discontinuity()` | Set `discontinuity_indicator` on genuine, unflagged PCR breaks without rewriting any timestamp — the alternative to restamping. |
 | Stuffing | `.stuffing(Stuffing)` | Drop null packets (PID 0x1FFF) or pad to a target packet rate. |
+
+`discontinuity::detect_pcr_discontinuities` is a standalone read-only scan for
+auditing PCR breaks (flagged vs. unflagged) without repairing the stream.
 
 All configuration enums are `#[non_exhaustive]`; adding new operations in a
 future minor release is purely additive and never breaks callers.
@@ -58,7 +63,9 @@ cargo run --example extract_service
 ## Spec
 
 ISO/IEC 13818-1 (= ITU-T H.222.0) — §2.4.3.2 (TS packet), §2.4.3.3
-(adaptation field / continuity counter), §2.4.3.4 (PCR), §2.4.4 (PSI).
+(adaptation field / continuity counter), §2.4.3.4 (PCR), §2.4.4 (PSI). PCR
+discontinuity classification reuses ETSI TR 101 290 v1.4.1 §5.2.2 Table 5.0b
+indicator 2.3b (`dvb-conformance`).
 
 ## License
 

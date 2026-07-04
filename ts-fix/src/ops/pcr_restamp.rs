@@ -15,6 +15,25 @@
 //! anchor to the observed PCR, so the two segments are restamped independently
 //! from their own bases.
 //!
+//! # Genuine, unflagged discontinuities (#562)
+//!
+//! A break with **no** `discontinuity_indicator` is not a legal re-anchor
+//! point — it is the defect this operation exists to fix. `Interpolate` mode
+//! classifies every observed forward jump using
+//! [`super::pcr_conformance::PcrDiscDetector`] (which reuses
+//! `dvb_conformance::ConformanceMonitor`'s ETSI TR 101 290 §5.2.2 indicator
+//! 2.3b check — the 100 ms threshold is never re-derived here). A jump that
+//! trips 2.3b is **not** adopted as a sane observation; the PID's anchor is
+//! permanently "frozen" onto its pre-break rate from that point on (every
+//! later value is still on the same unflagged, jumped clock and would
+//! otherwise look like just another sane forward step one packet later), so
+//! the restamped PCR stays on one continuous timeline across — and past —
+//! the break. Only a legal flagged discontinuity un-freezes a PID (it
+//! replaces the anchor outright). `FromBitrate` mode already ignores
+//! observed values outside of flagged re-anchors, so it ships this same
+//! guarantee for free. See `ts-fix/src/ops/pcr_honor.rs` for the alternative
+//! **honor** repair, which flags such a break instead of rewriting it.
+//!
 //! # PCR 33-bit base wrap
 //!
 //! The PCR is a 42-bit field: 33-bit base (90 kHz) × 300 + 9-bit extension,
@@ -59,6 +78,7 @@ use alloc::collections::BTreeMap;
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsPacket};
 
+use crate::ops::pcr_conformance::PcrDiscDetector;
 use crate::ops::{Op, StreamModel};
 
 /// 27 MHz PCR wrap period: 33-bit base × 300 (ISO/IEC 13818-1 §2.4.3.5).
@@ -117,12 +137,24 @@ struct Anchor {
     /// Last monotonic observation: (packet_count, 27 MHz) — for Interpolate rate.
     last_obs_pkt: u64,
     last_obs_27mhz: u64,
+    /// #562: once `Interpolate` mode has hit a genuine, unflagged
+    /// discontinuity on this PID, it is permanently "frozen" onto the
+    /// pre-break rate — every later observation is on the (still unflagged)
+    /// post-break clock and must never be re-adopted, or the output would
+    /// carry the exact same jump one packet later. Cleared only by a legal
+    /// flagged discontinuity, which replaces this `Anchor` outright.
+    frozen: bool,
 }
 
 /// PCR restamp operation — restamps every PCR PID independently.
 pub(crate) struct PcrRestampOp {
     anchors: BTreeMap<u16, Anchor>,
     mode: PcrRestamp,
+    /// TR 101 290 §5.2.2 indicator 2.3b classifier (#562) — tells
+    /// `Interpolate` mode whether an observed forward jump is a genuine,
+    /// unflagged discontinuity (must NOT be adopted as a "sane" observation)
+    /// rather than normal jitter or a legal 33-bit base wrap.
+    disc_detector: PcrDiscDetector,
 }
 
 impl PcrRestampOp {
@@ -130,6 +162,7 @@ impl PcrRestampOp {
         Self {
             anchors: BTreeMap::new(),
             mode,
+            disc_detector: PcrDiscDetector::new(),
         }
     }
 
@@ -167,6 +200,15 @@ impl Op for PcrRestampOp {
         };
         let now = model.packet_count;
 
+        // TR 101 290 §5.2.2 indicator 2.3b classifier (#562): feed the
+        // ORIGINAL observed PCR through the shared conformance detector on
+        // every path so its per-PID PCR state tracks the true input
+        // timeline. Only `Interpolate` mode consults the verdict below — a
+        // `discontinuity`-flagged packet never raises 2.3b (it only fires
+        // when `discontinuity_indicator == 0`), so this call is a no-op for
+        // that branch.
+        let is_genuine_unflagged_break = self.disc_detector.feed(packet).is_some();
+
         // System-time-base discontinuity (§2.4.3.5): re-anchor this PID to the
         // current observed PCR. The discontinuity packet itself passes through
         // unchanged (its discontinuity_indicator is in the AF flags byte, not
@@ -177,6 +219,7 @@ impl Op for PcrRestampOp {
                 anchor_pkt: now,
                 last_obs_pkt: now,
                 last_obs_27mhz: current.as_27mhz(),
+                frozen: false,
             };
             self.anchors.insert(pid, a);
             model.timing.has_anchor = true;
@@ -192,6 +235,7 @@ impl Op for PcrRestampOp {
                 anchor_pkt: now,
                 last_obs_pkt: now,
                 last_obs_27mhz: current.as_27mhz(),
+                frozen: false,
             };
             self.anchors.insert(pid, a);
             // Mark the shared timing context as anchored (forward-compat for v0.2).
@@ -217,15 +261,30 @@ impl Op for PcrRestampOp {
                 // the raw `obs` is smaller than `last_obs_27mhz`, but the forward
                 // distance modulo the PCR modulus is a small positive step.
                 let fwd = obs.wrapping_sub(anchor.last_obs_27mhz) % PCR_27MHZ_MODULUS;
-                if fwd > 0 && fwd < PCR_27MHZ_MODULUS / 2 && pkt_delta > 0 {
+                // #562: a genuine, unflagged discontinuity (TR 101 290 §5.2.2
+                // indicator 2.3b) is a forward jump too, but it must NOT be
+                // adopted as a "sane" observation — that would carry the
+                // defect straight into the restamped output. Once one is seen
+                // on this PID, `frozen` stays set: every later observation is
+                // still on the (still unflagged) post-break clock relative to
+                // the pre-break anchor, so it would look like just another
+                // "sane forward jump" one packet later and re-introduce the
+                // exact same break. Freezing keeps the PID on the pre-break
+                // rate indefinitely — one continuous timeline across (and
+                // past) the break — until a legal flagged discontinuity
+                // replaces the anchor outright.
+                if is_genuine_unflagged_break {
+                    anchor.frozen = true;
+                }
+                if !anchor.frozen && fwd > 0 && fwd < PCR_27MHZ_MODULUS / 2 && pkt_delta > 0 {
                     // Sane forward observation (possibly across a wrap): trust it,
                     // advance the anchor's observation window.
                     anchor.last_obs_pkt = now;
                     anchor.last_obs_27mhz = obs;
                     obs
                 } else {
-                    // Non-monotonic / corrupt observation: recompute from the
-                    // anchor using the last known rate.
+                    // Frozen, or a non-monotonic/corrupt observation: recompute
+                    // from the anchor using the last known (pre-break) rate.
                     let span_pkt = anchor.last_obs_pkt.saturating_sub(anchor.anchor_pkt).max(1);
                     let span_ticks = anchor.last_obs_27mhz.saturating_sub(anchor.anchor_27mhz);
                     let rate = (span_ticks / span_pkt).max(1);
