@@ -3,74 +3,146 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>rust-dvb WASM Demo</title>
+  <title>SIGNAL // rust-broadcast analyzer</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <div class="scanlines" aria-hidden="true"></div>
+
   <header>
-    <h1>rust-dvb SI parser</h1>
-    <p class="subtitle">Drop an MPEG-TS capture (.ts) to parse its DVB Service Information tables in-browser.</p>
+    <div class="brand">
+      <span class="brand-led" id="brand-led" aria-hidden="true"></span>
+      <h1><span class="brand-mono">SIGNAL</span><span class="brand-sub">/broadcast analyzer</span></h1>
+    </div>
+    <p class="subtitle">Drop an MPEG-TS capture — PIDs, PCR/PTS timing, SI/PSI, TR&nbsp;101&nbsp;290 conformance and SCTE-35, parsed entirely in this tab. Nothing is uploaded. No codec bitstream is ever decoded.</p>
   </header>
 
   <main>
     <!-- Drop zone -->
     <div id="dropzone" role="button" tabindex="0" aria-label="Drop zone for .ts files">
-      <span id="dropzone-label">Drop a .ts file here, or click to browse</span>
-      <input type="file" id="file-input" accept=".ts" aria-hidden="true">
+      <div class="dropzone-frame" aria-hidden="true">
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+      </div>
+      <span id="dropzone-label">DROP .TS CAPTURE — OR CLICK TO BROWSE</span>
+      <span class="dropzone-hint">accepts raw MPEG-2 transport streams</span>
+      <input type="file" id="file-input" accept=".ts,.m2ts,.mpg,.mpeg" aria-hidden="true">
     </div>
 
     <!-- Loading indicator -->
-    <div id="loading" class="hidden" aria-live="polite">Parsing…</div>
+    <div id="loading" class="hidden" aria-live="polite"><span class="spinner" aria-hidden="true"></span>ANALYZING…</div>
 
     <!-- Error banner -->
     <div id="error-banner" class="hidden" role="alert"></div>
 
-    <!-- Stats bar -->
-    <section id="stats-section" class="hidden">
-      <h2>Summary</h2>
-      <dl id="stats-list"></dl>
-    </section>
+    <div id="results" class="hidden">
 
-    <!-- Services panel -->
-    <section id="services-section" class="hidden">
-      <h2>Services (from SDT)</h2>
-      <table id="services-table">
-        <thead>
-          <tr>
-            <th>Service ID</th>
-            <th>Service Name</th>
-            <th>Provider</th>
-            <th>Type</th>
-          </tr>
-        </thead>
-        <tbody id="services-body"></tbody>
-      </table>
-    </section>
+      <!-- Stats bar -->
+      <section id="stats-section" class="panel">
+        <h2><span class="panel-index">01</span>Summary</h2>
+        <dl id="stats-list"></dl>
+      </section>
 
-    <!-- Tables panel -->
-    <section id="tables-section" class="hidden">
-      <h2>Table Sections</h2>
-      <table id="tables-table">
-        <thead>
-          <tr>
-            <th>PID</th>
-            <th>Table</th>
-            <th>Raw JSON</th>
-          </tr>
-        </thead>
-        <tbody id="tables-body"></tbody>
-      </table>
-    </section>
+      <!-- PID map -->
+      <section id="pidmap-section" class="panel hidden">
+        <h2><span class="panel-index">02</span>PID Map</h2>
+        <div class="table-scroll">
+          <table id="pidmap-table">
+            <thead>
+              <tr>
+                <th>PID</th>
+                <th>Kind</th>
+                <th>Stream type</th>
+                <th class="num">Packets</th>
+                <th>PCR</th>
+              </tr>
+            </thead>
+            <tbody id="pidmap-body"></tbody>
+          </table>
+        </div>
+      </section>
 
-    <!-- Raw JSON panel -->
-    <section id="json-section" class="hidden">
-      <h2>
-        Raw JSON output
-        <button id="json-toggle" aria-expanded="false">Show</button>
-      </h2>
-      <pre id="json-pre" class="hidden"></pre>
-    </section>
+      <!-- Timing -->
+      <section id="timing-section" class="panel hidden">
+        <h2><span class="panel-index">03</span>Timing</h2>
+        <div class="timing-grid">
+          <div class="chart-block">
+            <div class="chart-label" id="pcr-chart-label">PCR interval</div>
+            <canvas id="pcr-canvas" width="640" height="180" role="img" aria-label="PCR interval over time"></canvas>
+          </div>
+          <div class="chart-block">
+            <div class="chart-label" id="drift-chart-label">PTS / DTS drift vs. reference clock</div>
+            <canvas id="drift-canvas" width="640" height="180" role="img" aria-label="PTS and DTS drift over time"></canvas>
+          </div>
+        </div>
+        <p id="timing-note" class="panel-note hidden"></p>
+      </section>
+
+      <!-- SI/PSI tree -->
+      <section id="services-section" class="panel hidden">
+        <h2><span class="panel-index">04</span>Services <span class="panel-sub">(SDT)</span></h2>
+        <div class="table-scroll">
+          <table id="services-table">
+            <thead>
+              <tr>
+                <th>Service ID</th>
+                <th>Name</th>
+                <th>Provider</th>
+                <th>Type</th>
+              </tr>
+            </thead>
+            <tbody id="services-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tables-section" class="panel hidden">
+        <h2><span class="panel-index">05</span>SI / PSI Tables</h2>
+        <div class="table-scroll">
+          <table id="tables-table">
+            <thead>
+              <tr>
+                <th>PID</th>
+                <th>Table</th>
+                <th>Section</th>
+              </tr>
+            </thead>
+            <tbody id="tables-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TR 101 290 -->
+      <section id="conformance-section" class="panel hidden">
+        <h2><span class="panel-index">06</span>TR&nbsp;101&nbsp;290 <span class="panel-sub">conformance</span></h2>
+        <dl id="conformance-stats" class="inline-stats"></dl>
+        <div id="conformance-groups"></div>
+      </section>
+
+      <!-- SCTE-35 -->
+      <section id="scte35-section" class="panel hidden">
+        <h2><span class="panel-index">07</span>SCTE-35 <span class="panel-sub">splice timeline</span></h2>
+        <ol id="scte35-timeline" class="timeline"></ol>
+        <p id="scte35-note" class="panel-note hidden"></p>
+      </section>
+
+      <!-- Raw JSON -->
+      <section id="json-section" class="panel">
+        <h2>
+          <span class="panel-index">08</span>Raw JSON
+          <button id="json-toggle" aria-expanded="false">show</button>
+        </h2>
+        <pre id="json-pre" class="hidden"></pre>
+      </section>
+
+    </div>
   </main>
+
+  <footer>
+    <span>containers &amp; SI only — never the codec bitstream</span>
+    <span class="dot" aria-hidden="true">&middot;</span>
+    <span>100% client-side — nothing leaves this tab</span>
+  </footer>
 
   <script type="module" src="app.js"></script>
 </body>
