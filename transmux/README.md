@@ -108,7 +108,7 @@ round-trips through the IR.
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
 | WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |
 | CMAF / progressive / TS mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` | ✅ |
-| DASH / LL-DASH / Smooth | `Package` | `DashPackager` · `LlDashPackager` · `SmoothPackager` | ✅ |
+| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/ContentProtection/InbandEventStream) · `LlDashPackager` · `SmoothPackager` | ✅ |
 | TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`) | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |

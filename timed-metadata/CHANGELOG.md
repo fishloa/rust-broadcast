@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-07-04
 ### Added
 - **`webvtt`** module (feature `cc-data`, off by default): converts CEA-608/708
   closed captions to WebVTT cues (#568). `Cea608CueExtractor` /

@@ -15,6 +15,11 @@ Each [`Diagnostic`] checks one rule against a TS byte buffer and pushes
 | `PcrCheck` | PCR jitter / discontinuity on the PCR PID (TR 101 290-style), honouring signalled discontinuities |
 | `PtsCheck` | non-monotonic **decode** timestamps (DTS, else PTS — legal B-frame PTS reorder is not flagged) + forbidden `PTS_DTS_flags == 0b01`, on real PES PIDs only |
 | `Scte35Check` | SCTE-35 splice consistency — unbalanced `splice_insert` out/in pairs, duplicate open "out"s |
+| `CodecSignallingCheck` | codec signalling vs bitstream — PMT `stream_type` vs actual ES codec; `esds` ASC vs ADTS (reuses `transmux` SPS decoders) |
+| `check_container_codec` | `avcC`/`hvcC` profile/level/chroma/bit-depth vs in-band SPS; sample-entry dims vs SPS-decoded dims |
+| `FpsCadenceCheck` | VUI frame rate vs track timescale cadence |
+| `ParamSetsCheck` | missing SPS/PPS/VPS before the first IDR/IRAP |
+| `InterlaceCheck` | interlaced coding (`frame_mbs_only_flag == 0`) reported as content fact |
 | `check_playlist` | HLS playlist validation (RFC 8216): missing `#EXTM3U`, missing `#EXT-X-TARGETDURATION`, `#EXTINF` exceeding target, malformed `#EXT-X-DATERANGE` |
 
 Diagnostics are validated against **real captures** (e.g. a clean H.264+AAC
