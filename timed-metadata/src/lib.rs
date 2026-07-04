@@ -9,8 +9,14 @@
 //!
 //! Pure functions live in [`convert`]; the stateful [`Timeline`] session adds a
 //! wall-clock [`TimeAnchor`] and 33-bit PTS wrap-unrolling.
+//!
+//! [`webvtt`] converts a different kind of timed metadata — CEA-608/708
+//! closed captions — to WebVTT cues (W3C WebVTT + RFC 8216 §3.5
+//! `X-TIMESTAMP-MAP`), feature `cc-data` for the CEA-608/708 extraction half.
+//! Lossy by design (see its module docs).
 #![no_std]
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 extern crate alloc;
 
@@ -20,6 +26,7 @@ pub mod daterange;
 pub mod error;
 pub mod event;
 pub mod timeline;
+pub mod webvtt;
 
 pub use anchor::TimeAnchor;
 pub use daterange::DateRange;

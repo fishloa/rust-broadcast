@@ -97,13 +97,26 @@ monotonically increasing across a long stream.
 
 The pure conversion functions live in [`convert`] for use without a session.
 
+## CEA-608/708 → WebVTT
+
+[`webvtt`] converts closed captions to WebVTT cues: feed one access unit's
+`cc_data()` triplets at a time to [`webvtt::Cea608CueExtractor`] (CC1
+pop-on/roll-up/paint-on) or [`webvtt::Cea708CueExtractor`] (service 1), then
+render the resulting [`webvtt::Cue`]s with [`webvtt::write_document`] or —
+for HLS segmented delivery — [`webvtt::write_segment`], which emits the
+RFC 8216 §3.5 `X-TIMESTAMP-MAP=MPEGTS:<n>,LOCAL:00:00:00.000` header. Lossy
+by design (no cue placement/styling in this first pass) — see the module
+docs for the full list of documented losses. Requires the `cc-data` feature
+(off by default).
+
 ## Features
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std`   | yes     | Enable `std` in all dependencies. |
-| `serde` | yes     | `Serialize`/`Deserialize` for all public types. |
-| `chrono`| yes     | `chrono` dependency (future wall-clock helpers). |
+| Feature   | Default | Description |
+|-----------|---------|-------------|
+| `std`     | yes     | Enable `std` in all dependencies. |
+| `serde`   | yes     | `Serialize`/`Deserialize` for all public types. |
+| `chrono`  | yes     | `chrono` dependency (future wall-clock helpers). |
+| `cc-data` | no      | CEA-608/708 → WebVTT cue extraction ([`webvtt`]). |
 
 `no_std` + `alloc` when built with `default-features = false`. All conversions
 are available in `no_std` mode.
@@ -115,6 +128,10 @@ are available in `no_std` mode.
 - **SCTE 214-3** — SCTE-35 binary carriage in DASH `emsg`; scheme
   `urn:scte:scte35:2013:bin`.
 - **ISO/IEC 23009-1 §5.10.3.3** — ISOBMFF Event Message Box (`emsg`).
+- **W3C WebVTT** + **RFC 8216 §3.5** — WebVTT cue syntax + HLS
+  `X-TIMESTAMP-MAP` segmented delivery.
+- **ANSI/CTA-608-E** / **ANSI/CTA-708-E** — closed-caption semantics (decode
+  owned by the `cc-data` crate).
 
 ## License
 

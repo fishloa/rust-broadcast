@@ -1,0 +1,21 @@
+# CEA-608 (line-21) CC1 cc_data() fixture -- synthetic, spec-derived
+# (CTA-608-E control/PAC/char codes; Table B.9 cc_data() wire framing).
+# Generated for rust-broadcast issue #568 (timed-metadata webvtt module).
+# Format: one frame per non-comment line: `<pts_90k_ticks> <hex cc_data() bytes>`
+#
+# Plan: pop-on "HELLO" (commit@EOC pts=6000, erase@EDM pts=9000);
+# roll-up "HI"->"HI/BYE"->"BYE" (2-row, CR-scrolled, erase@EDM pts=33000);
+# paint-on "OK" (pts=39000, erase@EDM pts=42000).
+0 c4fffc9420fc9420fc9470fc9470ff
+3000 c3fffcc845fc4c4cfc4f80ff
+6000 c2fffc942ffc942fff
+9000 c2fffc942cfc942cff
+12000 c2fffc9425fc9425ff
+15000 c1fffcc849ff
+18000 c2fffc94adfc94adff
+21000 c2fffcc2d9fc4580ff
+24000 c2fffc94adfc94adff
+33000 c2fffc942cfc942cff
+36000 c2fffc9429fc9429ff
+39000 c1fffc4fcbff
+42000 c2fffc942cfc942cff
