@@ -99,6 +99,7 @@ pub mod crypto;
 pub mod error;
 pub mod handshake_sm;
 pub mod listener;
+pub mod livecc;
 pub mod packet;
 pub mod rendezvous;
 

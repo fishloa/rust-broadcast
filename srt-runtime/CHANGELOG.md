@@ -8,6 +8,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO LiveCC packet pacing controller** (§5.1 SRT Packet Pacing and Live
+  Congestion Control; issue #610, curated at `specs/rules/srt-livecc.md`):
+  - `livecc::LiveCC` — sender-side pacing state: computes the inter-packet send
+    period (`PKT_SND_PERIOD`) from the running EWMA average payload size
+    (`AvgPayloadSize`) and the configured maximum bandwidth (`MAX_BW`), per the
+    `§5.1.2` formulas.
+  - `livecc::MaxBwConfig` — three bandwidth-configuration modes (`MAXBW_SET`,
+    `INPUTBW_SET`, `INPUTBW_ESTIMATED`) plus `Infinite` (unbounded), per
+    `§5.1.1`.
+  - `on_data_packet` — updates the `AvgPayloadSize` EWMA (`7/8 * old + 1/8 *
+    packet`, L3219).
+  - `on_ack_received` — computes `PKT_SND_PERIOD = PktSize * 1000000 / MAX_BW`
+    (L3234), returning `Duration::ZERO` for infinite bandwidth.
+  - Initial `AvgPayloadSize` capped at 1456 bytes (L3222-3223); default
+    `MAXBW_SET` at 1 Gbps (L3122-3123).
+  - `tests/livecc_pacing.rs` — integration tests that assert hand-computed
+    `PKT_SND_PERIOD` constants for known payload and bandwidth values; EWMA
+    step-by-step convergence; all three bandwidth modes; runtime mode switching.
+
 - **Sans-IO ARQ (Automatic Repeat reQuest) reliability engine** (§4.8
   Acknowledgement and Lost Packet Handling, §4.8.1 ACKs/ACKACKs, §4.8.2 NAKs,
   §4.10 Round-Trip Time Estimation; issue #606), driving the existing
