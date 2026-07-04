@@ -19,13 +19,20 @@
 //!   packets via the existing [`packet`] codecs, validating the peer's
 //!   replies, and exposing [`handshake_sm::NegotiatedParams`] on success.
 //!
+//! The optional `crypto` feature (off by default) adds the §6 payload
+//! **encryption** path on top of that: AES-CTR encrypt/decrypt, RFC 3394 AES
+//! key wrap/unwrap of the SEK, and PBKDF2 (HMAC-SHA1) KEK derivation — see
+//! [`crypto`]. [`packet::KeyMaterial`] still only carries the wrapped-key
+//! *bytes*; [`crypto`] is what actually wraps/unwraps and encrypts/decrypts
+//! them.
+//!
 //! **Explicit follow-ups, not attempted here:**
 //! - The Rendezvous handshake (§4.3.2, WAVEAHAND/AGREEMENT) — only
 //!   Caller-Listener (§4.3.1) is implemented.
 //! - ARQ / loss handling, TSBPD delivery, congestion control (§4-§5).
-//! - Actual AES key-wrap/unwrap **crypto** (§6) — [`packet::KeyMaterial`]
-//!   carries the wrapped-key bytes opaquely, and the handshake negotiates the
-//!   `Encryption Field` without acting on it.
+//! - Wiring [`crypto`] into the handshake state machines / a per-connection
+//!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
+//!   *primitives* only.
 //! - A `tokio` socket adapter (mirroring `rtsp-runtime`'s `io` module).
 //!
 //! # The sans-IO contract
@@ -59,6 +66,7 @@
 //! - [`caller`] — [`caller::CallerHandshake`] (§4.3.1, Caller role).
 //! - [`listener`] — [`listener::ListenerHandshake`] (§4.3.1, Listener role).
 //! - [`error`] — the [`Error`] enum and [`Result`] alias.
+//! - [`crypto`] (feature `crypto`) — §6 payload encryption primitives.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]
@@ -68,6 +76,9 @@
 extern crate alloc;
 
 pub mod caller;
+#[cfg(feature = "crypto")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
+pub mod crypto;
 pub mod error;
 pub mod handshake_sm;
 pub mod listener;
