@@ -424,13 +424,27 @@ impl Driver {
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut app_open = true;
 
+        // Set when the application handle is gone (its `to_driver` sender was
+        // dropped): the loop makes one final flush pass and then exits, so a
+        // dropped [`SrtSocket`] does not leave a driver task parked forever on
+        // the socket/timer arms — which would keep a current-thread runtime
+        // from shutting down. (`SrtSocket::Drop` also aborts the task; this is
+        // the cooperative path that does not rely on abort-during-shutdown.)
+        let mut shutting_down = false;
+
         loop {
             tokio::select! {
                 // Application handed us a payload to send.
                 maybe = app_out.recv(), if app_open => {
                     match maybe {
                         Some(payload) => self.send_one(&payload),
-                        None => app_open = false, // handle dropped its sender.
+                        None => {
+                            // Handle dropped its sender — no more app data
+                            // will ever arrive. Stop polling this (now
+                            // permanently `Ready(None)`) arm and tear down.
+                            app_open = false;
+                            shutting_down = true;
+                        }
                     }
                 }
                 // A datagram arrived from the network.
@@ -453,7 +467,7 @@ impl Driver {
             if self.flush_outbound().await.is_err() {
                 break;
             }
-            if self.peer_shutdown {
+            if self.peer_shutdown || shutting_down {
                 break;
             }
         }
