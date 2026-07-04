@@ -206,15 +206,15 @@ mod tests {
             bit_depth_chroma_minus8: None,
             sps_ext: vec![],
         };
-        TrackSpec {
-            track_id: 1,
-            timescale: 90_000,
-            config: CodecConfig::Avc {
+        TrackSpec::new(
+            1,
+            90_000,
+            CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),
                 width: 16,
                 height: 16,
             },
-        }
+        )
     }
 
     #[test]

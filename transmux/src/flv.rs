@@ -432,15 +432,15 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     .map(|i| (i.width as u16, i.height as u16))
                     .unwrap_or((0, 0));
                 tracks.push(Track::new(
-                    TrackSpec {
+                    TrackSpec::new(
                         track_id,
-                        timescale: FLV_TIMESCALE,
-                        config: CodecConfig::Avc {
+                        FLV_TIMESCALE,
+                        CodecConfig::Avc {
                             config,
                             width,
                             height,
                         },
-                    },
+                    ),
                     video_samples,
                 ));
                 track_id += 1;
@@ -449,16 +449,16 @@ impl<'a> Unpackage for FlvDemux<'a> {
         if let Some(esds) = aac_esds {
             if !audio_samples.is_empty() {
                 tracks.push(Track::new(
-                    TrackSpec {
+                    TrackSpec::new(
                         track_id,
-                        timescale: FLV_TIMESCALE,
-                        config: CodecConfig::Aac {
+                        FLV_TIMESCALE,
+                        CodecConfig::Aac {
                             esds,
                             channel_count: aac_channels,
                             sample_rate: aac_rate,
                             sample_size: AUDIO_SAMPLE_SIZE_BITS,
                         },
-                    },
+                    ),
                     audio_samples,
                 ));
             }

@@ -707,15 +707,15 @@ fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
         bit_depth_chroma_minus8: None,
         sps_ext: Vec::new(),
     };
-    TrackSpec {
+    TrackSpec::new(
         track_id,
-        timescale: VIDEO_CLOCK_RATE,
-        config: CodecConfig::Avc {
+        VIDEO_CLOCK_RATE,
+        CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 0,
             height: 0,
         },
-    }
+    )
 }
 
 /// Depacketize an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed

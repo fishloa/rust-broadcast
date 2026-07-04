@@ -244,16 +244,16 @@ fn dac4_round_trip_and_fields() {
     roundtrip(&cfg, DAC4_ORACLE);
 
     // Wrapping in the ac-4 sample entry and re-parsing must preserve the dac4 body.
-    let track = transmux::TrackSpec {
-        track_id: 1,
-        timescale: 48000,
-        config: transmux::CodecConfig::Ac4 {
+    let track = transmux::TrackSpec::new(
+        1,
+        48000,
+        transmux::CodecConfig::Ac4 {
             config: cfg.clone(),
             channel_count: 2,
             sample_rate: 48000,
             sample_size: 16,
         },
-    };
+    );
     let init = transmux::build_init_segment(&[track], 48000).expect("init segment");
     let dac4_body = find_box_body(&init, b"dac4");
     assert_eq!(dac4_body, DAC4_ORACLE, "dac4 in ac-4 entry == oracle");

@@ -25,27 +25,21 @@ fn avc_spec(track_id: u32) -> TrackSpec {
         bit_depth_chroma_minus8: None,
         sps_ext: vec![],
     };
-    TrackSpec {
+    TrackSpec::new(
         track_id,
-        timescale: TIMESCALE,
-        config: CodecConfig::Avc {
+        TIMESCALE,
+        CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
             height: 16,
         },
-    }
+    )
 }
 
 /// Build a sample whose `data` bytes are a recognizable pattern (so byte
 /// preservation is verifiable). `tag` distinguishes samples across media.
 fn sample(tag: u8, index: usize, duration: u32, is_sync: bool) -> Sample {
-    Sample {
-        data: vec![tag, index as u8, 0xAB, 0xCD],
-        duration,
-        is_sync,
-        composition_offset: 0,
-        source_timing: None,
-    }
+    Sample::new(vec![tag, index as u8, 0xAB, 0xCD], duration, is_sync, 0)
 }
 
 /// A video track: first sample is a sync sample (keyframe), then `sync_period`

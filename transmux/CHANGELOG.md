@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+- `TrackSpec` gains two fields, `source_pid: Option<u16>` and
+  `es_info_descriptors: Vec<u8>` (#582) — external struct literals must be
+  migrated to the new `TrackSpec::new(track_id, timescale, config)`
+  constructor (+ `.with_source(pid, descriptors)` to attach TS provenance).
+- `CodecConfig`, `Sample`, and `TrackSpec` are now `#[non_exhaustive]` (#580,
+  the crate-wide convention already applied to most other public config/error
+  enums). External code can no longer build these with a struct/variant
+  literal or exhaustively `match`/destructure without a wildcard arm:
+  - `Sample` — construct via `Sample::new(data, duration, is_sync,
+    composition_offset)` (the new general-purpose constructor),
+    `Sample::from_annexb`, or `Sample::from_raw`, then `.with_source_timing(t)`
+    if needed.
+  - `TrackSpec` — construct via `TrackSpec::new(...)` /
+    `.with_source(...)` (see above).
+  - `CodecConfig` — exhaustive external `match`/`if let` sites need a
+    trailing `_ =>` (or `other =>`) arm.
+
+### Added
+- **Origin PID + PMT ES_info descriptors on every TS-demuxed track** (#582):
+  a DVB player track-picker can now select/label tracks by PID and by
+  ES_info descriptor (ISO-639 language `0x0A`, DVB subtitling `0x59`, E-AC-3
+  `0x7A`, …) without running its own parallel PAT/PMT parser.
+  - `TrackSpec::source_pid` — the source elementary-stream PID, populated for
+    every `StreamingTsDemux`/`TsDemux`-produced track (codec **and** opaque
+    `CodecConfig::Data`, not just `Data` as before); `None` for non-TS
+    sources (fMP4/FLV/WebM/PS/RTP).
+  - `TrackSpec::es_info_descriptors` — the verbatim PMT ES_info
+    descriptor-loop bytes (ISO/IEC 13818-1 §2.4.4.8) for that elementary
+    stream, for every TS-demuxed track; empty for non-TS sources. transmux
+    does not parse these — consumers use `dvb-si`.
+  - `TrackSpec::new(track_id, timescale, config)` — the new constructor
+    every non-TS demuxer/transform now builds a spec with; `.with_source(pid,
+    descriptors)` attaches TS provenance (builder style).
+
+### Internal
+- `tests/label_coverage.rs` drift-guard (#580): fails CI if any new public
+  spec/field enum in `transmux/src/` lacks a `name()` + `Display` impl (the
+  issue #204 convention), mirroring the guard already run in `dvb-si` and
+  other crates. `ColourType` (`src/visual_ext.rs`) gained `name()` +
+  `Display` as part of closing the existing gap the guard found.
+
 ## [0.11.0] - 2026-07-04
 
 ### Breaking

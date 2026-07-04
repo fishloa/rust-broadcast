@@ -178,6 +178,42 @@ pub enum ColourType {
     Unknown([u8; 4]),
 }
 
+impl ColourType {
+    /// Spec token for this `colour_type` FourCC (`"reserved"` for an
+    /// unrecognised code — issue #204 convention).
+    pub fn name(&self) -> &'static str {
+        match self {
+            ColourType::Nclx => "nclx",
+            ColourType::RIcc => "rICC",
+            ColourType::Prof => "prof",
+            ColourType::Unknown(_) => "reserved",
+        }
+    }
+}
+
+// Hand-written rather than `impl_spec_display!` because the catch-all carries
+// a 4-byte FourCC (not a single reserved byte the macro's `Reserved(u8)` form
+// can format) — still losslessly renders the raw code, per the same
+// convention.
+impl core::fmt::Display for ColourType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ColourType::Unknown(code) => {
+                write!(
+                    f,
+                    "{}(0x{:02X}{:02X}{:02X}{:02X})",
+                    self.name(),
+                    code[0],
+                    code[1],
+                    code[2],
+                    code[3]
+                )
+            }
+            other => f.write_str(other.name()),
+        }
+    }
+}
+
 /// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2015 §12.1.5.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

@@ -587,29 +587,29 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
     // CMAF init segment for its carriable tracks.
     let data_only = Media::new(
         vec![Track::new(
-            TrackSpec {
-                track_id: 1,
-                timescale: 90_000,
-                config: CodecConfig::Data {
+            TrackSpec::new(
+                1,
+                90_000,
+                CodecConfig::Data {
                     stream_type: 0x06,
                     descriptors: vec![],
                     carriage: DataCarriage::Pes,
                 },
-            },
+            ),
             vec![Sample::from_raw(vec![1, 2, 3], 0)],
         )],
         90_000,
     );
     let vp8_media = Media::new(
         vec![Track::new(
-            TrackSpec {
-                track_id: 1,
-                timescale: 90_000,
-                config: CodecConfig::Vp8 {
+            TrackSpec::new(
+                1,
+                90_000,
+                CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
                 },
-            },
+            ),
             vec![Sample::from_raw(vec![1, 2, 3], 0)],
         )],
         90_000,

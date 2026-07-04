@@ -285,13 +285,7 @@ fn ts_to_cmaf_end_to_end() {
         for frame in frames {
             // Strip the 7-byte ADTS header → raw AAC frame
             if frame.len() > 7 {
-                audio_samples_vec.push(Sample {
-                    data: frame[7..].to_vec(),
-                    duration: 1024,
-                    is_sync: true,
-                    composition_offset: 0,
-                    source_timing: None,
-                });
+                audio_samples_vec.push(Sample::new(frame[7..].to_vec(), 1024, true, 0));
                 total_adts_frames += 1;
             }
         }
@@ -303,25 +297,25 @@ fn ts_to_cmaf_end_to_end() {
     );
 
     // ---- Phase 6: Build CMAF segments ---------------------------------------
-    let video_track = TrackSpec {
-        track_id: 1,
-        timescale: 90000,
-        config: CodecConfig::Avc {
+    let video_track = TrackSpec::new(
+        1,
+        90000,
+        CodecConfig::Avc {
             config: config.clone(),
             width: 0,
             height: 0,
         },
-    };
-    let audio_track = TrackSpec {
-        track_id: 2,
-        timescale: audio_sample_rate,
-        config: CodecConfig::Aac {
+    );
+    let audio_track = TrackSpec::new(
+        2,
+        audio_sample_rate,
+        CodecConfig::Aac {
             esds: esds.clone(),
             channel_count: audio_channel_count,
             sample_rate: audio_sample_rate,
             sample_size,
         },
-    };
+    );
     let tracks = [video_track, audio_track];
 
     let init_data = build_init_segment(&tracks, 1000).expect("build_init_segment must succeed");

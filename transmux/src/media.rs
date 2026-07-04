@@ -585,11 +585,7 @@ fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     })?;
 
     let config = codec_config_from_entry(entry)?;
-    Ok(TrackSpec {
-        track_id,
-        timescale,
-        config,
-    })
+    Ok(TrackSpec::new(track_id, timescale, config))
 }
 
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.

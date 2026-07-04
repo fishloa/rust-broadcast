@@ -38,13 +38,7 @@ fn scte35_fixture_emsg_bytes() -> Vec<u8> {
 /// Build a minimal one-track segment (one zero-byte sync sample) for use as a
 /// stable test vehicle — we care about the box structure, not the payload.
 fn minimal_tracks() -> Vec<Sample> {
-    vec![Sample {
-        data: vec![0u8; 4],
-        duration: 3000,
-        is_sync: true,
-        composition_offset: 0,
-        source_timing: None,
-    }]
+    vec![Sample::new(vec![0u8; 4], 3000, true, 0)]
 }
 
 fn minimal_frag(samples: &[Sample]) -> Vec<FragmentTrackData<'_>> {

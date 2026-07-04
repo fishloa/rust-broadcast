@@ -33,38 +33,30 @@
 //! use transmux::media::Track;
 //!
 //! // Build a minimal AVC TrackSpec for the example.
-//! let spec = TrackSpec {
-//!     track_id: 1,
-//!     timescale: 90000,
-//!     config: CodecConfig::Avc {
-//!         config: AVCConfigurationBox {
-//!             config: AVCDecoderConfigurationRecord {
-//!                 configuration_version: 1,
-//!                 profile_indication: 66,
-//!                 profile_compatibility: 0,
-//!                 level_indication: 30,
-//!                 length_size_minus_one: 3,
-//!                 sps: vec![],
-//!                 pps: vec![],
-//!                 chroma_format: None,
-//!                 bit_depth_luma_minus8: None,
-//!                 bit_depth_chroma_minus8: None,
-//!                 sps_ext: vec![],
-//!             },
+//! let spec = TrackSpec::new(1, 90000, CodecConfig::Avc {
+//!     config: AVCConfigurationBox {
+//!         config: AVCDecoderConfigurationRecord {
+//!             configuration_version: 1,
+//!             profile_indication: 66,
+//!             profile_compatibility: 0,
+//!             level_indication: 30,
+//!             length_size_minus_one: 3,
+//!             sps: vec![],
+//!             pps: vec![],
+//!             chroma_format: None,
+//!             bit_depth_luma_minus8: None,
+//!             bit_depth_chroma_minus8: None,
+//!             sps_ext: vec![],
 //!         },
-//!         width: 1920,
-//!         height: 1080,
 //!     },
-//! };
+//!     width: 1920,
+//!     height: 1080,
+//! });
 //!
 //! // 8 samples: sync at indices 0 and 4, all with duration 100.
-//! let samples: Vec<Sample> = (0u8..8).map(|i| Sample {
-//!     data: vec![i],
-//!     duration: 100,
-//!     is_sync: i == 0 || i == 4,
-//!     composition_offset: 0,
-//!     source_timing: None,
-//! }).collect();
+//! let samples: Vec<Sample> = (0u8..8)
+//!     .map(|i| Sample::new(vec![i], 100, i == 0 || i == 4, 0))
+//!     .collect();
 //!
 //! let src = Track::new(spec, samples);
 //! let trick = derive_iframe_track(&src).unwrap();
