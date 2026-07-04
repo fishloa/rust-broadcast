@@ -2,7 +2,7 @@
 name    = "srt-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + a sans-IO HSv5 Caller-Listener handshake state machine, no_std. ARQ/loss, TSBPD, crypto, and a tokio adapter are planned follow-ups."
+description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, and optional (crypto feature) payload encryption, no_std. TSBPD, congestion control, and a tokio adapter are planned follow-ups."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["srt", "packet", "sans-io", "transport", "streaming"]
@@ -20,6 +20,18 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# §6 payload crypto (AES-CTR, RFC 3394 key wrap, PBKDF2/HMAC-SHA1 KEK
+# derivation) — all optional, behind the `crypto` feature. `aes`/`ctr` pinned
+# to the same versions already resolved elsewhere in this workspace
+# (`transmux`'s `cenc` feature); `aes-kw`/`pbkdf2`/`hmac`/`sha1` pinned to the
+# newest versions that still build on this workspace's MSRV (1.86) with
+# `--locked` — see CHANGELOG.
+aes    = { version = "0.8", default-features = false, optional = true }
+ctr    = { version = "0.9", default-features = false, optional = true }
+aes-kw = { version = "0.2", default-features = false, optional = true }
+pbkdf2 = { version = "0.12", default-features = false, optional = true }
+hmac   = { version = "0.12", default-features = false, optional = true }
+sha1   = { version = "0.10", default-features = false, optional = true }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -31,3 +43,7 @@ default = ["std"]
 std = ["broadcast-common/std", "thiserror/std"]
 # Derive serde on the public wire types.
 serde = ["dep:serde"]
+# `crypto` adds the §6 payload-encryption path: AES-CTR encrypt/decrypt, RFC
+# 3394 AES key wrap/unwrap of the SEK, and PBKDF2/HMAC-SHA1 KEK derivation.
+# Off by default so the no_std packet-codec core pulls zero crypto deps.
+crypto = ["dep:aes", "dep:ctr", "dep:aes-kw", "dep:pbkdf2", "dep:hmac", "dep:sha1"]

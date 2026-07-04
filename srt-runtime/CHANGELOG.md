@@ -8,6 +8,107 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Sans-IO ARQ (Automatic Repeat reQuest) reliability engine** (§4.8
+  Acknowledgement and Lost Packet Handling, §4.8.1 ACKs/ACKACKs, §4.8.2 NAKs,
+  §4.10 Round-Trip Time Estimation; issue #606), driving the existing
+  ACK/NAK/ACKACK/Data packet codecs — no wire format is re-encoded:
+  - `arq::Sender` — buffers every sent data packet (rule 1); `on_nak`
+    records a NAK's loss-list entries for prioritized retransmission (rules
+    5, 15, 16, 18); `tick` drains the pending retransmit queue, setting the
+    `R` flag and incrementing the resend counter; `on_ack` frees every
+    packet acknowledged by the ACK's `n + 1` cumulative semantics (rule 8)
+    and, for a Full ACK only, updates RTT/RTTVar from the ACK's carried
+    value (rule 33) and returns the ACKACK reply (rules 3, 9).
+  - `arq::Receiver` — tracks arrivals and a cumulative ack point;
+    `feed_data` detects newly-opened sequence gaps and returns an immediate
+    NAK (rules 4, 14) plus the sequence numbers that became
+    in-order-deliverable as a result (`FeedOutcome::delivered`); `tick`
+    emits a Full ACK every 10 ms (rule 11), a Light ACK once 64 packets have
+    arrived since the last ACK (rule 12), and a periodic NAK once
+    `NAKInterval = max((RTT + 4*RTTVar)/2, 20ms)` has elapsed and the loss
+    list is non-empty (rules 21-22) — never a NAK when nothing is lost;
+    `on_ackack` matches an ACKACK against its outstanding Full ACK and
+    updates RTT/RTTVar from the measured round trip (rules 26-30).
+  - `arq::rtt::RttEstimator` — the rule 29-31 RTT/RTTVar EWMA (`RTT = 7/8 *
+    RTT + 1/8 * rtt`, `RTTVar = 3/4 * RTTVar + 1/4 * abs(RTT - rtt)`,
+    microseconds, initial 100 ms / 50 ms), shared by both roles.
+  - `arq::seq` — wrap-safe 31-bit sequence-number arithmetic (circular
+    comparison/increment, comparable to RFC 1982 serial number arithmetic;
+    the draft does not itself specify a comparison algorithm, so this is
+    implementation-defined, documented as such).
+  - Timing is entirely caller-driven (`now: core::time::Duration` passed to
+    every `tick`/`feed_data`/`on_data`/`on_ack`/`on_ackack` call) — no
+    wall-clock read anywhere in the crate.
+  - `tests/arq_recovery.rs` — an in-memory `Sender`<->`Receiver` wiring (no
+    sockets) that drops two packets in transit, asserts the receiver's NAK
+    triggers sender retransmission, all packets are ultimately delivered in
+    order, the ACK/ACKACK exchange advances the sender's acknowledged
+    sequence and frees its send buffer, RTT converges toward an injected
+    30 ms round trip on both sides, and a zero-loss run never emits a
+    spurious NAK (from either the immediate or periodic path).
+  - Explicit non-goals, unchanged from prior releases: TLPKTDROP fake-ACK
+    skip handling, RTO-based/congestion-control retransmission, send-queue
+    overflow sizing, TSBPD delivery timing.
+- **§6 SRT payload encryption primitives** (issue #608), behind a new
+  non-default `crypto` feature (zero new dependencies for the default/no_std
+  packet-codec core):
+  - `crypto::aes_ctr_apply` — AES-CTR payload encrypt/decrypt (self-inverse).
+    The per-packet counter (`crypto::packet_counter`) is derived from the Key
+    Material `Salt` and the data packet's Packet Sequence Number per the
+    §6.2.2/§6.3.2 formula `IV = (MSB(112, Salt) << 2) XOR PktSeqNo` — the
+    draft gives a second, textually different formula in §6.1.2 that this
+    crate deliberately does *not* implement; both are transcribed and the
+    conflict documented in `specs/rules/srt-crypto.md` and the `crypto`
+    module doc.
+  - `crypto::wrap_sek` / `crypto::unwrap_sek` — RFC 3394 AES key wrap/unwrap
+    of the SEK under the KEK (§6.1.5/§6.2.1/§6.3.1), split as
+    `(icv, wrapped)` to match `packet::KeyMaterial`'s `icv`/`x_sek`/`o_sek`
+    fields; supports wrapping one or two concatenated SEKs (`KK` = even/odd
+    vs. both).
+  - `crypto::derive_kek` — KEK derivation from a pre-shared passphrase via
+    PBKDF2 (HMAC-SHA1, 2048 iterations) per §6.1.4/§6.2.1/§6.3.1, salted with
+    the Key Material `Salt`'s low 64 bits (`LSB(64,Salt)`).
+  - `crypto::select_sek` — picks the even/odd SEK for a data packet from its
+    `KK` field (`packet::EncryptionKeyField`).
+  - AES-128/192/256 (`KLen` 16/24/32 bytes) supported throughout, selected by
+    key length at runtime.
+  - Uses the `aes`/`ctr`/`aes-kw`/`pbkdf2`/`hmac`/`sha1` RustCrypto crates
+    (all `no_std`) — no hand-rolled crypto.
+  - `tests/crypto_vectors.rs` — external ground truth, not spec-vector-free
+    self-checks: the RFC 3394 §4.1 worked key-wrap vector (byte-exact wrap
+    *and* unwrap), the NIST SP 800-38A Appendix F.5.1 CTR-AES128 vector
+    (byte-exact both directions), and an SRT-specific SEK+Salt+PktSeqNo
+    payload round-trip including a wrong-SEK-does-not-recover negative case.
+    `draft-sharabayko-srt-01` §6 has no test vectors of its own
+    (`specs/rules/srt-crypto.md`).
+- **Sans-IO Rendezvous handshake state machine** (§4.3.2, issue #609, curated
+  at `specs/rules/srt-rendezvous.md`), reusing the same shared
+  `handshake_sm` types and packet codecs as the Caller-Listener flow:
+  - `rendezvous::RendezvousHandshake` — a single, symmetric engine: both
+    peers run the same code. `start()` sends WAVEAHAND (Version 5, this
+    side's own cookie); the **cookie contest** (greater cookie wins) resolves
+    each side's `rendezvous::RendezvousRole` (`Initiator`/`Responder`) at
+    runtime from the first inbound message's cookie. Drives the
+    `Waving -> Attention -> Initiated -> Connected` states (Parallel
+    Handshake Flow, §4.3.2.2) with the full Initiator/Responder transition
+    tables, including the idempotent missing-packet recovery rules
+    (§4.3.2.2: a Responder stuck in `Initiated` always re-sends HSRSP on a
+    repeated HSREQ; may promote to `Connected` on non-handshake traffic via
+    `on_recovery_trigger()`, modeling "as if it had received AGREEMENT").
+    The Serial flow (§4.3.2.1) is handled by the same engine, not a separate
+    state — see the module docs' "Serial vs Parallel flow" note for why.
+  - Identical cookies are surfaced as `RejectionReason::RdvCookie` (Table 7
+    code `1009`, "rendezvous cookie collision") rather than an internal
+    retry loop.
+  - `tests/rendezvous_round_trip.rs` — two `RendezvousHandshake` peers wired
+    together in memory (no sockets), both reaching `Connected` with
+    cross-matching negotiated socket ids and the greater-of-both latency;
+    a deterministic cookie tie-break test; and a malformed-extension-mid-flow
+    test asserting a structured rejection, never a panic.
+  - `tests/no_panic.rs` extended to fuzz the Rendezvous engine at Waving,
+    Attention, and Initiated.
+  - Explicit non-goals, unchanged: TSBPD delivery, congestion control, a
+    `tokio` socket adapter, and the Version-4 legacy Rendezvous path.
 - **Sans-IO HSv5 Caller-Listener handshake state machine** (§4.3.1, issue
   #598), driving the existing packet codecs from #565 — no raw handshake
   bytes are hand-encoded:
@@ -40,9 +141,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     Table 7 wire encoding on the rejection packet actually sent.
   - `tests/no_panic.rs` extended to feed arbitrary parsed handshake packets
     into both engines at every state that accepts inbound packets.
-  - Explicit non-goals, unchanged from `0.1.0`: the Rendezvous handshake
-    (§4.3.2), ARQ/loss, TSBPD delivery, congestion control, AES key-wrap/
-    unwrap crypto, and a `tokio` socket adapter.
+  - Explicit non-goals, unchanged from `0.1.0`: ARQ/loss, TSBPD delivery,
+    congestion control, AES key-wrap/unwrap crypto, and a `tokio` socket
+    adapter. (The Rendezvous handshake, §4.3.2, is no longer a non-goal —
+    see above.)
 
 ## [0.1.0] - 2026-07-04
 
