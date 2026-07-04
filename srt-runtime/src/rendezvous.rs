@@ -163,6 +163,7 @@ impl core::fmt::Display for RendezvousHandshakeState {
 /// Initiator (the other party becomes the Responder)."
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum RendezvousRole {
     /// Wins the cookie contest (the greater cookie value, L2133-2135). MUST
     /// attach the HSREQ extension (L2286-2287).

@@ -31,13 +31,16 @@
 //!   identical in both places: `IV = (MSB(112, Salt) << 2) XOR (PktSeqNo)`.
 //!
 //! These are not algebraically the same construction, and the draft never
-//! reconciles them. This module implements the **§6.2.2/§6.3.2 form** (the
-//! one attached to the actual Encryption/Decryption Process pseudocode,
-//! rather than the more abstract §6.1.2 overview) — see [`packet_counter`].
-//! No sample ciphertext exists anywhere in the draft to disambiguate by
-//! reproduction (`srt-crypto.md`, "No test vectors" note); this crate picks
-//! deliberately rather than average/guess, and flags the ambiguity here
-//! rather than silently picking one.
+//! reconciles them. No sample ciphertext exists anywhere in the draft to
+//! disambiguate by reproduction (`srt-crypto.md`, "No test vectors" note), so
+//! this module resolves it against the **reference implementation** instead:
+//! `libsrt` (`haivision/srt`) `haicrypt/hcrypt.h` `hcrypt_SetCtrIV` builds the
+//! counter as §6.1.2 describes — `{80 zero bits | 32-bit packet index | 16-bit
+//! block counter}` with `MSB(112, Salt)` XORed across the top 112 bits — and
+//! performs **no** `<< 2` shift. The §6.2.2/§6.3.2 `<< 2` is a draft-text
+//! artifact; implementing it literally yields a keystream no real SRT peer can
+//! decrypt. [`packet_counter`] therefore follows `hcrypt_SetCtrIV` (≡ the
+//! §6.1.2 layout), verified byte-for-byte against that macro in the tests.
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::{Aes128, Aes192, Aes256};
@@ -202,52 +205,49 @@ pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Vec<u8>> 
 // §6.1.2/§6.2.2/§6.3.2 — AES-CTR payload encrypt/decrypt.
 // ---------------------------------------------------------------------------
 
-/// Compute the 128-bit AES-CTR initial counter for one data packet, per the
-/// §6.2.2/§6.3.2 (Encryption/Decryption Process) formula — see the module
-/// doc's "conflicting IV formula" note for why this form (and not §6.1.2's)
-/// is the one implemented:
+/// Compute the 128-bit AES-CTR initial counter for one data packet.
+///
+/// This follows the **reference SRT construction** (`libsrt` `haicrypt/hcrypt.h`,
+/// `hcrypt_SetCtrIV`), which is what real SRT peers use on the wire:
 ///
 /// ```text
-/// IV = (MSB(112, Salt) << 2) XOR (PktSeqNo)
+/// memset(iv, 0, 16);              // all 16 bytes zeroed
+/// memcpy(&iv[10], &pki, 4);       // 32-bit packet index at bytes [10..14]
+/// iv[0..14] ^= salt[0..14];       // XOR MSB(112, Salt) across the top 14 bytes
+/// // iv[14..16] = per-packet AES-block counter, starts 0
+/// //
+/// //  byte:  0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+/// //        +-----------------------+-----------+-----+
+/// //        |          0s           |    pki    | ctr |
+/// //        +-----------------------+-----------+-----+
 /// ```
 ///
-/// The resulting 112-bit `IV` occupies the counter's upper 112 bits
-/// (`counter[0..14]`); the low 16 bits (`counter[14..16]`) are the
-/// per-packet AES-block counter (§6.1.2), left at `0` here — a standard
-/// 128-bit big-endian CTR implementation increments the *whole* counter per
-/// block, which only touches these low 16 bits as long as a single packet's
-/// payload stays under `2^16` AES blocks (1 MiB); every SRT payload (bounded
-/// by a UDP datagram) is far smaller.
+/// **On the draft's `IV = (MSB(112, Salt) << 2) XOR PktSeqNo` (§6.2.2/§6.3.2):**
+/// the `<< 2` is a known artifact/typo of the draft text — the reference
+/// implementation does **no** left shift. Implementing the `<< 2` literally
+/// produces a keystream no real SRT peer can decrypt, so this function follows
+/// `hcrypt_SetCtrIV` (which is equivalent to §6.1.2's field layout: packet index
+/// in bits `[47:16]`, block counter in `[15:0]`). See the module doc's
+/// "conflicting IV formula" note.
+///
+/// The low 16 bits (`counter[14..16]`) are the per-packet AES-block counter,
+/// left at `0` here — a standard 128-bit big-endian CTR increments the whole
+/// counter per block, which only touches these low bits as long as a single
+/// packet's payload stays under `2^16` AES blocks (1 MiB); every SRT payload
+/// (bounded by a UDP datagram) is far smaller.
 ///
 /// `pkt_seq_no` is the data packet's 31-bit Packet Sequence Number
-/// (`draft-sharabayko-srt-01` §3.1); bit 31 (the `F` header bit) is never
-/// part of it.
+/// (`draft-sharabayko-srt-01` §3.1); bit 31 (the `F` header bit) is never part
+/// of it.
 pub fn packet_counter(salt: &[u8; SALT_LEN], pkt_seq_no: u32) -> [u8; AES_BLOCK_LEN] {
-    // MSB(112, Salt): the most-significant 14 bytes of the 128-bit Salt.
-    let msb112 = &salt[..IV_SALT_LEN];
-
-    // `<< 2` over the 112-bit big-endian value: for each byte (MSB-first),
-    // the shifted-in low 2 bits come from the *next* byte's top 2 bits; the
-    // top 2 bits of the whole 112-bit value are dropped (the sequence stays
-    // 112 bits wide, per the draft).
-    let mut iv = [0u8; IV_SALT_LEN];
-    for i in 0..IV_SALT_LEN {
-        let hi = msb112[i] << 2;
-        let lo = if i + 1 < IV_SALT_LEN {
-            msb112[i + 1] >> 6
-        } else {
-            0
-        };
-        iv[i] = hi | lo;
-    }
-
-    // XOR PktSeqNo into the low 32 bits of the 112-bit IV (PktSeqNo is a
-    // 31-bit field, so this only ever touches bits [30:0] of that word).
-    let low = u32::from_be_bytes([iv[10], iv[11], iv[12], iv[13]]) ^ pkt_seq_no;
-    iv[10..14].copy_from_slice(&low.to_be_bytes());
-
     let mut counter = [0u8; AES_BLOCK_LEN];
-    counter[..IV_SALT_LEN].copy_from_slice(&iv);
+    // 32-bit packet index at bytes [10..14] (hcrypt.h: `memcpy(&iv[10], pki, 4)`).
+    counter[10..14].copy_from_slice(&pkt_seq_no.to_be_bytes());
+    // XOR MSB(112, Salt) — the top 14 bytes of the Salt — across bytes [0..14]
+    // (hcrypt.h: `hcrypt_XorStream(&iv[0], nonce, 112/8)`). No left shift.
+    for i in 0..IV_SALT_LEN {
+        counter[i] ^= salt[i];
+    }
     // counter[14..16] stays 0 — the block counter starts at 0 for this packet.
     counter
 }
@@ -363,6 +363,36 @@ mod tests {
         let (icv, wrapped) = wrap_sek(&RFC3394_KEK_128, &RFC3394_KEY_DATA_128).unwrap();
         assert_eq!(&icv[..], &RFC3394_WRAPPED_128[..8]);
         assert_eq!(wrapped.as_slice(), &RFC3394_WRAPPED_128[8..]);
+    }
+
+    // -----------------------------------------------------------------
+    // packet_counter known-answer, hand-derived from libsrt
+    // haicrypt/hcrypt.h `hcrypt_SetCtrIV`:
+    //   memset(iv,0,16); memcpy(&iv[10], pki, 4); iv[0..14] ^= salt[0..14];
+    // For salt = 01 02 … 10 and pki = 0x11223344:
+    //   [0..10]  = salt[0..10]                = 01 02 03 04 05 06 07 08 09 0A
+    //   [10]     = salt[10]^0x11 = 0x0B^0x11  = 1A
+    //   [11]     = salt[11]^0x22 = 0x0C^0x22  = 2E
+    //   [12]     = salt[12]^0x33 = 0x0D^0x33  = 3E
+    //   [13]     = salt[13]^0x44 = 0x0E^0x44  = 4A
+    //   [14..16] = 00 00                        (block counter, salt[14..] unused)
+    // The old `MSB(112,Salt) << 2` construction gives byte[0]=0x04 (not 0x01)
+    // and different [10..14] — this test BITES against that regression.
+    // -----------------------------------------------------------------
+    #[test]
+    fn packet_counter_matches_libsrt_hcrypt_setctriv() {
+        let salt: [u8; SALT_LEN] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E,
+            0x0F, 0x10,
+        ];
+        let expected: [u8; AES_BLOCK_LEN] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x1A, 0x2E, 0x3E, 0x4A,
+            0x00, 0x00,
+        ];
+        let got = packet_counter(&salt, 0x1122_3344);
+        assert_eq!(got, expected, "counter must match hcrypt_SetCtrIV (no <<2)");
+        // Explicit guard against the buggy left-shift construction.
+        assert_eq!(got[0], 0x01, "byte 0 is pure salt, not the <<2 value 0x04");
     }
 
     #[test]

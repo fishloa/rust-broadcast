@@ -63,6 +63,7 @@ const TSBPD_DELAY_MIN_MS: u64 = 120;
 
 /// Outcome of one [`TsbpdScheduler::tick`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct TickOutcome {
     /// Sequence numbers released to the application in monotonically
     /// increasing order — each at or after its `PktTsbpdTime`.

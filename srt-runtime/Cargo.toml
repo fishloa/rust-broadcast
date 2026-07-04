@@ -2,7 +2,7 @@
 name    = "srt-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, and optional (crypto feature) payload encryption, no_std. TSBPD, congestion control, and a tokio adapter are planned follow-ups."
+description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC packet pacing, optional (crypto feature) payload encryption, and an optional (tokio feature) async UDP socket adapter; no_std core. Window-based congestion control beyond LiveCC is a planned follow-up."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["srt", "packet", "sans-io", "transport", "streaming"]
@@ -35,11 +35,11 @@ sha1   = { version = "0.10", default-features = false, optional = true }
 # Async UDP socket adapter (tokio feature) — mirrors `rtsp-runtime`'s io.rs
 # pattern for driving the sans-IO SRT engines over real UDP sockets. Same
 # tokio feature set as the sibling crate, matching the workspace MSRV (1.86).
-tokio = { version = "1", optional = true, default-features = false, features = ["net", "io-util", "rt", "macros", "time"] }
+tokio = { version = "1", optional = true, default-features = false, features = ["net", "io-util", "rt", "macros", "time", "sync"] }
 
 [dev-dependencies]
 serde_json = "1.0"
-tokio = { version = "1", default-features = false, features = ["net", "io-util", "rt", "macros", "time"] }
+tokio = { version = "1", default-features = false, features = ["net", "io-util", "rt", "macros", "time", "sync"] }
 
 [features]
 default = ["std"]

@@ -58,7 +58,6 @@
 //! - Wiring [`crypto`] into the handshake state machines / a per-connection
 //!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
 //!   *primitives* only.
-//! - A `tokio` socket adapter (mirroring `rtsp-runtime`'s `io` module).
 //! - The Version-4 legacy Rendezvous path (§4.3.2, out of scope of the draft
 //!   excerpt this crate implements against).
 //!
@@ -101,6 +100,9 @@
 //! - [`rendezvous`] — [`rendezvous::RendezvousHandshake`] (§4.3.2).
 //! - [`error`] — the [`Error`] enum and [`Result`] alias.
 //! - [`crypto`] (feature `crypto`) — §6 payload encryption primitives.
+//! - [`io`] (feature `tokio`) — [`io::SrtSocket`] / [`io::SrtListener`]: an
+//!   async UDP socket adapter driving the sans-IO handshake + ARQ + TSBPD
+//!   engines end-to-end over real sockets.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![forbid(unsafe_code)]

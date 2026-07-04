@@ -52,6 +52,7 @@ const DEFAULT_MAX_BW_BYTES_PER_SEC: u64 = 125_000_000;
 /// Maximum bandwidth configuration mode (`specs/rules/srt-livecc.md` §5.1.1,
 /// lines L3116-L3202).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum MaxBwConfig {
     /// **MAXBW_SET** (§5.1.1, L3120-3128): MAX_BW set explicitly (bytes/sec).
     /// Default: 1 Gbps = 125_000_000 bytes/sec.

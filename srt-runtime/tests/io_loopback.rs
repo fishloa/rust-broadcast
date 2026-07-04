@@ -98,6 +98,16 @@ async fn loopback_call_to_recv() {
                 recvd.len()
             );
         }
+
+        // Deterministic teardown: drop both sockets so `SrtSocket::Drop`
+        // aborts their background driver tasks (and each driver also exits
+        // cooperatively once its command channel closes). Without this a live
+        // driver task — parked on `udp.recv` with a periodic 2 ms tick — can
+        // keep the current-thread test runtime from shutting down, which under
+        // `cargo test`'s parallel binary execution shows up as this test's
+        // binary never exiting.
+        drop(caller);
+        drop(receiver);
     })
     .await
     .expect("test timed out — deadlock or stalled handshake");
