@@ -45,18 +45,26 @@ backlog; promote any to an epic when ready.
    to WebCodecs/ONNX (scene/ad/content-ID detection) with no ffmpeg glue.
    Pip/npm-able primitive.
 
-8. **Camera → LL-HLS extension (browser-native, no media server).**
-   A tiny binary that pulls an IP camera's own RTSP and serves **LL-HLS**
-   directly — sub-second-ish browser viewing with NO MediaMTX/go2rtc, NO WebRTC
-   gateway, NO transcode. Runs on the camera's own ARM Linux or a Pi beside it.
-   Chain is already here: `rtsp-runtime` (RTSP session + interleaved RTP) →
-   `transmux::RtpDepacketizer` (RFC 6184 H.264: single-NAL/STAP-A/FU-A) →
-   `LlHlsSegmenter` (EXT-X-PART partial segments). **#595 open-GOP anchoring is
-   exactly what cameras need** (they rarely emit IDR); **#599 SEI captions**
-   picks up camera-embedded captions. Only real gaps: (a) a thin HTTP delivery
-   layer (chunked partials + blocking playlist reload — axum/hyper, app-level),
-   (b) H.265 RTP depacketization (RFC 7798) for HEVC cameras (H.264 is done).
-   Competes with go2rtc/MediaMTX restreaming but pure-Rust, tiny, proper LL-HLS.
+8. **On-camera LL-HLS origin (firmware, no media server, no restream hop).**
+   Runs **inside** the camera. The SoC's own H.264/H.265 encoder already emits an
+   Annex-B NAL byte-stream (V4L2 M2M / vendor encoder API) — so you skip RTSP and
+   RTP entirely: feed the encoder output straight into the NAL parser → neutral IR
+   → `LlHlsSegmenter` (EXT-X-PART partials) → a tiny embedded HTTP server. The
+   camera **is** the LL-HLS origin; a browser hits it directly for sub-second-ish
+   viewing with NO MediaMTX/go2rtc, NO WebRTC gateway, NO transcode.
+   Why this stack: it's the *only* one that fits an SoC — `no_std`+alloc, no
+   ffmpeg, tiny footprint. **#595 open-GOP anchoring is exactly what cameras need**
+   (they rarely emit IDR); **#599 SEI captions** picks up camera-embedded captions.
+   Build pieces present: NAL/AU parsing (`transmux::nal`), IR, `LlHlsSegmenter`.
+   Gaps to close: (a) Annex-B start-code framing → AU boundary input adapter
+   (byte-stream, not RTP — `transmux::RtpDepacketizer` is for the *off-box*
+   restream variant only), (b) a minimal `no_std`-friendly HTTP/1.1 server
+   (picoserve-class — chunked partials + blocking playlist reload; NOT axum),
+   (c) H.265 path for HEVC SoCs (parse/segment; H.264 is done),
+   (d) aarch64/armv7 musl cross-compile + a small vendor-encoder shim.
+   Off-box restream variant (Pi beside a legacy RTSP-only camera) reuses
+   `rtsp-runtime` + `RtpDepacketizer` instead of the encoder adapter.
+   Competes with go2rtc/MediaMTX but pure-Rust, firmware-sized, proper LL-HLS.
 
 ## Through-line
 Ship **#1 (browser analyzer)** as the free on-ramp and **#2 (JIT origin)** as the
