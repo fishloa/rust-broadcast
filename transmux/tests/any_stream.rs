@@ -345,6 +345,7 @@ fn demux_completeness_every_live_pmt_stream_becomes_a_track() {
         match carriage {
             DataCarriage::Pes => n_pes += 1,
             DataCarriage::Sections => n_sections += 1,
+            _ => {}
         }
     }
     assert_eq!(

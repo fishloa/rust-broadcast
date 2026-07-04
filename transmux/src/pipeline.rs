@@ -82,6 +82,7 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 /// yields nothing, so a demuxer/muxer must dispatch on this before touching
 /// the payload — see `crate::ts_demux` / `crate::ts_mux` (issue #576).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DataCarriage {
     /// The elementary stream is PES-packetized (ISO/IEC 13818-1 §2.4.3.6).
     Pes,
