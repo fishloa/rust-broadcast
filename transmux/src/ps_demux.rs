@@ -456,15 +456,15 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         .collect();
 
     Some(Track::new(
-        TrackSpec {
+        TrackSpec::new(
             track_id,
-            timescale: VIDEO_TIMESCALE,
-            config: CodecConfig::Avc {
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
                 config,
                 width: 0,
                 height: 0,
             },
-        },
+        ),
         samples,
     ))
 }
@@ -587,16 +587,16 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         .collect();
 
     Some(Track::new(
-        TrackSpec {
+        TrackSpec::new(
             track_id,
-            timescale: sample_rate,
-            config: CodecConfig::Ac3 {
+            sample_rate,
+            CodecConfig::Ac3 {
                 config,
                 channel_count,
                 sample_rate,
                 sample_size: AUDIO_SAMPLE_SIZE_BITS,
             },
-        },
+        ),
         samples,
     ))
 }

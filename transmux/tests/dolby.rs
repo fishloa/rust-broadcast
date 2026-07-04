@@ -173,16 +173,16 @@ fn ac3_init_segment_sample_entry() {
     let dac3 = Ac3SpecificBox::parse(&DAC3_ORACLE).unwrap();
     let sample_rate: u32 = 44100;
 
-    let tracks = vec![TrackSpec {
-        track_id: 1,
-        timescale: sample_rate,
-        config: CodecConfig::Ac3 {
+    let tracks = vec![TrackSpec::new(
+        1,
+        sample_rate,
+        CodecConfig::Ac3 {
             config: dac3,
             channel_count: 1,
             sample_rate,
             sample_size: 16,
         },
-    }];
+    )];
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 
@@ -195,16 +195,16 @@ fn ec3_init_segment_sample_entry() {
     let dec3 = Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap();
     let sample_rate: u32 = 44100;
 
-    let tracks = vec![TrackSpec {
-        track_id: 1,
-        timescale: sample_rate,
-        config: CodecConfig::Eac3 {
+    let tracks = vec![TrackSpec::new(
+        1,
+        sample_rate,
+        CodecConfig::Eac3 {
             config: dec3,
             channel_count: 1,
             sample_rate,
             sample_size: 16,
         },
-    }];
+    )];
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 

@@ -258,17 +258,17 @@ fn dtsc_init_segment_ddts_round_trip() {
     let ddts = spec_vector();
     let sample_rate: u32 = 48_000;
 
-    let tracks = vec![TrackSpec {
-        track_id: 1,
-        timescale: sample_rate,
-        config: CodecConfig::Dts {
+    let tracks = vec![TrackSpec::new(
+        1,
+        sample_rate,
+        CodecConfig::Dts {
             config: ddts.clone(),
             codec_fourcc: DTSC_FOURCC,
             channel_count: 2,
             sample_rate,
             sample_size: 16,
         },
-    }];
+    )];
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 
@@ -301,17 +301,17 @@ fn stsd_round_trip_dts_entry() {
     let ddts = spec_vector();
     let sample_rate: u32 = 48_000;
 
-    let tracks = vec![TrackSpec {
-        track_id: 1,
-        timescale: sample_rate,
-        config: CodecConfig::Dts {
+    let tracks = vec![TrackSpec::new(
+        1,
+        sample_rate,
+        CodecConfig::Dts {
             config: ddts.clone(),
             codec_fourcc: DTSC_FOURCC,
             channel_count: 2,
             sample_rate,
             sample_size: 16,
         },
-    }];
+    )];
 
     let init = build_init_segment(&tracks, 1000).unwrap();
 

@@ -401,10 +401,10 @@ fn ir_trick_track_wired_to_signalling() {
 /// in DASH packaging tests.  8 samples, sync only at index 0.
 fn minimal_video_media() -> transmux::media::Media {
     use transmux::media::Media;
-    let spec = TrackSpec {
-        track_id: 1,
-        timescale: 90000,
-        config: CodecConfig::Avc {
+    let spec = TrackSpec::new(
+        1,
+        90000,
+        CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {
                     configuration_version: 1,
@@ -423,15 +423,9 @@ fn minimal_video_media() -> transmux::media::Media {
             width: 1280,
             height: 720,
         },
-    };
+    );
     let samples: Vec<Sample> = (0u8..8)
-        .map(|i| Sample {
-            data: vec![i; 8],
-            duration: 3000,
-            is_sync: i == 0,
-            composition_offset: 0,
-            source_timing: None,
-        })
+        .map(|i| Sample::new(vec![i; 8], 3000, i == 0, 0))
         .collect();
     let track = Track::new(spec, samples);
     Media {

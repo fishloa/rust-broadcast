@@ -50,15 +50,15 @@ fn avc_spec() -> TrackSpec {
         bit_depth_chroma_minus8: None,
         sps_ext: vec![],
     };
-    TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
             height: 16,
         },
-    }
+    )
 }
 
 /// One length-prefixed IDR-ish sample (a single 4-byte-prefixed NAL body).
@@ -67,13 +67,7 @@ fn sample(duration: u32) -> Sample {
     let nal = [0x65u8, 0x88, 0x84, 0x00];
     let mut data = (nal.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&nal);
-    Sample {
-        data,
-        duration,
-        is_sync: true,
-        composition_offset: 0,
-        source_timing: None,
-    }
+    Sample::new(data, duration, true, 0)
 }
 
 fn media_with_anchor(start: u64, durs: &[u32]) -> Media {

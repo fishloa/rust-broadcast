@@ -1073,11 +1073,24 @@ fn finalize_probe(
             if sps_bytes.len() < 4 {
                 return None;
             }
-            // Coded dimensions from the SPS (ISO/IEC 14496-10 §7.3.2.1.1) — the
-            // TS in-band parameter set carries them (0 if undecodable).
-            let (width, height) = crate::sps::decode_avc_sps(sps_bytes)
+            // Coded dimensions + high-profile chroma/bit-depth from the SPS
+            // (ISO/IEC 14496-10 §7.3.2.1.1) — the TS in-band parameter set
+            // carries them (0/None if undecodable).
+            let info = crate::sps::decode_avc_sps(sps_bytes).ok();
+            let (width, height) = info
+                .as_ref()
                 .map(|i| (i.width as u16, i.height as u16))
                 .unwrap_or((0, 0));
+            // The avcC high-profile extension (chroma_format_idc + bit depths)
+            // exists only for the High-family profiles that carry it
+            // (ISO/IEC 14496-15 §5.3.3.1). Populate it from the SPS for those —
+            // previously hardcoded None, so a High 10/4:2:2/4:4:4 TS lost its
+            // chroma/bit-depth in the recovered avcC (#563 flagged; #582 owns
+            // this file). Gate matches the serializer's emission set via the
+            // shared `sps::is_high_profile` source of truth.
+            let ext = info
+                .as_ref()
+                .filter(|i| crate::sps::is_high_profile(i.profile_idc));
             let record = AVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 // profile_idc / constraint_flags / level_idc live at SPS bytes
@@ -1088,9 +1101,9 @@ fn finalize_probe(
                 length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
                 sps: alloc::vec![AvcSps(sps_bytes.clone())],
                 pps: alloc::vec![AvcPps(pps_bytes.clone())],
-                chroma_format: None,
-                bit_depth_luma_minus8: None,
-                bit_depth_chroma_minus8: None,
+                chroma_format: ext.map(|i| i.chroma_format_idc),
+                bit_depth_luma_minus8: ext.map(|i| i.bit_depth_luma.saturating_sub(8)),
+                bit_depth_chroma_minus8: ext.map(|i| i.bit_depth_chroma.saturating_sub(8)),
                 sps_ext: alloc::vec![],
             };
             Some((
@@ -1841,12 +1854,10 @@ impl StreamingTsDemux {
                     let track_id = self.next_track_id;
                     self.next_track_id += 1;
                     let anchor = stream.first_dts_uw.unwrap_or(0).max(0) as u64;
+                    let spec = TrackSpec::new(track_id, timescale, config)
+                        .with_source(next_pid, stream.descriptors.clone());
                     self.events.push_back(DemuxEvent::TrackAdded(Track::new_at(
-                        TrackSpec {
-                            track_id,
-                            timescale,
-                            config,
-                        },
+                        spec,
                         Vec::new(),
                         anchor,
                     )));

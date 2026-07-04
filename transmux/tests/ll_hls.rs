@@ -63,40 +63,34 @@ fn dummy_esds() -> EsdsBox {
 }
 
 fn video_track() -> TrackSpec {
-    TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
             height: 240,
         },
-    }
+    )
 }
 
 fn audio_track() -> TrackSpec {
-    TrackSpec {
-        track_id: 2,
-        timescale: 48_000,
-        config: CodecConfig::Aac {
+    TrackSpec::new(
+        2,
+        48_000,
+        CodecConfig::Aac {
             esds: dummy_esds(),
             channel_count: 2,
             sample_rate: 48_000,
             sample_size: 16,
         },
-    }
+    )
 }
 
 const VID_DUR: u32 = 3000; // 90 kHz, 1/30 s per AU
 
 fn vsample(is_sync: bool, byte: u8) -> Sample {
-    Sample {
-        data: vec![byte; 32],
-        duration: VID_DUR,
-        is_sync,
-        composition_offset: 0,
-        source_timing: None,
-    }
+    Sample::new(vec![byte; 32], VID_DUR, is_sync, 0)
 }
 
 // ---------------------------------------------------------------------------

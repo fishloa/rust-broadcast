@@ -66,28 +66,28 @@ fn dummy_esds() -> EsdsBox {
 }
 
 fn video_track() -> TrackSpec {
-    TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
             height: 240,
         },
-    }
+    )
 }
 
 fn audio_track() -> TrackSpec {
-    TrackSpec {
-        track_id: 2,
-        timescale: 48_000,
-        config: CodecConfig::Aac {
+    TrackSpec::new(
+        2,
+        48_000,
+        CodecConfig::Aac {
             esds: dummy_esds(),
             channel_count: 2,
             sample_rate: 48_000,
             sample_size: 16,
         },
-    }
+    )
 }
 
 /// Find the first top-level box of `fourcc` in a serialized segment and return
@@ -166,17 +166,8 @@ fn synthetic_cuts_are_exact_and_lossless() {
     for (_, is_video, idx) in &items {
         if *is_video {
             let is_sync = idx % 10 == 0;
-            seg.push(
-                1,
-                Sample {
-                    data: vec![0xAA; 16],
-                    duration: VID_DUR,
-                    is_sync,
-                    composition_offset: 0,
-                    source_timing: None,
-                },
-            )
-            .unwrap();
+            seg.push(1, Sample::new(vec![0xAA; 16], VID_DUR, is_sync, 0))
+                .unwrap();
         } else {
             seg.push(2, Sample::from_raw(vec![0xBB; 8], AUD_DUR))
                 .unwrap();
@@ -234,13 +225,7 @@ fn synthetic_cuts_are_exact_and_lossless() {
 #[test]
 fn single_segment_is_byte_identical_to_batch_builder() {
     let vid: Vec<Sample> = (0..12)
-        .map(|i| Sample {
-            data: vec![i as u8; 10],
-            duration: 3000,
-            is_sync: i % 6 == 0,
-            composition_offset: 0,
-            source_timing: None,
-        })
+        .map(|i| Sample::new(vec![i as u8; 10], 3000, i % 6 == 0, 0))
         .collect();
     let aud: Vec<Sample> = (0..20)
         .map(|_| Sample::from_raw(vec![0x5A; 6], 1024))
@@ -448,25 +433,25 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     });
     let audio_rate = sfi_to_hz(adts.sampling_frequency_index);
 
-    let vtrack = TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    let vtrack = TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config,
             width: 0,
             height: 0,
         },
-    };
-    let atrack = TrackSpec {
-        track_id: 2,
-        timescale: audio_rate,
-        config: CodecConfig::Aac {
+    );
+    let atrack = TrackSpec::new(
+        2,
+        audio_rate,
+        CodecConfig::Aac {
             esds,
             channel_count: adts.channel_configuration as u16,
             sample_rate: audio_rate,
             sample_size: 16,
         },
-    };
+    );
 
     // Count expected samples for the loss check.
     let expect_vid = vid.len();

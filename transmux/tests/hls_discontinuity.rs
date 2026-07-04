@@ -58,27 +58,27 @@ fn dummy_avc_config_b() -> AVCConfigurationBox {
 }
 
 fn video_track_a() -> TrackSpec {
-    TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
             height: 240,
         },
-    }
+    )
 }
 
 fn video_track_b() -> TrackSpec {
-    TrackSpec {
-        track_id: 1,
-        timescale: 90_000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
             config: dummy_avc_config_b(),
             width: 320,
             height: 240,
         },
-    }
+    )
 }
 
 /// Build a Segmenter with a single video track and target 1 second.
@@ -268,32 +268,14 @@ fn explicit_mark_discontinuity_bites() {
 
     // Helper: push one sync then one non-sync to fill the buffer.
     let fill = |s: &mut Segmenter| {
-        let sync = Sample {
-            data: vec![0u8; 4],
-            duration: 45_000,
-            is_sync: true,
-            composition_offset: 0,
-            source_timing: None,
-        };
-        let non_sync = Sample {
-            data: vec![0u8; 4],
-            duration: 45_000,
-            is_sync: false,
-            composition_offset: 0,
-            source_timing: None,
-        };
+        let sync = Sample::new(vec![0u8; 4], 45_000, true, 0);
+        let non_sync = Sample::new(vec![0u8; 4], 45_000, false, 0);
         s.push(1, sync).unwrap();
         s.push(1, non_sync).unwrap();
     };
 
     // Trigger sample (sync that causes the preceding buffer to be cut).
-    let trigger = || Sample {
-        data: vec![0u8; 4],
-        duration: 45_000,
-        is_sync: true,
-        composition_offset: 0,
-        source_timing: None,
-    };
+    let trigger = || Sample::new(vec![0u8; 4], 45_000, true, 0);
 
     // Fill segment 0's buffer (90_000 ticks pending).
     fill(&mut seg);
@@ -308,13 +290,7 @@ fn explicit_mark_discontinuity_bites() {
     seg.mark_discontinuity();
 
     // Fill segment 1's buffer; the anchor already has 45_000 ticks from the trigger.
-    let non_sync = Sample {
-        data: vec![0u8; 4],
-        duration: 45_000,
-        is_sync: false,
-        composition_offset: 0,
-        source_timing: None,
-    };
+    let non_sync = Sample::new(vec![0u8; 4], 45_000, false, 0);
     seg.push(1, non_sync).unwrap();
     // Now trigger the cut for segment 1 — must be discontinuous.
     seg.push(1, trigger()).unwrap();

@@ -105,6 +105,7 @@ broadcast_common::impl_spec_display!(DataCarriage);
 
 /// Per-track codec configuration for the initialization segment.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CodecConfig {
     /// H.264/AVC video (`avc1` sample entry with an `avcC` config box).
     Avc {
@@ -370,6 +371,7 @@ impl CodecConfig {
 
 /// A track's identity + codec config, used to build the init segment.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
     pub track_id: u32,
@@ -377,6 +379,35 @@ pub struct TrackSpec {
     pub timescale: u32,
     /// Codec configuration + dimensions.
     pub config: CodecConfig,
+    /// Source elementary-stream PID for TS-demuxed tracks; `None` for non-TS
+    /// sources (fMP4/FLV/WebM/PS/RTP). (issue #582)
+    pub source_pid: Option<u16>,
+    /// Raw PMT ES_info descriptor-loop bytes for this elementary stream
+    /// (ISO/IEC 13818-1 §2.4.4.8), verbatim; empty for non-TS sources.
+    /// transmux does not parse these — consumers use dvb-si. (issue #582)
+    pub es_info_descriptors: Vec<u8>,
+}
+
+impl TrackSpec {
+    /// A track spec with no TS provenance (`source_pid = None`, no ES_info
+    /// descriptors) — the common case for every non-TS demuxer/transform.
+    pub fn new(track_id: u32, timescale: u32, config: CodecConfig) -> Self {
+        Self {
+            track_id,
+            timescale,
+            config,
+            source_pid: None,
+            es_info_descriptors: Vec::new(),
+        }
+    }
+
+    /// Attach TS provenance (issue #582): the source elementary-stream PID
+    /// and its verbatim PMT ES_info descriptor-loop bytes.
+    pub fn with_source(mut self, source_pid: u16, es_info_descriptors: Vec<u8>) -> Self {
+        self.source_pid = Some(source_pid);
+        self.es_info_descriptors = es_info_descriptors;
+        self
+    }
 }
 
 /// Explicit per-sample timestamps recovered from the source container, in the
@@ -393,6 +424,7 @@ pub struct SourceTiming {
 
 /// A single coded sample (access unit) fed to [`build_media_segment`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Sample {
     /// Coded bytes: **length-prefixed** NAL data for AVC/HEVC, or the raw frame
     /// for AAC. Use [`Sample::from_annexb`] to convert an Annex B access unit.
@@ -411,6 +443,22 @@ pub struct Sample {
 }
 
 impl Sample {
+    /// Build a sample from already-encoded bytes with every field explicit
+    /// (issue #580: the general-purpose constructor now that `Sample` is
+    /// `#[non_exhaustive]` and cannot be struct-literal-constructed outside
+    /// this crate). `data` must already be in this crate's wire form
+    /// (length-prefixed for AVC/HEVC) — use [`Sample::from_annexb`] to
+    /// convert an Annex B access unit instead.
+    pub fn new(data: Vec<u8>, duration: u32, is_sync: bool, composition_offset: i32) -> Self {
+        Self {
+            data,
+            duration,
+            is_sync,
+            composition_offset,
+            source_timing: None,
+        }
+    }
+
     /// Build a video sample from an Annex B access unit, converting its NAL
     /// units to the length-prefixed `mdat` form.
     pub fn from_annexb(

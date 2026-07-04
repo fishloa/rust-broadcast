@@ -80,15 +80,15 @@ fn video_spec(moov: &MovieBox) -> TrackSpec {
         SampleEntryVariant::Avc1(a) => a,
         _ => panic!("expected avc1"),
     };
-    TrackSpec {
-        track_id: 1,
-        timescale: track_timescale(moov, 0),
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        track_timescale(moov, 0),
+        CodecConfig::Avc {
             config: avc.config.clone(),
             width: avc.visual.width,
             height: avc.visual.height,
         },
-    }
+    )
 }
 
 /// Extract the first moof's video samples (track index 0).
@@ -102,13 +102,12 @@ fn video_samples(data: &[u8]) -> Vec<Sample> {
     let mut cursor = base;
     for (i, ts) in trun.samples.iter().enumerate() {
         let size = ts.sample_size.expect("sample_size") as usize;
-        samples.push(Sample {
-            data: data[cursor..cursor + size].to_vec(),
-            duration: ts.sample_duration.unwrap_or(3000),
-            is_sync: i == 0,
-            composition_offset: ts.sample_composition_time_offset.unwrap_or(0),
-            source_timing: None,
-        });
+        samples.push(Sample::new(
+            data[cursor..cursor + size].to_vec(),
+            ts.sample_duration.unwrap_or(3000),
+            i == 0,
+            ts.sample_composition_time_offset.unwrap_or(0),
+        ));
         cursor += size;
     }
     samples

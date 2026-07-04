@@ -40,10 +40,10 @@ const SYNTHETIC_SYNC2_INDEX: usize = 4;
 const SYNTHETIC_GOP_SIZE: usize = 4;
 
 fn synthetic_spec() -> TrackSpec {
-    TrackSpec {
-        track_id: 1,
-        timescale: 90000,
-        config: CodecConfig::Avc {
+    TrackSpec::new(
+        1,
+        90000,
+        CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {
                     configuration_version: 1,
@@ -62,17 +62,18 @@ fn synthetic_spec() -> TrackSpec {
             width: 1280,
             height: 720,
         },
-    }
+    )
 }
 
 fn synthetic_track() -> Track {
     let samples: Vec<Sample> = (0..SYNTHETIC_SAMPLE_COUNT)
-        .map(|i| Sample {
-            data: vec![i as u8; 4],
-            duration: SYNTHETIC_SAMPLE_DURATION,
-            is_sync: i == 0 || i == SYNTHETIC_SYNC2_INDEX,
-            composition_offset: 0,
-            source_timing: None,
+        .map(|i| {
+            Sample::new(
+                vec![i as u8; 4],
+                SYNTHETIC_SAMPLE_DURATION,
+                i == 0 || i == SYNTHETIC_SYNC2_INDEX,
+                0,
+            )
         })
         .collect();
     Track::new(synthetic_spec(), samples)
@@ -247,13 +248,7 @@ fn real_fixture_video_trickplay() {
 #[test]
 fn no_sync_samples_returns_error() {
     let samples: Vec<Sample> = (0u8..4)
-        .map(|i| Sample {
-            data: vec![i],
-            duration: 100,
-            is_sync: false,
-            composition_offset: 0,
-            source_timing: None,
-        })
+        .map(|i| Sample::new(vec![i], 100, false, 0))
         .collect();
     let src = Track::new(synthetic_spec(), samples);
 

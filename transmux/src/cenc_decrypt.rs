@@ -479,15 +479,15 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
         }
 
         tracks.push(Track::new(
-            TrackSpec {
+            TrackSpec::new(
                 track_id,
                 timescale,
-                config: CodecConfig::Avc {
+                CodecConfig::Avc {
                     config: AVCConfigurationBox::new(avc_config),
                     width: 0,
                     height: 0,
                 },
-            },
+            ),
             samples,
         ));
         track_id += 1;

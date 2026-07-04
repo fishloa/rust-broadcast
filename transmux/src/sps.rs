@@ -28,7 +28,7 @@ use alloc::string::String;
 /// chroma_format_idc, bit_depth_*_minus8, and optionally scaling lists.
 const H264_HIGH_PROFILES: &[u8] = &[100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135];
 
-fn is_high_profile(profile_idc: u8) -> bool {
+pub(crate) fn is_high_profile(profile_idc: u8) -> bool {
     H264_HIGH_PROFILES.contains(&profile_idc)
 }
 

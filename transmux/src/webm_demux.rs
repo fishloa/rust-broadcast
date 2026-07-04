@@ -518,11 +518,7 @@ fn build_media(
         }
 
         out_tracks.push(Track::new(
-            TrackSpec {
-                track_id,
-                timescale: IR_TIMESCALE,
-                config,
-            },
+            TrackSpec::new(track_id, IR_TIMESCALE, config),
             samples,
         ));
         track_id += 1;

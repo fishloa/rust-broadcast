@@ -97,26 +97,26 @@ fn track_specs(moov: &MovieBox) -> (Vec<TrackSpec>, EsdsBox) {
     let esds = EsdsBox::parse_box(&esds_full).expect("esds must parse");
 
     let specs = vec![
-        TrackSpec {
-            track_id: 1,
-            timescale: track_timescale(moov, 0),
-            config: CodecConfig::Avc {
+        TrackSpec::new(
+            1,
+            track_timescale(moov, 0),
+            CodecConfig::Avc {
                 config: avc.config.clone(),
                 width: avc.visual.width,
                 height: avc.visual.height,
             },
-        },
-        TrackSpec {
-            track_id: 2,
-            timescale: track_timescale(moov, 1),
-            config: CodecConfig::Aac {
+        ),
+        TrackSpec::new(
+            2,
+            track_timescale(moov, 1),
+            CodecConfig::Aac {
                 esds: esds.clone(),
                 channel_count: mp4a.channelcount,
                 // sample entry stores 16.16; recover the integer Hz.
                 sample_rate: mp4a.samplerate >> 16,
                 sample_size: mp4a.samplesize,
             },
-        },
+        ),
     ];
     (specs, esds)
 }
@@ -140,13 +140,12 @@ fn extract_samples(
         let size = ts.sample_size.expect("sample_size present") as usize;
         let data_bytes = data[cursor..cursor + size].to_vec();
         cursor += size;
-        samples.push(Sample {
-            data: data_bytes,
-            duration: ts.sample_duration.unwrap_or(3000),
-            is_sync: i == 0,
-            composition_offset: ts.sample_composition_time_offset.unwrap_or(0),
-            source_timing: None,
-        });
+        samples.push(Sample::new(
+            data_bytes,
+            ts.sample_duration.unwrap_or(3000),
+            i == 0,
+            ts.sample_composition_time_offset.unwrap_or(0),
+        ));
     }
     (track_id, samples)
 }
