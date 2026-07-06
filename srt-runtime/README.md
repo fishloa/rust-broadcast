@@ -50,7 +50,12 @@ the packet-codec + sans-IO core pulls zero crypto/async dependencies.
 - Wiring `crypto` into the handshake state machines / a per-connection
   SEK-rotation driver (§6.1.6 KM Refresh) — this release ships the crypto
   *primitives* only.
-- The Version-4 legacy Rendezvous path (§4.3.2).
+
+## Permanently out of scope
+
+- **The Version-4 legacy Rendezvous path (§4.3.2).** Only the current HSv5
+  Rendezvous flow is implemented. V4 is a legacy interop path for pre-HSv5
+  peers; not planned.
 
 ```toml
 [dependencies]

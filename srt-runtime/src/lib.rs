@@ -58,8 +58,10 @@
 //! - Wiring [`crypto`] into the handshake state machines / a per-connection
 //!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
 //!   *primitives* only.
-//! - The Version-4 legacy Rendezvous path (§4.3.2, out of scope of the draft
-//!   excerpt this crate implements against).
+//!
+//! **Permanently out of scope:** the Version-4 legacy Rendezvous path (§4.3.2).
+//! Only the current HSv5 Rendezvous flow ([`rendezvous`]) is implemented; V4 is
+//! a legacy interop path for pre-HSv5 peers and is not planned.
 //!
 //! # The sans-IO contract
 //!
