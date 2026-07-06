@@ -104,7 +104,7 @@ use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
-use crate::aac_asc::{AudioSpecificConfig, parse_adts_header};
+use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, parse_adts_header};
 use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SyncframeInfo, split_ac3_syncframes,
     split_eac3_syncframes,
@@ -420,16 +420,38 @@ fn mpeg2_is_sync(au: &[u8]) -> bool {
     false
 }
 
+/// Scan forward from the start of `data` for the first byte offset carrying a
+/// valid MPEG audio frame header, returning that offset and the parsed
+/// header. A broadcast MP2-in-PES payload is not guaranteed to start on a
+/// frame boundary (issue #638: a real DVB-S multiplexer routinely splits PES
+/// payloads without regard to the ~1253/1254-byte frame length) -- this
+/// resyncs instead of requiring the syncword at offset 0. Bytes before the
+/// returned offset are a partial frame tail from the previous payload and are
+/// discarded (no cross-PES carry).
+fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
+    let mut off = 0usize;
+    while off + 4 <= data.len() {
+        if let Ok(hdr) = MpegAudioFrameHeader::parse(&data[off..]) {
+            return Some((off, hdr));
+        }
+        off += 1;
+    }
+    None
+}
+
 /// Split a concatenated MPEG audio payload into individual frames using the
-/// frame-header length field (ISO/IEC 11172-3 §2.4.1.3). Stops at the first
-/// bad sync / over-run so a partial tail does not lose earlier frames.
+/// frame-header length field (ISO/IEC 11172-3 §2.4.1.3). Resyncs to the next
+/// frame boundary on a bad sync (see [`find_mpeg_audio_sync`]); stops once no
+/// further sync is found or a frame would run past the end of `payload`, so a
+/// partial tail does not lose earlier frames.
 fn split_mpeg_audio_frames(payload: &[u8]) -> Vec<&[u8]> {
     let mut frames = Vec::new();
     let mut off = 0usize;
     while off + 4 <= payload.len() {
-        let Ok(hdr) = MpegAudioFrameHeader::parse(&payload[off..]) else {
+        let Some((sync_off, hdr)) = find_mpeg_audio_sync(&payload[off..]) else {
             break;
         };
+        off += sync_off;
         let flen = hdr.frame_length;
         if flen < 4 || off + flen > payload.len() {
             break;
@@ -440,14 +462,36 @@ fn split_mpeg_audio_frames(payload: &[u8]) -> Vec<&[u8]> {
     frames
 }
 
-/// Split a concatenated ADTS payload into individual frames (header + raw data).
+/// Scan forward from the start of `data` for the first byte offset carrying a
+/// valid ADTS frame header, returning that offset and the parsed header --
+/// see [`find_mpeg_audio_sync`] for why a broadcast PES payload isn't
+/// guaranteed to start on a frame boundary (issue #638). Bytes before the
+/// returned offset are a partial frame tail from the previous payload and are
+/// discarded (no cross-PES carry).
+fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
+    let mut off = 0usize;
+    while off + ADTS_HEADER_SIZE <= data.len() {
+        if let Ok(hdr) = parse_adts_header(&data[off..]) {
+            return Some((off, hdr));
+        }
+        off += 1;
+    }
+    None
+}
+
+/// Split a concatenated ADTS payload into individual frames (header + raw
+/// data). Resyncs to the next frame boundary on a bad sync (see
+/// [`find_adts_sync`]); stops once no further sync is found or a frame would
+/// run past the end of `payload`, so a partial tail does not lose earlier
+/// frames.
 fn split_adts_frames(payload: &[u8]) -> Vec<&[u8]> {
     let mut frames = Vec::new();
     let mut off = 0usize;
     while off + ADTS_HEADER_SIZE <= payload.len() {
-        let Ok(hdr) = parse_adts_header(&payload[off..]) else {
+        let Some((sync_off, hdr)) = find_adts_sync(&payload[off..]) else {
             break;
         };
+        off += sync_off;
         let frame_len = hdr.frame_length as usize;
         if frame_len < ADTS_HEADER_SIZE || off + frame_len > payload.len() {
             break;
@@ -1305,9 +1349,11 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::MpegAudio { is_mpeg2 } => {
+            // Resync within each buffered PES payload (issue #638) -- a real
+            // broadcast payload is not guaranteed to start on a frame sync.
             let first = backlog
                 .iter()
-                .find_map(|au| MpegAudioFrameHeader::parse(&au.data).ok())?;
+                .find_map(|au| find_mpeg_audio_sync(&au.data).map(|(_, hdr)| hdr))?;
             let sample_rate = first.sample_rate;
             let channel_count = first.channels;
             let samples_per_frame = first.samples_per_frame;
@@ -1354,9 +1400,11 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Aac => {
+            // Resync within each buffered PES payload (issue #638) -- a real
+            // broadcast payload is not guaranteed to start on a frame sync.
             let first_hdr = backlog
                 .iter()
-                .find_map(|au| parse_adts_header(&au.data).ok())?;
+                .find_map(|au| find_adts_sync(&au.data).map(|(_, hdr)| hdr))?;
             let asc = AudioSpecificConfig::from_adts_header(&first_hdr);
             let sample_rate = sfi_to_hz(first_hdr.sampling_frequency_index)?;
             let channel_count = first_hdr.channel_configuration as u16;
@@ -2174,6 +2222,7 @@ impl<'a> Unpackage for TsDemux<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::Parse;
 
     /// Every section-carried `stream_type` (Table 2-34) classifies as
     /// [`DataCarriage::Sections`]; the historical PES-carried 0x06/0x15 and
@@ -2269,6 +2318,85 @@ mod tests {
         assert_eq!(
             actual, demux.unattributed_bytes,
             "unattributed_bytes drifted from the real retained size"
+        );
+    }
+
+    /// `split_adts_frames` must resync across PES payloads that don't start
+    /// on a frame sync (issue #638 — the same defect reported for MP2, see
+    /// `mpeg_legacy.rs`'s `mpeg_audio_resyncs_across_pes_boundaries`, applies
+    /// identically to ADTS). Builds a real ADTS elementary stream from the
+    /// real captured AAC frames in `fixtures/ts/h264_aac.ts` (re-synthesizing
+    /// each frame's ADTS header from the track's real recovered config, the
+    /// same way [`build_es_payload`] does for muxing), then re-chunks it at a
+    /// fixed size that does not align to any real AAC frame length.
+    #[test]
+    fn adts_resyncs_across_pes_boundaries() {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("..");
+        path.push("fixtures");
+        path.push("ts");
+        path.push("h264_aac.ts");
+        let ts_bytes =
+            std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
+
+        let mut demux = TsDemux::new();
+        let media = demux.demux(&ts_bytes).expect("demux h264_aac.ts");
+        let audio = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Aac { .. }))
+            .expect("h264_aac.ts has an AAC track");
+        let esds = match audio.config() {
+            CodecConfig::Aac { esds, .. } => esds,
+            _ => unreachable!(),
+        };
+        let dsi = esds
+            .es_descriptor
+            .decoder_config
+            .as_ref()
+            .and_then(|dc| dc.decoder_specific_info.as_ref())
+            .expect("AAC esds carries a DecoderSpecificInfo");
+        let asc = AudioSpecificConfig::parse(&dsi.data).expect("parse real AudioSpecificConfig");
+
+        // Real ADTS ES: real captured AAC frame bytes, each with a freshly
+        // synthesized (but spec-correct, config-derived) ADTS header.
+        let mut es: Vec<u8> = Vec::new();
+        for s in &audio.samples {
+            let frame_len = (ADTS_HEADER_SIZE + s.data.len()) as u16;
+            let hdr = asc
+                .to_adts_header(frame_len)
+                .expect("build real ADTS header");
+            es.extend_from_slice(&hdr);
+            es.extend_from_slice(&s.data);
+        }
+        assert!(
+            audio.samples.len() >= 10,
+            "fixture too small to be a meaningful resync test"
+        );
+
+        // Re-chunk at a fixed size (a realistic broadcast audio PES payload
+        // size, several frames' worth) with no relation to any real AAC
+        // frame length (~292 bytes average here), so PES payload boundaries
+        // land mid-frame (issue #638).
+        const CHUNK: usize = 2000;
+        let mut recovered = 0usize;
+        let mut off = 0usize;
+        while off < es.len() {
+            let end = (off + CHUNK).min(es.len());
+            recovered += split_adts_frames(&es[off..end]).len();
+            off = end;
+        }
+
+        // Before the #638-style fix, `split_adts_frames` bails at the first
+        // byte that isn't a syncword and never resyncs, so only the chunks
+        // that happen to start exactly on a frame boundary by chance yield
+        // anything -- effectively none, for a chunk size unrelated to frame
+        // length. Resync must recover the large majority of the real frames.
+        assert!(
+            recovered * 2 >= audio.samples.len(),
+            "resync must recover most real AAC frames across misaligned \
+             chunks (got {recovered} of {} real frames)",
+            audio.samples.len()
         );
     }
 }

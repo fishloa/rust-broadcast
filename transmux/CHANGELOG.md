@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **MPEG audio / ADTS frame splitting never resynced past a bad sync**
+  (#638). `split_mpeg_audio_frames` and `split_adts_frames` assumed a PES
+  payload always starts exactly on a frame boundary; a real DVB-S broadcast
+  multiplexer routinely splits PES payloads without regard to audio frame
+  length, so a misaligned payload silently yielded zero frames (a track
+  stuck in `Probing` forever if no buffered PES happened to align, or
+  silently dropped samples on an already-live track). Both splitters, and
+  the MP2/AAC config-probe backlog scans, now resync forward to the next
+  valid frame header instead of bailing on the first byte that isn't one.
+
 ## [0.15.0] - 2026-07-06
 
 ### Added
