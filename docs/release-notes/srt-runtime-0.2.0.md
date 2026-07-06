@@ -21,6 +21,20 @@ adapter that drives them end-to-end.
   socket adapter driving the handshake + ARQ + TSBPD + LiveCC engines over real
   sockets. Background per-connection driver task; loopback + loss-injection
   integration tests.
+- **FileCC window congestion control** (§5.2, #620) — `filecc::FileCc`, the
+  file/bulk-transfer-mode sibling of `LiveCC`: hybrid AIMD Slow Start +
+  Congestion Avoidance, the full NAK-driven rate-decrease state machine, and
+  the `MAX_BW`-derived `MIN_PERIOD` clamp. A pre-tag audit found and fixed a
+  measure-zero float-comparison bug in `DecRandom` (now rounded to the
+  nearest whole number); a documented (not "fixed") one-shot quirk in the
+  draft's own Step 4 pseudocode is called out in the module doc.
+- **Crypto wired into the handshake, plus KM Refresh** (§6.1.5/§6.1.6, #621,
+  `crypto` feature) — Key Material now piggybacks on the existing
+  Caller-Listener CONCLUSION extension flow (`handshake_sm::CryptoConfig`);
+  the Listener echoes it back to prove key derivation, and a mismatched
+  passphrase or one-sided encryption config is rejected. New
+  `km_refresh::KmRefreshDriver` — a sans-IO §6.1.6 SEK-rotation state machine
+  (PreAnnounce/Switchover/Decommission), state-tracking only.
 
 Every constant/formula is grep-verified against a curated, spec-cited markdown
 transcription (`specs/rules/srt-{arq,tsbpd,livecc,crypto,rendezvous}.md`) before
@@ -48,9 +62,11 @@ are `std`-only, off by default, and pull zero extra dependencies when disabled.
   `RendezvousRole`.
 
 ## Not yet (tracked follow-ups)
-Window-based congestion control beyond LiveCC pacing (§5.2), wiring `crypto`
-into the handshake state machines / SEK-rotation (§6.1.6), the Version-4 legacy
-Rendezvous path.
+Wiring the negotiated SEK / `KmRefreshDriver` events into `io.rs`'s tokio
+adapter to actually encrypt/decrypt data-packet payloads end-to-end over a
+real socket (the handshake negotiation and rotation state machine are both
+sans-IO and fully tested). The Version-4 legacy Rendezvous path is
+permanently out of scope (see README), not a follow-up.
 
 ## Compatibility
 `no_std` core unchanged; MSRV 1.86. Additive minor release — no breaking
