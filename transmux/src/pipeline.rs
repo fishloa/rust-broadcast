@@ -367,6 +367,25 @@ impl CodecConfig {
     pub(crate) fn is_opaque_data(&self) -> bool {
         matches!(self, CodecConfig::Data { .. })
     }
+
+    /// True if `self` is a video codec (issue #628) — codec-family-complete
+    /// regardless of which output container actually carries it (e.g. the TS
+    /// mux path does not carry every variant matched here; see
+    /// `ts_mux::EsKind::from_config`). Mirrors [`CodecConfig::is_audio`]. Used
+    /// to pick the anchor/segmentation track (`ts_hls::choose_anchor`,
+    /// `Segmenter::new`).
+    pub(crate) fn is_video(&self) -> bool {
+        matches!(
+            self,
+            CodecConfig::Avc { .. }
+                | CodecConfig::Hevc { .. }
+                | CodecConfig::Vvc { .. }
+                | CodecConfig::Av1 { .. }
+                | CodecConfig::Vp9 { .. }
+                | CodecConfig::Vp8 { .. }
+                | CodecConfig::Mpeg2Video { .. }
+        )
+    }
 }
 
 /// A track's identity + codec config, used to build the init segment.
