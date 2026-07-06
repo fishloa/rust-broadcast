@@ -36,7 +36,7 @@ Companion to [`DESCRIPTOR-ACCEPTANCE.md`](DESCRIPTOR-ACCEPTANCE.md) (descriptor-
 `cargo build --workspace --all-features --locked` · `cargo test --workspace --all-features --locked` ·
 `cargo build --workspace --no-default-features --locked` · `cargo clippy --workspace --all-features --all-targets --locked -- -D warnings` ·
 `cargo fmt --all --check` · `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked`.
-Plus **MSRV 1.81** and, for `no_std` crates, a **bare-metal `thumbv7em-none-eabi`** build.
+Plus **MSRV 1.86** (`rust-toolchain.toml`, single source) and, for `no_std` crates, a **bare-metal `thumbv7em-none-eabi`** build.
 
 ## 5. `no_std`, labels, fuzz, examples, CLI
 - **`no_std` + `alloc`** where practical; `--no-default-features` + bare-metal build green.
@@ -57,7 +57,7 @@ Independent crates version on their own cadence; lockstep crates move together. 
 - [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
-- [ ] 6-gate CI suite + MSRV 1.81 (+ thumbv7em if no_std) — run by the orchestrator
+- [ ] 6-gate CI suite + MSRV 1.86 (+ thumbv7em if no_std) — run by the orchestrator
 - [ ] #204 labels + label_coverage · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
 - [ ] RELEASE-DOCS complete (CHANGELOG/release-note/README/crate-root/docs.rs metadata)
 - [ ] Versioning + dep-refs consistent; publish staged for owner sign-off
