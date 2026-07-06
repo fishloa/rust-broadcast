@@ -252,6 +252,24 @@ fn fmax(a: f64, b: f64) -> f64 {
     if a > b { a } else { b }
 }
 
+/// Round-half-away-from-zero for `f64`, matching `f64::round`'s semantics —
+/// without calling it, since `f64::round` is a `std`-only method (`core`
+/// float types don't expose it; see [`fmin`]'s doc for why this module avoids
+/// any transcendental/libm dependency). `as i64` float-to-int casts are
+/// saturating in Rust, so this is safe for any finite input in `i64` range —
+/// `DecRandom` values are always small and positive.
+fn fround(x: f64) -> f64 {
+    let truncated = x as i64 as f64;
+    let diff = x - truncated;
+    if diff >= 0.5 {
+        truncated + 1.0
+    } else if diff <= -0.5 {
+        truncated - 1.0
+    } else {
+        truncated
+    }
+}
+
 /// `pow(10.0, ceil(log10(x)))` for `x > 0` — the smallest power of 10 that is
 /// `>= x` (`specs/rules/srt-congestion.md` Step 5, L3506, verbatim source:
 /// `pow(10.0, ceil(log10(B * S * 8))) * 0.0000015 / S`).
@@ -664,7 +682,7 @@ impl FileCc {
     fn next_dec_random(&mut self) -> f64 {
         let hi = fmax(self.avg_nak_num, 1.0);
         let r = self.rng.next_unit();
-        let val = (1.0 + r * (hi - 1.0)).round();
+        let val = fround(1.0 + r * (hi - 1.0));
         fmax(val, 1.0)
     }
 
