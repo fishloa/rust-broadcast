@@ -34,6 +34,12 @@
 //!   of `AvgPayloadSize` and the configured `MAX_BW` (§5.1.1's `MAXBW_SET` /
 //!   `INPUTBW_SET` / `INPUTBW_ESTIMATED` modes) — see the `livecc` module doc
 //!   for the full formula mapping.
+//! - [`filecc::FileCc`] drives sender-side **file/bulk-transfer** congestion
+//!   control (§5.2): the two-phase Slow Start / Congestion Avoidance
+//!   AIMD algorithm that grows/shrinks both `CWND_SIZE` and `PKT_SND_PERIOD`
+//!   — the window-based sibling of [`livecc::LiveCC`]'s pacing-only model —
+//!   see the `filecc` module doc for the full formula mapping and its two
+//!   flagged spec gaps.
 //! - [`caller::CallerHandshake`] / [`listener::ListenerHandshake`] drive the
 //!   induction → conclusion exchange (§4.3.1.1/§4.3.1.2): building the wire
 //!   packets via the existing [`packet`] codecs, validating the peer's
@@ -53,8 +59,11 @@
 //! them.
 //!
 //! **Explicit follow-ups, not attempted here:**
-//! - Congestion control beyond LiveCC packet pacing (§5.2's window-based
-//!   congestion control and the rest of §5).
+//! - CUBIC/BBR or any other alternative file-transfer congestion-control
+//!   algorithm (§5.2 names them as applicable alternatives to
+//!   [`filecc::FileCc`]'s default algorithm but does not describe them).
+//! - Wiring [`filecc::FileCc`] / [`livecc::LiveCC`] into a real send-queue
+//!   scheduler ([`arq::Sender`] has no congestion-control hook today).
 //! - Wiring [`crypto`] into the handshake state machines / a per-connection
 //!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
 //!   *primitives* only.
@@ -94,6 +103,8 @@
 //!   too-late packet drop (§4.5/§4.6).
 //! - [`livecc`] — [`livecc::LiveCC`] / [`livecc::MaxBwConfig`]: sans-IO LiveCC
 //!   packet pacing (§5.1).
+//! - [`filecc`] — [`filecc::FileCc`] / [`filecc::Phase`]: sans-IO FileCC
+//!   window + pacing congestion control (§5.2).
 //! - [`handshake_sm`] — shared handshake types: [`handshake_sm::HandshakeConfig`],
 //!   [`handshake_sm::NegotiatedParams`], [`handshake_sm::HandshakeOutput`],
 //!   [`handshake_sm::RejectionReason`] (§4.3, Table 7).
@@ -119,6 +130,7 @@ pub mod caller;
 #[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
 pub mod crypto;
 pub mod error;
+pub mod filecc;
 pub mod handshake_sm;
 pub mod listener;
 pub mod livecc;
