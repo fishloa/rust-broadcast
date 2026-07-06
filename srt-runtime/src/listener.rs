@@ -228,6 +228,40 @@ impl ListenerHandshake {
 
         self.peer_socket_id = hp.srt_socket_id;
 
+        // §6.1.5: the Listener (responder) requires the pre-shared
+        // passphrase to recover the SEK from the Caller's Key Material
+        // request; a mismatch in *either* direction (one side configured
+        // for encryption, the other not) is rejected as
+        // `RejectionReason::Unsecure` ("password required or unexpected",
+        // Table 7 code 1011) — a wrong passphrase (RFC 3394 wrap-integrity
+        // failure) is `RejectionReason::BadSecret` (code 1010) instead.
+        #[cfg(feature = "crypto")]
+        let crypto_cfg = self.config.crypto.clone();
+        #[cfg(feature = "crypto")]
+        type CryptoConclusionResult = (
+            Option<handshake_sm::RecoveredSek>,
+            Option<alloc::vec::Vec<u8>>,
+        );
+        #[cfg(feature = "crypto")]
+        let (crypto_result, km_echo_ext): CryptoConclusionResult = match (&crypto_cfg, &parsed.km) {
+            (Some(crypto), Some(km_req)) => {
+                match handshake_sm::recover_sek(&crypto.passphrase, km_req) {
+                    Ok((sek, salt)) => {
+                        let echo = match handshake_sm::echo_key_material_as_response(km_req) {
+                            Ok(e) => e,
+                            Err(_) => return self.reject(RejectionReason::Rogue, hp),
+                        };
+                        (Some((sek, salt)), Some(echo))
+                    }
+                    Err(_) => return self.reject(RejectionReason::BadSecret, hp),
+                }
+            }
+            (Some(_), None) | (None, Some(_)) => {
+                return self.reject(RejectionReason::Unsecure, hp);
+            }
+            (None, None) => (None, None),
+        };
+
         let negotiated = NegotiatedParams {
             version: HANDSHAKE_VERSION_5,
             flags: crate::packet::HandshakeExtensionMessageFlags(
@@ -238,6 +272,10 @@ impl ListenerHandshake {
             peer_socket_id: self.peer_socket_id,
             stream_id: parsed.stream_id,
             group: parsed.group,
+            #[cfg(feature = "crypto")]
+            sek: crypto_result.as_ref().map(|(sek, _)| sek.clone()),
+            #[cfg(feature = "crypto")]
+            salt: crypto_result.as_ref().map(|(_, salt)| *salt),
         };
 
         let hs_msg = HsExtMessage {
@@ -256,6 +294,17 @@ impl ListenerHandshake {
             None,
             self.config.group,
         )?;
+        // §6.1.5: echo the Caller's Key Material back as confirmation.
+        #[cfg(feature = "crypto")]
+        let (ext_bytes, ext_flags) = {
+            let mut ext_bytes = ext_bytes;
+            let mut ext_flags = ext_flags;
+            if let Some(echo) = km_echo_ext {
+                ext_bytes.extend(echo);
+                ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+            }
+            (ext_bytes, ext_flags)
+        };
 
         let hp_out = HandshakePacket {
             timestamp: 0,

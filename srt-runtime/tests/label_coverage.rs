@@ -19,6 +19,7 @@ const SKIP: &[&str] = &[
     "AckCif",          // data-carrying ADT (Full/Small/Light field sets)
     "LossListEntry",   // data-carrying ADT (Single/Range sequence numbers)
     "HandshakeOutput", // data-carrying ADT (handshake SM event, not a wire label)
+    "KmRefreshEvent",  // data-carrying ADT (KM refresh driver event, not a wire label)
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

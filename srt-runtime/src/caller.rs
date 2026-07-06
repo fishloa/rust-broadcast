@@ -247,6 +247,19 @@ impl CallerHandshake {
             self.config.stream_id.as_deref(),
             self.config.group,
         )?;
+        // §6.1.5: the connection initiator (Caller) is the one that sends
+        // the Key Material request, piggybacked on this same CONCLUSION.
+        #[cfg(feature = "crypto")]
+        let (ext_bytes, ext_flags) = {
+            let mut ext_bytes = ext_bytes;
+            let mut ext_flags = ext_flags;
+            if let Some(crypto) = &self.config.crypto {
+                let km_ext = handshake_sm::build_key_material_extension(crypto)?;
+                ext_bytes.extend(km_ext);
+                ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+            }
+            (ext_bytes, ext_flags)
+        };
 
         let hp_out = HandshakePacket {
             timestamp: 0,
@@ -301,6 +314,29 @@ impl CallerHandshake {
             }
         };
 
+        // §6.1.5: this Caller (the initiator) already holds the plaintext
+        // SEK/Salt it generated itself — it does not need to unwrap
+        // anything. It only needs the Listener's echo to *confirm* the
+        // Listener derived the same SEK (§6.1.5, "the responder echoes the
+        // same KM message back to prove it derived the same SEK"); a
+        // missing or mismatched echo means the Listener does not have (or
+        // never confirmed) the SEK.
+        #[cfg(feature = "crypto")]
+        let crypto_cfg = self.config.crypto.clone();
+        #[cfg(feature = "crypto")]
+        let crypto_result: Option<handshake_sm::RecoveredSek> = match &crypto_cfg {
+            Some(crypto) => match &parsed.km {
+                Some(echoed) if handshake_sm::verify_km_echo(crypto, echoed) => {
+                    Some((crypto.sek.clone(), crypto.salt))
+                }
+                _ => {
+                    self.state = CallerHandshakeState::Rejected;
+                    return Ok(vec![HandshakeOutput::Rejected(RejectionReason::BadSecret)]);
+                }
+            },
+            None => None,
+        };
+
         let negotiated = NegotiatedParams {
             version: HANDSHAKE_VERSION_5,
             flags: crate::packet::HandshakeExtensionMessageFlags(
@@ -311,6 +347,10 @@ impl CallerHandshake {
             peer_socket_id: self.peer_socket_id,
             stream_id: self.config.stream_id.clone(),
             group: self.config.group,
+            #[cfg(feature = "crypto")]
+            sek: crypto_result.as_ref().map(|(sek, _)| sek.clone()),
+            #[cfg(feature = "crypto")]
+            salt: crypto_result.as_ref().map(|(_, salt)| *salt),
         };
         self.negotiated = Some(negotiated.clone());
         self.state = CallerHandshakeState::Connected;
