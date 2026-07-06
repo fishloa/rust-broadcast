@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Late-resolving live tracks: `DemuxEvent::TracksResolved` +
+  `StreamingTsHlsSegmenter::add_track`** (#624). A live MPEG-TS feed resolves
+  `DemuxEvent::TrackAdded` incrementally per PID (`ts_demux.rs`'s
+  `Probing`→`Parked`/`Live` lifecycle), and an audio PID's first frame
+  commonly parses after the first video keyframe — a consumer that built
+  `StreamingTsHlsSegmenter` at the first video keyframe therefore got a
+  permanently video-only segmenter with silently no audio, and no way to fix
+  it. `StreamingTsDemux` now emits `DemuxEvent::TracksResolved` once every
+  currently-known PMT-declared PID has left `Probing` (no PID stuck
+  probing), re-arming (and firing again) if a later PMT version bump adds a
+  new PID that itself then resolves — de-duplicated against a
+  known-PID-count high-water mark so it never fires once per repeated PMT
+  section or per packet on an already-stable track set.
+  `StreamingTsHlsSegmenter::add_track(spec)` registers a track after
+  construction: errors on a `track_id` collision; otherwise, if nothing has
+  been cut or buffered yet (`total_segments == 0`, every track's `pending`
+  empty) and the newly-added track is AVC while the current anchor isn't, the
+  anchor (and its target-duration tick count) is recomputed to the new video
+  track — recovering the construction-time "first video, else first track"
+  rule for the case this issue targets — otherwise the existing anchor and
+  already-cut segments are left untouched and the track simply joins future
+  muxing. Segments cut before `add_track` have no PES data for the new track
+  (spec-legal — ISO/IEC 13818-1 §2.4.4.8 permits a PMT to declare a track
+  with zero samples in a given segment); every segment cut after `add_track`
+  carries it correctly in both the PMT and the PES.
 - **Streaming Annex B → access-unit splitter** (`au::AccessUnitSplitter`,
   `au::split_access_units`) (#601). An IP-camera SoC encoder emits a continuous
   Annex B byte stream (ITU-T H.264 Annex B) with no TS/PES framing; the on-camera
