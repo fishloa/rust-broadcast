@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-06
+
 ### Fixed
 
 - **Tokio UDP adapter (`io.rs`) — loss recovery now genuinely works end-to-end**
