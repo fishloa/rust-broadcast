@@ -3,7 +3,10 @@
 //! [`StreamingTsDemux`] (issue #555) is the **one** demux core: an
 //! event-driven, incremental engine that consumes TS bytes of any size or
 //! alignment and emits [`DemuxEvent`]s (`TrackAdded`/`TrackUpdated`/`Sample`/
-//! `Pcr`/`Discontinuity`) as soon as they are known. [`TsDemux`] — the
+//! `Pcr`/`Discontinuity`/`TracksResolved`) as soon as they are known.
+//! `TracksResolved` (issue #624) additionally tells a consumer when every
+//! currently-known PMT-declared PID has resolved — the "safe to build a
+//! multi-track segmenter now" signal. [`TsDemux`] — the
 //! **input** side of the any-to-any container hub, implementing the abstract
 //! [`broadcast_common::Unpackage`] trait so `{TS} → IR → {any}` composes with
 //! the existing [`CmafMux`](crate::media::CmafMux) /
@@ -1643,6 +1646,23 @@ pub enum DemuxEvent {
         /// The PID the discontinuity was observed on.
         pid: u16,
     },
+    /// Every currently-known PMT-declared PID has resolved: none is still
+    /// `Probing` (issue #624). By the time this fires, [`DemuxEvent::TrackAdded`]
+    /// has already been (or is about to be, in the same event batch) emitted
+    /// for every track known so far — the signal a consumer building a
+    /// [`crate::ts_hls::StreamingTsHlsSegmenter`] needs to know it is safe to
+    /// construct (or has learned) the full track set, rather than building
+    /// video-only at the first video keyframe and silently missing a
+    /// later-resolving audio track.
+    ///
+    /// Fires once per **stable-state transition**, not once per PMT section:
+    /// [`StreamingTsDemux`] tracks the PID count it last fired at and only
+    /// re-fires when that count changes and the (possibly larger) new set
+    /// fully resolves again — so a live PMT version bump that adds a PID
+    /// re-arms the signal (fires again once the new PID also resolves)
+    /// without spamming one event per packet while the state is already
+    /// stable. Never fires with zero known tracks.
+    TracksResolved,
 }
 
 /// Event-driven, incremental MPEG-2 Transport Stream demuxer (issue #555) —
@@ -1720,6 +1740,13 @@ pub struct StreamingTsDemux {
     resolved: BTreeSet<u16>,
     next_track_id: u32,
     events: VecDeque<DemuxEvent>,
+    /// The known-PID count ([`codec_order`](Self::codec_order) +
+    /// [`data_order`](Self::data_order) lengths) at which
+    /// [`DemuxEvent::TracksResolved`] last fired, if ever — the de-dup key
+    /// that keeps the event from spamming once per PMT section /packet while
+    /// the fully-resolved state is unchanged (issue #624). Re-arms whenever a
+    /// new PID is discovered (the known count grows past this value).
+    tracks_resolved_signalled_at: Option<usize>,
 }
 
 impl Default for StreamingTsDemux {
@@ -1746,6 +1773,7 @@ impl StreamingTsDemux {
             resolved: BTreeSet::new(),
             next_track_id: 1,
             events: VecDeque::new(),
+            tracks_resolved_signalled_at: None,
         }
     }
 
@@ -1931,10 +1959,10 @@ impl StreamingTsDemux {
                 .chain(self.data_order.iter())
                 .find(|p| !self.resolved.contains(p))
             else {
-                return;
+                break;
             };
             let Some(stream) = self.streams.get_mut(&next_pid) else {
-                return;
+                break;
             };
             let track = stream
                 .track
@@ -1967,7 +1995,7 @@ impl StreamingTsDemux {
                 }
                 other @ TrackState::Probing { .. } => {
                     stream.track = Some(other);
-                    return; // blocked — an earlier-ranked PID isn't ready yet
+                    break; // blocked — an earlier-ranked PID isn't ready yet
                 }
                 other @ TrackState::Live(_) => {
                     // Already resolved; `resolved` should already contain it,
@@ -1976,6 +2004,25 @@ impl StreamingTsDemux {
                     self.resolved.insert(next_pid);
                 }
             }
+        }
+        self.maybe_signal_tracks_resolved();
+    }
+
+    /// Emit [`DemuxEvent::TracksResolved`] (issue #624) when every currently
+    /// known PID (`codec_order` + `data_order`) has resolved to `Live` — i.e.
+    /// [`try_promote_ready`](Self::try_promote_ready) just ran to a fixed
+    /// point with no PID left `Probing` — and the known-PID count differs
+    /// from the count the signal last fired at (de-dup: a PMT re-processed
+    /// with no new PIDs, or plain sample traffic on an already-fully-resolved
+    /// stream, must not re-fire the event every time this is called).
+    fn maybe_signal_tracks_resolved(&mut self) {
+        let known = self.codec_order.len() + self.data_order.len();
+        if known == 0 {
+            return;
+        }
+        if self.resolved.len() == known && self.tracks_resolved_signalled_at != Some(known) {
+            self.tracks_resolved_signalled_at = Some(known);
+            self.events.push_back(DemuxEvent::TracksResolved);
         }
     }
 
@@ -2107,6 +2154,7 @@ impl<'a> TsDemux<'a> {
                 }
                 DemuxEvent::Pcr(sample) => pcr.push(sample),
                 DemuxEvent::Discontinuity { .. } => {}
+                DemuxEvent::TracksResolved => {}
             }
         }
         Ok(Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr))

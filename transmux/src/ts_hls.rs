@@ -472,6 +472,11 @@ pub struct StreamingTsHlsSegmenter {
     tracks: Vec<StreamTrackState>,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
+    /// Target segment duration in whole seconds, as given to [`Self::new`] —
+    /// retained (alongside the derived `target_ticks`) so
+    /// [`Self::add_track`] can recompute `target_ticks` in the anchor-track's
+    /// timescale if a late-added track becomes the new anchor (issue #624).
+    target_secs: u32,
     /// Target segment duration in the *anchor track's* media timescale.
     target_ticks: u64,
     /// Buffered duration of the anchor's `pending` samples (media-timescale ticks).
@@ -536,6 +541,7 @@ impl StreamingTsHlsSegmenter {
         }
 
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config));
+        let target_secs = target_secs.max(1);
         let target_ticks = target_ticks_for(target_secs, tracks[anchor].timescale);
 
         let tracks = tracks
@@ -550,6 +556,7 @@ impl StreamingTsHlsSegmenter {
         Ok(Self {
             tracks,
             anchor,
+            target_secs,
             target_ticks,
             anchor_pending_dur: 0,
             pending_discontinuity: false,
@@ -631,6 +638,71 @@ impl StreamingTsHlsSegmenter {
     /// between one push and the next.
     pub fn mark_discontinuity(&mut self) {
         self.pending_discontinuity = true;
+    }
+
+    /// Register a track after construction (issue #624).
+    ///
+    /// A live [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) resolves
+    /// tracks incrementally — `DemuxEvent::TrackAdded` for one track can land
+    /// after a segmenter has already been built and has already cut segments
+    /// from an earlier-resolving track (e.g. video resolves and cuts a
+    /// segment before audio's first frame parses). `add_track` lets that
+    /// track join the segmenter mid-stream instead of forcing a rebuild that
+    /// would silently drop it. Segments cut *before* `add_track` simply have
+    /// no PES data for this track (spec-legal: a PMT may declare a track with
+    /// zero samples in a given segment); every segment cut *after*
+    /// `add_track` carries it correctly in both the PMT and the PES.
+    ///
+    /// # Anchor recomputation
+    ///
+    /// The anchor (the keyframe-cut-boundary track, normally "first video,
+    /// else first track" — `choose_anchor`) was chosen from whatever track
+    /// set existed at construction time and is deliberately **not**
+    /// reconsidered on every `add_track`, or a video track added on segment
+    /// 50 could retroactively invalidate the cut boundaries of the 49
+    /// segments already emitted. The one case this method *does* recompute
+    /// the anchor is: nothing has been cut yet (`total_segments == 0`), no
+    /// track has any sample buffered yet (every `pending` is empty — so no
+    /// cut/anchor decision has been made even provisionally), the current
+    /// anchor is not already a video (AVC) track, and the newly-added track
+    /// *is* AVC. That exactly recovers the construction-time rule ("first
+    /// video, else first track") for the case this issue targets: the
+    /// segmenter had to be built video-first because audio hadn't resolved,
+    /// so by the time `add_track(video)`... — nothing has cut yet, hence it's
+    /// safe. Every other case (anchor already AVC, new track isn't AVC, or
+    /// anything has already been buffered/cut) keeps the existing anchor
+    /// unchanged and simply adds the track for muxing.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if `spec.track_id` collides with an existing
+    /// track.
+    pub fn add_track(&mut self, spec: TrackSpec) -> Result<()> {
+        if self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+            return Err(Error::InvalidInput("add_track: duplicate track_id"));
+        }
+
+        let nothing_cut_or_buffered =
+            self.total_segments == 0 && self.tracks.iter().all(|t| t.pending.is_empty());
+        let current_anchor_is_avc = matches!(
+            self.tracks[self.anchor].spec.config,
+            CodecConfig::Avc { .. }
+        );
+        let new_is_avc = matches!(spec.config, CodecConfig::Avc { .. });
+
+        let new_index = self.tracks.len();
+        self.tracks.push(StreamTrackState {
+            spec,
+            pending: Vec::new(),
+            base_decode: 0,
+        });
+
+        if nothing_cut_or_buffered && new_is_avc && !current_anchor_is_avc {
+            self.anchor = new_index;
+            self.target_ticks =
+                target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
+        }
+
+        Ok(())
     }
 
     /// The current rolling media playlist: at most [`window`](Self::new)
