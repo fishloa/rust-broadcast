@@ -12,7 +12,10 @@
 
 use broadcast_common::{Package, Unpackage};
 use transmux::media::Media;
-use transmux::{StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment};
+use transmux::{
+    AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample,
+    StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment,
+};
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
@@ -225,4 +228,155 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
         let uris2 = extract_uris(&pl2);
         assert_eq!(uris2.last().unwrap(), &tail.uri);
     }
+}
+
+// ── Test 4 — #EXT-X-DISCONTINUITY-SEQUENCE reflects the window's leading
+//    segment, not evictions (issue #629) ───────────────────────────────────
+//
+// RFC 8216 §4.3.3.3: the header carries the discontinuity-sequence number of
+// the FIRST segment currently in the playlist. A segment carrying
+// `#EXT-X-DISCONTINUITY` already belongs to the incremented sequence from the
+// moment it becomes the window's leading (oldest) segment — not one eviction
+// cycle later, once *it* rolls off in turn.
+
+fn dummy_avc_config() -> AVCConfigurationBox {
+    AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3, // 4-byte length prefixes
+        sps: vec![transmux::AvcSps(vec![0x67, 66, 0, 30, 0x00])],
+        pps: vec![transmux::AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    })
+}
+
+fn single_video_track() -> TrackSpec {
+    TrackSpec::new(
+        1,
+        90_000,
+        CodecConfig::Avc {
+            config: dummy_avc_config(),
+            width: 320,
+            height: 240,
+        },
+    )
+}
+
+/// One 4-byte-length-prefixed H.264 NAL sample: type 5 (IDR) for sync
+/// samples, type 1 (non-IDR slice) otherwise — matches
+/// `AVCDecoderConfigurationRecord::length_size_minus_one == 3` above.
+fn nal_sample(is_sync: bool, dur: u32) -> Sample {
+    let nal_type: u8 = if is_sync { 5 } else { 1 };
+    let payload = [nal_type, 0xAA, 0xBB];
+    let mut data = Vec::with_capacity(4 + payload.len());
+    data.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    data.extend_from_slice(&payload);
+    Sample::new(data, dur, is_sync, 0)
+}
+
+/// Build the worked example from issue #629: 5 segments s0..s4 (target 1s @
+/// 90_000 ticks/s, so a cut fires once 90_000 ticks are buffered and the next
+/// sample is a sync sample), with s2 explicitly marked discontinuous via
+/// `mark_discontinuity()` before it is cut. Returns the segmenter plus the
+/// playlist snapshot captured right after each of the 5 cuts.
+fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>) {
+    let mut seg = StreamingTsHlsSegmenter::new(vec![single_video_track()], 1, window)
+        .expect("construct segmenter");
+    let mut snapshots = Vec::new();
+
+    // sync -> opens s0 (45_000 ticks buffered)
+    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_none());
+    // non-sync -> 90_000 ticks buffered (>= target)
+    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+
+    // sync -> cuts s0 (continuous); opens s1
+    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
+    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+
+    // sync -> cuts s1 (continuous); opens s2
+    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
+    snapshots.push(seg.playlist());
+    // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
+    seg.mark_discontinuity();
+    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+
+    // sync -> cuts s2 (discontinuous); opens s3
+    let s2 = seg.push(1, nal_sample(true, 45_000)).unwrap();
+    assert!(
+        s2.expect("s2 cut").discontinuous,
+        "s2 must be discontinuous"
+    );
+    snapshots.push(seg.playlist());
+    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+
+    // sync -> cuts s3 (continuous); opens s4
+    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
+    snapshots.push(seg.playlist());
+    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+
+    // finish() -> cuts s4 (continuous, final flush)
+    assert!(seg.finish().unwrap().is_some());
+    snapshots.push(seg.playlist());
+
+    (seg, snapshots)
+}
+
+#[test]
+fn discontinuity_sequence_reflects_window_leading_segment_not_eviction() {
+    let (_seg, snapshots) = build_worked_example(2);
+    assert_eq!(
+        snapshots.len(),
+        4,
+        "expected one playlist snapshot after each of the last 4 cuts"
+    );
+
+    // Snapshot 0: just after cutting s1 -> window=[s0,s1]. discontinuity
+    // sequence 0 means the header is omitted entirely (RFC 8216 §4.3.3.3 /
+    // this crate's `MediaPlaylist` convention — see hls.rs).
+    let uris0 = extract_uris(&snapshots[0]);
+    assert_eq!(uris0, vec!["seg0.ts", "seg1.ts"], "window=[s0,s1]");
+    assert!(
+        !snapshots[0].contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
+        "window=[s0,s1]: no discontinuity has been cut yet, header must be absent"
+    );
+
+    // Snapshot 1: just after cutting s2 (discontinuous) -> window=[s1,s2].
+    // s2 has just entered the window as its NEWEST member; s1 (continuous)
+    // is still the oldest/leading segment, so the header must not have
+    // advanced yet (still absent/0).
+    let uris1 = extract_uris(&snapshots[1]);
+    assert_eq!(uris1, vec!["seg1.ts", "seg2.ts"], "window=[s1,s2]");
+    assert!(
+        !snapshots[1].contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
+        "window=[s1,s2]: s1 (continuous) is still the leading segment, header must be absent"
+    );
+
+    // Snapshot 2: just after cutting s3 -> window=[s2,s3]. THIS is the
+    // state issue #629 was broken at: s2, the discontinuous segment, is now
+    // the window's leading (oldest) segment, so the header must already
+    // read 1 — not wait for s2 itself to roll off.
+    let uris2 = extract_uris(&snapshots[2]);
+    assert_eq!(uris2, vec!["seg2.ts", "seg3.ts"], "window=[s2,s3]");
+    assert_eq!(
+        extract_tag_u64(&snapshots[2], "#EXT-X-DISCONTINUITY-SEQUENCE:"),
+        1,
+        "window=[s2,s3]: s2 (discontinuous) is now the leading segment — \
+         the header must read 1 from the moment s2 becomes the window's \
+         first segment, per RFC 8216 §4.3.3.3 (issue #629)"
+    );
+
+    // Snapshot 3: just after cutting s4 (via finish()) -> window=[s3,s4].
+    // s2 has now rolled off entirely; the header must stay at 1.
+    let uris3 = extract_uris(&snapshots[3]);
+    assert_eq!(uris3, vec!["seg3.ts", "seg4.ts"], "window=[s3,s4]");
+    assert_eq!(
+        extract_tag_u64(&snapshots[3], "#EXT-X-DISCONTINUITY-SEQUENCE:"),
+        1,
+        "window=[s3,s4]: still 1 discontinuity total, now fully rolled off"
+    );
 }

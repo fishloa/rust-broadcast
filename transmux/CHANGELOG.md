@@ -81,6 +81,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-blocking `golden-gate` CI job (`.github/workflows/ci.yml`) installs
   ffmpeg and runs the harness.
 
+### Fixed
+- **`StreamingTsHlsSegmenter::playlist`'s `#EXT-X-DISCONTINUITY-SEQUENCE`
+  incremented one segment late on window rollover** (#629). RFC 8216
+  §4.3.3.3 defines the header as the discontinuity-sequence number of the
+  playlist's *current* first segment; a segment carrying
+  `#EXT-X-DISCONTINUITY` already belongs to the incremented sequence from the
+  moment it becomes the window's leading segment. The old bookkeeping instead
+  incremented the counter only when a discontinuous segment was itself
+  *evicted* from the window — one cut too late (e.g. window `[s2, s3]` with
+  `s2` discontinuous reported `0` instead of `1`; the header only caught up
+  once `s2` rolled off and the window became `[s3, s4]`). Each `WindowEntry`
+  now carries its own absolute discontinuity-sequence number, assigned once
+  at cut time from a monotonic running count of discontinuities cut so far;
+  `playlist()` reads the header straight off the window's current front
+  entry, so it is correct immediately, not one eviction cycle later. Batch
+  `TsHlsPackager::package` is unaffected — it has no rolling window or
+  discontinuity marking (always emits `discontinuity_sequence: 0`).
+
 ## [0.14.0] - 2026-07-04
 
 ### Fixed
