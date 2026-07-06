@@ -107,22 +107,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ffmpeg and runs the harness.
 
 ### Fixed
-- **`StreamingTsHlsSegmenter::playlist`'s `#EXT-X-DISCONTINUITY-SEQUENCE`
-  incremented one segment late on window rollover** (#629). RFC 8216
-  §4.3.3.3 defines the header as the discontinuity-sequence number of the
-  playlist's *current* first segment; a segment carrying
-  `#EXT-X-DISCONTINUITY` already belongs to the incremented sequence from the
-  moment it becomes the window's leading segment. The old bookkeeping instead
-  incremented the counter only when a discontinuous segment was itself
-  *evicted* from the window — one cut too late (e.g. window `[s2, s3]` with
-  `s2` discontinuous reported `0` instead of `1`; the header only caught up
-  once `s2` rolled off and the window became `[s3, s4]`). Each `WindowEntry`
-  now carries its own absolute discontinuity-sequence number, assigned once
-  at cut time from a monotonic running count of discontinuities cut so far;
-  `playlist()` reads the header straight off the window's current front
-  entry, so it is correct immediately, not one eviction cycle later. Batch
-  `TsHlsPackager::package` is unaffected — it has no rolling window or
-  discontinuity marking (always emits `discontinuity_sequence: 0`).
+- **Reverted the #629 `#EXT-X-DISCONTINUITY-SEQUENCE` change — the original
+  eviction-based bookkeeping was correct; the "fix" was not.** #629 diagnosed
+  the header as reflecting the window's leading segment's discontinuity-count
+  one cut too late, and changed it to stamp each segment's absolute count at
+  cut time. A pre-tag audit re-derived RFC 8216 §6.2.1's literal definition —
+  *"a segment's Discontinuity Sequence Number is the value of the
+  EXT-X-DISCONTINUITY-SEQUENCE tag (or zero if none) plus the number of
+  EXT-X-DISCONTINUITY tags in the Playlist preceding the URI line of the
+  segment"* — and found the "fix" double-counts: the inline `#EXT-X-
+  DISCONTINUITY` tag rendered on a discontinuous segment (while it's still in
+  the window) already accounts for that segment's boundary, so advancing the
+  header *at the same time* makes every segment still sharing the window with
+  it compute a Discontinuity Sequence Number one too high — e.g. window
+  `[s2, s3]` with `s2` discontinuous: the "fix" reported both segments' true
+  client-computed DSN as `2` instead of `1`. The original eviction-based
+  logic (advance the header only once a discontinuous segment rolls *off* the
+  window, so its own inline tag stops rendering) is exactly correct per the
+  spec's formula and was verified stable at every window state. Restored it.
+  The regression test (`transmux/tests/streaming_tshls.rs`) now computes each
+  segment's *client-observable* DSN (header + preceding inline tags), not the
+  raw header integer in isolation — the isolation-only check is what let the
+  wrong "fix" pass its own test. Batch `TsHlsPackager::package` was, and
+  remains, unaffected (no rolling window; always emits
+  `discontinuity_sequence: 0`).
 - **TS mux silently dropped HEVC/MPEG-2-video/MPEG-1/2-audio tracks** (#627).
   `ts_mux::EsKind::from_config` only mapped `CodecConfig::Avc`/`Aac`/`Ac3`/
   `Eac3`/`Dts`/`MpegH`/`Data` to a carriable elementary stream — every other
@@ -148,6 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back to "first track", which is wrong whenever video isn't track 0. Added
   `CodecConfig::is_video` (mirrors the existing `is_audio`, covering every
   video variant the enum defines) and switched both call sites to it.
+  `StreamingTsHlsSegmenter::add_track` (#624) had a *third*, undisclosed
+  AVC-only anchor-promotion check that #628 missed — a late-resolving HEVC
+  (or any non-AVC video) track added via `add_track` never got promoted to
+  anchor, silently reintroducing the audio-anchors-and-video-never-cuts bug
+  for exactly the codec #627 exists to carry. Found by a pre-tag audit;
+  switched to `is_video()` there too.
 
 ## [0.14.0] - 2026-07-04
 

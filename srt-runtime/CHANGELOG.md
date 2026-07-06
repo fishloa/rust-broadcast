@@ -26,7 +26,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (the `RECEIVING_RATE`/`EST_LINK_CAPACITY` EWMA smoothing weight; the
   packet-pairs probing mechanics that would produce those inputs) are
   resolved with a documented choice in the module doc, not silently
-  invented.
+  invented. `DecRandom` (Step 4's repeat-decrease staggering factor) is
+  rounded to the nearest whole number — found by a pre-tag audit: a raw
+  fractional draw made Step 4's `NAKCount == DecCount * DecRandom` gate a
+  measure-zero float comparison, since both counters are integers. Also
+  documented (not "fixed", since it's a property of the draft's own literal
+  Step 4 pseudocode, verified against `libsrt`'s differing reference
+  formulation): once the immediate post-reset check fails (`DecRandom != 1`),
+  neither counter is touched again for the rest of the congestion period, so
+  Step 4 fires at most once per period unless the drawn `DecRandom` rounds
+  to exactly `1`.
 - **Payload encryption wired into the handshake, plus a KM Refresh driver**
   (issue #621, `crypto` feature). `draft-sharabayko-srt-01` §6.1.5 Key
   Material Exchange is now piggybacked on the existing Caller-Listener

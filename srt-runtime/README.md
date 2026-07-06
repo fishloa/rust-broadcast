@@ -30,15 +30,28 @@ out — no wall-clock read inside the crate):
   ACK/ACKACK, RTT/RTTVar estimation.
 - **TSBPD delivery scheduler** (§4.5/§4.6) — `tsbpd::TsbpdScheduler`:
   timestamp-based ordered delivery + too-late packet drop.
-- **LiveCC packet pacing** (§5.1) — `livecc::LiveCC`.
+- **LiveCC packet pacing** (§5.1) — `livecc::LiveCC`: live/streaming-mode
+  pacing-only rate control.
+- **FileCC window congestion control** (§5.2) — `filecc::FileCc`: the
+  file/bulk-transfer-mode sibling of LiveCC — a two-phase hybrid AIMD
+  algorithm (Slow Start, then Congestion Avoidance) that also grows/shrinks a
+  congestion window, not just a pacing interval.
 
-**Optional features:**
+**Payload encryption, wired into the handshake** (§6, `crypto` feature):
 
-- `crypto` — AES-CTR payload encrypt/decrypt, RFC 3394 key wrap/unwrap, and
-  PBKDF2/HMAC-SHA1 KEK derivation (§6). The key-wrap and KEK primitives are
-  verified against RFC 3394 and NIST SP 800-38A test vectors.
-- `tokio` — an async UDP socket adapter (`io::SrtSocket` / `io::SrtListener`)
-  that drives the handshake + ARQ + TSBPD engines end-to-end over real sockets.
+- AES-CTR payload encrypt/decrypt, RFC 3394 AES key wrap/unwrap of the SEK,
+  and PBKDF2 (HMAC-SHA1) KEK derivation — `crypto`.
+- The Caller/Listener handshake negotiates it: `handshake_sm::CryptoConfig`
+  (a pre-shared passphrase) piggybacks the Key Material exchange (§6.1.5) on
+  the existing CONCLUSION extension flow, reusing `packet::KeyMaterial`
+  rather than a new wire message — no separate negotiation step to wire up
+  yourself.
+- A sans-IO SEK-rotation driver for §6.1.6 KM Refresh —
+  `km_refresh::KmRefreshDriver`.
+
+**Optional `tokio` feature** — an async UDP socket adapter (`io::SrtSocket` /
+`io::SrtListener`) that drives the handshake + ARQ + TSBPD + LiveCC/FileCC
+engines end-to-end over real sockets.
 
 The core is `no_std` + `alloc` (default `std` feature can be turned off); no
 `unsafe`. The `crypto` and `tokio` features are `std`-only and off by default, so
@@ -46,10 +59,18 @@ the packet-codec + sans-IO core pulls zero crypto/async dependencies.
 
 ## What's *not* here — explicit follow-ups
 
-- Window-based congestion control beyond LiveCC packet pacing (the rest of §5).
-- Wiring `crypto` into the handshake state machines / a per-connection
-  SEK-rotation driver (§6.1.6 KM Refresh) — this release ships the crypto
-  *primitives* only.
+- CUBIC/BBR or any other alternative file-transfer congestion-control
+  algorithm (§5.2 names them as applicable alternatives to `filecc::FileCc`'s
+  default algorithm but does not describe them).
+- Wiring `filecc::FileCc` / `livecc::LiveCC` into a real send-queue scheduler
+  (`arq::Sender` has no congestion-control hook today).
+- Wiring the negotiated SEK from `handshake_sm::NegotiatedParams` (or
+  `km_refresh::KmRefreshDriver`'s events) into `io`'s tokio adapter to
+  actually encrypt/decrypt data-packet payloads end-to-end over a real
+  socket — the handshake negotiation and the rotation state machine are both
+  sans-IO and fully wired/tested; driving real payload encryption from them
+  through `io.rs` (additive, `crypto`-feature-gated, without touching the
+  existing ARQ/TSBPD paths) is a follow-up.
 
 ## Permanently out of scope
 

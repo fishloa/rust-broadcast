@@ -31,8 +31,8 @@ use std::path::PathBuf;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord, Media, Sample, Track,
-    TrackSpec, TsDemux, TsHlsPackager, TsMux,
+    Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord, Media, Sample,
+    StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux, TsHlsPackager, TsMux,
 };
 
 // ── Fixture loading (mirrors tests/ts_hevc.rs) ──────────────────────────────
@@ -476,5 +476,85 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         "anchoring on the HEVC track's keyframes must cut 2 segments; \
          anchoring on audio (pre-#628 bug) would cut only 1 (audio never \
          reaches the 1s target across its 20 short frames)"
+    );
+}
+
+// ── Test 4 — add_track anchor promotion recognizes HEVC, not just AVC ──────
+// ── (issues #624 x #628 interaction, found by pre-tag audit) ────────────────
+
+#[test]
+fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
+    // Build the segmenter audio-first, as if HEVC video hadn't resolved yet
+    // (mirrors the real #624 scenario, but for a non-AVC video codec).
+    // `StreamingTsHlsSegmenter::add_track`'s anchor-recompute guard originally
+    // checked `CodecConfig::Avc` directly instead of the crate's own
+    // `CodecConfig::is_video()` helper (the fix #628 used for `choose_anchor`/
+    // `Segmenter::new`), so a late HEVC track never got promoted to anchor —
+    // silently reintroducing the audio-anchors-and-video-never-cuts bug for
+    // every non-AVC video codec.
+    let audio_spec = TrackSpec::new(
+        1,
+        48_000,
+        CodecConfig::Ac3 {
+            config: dummy_ac3_config(),
+            channel_count: 2,
+            sample_rate: 48_000,
+            sample_size: 16,
+        },
+    );
+    let mut seg = StreamingTsHlsSegmenter::new(vec![audio_spec], 1, usize::MAX)
+        .expect("construct audio-only streaming segmenter");
+
+    // HEVC "resolves" late — add it before anything has been pushed, so the
+    // anchor-recompute guard's *separate* "nothing cut or buffered yet"
+    // precondition holds. This isolates the specific thing under test (does
+    // the guard recognize HEVC as video via `is_video()`, not just AVC) from
+    // that other precondition — pushing audio first would trip it too and
+    // mask the AVC-vs-`is_video()` bug this test exists to catch.
+    let parts = real_hevc_parts();
+    let full_au: Vec<u8> = [&parts.vps, &parts.sps, &parts.pps, &parts.slice]
+        .into_iter()
+        .flat_map(|n| lp_nal(n))
+        .collect();
+    let video_spec = TrackSpec::new(
+        2,
+        90_000,
+        CodecConfig::Hevc {
+            config: parts.config,
+            width: parts.width,
+            height: parts.height,
+        },
+    );
+    seg.add_track(video_spec).expect("add_track: hevc");
+
+    // Push 4 one-second HEVC samples (IRAP at 0 and 2, mirroring Test 3) plus
+    // a little more audio alongside. Correctly anchored on HEVC, a 1s target
+    // must cut on the video's keyframes; anchored on audio (the bug), the
+    // short audio frames never reach the target and nothing cuts at all.
+    let video_samples = vec![
+        Sample::new(full_au.clone(), 90_000, true, 0),
+        Sample::new(full_au.clone(), 90_000, false, 0),
+        Sample::new(full_au.clone(), 90_000, true, 0),
+        Sample::new(full_au, 90_000, false, 0),
+    ];
+    let mut cuts = 0usize;
+    for s in video_samples {
+        if seg.push(2, s).expect("push video").is_some() {
+            cuts += 1;
+        }
+    }
+    for _ in 0..5 {
+        seg.push(1, Sample::new(vec![0xAAu8; 8], 1_024, true, 0))
+            .expect("push audio");
+    }
+    if seg.finish().expect("finish").is_some() {
+        cuts += 1;
+    }
+
+    assert_eq!(
+        cuts, 2,
+        "add_track must promote HEVC to anchor exactly like construction-time \
+         choose_anchor does — anchoring on audio (the bug) would produce a \
+         single trailing segment instead of 2 keyframe-aligned cuts"
     );
 }

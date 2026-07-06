@@ -81,7 +81,27 @@
 //! uses a small internal, deterministic xorshift PRNG instead of pulling in
 //! a `rand` dependency for a `no_std` crate — true entropy is not required
 //! for correctness here, `DecRandom` only staggers repeat-decrease timing
-//! across congestion periods (rule 24).
+//! across congestion periods (rule 24). `DecRandom` is rounded to the
+//! nearest whole number (`FileCc::next_dec_random`, internal): Step 4's gate
+//! (`NAKCount == DecCount * DecRandom`) compares two integer counters, so a
+//! fractional draw makes that equality unsatisfiable after the first check.
+//!
+//! ## A quirk of the draft's own Step 4 pseudocode (verified, not a bug)
+//!
+//! `NAKCount`/`DecCount` reset to 1 at the start of a congestion period and
+//! are ONLY incremented again *inside* Step 4's own conditional (rule 28) —
+//! never unconditionally per NAK. So once the immediate post-reset check
+//! (`1 == 1*DecRandom`) fails — i.e. whenever the drawn `DecRandom != 1` —
+//! neither counter ever moves again for the rest of the period, and Step 4
+//! goes silent until the next congestion period redraws `DecRandom`. This is
+//! a property of the draft text as transcribed (`specs/rules/srt-congestion.md`,
+//! confirmed against the actual reference implementation, `libsrt`
+//! `congctl.cpp`, which uses a different formulation — `NAKCount % DecRandom
+//! == 0` with both counters incrementing on every same-period NAK
+//! regardless of outcome — that does not share this one-shot property).
+//! Adopting libsrt's formulation would be a spec-posture departure this
+//! crate is not designated for; this implementation stays literal to the
+//! curated draft text. See `filecc::tests::repeat_decrease_is_a_one_shot_per_period_once_dec_random_exceeds_one`.
 
 use core::time::Duration;
 
@@ -141,6 +161,28 @@ const MAX_DEC_COUNT: u32 = 5;
 /// `inc`'s multiplier in the Step 5 rate-increase formula (`specs/rules/srt-congestion.md`
 /// L3498-3517, verbatim: `0.0000015`).
 const INC_SCALE: f64 = 0.0000015;
+
+/// Microseconds per second — the units conversion every `PKT_SND_PERIOD`/rate
+/// formula in this module divides or multiplies by (`specs/rules/srt-congestion.md`,
+/// recurring throughout §5.2.1.2's Steps 3/5/6, sourced from the same
+/// L3498-3517 code block as [`INC_SCALE`]).
+const US_PER_SEC: f64 = 1_000_000.0;
+
+/// `lossBandwidth`'s doubling factor in the Step 5 rate-increase formula
+/// (`specs/rules/srt-congestion.md` L3498-3517 code block, verbatim:
+/// `lossBandwidth = 2 * (1000000 / LastDecPeriod)`).
+const LOSS_BANDWIDTH_FACTOR: f64 = 2.0;
+
+/// The `linkCapacity / 9` clamp divisor in the Step 5 rate-increase formula
+/// (`specs/rules/srt-congestion.md` L3498-3517 code block, verbatim:
+/// `if (... && (linkCapacity / 9) < B) B = linkCapacity / 9;`) — a
+/// spec-mandated tuning constant, not independently derived.
+const LINK_CAPACITY_CLAMP_DIVISOR: f64 = 9.0;
+
+/// Bits per byte, used to convert `S` (packet size in bytes) to bits in the
+/// Step 5 rate-increase formula (`specs/rules/srt-congestion.md` L3498-3517
+/// code block, verbatim: `inc = pow(10.0, ceil(log10(B * S * 8))) * 0.0000015 / S`).
+const BITS_PER_BYTE: f64 = 8.0;
 
 /// FileCC algorithm phase (`specs/rules/srt-congestion.md` rules 4-5). Slow
 /// Start (§5.2.1.1) runs exactly once at the start of a connection; it
@@ -478,8 +520,9 @@ impl FileCc {
     fn on_ack_congestion_avoidance(&mut self) {
         // Step 3: CWND_SIZE = RECEIVING_RATE*(RTT+RC_INTERVAL)/1000000 + 16
         // (recomputed directly, not incrementally, unlike slow start).
-        self.cwnd_size =
-            self.receiving_rate_pps as f64 * self.rtt_plus_rc_interval_us() / 1_000_000.0 + 16.0;
+        self.cwnd_size = self.receiving_rate_pps as f64 * self.rtt_plus_rc_interval_us()
+            / US_PER_SEC
+            + INITIAL_CWND_SIZE;
 
         // Step 4: loss-in-flight guard.
         if self.b_loss {
@@ -488,16 +531,18 @@ impl FileCc {
         }
 
         // Step 5: rate-increase formula (L3498-3517, verbatim).
-        let loss_bandwidth = 2.0 * (1_000_000.0 / self.last_dec_period_us);
+        let loss_bandwidth = LOSS_BANDWIDTH_FACTOR * (US_PER_SEC / self.last_dec_period_us);
         let link_capacity = fmin(loss_bandwidth, self.est_link_capacity_pps as f64);
-        let mut b = link_capacity - 1_000_000.0 / self.pkt_snd_period_us;
-        if self.pkt_snd_period_us > self.last_dec_period_us && (link_capacity / 9.0) < b {
-            b = link_capacity / 9.0;
+        let mut b = link_capacity - US_PER_SEC / self.pkt_snd_period_us;
+        if self.pkt_snd_period_us > self.last_dec_period_us
+            && (link_capacity / LINK_CAPACITY_CLAMP_DIVISOR) < b
+        {
+            b = link_capacity / LINK_CAPACITY_CLAMP_DIVISOR;
         }
         let inc = if b <= 0.0 {
             1.0 / S_BYTES
         } else {
-            let raw = next_power_of_10(b * S_BYTES * 8.0) * INC_SCALE / S_BYTES;
+            let raw = next_power_of_10(b * S_BYTES * BITS_PER_BYTE) * INC_SCALE / S_BYTES;
             fmax(raw, 1.0 / S_BYTES)
         };
         let rc_interval_us = RC_INTERVAL.as_micros() as f64;
@@ -506,7 +551,7 @@ impl FileCc {
 
         // Step 6: MAX_BW clamp, if configured (rule 15).
         if let Some(max_bw) = self.max_bw_bytes_per_sec {
-            let min_period_us = 1_000_000.0 / (max_bw as f64 / S_BYTES);
+            let min_period_us = US_PER_SEC / (max_bw as f64 / S_BYTES);
             if self.pkt_snd_period_us < min_period_us {
                 self.pkt_snd_period_us = min_period_us;
             }
@@ -525,7 +570,7 @@ impl FileCc {
     fn end_slow_start(&mut self) {
         self.phase = Phase::CongestionAvoidance;
         self.pkt_snd_period_us = if self.receiving_rate_pps > 0 {
-            1_000_000.0 / self.receiving_rate_pps as f64
+            US_PER_SEC / self.receiving_rate_pps as f64
         } else {
             self.cwnd_size / self.rtt_plus_rc_interval_us()
         };
@@ -607,10 +652,19 @@ impl FileCc {
     /// `DecRandom` — "a random number between 1 and the average number of
     /// NAKs per congestion period (AvgNAKNum)", clamped to 1 if the draw is
     /// below 1 (rule 23). See the module doc for the PRNG source note.
+    ///
+    /// Rounded to the nearest whole number: Step 4's repeat-decrease gate
+    /// (`NAKCount == DecCount * DecRandom`) compares against the integer
+    /// counters `NAKCount`/`DecCount`, so it only means "every `DecRandom`-th
+    /// NAK" — and is satisfiable — when `DecRandom` is itself integer-valued.
+    /// A raw fractional draw (`AvgNAKNum > 1`) makes that equality a
+    /// measure-zero float comparison that (almost) never holds again after
+    /// the congestion period's first decrease, silently disabling repeat
+    /// decrease for the rest of the period.
     fn next_dec_random(&mut self) -> f64 {
         let hi = fmax(self.avg_nak_num, 1.0);
         let r = self.rng.next_unit();
-        let val = 1.0 + r * (hi - 1.0);
+        let val = (1.0 + r * (hi - 1.0)).round();
         fmax(val, 1.0)
     }
 
@@ -788,6 +842,111 @@ mod tests {
         let mut cc = FileCc::new(0);
         assert_eq!(cc.avg_nak_num(), 0.0);
         assert_eq!(cc.next_dec_random(), 1.0);
+    }
+
+    /// `DecRandom` must be integer-valued once `AvgNAKNum > 1` (a fractional
+    /// draw makes Step 4's `NAKCount == DecCount * DecRandom` gate a
+    /// measure-zero float comparison that — after the congestion period's
+    /// first decrease — essentially never holds again, silently disabling
+    /// repeat decrease for the rest of the period). This is the bug a
+    /// pre-tag audit found: the un-rounded draw only ever produced an
+    /// integer in the degenerate `AvgNAKNum <= 1` case, which is the only
+    /// case the pre-existing test suite exercised.
+    #[test]
+    fn dec_random_is_integer_valued_once_avg_nak_num_exceeds_one() {
+        let mut cc = FileCc::new(0);
+        cc.avg_nak_num = 6.0;
+        for _ in 0..200 {
+            let v = cc.next_dec_random();
+            assert_eq!(
+                v,
+                v.round(),
+                "DecRandom must be a whole number (got {v}) so Step 4's \
+                 NAKCount == DecCount * DecRandom gate is actually satisfiable"
+            );
+            assert!((1.0..=6.0).contains(&v), "DecRandom out of range: {v}");
+        }
+    }
+
+    /// Documents a genuine quirk of the draft's own literal Step 4
+    /// pseudocode (verified against `specs/rules/srt-congestion.md`, not
+    /// assumed): `NAKCount`/`DecCount` are reset to 1 on a new congestion
+    /// period and are ONLY ever touched again *inside* Step 4's own
+    /// `NAKCount == DecCount * DecRandom` conditional (rule 28: "Increase
+    /// DecCount and NAKCount each by 1" — inside the `if`, not unconditional
+    /// per-NAK). So the very next same-period NAK checks `1 == 1*DecRandom`;
+    /// if `DecRandom != 1` that fails, and since neither counter has moved,
+    /// the SAME false check repeats for every subsequent NAK in the period —
+    /// Step 4 cannot fire again until the next congestion period redraws
+    /// `DecRandom`. This is a property of the literal spec text as
+    /// transcribed, not a Rust-side bug: the reference implementation
+    /// (libsrt `congctl.cpp`) uses a different formulation (`NAKCount %
+    /// DecRandom == 0`, incrementing both counters on every same-period NAK
+    /// regardless of the check's outcome) that does NOT have this one-shot
+    /// property — but adopting that would be a spec-posture departure this
+    /// crate isn't designated for (see `CLAUDE.md`), so this implementation
+    /// stays literal to the curated draft text. Confirmed here with a fixed
+    /// `dec_random` (bypassing the RNG) so the assertion is deterministic.
+    #[test]
+    fn repeat_decrease_is_a_one_shot_per_period_once_dec_random_exceeds_one() {
+        let mut cc = FileCc::new(0);
+        cc.on_loss(10, 10, 0.9); // end slow start
+        cc.on_loss(20, 20, 0.9); // new congestion period, big decrease
+        assert_eq!(cc.dec_count(), 1);
+
+        // Force a specific integer DecRandom > 1 for this period (bypassing
+        // the RNG so the check below is deterministic, not seed-dependent).
+        cc.dec_random = 3.0;
+        let after_first = cc.pkt_snd_period_us();
+
+        // Many same-period NAKs: per the literal spec pseudocode, NONE of
+        // them can fire Step 4 again, because NAKCount/DecCount are frozen
+        // at (1, 1) and 1 == 1*3 is false — and stays false forever, since
+        // nothing outside Step 4's own conditional advances either counter.
+        for sent in 21..=60u32 {
+            cc.on_loss(15, sent, 0.9);
+        }
+
+        assert_eq!(
+            cc.dec_count(),
+            1,
+            "with the literal spec's Step 4 pseudocode, DecCount must stay \
+             frozen at 1 for the rest of the period once the immediate \
+             post-reset check (NAKCount==DecCount*DecRandom, i.e. 1==1*3) \
+             fails — this is the draft's own one-shot property, not a bug"
+        );
+        assert_eq!(
+            cc.pkt_snd_period_us(),
+            after_first,
+            "PKT_SND_PERIOD must not change further once Step 4 has gone \
+             silent for the rest of the period"
+        );
+    }
+
+    /// The complementary, working case: when the drawn integer `DecRandom`
+    /// rounds to exactly `1`, the immediate post-reset check `1 == 1*1`
+    /// holds, so Step 4 fires on every subsequent same-period NAK (this is
+    /// the case the pre-existing integration test
+    /// `repeated_decrease_backs_off_by_1_03_bounded_by_dec_count` already
+    /// covers end-to-end with `AvgNAKNum == 0`; this unit test additionally
+    /// proves it holds even when `AvgNAKNum` is nonzero but rounds to 1).
+    #[test]
+    fn repeat_decrease_fires_repeatedly_when_dec_random_rounds_to_one() {
+        let mut cc = FileCc::new(0);
+        cc.avg_nak_num = 1.2; // rounds to 1 via next_dec_random's `.round()`
+        cc.on_loss(10, 10, 0.9);
+        cc.on_loss(20, 20, 0.9);
+        assert_eq!(cc.dec_random, 1.0);
+        assert_eq!(cc.dec_count(), 1);
+
+        for sent in 21..=25u32 {
+            cc.on_loss(15, sent, 0.9);
+        }
+        assert_eq!(
+            cc.dec_count(),
+            6,
+            "DecRandom==1 must let Step 4 fire on every same-period NAK"
+        );
     }
 
     #[test]
