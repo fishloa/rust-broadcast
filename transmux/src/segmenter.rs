@@ -47,7 +47,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::pipeline::{
-    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
+    FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
 
 /// Per-segment metadata returned alongside the media segment bytes by
@@ -158,11 +158,9 @@ impl Segmenter {
             ));
         }
 
-        // Anchor = first video track; else first track (audio-only).
-        let anchor = tracks
-            .iter()
-            .position(|t| matches!(t.config, CodecConfig::Avc { .. }))
-            .unwrap_or(0);
+        // Anchor = first video track (any `CodecConfig::is_video` codec —
+        // issue #628); else first track (audio-only).
+        let anchor = tracks.iter().position(|t| t.config.is_video()).unwrap_or(0);
 
         let anchor_timescale = tracks[anchor].timescale as f64;
         let target_ticks = (target_duration_secs * anchor_timescale) as u64;

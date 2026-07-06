@@ -246,15 +246,16 @@ impl TsHlsPackager {
 // silently drift apart (issue #571).
 
 /// Choose the anchor track index used for segment-cut boundaries: the first
-/// video (AVC) track, else the first track — mirrors
-/// [`Segmenter`](crate::segmenter::Segmenter)'s anchor selection.
+/// video track (any [`CodecConfig::is_video`] codec — issue #628), else the
+/// first track — mirrors [`Segmenter`](crate::segmenter::Segmenter)'s anchor
+/// selection.
 fn choose_anchor<'a, I>(configs: I) -> usize
 where
     I: Iterator<Item = &'a CodecConfig>,
 {
     configs
         .enumerate()
-        .find(|(_, c)| matches!(c, CodecConfig::Avc { .. }))
+        .find(|(_, c)| c.is_video())
         .map(|(i, _)| i)
         .unwrap_or(0)
 }

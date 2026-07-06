@@ -123,6 +123,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry, so it is correct immediately, not one eviction cycle later. Batch
   `TsHlsPackager::package` is unaffected — it has no rolling window or
   discontinuity marking (always emits `discontinuity_sequence: 0`).
+- **TS mux silently dropped HEVC/MPEG-2-video/MPEG-1/2-audio tracks** (#627).
+  `ts_mux::EsKind::from_config` only mapped `CodecConfig::Avc`/`Aac`/`Ac3`/
+  `Eac3`/`Dts`/`MpegH`/`Data` to a carriable elementary stream — every other
+  codec fell to `None` and `plan_elementary_streams` skipped it ("uncarriable
+  codec: skip, never fatal"), so a HEVC/MPEG-2-video/MPEG-1/2-audio track was
+  silently absent from TS and TS-HLS output instead of degraded. Added
+  `EsKind::Hevc` (stream_type `0x24`), `EsKind::Mpeg2Video` (stream_type
+  `0x02`, raw ES passthrough), and `EsKind::MpegAudio` (stream_type `0x03`/
+  `0x04` selected from the recovered `esds` `objectTypeIndication`, raw frame
+  passthrough) — ISO/IEC 13818-1 Table 2-34. HEVC access units get the same
+  independently-decodable guarantee AVC already had: a new
+  `build_hevc_annexb_au` (mirroring `build_annexb_au`, HEVC's 2-byte NAL
+  header and VPS(32)/SPS(33)/PPS(34) types) prepends the track's VPS/SPS/PPS
+  (new `EsPlan::hevc_vps_sps_pps`, recovered from `hvcC` in AU order) to any
+  keyframe access unit that does not already carry its own SPS. VVC/AV1/VP9
+  are not modeled as `CodecConfig` variants in a way this container layer
+  carries into TS today and remain out of scope for this fix (`EsKind` has no
+  mapping for them, same as before).
+- **Anchor-track selection only recognised AVC as video** (#628).
+  `ts_hls::choose_anchor` and `Segmenter::new` both picked the segmentation
+  anchor by matching `CodecConfig::Avc` only, so any other video codec (HEVC,
+  MPEG-2 video, VVC, AV1, VP9, VP8) was never chosen as the anchor — falling
+  back to "first track", which is wrong whenever video isn't track 0. Added
+  `CodecConfig::is_video` (mirrors the existing `is_audio`, covering every
+  video variant the enum defines) and switched both call sites to it.
 
 ## [0.14.0] - 2026-07-04
 

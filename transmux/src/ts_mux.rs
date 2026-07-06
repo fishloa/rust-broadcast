@@ -43,6 +43,8 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
+use crate::mp4esds::EsdsBox;
+use crate::nal::{NalCodec, nal_unit_type};
 use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
@@ -80,8 +82,18 @@ const INFO_RESERVED_HI: u8 = 0xF0;
 
 /// AVC (H.264) video — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_AVC: u8 = 0x1B;
+/// HEVC (H.265) video — ISO/IEC 13818-1 Table 2-34 (issue #627).
+const STREAM_TYPE_HEVC: u8 = 0x24;
+/// MPEG-2 video (ITU-T H.262 / ISO/IEC 13818-2) — ISO/IEC 13818-1 Table 2-34
+/// (issue #627).
+const STREAM_TYPE_MPEG2_VIDEO: u8 = 0x02;
 /// ISO/IEC 13818-7 AAC in ADTS — ISO/IEC 13818-1 Table 2-34.
 const STREAM_TYPE_AAC_ADTS: u8 = 0x0F;
+/// MPEG-1 audio (ISO/IEC 11172-3) — ISO/IEC 13818-1 Table 2-34 (issue #627).
+const STREAM_TYPE_MPEG1_AUDIO: u8 = 0x03;
+/// MPEG-2 audio (ISO/IEC 13818-3, LSF) — ISO/IEC 13818-1 Table 2-34 (issue
+/// #627).
+const STREAM_TYPE_MPEG2_AUDIO: u8 = 0x04;
 /// AC-3 (ATSC/DVB user-private) — ETSI TS 101 154 §G.
 const STREAM_TYPE_AC3: u8 = 0x81;
 /// E-AC-3 (user-private) — ETSI TS 101 154 §G.
@@ -91,6 +103,13 @@ const STREAM_TYPE_DTS: u8 = 0x82;
 /// MPEG-H 3D Audio main stream (MHAS) — ISO/IEC 13818-1 Table 2-34 / ETSI
 /// TS 101 154 §6.8 (issue #579).
 const STREAM_TYPE_MPEGH: u8 = 0x2D;
+
+/// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 14496-1 Table 5) —
+/// selects TS `stream_type` 0x03 vs 0x04 for a re-muxed
+/// [`CodecConfig::MpegAudio`] track (issue #627).
+const OTI_MPEG1_AUDIO: u8 = 0x6B;
+/// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 14496-1 Table 5).
+const OTI_MPEG2_AUDIO: u8 = 0x69;
 
 /// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.8).
 const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
@@ -172,6 +191,18 @@ const H264_NAL_AUD: u8 = 9;
 /// `nal_unit_type` for a Sequence Parameter Set.
 const H264_NAL_SPS: u8 = 7;
 
+// ── H.265/HEVC NAL constants (ITU-T H.265 Table 7-1) — issue #627 ───────────
+
+/// H.265 `nal_unit_type` for VPS (`VPS_NUT`) — Table 7-1 (type 32).
+const HEVC_NAL_VPS: u8 = 32;
+/// H.265 `nal_unit_type` for SPS (`SPS_NUT`) — Table 7-1 (type 33).
+const HEVC_NAL_SPS: u8 = 33;
+/// H.265 `nal_unit_type` for PPS (`PPS_NUT`) — Table 7-1 (type 34).
+const HEVC_NAL_PPS: u8 = 34;
+/// H.265 `nal_unit_type` for an Access Unit Delimiter (`AUD_NUT`) — Table 7-1
+/// (type 35).
+const HEVC_NAL_AUD: u8 = 35;
+
 // ── TS adaptation-field constants (ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5) ───────
 
 /// `adaptation_field_control` bit: adaptation field present.
@@ -200,8 +231,19 @@ const PCR_LEAD_TICKS: u64 = 9_000;
 enum EsKind {
     /// H.264/AVC video.
     Avc,
+    /// H.265/HEVC video (issue #627).
+    Hevc,
+    /// MPEG-2 video / H.262 (issue #627).
+    Mpeg2Video,
     /// AAC audio (re-wrapped in ADTS).
     Aac,
+    /// MPEG-1/2 audio, Layers I/II/III, passed through verbatim (issue #627).
+    MpegAudio {
+        /// Whether the source `esds` carries the MPEG-2 (LSF) `objectTypeIndication`
+        /// (`0x69`) rather than MPEG-1 (`0x6B`) — selects `stream_type` 0x04 vs
+        /// 0x03 (ISO/IEC 13818-1 Table 2-34).
+        is_mpeg2: bool,
+    },
     /// AC-3 audio.
     Ac3,
     /// E-AC-3 audio.
@@ -225,7 +267,11 @@ impl EsKind {
     fn stream_type(self) -> u8 {
         match self {
             EsKind::Avc => STREAM_TYPE_AVC,
+            EsKind::Hevc => STREAM_TYPE_HEVC,
+            EsKind::Mpeg2Video => STREAM_TYPE_MPEG2_VIDEO,
             EsKind::Aac => STREAM_TYPE_AAC_ADTS,
+            EsKind::MpegAudio { is_mpeg2: true } => STREAM_TYPE_MPEG2_AUDIO,
+            EsKind::MpegAudio { is_mpeg2: false } => STREAM_TYPE_MPEG1_AUDIO,
             EsKind::Ac3 => STREAM_TYPE_AC3,
             EsKind::Eac3 => STREAM_TYPE_EAC3,
             EsKind::Dts => STREAM_TYPE_DTS,
@@ -236,7 +282,7 @@ impl EsKind {
 
     /// Whether this is a video stream (drives PES `stream_id` family + PCR PID).
     fn is_video(self) -> bool {
-        matches!(self, EsKind::Avc)
+        matches!(self, EsKind::Avc | EsKind::Hevc | EsKind::Mpeg2Video)
     }
 
     /// Whether this elementary stream is re-emitted as PSI/private sections
@@ -252,15 +298,27 @@ impl EsKind {
     }
 
     /// Classify a track's [`CodecConfig`] into the elementary-stream kind the
-    /// TS muxer emits it as. Every [`CodecConfig`] this crate knows is
-    /// carriable in a TS: decoded codecs get their canonical `stream_type`,
-    /// and [`CodecConfig::Data`] carries its preserved `stream_type` +
-    /// `carriage` straight through (issue #576) — only a config this muxer
-    /// has never heard of (there is none today) would return `None`.
+    /// TS muxer emits it as, or `None` if the TS layer has no `stream_type`
+    /// mapping for that codec (issue #627: the track is silently dropped by
+    /// [`plan_elementary_streams`], not an error). Decoded codecs get their
+    /// canonical `stream_type`; [`CodecConfig::Data`] carries its preserved
+    /// `stream_type` + `carriage` straight through (issue #576).
+    ///
+    /// Not TS-carriable today: [`CodecConfig::Vvc`]/[`CodecConfig::Av1`]/
+    /// [`CodecConfig::Vp9`] (no allocated/implemented TS `stream_type` mapping
+    /// in this crate yet), [`CodecConfig::Opus`]/[`CodecConfig::Flac`]/
+    /// [`CodecConfig::Ac4`] (no ES framing implemented for TS), and the
+    /// WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`] (out of scope
+    /// for any ISOBMFF/TS mux path — see their doc comments).
     fn from_config(config: &CodecConfig) -> Option<Self> {
         match config {
             CodecConfig::Avc { .. } => Some(EsKind::Avc),
+            CodecConfig::Hevc { .. } => Some(EsKind::Hevc),
+            CodecConfig::Mpeg2Video { .. } => Some(EsKind::Mpeg2Video),
             CodecConfig::Aac { .. } => Some(EsKind::Aac),
+            CodecConfig::MpegAudio { esds, .. } => Some(EsKind::MpegAudio {
+                is_mpeg2: mpeg_audio_is_mpeg2(esds),
+            }),
             CodecConfig::Ac3 { .. } => Some(EsKind::Ac3),
             CodecConfig::Eac3 { .. } => Some(EsKind::Eac3),
             CodecConfig::Dts { .. } => Some(EsKind::Dts),
@@ -278,6 +336,21 @@ impl EsKind {
     }
 }
 
+/// Whether an MPEG-1/2 audio `esds` was recovered from an MPEG-2 (LSF) rather
+/// than MPEG-1 elementary stream, from its `objectTypeIndication` — selects TS
+/// `stream_type` 0x04 vs 0x03 (ISO/IEC 13818-1 Table 2-34; issue #627).
+/// Defaults to MPEG-1 if the decoder-config descriptor is absent (this crate's
+/// demuxers always populate it for `CodecConfig::MpegAudio`).
+fn mpeg_audio_is_mpeg2(esds: &EsdsBox) -> bool {
+    let oti = esds
+        .es_descriptor
+        .decoder_config
+        .as_ref()
+        .map(|dc| dc.object_type_indication.0)
+        .unwrap_or(OTI_MPEG1_AUDIO);
+    oti == OTI_MPEG2_AUDIO
+}
+
 /// One elementary stream to emit: its PID, `stream_id`, kind, and codec-derived
 /// framing state (AAC ADTS template / AVC parameter sets).
 pub(crate) struct EsPlan {
@@ -290,6 +363,11 @@ pub(crate) struct EsPlan {
     /// lacks them so every TS video AU is independently decodable. Empty for
     /// non-AVC streams.
     avc_sps_pps: Vec<Vec<u8>>,
+    /// HEVC VPS + SPS + PPS NALs (from `hvcC`, in that AU order — ITU-T H.265
+    /// §7.4.2.1), prepended to a keyframe access unit that lacks an SPS so
+    /// every TS video AU is independently decodable (issue #627). Empty for
+    /// non-HEVC streams.
+    hevc_vps_sps_pps: Vec<Vec<u8>>,
     /// Preserved PMT ES_info descriptor-loop bytes for this stream (issue
     /// #576) — non-empty only for an [`EsKind::Data`] track sourced from a
     /// [`CodecConfig::Data`] (the IR carries no descriptors for decoded
@@ -363,24 +441,25 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         // PES-carried Data stream always gets the fixed `private_stream_1`
         // (issue #576); a section-carried Data stream emits no PES at all, so
         // its `stream_id` is never serialized (value irrelevant).
-        let stream_id = match kind {
-            EsKind::Avc => {
-                let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
-                n_video += 1;
-                id
-            }
-            EsKind::Data {
-                carriage: DataCarriage::Pes,
-                ..
-            } => StreamId(STREAM_ID_PRIVATE_1),
-            EsKind::Data {
-                carriage: DataCarriage::Sections,
-                ..
-            } => StreamId(0),
-            _ => {
-                let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
-                n_audio += 1;
-                id
+        let stream_id = if kind.is_video() {
+            let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
+            n_video += 1;
+            id
+        } else {
+            match kind {
+                EsKind::Data {
+                    carriage: DataCarriage::Pes,
+                    ..
+                } => StreamId(STREAM_ID_PRIVATE_1),
+                EsKind::Data {
+                    carriage: DataCarriage::Sections,
+                    ..
+                } => StreamId(0),
+                _ => {
+                    let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
+                    n_audio += 1;
+                    id
+                }
             }
         };
         let asc = match &track.spec.config {
@@ -401,6 +480,10 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             }
             _ => Vec::new(),
         };
+        let hevc_vps_sps_pps = match &track.spec.config {
+            CodecConfig::Hevc { config, .. } => hevc_parameter_sets(&config.config),
+            _ => Vec::new(),
+        };
         let descriptors = match &track.spec.config {
             CodecConfig::Data { descriptors, .. } => descriptors.clone(),
             // MPEG-H's ES_info descriptor is synthesized fresh from the
@@ -418,6 +501,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             kind,
             asc,
             avc_sps_pps,
+            hevc_vps_sps_pps,
             descriptors,
         });
         planned_idx.push(idx);
@@ -425,10 +509,35 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
     }
     if plans.is_empty() {
         return Err(Error::InvalidInput(
-            "no track carries a TS-representable codec (AVC/AAC/AC-3/E-AC-3/DTS/Data)",
+            "no track carries a TS-representable codec (AVC/HEVC/MPEG-2-video/AAC/\
+             MPEG-audio/AC-3/E-AC-3/DTS/MPEG-H/Data)",
         ));
     }
     Ok((plans, planned_idx))
+}
+
+/// Collect a HEVC `hvcC` record's parameter-set NALs in AU order — VPS, then
+/// SPS, then PPS (ITU-T H.265 §7.4.2.1) — flattening [`HEVCDecoderConfigurationRecord::arrays`]
+/// (which may list the three types in any order, one array per type). Used to
+/// prepend missing parameter sets to a keyframe TS access unit (issue #627).
+fn hevc_parameter_sets(
+    record: &crate::hevc_config::HEVCDecoderConfigurationRecord,
+) -> Vec<Vec<u8>> {
+    let mut vps = Vec::new();
+    let mut sps = Vec::new();
+    let mut pps = Vec::new();
+    for array in &record.arrays {
+        let bucket = match array.nal_unit_type {
+            HEVC_NAL_VPS => &mut vps,
+            HEVC_NAL_SPS => &mut sps,
+            HEVC_NAL_PPS => &mut pps,
+            _ => continue,
+        };
+        for nalu in &array.nalus {
+            bucket.push(nalu.0.clone());
+        }
+    }
+    vps.into_iter().chain(sps).chain(pps).collect()
 }
 
 /// Mux `tracks` into one self-contained MPEG-2 TS byte stream: a leading
@@ -599,15 +708,18 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 }
 
 /// Build the elementary-stream PES payload for one sample:
-/// video → length-prefixed NAL back to Annex B (prepending SPS/PPS/AUD only when
-/// absent so the stream stays self-decodable); AAC → the raw frame re-wrapped in
-/// an ADTS header; other audio, and a PES-carried opaque [`CodecConfig::Data`]
-/// sample (issue #576) → the raw frame/payload verbatim. Never called for a
-/// section-carried `EsKind::Data` — those samples are whole PSI sections,
-/// packetized directly by the caller instead ([`SectionPacketizer`]).
+/// AVC/HEVC → length-prefixed NAL back to Annex B (prepending parameter
+/// sets/AUD only when absent so the stream stays self-decodable); AAC → the
+/// raw frame re-wrapped in an ADTS header; MPEG-2 video, MPEG-1/2 audio, other
+/// audio, and a PES-carried opaque [`CodecConfig::Data`] sample (issue #576)
+/// → the raw frame/payload verbatim (already self-framed byte streams — no
+/// NAL length-prefixing to undo). Never called for a section-carried
+/// `EsKind::Data` — those samples are whole PSI sections, packetized directly
+/// by the caller instead ([`SectionPacketizer`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
         EsKind::Avc => build_annexb_au(&sample.data, sample.is_sync, &plan.avc_sps_pps),
+        EsKind::Hevc => build_hevc_annexb_au(&sample.data, sample.is_sync, &plan.hevc_vps_sps_pps),
         EsKind::Aac => {
             let asc = plan
                 .asc
@@ -620,9 +732,13 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
             out.extend_from_slice(&sample.data);
             Ok(out)
         }
-        EsKind::Ac3 | EsKind::Eac3 | EsKind::Dts | EsKind::MpegH | EsKind::Data { .. } => {
-            Ok(sample.data.clone())
-        }
+        EsKind::Mpeg2Video
+        | EsKind::MpegAudio { .. }
+        | EsKind::Ac3
+        | EsKind::Eac3
+        | EsKind::Dts
+        | EsKind::MpegH
+        | EsKind::Data { .. } => Ok(sample.data.clone()),
     }
 }
 
@@ -666,6 +782,54 @@ fn build_annexb_au(length_prefixed: &[u8], is_sync: bool, sps_pps: &[Vec<u8>]) -
     if !inserted {
         // Access unit was only an AUD (degenerate) — still emit the params.
         append_param_sets(&mut out, sps_pps);
+    }
+    Ok(out)
+}
+
+/// Convert a length-prefixed HEVC video sample to an Annex B access unit,
+/// prepending the parameter sets `vps_sps_pps` (VPS + SPS + PPS, in that AU
+/// order — ITU-T H.265 §7.4.2.1) to an `is_sync` (IRAP keyframe) access unit
+/// that does not already carry an SPS, so the TS video AU is independently
+/// decodable (issue #627).
+///
+/// Mirrors [`build_annexb_au`] for HEVC's 2-byte NAL header (ITU-T H.265
+/// §7.3.1.2) and `nal_unit_type` classification instead of AVC's 1-byte
+/// header: when the IR sample already carries its parameter sets in-band, the
+/// length↔Annex B round-trip stays byte-identical NAL-for-NAL.
+fn build_hevc_annexb_au(
+    length_prefixed: &[u8],
+    is_sync: bool,
+    vps_sps_pps: &[Vec<u8>],
+) -> Result<Vec<u8>> {
+    let nals = iter_length_prefixed_nals(length_prefixed)?;
+
+    let needs_params = is_sync
+        && !vps_sps_pps.is_empty()
+        && !nals
+            .iter()
+            .any(|n| nal_unit_type(NalCodec::Hevc, n) == Some(HEVC_NAL_SPS));
+
+    if !needs_params {
+        // Straight, byte-exact rewrite of the existing NAL sequence.
+        return length_prefixed_to_annexb(length_prefixed);
+    }
+
+    // Insert the parameter sets after a leading AUD (if any), before the slices.
+    let mut out = Vec::with_capacity(length_prefixed.len() + total_param_len(vps_sps_pps));
+    let mut inserted = false;
+    for nal in &nals {
+        let nal_type = nal_unit_type(NalCodec::Hevc, nal);
+        // Emit the parameter sets right before the first non-AUD NAL.
+        if !inserted && nal_type != Some(HEVC_NAL_AUD) {
+            append_param_sets(&mut out, vps_sps_pps);
+            inserted = true;
+        }
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(nal);
+    }
+    if !inserted {
+        // Access unit was only an AUD (degenerate) — still emit the params.
+        append_param_sets(&mut out, vps_sps_pps);
     }
     Ok(out)
 }
@@ -1017,11 +1181,28 @@ mod tests {
     #[test]
     fn es_kind_stream_types_mirror_demux() {
         assert_eq!(EsKind::Avc.stream_type(), 0x1B);
+        assert_eq!(EsKind::Hevc.stream_type(), 0x24);
+        assert_eq!(EsKind::Mpeg2Video.stream_type(), 0x02);
         assert_eq!(EsKind::Aac.stream_type(), 0x0F);
+        assert_eq!(
+            EsKind::MpegAudio { is_mpeg2: false }.stream_type(),
+            0x03,
+            "MPEG-1 audio"
+        );
+        assert_eq!(
+            EsKind::MpegAudio { is_mpeg2: true }.stream_type(),
+            0x04,
+            "MPEG-2 audio"
+        );
         assert_eq!(EsKind::Ac3.stream_type(), 0x81);
         assert_eq!(EsKind::Eac3.stream_type(), 0x87);
         assert_eq!(EsKind::Dts.stream_type(), 0x82);
         assert_eq!(EsKind::MpegH.stream_type(), 0x2D);
+        assert!(EsKind::Avc.is_video());
+        assert!(EsKind::Hevc.is_video());
+        assert!(EsKind::Mpeg2Video.is_video());
+        assert!(!EsKind::Aac.is_video());
+        assert!(!EsKind::MpegAudio { is_mpeg2: false }.is_video());
         // Opaque Data (issue #576): the preserved stream_type round-trips
         // verbatim regardless of carriage.
         assert_eq!(
@@ -1073,6 +1254,7 @@ mod tests {
             kind: EsKind::Avc,
             asc: None,
             avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
             descriptors: Vec::new(),
         }];
         let pmt = build_pmt_section(ES_PID_BASE, &plans);
@@ -1094,6 +1276,7 @@ mod tests {
             },
             asc: None,
             avc_sps_pps: Vec::new(),
+            hevc_vps_sps_pps: Vec::new(),
             descriptors: descriptors.clone(),
         }];
         let pmt = build_pmt_section(ES_PID_BASE, &plans);
