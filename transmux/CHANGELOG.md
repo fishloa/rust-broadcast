@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-06
+
 ### Added
 - **Late-resolving live tracks: `DemuxEvent::TracksResolved` +
   `StreamingTsHlsSegmenter::add_track`** (#624). A live MPEG-TS feed resolves
