@@ -2,7 +2,7 @@
 name    = "srt-runtime"
 version = "0.2.0"
 edition = "2024"
-description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC packet pacing, optional (crypto feature) payload encryption, and an optional (tokio feature) async UDP socket adapter; no_std core. Window-based congestion control beyond LiveCC is a planned follow-up."
+description = "SRT (Secure Reliable Transport, draft-sharabayko-srt-01) packet codecs + sans-IO HSv5 Caller-Listener and Rendezvous handshake state machines, an ARQ reliability engine, a TSBPD delivery scheduler, LiveCC packet pacing, FileCC window-based congestion control, optional (crypto feature) payload encryption, and an optional (tokio feature) async UDP socket adapter; no_std core."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["srt", "packet", "sans-io", "transport", "streaming"]

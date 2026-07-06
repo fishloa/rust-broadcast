@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **`filecc` — SRT File Transfer Congestion Control (FileCC), §5.2** (issue
+  #620). [`filecc::FileCc`] is the file/bulk-transfer-mode sibling of
+  [`livecc::LiveCC`] (§5.1): a two-phase hybrid AIMD window + pacing
+  controller. Slow Start (§5.2.1.1) grows `CWND_SIZE` by the ACK
+  sequence-number delta each full ACK, holding `PKT_SND_PERIOD` fixed at 1
+  microsecond, until the first loss/timeout or `CWND_SIZE` exceeding
+  `MAX_CWND_SIZE` ends it. Congestion Avoidance (§5.2.1.2) recomputes
+  `CWND_SIZE` directly from `RECEIVING_RATE`/`RTT` each ACK, and runs the
+  full NAK-driven rate-decrease state machine: the 2%-loss-ratio tolerance,
+  the `LastDecSeq`-bounded congestion-period detection, the `1.03x`
+  repeat-decrease backoff (bounded by `DecCount<=5`), the `AvgNAKNum` EWMA,
+  and the `MAX_BW`-derived `MIN_PERIOD` clamp. Sans-IO, `no_std` (including
+  `thumbv7em-none-eabi`): driven by `on_ack`/`on_loss`/`on_timeout`, no
+  wall-clock reads. Curated at `specs/rules/srt-congestion.md`, every
+  constant/formula cited to a source line. The draft's two flagged gaps
+  (the `RECEIVING_RATE`/`EST_LINK_CAPACITY` EWMA smoothing weight; the
+  packet-pairs probing mechanics that would produce those inputs) are
+  resolved with a documented choice in the module doc, not silently
+  invented.
+
 ## [0.2.0] - 2026-07-06
 
 ### Fixed
