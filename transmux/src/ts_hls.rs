@@ -40,13 +40,13 @@
 //! anchor track crosses a keyframe past the target duration;
 //! [`StreamingTsHlsSegmenter::finish`] flushes the trailing partial segment;
 //! [`StreamingTsHlsSegmenter::playlist`] renders a rolling media playlist over
-//! a configurable sliding window, advancing `#EXT-X-MEDIA-SEQUENCE` as older
-//! segments roll off and `#EXT-X-DISCONTINUITY-SEQUENCE` to the window's
-//! current leading segment's absolute discontinuity count (RFC 8216
-//! §4.3.3.3 — a segment carrying `#EXT-X-DISCONTINUITY` belongs to the
-//! incremented sequence from the moment it becomes the playlist's first
-//! segment, not once it later rolls off in turn), and omitting
-//! `#EXT-X-ENDLIST` until `finish` has been called. Both types share the same
+//! a configurable sliding window, advancing `#EXT-X-MEDIA-SEQUENCE` and
+//! `#EXT-X-DISCONTINUITY-SEQUENCE` as older segments roll off (RFC 8216
+//! §6.2.1 defines a segment's Discontinuity Sequence Number as the header
+//! value plus the `#EXT-X-DISCONTINUITY` tags still visible ahead of it in
+//! the *current* playlist, so the header only needs to advance once a
+//! discontinuous segment's own inline tag has rolled out of the window), and
+//! omitting `#EXT-X-ENDLIST` until `finish` has been called. Both types share the same
 //! anchor-selection, cut-decision, and duration-accounting logic (this
 //! module's private `choose_anchor`/`is_cut_point`/`segment_duration_secs`
 //! helpers) so they can never drift apart.
@@ -421,15 +421,6 @@ struct WindowEntry {
     uri: String,
     duration: f64,
     discontinuous: bool,
-    /// Absolute `#EXT-X-DISCONTINUITY-SEQUENCE` value for this segment (RFC
-    /// 8216 §4.3.3.3): the cumulative count of `#EXT-X-DISCONTINUITY`
-    /// boundaries crossed by, and including, this segment, counted from
-    /// stream start — i.e. this segment's own `discontinuous` flag has
-    /// already been folded in if `true`. Assigned once at cut time
-    /// ([`StreamingTsHlsSegmenter::cut_segment`]) so the header can read it
-    /// straight off whichever entry is currently the window's front, with no
-    /// eviction-time bookkeeping.
-    disc_seq: u64,
 }
 
 /// Per-track accumulation state for [`StreamingTsHlsSegmenter`].
@@ -498,13 +489,16 @@ pub struct StreamingTsHlsSegmenter {
     /// Total number of segments ever cut (also the sequence number of the
     /// next segment).
     total_segments: u64,
-    /// Running cumulative count of `#EXT-X-DISCONTINUITY` boundaries cut so
-    /// far (from stream start), used to stamp each [`WindowEntry::disc_seq`]
-    /// at cut time. Monotonic — never decremented, independent of window
-    /// eviction (RFC 8216 §4.3.3.3: the header tracks the *current leading
-    /// segment's* discontinuity count, not "discontinuities that have rolled
-    /// off").
-    total_discontinuities: u64,
+    /// `#EXT-X-DISCONTINUITY-SEQUENCE`: count of discontinuous segments that
+    /// have already rolled out of the window. RFC 8216 §6.2.1 defines a
+    /// segment's Discontinuity Sequence Number as this header value *plus*
+    /// the number of `#EXT-X-DISCONTINUITY` tags still visible in the
+    /// current playlist preceding that segment's URI line — so a
+    /// discontinuous segment's own inline tag (rendered while it's still in
+    /// the window) already accounts for its own boundary; the header must
+    /// only advance once that segment (and its tag) has rolled off, or every
+    /// segment still in the window would be double-counted.
+    discontinuity_sequence: u64,
     /// Running max `#EXT-X-TARGETDURATION` ceiling ever produced (monotonic,
     /// per RFC 8216 §4.3.3.1 — never shrinks even as segments roll off).
     target_duration: u32,
@@ -567,7 +561,7 @@ impl StreamingTsHlsSegmenter {
             window,
             window_segments: VecDeque::new(),
             total_segments: 0,
-            total_discontinuities: 0,
+            discontinuity_sequence: 0,
             target_duration: 0,
         })
     }
@@ -665,14 +659,15 @@ impl StreamingTsHlsSegmenter {
     /// the anchor is: nothing has been cut yet (`total_segments == 0`), no
     /// track has any sample buffered yet (every `pending` is empty — so no
     /// cut/anchor decision has been made even provisionally), the current
-    /// anchor is not already a video (AVC) track, and the newly-added track
-    /// *is* AVC. That exactly recovers the construction-time rule ("first
-    /// video, else first track") for the case this issue targets: the
-    /// segmenter had to be built video-first because audio hadn't resolved,
-    /// so by the time `add_track(video)`... — nothing has cut yet, hence it's
-    /// safe. Every other case (anchor already AVC, new track isn't AVC, or
-    /// anything has already been buffered/cut) keeps the existing anchor
-    /// unchanged and simply adds the track for muxing.
+    /// anchor is not already a video track (`CodecConfig::is_video`, internal), and
+    /// the newly-added track *is* video. That exactly recovers the
+    /// construction-time rule ("first video, else first track") for the case
+    /// this issue targets: the segmenter had to be built audio-first because
+    /// video hadn't resolved (or vice versa), so by the time
+    /// `add_track(video)` runs, nothing has cut yet, hence it's safe. Every
+    /// other case (anchor already video, new track isn't video, or anything
+    /// has already been buffered/cut) keeps the existing anchor unchanged
+    /// and simply adds the track for muxing.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `spec.track_id` collides with an existing
@@ -684,11 +679,8 @@ impl StreamingTsHlsSegmenter {
 
         let nothing_cut_or_buffered =
             self.total_segments == 0 && self.tracks.iter().all(|t| t.pending.is_empty());
-        let current_anchor_is_avc = matches!(
-            self.tracks[self.anchor].spec.config,
-            CodecConfig::Avc { .. }
-        );
-        let new_is_avc = matches!(spec.config, CodecConfig::Avc { .. });
+        let current_anchor_is_video = self.tracks[self.anchor].spec.config.is_video();
+        let new_is_video = spec.config.is_video();
 
         let new_index = self.tracks.len();
         self.tracks.push(StreamTrackState {
@@ -697,7 +689,7 @@ impl StreamingTsHlsSegmenter {
             base_decode: 0,
         });
 
-        if nothing_cut_or_buffered && new_is_avc && !current_anchor_is_avc {
+        if nothing_cut_or_buffered && new_is_video && !current_anchor_is_video {
             self.anchor = new_index;
             self.target_ticks =
                 target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale);
@@ -709,12 +701,16 @@ impl StreamingTsHlsSegmenter {
     /// The current rolling media playlist: at most [`window`](Self::new)
     /// segments (the most recently cut), with `#EXT-X-MEDIA-SEQUENCE`
     /// advanced past every segment that has rolled out of the window and
-    /// `#EXT-X-DISCONTINUITY-SEQUENCE` set to the window's current leading
-    /// (oldest still-present) segment's absolute discontinuity count (RFC
-    /// 8216 §4.3.3.3) — a segment carrying `#EXT-X-DISCONTINUITY` already
-    /// belongs to the incremented sequence from the moment it becomes the
-    /// playlist's first segment, not one eviction cycle later when it rolls
-    /// off in turn. No `#EXT-X-ENDLIST` until [`Self::finish`] has been
+    /// `#EXT-X-DISCONTINUITY-SEQUENCE` incremented once per discontinuous
+    /// segment that has rolled *off* the window. RFC 8216 §6.2.1 defines a
+    /// segment's Discontinuity Sequence Number as this header value plus the
+    /// number of `#EXT-X-DISCONTINUITY` tags still visible in the current
+    /// playlist preceding that segment's URI — so a discontinuous segment's
+    /// own inline tag (rendered while it is still in the window) already
+    /// accounts for its own boundary, and the header must only advance once
+    /// that segment (and its tag) is gone, or every segment sharing the
+    /// window with it would have its Discontinuity Sequence Number
+    /// double-counted. No `#EXT-X-ENDLIST` until [`Self::finish`] has been
     /// called.
     pub fn playlist(&self) -> String {
         let segments: Vec<MediaSegment> = self
@@ -729,17 +725,12 @@ impl StreamingTsHlsSegmenter {
             .collect();
 
         let media_sequence = self.total_segments - self.window_segments.len() as u64;
-        let discontinuity_sequence = self
-            .window_segments
-            .front()
-            .map(|e| e.disc_seq)
-            .unwrap_or(self.total_discontinuities);
 
         MediaPlaylist {
             version: self.version,
             target_duration: self.target_duration.max(1),
             media_sequence,
-            discontinuity_sequence,
+            discontinuity_sequence: self.discontinuity_sequence,
             segments,
             endlist: self.finished,
             extra_tags: vec![],
@@ -817,13 +808,6 @@ impl StreamingTsHlsSegmenter {
 
         let discontinuous = self.pending_discontinuity;
         self.pending_discontinuity = false;
-        // This segment's own discontinuity (if any) already belongs to its
-        // absolute disc_seq — it is the segment carrying the
-        // `#EXT-X-DISCONTINUITY` tag, so the boundary is crossed here, not
-        // one eviction cycle later.
-        if discontinuous {
-            self.total_discontinuities += 1;
-        }
 
         // Drop the flushed prefix of each track's pending buffer and advance
         // its base_decode past it.
@@ -840,11 +824,14 @@ impl StreamingTsHlsSegmenter {
             uri: uri.clone(),
             duration,
             discontinuous,
-            disc_seq: self.total_discontinuities,
         });
         self.total_segments += 1;
         while self.window_segments.len() > self.window {
-            self.window_segments.pop_front();
+            if let Some(dropped) = self.window_segments.pop_front() {
+                if dropped.discontinuous {
+                    self.discontinuity_sequence += 1;
+                }
+            }
         }
 
         Ok(TsSegment {

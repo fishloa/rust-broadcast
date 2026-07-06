@@ -326,8 +326,44 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     (seg, snapshots)
 }
 
+/// Compute each segment's true **Discontinuity Sequence Number** from a raw
+/// playlist, per RFC 8216 §6.2.1's literal definition: "the value of the
+/// EXT-X-DISCONTINUITY-SEQUENCE tag (or zero if none) plus the number of
+/// EXT-X-DISCONTINUITY tags in the Playlist preceding the URI line of the
+/// segment." Returns `(uri, dsn)` pairs in playlist order. This is the
+/// client-observable value a real HLS player computes — asserting against
+/// it (rather than the raw header integer alone) is what actually validates
+/// spec compliance; a header value can be "correct-looking" in isolation
+/// while still yielding a wrong DSN once combined with the inline tags still
+/// visible in the window (exactly how issue #629's original "fix" slipped
+/// through: it changed the header without accounting for the inline tag on
+/// the same leading segment, double-counting that segment's own boundary).
+fn client_computed_dsns(playlist: &str) -> Vec<(String, u64)> {
+    let base = playlist
+        .lines()
+        .find_map(|l| l.strip_prefix("#EXT-X-DISCONTINUITY-SEQUENCE:"))
+        .map(|v| v.trim().parse::<u64>().unwrap())
+        .unwrap_or(0);
+
+    let mut out = Vec::new();
+    let mut tags_seen = 0u64;
+    let mut lines = playlist.lines().peekable();
+    while let Some(line) = lines.next() {
+        if line.starts_with("#EXT-X-DISCONTINUITY")
+            && !line.starts_with("#EXT-X-DISCONTINUITY-SEQUENCE")
+        {
+            tags_seen += 1;
+        }
+        if line.starts_with("#EXTINF:") {
+            let uri = lines.next().expect("URI after #EXTINF");
+            out.push((uri.to_string(), base + tags_seen));
+        }
+    }
+    out
+}
+
 #[test]
-fn discontinuity_sequence_reflects_window_leading_segment_not_eviction() {
+fn discontinuity_sequence_is_spec_correct_and_stable_across_window_rollover() {
     let (_seg, snapshots) = build_worked_example(2);
     assert_eq!(
         snapshots.len(),
@@ -335,48 +371,50 @@ fn discontinuity_sequence_reflects_window_leading_segment_not_eviction() {
         "expected one playlist snapshot after each of the last 4 cuts"
     );
 
-    // Snapshot 0: just after cutting s1 -> window=[s0,s1]. discontinuity
-    // sequence 0 means the header is omitted entirely (RFC 8216 §4.3.3.3 /
-    // this crate's `MediaPlaylist` convention — see hls.rs).
-    let uris0 = extract_uris(&snapshots[0]);
-    assert_eq!(uris0, vec!["seg0.ts", "seg1.ts"], "window=[s0,s1]");
-    assert!(
-        !snapshots[0].contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
-        "window=[s0,s1]: no discontinuity has been cut yet, header must be absent"
-    );
+    // The TRUE discontinuity sequence number for each segment, independent
+    // of window state: s0=0, s1=0, s2=1 (s2 itself is discontinuous), s3=1,
+    // s4=1 — the cumulative count of discontinuity boundaries crossed by,
+    // and including, that segment, from stream start.
+    let true_dsn = |uri: &str| -> u64 {
+        match uri {
+            "seg0.ts" | "seg1.ts" => 0,
+            "seg2.ts" | "seg3.ts" | "seg4.ts" => 1,
+            other => panic!("unexpected uri {other}"),
+        }
+    };
 
-    // Snapshot 1: just after cutting s2 (discontinuous) -> window=[s1,s2].
-    // s2 has just entered the window as its NEWEST member; s1 (continuous)
-    // is still the oldest/leading segment, so the header must not have
-    // advanced yet (still absent/0).
-    let uris1 = extract_uris(&snapshots[1]);
-    assert_eq!(uris1, vec!["seg1.ts", "seg2.ts"], "window=[s1,s2]");
-    assert!(
-        !snapshots[1].contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
-        "window=[s1,s2]: s1 (continuous) is still the leading segment, header must be absent"
-    );
+    let mut seen_dsn: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
 
-    // Snapshot 2: just after cutting s3 -> window=[s2,s3]. THIS is the
-    // state issue #629 was broken at: s2, the discontinuous segment, is now
-    // the window's leading (oldest) segment, so the header must already
-    // read 1 — not wait for s2 itself to roll off.
-    let uris2 = extract_uris(&snapshots[2]);
-    assert_eq!(uris2, vec!["seg2.ts", "seg3.ts"], "window=[s2,s3]");
-    assert_eq!(
-        extract_tag_u64(&snapshots[2], "#EXT-X-DISCONTINUITY-SEQUENCE:"),
-        1,
-        "window=[s2,s3]: s2 (discontinuous) is now the leading segment — \
-         the header must read 1 from the moment s2 becomes the window's \
-         first segment, per RFC 8216 §4.3.3.3 (issue #629)"
-    );
+    for (i, snapshot) in snapshots.iter().enumerate() {
+        for (uri, dsn) in client_computed_dsns(snapshot) {
+            assert_eq!(
+                dsn,
+                true_dsn(&uri),
+                "snapshot {i}: client-computed DSN for {uri} must equal its true \
+                 cumulative discontinuity count (RFC 8216 §6.2.1: header + \
+                 preceding #EXT-X-DISCONTINUITY tags in THIS playlist)"
+            );
+            // A segment's DSN must never change across reloads while it
+            // remains in the playlist (RFC 8216 §6.2.2 requires
+            // EXT-X-DISCONTINUITY-SEQUENCE to only ever increase, and the
+            // whole point of the tag is a stable, monotonic numbering).
+            if let Some(&prev) = seen_dsn.get(&uri) {
+                assert_eq!(
+                    prev, dsn,
+                    "snapshot {i}: {uri}'s client-computed DSN changed across \
+                     reloads ({prev} -> {dsn}) while still in the window — \
+                     this is exactly the #629 regression (a segment's DSN must \
+                     be stable for as long as it remains in the playlist)"
+                );
+            }
+            seen_dsn.insert(uri, dsn);
+        }
+    }
 
-    // Snapshot 3: just after cutting s4 (via finish()) -> window=[s3,s4].
-    // s2 has now rolled off entirely; the header must stay at 1.
-    let uris3 = extract_uris(&snapshots[3]);
-    assert_eq!(uris3, vec!["seg3.ts", "seg4.ts"], "window=[s3,s4]");
-    assert_eq!(
-        extract_tag_u64(&snapshots[3], "#EXT-X-DISCONTINUITY-SEQUENCE:"),
-        1,
-        "window=[s3,s4]: still 1 discontinuity total, now fully rolled off"
-    );
+    // Sanity: the specific window states named in the original issue are
+    // exercised (uris confirm we're looking at the right cuts).
+    assert_eq!(extract_uris(&snapshots[0]), vec!["seg0.ts", "seg1.ts"]);
+    assert_eq!(extract_uris(&snapshots[1]), vec!["seg1.ts", "seg2.ts"]);
+    assert_eq!(extract_uris(&snapshots[2]), vec!["seg2.ts", "seg3.ts"]);
+    assert_eq!(extract_uris(&snapshots[3]), vec!["seg3.ts", "seg4.ts"]);
 }
