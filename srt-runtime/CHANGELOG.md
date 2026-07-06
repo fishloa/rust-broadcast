@@ -27,6 +27,39 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   packet-pairs probing mechanics that would produce those inputs) are
   resolved with a documented choice in the module doc, not silently
   invented.
+- **Payload encryption wired into the handshake, plus a KM Refresh driver**
+  (issue #621, `crypto` feature). `draft-sharabayko-srt-01` §6.1.5 Key
+  Material Exchange is now piggybacked on the existing Caller-Listener
+  CONCLUSION extension flow instead of a new wire message: opt-in
+  `handshake_sm::CryptoConfig` (a pre-shared passphrase plus a
+  caller-supplied fresh Salt/SEK — this crate's sans-IO core still never
+  reads OS randomness, matching `derive_cookie`'s existing precedent) on
+  `HandshakeConfig::crypto`. When set, `CallerHandshake` derives a KEK
+  (`crypto::derive_kek`), wraps its SEK (`crypto::wrap_sek`), and sends it as
+  a `packet::KeyMaterial` `SRT_CMD_KMREQ` extension on its CONCLUSION;
+  `ListenerHandshake` unwraps it (`crypto::unwrap_sek`) and echoes the same
+  Key Material back as `SRT_CMD_KMRSP` to confirm (§6.1.5, "the responder
+  echoes the same KM message back to prove it derived the same SEK"); the
+  Caller verifies the echo before trusting it. The negotiated SEK/Salt are
+  exposed via new `handshake_sm::NegotiatedParams::sek`/`salt` fields. A
+  mismatched passphrase fails the RFC 3394 wrap-integrity check and rejects
+  the connection (`RejectionReason::BadSecret`); one side configured for
+  encryption and the other not rejects as `RejectionReason::Unsecure`.
+  - New `km_refresh` module (`crypto` feature): a sans-IO §6.1.6 KM Refresh
+    (SEK-rotation) driver, `km_refresh::KmRefreshDriver`. Driven by
+    `on_packet_sent(n)`/`tick()` (no wall-clock reads), it fires
+    `KmRefreshEvent::PreAnnounce` at `refresh_period - pre_announcement_period`
+    packets, `Switchover` at `refresh_period`, and `Decommission` at
+    `refresh_period + pre_announcement_period`, alternating `KeyParity`
+    (`Even`/`Odd`) and keeping both keys valid through the transition window
+    — the spec-recommended thresholds (`2^25` / `4000`) are
+    `KmRefreshThresholds::RECOMMENDED`. The driver tracks state only; actual
+    SEK generation/wrap/send in response to `PreAnnounce` is the caller's
+    job, mirroring `CryptoConfig`'s caller-supplied-randomness design.
+  - Wiring the negotiated SEK / `KmRefreshDriver` events into `io.rs`'s
+    tokio adapter to actually encrypt/decrypt data-packet payloads
+    end-to-end is a follow-up — this release wires the handshake negotiation
+    and ships the rotation state machine, both sans-IO and fully tested.
 
 ## [0.2.0] - 2026-07-06
 

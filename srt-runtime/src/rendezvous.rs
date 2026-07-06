@@ -709,9 +709,16 @@ impl RendezvousHandshake {
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
             // §4.3.2 never mentions a Stream ID / Group Membership exchange —
-            // module docs "Resolved ambiguities".
+            // module docs "Resolved ambiguities". The same applies to §6.1.5
+            // Key Material Exchange: this engine does not implement it (see
+            // the crate root docs' explicit-follow-ups list), so encryption
+            // is never negotiated over Rendezvous.
             stream_id: None,
             group: None,
+            #[cfg(feature = "crypto")]
+            sek: None,
+            #[cfg(feature = "crypto")]
+            salt: None,
         }
     }
 }

@@ -56,7 +56,12 @@
 //! key wrap/unwrap of the SEK, and PBKDF2 (HMAC-SHA1) KEK derivation — see
 //! [`crypto`]. [`packet::KeyMaterial`] still only carries the wrapped-key
 //! *bytes*; [`crypto`] is what actually wraps/unwraps and encrypts/decrypts
-//! them.
+//! them. The same feature also wires that primitive into the handshake
+//! exchange — [`handshake_sm::CryptoConfig`] (§6.1.5 Key Material Exchange,
+//! piggybacked on [`caller::CallerHandshake`]/[`listener::ListenerHandshake`]'s
+//! existing CONCLUSION extension flow, reusing [`packet::KeyMaterial`]
+//! rather than inventing a new wire message) — and adds a sans-IO
+//! SEK-rotation driver for §6.1.6 KM Refresh, [`km_refresh::KmRefreshDriver`].
 //!
 //! **Explicit follow-ups, not attempted here:**
 //! - CUBIC/BBR or any other alternative file-transfer congestion-control
@@ -64,9 +69,13 @@
 //!   [`filecc::FileCc`]'s default algorithm but does not describe them).
 //! - Wiring [`filecc::FileCc`] / [`livecc::LiveCC`] into a real send-queue
 //!   scheduler ([`arq::Sender`] has no congestion-control hook today).
-//! - Wiring [`crypto`] into the handshake state machines / a per-connection
-//!   SEK-rotation driver (§6.1.6 KM Refresh) — this release adds the crypto
-//!   *primitives* only.
+//! - Wiring the negotiated SEK from [`handshake_sm::NegotiatedParams`] (or
+//!   [`km_refresh::KmRefreshDriver`]'s events) into [`io`]'s tokio adapter to
+//!   actually encrypt/decrypt data-packet payloads end-to-end over a real
+//!   socket — the handshake negotiation and the rotation state machine are
+//!   both sans-IO and fully wired/tested; driving real payload
+//!   encryption from them through `io.rs` (additive, `crypto`-feature-gated,
+//!   without touching the existing ARQ/TSBPD paths) is a follow-up.
 //!
 //! **Permanently out of scope:** the Version-4 legacy Rendezvous path (§4.3.2).
 //! Only the current HSv5 Rendezvous flow ([`rendezvous`]) is implemented; V4 is
@@ -113,6 +122,8 @@
 //! - [`rendezvous`] — [`rendezvous::RendezvousHandshake`] (§4.3.2).
 //! - [`error`] — the [`Error`] enum and [`Result`] alias.
 //! - [`crypto`] (feature `crypto`) — §6 payload encryption primitives.
+//! - [`km_refresh`] (feature `crypto`) — [`km_refresh::KmRefreshDriver`]: the
+//!   sans-IO §6.1.6 KM Refresh (SEK-rotation) state machine.
 //! - [`io`] (feature `tokio`) — [`io::SrtSocket`] / [`io::SrtListener`]: an
 //!   async UDP socket adapter driving the sans-IO handshake + ARQ + TSBPD
 //!   engines end-to-end over real sockets.
@@ -132,6 +143,9 @@ pub mod crypto;
 pub mod error;
 pub mod filecc;
 pub mod handshake_sm;
+#[cfg(feature = "crypto")]
+#[cfg_attr(docsrs, doc(cfg(feature = "crypto")))]
+pub mod km_refresh;
 pub mod listener;
 pub mod livecc;
 pub mod packet;
