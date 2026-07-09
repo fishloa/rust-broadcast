@@ -634,9 +634,12 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
     );
 
     // Confirm the skip (not a hard error) on the real demuxed m6-single.ts
-    // Data tracks too: this excerpt carries no video (see the module docs),
-    // so once every Data track is skipped nothing carriable remains — still
-    // an error, but "no carriable track", never "Data is unsupported".
+    // Data tracks too. Since issue #641, this excerpt's 3 audio PIDs
+    // (0x82/0x83/0x84) classify as real, CMAF-carriable `CodecConfig::Eac3`
+    // tracks rather than opaque Data (see `tests/any_stream.rs`), so this is
+    // no longer an all-Data Media: CmafMux now succeeds, muxing the 3
+    // E-AC-3 tracks and silently skipping the remaining Data tracks
+    // (0x8C subtitle, 0xAA/0xAB sections).
     let ts = read_fixture("m6-single.ts");
     let media = demux(&ts);
     assert!(
@@ -644,12 +647,21 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
             .tracks
             .iter()
             .any(|t| matches!(t.spec.config, CodecConfig::Data { .. })),
-        "m6-single.ts must produce at least one Data track"
+        "m6-single.ts must still produce at least one Data track (subtitle/sections)"
     );
-    let err = CmafMux::default().package(&media).unwrap_err();
     assert!(
-        !matches!(err, Error::UnsupportedCodec { codec: "Data" }),
-        "packaging an all-Data Media must never fail with UnsupportedCodec(\"Data\"), got {err:?}"
+        media
+            .tracks
+            .iter()
+            .any(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. })),
+        "m6-single.ts must produce at least one E-AC-3 track (issue #641)"
+    );
+    let out = CmafMux::default()
+        .package(&media)
+        .expect("CmafMux must succeed: the E-AC-3 tracks are carriable, Data tracks are skipped");
+    assert!(
+        out.windows(4).any(|w| w == b"moov"),
+        "CmafMux output must contain a moov box for the carriable E-AC-3 tracks"
     );
 }
 
