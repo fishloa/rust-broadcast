@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DVB `stream_type 0x06`/`0x15` Dolby/DTS audio never classified past
+  opaque data** (#641). AC-3/E-AC-3/DTS carried the standard DVB way --
+  `stream_type 0x06` (PES private data) or `0x15` (metadata in PES) plus an
+  AC-3 (`0x6A`), enhanced AC-3 (`0x7A`), or DTS (`0x7B`) ES_info descriptor,
+  per ETSI EN 300 468 -- fell through to opaque `CodecConfig::Data` and was
+  silently dropped from HLS/fMP4 output, exactly like the native
+  `0x81`/`0x87`/`0x8*` stream_types would have been recognised. The PMT
+  parser now consults the ES_info descriptor loop for those two
+  `stream_type`s and reclassifies to the matching audio codec, reaching the
+  existing `ConfigProbe::Ac3`/`Eac3`/`Dts` syncframe recovery unchanged.
+
 ## [0.15.1] - 2026-07-07
 
 ### Fixed
