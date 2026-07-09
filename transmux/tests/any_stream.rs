@@ -229,6 +229,40 @@ fn expected_carriage(stream_type: u8) -> DataCarriage {
     }
 }
 
+/// Independent second opinion (not calling the crate) for whether a
+/// `stream_type` `0x06`/`0x15` ES_info descriptor loop signals AC-3 (`0x6A`),
+/// enhanced AC-3 (`0x7A`), or DTS (`0x7B`) per ETSI EN 300 468 (issue #641) —
+/// mirrors [`expected_carriage`]'s pattern. Returns the matched tag byte, or
+/// `None` for any other `stream_type` or a `0x06`/`0x15` stream with none of
+/// those descriptors (e.g. DVB subtitles).
+fn expected_dolby_dts_tag(stream_type: u8, descriptors: &[u8]) -> Option<u8> {
+    if !matches!(stream_type, 0x06 | 0x15) {
+        return None;
+    }
+    let mut off = 0usize;
+    while off + 2 <= descriptors.len() {
+        let tag = descriptors[off];
+        let len = descriptors[off + 1] as usize;
+        if matches!(tag, 0x6A | 0x7A | 0x7B) {
+            return Some(tag);
+        }
+        off += 2 + len;
+    }
+    None
+}
+
+/// Find the track in `media` whose preserved TS provenance (issue #582) is
+/// this exact `pid` — works for every codec, typed or opaque `Data`, unlike
+/// [`find_data_track`]/[`find_data_track_exact`] which only match opaque
+/// `Data` tracks by their carried `(stream_type, descriptors)`.
+fn find_track_by_pid(media: &Media, pid: u16) -> &Track {
+    media
+        .tracks
+        .iter()
+        .find(|t| t.spec.source_pid == Some(pid))
+        .unwrap_or_else(|| panic!("no track with source_pid {pid:#06x}"))
+}
+
 /// True if `bytes` is a structurally valid long-form PSI/private section:
 /// enough bytes for the 3-byte header, and `section_length` (bytes[1..3])
 /// accounts for exactly the rest of `bytes` (ISO/IEC 13818-1 §2.4.4.1).
@@ -319,43 +353,70 @@ fn demux_completeness_every_live_pmt_stream_becomes_a_track() {
 
     let mut n_pes = 0usize;
     let mut n_sections = 0usize;
+    let mut n_dolby = 0usize;
     for es in &live {
-        let track = find_data_track(&media, es);
-        let (carriage, descriptors) = match &track.spec.config {
-            CodecConfig::Data {
-                carriage,
-                descriptors,
-                ..
-            } => (*carriage, descriptors),
-            other => panic!("PID {:#06x} must be a Data track, got {other:?}", es.pid),
-        };
-        assert!(
-            !descriptors.is_empty() || es.descriptor_variants.contains(&Vec::new()),
-            "PID {:#06x}: descriptors must equal the (non-empty, in this fixture) \
-             PMT ES_info bytes",
-            es.pid
-        );
-        assert_eq!(
-            carriage,
-            expected_carriage(es.stream_type),
-            "PID {:#06x} (stream_type {:#04X}) carriage classification",
-            es.pid,
-            es.stream_type
-        );
-        match carriage {
-            DataCarriage::Pes => n_pes += 1,
-            DataCarriage::Sections => n_sections += 1,
-            _ => {}
+        let track = find_track_by_pid(&media, es.pid);
+
+        // Independent second opinion (not the crate's classifier): does ANY
+        // observed ES_info variant for this PID signal AC-3/E-AC-3/DTS
+        // (ETSI EN 300 468, issue #641)?
+        let expected_tag = es
+            .descriptor_variants
+            .iter()
+            .find_map(|d| expected_dolby_dts_tag(es.stream_type, d));
+
+        match (expected_tag, &track.spec.config) {
+            (
+                None,
+                CodecConfig::Data {
+                    carriage,
+                    descriptors,
+                    ..
+                },
+            ) => {
+                assert!(
+                    !descriptors.is_empty() || es.descriptor_variants.contains(&Vec::new()),
+                    "PID {:#06x}: descriptors must equal the (non-empty, in this fixture) \
+                     PMT ES_info bytes",
+                    es.pid
+                );
+                assert_eq!(
+                    *carriage,
+                    expected_carriage(es.stream_type),
+                    "PID {:#06x} (stream_type {:#04X}) carriage classification",
+                    es.pid,
+                    es.stream_type
+                );
+                match carriage {
+                    DataCarriage::Pes => n_pes += 1,
+                    DataCarriage::Sections => n_sections += 1,
+                    _ => {}
+                }
+            }
+            (Some(0x6A), CodecConfig::Ac3 { .. })
+            | (Some(0x7A), CodecConfig::Eac3 { .. })
+            | (Some(0x7B), CodecConfig::Dts { .. }) => n_dolby += 1,
+            (tag, other) => panic!(
+                "PID {:#06x}: expected_dolby_tag={tag:?} but track config is {other:?} \
+                 -- issue #641",
+                es.pid
+            ),
         }
     }
     assert_eq!(
-        n_pes, 4,
-        "expected 4 PES-carried Data tracks (0x82/0x83/0x84 audio + 0x8C subtitle)"
+        n_pes, 1,
+        "expected 1 PES-carried Data track (0x8C subtitle) -- 0x82/0x83/0x84 now \
+         classify as E-AC-3, not opaque data (issue #641)"
     );
     assert_eq!(
         n_sections, 2,
         "expected 2 section-carried Data tracks (0xAA/0xAB — 0xAC never starts a \
          section in this excerpt, see module docs)"
+    );
+    assert_eq!(
+        n_dolby, 3,
+        "expected 3 E-AC-3 tracks (0x82/0x83/0x84: main, audio-description, and a \
+         third variant, all carrying a real enhanced_AC3_descriptor -- issue #641)"
     );
 }
 
@@ -403,11 +464,14 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
     let data = read_fixture("m6-single.ts");
     let media = demux(&data);
 
-    // Re-mux the whole IR (every track here is `CodecConfig::Data`, PES or
-    // section — issue #576 means the TS muxer can now carry ALL of them).
+    // Re-mux the whole IR — issue #576 means the TS muxer can carry every
+    // Data track (PES and section); issue #641 means the 3 audio PIDs
+    // (0x82/0x83/0x84) are now typed `CodecConfig::Eac3`, which the muxer
+    // has always been able to carry (just under its own canonical
+    // `stream_type`, not the original DVB 0x06+descriptor carriage).
     let ts2 = TsMux::new()
         .package(&media)
-        .expect("TsMux must carry every Data track (PES and section), not error");
+        .expect("TsMux must carry every Data and E-AC-3 track, not error");
     let media2 = demux(&ts2);
     assert_eq!(
         media2.tracks.len(),
@@ -415,39 +479,66 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
         "re-demux must recover the same number of tracks"
     );
 
-    // The re-emitted PMT must carry each track's exact preserved stream_type
-    // + descriptors (parsed independently here, not via the crate's PMT
-    // parser) — the round-trip pins against what the IR actually holds, not
-    // the raw fixture's PMT-repeat ambiguity (see module docs).
     let out_pmt_pid = find_pmt_pid(&ts2);
     let out_es = collect_pmt_es(&ts2, out_pmt_pid);
     for track in &media.tracks {
-        let CodecConfig::Data {
-            stream_type,
-            descriptors,
-            ..
-        } = &track.spec.config
-        else {
-            panic!("m6-single.ts must produce only Data tracks in this excerpt");
-        };
-        assert!(
-            out_es
-                .iter()
-                .any(|(st, _pid, d)| st == stream_type && d == descriptors),
-            "re-emitted PMT must list stream_type {stream_type:#04X} with its \
-             preserved ES_info descriptors"
-        );
-
-        // Every original track's sample payloads must survive byte-for-byte
-        // (payload-lossless — NOT packet-identical: PIDs/PSI/PES framing
-        // legitimately differ between the two TS byte streams).
-        let round = find_data_track_exact(&media2, *stream_type, descriptors);
         let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_slice()).collect();
-        let round_payloads: Vec<&[u8]> = round.samples.iter().map(|s| s.data.as_slice()).collect();
-        assert_eq!(
-            orig_payloads, round_payloads,
-            "stream_type {stream_type:#04X}: sample payloads must round-trip byte-for-byte"
-        );
+        match &track.spec.config {
+            CodecConfig::Data {
+                stream_type,
+                descriptors,
+                ..
+            } => {
+                // The re-emitted PMT must carry this Data track's exact
+                // preserved stream_type + descriptors (parsed independently
+                // here, not via the crate's PMT parser) — the round-trip
+                // pins against what the IR actually holds, not the raw
+                // fixture's PMT-repeat ambiguity (see module docs).
+                assert!(
+                    out_es
+                        .iter()
+                        .any(|(st, _pid, d)| st == stream_type && d == descriptors),
+                    "re-emitted PMT must list stream_type {stream_type:#04X} with its \
+                     preserved ES_info descriptors"
+                );
+                let round = find_data_track_exact(&media2, *stream_type, descriptors);
+                let round_payloads: Vec<&[u8]> =
+                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                assert_eq!(
+                    orig_payloads, round_payloads,
+                    "stream_type {stream_type:#04X}: sample payloads must round-trip byte-for-byte"
+                );
+            }
+            CodecConfig::Eac3 { .. } => {
+                // A typed audio codec always re-muxes under its own
+                // canonical stream_type (0x87), never the original DVB
+                // 0x06+descriptor carriage -- only sample payload fidelity
+                // is the contract here. Matched by first-sample bytes
+                // (unique per real audio stream in this fixture) since
+                // remuxing assigns fresh PIDs.
+                let first = orig_payloads
+                    .first()
+                    .expect("E-AC-3 track must have at least one sample");
+                let round = media2
+                    .tracks
+                    .iter()
+                    .find(|t| {
+                        matches!(t.spec.config, CodecConfig::Eac3 { .. })
+                            && t.samples.first().map(|s| s.data.as_slice()) == Some(*first)
+                    })
+                    .unwrap_or_else(|| panic!("no re-demuxed E-AC-3 track matching first sample"));
+                let round_payloads: Vec<&[u8]> =
+                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                assert_eq!(
+                    orig_payloads, round_payloads,
+                    "E-AC-3 track: sample payloads must round-trip byte-for-byte"
+                );
+            }
+            other => panic!(
+                "m6-single.ts must produce only Data or E-AC-3 tracks in this excerpt, \
+                 got {other:?}"
+            ),
+        }
     }
 }
 
@@ -546,17 +637,27 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
 
     let out = TsHlsPackager::new(1)
         .package(&media)
-        .expect("TS-HLS packaging must carry every Data/section track, not error");
+        .expect("TS-HLS packaging must carry every Data/section/E-AC-3 track, not error");
     assert!(
         !out.segments.is_empty(),
         "must produce at least one segment"
     );
     assert!(out.playlist.starts_with("#EXTM3U"));
 
-    // Pin the exact (stream_type, descriptors) each track's config carries in
-    // the IR — the segment PMT check pins against what the IR actually
-    // holds, not the raw fixture's PMT-repeat ambiguity (see module docs).
-    let track_ids: Vec<(u8, Vec<u8>)> = media
+    /// E-AC-3 canonical `stream_type` (ISO/IEC 13818-1 Table 2-34 / ETSI
+    /// TS 101 154 §G) -- an Eac3 track always segments under this, never the
+    /// original DVB `0x06`+descriptor carriage (issue #641).
+    const STREAM_TYPE_EAC3: u8 = 0x87;
+
+    // Pin what each segment's PMT must list for every track: a Data track's
+    // exact preserved `(stream_type, descriptors)`, or an Eac3 track's
+    // canonical `stream_type` (descriptors aside -- the muxer is free to
+    // synthesize its own registration descriptor).
+    enum Expect {
+        Data(u8, Vec<u8>),
+        Eac3,
+    }
+    let track_ids: Vec<Expect> = media
         .tracks
         .iter()
         .map(|t| match &t.spec.config {
@@ -564,8 +665,9 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
                 stream_type,
                 descriptors,
                 ..
-            } => (*stream_type, descriptors.clone()),
-            other => panic!("m6-single.ts must produce only Data tracks, got {other:?}"),
+            } => Expect::Data(*stream_type, descriptors.clone()),
+            CodecConfig::Eac3 { .. } => Expect::Eac3,
+            other => panic!("m6-single.ts must produce only Data or E-AC-3 tracks, got {other:?}"),
         })
         .collect();
 
@@ -577,34 +679,69 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
         assert_eq!(seg.len() % TS, 0, "segment {i} must be whole TS packets");
         let seg_pmt_pid = find_pmt_pid(seg);
         let seg_es = collect_pmt_es(seg, seg_pmt_pid);
-        for (stream_type, descriptors) in &track_ids {
-            assert!(
-                seg_es
-                    .iter()
-                    .any(|(st, _pid, d)| st == stream_type && d == descriptors),
-                "segment {i}'s PMT must list stream_type {stream_type:#04X} \
-                 with its preserved ES_info descriptors, got {seg_es:?}"
-            );
+        for expect in &track_ids {
+            match expect {
+                Expect::Data(stream_type, descriptors) => assert!(
+                    seg_es
+                        .iter()
+                        .any(|(st, _pid, d)| st == stream_type && d == descriptors),
+                    "segment {i}'s PMT must list stream_type {stream_type:#04X} \
+                     with its preserved ES_info descriptors, got {seg_es:?}"
+                ),
+                Expect::Eac3 => assert!(
+                    seg_es.iter().any(|(st, ..)| *st == STREAM_TYPE_EAC3),
+                    "segment {i}'s PMT must list an E-AC-3 (stream_type 0x87) \
+                     elementary stream, got {seg_es:?}"
+                ),
+            }
         }
     }
 
     // Concatenating the segments and re-demuxing must reproduce every
-    // data/section track's sample payloads byte-for-byte (payload-lossless
-    // through segmentation), matching the direct single-shot demux.
+    // track's sample payloads byte-for-byte (payload-lossless through
+    // segmentation), matching the direct single-shot demux.
     let mut concat = Vec::new();
     for seg in &out.segments {
         concat.extend_from_slice(seg);
     }
     let media2 = demux(&concat);
 
-    for (stream_type, descriptors) in &track_ids {
-        let orig = find_data_track_exact(&media, *stream_type, descriptors);
-        let round = find_data_track_exact(&media2, *stream_type, descriptors);
-        let orig_payloads: Vec<&[u8]> = orig.samples.iter().map(|s| s.data.as_slice()).collect();
-        let round_payloads: Vec<&[u8]> = round.samples.iter().map(|s| s.data.as_slice()).collect();
-        assert_eq!(
-            orig_payloads, round_payloads,
-            "stream_type {stream_type:#04X}: payload-lossless through TS-HLS segmentation"
-        );
+    for track in &media.tracks {
+        let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_slice()).collect();
+        match &track.spec.config {
+            CodecConfig::Data {
+                stream_type,
+                descriptors,
+                ..
+            } => {
+                let round = find_data_track_exact(&media2, *stream_type, descriptors);
+                let round_payloads: Vec<&[u8]> =
+                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                assert_eq!(
+                    orig_payloads, round_payloads,
+                    "stream_type {stream_type:#04X}: payload-lossless through TS-HLS segmentation"
+                );
+            }
+            CodecConfig::Eac3 { .. } => {
+                let first = orig_payloads
+                    .first()
+                    .expect("E-AC-3 track must have at least one sample");
+                let round = media2
+                    .tracks
+                    .iter()
+                    .find(|t| {
+                        matches!(t.spec.config, CodecConfig::Eac3 { .. })
+                            && t.samples.first().map(|s| s.data.as_slice()) == Some(*first)
+                    })
+                    .unwrap_or_else(|| panic!("no re-demuxed E-AC-3 track matching first sample"));
+                let round_payloads: Vec<&[u8]> =
+                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                assert_eq!(
+                    orig_payloads, round_payloads,
+                    "E-AC-3 track: payload-lossless through TS-HLS segmentation"
+                );
+            }
+            _ => unreachable!("checked above"),
+        }
     }
 }

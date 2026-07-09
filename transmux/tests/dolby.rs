@@ -212,6 +212,35 @@ fn ec3_init_segment_sample_entry() {
     assert_eq!(dec3_body, &DEC3_ORACLE[..], "dec3 in init segment mismatch");
 }
 
+// ── Test: DVB stream_type 0x06 + enhanced_AC3_descriptor must classify as ──
+// ── E-AC-3, not opaque data (issue #641) ────────────────────────────────────
+// `eac3_dvb_0x06.ts` re-muxes the same real E-AC-3 syncframes already
+// captured in `eac3.ts` (there declared via native `stream_type 0x87`) under
+// `stream_type 0x06` (PES private data) + a real enhanced_AC3_descriptor
+// (tag 0x7A) -- the standard DVB signalling for E-AC-3 that `eac3.ts`'s own
+// native-stream_type packetization never exercises.
+#[test]
+fn dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3() {
+    let ts = std::fs::read("../fixtures/ts/dolby/eac3_dvb_0x06.ts")
+        .expect("read eac3_dvb_0x06.ts fixture");
+    let mut demux = transmux::ts_demux::TsDemux::new();
+    let media = demux.demux(&ts).expect("demux dvb 0x06 ts");
+
+    assert_eq!(media.tracks.len(), 1, "one audio track");
+    let audio = &media.tracks[0];
+    match audio.config() {
+        CodecConfig::Eac3 { .. } => {}
+        other => panic!(
+            "stream_type 0x06 + enhanced_AC3_descriptor (0x7A) must classify \
+             as E-AC-3, not {other:?} -- issue #641"
+        ),
+    }
+    assert!(
+        !audio.samples.is_empty(),
+        "E-AC-3 samples must actually be recovered, not silently dropped"
+    );
+}
+
 #[test]
 fn rfc6381_codes() {
     let dac3 = Ac3SpecificBox::parse(&DAC3_ORACLE).unwrap();

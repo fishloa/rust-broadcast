@@ -58,10 +58,15 @@
 //! Any PMT `stream_type` that is not a decoded codec is carried losslessly as
 //! an opaque [`CodecConfig::Data`] track (issues #557/#576) rather than
 //! silently dropped — `stream_type` 0x06 (PES private data — DVB
-//! subtitles/teletext/SMPTE 2038/etc.) and 0x15 (metadata in PES) were the
-//! first examples; every other unrecognised `stream_type` follows the same
-//! path. `descriptors` preserves the raw PMT ES_info descriptor loop for the
-//! caller to classify. ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits
+//! subtitles/teletext/SMPTE 2038/AC-3/E-AC-3/DTS/etc.) and 0x15 (metadata in
+//! PES) were the first examples; every other unrecognised `stream_type`
+//! follows the same path. A `0x06`/`0x15` stream carrying an AC-3 (`0x6A`),
+//! enhanced AC-3 (`0x7A`), or DTS (`0x7B`) ES_info descriptor is instead
+//! reclassified to that audio codec (issue #641: DVB's standard descriptor-
+//! disambiguated Dolby/DTS carriage), reaching the same syncframe-recovery
+//! path as the native `0x81`/`0x87`/`0x8*` stream_types. `descriptors`
+//! preserves the raw PMT ES_info descriptor loop for the caller to classify.
+//! ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits
 //! `stream_type` into two carriage families, and the two are reassembled
 //! completely differently (PES-reassembling a section stream, or vice versa,
 //! silently yields nothing): most `stream_type`s (including every
@@ -191,6 +196,20 @@ const STREAM_TYPE_DTS_8A: u8 = 0x8A;
 /// (§6.8.7) — out of scope here; only the single/main-stream `0x2D` is
 /// recognised.
 const STREAM_TYPE_MPEGH: u8 = 0x2D;
+/// PES private data (ISO/IEC 13818-1 Table 2-34) — DVB's standard carriage
+/// for AC-3/E-AC-3/DTS audio, subtitles, teletext, SMPTE 2038, etc., all
+/// disambiguated by the ES_info descriptor loop, not the `stream_type` byte
+/// itself (issue #641).
+const STREAM_TYPE_PES_PRIVATE: u8 = 0x06;
+/// Metadata in PES packets (ISO/IEC 13818-1 Table 2-34) — the other
+/// descriptor-disambiguated `stream_type`, per [`STREAM_TYPE_PES_PRIVATE`].
+const STREAM_TYPE_METADATA_PES: u8 = 0x15;
+/// AC-3 descriptor tag (ETSI EN 300 468 Annex D, issue #641).
+const DESC_TAG_AC3: u8 = 0x6A;
+/// Enhanced AC-3 (E-AC-3) descriptor tag (ETSI EN 300 468 Annex D).
+const DESC_TAG_ENHANCED_AC3: u8 = 0x7A;
+/// DTS descriptor tag (ETSI EN 300 468 Annex G, Table G.1).
+const DESC_TAG_DTS: u8 = 0x7B;
 // ── Section-carried stream_types (ISO/IEC 13818-1 Table 2-34) — issue #576 ──
 //
 // These stream_types carry PSI/private *sections* directly on their PID, not
@@ -347,6 +366,36 @@ impl Codec {
             STREAM_TYPE_MPEGH => Codec::MpegH,
             _ => Codec::Data(stream_type),
         }
+    }
+
+    /// Refine a [`Codec::Data`] classification for `stream_type` `0x06`/`0x15`
+    /// (DVB's descriptor-disambiguated PES private data / metadata carriage)
+    /// by consulting the ES_info descriptor loop, per ETSI EN 300 468: an
+    /// AC-3 (`0x6A`), enhanced AC-3 (`0x7A`), or DTS (`0x7B`) descriptor
+    /// reclassifies the stream to the matching audio codec instead of opaque
+    /// data (issue #641). Any other `stream_type`, or a `0x06`/`0x15` stream
+    /// with none of those descriptors (e.g. DVB subtitles/teletext), is
+    /// returned unchanged.
+    fn refine_with_descriptors(self, stream_type: u8, descriptors: &[u8]) -> Self {
+        if !matches!(
+            stream_type,
+            STREAM_TYPE_PES_PRIVATE | STREAM_TYPE_METADATA_PES
+        ) {
+            return self;
+        }
+        let mut off = 0usize;
+        while off + 2 <= descriptors.len() {
+            let tag = descriptors[off];
+            let len = descriptors[off + 1] as usize;
+            match tag {
+                DESC_TAG_AC3 => return Codec::Ac3,
+                DESC_TAG_ENHANCED_AC3 => return Codec::Eac3,
+                DESC_TAG_DTS => return Codec::Dts,
+                _ => {}
+            }
+            off += 2 + len;
+        }
+        self
     }
 }
 
@@ -575,8 +624,9 @@ fn parse_pmt(section: &[u8]) -> Result<Vec<(u16, Codec, Vec<u8>)>> {
             (((body[off + 3] & INFO_LENGTH_HI_MASK) as usize) << 8) | body[off + 4] as usize;
         let desc_start = off + 5;
         let desc_end = (desc_start + es_info_length).min(body.len());
-        let codec = Codec::from_stream_type(stream_type);
         let descriptors = body[desc_start..desc_end].to_vec();
+        let codec =
+            Codec::from_stream_type(stream_type).refine_with_descriptors(stream_type, &descriptors);
         out.push((es_pid, codec, descriptors));
         off += 5 + es_info_length;
     }
@@ -2397,6 +2447,66 @@ mod tests {
             "resync must recover most real AAC frames across misaligned \
              chunks (got {recovered} of {} real frames)",
             audio.samples.len()
+        );
+    }
+
+    /// Every DVB descriptor-disambiguated `stream_type` (`0x06`/`0x15`) with
+    /// a recognised Dolby/DTS descriptor reclassifies from opaque data to the
+    /// matching audio codec (issue #641). The end-to-end E-AC-3 case (real
+    /// captured syncframes, full PMT-parse-through-sample-recovery path) is
+    /// covered by `transmux/tests/dolby.rs`'s
+    /// `dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3`; this covers the
+    /// other two descriptor tags at the classification-function level.
+    #[test]
+    fn refine_with_descriptors_recognises_every_dolby_dts_tag() {
+        let ac3_desc = [DESC_TAG_AC3, 1, 0x40];
+        assert_eq!(
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+                .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, &ac3_desc),
+            Codec::Ac3
+        );
+
+        let dts_desc = [DESC_TAG_DTS, 1, 0x00];
+        assert_eq!(
+            Codec::Data(STREAM_TYPE_METADATA_PES)
+                .refine_with_descriptors(STREAM_TYPE_METADATA_PES, &dts_desc),
+            Codec::Dts,
+            "0x15 (metadata in PES) is also descriptor-disambiguated"
+        );
+
+        let eac3_desc = [DESC_TAG_ENHANCED_AC3, 1, 0x00];
+        assert_eq!(
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+                .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, &eac3_desc),
+            Codec::Eac3
+        );
+    }
+
+    /// A `0x06`/`0x15` stream with no Dolby/DTS descriptor (e.g. DVB
+    /// subtitles, tag `0x59`) must stay opaque data, not be misclassified as
+    /// audio.
+    #[test]
+    fn refine_with_descriptors_leaves_non_audio_0x06_as_data() {
+        const DESC_TAG_SUBTITLING: u8 = 0x59;
+        let subtitle_desc = [DESC_TAG_SUBTITLING, 3, 0x65, 0x6E, 0x67];
+        assert_eq!(
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+                .refine_with_descriptors(STREAM_TYPE_PES_PRIVATE, &subtitle_desc),
+            Codec::Data(STREAM_TYPE_PES_PRIVATE)
+        );
+    }
+
+    /// A `stream_type` outside the descriptor-disambiguated set (`0x06`/
+    /// `0x15`) must never be reclassified, even if its ES_info descriptor
+    /// loop happens to contain a Dolby/DTS tag byte -- the descriptor scan
+    /// only applies to the two `stream_type`s DVB actually disambiguates this
+    /// way.
+    #[test]
+    fn refine_with_descriptors_ignores_other_stream_types() {
+        let eac3_desc = [DESC_TAG_ENHANCED_AC3, 1, 0x00];
+        assert_eq!(
+            Codec::H264.refine_with_descriptors(STREAM_TYPE_AVC, &eac3_desc),
+            Codec::H264
         );
     }
 }
