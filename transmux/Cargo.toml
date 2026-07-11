@@ -19,6 +19,7 @@ mpeg-ts    = { path = "../mpeg-ts",  version = "0.2", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.2", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.1", default-features = false }
+rtcp-packet = { path = "../rtcp-packet", version = "0.1", default-features = false }
 aes        = { version = "0.8", default-features = false, optional = true }
 ctr        = { version = "0.9", default-features = false, optional = true }
 cbc        = { version = "0.1", default-features = false, optional = true }
@@ -30,8 +31,8 @@ required-features = ["cli"]
 
 [features]
 default = ["std", "serde", "cenc"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std"]
-serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde"]
+std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std"]
+serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
 # content protection. Extends `cenc` (shares the `aes` block cipher) and pulls

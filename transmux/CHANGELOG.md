@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Internal only, no public API change**: the RTCP control-packet codec
+  (`SenderReport`/`ReceiverReport`/`SourceDescription`/`Bye`/`App`/
+  `RtcpPacket`/`CompoundPacket` and friends) moved to the new standalone
+  [`rtcp-packet`](https://crates.io/crates/rtcp-packet) crate (issue #654,
+  part of epic #653 — the same extraction `rtp-packet` went through in
+  #646/#650). `transmux::rtcp` is now a thin `pub use rtcp_packet::*;`
+  re-export, so every `transmux::rtcp::*` and crate-root `transmux::*` call
+  site keeps working unchanged; existing RTCP tests
+  (`transmux/tests/rtcp.rs`) pass byte-for-byte unchanged. Not released as
+  its own transmux version bump (same precedent as the rtp-packet
+  migration).
+
 ## [0.15.2] - 2026-07-09
 
 ### Fixed

@@ -31,6 +31,7 @@ cc-data      = { path = "../cc-data" }
 dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
 st291        = { path = "../st291", features = ["rtp"] }
+rtcp-packet  = { path = "../rtcp-packet" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -132,5 +133,11 @@ doc  = false
 [[bin]]
 name = "st291"
 path = "fuzz_targets/st291.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "rtcp_packet"
+path = "fuzz_targets/rtcp_packet.rs"
 test = false
 doc  = false
