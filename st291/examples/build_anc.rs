@@ -2,9 +2,9 @@
 /// wire bytes — including the 10-bit bit-packed ANC records.
 ///
 /// ```sh
-/// cargo run -p smpte2038 --example build_anc
+/// cargo run -p st291 --example build_anc
 /// ```
-use smpte2038::{AncDataPacket, AncPacket};
+use st291::{AncDataPacket, AncPacket};
 
 fn main() {
     // Two ANC packets on the same line's PES, plus a few stuffing bytes.

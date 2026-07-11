@@ -52,7 +52,7 @@ jobs:
       #   broadcast-common → bbframe → si → conformance → t2mi → tools.
       # dvb-common is a deprecated re-export shim, now FROZEN at 8.1.0 and no
       # longer part of the lockstep — like the other shims (dvb-scte35, dvb-pes,
-      # dvb-cc, dvb-ule, dvb-smpte2038, dvb-emsg), it is not gated or published
+      # dvb-cc, dvb-ule, dvb-emsg), it is not gated or published
       # here. External `dvb-common = "8"` deps still resolve (the 8.1.0 shim
       # re-exports broadcast-common ^8). It stays a workspace member so it is
       # still built + tested.
