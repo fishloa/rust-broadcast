@@ -30,7 +30,7 @@ scte104      = { path = "../scte104" }
 cc-data      = { path = "../cc-data" }
 dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
-st291        = { path = "../st291" }
+st291        = { path = "../st291", features = ["rtp"] }
 libfuzzer-sys = "0.4"
 
 [[bin]]

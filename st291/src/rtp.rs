@@ -26,8 +26,8 @@ use crate::error::{Error, Result};
 // ---------------------------------------------------------------------------
 
 /// Length of the RFC 8331 §2.1 payload header: `Extended Sequence Number`(16)
-/// + `Length`(16) + `ANC_Count`(8) + `F`(2) + `reserved`(22) = 64 bits = 8
-/// bytes.
+/// plus `Length`(16) plus `ANC_Count`(8) plus `F`(2) plus `reserved`(22),
+/// i.e. 64 bits, 8 bytes.
 pub const ANC_RTP_PAYLOAD_HEADER_LEN: usize = 8;
 
 /// Maximum `ANC_Count` value — an 8-bit field; "a single ANC data RTP packet
