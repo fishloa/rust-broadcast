@@ -24,7 +24,7 @@ cited commit.
 
 | Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
 |---|---|---|---|---|---|---|
-| `dvb-smpte2038/docs/` (st_2038.md, anc_packet_291.md) | SMPTE ST 2038:2021; RFC 8331 (ANC) | PDF render + RFC ASCII | 34 | ✅ 0 substantive | — | `7963ed32` |
+| `st291/docs/` (st_2038.md, anc_packet_291.md) | SMPTE ST 2038:2021; RFC 8331 (ANC) | PDF render + RFC ASCII | 34 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-vbi/docs/vbi.md` + `dvb-emsg/docs/emsg.md` | ETSI EN 301 775; DASH-IF IOP Part 10 | PDF render | 44 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-simulcrypt/docs/` (message-framing, ecmg-scs, emmg-pdg-mux, parameter-types) | ETSI TS 103 197 V1.5.1 | PDF render | 30 | ✅ 0 substantive | — | `7963ed32` |
 | `dvb-ule/docs/` (sndu, ts-mapping, ext-headers) | RFC 4326; RFC 5163 | RFC ASCII | 37 | ✅ 0 substantive | — | `7963ed32` |

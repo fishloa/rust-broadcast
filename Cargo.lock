@@ -608,13 +608,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dvb-smpte2038"
-version = "0.1.1"
-dependencies = [
- "smpte2038",
-]
-
-[[package]]
 name = "dvb-stream"
 version = "0.3.0"
 dependencies = [
@@ -1786,16 +1779,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
-name = "smpte2038"
-version = "0.2.0"
-dependencies = [
- "broadcast-common",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
 name = "socket2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1820,6 +1803,16 @@ dependencies = [
  "sha1",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "st291"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

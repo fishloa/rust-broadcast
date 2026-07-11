@@ -1,13 +1,36 @@
 # Changelog
 
-All notable changes to `smpte2038` will be documented in this file.
-This crate was previously published as `dvb-smpte2038` (0.1.0). The rename
-reflects that SMPTE ST 2038 is a SMPTE standard, not a DVB standard.
+All notable changes to `st291` will be documented in this file.
+This crate was previously published as `smpte2038` (0.1.0-0.2.0), and before
+that as `dvb-smpte2038` (0.1.0). The rename reflects that the crate's real
+subject is ST 291-1 ancillary-data *content*, not any one carriage mechanism:
+ST 2038 (MPEG-2 TS/PES) is the first of what will become multiple transports
+once RTP carriage (ST 2110-40 / RFC 8331, issue #648) is added. Both
+`smpte2038` and `dvb-smpte2038` are being yanked from crates.io rather than
+carried forward as deprecated shims — this is a clean break, not a shim
+chain. `st291` restarts version numbering at 0.1.0.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-07-03
+## [0.1.0] - 2026-07-11
+
+### Changed
+- Renamed `smpte2038` → `st291` (issue #647, part of epic #645). No functional
+  or API change beyond the new `ts` feature below; every existing test still
+  passes under the new name with identical behaviour.
+- Added a `ts` feature (on by default) gating the existing ST 2038:2021
+  MPEG-2 TS transport (`AncDataDescriptor`, `AncDataPacket`) — preparation for
+  a future `rtp` feature (issue #648) so the two transports can sit side by
+  side without another restructuring.
+- Fixed a stale README line claiming the crate "depends only on `dvb-common`"
+  (it depends on `broadcast-common`, predating this rename).
+
+### Added
+- A libfuzzer fuzz target (`fuzz/fuzz_targets/st291.rs`) exercising
+  `AncDataPacket::parse` — previously absent for this crate's ANC parsing.
+
+## [0.2.0] - 2026-07-03 (as `smpte2038`)
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
 

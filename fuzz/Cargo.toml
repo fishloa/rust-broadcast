@@ -30,6 +30,7 @@ scte104      = { path = "../scte104" }
 cc-data      = { path = "../cc-data" }
 dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
+st291        = { path = "../st291" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -125,5 +126,11 @@ doc  = false
 [[bin]]
 name = "scte35"
 path = "fuzz_targets/scte35.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "st291"
+path = "fuzz_targets/st291.rs"
 test = false
 doc  = false

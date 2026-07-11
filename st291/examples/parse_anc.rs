@@ -2,15 +2,15 @@
 /// and verify a byte-exact round-trip.
 ///
 /// ```sh
-/// cargo run -p smpte2038 --example parse_anc
+/// cargo run -p st291 --example parse_anc
 /// ```
 use std::fs;
 
-use smpte2038::AncDataPacket;
+use st291::AncDataPacket;
 
 fn main() {
     // Resolve relative to the crate so it runs from any cwd.
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/anc.bin");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/st291/anc.bin");
     let data = match fs::read(path) {
         Ok(d) => d,
         Err(e) => {
