@@ -28,6 +28,7 @@ fuzz_target!(|data: &[u8]| {
                     ExtensionElements::TwoByte(e) => {
                         let _ = e.to_bytes();
                     }
+                    _ => {}
                 }
             }
         }

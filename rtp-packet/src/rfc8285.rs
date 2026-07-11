@@ -201,8 +201,10 @@ impl<'a> Parse<'a> for OneByteElements<'a> {
                     what: "RFC 8285 one-byte extension element data",
                 });
             }
-            let id =
-                OneByteId::new(id_nibble).expect("id_nibble is 1..=14: 0 and 15 handled above");
+            // id_nibble is 1..=14 here: 0 and 15 were handled above, so
+            // constructing directly (bypassing the fallible `new`) cannot
+            // violate OneByteId's invariant.
+            let id = OneByteId(id_nibble);
             elements.push(OneByteElement {
                 id,
                 data: &bytes[data_start..data_end],
@@ -326,7 +328,10 @@ impl<'a> Parse<'a> for TwoByteElements<'a> {
                     what: "RFC 8285 two-byte extension element data",
                 });
             }
-            let id = TwoByteId::new(id_byte).expect("id_byte != 0, checked above");
+            // id_byte != 0 here: the padding case was handled above, so
+            // constructing directly (bypassing the fallible `new`) cannot
+            // violate TwoByteId's invariant.
+            let id = TwoByteId(id_byte);
             elements.push(TwoByteElement {
                 id,
                 data: &bytes[data_start..data_end],
@@ -387,6 +392,7 @@ impl Serialize for TwoByteElements<'_> {
 /// `name()`/`Display` convention (see `tests/label_coverage.rs`'s SKIP list).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub enum ExtensionElements<'a> {
     /// §4.2 one-byte-form elements (`profile_id == 0xBEDE`).
     OneByte(OneByteElements<'a>),
