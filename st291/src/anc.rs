@@ -23,11 +23,20 @@
 //! 10-bit values are stored verbatim as `u16`; ST 291-1 parity/checksum
 //! derivation is **not** computed or validated here (ST 2038 defers it to
 //! ST 291-1, which is not vendored).
+//!
+//! ## Shared content (issue #648)
+//! The `DID`/`SDID`/`data_count`/`user_data_words`/`checksum` bit sequence is
+//! identical to RFC 8331's RTP carriage of the same ST 291-1 content (see
+//! `docs/anc_rtp_8331.md`); [`AncPacket`]'s `read_from`/`write_into` delegate
+//! that portion to the always-compiled [`crate::anc_content::AncContent`], so
+//! the bit-packing logic is implemented exactly once. [`AncPacket`]'s public
+//! field layout is unchanged by this — see `anc_content`'s module doc for why.
 
 use alloc::vec::Vec;
 
 use broadcast_common::bits::{BitReader, BitWriter};
 
+use crate::anc_content::{AncContent, check_field_width};
 use crate::error::{Error, Result};
 
 /// `packet_start_code_prefix` — `0x000001` (Table 2).
@@ -51,16 +60,13 @@ pub const STUFFING_BYTE: u8 = 0xFF;
 /// 33-bit PTS mask.
 const PTS_MASK: u64 = (1 << 33) - 1;
 
-// Field widths (bits) of the per-ANC-packet record (Table 2).
+// Field widths (bits) of the per-ANC-packet **placement** (Table 2); the
+// content field widths (DID/SDID/data_count/user_data_word/checksum) live in
+// `crate::anc_content` since they are shared with the RTP transport.
 const W_LEADING_ZEROS: u32 = 6;
 const W_C_NOT_Y: u32 = 1;
 const W_LINE_NUMBER: u32 = 11;
 const W_HORIZONTAL_OFFSET: u32 = 12;
-const W_DID: u32 = 10;
-const W_SDID: u32 = 10;
-const W_DATA_COUNT: u32 = 10;
-const W_USER_DATA_WORD: u32 = 10;
-const W_CHECKSUM: u32 = 10;
 
 /// Number of leading bytes before `PES_packet_length`'s value applies:
 /// start_code(3) + stream_id(1) + PES_packet_length(2).
@@ -104,19 +110,27 @@ impl AncPacket {
         usize::from(self.data_count & 0xFF)
     }
 
+    /// Borrow this packet's transport-independent content as the shared
+    /// [`AncContent`] type (see `crate::anc_content`'s module doc for why
+    /// [`AncPacket`]'s own flat field layout is kept as-is rather than
+    /// embedding it directly).
+    fn as_content(&self) -> AncContent {
+        AncContent {
+            did: self.did,
+            sdid: self.sdid,
+            data_count: self.data_count,
+            user_data_words: self.user_data_words.clone(),
+            checksum: self.checksum,
+        }
+    }
+
     /// Bit length of this record's payload, **excluding** the trailing `'1'`
-    /// byte-alignment padding: the fixed 70-bit prefix + 10 bits per
-    /// `user_data_word` (counted as `data_count & 0xFF`) + the 10-bit checksum.
+    /// byte-alignment padding: the fixed 30-bit placement prefix + the shared
+    /// [`AncContent`] content bit width.
     fn body_bits(&self) -> usize {
-        let fixed = (W_LEADING_ZEROS
-            + W_C_NOT_Y
-            + W_LINE_NUMBER
-            + W_HORIZONTAL_OFFSET
-            + W_DID
-            + W_SDID
-            + W_DATA_COUNT
-            + W_CHECKSUM) as usize;
-        fixed + self.udw_loop_count() * W_USER_DATA_WORD as usize
+        let placement =
+            (W_LEADING_ZEROS + W_C_NOT_Y + W_LINE_NUMBER + W_HORIZONTAL_OFFSET) as usize;
+        placement + self.as_content().content_bit_width()
     }
 
     /// Serialized byte length of this record (body bits rounded up to a byte
@@ -133,57 +147,23 @@ impl AncPacket {
     /// not equal `data_count & 0xFF`; a mismatch would silently zero-fill missing
     /// words, making serialize→parse non-identity.
     fn write_into(&self, w: &mut BitWriter<'_>) -> Result<()> {
-        fn check(what: &'static str, value: u16, bits: u32) -> Result<u64> {
-            if u32::from(value) >= (1u32 << bits) {
-                return Err(Error::FieldTooWide {
-                    what,
-                    value: u32::from(value),
-                    bits,
-                });
-            }
-            Ok(u64::from(value))
-        }
-
-        // Validate coherence: user_data_words.len() must equal data_count & 0xFF
-        // (§4.2.1).  A mismatch would produce extra zero words on re-parse.
-        let need = self.udw_loop_count();
-        let have = self.user_data_words.len();
-        if have != need {
-            return Err(Error::InconsistentUdwLength { have, need });
-        }
-
         w.write_bits(0, W_LEADING_ZEROS)?; // '000000'
         w.write_bits(u64::from(self.c_not_y_channel_flag), W_C_NOT_Y)?;
         w.write_bits(
-            check("line_number", self.line_number, W_LINE_NUMBER)?,
+            check_field_width("line_number", u64::from(self.line_number), W_LINE_NUMBER)?,
             W_LINE_NUMBER,
         )?;
         w.write_bits(
-            check(
+            check_field_width(
                 "horizontal_offset",
-                self.horizontal_offset,
+                u64::from(self.horizontal_offset),
                 W_HORIZONTAL_OFFSET,
             )?,
             W_HORIZONTAL_OFFSET,
         )?;
-        w.write_bits(check("DID", self.did, W_DID)?, W_DID)?;
-        w.write_bits(check("SDID", self.sdid, W_SDID)?, W_SDID)?;
-        w.write_bits(
-            check("data_count", self.data_count, W_DATA_COUNT)?,
-            W_DATA_COUNT,
-        )?;
-        // §4.2.1: loop runs exactly `data_count & 0xFF` times; coherence
-        // validated above so user_data_words.len() == need here.
-        for udw in &self.user_data_words {
-            w.write_bits(
-                check("user_data_word", *udw, W_USER_DATA_WORD)?,
-                W_USER_DATA_WORD,
-            )?;
-        }
-        w.write_bits(
-            check("checksum_word", self.checksum, W_CHECKSUM)?,
-            W_CHECKSUM,
-        )?;
+        // DID/SDID/data_count/user_data_words/checksum (§4.2.1) — shared with
+        // the RTP transport, see `crate::anc_content`.
+        self.as_content().write_into(w)?;
         // Pad to byte boundary with '1' bits (note: '1', not '0' — §4.2).
         while !w.is_byte_aligned() {
             w.write_bits(1, 1)?;
@@ -199,15 +179,13 @@ impl AncPacket {
         let c_not_y_channel_flag = r.read_bool()?;
         let line_number = r.read_bits(W_LINE_NUMBER)? as u16;
         let horizontal_offset = r.read_bits(W_HORIZONTAL_OFFSET)? as u16;
-        let did = r.read_bits(W_DID)? as u16;
-        let sdid = r.read_bits(W_SDID)? as u16;
-        let data_count = r.read_bits(W_DATA_COUNT)? as u16;
-        let n = usize::from(data_count & 0xFF);
-        let mut user_data_words = Vec::with_capacity(n);
-        for _ in 0..n {
-            user_data_words.push(r.read_bits(W_USER_DATA_WORD)? as u16);
-        }
-        let checksum = r.read_bits(W_CHECKSUM)? as u16;
+        let AncContent {
+            did,
+            sdid,
+            data_count,
+            user_data_words,
+            checksum,
+        } = AncContent::read_from(r)?;
         // Consume the '1' padding up to the byte boundary.
         r.align_to_byte();
         Ok(Self {
