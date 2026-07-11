@@ -128,3 +128,46 @@ origin)** as the product; 3–8 are features/verticals on the same core; 9–13 
 new-crate expansions into the professional-broadcast-plant domain, freshly
 unblocked by SMPTE's catalog going free. All flow from the one architectural
 bet: parse the wrappers, leave the bitstream opaque.
+
+## Priority (value-for-effort, 2026-07-12)
+
+All items now tracked as issues (#662-#673 below; #564/#614 are pre-existing
+engineering issues, not from this list). Ranked by value delivered per unit of
+new engineering — not by strategic importance alone, since the flagship item
+(multimux) genuinely needs other work to mature first.
+
+**Tier 0 — blocked, not an effort question.** #564 (CENC/CBCS) needs an
+owner spec-sourcing decision (buy ISO/IEC 23001-7 vs. GPAC/Bento4-as-
+ground-truth) before it can enter the effort ladder at all.
+
+**Tier 1 — cheap, do now.**
+- #614 — DASH golden-gate CI flake (mechanical, clears noise).
+- #670 — ST 337 AES3 wrapper (~15pp, extends shipped AC-3/E-AC-3 typing).
+- #671 — ST 12-1 LTC timecode (~20pp, pairs with st291's ANC work).
+- #662 — Browser analyzer (WASM). A live WASM demo already exists for this
+  workspace, so this is mostly UI/wiring on parsers that already ship
+  (dvb-si/mpeg-ts/dvb-conformance/transmux/cc-data), not new spec work —
+  best ROI of any product item.
+
+**Tier 2 — solid value, more real work.**
+- #665 — Compliance probe (media-doctor/dvb-conformance/streaming-demux
+  exist; needs the always-on watch loop + Prometheus exporter).
+- #666 — Captions-as-a-service (cc-data/dvb-subtitle/timed-metadata WebVTT
+  shipped; needs the service wrapper).
+- #673 — RDD 6/29 Dolby E/Atmos metadata (niche, extends shipped Dolby
+  typing).
+- #668 — ML demux front-end (thin wrapper + packaging; value depends on
+  distribution more than engineering).
+
+**Tier 3 — bigger commitment.**
+- #672 — ST 377-1 MXF (biggest SMPTE lift, ~130pp, but opens a genuinely
+  new domain: file-based interchange).
+- #664 — SSAI ad-stitcher (real ad-tech value, more net-new splice/manifest
+  logic than the Tier 2 verticals).
+
+**Tier 4 — big bets, blocked on prerequisites maturing.**
+- #667 — Embedded ingest gateway, #669 — on-camera LL-HLS origin (both need
+  real hardware access + a new no_std HTTP server).
+- #663 — multimux, the actual commercial centerpiece — needs
+  `srt-runtime`/`rtsp-runtime` production-mature first. North star, not
+  next.
