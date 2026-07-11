@@ -41,6 +41,8 @@
 //! Build an ANC PES packet from typed fields and round-trip it:
 //!
 //! ```
+//! # #[cfg(feature = "ts")]
+//! # fn main() {
 //! use st291::{AncDataPacket, AncPacket};
 //!
 //! let pkt = AncDataPacket {
@@ -66,6 +68,9 @@
 //!     b
 //! };
 //! assert_eq!(AncDataPacket::parse(&bytes).unwrap(), pkt);
+//! # }
+//! # #[cfg(not(feature = "ts"))]
+//! # fn main() {}
 //! ```
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
