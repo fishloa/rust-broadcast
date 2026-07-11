@@ -9,8 +9,16 @@
 # Analyse with every feature on — matches the project's default build & test
 # (CLAUDE.md: everything is --all-features by default; it must also build
 # --no-default-features, checked in CI).
+#
+# targetDir = true puts rust-analyzer's own background `cargo check` in
+# target/rust-analyzer/ instead of the shared target/ — otherwise its
+# check-on-save and a manual `cargo build`/`test` fight over the same
+# target-dir lock (the exact "local cargo hangs" symptom this project has
+# hit before: two cargo invocations serialize on one target dir, and one of
+# them looks hung).
 [cargo]
 features = "all"
+targetDir = true
 
 # Mirror CI's gate so the editor flags exactly what CI will: clippy, all targets.
 [check]
