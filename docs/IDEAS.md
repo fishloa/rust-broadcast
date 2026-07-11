@@ -81,7 +81,7 @@ repo: parse the wrapper/protocol, never the bitstream. (Check each PDF's own
 licence/redistribution terms before vendoring into `specs/` — the catalog page
 itself doesn't state one.)
 
-9. **ST 2110-40 — ancillary data over RTP.** The direct RTP sibling of the
+9. **[SHIPPED — st291 0.2.0, #648] ST 2110-40 — ancillary data over RTP.** The direct RTP sibling of the
    shipped `smpte2038` (ANC-in-TS): same ST 291-1 ANC packets, different
    transport. Built on free IETF **RFC 8331** ("RTP Payload for SMPTE ST 291-1
    Ancillary Data"), which alone is likely sufficient — there's even an
