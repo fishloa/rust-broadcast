@@ -20,17 +20,25 @@ as it is added.
   - **`AncDataPacket`** — the ANC data PES packet (`stream_id == 0xBD`, PTS,
     `PES_header_data_length == 0x05`) carrying a list of bit-packed
     `AncPacket` records followed by `0xFF` stuffing (§4.2, Table 2).
-- A future `rtp` transport (ST 2110-40 / RFC 8331) will carry the same
-  `AncPacket` content over RTP; see issue #648.
+- **`rtp`** — RFC 8331 / ST 2110-40 carriage of ANC data packets over RTP
+  (issue #648). `AncRtpPayload` is the §2.1 payload (`Extended Sequence
+  Number`/`Length`/`ANC_Count`/`F`/`reserved` + a list of `RtpAncPacket`s),
+  riding on an `rtp_packet::RtpPacket`'s payload (the RTP fixed header, RFC
+  3550, is the `rtp-packet` crate's responsibility). `Length`/`ANC_Count` are
+  always recomputed on serialize and cross-validated on parse; the `F` field
+  is a `#[non_exhaustive]` `FieldSense` enum whose `Invalid` (`0b01`) variant
+  parses successfully rather than being rejected.
 
 The per-ANC-packet `DID`/`SDID`/`data_count`/`user_data_word`/`checksum_word`
-fields are a contiguous **MSB-first 10-bit bit stream**. Per ST 2038 §4.2.1
-the `user_data_word` loop counter uses only the **low 8 bits** of
+content fields are a contiguous **MSB-first 10-bit bit stream**, identical
+across both transports (the always-compiled `AncContent` type). Per §4.2.1/
+§2.1 the `user_data_word` loop counter uses only the **low 8 bits** of
 `data_count`; the full 10-bit values are stored verbatim. ST 291-1
-parity/checksum is **not** validated here (ST 2038 defers it to ST 291-1,
-which is not vendored).
+parity/checksum is **not** validated here (deferred to ST 291-1, which is
+not vendored).
 
-`#![no_std]` + `alloc`; depends only on `broadcast-common`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common` (plus
+`rtp-packet`, optionally, for the `rtp` feature).
 
 ## Quick start
 
@@ -64,6 +72,8 @@ assert_eq!(AncDataPacket::parse(&bytes).unwrap(), pkt);
 ```sh
 cargo run -p st291 --example build_anc
 cargo run -p st291 --example parse_anc
+cargo run -p st291 --example build_anc_rtp --features rtp
+cargo run -p st291 --example parse_anc_rtp --features rtp
 ```
 
 ## Features
@@ -72,6 +82,7 @@ cargo run -p st291 --example parse_anc
 |---------|---------|-------------|
 | `std`   | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
 | `ts`    | yes     | SMPTE ST 2038:2021 MPEG-2 TS transport (`AncDataDescriptor` + `AncDataPacket`). |
+| `rtp`   | no      | RFC 8331 / ST 2110-40 RTP transport (`AncRtpPayload` + `RtpAncPacket`). |
 | `serde` | no      | `serde::Serialize` derives on public types. |
 
 ## Minimum Supported Rust Version

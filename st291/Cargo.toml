@@ -1,6 +1,6 @@
 [package]
 name    = "st291"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage."
 license      = "MIT OR Apache-2.0"
