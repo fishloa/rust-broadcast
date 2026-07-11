@@ -123,12 +123,14 @@ impl FieldSense {
     }
 
     fn from_bits(bits: u8) -> Self {
+        // `bits & F_MASK` (F_MASK == 0b11) is always in 0..=3, so 0b11 is the
+        // only remaining case here — matched via `_` to avoid a panicking
+        // catch-all.
         match bits & F_MASK {
             0b00 => Self::ProgressiveOrUnspecified,
             0b01 => Self::Invalid,
             0b10 => Self::Field1,
-            0b11 => Self::Field2,
-            _ => unreachable!("bits & 0b11 is always in 0..=3"),
+            _ => Self::Field2,
         }
     }
 
