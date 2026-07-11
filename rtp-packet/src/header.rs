@@ -240,7 +240,8 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
                     reason: "padding bit set but no bytes remain for the count octet",
                 });
             }
-            let count = *bytes.last().expect("checked non-empty above");
+            // bytes.len() > pos (checked above) implies bytes.len() >= 1.
+            let count = bytes[bytes.len() - 1];
             if count == 0 {
                 return Err(Error::InvalidPadding {
                     count,
@@ -340,7 +341,8 @@ impl Serialize for RtpPacket<'_> {
                     reason: "exceeds the 8-bit padding-count field maximum (255)",
                 });
             }
-            let last = *pad.last().expect("checked non-empty above");
+            // pad.is_empty() was rejected above, so pad.len() >= 1.
+            let last = pad[pad.len() - 1];
             if usize::from(last) != pad.len() {
                 return Err(Error::InvalidPadding {
                     count: last,
