@@ -13,6 +13,48 @@ chain. `st291` restarts version numbering at 0.1.0.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-11
+
+### Added
+- A new `rtp` feature: RFC 8331 / ST 2110-40 carriage of ST 291-1 ANC data
+  packets over RTP (issue #648, epic #645 story 3), sitting alongside the
+  existing `ts` feature.
+  - `AncContent` — the shared ST 291-1 ANC-packet content
+    (`DID`/`SDID`/`Data_Count`/`User_Data_Words`/`Checksum_Word`), factored
+    out of `AncPacket`'s existing bit-packing logic. Always compiled, gated
+    behind neither `ts` nor `rtp`, so enabling one transport never pulls in
+    the other; `AncPacket`'s own public field layout is unchanged.
+  - `RtpAncPacket` — the RFC 8331 §2.1 per-ANC-packet placement
+    (`C`/`Line_Number`/`Horizontal_Offset`/`S`/`StreamNum`) wrapping
+    `AncContent`.
+  - `AncRtpPayload` — the full RFC 8331 §2.1 payload (`Extended Sequence
+    Number`/`Length`/`ANC_Count`/`F`/`reserved` + the `RtpAncPacket` list),
+    implementing `broadcast_common::Parse`/`Serialize`. `Length` and
+    `ANC_Count` are always recomputed on serialize and cross-validated
+    against the wire value on parse (a corrupted `Length` or `ANC_Count` is
+    rejected, never silently trusted); the 22-bit `reserved` field and each
+    per-packet `word_align` padding are validated as zero.
+  - `AncRtpPayload::parse_rtp_packet` — convenience composition riding on
+    `rtp_packet::RtpPacket` (RFC 3550) for a full ANC-over-RTP packet.
+  - `FieldSense` — the `F` field (2 bits): `ProgressiveOrUnspecified`/
+    `Field1`/`Field2`, plus `Invalid` for the spec's `0b01` ("not valid")
+    value — parses successfully rather than being rejected, per this
+    project's decode-completeness principle (RFC 8331's "SHOULD ignore" is a
+    receiver recommendation, not a parser-level rejection). `#[non_exhaustive]`,
+    `name()` + `impl_spec_display!` (issue #204).
+  - `st291/docs/anc_rtp_8331.md` — the RFC 8331 curation for the
+    RTP-transport-specific material (RTP-header semantics, the §2.1 payload
+    header, §3.1/§4 media type + clock rate); reuses the already-audited
+    `anc_packet_291.md` (per-ANC-packet fields + parity/checksum) unchanged.
+  - Two new runnable examples (`build_anc_rtp`, `parse_anc_rtp`) and a
+    fixture (`fixtures/st291/anc_rtp.bin`, built from the existing audited
+    `anc.bin` content bytes wrapped in fresh RFC-8331 framing — see
+    `fixtures/st291/anc_rtp-PROVENANCE.md`).
+  - The libfuzzer fuzz target now also exercises `AncRtpPayload::parse` and
+    `AncRtpPayload::parse_rtp_packet`.
+- `Error::ReservedNotZero` and `Error::LengthMismatch` — new error variants
+  for the `rtp` feature's payload-header/word-align validation.
+
 ## [0.1.0] - 2026-07-11
 
 ### Changed

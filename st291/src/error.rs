@@ -1,4 +1,5 @@
-//! Error type for SMPTE ST 2038 ANC-data parsing/serialization.
+//! Error type for ST 291-1 ANC-data parsing/serialization (shared by every
+//! transport: ST 2038 MPEG-2 TS/PES and RFC 8331 RTP).
 
 use broadcast_common::bits::BitError;
 
@@ -67,9 +68,38 @@ pub enum Error {
         /// Expected count: `data_count & 0xFF`.
         need: usize,
     },
+    /// A field required by the spec to be `0` was not — RFC 8331 §2.1
+    /// `reserved` (22 bits) or a per-ANC-packet `word_align` padding region
+    /// (`rtp` feature).
+    #[error("reserved field {what} was not zero: {value:#X}")]
+    ReservedNotZero {
+        /// The field name (e.g. `"reserved (RFC 8331 §2.1)"` or
+        /// `"word_align"`).
+        what: &'static str,
+        /// The nonzero value actually present.
+        value: u64,
+    },
+    /// An RFC 8331 ANC RTP payload's declared `Length` did not match the
+    /// bytes actually consumed while parsing `ANC_Count` ANC packets (`rtp`
+    /// feature) — catches a corrupted `Length` or a corrupted `ANC_Count`
+    /// (either one desyncs the two).
+    #[error("ANC RTP payload Length mismatch: header declares {declared}, computed {computed}")]
+    LengthMismatch {
+        /// The `Length` value read from the wire.
+        declared: usize,
+        /// The number of bytes actually consumed while parsing `ANC_Count`
+        /// ANC packets.
+        computed: usize,
+    },
     /// Underlying bit reader/writer error.
     #[error("bit stream error: {0}")]
     Bits(BitError),
+    /// The RFC 3550 RTP fixed header itself (via `rtp_packet::RtpPacket`) was
+    /// malformed, when composing/decomposing a full ANC-over-RTP packet
+    /// (`rtp` feature).
+    #[cfg(feature = "rtp")]
+    #[error("RTP header error: {0}")]
+    Rtp(rtp_packet::Error),
 }
 
 impl From<BitError> for Error {

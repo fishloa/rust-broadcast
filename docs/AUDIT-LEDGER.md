@@ -44,6 +44,19 @@ Notes:
 
 ---
 
+## Session 2026-07-11 — RFC 8331 ANC-over-RTP transport (issue #648)
+
+| Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
+|---|---|---|---|---|---|---|
+| `st291/docs/anc_rtp_8331.md` | RFC 8331 §2/§2.1/§3.1/§4 | RFC ASCII (`specs/rfc8331_anc_rtp.txt`) | 13 (timestamp progressive/interlaced semantics, marker bit, Extended Sequence Number + RFC 4175 scope note, Length, ANC_Count, F's 4 values incl. 0b01 invalid, reserved, media type, subtype, clock rate, SDP rtpmap example) | ✅ 0 substantive | — | `401dcec1` |
+
+Scope: only the RTP-transport-specific material curated here — the
+per-ANC-packet fields + parity/checksum math were already curated (and
+audited clean, 0 substantive discrepancies) in `anc_packet_291.md` per the
+2026-06-21 session above and are reused unchanged, not re-audited.
+
+---
+
 ## Extensibility / code-quality audits
 
 Distinct from the PDF→md fidelity audits above: these are adversarial **code**

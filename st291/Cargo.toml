@@ -1,8 +1,8 @@
 [package]
 name    = "st291"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
-description = "SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports, starting with ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet)."
+description = "SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["st291", "smpte", "anc", "vanc", "broadcast"]
@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.1", default-features = false, optional = true }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
@@ -32,18 +33,34 @@ required-features = ["ts"]
 name = "parse_anc"
 required-features = ["ts"]
 
+[[example]]
+name = "build_anc_rtp"
+required-features = ["rtp"]
+
+[[example]]
+name = "parse_anc_rtp"
+required-features = ["rtp"]
+
 [[test]]
 name = "fixture_anc"
 required-features = ["ts"]
+
+[[test]]
+name = "fixture_anc_rtp"
+required-features = ["rtp"]
 
 [features]
 default = ["std", "ts"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["broadcast-common/std", "thiserror/std"]
+std = ["broadcast-common/std", "thiserror/std", "rtp-packet?/std"]
 # `ts` gates the ST 2038:2021 MPEG-2 TS transport (anc_data_descriptor + ANC
-# data PES packet) -- the first of the ST 291-1 content's transports. A future
-# `rtp` feature (ST 2110-40 / RFC 8331, issue #648) will sit alongside this one
-# so a consumer can build with only the transport(s) it needs.
+# data PES packet) -- the first of the ST 291-1 content's transports.
 ts = []
+# `rtp` gates the RFC 8331 / ST 2110-40 RTP transport (issue #648): the ANC
+# RTP payload header (Extended Sequence Number/Length/ANC_Count/F/reserved)
+# riding on an `rtp_packet::RtpPacket`'s payload. Sits alongside `ts` so a
+# consumer builds with only the transport(s) it needs -- the shared ANC
+# content core (`AncContent`) is always compiled, gated behind neither.
+rtp = ["dep:rtp-packet"]
 serde = ["dep:serde"]
