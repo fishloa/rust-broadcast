@@ -15,11 +15,14 @@ backlog; promote any to an epic when ready.
    Free viral on-ramp. (skyfire is already partway here.) Crates: dvb-si,
    mpeg-ts, dvb-conformance, transmux, cc-data.
 
-2. **Just-in-time repackaging origin** (the Rust Shaka-Packager / Unified-Origin).
-   SRT/RTSP/TS in → CMAF / HLS / LL-HLS / DASH / LL-DASH / TS-HLS per-request,
-   **no transcode**. One tiny memory-safe binary or a WASM edge-worker replacing
-   a Java/C++ packager. Crates: transmux + srt-runtime + rtsp-runtime +
-   segmenters. The commercial centerpiece.
+2. **"multimux" — just-in-time repackaging origin** (the Rust Shaka-Packager /
+   Unified-Origin). SRT/RTSP/TS in → CMAF / HLS / LL-HLS / DASH / LL-DASH /
+   TS-HLS per-request, **no transcode**. One tiny memory-safe binary or a WASM
+   edge-worker replacing a Java/C++ packager. Crates: transmux + srt-runtime +
+   rtsp-runtime + segmenters. The commercial centerpiece. Naming split:
+   `transmux` stays the library (the demux→IR→mux engine); `multimux` is the
+   product wrapping it — the live per-request HTTP origin server that actually
+   serves traffic.
 
 ## Verticals / features on the same core
 
@@ -66,7 +69,62 @@ backlog; promote any to an epic when ready.
    `rtsp-runtime` + `RtpDepacketizer` instead of the encoder adapter.
    Competes with go2rtc/MediaMTX but pure-Rust, firmware-sized, proper LL-HLS.
 
+## New crates: SMPTE professional media-plant coverage
+
+SMPTE opened its **entire standards catalog free** on 2026-06-17 (Standards, RPs,
+Engineering Guidelines, RDDs — 800+ documents, permanently, at
+`pub.smpte.org/doc/`). Confirmed independently across trade press + SMPTE's own
+site. This unblocks a whole professional-broadcast-plant surface that was
+previously paywalled, on top of the one SMPTE crate already shipped
+(`smpte2038`, ANC data in MPEG-2 TS). Same filter as everything else in this
+repo: parse the wrapper/protocol, never the bitstream. (Check each PDF's own
+licence/redistribution terms before vendoring into `specs/` — the catalog page
+itself doesn't state one.)
+
+9. **ST 2110-40 — ancillary data over RTP.** The direct RTP sibling of the
+   shipped `smpte2038` (ANC-in-TS): same ST 291-1 ANC packets, different
+   transport. Built on free IETF **RFC 8331** ("RTP Payload for SMPTE ST 291-1
+   Ancillary Data"), which alone is likely sufficient — there's even an
+   existing open-source reference impl (`astronautlabs/rfc8331`) to
+   cross-check against. Also the entry point into the wider **ST 2110** family
+   (-10 timing, -20 uncompressed video/RFC 4175, -21 traffic shaping, -22
+   JPEG XS, -30/-31 audio), all free now, the modern SDI-replacement
+   professional-IP media transport. Top pick: smallest, most self-contained,
+   most directly extends existing work.
+
+10. **ST 337 — non-PCM audio in AES3.** Small (~15pp): the Pa/Pb/Pc/Pd
+    preamble + burst-length framing that wraps compressed AC-3/E-AC-3/DTS
+    bursts inside professional AES3 digital audio — wrapper-only, no
+    bitstream decode. Directly extends the AC-3/E-AC-3/DTS codec-config work
+    already shipped (dvb-si/transmux, MPEG-TS carriage) into the SDI/AES3
+    professional-audio domain.
+
+11. **ST 12-1 — Linear Timecode (LTC).** Small (~20pp), self-contained: the
+    80-bit LTC frame + biphase-mark encoding. Pairs with ANC/VITC work
+    (VITC/LTC commonly ride inside ANC packets) and the ST 2110-40 work above.
+    Quick, low-risk addition.
+
+12. **ST 377-1 — MXF core file format.** The strategic bet of this batch:
+    KLV-based Partition/Header/Body/Footer structure + essence-container
+    registry, ~130pp, free, self-contained without needing every operational-
+    pattern sibling (OP-Atom, generic-container/AVC mappings, etc. — those can
+    follow later, opaque-fallback in the spirit of issue #576). The one item
+    here that opens a genuinely **new domain**: professional file-based
+    interchange, vs. every other crate in this repo being live-stream-shaped.
+    Bigger lift (M–L) than the others.
+
+13. **RDD 6 / RDD 29 — Dolby E / Dolby Atmos metadata.** Niche but free,
+    complements the existing Dolby (AC-3/E-AC-3) codec-config typing with the
+    professional-audio-plant metadata layer (loudness/dialnorm/downmix,
+    object-audio metadata) broadcast chains carry constantly over SDI.
+
+Deprioritized: IMF (ST 2067 Composition/Packing List) and ST 2052-1
+(SMPTE-TT/CFF-TT) — both XML-heavy, consistent with how TTML/IMSC got
+deprioritized elsewhere in this project's spec surveys.
+
 ## Through-line
-Ship **#1 (browser analyzer)** as the free on-ramp and **#2 (JIT origin)** as the
-product; 3–8 are features/verticals on the same core. All flow from the one
-architectural bet: parse the wrappers, leave the bitstream opaque.
+Ship **#1 (browser analyzer)** as the free on-ramp and **#2 (multimux, the JIT
+origin)** as the product; 3–8 are features/verticals on the same core; 9–13 are
+new-crate expansions into the professional-broadcast-plant domain, freshly
+unblocked by SMPTE's catalog going free. All flow from the one architectural
+bet: parse the wrappers, leave the bitstream opaque.
