@@ -1562,6 +1562,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtcp-packet"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "rtp-packet"
 version = "0.1.0"
 dependencies = [
@@ -2017,6 +2027,7 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
+ "rtcp-packet",
  "rtp-packet",
  "serde",
  "serde_json",
