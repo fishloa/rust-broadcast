@@ -36,7 +36,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use rtp_packet::RtpPacket;
 
 use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
@@ -47,15 +48,17 @@ use crate::pipeline::CodecConfig;
 // Named constants (no magic numbers — RFC 3550 §5.1 / RFC 6184 / RFC 3640)
 // ---------------------------------------------------------------------------
 
-/// RTP version — always 2 (RFC 3550 §5.1).
-const RTP_VERSION: u8 = 2;
-/// RTP fixed-header length in bytes (no CSRC, no extension).
-const RTP_HEADER_LEN: usize = 12;
-/// Byte 0 of the fixed header: `V=2 P=0 X=0 CC=0` (`0b10_0_0_0000`).
-const RTP_BYTE0_V2: u8 = RTP_VERSION << 6;
-/// Marker-bit mask within byte 1 (`M` — RFC 3550 §5.1).
-const RTP_MARKER_MASK: u8 = 0x80;
-/// Payload-type mask within byte 1 (low 7 bits).
+/// RTP fixed-header length in bytes (no CSRC, no extension) — re-exported
+/// from `rtp_packet` (RFC 3550 §5.1) so every existing `RTP_HEADER_LEN` use
+/// site below keeps working unchanged. The fixed-header codec itself now
+/// lives in the spec-complete `rtp-packet` crate (padding/CSRC/header
+/// extension); transmux only ever emits/expects the simple `P=0 X=0 CC=0`
+/// case, so this migration is internal-only (issue #646).
+const RTP_HEADER_LEN: usize = rtp_packet::FIXED_HEADER_LEN;
+/// Payload-type mask applied before handing a payload type to `rtp_packet`
+/// (RFC 3550 §5.1, low 7 bits) — matches the masking this crate has always
+/// applied here; transmux's dynamic payload types never legitimately exceed
+/// 127, so this is defensive parity with the prior implementation.
 const RTP_PT_MASK: u8 = 0x7F;
 
 /// Default dynamic payload type for the H.264 video stream.
@@ -217,14 +220,26 @@ impl SeqCounter {
 }
 
 /// Write an RTP fixed header into a new packet buffer and return it.
+///
+/// Delegates the wire encoding to [`rtp_packet::RtpPacket`] (RFC 3550 §5.1);
+/// transmux only ever emits the simple `P=0 X=0 CC=0` case (no CSRC list, no
+/// header extension, no padding) — see issue #646.
 fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Vec<u8> {
-    let mut h = Vec::with_capacity(RTP_HEADER_LEN);
-    h.push(RTP_BYTE0_V2);
-    h.push((if marker { RTP_MARKER_MASK } else { 0 }) | (pt & RTP_PT_MASK));
-    h.extend_from_slice(&seq.to_be_bytes());
-    h.extend_from_slice(&timestamp.to_be_bytes());
-    h.extend_from_slice(&ssrc.to_be_bytes());
-    h
+    let pkt = RtpPacket {
+        marker,
+        payload_type: pt & RTP_PT_MASK,
+        sequence_number: seq,
+        timestamp,
+        ssrc,
+        csrc: Vec::new(),
+        extension: None,
+        padding: None,
+        payload: &[],
+    };
+    let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+    pkt.serialize_into(&mut buf)
+        .expect("simple V=2 P=0 X=0 CC=0 header always serializes");
+    buf
 }
 
 impl Package for RtpPacketizer {
@@ -730,7 +745,7 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 
     for pkt in packets {
         let hdr = parse_rtp_header(pkt)?;
-        let payload = &pkt[RTP_HEADER_LEN..];
+        let payload = hdr.payload;
         if payload.is_empty() {
             continue;
         }
@@ -837,8 +852,8 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
 fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     let mut aus = Vec::with_capacity(packets.len());
     for pkt in packets {
-        parse_rtp_header(pkt)?;
-        let payload = &pkt[RTP_HEADER_LEN..];
+        let hdr = parse_rtp_header(pkt)?;
+        let payload = hdr.payload;
         if payload.len() < AAC_AU_HEADERS_LENGTH_LEN {
             return Err(Error::BufferTooShort {
                 need: AAC_AU_HEADERS_LENGTH_LEN,
@@ -884,8 +899,12 @@ fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
+/// Delegates the wire decode to [`rtp_packet::RtpPacket`]; transmux only ever
+/// depacketizes the simple `P=0 X=0 CC=0` case it itself emits, so only
+/// `marker`/`timestamp`/`payload` are read at call sites below (the rest are
+/// carried through for the unit test at the bottom of this file) — see #646.
 #[derive(Debug, Clone, Copy)]
-struct RtpHeader {
+struct RtpHeader<'a> {
     marker: bool,
     #[allow(dead_code)]
     payload_type: u8,
@@ -894,32 +913,58 @@ struct RtpHeader {
     timestamp: u32,
     #[allow(dead_code)]
     ssrc: u32,
+    /// The payload after the fixed header, CSRC list, and header extension
+    /// (if a non-conforming sender added either — `rtp_packet` correctly
+    /// skips them; the hand-rolled decode this replaces always assumed
+    /// neither was present).
+    payload: &'a [u8],
 }
 
-/// Parse and validate the 12-byte RTP fixed header, rejecting bad versions.
-fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader> {
-    if pkt.len() < RTP_HEADER_LEN {
-        return Err(Error::BufferTooShort {
-            need: RTP_HEADER_LEN,
-            have: pkt.len(),
-            what: "RTP fixed header",
-        });
-    }
-    let version = pkt[0] >> 6;
-    if version != RTP_VERSION {
-        return Err(Error::InvalidValue {
-            field: "rtp_version",
-            value: version as u64,
-            reason: "must be 2",
-        });
-    }
+/// Parse and validate the RTP fixed header, rejecting bad versions.
+fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
+    let parsed = RtpPacket::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
-        marker: pkt[1] & RTP_MARKER_MASK != 0,
-        payload_type: pkt[1] & RTP_PT_MASK,
-        sequence: u16::from_be_bytes([pkt[2], pkt[3]]),
-        timestamp: u32::from_be_bytes([pkt[4], pkt[5], pkt[6], pkt[7]]),
-        ssrc: u32::from_be_bytes([pkt[8], pkt[9], pkt[10], pkt[11]]),
+        marker: parsed.marker,
+        payload_type: parsed.payload_type,
+        sequence: parsed.sequence_number,
+        timestamp: parsed.timestamp,
+        ssrc: parsed.ssrc,
+        payload: parsed.payload,
     })
+}
+
+/// Map an [`rtp_packet::Error`] onto this crate's [`Error`].
+fn map_rtp_error(e: rtp_packet::Error) -> Error {
+    match e {
+        rtp_packet::Error::BufferTooShort { need, have, what } => {
+            Error::BufferTooShort { need, have, what }
+        }
+        rtp_packet::Error::InvalidVersion(v) => Error::InvalidValue {
+            field: "rtp_version",
+            value: u64::from(v),
+            reason: "must be 2",
+        },
+        rtp_packet::Error::InvalidValue {
+            field,
+            value,
+            reason,
+        } => Error::InvalidValue {
+            field,
+            value,
+            reason,
+        },
+        rtp_packet::Error::InvalidPadding { count, reason } => Error::InvalidValue {
+            field: "rtp_padding",
+            value: u64::from(count),
+            reason,
+        },
+        rtp_packet::Error::ExtensionNotWordAligned { data_len } => Error::InvalidValue {
+            field: "rtp_extension_length",
+            value: data_len as u64,
+            reason: "extension data length is not a multiple of 4 bytes",
+        },
+        _ => Error::InvalidInput("invalid RTP header"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -988,7 +1033,7 @@ pub fn depacketize_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
             }
         }
         cur_ts = Some(hdr.timestamp);
-        cur.extend_from_slice(&pkt[RTP_HEADER_LEN..]);
+        cur.extend_from_slice(hdr.payload);
         if hdr.marker {
             units.push(core::mem::take(&mut cur));
             cur_ts = None;

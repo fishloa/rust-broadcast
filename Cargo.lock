@@ -1562,6 +1562,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtp-packet"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "rtsp-runtime"
 version = "0.2.0"
 dependencies = [
@@ -2006,6 +2016,7 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
+ "rtp-packet",
  "serde",
  "serde_json",
  "thiserror",
