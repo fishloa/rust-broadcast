@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.1", default-features = false, optional = true }
+rtp-packet = { path = "../rtp-packet", version = "0.2", default-features = false, optional = true }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

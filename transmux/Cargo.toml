@@ -18,7 +18,7 @@ mp4-emsg   = { path = "../mp4-emsg",  version = "0.2", default-features = false 
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.2", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.2", default-features = false }
-rtp-packet = { path = "../rtp-packet", version = "0.1", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.2", default-features = false }
 rtcp-packet = { path = "../rtcp-packet", version = "0.1", default-features = false }
 aes        = { version = "0.8", default-features = false, optional = true }
 ctr        = { version = "0.9", default-features = false, optional = true }

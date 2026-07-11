@@ -24,6 +24,12 @@ work next), instead of each crate re-implementing its own header codec.
 See `docs/rtp-header.md` for the curated RFC 3550 §5.1/§5.3.1 transcription
 this crate implements field-for-field.
 
+The optional `rfc8285` feature adds `rfc8285::parse_extensions`, decoding
+[RFC 8285](https://www.rfc-editor.org/rfc/rfc8285.txt)'s one-byte/two-byte
+multiplexed extension elements out of a `HeaderExtension`'s opaque `data`
+(the profile-specific interpretation RFC 3550 itself leaves to the
+profile). See `docs/rfc8285_header_ext.md` for the curated transcription.
+
 `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
@@ -53,14 +59,16 @@ assert_eq!(RtpPacket::parse(&bytes).unwrap(), pkt);
 ```sh
 cargo run -p rtp-packet --example build_packet
 cargo run -p rtp-packet --example parse_packet
+cargo run -p rtp-packet --example rfc8285_extensions --features rfc8285
 ```
 
 ## Features
 
-| Feature | Default | Description |
-|---------|---------|-------------|
-| `std`   | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
-| `serde` | no      | `serde::Serialize` derives on public types. |
+| Feature   | Default | Description |
+|-----------|---------|-------------|
+| `std`     | yes     | Link the standard library. Without it the crate is `#![no_std]` + `alloc`. |
+| `serde`   | no      | `serde::Serialize` derives on public types. |
+| `rfc8285` | no      | RFC 8285 one-byte/two-byte multiplexed header-extension element decoding (`rfc8285` module). |
 
 ## Minimum Supported Rust Version
 

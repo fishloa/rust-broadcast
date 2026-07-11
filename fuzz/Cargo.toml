@@ -32,6 +32,7 @@ dvb-ci       = { path = "../dvb-ci" }
 scte35-splice = { path = "../scte35-splice" }
 st291        = { path = "../st291", features = ["rtp"] }
 rtcp-packet  = { path = "../rtcp-packet" }
+rtp-packet   = { path = "../rtp-packet", features = ["rfc8285"] }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -139,5 +140,11 @@ doc  = false
 [[bin]]
 name = "rtcp_packet"
 path = "fuzz_targets/rtcp_packet.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "rtp_packet"
+path = "fuzz_targets/rtp_packet.rs"
 test = false
 doc  = false
