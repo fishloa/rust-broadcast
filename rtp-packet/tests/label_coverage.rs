@@ -11,18 +11,24 @@
 //! check enforces the whole convention and catches the one thing the compiler
 //! cannot: a brand-new `pub enum` that nobody labelled.
 //!
-//! `rtp-packet` currently defines no spec/field enums (the wire format is all
-//! struct fields — see `RtpPacket`/`HeaderExtension`), so this test passes
-//! trivially today; it exists so the drift-guard is already wired up the
-//! moment one is added.
+//! `rtp-packet`'s RFC 3550 core defines no spec/field enums (the wire format
+//! is all struct fields — see `RtpPacket`/`HeaderExtension`). The optional
+//! `rfc8285` feature adds one `pub enum`, `ExtensionElements` — a
+//! data-carrying `profile_id` dispatch wrapper (one-byte vs. two-byte form),
+//! in the same spirit as this workspace's `AnyTableSection`/`AnyDescriptor`
+//! dispatch enums, not a spec/field label — so it is on the SKIP list below.
+//! This test scans `src/` as plain text, so it covers `rfc8285.rs` even when
+//! the feature is off.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
 /// Enums that are intentionally **not** spec/field labels: the structured
-/// error type has no spec label, and any future dispatch wrappers belong here.
-const SKIP: &[&str] = &["Error"];
+/// error type has no spec label, and dispatch wrappers (like the `rfc8285`
+/// feature's `ExtensionElements`, which dispatches on `profile_id` between
+/// the RFC 8285 one-byte/two-byte forms) belong here.
+const SKIP: &[&str] = &["Error", "ExtensionElements"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

@@ -22,6 +22,13 @@
 //! Depends only on `broadcast-common`. `#![no_std]` (+ `alloc`) when the
 //! `std` feature is disabled.
 //!
+//! The optional `rfc8285` feature adds [`rfc8285`], a decoder for [RFC
+//! 8285](https://www.rfc-editor.org/rfc/rfc8285.txt)'s one-byte/two-byte
+//! multiplexed extension elements that a profile may pack into
+//! [`HeaderExtension::data`] — see `rtp-packet/docs/rfc8285_header_ext.md`
+//! for the curated transcription. It is additive and off by default: most
+//! RTP consumers only need the RFC 3550 fixed header.
+//!
 //! # Examples
 //!
 //! Build a simple packet (no padding/CSRC/extension) and round-trip it:
@@ -56,12 +63,16 @@
 #![doc = include_str!("../examples/build_packet.rs")]
 #![doc = "```\n\n### `parse_packet`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/parse_packet.rs")]
+#![doc = "```\n\n### `rfc8285_extensions` (requires `--features rfc8285`)\n\n```rust,ignore"]
+#![doc = include_str!("../examples/rfc8285_extensions.rs")]
 #![doc = "```"]
 
 extern crate alloc;
 
 mod error;
 mod header;
+#[cfg(feature = "rfc8285")]
+pub mod rfc8285;
 
 pub use error::{Error, Result};
 pub use header::{

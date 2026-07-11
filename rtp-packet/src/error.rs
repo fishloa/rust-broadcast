@@ -57,4 +57,37 @@ pub enum Error {
         /// The offending `data.len()`.
         data_len: usize,
     },
+    /// (`rfc8285` feature) A [`HeaderExtension`](crate::HeaderExtension)'s
+    /// `profile_id` matched neither the RFC 8285 one-byte form (`0xBEDE`) nor
+    /// the two-byte form (`profile_id & 0xFFF0 == 0x1000`). This is **not** a
+    /// malformed-packet error: RFC 8285 interpretation of the RFC 3550
+    /// §5.3.1 opaque extension `data` is profile-scoped and opt-in, so an
+    /// extension with some other `profile_id` is simply not one this crate's
+    /// `rfc8285` decoder understands.
+    #[cfg(feature = "rfc8285")]
+    #[error(
+        "profile_id {profile_id:#06x} matches neither the RFC 8285 one-byte \
+         (0xBEDE) nor two-byte (0x1000-0x100F) header-extension form"
+    )]
+    NotRfc8285Extension {
+        /// The offending `HeaderExtension::profile_id`.
+        profile_id: u16,
+    },
+    /// (`rfc8285` feature) An RFC 8285 one-byte-form local identifier was
+    /// outside the valid `1..=14` range (§4.2: 0 is reserved for padding, 15
+    /// is reserved for a future extension / used as the "stop" marker).
+    #[cfg(feature = "rfc8285")]
+    #[error(
+        "invalid RFC 8285 one-byte extension element id {0} (valid range is 1..=14; \
+         0 is reserved for padding, 15 is reserved)"
+    )]
+    InvalidOneByteExtensionId(u8),
+    /// (`rfc8285` feature) An RFC 8285 two-byte-form local identifier was 0
+    /// (§4.1.2 / §5: "0 is reserved for padding in both forms").
+    #[cfg(feature = "rfc8285")]
+    #[error(
+        "invalid RFC 8285 two-byte extension element id 0 (reserved for padding \
+         in both forms, per RFC 8285 §4.1.2/§5)"
+    )]
+    InvalidTwoByteExtensionId,
 }
