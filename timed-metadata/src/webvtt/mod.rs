@@ -14,6 +14,13 @@
 //!   turn a decoded CEA-608 CC1 channel / CEA-708 service into a [`Cue`]
 //!   sequence by feeding one access unit's `cc_data()` triplets at a time,
 //!   tagged with that access unit's 33-bit PTS.
+//! - [`TeletextCueExtractor`] (feature `teletext`): turns an EBU Teletext
+//!   (ETSI EN 300 706) subtitle page into a [`Cue`] sequence by feeding one
+//!   access unit's [`dvb_vbi::TeletextDataField`]s at a time. Unlike the CEA
+//!   extractors, the protocol decode (Hamming-8/4 FEC, character sets, page
+//!   composition) is NOT owned by the carriage crate (`dvb-vbi` is
+//!   deliberately carriage-only — see its module docs) — it lives in
+//!   [`teletext`] instead. See that module's docs for the full design.
 //!
 //! # Cue-boundary detection (the key design decision)
 //!
@@ -52,9 +59,13 @@
 //! - **Roll-up granularity**: see cue-boundary detection above.
 
 mod cue;
+#[cfg(feature = "teletext")]
+pub mod teletext;
 mod writer;
 
 pub use cue::Cue;
+#[cfg(feature = "teletext")]
+pub use cue::TeletextCueExtractor;
 #[cfg(feature = "cc-data")]
 pub use cue::{Cea608CueExtractor, Cea708CueExtractor};
 pub use writer::{cue_block, escape_payload, format_timestamp, write_document, write_segment};

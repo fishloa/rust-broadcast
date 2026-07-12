@@ -19,6 +19,7 @@ scte35-splice = { path = "../scte35-splice", version = "1", default-features = f
 mp4-emsg      = { path = "../mp4-emsg",      version = "0.2", default-features = false }
 broadcast-common    = { path = "../broadcast-common",    version = "8", default-features = false }
 cc-data       = { path = "../cc-data",       version = "0.3", default-features = false, optional = true }
+dvb-vbi       = { path = "../dvb-vbi",       version = "0.2", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }
 chrono        = { version = "0.4", default-features = false, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
@@ -33,11 +34,18 @@ transmux = { path = "../transmux", version = "0.15", default-features = false }
 
 [features]
 default = ["std", "serde", "chrono"]
-std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std"]
-serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde"]
+std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std"]
+serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde"]
 chrono  = ["dep:chrono", "chrono/alloc"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /
 # `Cea708CueExtractor`), layered on `cc-data`'s decode-only 608/708 model.
 # Not in `default`: pulls in the whole caption-decode crate, which most
 # SCTE-35/emsg/DATERANGE-only consumers of this crate don't need.
 cc-data = ["dep:cc-data", "cc-data/decode"]
+# EBU Teletext (ETSI EN 300 706) subtitle page decode -> WebVTT cue extraction
+# (`webvtt::TeletextCueExtractor`), layered on `dvb-vbi`'s carriage-only
+# `TeletextDataField` (EN 301 775 §4.5). `dvb-vbi` itself does not decode
+# EN 300 706 (out of scope by its own docs); the Hamming-8/4 / odd-parity FEC
+# decode, national character subset table, and page composition live here.
+# Not in `default`: most SCTE-35/emsg/DATERANGE-only consumers don't need it.
+teletext = ["dep:dvb-vbi"]

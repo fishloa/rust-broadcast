@@ -5,6 +5,34 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 ## [Unreleased]
 
 ### Added
+- **EBU Teletext (ETSI EN 300 706) subtitle decode -> WebVTT** (feature
+  `teletext`, off by default; issue #666): `webvtt::TeletextCueExtractor`
+  turns an EN 300 706 Level-1 subtitle page into a `Cue` sequence, fed
+  `dvb_vbi::TeletextDataField`s (EN 301 775 §4.5, carriage-only — `dvb-vbi`
+  itself does not decode EN 300 706, by its own documented scope). The new
+  `webvtt::teletext` module owns that decode entirely: Hamming-8/4 FEC
+  (`decode_hamming_8_4`/`encode_hamming_8_4`, §8.2 — single-bit errors
+  corrected, double-bit errors rejected, implemented as a brute-force
+  nearest-codeword search proven equivalent to the spec's "four parity
+  tests" via the code's minimum distance of 4), odd-parity FEC
+  (`decode_odd_parity`/`encode_odd_parity`, §8.1 — detect-only, corrupted
+  bytes render as `'\u{FFFD}'`), the `NationalOption` C12/C13/C14 selector
+  (all 8 values decoded/labelled; only `English`'s Table 36 character
+  substitutions are implemented — a documented gap for the other 7), page
+  header decode (`PageHeader`, Table 2's full eleven control bits + page
+  number/sub-code), and basic Level-1 page composition (header + rows
+  1-24, erase-page/inhibit-display handling). See
+  `timed-metadata/docs/teletext-subtitles.md` for the full spec citations
+  (including the Table 35/36 Latin G0 glyph charts, which render as bitmap
+  images in the PDF and were read visually, not machine-extracted) and the
+  architectural rationale for placing this decode in `timed-metadata`
+  rather than `dvb-vbi`. Validated against a synthetic-but-spec-real fixture
+  (`fixtures/teletext/teletext_subtitle_synthetic.txt` — no real DVB
+  VBI-teletext capture or spec worked example was available; the fixture is
+  constructed via this crate's own verified Hamming/parity encoders) with
+  mutation-bite tests proving both FEC paths (Hamming correction, parity
+  detection) actually run.
+
 - **SEI-carried caption input wired to `webvtt`** (#599, follow-up to #568):
   the `Cea608CueExtractor`/`Cea708CueExtractor` API is unchanged — it already
   consumed carriage-agnostic `cc_data::CcTriplet` slices — but this release

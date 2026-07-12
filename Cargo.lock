@@ -1934,6 +1934,7 @@ dependencies = [
  "broadcast-common",
  "cc-data",
  "chrono",
+ "dvb-vbi",
  "mp4-emsg",
  "scte35-splice",
  "serde",
