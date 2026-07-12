@@ -4,7 +4,7 @@
 //! design and the documented losses.
 use crate::event::MediaTime;
 use alloc::string::String;
-#[cfg(feature = "cc-data")]
+#[cfg(any(feature = "cc-data", feature = "teletext"))]
 use alloc::vec::Vec;
 
 /// A single extracted caption cue: display text plus its media-timeline span.
@@ -26,17 +26,17 @@ pub struct Cue {
     pub text: String,
 }
 
-/// Shared diff-based boundary tracker used by both the 608 and 708
+/// Shared diff-based boundary tracker used by the 608, 708, and Teletext
 /// extractors: unrolls the 33-bit PTS and turns "displayed text changed"
 /// transitions into completed [`Cue`]s.
-#[cfg(feature = "cc-data")]
+#[cfg(any(feature = "cc-data", feature = "teletext"))]
 struct DiffState {
     last_pts: Option<u64>,
     epoch: u64,
     open: Option<(u64, String)>,
 }
 
-#[cfg(feature = "cc-data")]
+#[cfg(any(feature = "cc-data", feature = "teletext"))]
 impl DiffState {
     fn new() -> Self {
         DiffState {
@@ -218,6 +218,132 @@ impl Cea708CueExtractor {
         self.decoder
             .push_triplets(triplets.iter().filter(|t| t.cc_type.is_cea708()));
         let text = self.decoder.service_text(self.service_number);
+        self.state.observe(ticks, text, &mut self.cues);
+    }
+
+    /// Close any still-open cue at end of stream, at `end_pts33`.
+    pub fn finalize(&mut self, end_pts33: u64) {
+        let ticks = self.state.unroll(end_pts33);
+        self.state.finalize(ticks, &mut self.cues);
+    }
+
+    /// The cues extracted so far, in order.
+    #[must_use]
+    pub fn cues(&self) -> &[Cue] {
+        &self.cues
+    }
+
+    /// Consume the extractor, returning the extracted cues.
+    #[must_use]
+    pub fn into_cues(self) -> Vec<Cue> {
+        self.cues
+    }
+}
+
+/// Extracts [`Cue`]s from an EBU Teletext (ETSI EN 300 706) subtitle page,
+/// feature `teletext`, layered on `dvb-vbi`'s carriage-only
+/// [`dvb_vbi::TeletextDataField`] (ETSI EN 301 775 §4.5).
+///
+/// `dvb-vbi` deliberately does not decode EN 300 706 (a large, separate spec
+/// covering FEC, character sets, and page composition — not carriage; see its
+/// own module docs). This crate owns that decode
+/// (`crate::webvtt::teletext`): Hamming-8/4 + odd-parity FEC, the English
+/// Latin G0 national option table, and basic Level-1 page composition
+/// (header + rows 1-24). See `crate::webvtt::teletext` module docs for the
+/// full list of documented losses (no enhancement packets, no styling, no
+/// sub-code-based multi-page selection, only the English national option's
+/// character substitutions).
+///
+/// Tracks a single `(magazine, page)` — the caller supplies these (typically
+/// known from the carrying service's SI, e.g. a DVB VBI/teletext descriptor's
+/// page association). Feed every [`dvb_vbi::TeletextDataField`] carried by
+/// one access unit at a time via [`push_frame`], tagged with that access
+/// unit's raw (non-unrolled) 33-bit PTS; call [`finalize`] at end of stream.
+///
+/// Cue boundaries are derived the same way as the CEA extractors (see
+/// `crate::webvtt` module docs): a diff on the currently-displayed text
+/// (rows 1-24, non-empty, joined with `\n`) after each fed frame. A page's
+/// C4 (erase page) control bit clears the row buffer, which — combined with
+/// the diff — naturally produces a cue boundary when a subtitle disappears.
+///
+/// [`push_frame`]: TeletextCueExtractor::push_frame
+/// [`finalize`]: TeletextCueExtractor::finalize
+///
+/// ```
+/// use timed_metadata::webvtt::TeletextCueExtractor;
+/// use dvb_vbi::{TeletextDataField, LineHeader, FRAMING_CODE_EBU};
+///
+/// // Build one page-header packet (magazine 8, page 0x88, subtitle+erase
+/// // set) and one row-1 packet ("HI"), using the crate's own verified
+/// // Hamming-8/4 / odd-parity encoders (see `webvtt::teletext` tests).
+/// # fn hamming(n: u8) -> u8 {
+/// #     let (d1,d2,d3,d4) = (n&1,(n>>1)&1,(n>>2)&1,(n>>3)&1);
+/// #     let p1=1^d1^d3^d4; let p2=1^d1^d2^d4; let p3=1^d1^d2^d3;
+/// #     let p4=1^p1^d1^p2^d2^p3^d3^d4;
+/// #     p1|(d1<<1)|(p2<<2)|(d2<<3)|(p3<<4)|(d3<<5)|(p4<<6)|(d4<<7)
+/// # }
+/// # fn parity(d7: u8) -> u8 { let d=d7&0x7F; if d.count_ones()%2==0 {d|0x80} else {d} }
+/// let mut header = [0u8; 42];
+/// header[0] = hamming(0); // magazine field 0 -> magazine 8, row 0
+/// header[1] = hamming(0);
+/// header[2] = hamming(8); // page units
+/// header[3] = hamming(8); // page tens -> page 0x88
+/// header[5] = hamming(0b1000); // C4 erase_page
+/// header[7] = hamming(0b1000); // C6 subtitle
+/// for b in header.iter_mut().skip(10) { *b = parity(0x20); }
+///
+/// let mut row1 = [0u8; 42];
+/// row1[0] = hamming(0 | (1 << 3)); // magazine 8, Y bit0 = 1 (row 1)
+/// row1[1] = hamming(0);            // Y bits 1..4 = 0
+/// row1[2] = parity(b'H');
+/// row1[3] = parity(b'I');
+/// for b in row1.iter_mut().skip(4) { *b = parity(0x20); }
+///
+/// let field = |block| TeletextDataField {
+///     header: LineHeader::new(true, 0),
+///     framing_code: FRAMING_CODE_EBU,
+///     txt_data_block: block,
+/// };
+///
+/// let mut ex = TeletextCueExtractor::new(8, 0x88);
+/// ex.push_frame(0, &[field(header)]);
+/// ex.push_frame(1, &[field(row1)]);
+/// ex.finalize(2);
+/// assert_eq!(ex.cues().len(), 1);
+/// assert_eq!(ex.cues()[0].text, "HI");
+/// ```
+#[cfg(feature = "teletext")]
+#[cfg_attr(docsrs, doc(cfg(feature = "teletext")))]
+pub struct TeletextCueExtractor {
+    assembler: crate::webvtt::teletext::PageAssembler,
+    state: DiffState,
+    cues: Vec<Cue>,
+}
+
+#[cfg(feature = "teletext")]
+#[cfg_attr(docsrs, doc(cfg(feature = "teletext")))]
+impl TeletextCueExtractor {
+    /// A new extractor tracking the given `(magazine, page)` (magazine
+    /// `1..=8`; page `Pt << 4 | Pu`, e.g. `0x88` for the common "page 888"
+    /// subtitle convention).
+    #[must_use]
+    pub fn new(magazine: u8, page: u8) -> Self {
+        TeletextCueExtractor {
+            assembler: crate::webvtt::teletext::PageAssembler::new(magazine, page),
+            state: DiffState::new(),
+            cues: Vec::new(),
+        }
+    }
+
+    /// Feed every [`dvb_vbi::TeletextDataField`] carried by one access unit,
+    /// tagged with that access unit's raw 33-bit PTS. Fields for other
+    /// magazines/pages are ignored.
+    pub fn push_frame(&mut self, pts33: u64, fields: &[dvb_vbi::TeletextDataField]) {
+        let ticks = self.state.unroll(pts33);
+        for field in fields {
+            self.assembler.push(field);
+        }
+        let text = self.assembler.display_text();
         self.state.observe(ticks, text, &mut self.cues);
     }
 

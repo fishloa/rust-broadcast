@@ -109,14 +109,28 @@ by design (no cue placement/styling in this first pass) — see the module
 docs for the full list of documented losses. Requires the `cc-data` feature
 (off by default).
 
+## EBU Teletext → WebVTT
+
+[`webvtt::TeletextCueExtractor`] converts an EBU Teletext (ETSI EN 300 706)
+Level-1 subtitle page to WebVTT cues: feed one access unit's
+[`dvb_vbi::TeletextDataField`]s at a time, tagged with a `(magazine, page)`.
+`dvb-vbi` carries the packet framing only (EN 301 775 §4.5); the
+[`webvtt::teletext`] module owns the EN 300 706 decode itself — Hamming-8/4 +
+odd-parity FEC, the English national-option Latin G0 character set, and
+basic page composition. See the module docs and
+`timed-metadata/docs/teletext-subtitles.md` for full spec citations and
+documented losses (no enhancement packets, no styling, English-only national
+option). Requires the `teletext` feature (off by default).
+
 ## Features
 
-| Feature   | Default | Description |
-|-----------|---------|-------------|
-| `std`     | yes     | Enable `std` in all dependencies. |
-| `serde`   | yes     | `Serialize`/`Deserialize` for all public types. |
-| `chrono`  | yes     | `chrono` dependency (future wall-clock helpers). |
-| `cc-data` | no      | CEA-608/708 → WebVTT cue extraction ([`webvtt`]). |
+| Feature    | Default | Description |
+|------------|---------|-------------|
+| `std`      | yes     | Enable `std` in all dependencies. |
+| `serde`    | yes     | `Serialize`/`Deserialize` for all public types. |
+| `chrono`   | yes     | `chrono` dependency (future wall-clock helpers). |
+| `cc-data`  | no      | CEA-608/708 → WebVTT cue extraction ([`webvtt`]). |
+| `teletext` | no      | EBU Teletext (EN 300 706) → WebVTT cue extraction ([`webvtt::teletext`]). |
 
 `no_std` + `alloc` when built with `default-features = false`. All conversions
 are available in `no_std` mode.

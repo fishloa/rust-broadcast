@@ -1,0 +1,26 @@
+# EBU Teletext (ETSI EN 300 706) subtitle page fixture -- synthetic, spec-derived.
+# No real DVB VBI-teletext-bearing capture was found anywhere in this
+# workspace's fixtures/ tree (searched for teletext/VBI PIDs), and EN 300 706
+# has no worked byte-level page example in its annexes to lift verbatim. Per
+# this project's established fallback (see fixtures/cc/cea608_cc1_synthetic.txt),
+# these bytes are CONSTRUCTED using timed-metadata's own verified
+# encode_hamming_8_4/encode_odd_parity (proven correct by exhaustive
+# round-trip + single/double-bit-error tests in
+# timed-metadata/src/webvtt/teletext.rs) -- not a captured broadcast stream.
+# See timed-metadata/docs/teletext-subtitles.md for the full spec citations.
+#
+# Generated for rust-broadcast issue #666 (timed-metadata webvtt module).
+# Format: one packet per non-comment line:
+#   <pts_90k_ticks> <hex 44-byte TeletextDataField wire>
+# (header_byte + framing_code + 42-byte txt_data_block; this is exactly
+# dvb_vbi::TeletextDataField::parse's expected input format.)
+#
+# Plan: magazine 8 (packet magazine field 0), page 0x88 ("888"), C6 Subtitle
+# and C4 Erase Page set. Header (erase) at pts=0 establishes an empty page;
+# row 20 "HELLO WORLD" at pts=3000; row 22 "THIS IS A TEST" at pts=6000
+# (two-row subtitle now showing); a second header (erase, same page) at
+# pts=30000 clears the page (subtitle disappears -> cue closes).
+0 e7e41515d0d015d015d015152020202020202020202020202020202020202020202020202020202020202020
+3000 e7e4158cc8454c4c4f20574f524cc42020202020202020202020202020202020202020202020202020202020
+6000 e7e4159b54c849d32049d320c1205445d3542020202020202020202020202020202020202020202020202020
+30000 e7e41515d0d015d015d015152020202020202020202020202020202020202020202020202020202020202020
