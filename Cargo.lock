@@ -2057,7 +2057,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.15.2"
+version = "0.15.3"
 dependencies = [
  "aes",
  "broadcast-common",
