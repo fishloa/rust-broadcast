@@ -59,8 +59,8 @@ assert_eq!(AtmosFrame::parse(&bytes).unwrap(), frame);
 ## Examples
 
 ```sh
-cargo run -p rdd29 --example build_frame
-cargo run -p rdd29 --example parse_frame
+cargo run -p rdd29 --example build_atmos_frame
+cargo run -p rdd29 --example parse_atmos_frame
 ```
 
 ## Features

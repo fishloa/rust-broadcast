@@ -3,7 +3,7 @@
 //! inside a hand-built `ATMOSFrame`, parse it back, and confirm the payload
 //! is byte-identical to the real capture — SMPTE RDD 29:2019 §2.4/§4.5.
 //!
-//! Run with `cargo run -p rdd29 --example parse_frame`.
+//! Run with `cargo run -p rdd29 --example parse_atmos_frame`.
 
 use broadcast_common::{Parse, Serialize};
 use rdd29::{

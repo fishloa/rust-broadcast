@@ -70,10 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pass-through, and (behind the `serde` feature) serde round-trips.
 - `tests/label_coverage.rs` — the workspace's issue #204 label-convention
   drift-guard (nine spec/field enums).
-- Two runnable examples: `build_frame` (construct a bed + object + audio
-  essence from typed fields and serialize) and `parse_frame` (wrap the real
-  E-AC-3 fixture as an opaque `AudioDataDLC` payload, parse it back, and
-  confirm the byte-identical payload).
+- Two runnable examples: `build_atmos_frame` (construct a bed + object +
+  audio essence from typed fields and serialize) and `parse_atmos_frame`
+  (wrap the real E-AC-3 fixture as an opaque `AudioDataDLC` payload, parse
+  it back, and confirm the byte-identical payload).
 - `#![no_std]` (via `#![cfg_attr(not(feature = "std"), no_std)]`) + `alloc`;
   builds standalone with `--no-default-features` and on a bare-metal
   (`thumbv7em-none-eabi`) target.

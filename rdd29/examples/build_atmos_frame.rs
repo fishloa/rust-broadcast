@@ -1,7 +1,7 @@
 //! Build an `ATMOSFrame` from typed bed/object/audio-essence elements, and
 //! serialize it to wire bytes — SMPTE RDD 29:2019 §2/§4.
 //!
-//! Run with `cargo run -p rdd29 --example build_frame`.
+//! Run with `cargo run -p rdd29 --example build_atmos_frame`.
 
 use broadcast_common::Serialize;
 use rdd29::{
