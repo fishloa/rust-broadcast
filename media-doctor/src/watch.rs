@@ -271,7 +271,9 @@ impl WatchState {
         let Some(payload) = ts_packet.payload else {
             return;
         };
-        let track = self.scte35_tracks.get_mut(&pid).expect("checked by caller");
+        let Some(track) = self.scte35_tracks.get_mut(&pid) else {
+            return;
+        };
         track.reassembler.feed(payload, ts_packet.header.pusi);
 
         while let Some(section) = track.reassembler.pop_section() {
@@ -308,7 +310,9 @@ impl WatchState {
             }
         }
 
-        let track = self.es_tracks.get_mut(&pid).expect("checked by caller");
+        let Some(track) = self.es_tracks.get_mut(&pid) else {
+            return;
+        };
         if discontinuity {
             // A signalled TS-layer discontinuity resets the decode-timestamp
             // baseline (mirrors PtsCheck) — the jump across it is legitimate,
@@ -339,7 +343,9 @@ impl WatchState {
         let Ok(pes) = PesPacket::parse(pes_bytes) else {
             return;
         };
-        let track = self.es_tracks.get_mut(&pid).expect("checked by caller");
+        let Some(track) = self.es_tracks.get_mut(&pid) else {
+            return;
+        };
         track.any_au = true;
         match track.kind {
             EsKind::Video => {

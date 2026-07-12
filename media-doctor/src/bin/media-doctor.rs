@@ -125,7 +125,13 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let (n, _src) = socket.recv_from(&mut buf)?;
         let clock = start.elapsed();
-        let mut guard = state.lock().expect("watch state mutex poisoned");
+        // A 24/7 probe must not crash on a poisoned lock (some unrelated
+        // panic elsewhere while the mutex was held) -- recover the data
+        // rather than unwrap/expect, since the mutex-protected state itself
+        // is still valid even after a poisoning panic.
+        let mut guard = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.feed_datagram(&buf[..n], clock);
     }
 }
@@ -176,7 +182,11 @@ fn handle_metrics_request(
     let _ = stream.read(&mut request)?;
 
     let body = {
-        let guard = state.lock().expect("watch state mutex poisoned");
+        // See the ingest loop's matching comment: recover from a poisoned
+        // lock instead of crashing a 24/7 probe.
+        let guard = state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.render_prometheus()
     };
 
