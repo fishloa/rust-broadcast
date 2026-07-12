@@ -68,6 +68,12 @@ const scte35Section  = document.getElementById('scte35-section');
 const scte35Timeline = document.getElementById('scte35-timeline');
 const scte35Note     = document.getElementById('scte35-note');
 
+const subtitleSection      = document.getElementById('subtitle-section');
+const subtitleSummary      = document.getElementById('subtitle-summary');
+const subtitlePreviewWrap  = document.getElementById('subtitle-preview-wrap');
+const subtitleCanvas       = document.getElementById('subtitle-canvas');
+const subtitleCaption      = document.getElementById('subtitle-caption');
+
 const jsonSection = document.getElementById('json-section');
 const jsonPre     = document.getElementById('json-pre');
 const jsonToggle  = document.getElementById('json-toggle');
@@ -150,6 +156,7 @@ async function processFile(file) {
     renderTables(result.tables ?? []);
     renderConformance(result.conformance);
     renderScte35(result.scte35);
+    renderSubtitle(result.subtitles);
     lastTiming = result.timing;
     timingSection.classList.remove('hidden');
     renderTiming(result.timing);
@@ -367,6 +374,59 @@ function renderScte35(report) {
   }
 
   scte35Section.classList.remove('hidden');
+}
+
+// ── DVB (bitmap) subtitle preview ───────────────────────────────────────────
+
+/** Decode a standard base64 string (as produced by the wasm side) to raw bytes. */
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function renderSubtitle(report) {
+  subtitleSummary.textContent = '';
+  subtitlePreviewWrap.classList.add('hidden');
+
+  const pids = report?.pids ?? [];
+  if (pids.length === 0) {
+    // No subtitling_descriptor anywhere in this capture's PMT(s) — hide the
+    // whole panel, matching how the conformance/SCTE-35 panels handle
+    // "nothing found".
+    subtitleSection.classList.add('hidden');
+    return;
+  }
+
+  const pidList = pids.map(p => `${p} (${pidHex(p)})`).join(', ');
+  const bits = [
+    `PID(s): ${pidList}`,
+    `${report.pes_fields ?? 0} PES field(s), ${report.segments_seen ?? 0} segment(s)`,
+  ];
+  if (report.parse_errors) bits.push(`${report.parse_errors} parse error(s)`);
+
+  const preview = report.preview;
+  if (preview) {
+    // Unlike the line charts (setupCanvas, HiDPI-scaled backing store), a
+    // decoded bitmap must be painted 1:1 — the canvas's pixel dimensions
+    // ARE the image dimensions; CSS then stretches it to the panel width
+    // (image-rendering: pixelated keeps it crisp rather than blurred).
+    const bytes = base64ToBytes(preview.rgba_base64);
+    subtitleCanvas.width = preview.width;
+    subtitleCanvas.height = preview.height;
+    const ctx = subtitleCanvas.getContext('2d');
+    const imageData = new ImageData(new Uint8ClampedArray(bytes), preview.width, preview.height);
+    ctx.putImageData(imageData, 0, 0);
+    subtitleCaption.textContent =
+      `PID ${preview.pid} (${pidHex(preview.pid)}) · page ${preview.page_id} · region ${preview.region_id} · ${preview.width}×${preview.height}px`;
+    subtitlePreviewWrap.classList.remove('hidden');
+  } else {
+    bits.push('no page/region/CLUT/object combination fully resolved into a preview');
+  }
+
+  subtitleSummary.textContent = bits.join(' · ');
+  subtitleSection.classList.remove('hidden');
 }
 
 // ── Timing charts (canvas 2D, no libraries) ────────────────────────────────
@@ -628,7 +688,15 @@ function hideError() {
 
 function clearResults() {
   results.classList.add('hidden');
-  for (const el of [pidmapSection, timingSection, servicesSection, tablesSection, conformanceSection, scte35Section]) {
+  for (const el of [
+    pidmapSection,
+    timingSection,
+    servicesSection,
+    tablesSection,
+    conformanceSection,
+    scte35Section,
+    subtitleSection,
+  ]) {
     el.classList.add('hidden');
   }
   statsList.innerHTML = '';
@@ -638,6 +706,8 @@ function clearResults() {
   conformanceStats.innerHTML = '';
   conformanceGroups.innerHTML = '';
   scte35Timeline.innerHTML = '';
+  subtitleSummary.textContent = '';
+  subtitlePreviewWrap.classList.add('hidden');
   jsonPre.textContent = '';
   brandLed.classList.remove('led-lost');
   lastTiming = null;

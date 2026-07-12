@@ -10,6 +10,9 @@
 //! - [`dvb_conformance::ConformanceMonitor`] — ETSI TR 101 290.
 //! - [`scte35_splice::SpliceInfoSection`] — a splice-command timeline on
 //!   every PMT-declared SCTE-35 PID.
+//! - [`subtitle::SubtitleState`] — DVB (bitmap) subtitle discovery
+//!   (ETSI EN 300 468 `subtitling_descriptor`) plus a decoded RGBA still
+//!   preview of the first page/region/object found (ETSI EN 300 743).
 //!
 //! ...and returns ONE JSON object driving every panel of the demo UI. Every
 //! sub-object reuses that crate's own serde shape (e.g. `serde_json::to_value`
@@ -35,6 +38,9 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
+
+mod subtitle;
+use subtitle::{SubtitleReport, SubtitleState};
 
 // ───────────────────────────── caps ───────────────────────────────────────
 //
@@ -66,6 +72,7 @@ enum PidRole {
     Scte35,
     Video,
     Audio,
+    Subtitle,
     Si,
     Pcr,
     Null,
@@ -81,10 +88,11 @@ impl PidRole {
             Self::Scte35 => 2,
             Self::Video => 3,
             Self::Audio => 4,
-            Self::Si => 5,
-            Self::Pcr => 6,
-            Self::Null => 7,
-            Self::Other => 8,
+            Self::Subtitle => 5,
+            Self::Si => 6,
+            Self::Pcr => 7,
+            Self::Null => 8,
+            Self::Other => 9,
         }
     }
 
@@ -95,6 +103,7 @@ impl PidRole {
             Self::Scte35 => "SCTE-35",
             Self::Video => "Video",
             Self::Audio => "Audio",
+            Self::Subtitle => "Subtitle",
             Self::Si => "SI",
             Self::Pcr => "PCR",
             Self::Null => "Null",
@@ -182,7 +191,7 @@ struct ServiceEntry {
 struct PidEntry {
     pid: u16,
     packets: u64,
-    /// "PAT" | "PMT" | "SI" | "PCR" | "Video" | "Audio" | "SCTE-35" | "Null" | "Other".
+    /// "PAT" | "PMT" | "SI" | "PCR" | "Video" | "Audio" | "Subtitle" | "SCTE-35" | "Null" | "Other".
     kind: &'static str,
     /// PMT stream_type name (ITU-T H.222.0 Table 2-34), when this PID is an
     /// elementary stream declared by a PMT.
@@ -292,6 +301,7 @@ struct AnalysisResult {
     services: Vec<ServiceEntry>,
     conformance: ConformanceReport,
     scte35: Scte35Report,
+    subtitles: SubtitleReport,
 }
 
 // ───────────────────────────── conformance grouping ───────────────────────
@@ -532,6 +542,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
     let mut scte35_pids: BTreeMap<u16, SectionReassembler> = BTreeMap::new();
     let mut pes_pids: BTreeMap<u16, PesAssembler> = BTreeMap::new();
     let mut conformance_acc: BTreeMap<&'static str, IndicatorAccum> = BTreeMap::new();
+    let mut subtitles = SubtitleState::new();
 
     let mut pcr_samples: Vec<PcrSample> = Vec::new();
     let mut pts_samples: Vec<TimestampSample> = Vec::new();
@@ -655,6 +666,13 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                         if matches!(kind, PidRole::Video | PidRole::Audio) {
                             pes_pids.entry(stream.elementary_pid).or_default();
                         }
+                        if subtitle::stream_is_subtitle(stream) {
+                            upgrade_role(
+                                pid_stats.entry(stream.elementary_pid).or_default(),
+                                PidRole::Subtitle,
+                            );
+                            subtitles.note_pid(stream.elementary_pid);
+                        }
                     }
                 }
                 _ => {}
@@ -714,6 +732,11 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                 }
             }
         }
+
+        // ── DVB (bitmap) subtitle reassembly, on the first PID found ────
+        if let Some(payload) = ts_packet.payload {
+            subtitles.feed(pid, ts_packet.header.pusi, payload);
+        }
     }
 
     // Flush any PES packet still buffered at end of stream.
@@ -731,6 +754,8 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             );
         }
     }
+
+    subtitles.flush();
 
     let demux_stats = demux.stats();
     let conformance_stats = conformance.stats();
@@ -766,6 +791,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             truncated: scte35_truncated,
             parse_errors: scte35_parse_errors,
         },
+        subtitles: subtitles.into_report(),
     }
 }
 
@@ -773,8 +799,8 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
 
 /// Analyze a raw MPEG-TS byte buffer and return a single JSON object driving
 /// every panel of the demo UI: PID map, PCR/PTS timing, the SI/PSI table
-/// tree + service list, a TR 101 290 conformance report, and an SCTE-35
-/// splice timeline.
+/// tree + service list, a TR 101 290 conformance report, an SCTE-35 splice
+/// timeline, and a DVB (bitmap) subtitle preview.
 ///
 /// Never panics. On any bad packet, section, PES, or SCTE-35 message the
 /// error is counted and processing continues.
@@ -828,7 +854,15 @@ mod tests {
         let json = analyze(&bytes);
         let value: serde_json::Value =
             serde_json::from_str(&json).expect("analyze() must produce valid JSON");
-        for key in ["pid_map", "conformance", "tables", "timing", "scte35", "services"] {
+        for key in [
+            "pid_map",
+            "conformance",
+            "tables",
+            "timing",
+            "scte35",
+            "services",
+            "subtitles",
+        ] {
             assert!(value.get(key).is_some(), "missing top-level key {key}");
         }
         assert!(
@@ -959,5 +993,95 @@ mod tests {
             .find(|e| e.pid == SCTE35_PID)
             .expect("SCTE-35 PID must appear in the pid map");
         assert_eq!(scte_pid_entry.kind, "SCTE-35");
+    }
+
+    /// GitHub issue #662: real-fixture gate for DVB subtitle extraction +
+    /// preview decode. `france2.ts`'s PMT declares subtitle components
+    /// (`subtitling_descriptor`, tag 0x59) and PID 0x008C carries real DVB
+    /// subtitle PES in this (longer) capture, including a full page ->
+    /// region -> CLUT -> object_data chain with actual 4-bit RLE pixel
+    /// data — unlike the shorter `m6-*.ts` fixtures, whose ~1264-packet
+    /// excerpt happens to capture page/region/CLUT segments but never an
+    /// object_data segment for the objects those regions reference (a real
+    /// broadcast subtitle epoch retransmits object data on a longer cycle
+    /// than page/region setup). This proves the whole pipeline end-to-end
+    /// on real broadcast bytes: PMT descriptor scan -> PES reassembly ->
+    /// segment parse -> pixel decode -> CLUT color mapping -> a non-trivial
+    /// RGBA preview.
+    #[test]
+    fn analyzes_real_subtitle_fixture_and_decodes_a_preview() {
+        const SUBTITLE_PID: u16 = 0x008C;
+
+        let bytes = fixture("france2.ts");
+        let result = analyze_impl(&bytes);
+
+        assert!(
+            result.subtitles.pids.contains(&SUBTITLE_PID),
+            "expected PID 0x008C to be detected via subtitling_descriptor, got {:?}",
+            result.subtitles.pids
+        );
+        assert!(
+            result.subtitles.pes_fields >= 1,
+            "expected at least one subtitle PES_data_field reassembled"
+        );
+        assert!(
+            result.subtitles.segments_seen >= 1,
+            "expected at least one subtitling segment"
+        );
+
+        let preview = result
+            .subtitles
+            .preview
+            .as_ref()
+            .expect("expected a decoded subtitle preview from a real capture");
+        assert_eq!(preview.pid, SUBTITLE_PID);
+        assert!(preview.width > 0, "preview width must be non-zero");
+        assert!(preview.height > 0, "preview height must be non-zero");
+
+        // The RGBA buffer must base64-decode to exactly width*height*4 bytes,
+        // and at least one pixel must be non-fully-transparent — proving the
+        // CLUT color mapping actually produced visible pixels, not a blank
+        // (all-transparent) buffer.
+        let raw = base64_decode(&preview.rgba_base64);
+        assert_eq!(raw.len(), (preview.width * preview.height * 4) as usize);
+        assert!(
+            raw.chunks(4).any(|px| px[3] != 0),
+            "expected at least one non-transparent pixel in the decoded preview"
+        );
+
+        // Round-trip through the actual wasm-facing JSON entry point too.
+        let json = analyze(&bytes);
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("analyze() must produce valid JSON");
+        assert!(value["subtitles"]["preview"]["width"].as_u64().unwrap() > 0);
+    }
+
+    /// Minimal base64 decoder for the test above only (the encoder lives in
+    /// `subtitle.rs`; std has no built-in base64, and pulling in a crate for
+    /// one test assertion isn't worth it).
+    fn base64_decode(s: &str) -> Vec<u8> {
+        fn val(c: u8) -> Option<u8> {
+            match c {
+                b'A'..=b'Z' => Some(c - b'A'),
+                b'a'..=b'z' => Some(c - b'a' + 26),
+                b'0'..=b'9' => Some(c - b'0' + 52),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        }
+        let mut out = Vec::new();
+        let mut buf = 0u32;
+        let mut bits = 0u32;
+        for &c in s.as_bytes() {
+            let Some(v) = val(c) else { continue };
+            buf = (buf << 6) | u32::from(v);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((buf >> bits) as u8);
+            }
+        }
+        out
     }
 }
