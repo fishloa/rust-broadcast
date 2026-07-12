@@ -1,0 +1,38 @@
+[package]
+name    = "st377-1"
+version = "0.1.0"
+edition = "2024"
+description = "SMPTE ST 377-1:2019 Material Exchange Format (MXF) file format — KLV framing, Partition Pack, Primer Pack, local-set structural metadata (Preface/Identification/ContentStorage/EssenceContainerData), Random Index Pack. no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords = ["mxf", "smpte", "klv", "st377", "broadcast"]
+categories = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", optional = true, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["broadcast-common/std", "thiserror/std"]
+serde = ["dep:serde"]
+
+[[example]]
+name = "parse_partition"
+
+[[example]]
+name = "build_preface"
