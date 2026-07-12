@@ -36,6 +36,7 @@ rtp-packet   = { path = "../rtp-packet", features = ["rfc8285"] }
 st12-1       = { path = "../st12-1" }
 st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
+st377-1      = { path = "../st377-1" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -167,5 +168,11 @@ doc  = false
 [[bin]]
 name = "rdd29"
 path = "fuzz_targets/rdd29.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "st377_1"
+path = "fuzz_targets/st377_1.rs"
 test = false
 doc  = false
