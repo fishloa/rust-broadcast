@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DASH output emitted every Representation's segments as the full
+  multi-track CMAF artefact instead of a genuinely single-track one** (#614).
+  `OutputFormat::Dash` muxed one multi-track `CmafMux` blob from all tracks
+  and cloned it under every `init-stream{id}.m4s`/`chunk-stream{id}-1.m4s`
+  name, so each DASH Representation's segments carried every other track's
+  samples too, violating ISO/IEC 23009-1 §5.3.9.1 — invisible to the golden
+  gate test's own ffprobe-based checks because they only run against a
+  dash-demuxer-capable ffprobe build (rare locally, present on CI, where the
+  test was failing). Each track's segments are now muxed from a filtered
+  single-track `Media` (`Media::select_tracks_by`), and the golden gate
+  `ts_to_dash_mpd_validated` test gained its own single-track segment
+  assertion (`assert_single_track_matches_source`) to keep catching this
+  class of regression instead of loosening the existing multi-track check.
+
 ### Changed
 
 - **Internal only, no public API change**: the RTCP control-packet codec

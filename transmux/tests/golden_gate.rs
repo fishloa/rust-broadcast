@@ -138,6 +138,56 @@ fn stream<'a>(probe: &'a Value, codec_type: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no {codec_type} stream in ffprobe output: {probe}"))
 }
 
+/// Assert a single DASH per-Representation CMAF segment (`init-*`/`chunk-*`)
+/// carries exactly one track, and that track's codec identity matches the
+/// corresponding (by `codec_type`) stream in the source fixture's own ffprobe
+/// identification. Unlike [`assert_matches_source`] (which expects a
+/// multi-track artefact, e.g. CMAF/progressive/TS-HLS), a DASH Representation's
+/// Segments must carry only that Representation's own track (ISO/IEC
+/// 23009-1 §5.3.9.1) — so this is deliberately its own, narrower assertion
+/// rather than a relaxation of the shared one.
+fn assert_single_track_matches_source(src_probe: &Value, out_probe: &Value, what: &str) {
+    assert_eq!(
+        nb_streams(out_probe),
+        1,
+        "{what}: a DASH Representation's segment must carry exactly one track"
+    );
+    let out_streams = out_probe["streams"].as_array().expect("streams array");
+    let out_stream = &out_streams[0];
+    let codec_type = out_stream["codec_type"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{what}: stream missing codec_type: {out_stream}"));
+    let src_stream = stream(src_probe, codec_type);
+
+    assert_eq!(
+        out_stream["codec_name"], src_stream["codec_name"],
+        "{what}: {codec_type} codec_name must match source"
+    );
+    match codec_type {
+        "video" => {
+            assert_eq!(
+                out_stream["width"], src_stream["width"],
+                "{what}: video width must match source"
+            );
+            assert_eq!(
+                out_stream["height"], src_stream["height"],
+                "{what}: video height must match source"
+            );
+        }
+        "audio" => {
+            assert_eq!(
+                out_stream["sample_rate"], src_stream["sample_rate"],
+                "{what}: audio sample_rate must match source"
+            );
+            assert_eq!(
+                out_stream["channels"], src_stream["channels"],
+                "{what}: audio channel count must match source"
+            );
+        }
+        other => panic!("{what}: unexpected codec_type {other} in a single-track DASH segment"),
+    }
+}
+
 fn nb_streams(probe: &Value) -> u64 {
     probe["format"]["nb_streams"]
         .as_u64()
@@ -393,11 +443,11 @@ fn ts_to_dash_mpd_validated() {
     // even when the MPD text alone would look fine.
     for (name, _) in &segments {
         let probe = ffprobe_json(&dir.join(name));
-        // Each segment is the full per-track CMAF stream this CLI path
-        // reuses for both `init-*` and `chunk-*` names (see
-        // `transmux::cli::package`'s `OutputFormat::Dash` arm) — i.e. video
-        // and audio are muxed together in one file, same as the CMAF case.
-        assert_matches_source(&src_probe, &probe, &format!("TS->DASH segment {name}"));
+        // Each segment is a genuinely single-track CMAF stream — one per
+        // Representation (see `transmux::cli::package`'s `OutputFormat::Dash`
+        // arm, ISO/IEC 23009-1 §5.3.9.1) — so this is the narrower
+        // single-track assertion, not the multi-track `assert_matches_source`.
+        assert_single_track_matches_source(&src_probe, &probe, &format!("TS->DASH segment {name}"));
     }
 
     // ffprobe's own `dash` demuxer (needs libxml2; not every ffmpeg build has
