@@ -57,6 +57,43 @@ audited clean, 0 substantive discrepancies) in `anc_packet_291.md` per the
 
 ---
 
+## Session 2026-07-13 — new SMPTE crates (st337, st12-1, rdd29, st377-1)
+
+| Doc set | Source spec(s) | Oracle | Checks | Verdict | Nits (all fixed) | Audited at commit |
+|---|---|---|---|---|---|---|
+| `st337/docs/st337.md` | SMPTE ST 337:2015 | PDF render (`private/specs/smpte_st337_2015_aes3_nonpcm.pdf`) | 32 | ✅ 0 substantive | Table 6 Pb row label vs the PDF's own "Sync word 1" typo (noted, not silently corrected); Pe row high/low-significance-bit direction reversed (uninterpreted field, no parser impact) | `67557392` |
+| `st12-1/docs/st12-1.md` | SMPTE ST 12-1:2014 | PDF render (`private/specs/smpte_st12-1_2014_ltc.pdf`) | 26 | ✅ 0 substantive | Figure 9 page cite off-by-one (p.33→p.34); §11/§12 scope-paragraph mischaracterization | `67557392` |
+| `rdd29/docs/rdd29.md` | SMPTE RDD 29:2019 | PDF render (`private/specs/smpte_rdd29_2019_dolby_atmos_metadata.pdf`) | 40 | ✅ 0 substantive | — | (no changes needed) |
+| `st377-1/docs/st377-1.md` | SMPTE ST 377-1:2019 | PDF render (`private/specs/smpte_st377-1_2019_mxf.pdf`, targeted-read via clause citations, ~40 of 187 pages) | 39 | ⚠️ 2 substantive, both fixed | 4 collapsed 15-byte Key hex-string shorthands (Partition/Primer/Local-Set-common/RIP, each missing one of two adjacent `0x01` bytes) | `67557392` |
+
+**Session totals: 137 checks across 4 doc sets · 2 substantive discrepancies found and fixed · 6 nits found, all fixed.**
+
+Notes:
+- The two substantive st377-1 findings **propagated into code**, not just the
+  doc: (1) `StructuralSetKind::IndexTableSegment` claimed Index Table
+  Segments (Table 25) share the common Local Set Key family (Table 16/17) —
+  they don't (Table 25 byte 11 = `0x02` "MXF File Structure" vs Table 16/17's
+  `0x01`), and the variant's byte 14/15 were transposed relative to Table 25
+  besides, so it never matched a real on-wire value; removed. (2) Preface's
+  `Identifications` property was documented and coded as hard-`Req`, but
+  Annex A.2 marks it `E/req` (encoder-required, decoder-tolerant-of-absence)
+  — `Preface::parse` now defaults to empty rather than erroring. Both fixed
+  in `st377-1` 0.1.1, same-day as first publish (0.1.0), no external
+  consumers affected.
+- Every finding above was independently re-verified against the actual PDF
+  page image by a second reader (not just accepted on the auditing agent's
+  claim) before any fix was made — see the PR discussion on #689 for the
+  page-by-page confirmations.
+- st377-1's 187-page PDF was not read cover-to-cover: the audit targeted only
+  the page ranges backing the doc's own clause citations (BER, KLV, Partition
+  Pack, Primer Pack, Local Set, Preface/Identification/ContentStorage/
+  EssenceContainerData, RIP). Annexes B-H (Package/Track/Sequence/SourceClip/
+  Descriptor definitions the crate treats as "identified but generic") were
+  not read against the PDF — consistent with the doc's own stated scope, not
+  a gap, but flagged as unverified rather than silently assumed correct.
+
+---
+
 ## Extensibility / code-quality audits
 
 Distinct from the PDF→md fidelity audits above: these are adversarial **code**
