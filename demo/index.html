@@ -14,7 +14,7 @@
       <span class="brand-led" id="brand-led" aria-hidden="true"></span>
       <h1><span class="brand-mono">SIGNAL</span><span class="brand-sub">/broadcast analyzer</span></h1>
     </div>
-    <p class="subtitle">Drop an MPEG-TS capture — PIDs, PCR/PTS timing, SI/PSI, TR&nbsp;101&nbsp;290 conformance and SCTE-35, parsed entirely in this tab. Nothing is uploaded. No codec bitstream is ever decoded.</p>
+    <p class="subtitle">Drop an MPEG-TS capture — PIDs, PCR/PTS timing, SI/PSI, TR&nbsp;101&nbsp;290 conformance, SCTE-35 and a DVB subtitle preview, parsed entirely in this tab. Nothing is uploaded. No codec bitstream is ever decoded.</p>
   </header>
 
   <main>
@@ -126,10 +126,20 @@
         <p id="scte35-note" class="panel-note hidden"></p>
       </section>
 
+      <!-- DVB (bitmap) subtitles -->
+      <section id="subtitle-section" class="panel hidden">
+        <h2><span class="panel-index">08</span>DVB Subtitles <span class="panel-sub">bitmap preview</span></h2>
+        <p id="subtitle-summary" class="panel-note"></p>
+        <div id="subtitle-preview-wrap" class="subtitle-preview-wrap hidden">
+          <canvas id="subtitle-canvas" class="subtitle-canvas" role="img" aria-label="Decoded DVB subtitle bitmap preview"></canvas>
+          <p id="subtitle-caption" class="subtitle-caption"></p>
+        </div>
+      </section>
+
       <!-- Raw JSON -->
       <section id="json-section" class="panel">
         <h2>
-          <span class="panel-index">08</span>Raw JSON
+          <span class="panel-index">09</span>Raw JSON
           <button id="json-toggle" aria-expanded="false">show</button>
         </h2>
         <pre id="json-pre" class="hidden"></pre>

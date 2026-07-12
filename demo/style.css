@@ -379,6 +379,7 @@ tbody td { padding: 0.42rem 0.7rem; vertical-align: top; }
 .badge-pcr { color: var(--amber); }
 .badge-video { color: var(--green); }
 .badge-audio { color: var(--teal); }
+.badge-subtitle { color: var(--magenta); }
 .badge-scte-35 { color: var(--magenta); }
 .badge-null, .badge-other { color: var(--muted); }
 
@@ -544,6 +545,44 @@ canvas {
   margin-top: 0.3rem;
   color: var(--text-dim);
   font-size: 0.72rem;
+}
+
+/* ── DVB subtitle preview ───────────────────────────────────────────── */
+
+.subtitle-preview-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* A checkerboard backdrop (not the plain canvas fill used by the line
+   charts) so a fully- or partially-transparent decoded pixel reads as
+   "transparent", not "black". `image-rendering: pixelated` keeps the
+   (usually small) bitmap crisp when the browser upscales it to fill the
+   panel width, instead of the line charts' smooth interpolation. */
+.subtitle-canvas {
+  width: 100%;
+  height: auto;
+  display: block;
+  image-rendering: pixelated;
+  background-color: #04070a;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.07) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.07) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.07) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.07) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+  border: 1px solid var(--hair);
+  border-radius: 2px;
+}
+
+.subtitle-caption {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 0.68rem;
 }
 
 /* ── Raw JSON ───────────────────────────────────────────────────────── */
