@@ -1,6 +1,6 @@
 [package]
 name         = "media-doctor"
-version      = "0.3.0"
+version      = "0.4.0"
 edition      = "2024"
 description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
