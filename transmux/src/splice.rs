@@ -277,8 +277,11 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
 /// `at_ticks` is an absolute decode time in the base **video** track's media
 /// timescale; it is **snapped to the nearest preceding sync sample** of that
 /// track (a splice must land on a random-access point). The base's other tracks
-/// (audio) are cut at the same *sample count* boundary corresponding to that
-/// video split — audio is not independently RAP-aligned, but every audio sample
+/// (audio) are cut at the same *wall-clock* offset corresponding to that video
+/// split — the video-timescale offset is rescaled into each other track's own
+/// media timescale (audio is virtually never carried on the same timescale as
+/// video, e.g. 90 kHz video vs. 44.1/48 kHz audio) before searching for its
+/// split sample; audio is not independently RAP-aligned, but every audio sample
 /// is itself a sync sample, so the audio cut is always on a RAP. Each track's
 /// `ad` contribution is placed at the snapped boundary and the resumed base is
 /// shifted by that track's own `ad` span, keeping every track's timeline
@@ -316,9 +319,12 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
             "splice_insert: base video track has no samples",
         ))?;
     // Fraction of the video track (by decode time) at which the split falls,
-    // used to place the same wall-clock cut on the other (audio) tracks.
+    // used to place the same wall-clock cut on the other (audio) tracks. This
+    // is in the *video* track's own timescale; §sample_index_at_offset below
+    // rescales it into each other track's timescale before use.
     let split_offset_ticks =
         snapped_video_dts.saturating_sub(base.tracks[video_idx].start_decode_time);
+    let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.max(1));
 
     let mut out_tracks = Vec::with_capacity(base.tracks.len());
     let mut points = Vec::new();
@@ -328,12 +334,18 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
 
         // Where to cut this base track. For the video track it is the snapped
         // sync sample; for the others, the first sample whose decode time is at
-        // or beyond the same offset from the track start (audio samples are all
-        // sync samples, so this is a valid RAP cut).
+        // or beyond the same *wall-clock* offset from the track start, rescaled
+        // from the video track's timescale into this track's own (audio is
+        // virtually never carried on the video track's timescale, e.g. 90 kHz
+        // video vs. 44.1/48 kHz audio) — audio samples are all sync samples, so
+        // this is always a valid RAP cut.
         let split_index = if i == video_idx {
             video_split
         } else {
-            sample_index_at_offset(bt, split_offset_ticks)
+            let track_timescale = u128::from(bt.spec.timescale.max(1));
+            let offset_in_track_ticks =
+                (u128::from(split_offset_ticks) * track_timescale / video_timescale) as u64;
+            sample_index_at_offset(bt, offset_in_track_ticks)
         };
 
         let ad_span: u64 = adt.samples.iter().map(|s| s.duration as u64).sum();

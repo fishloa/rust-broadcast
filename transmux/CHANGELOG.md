@@ -7,8 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ssai_ad_stitch` example** (issue #664): a runnable, real-fixture
+  end-to-end SSAI (server-side ad insertion) walkthrough wiring
+  `scte35-splice` (cue parsing), `timed-metadata` (SCTE-35 -> HLS
+  `EXT-X-DATERANGE` / DASH `emsg` conversion), and transmux's own
+  `splice_insert` + HLS/DASH packaging together: extracts a hand-built,
+  spec-correct `splice_insert` cue from a real MPEG-2 TS PID, converts its
+  90 kHz PTS to the base track's own timescale, splices in a stand-in ad
+  clip, and renders both an HLS media playlist (`#EXT-X-DISCONTINUITY` +
+  `#EXT-X-DATERANGE`) and a DASH MPD (`InbandEventStream` + an inband `emsg`
+  box) describing the spliced timeline. `cargo run -p transmux --example
+  ssai_ad_stitch`; covered by `transmux/tests/ssai_ad_stitch.rs`, which
+  `#[path]`-includes the example and asserts on the exact rendered manifest
+  text and a full `emsg` -> SCTE-35 round-trip. Dev-dependency only
+  (`scte35-splice`, `timed-metadata`) — no change to transmux's own public
+  API or its dependency graph.
+
 ### Fixed
 
+- **`splice::splice_insert` mis-scaled the ad/resume cut point on every
+  non-anchor track whose media timescale differs from the anchor (video)
+  track's** — which is virtually always true for real content (e.g. 90 kHz
+  video vs. 44.1/48 kHz audio). The video-timescale tick offset used to be
+  passed straight to `sample_index_at_offset` for the audio track without
+  any unit conversion, so the audio split landed at the wrong wall-clock
+  position (and could run past the end of the audio samples, panicking on
+  index-out-of-bounds) on any base media with video and audio at different
+  timescales. `splice_insert` now rescales the offset into each track's own
+  timescale before searching for its split sample. No existing test exercised
+  a multi-track (video + audio) `Media` before this fix — none of
+  `transmux/tests/splice.rs`'s cases used more than one track; the new
+  `ssai_ad_stitch` example/test (issue #664) exercises a real video+audio
+  splice and would have caught this immediately.
 - **DASH output emitted every Representation's segments as the full
   multi-track CMAF artefact instead of a genuinely single-track one** (#614).
   `OutputFormat::Dash` muxed one multi-track `CmafMux` blob from all tracks

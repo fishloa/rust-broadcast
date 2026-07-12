@@ -49,6 +49,14 @@ media-doctor = { path = "../media-doctor", default-features = false, features = 
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
 serde_json   = "1.0"
+# ssai_ad_stitch.rs (issue #664) wires transmux's splice/HLS/DASH machinery to
+# the SCTE-35 cue parser and the SCTE-35<->HLS-DATERANGE/DASH-emsg conversion
+# crate. Dev-dependency only: transmux itself stays free of a SCTE-35
+# dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
+# *points* from SCTE-35 cues is left to callers, and this example is exactly
+# that follow-up wiring, not a library dependency.
+scte35-splice  = { path = "../scte35-splice", version = "1", default-features = false, features = ["std"] }
+timed-metadata = { path = "../timed-metadata", version = "0.3", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true

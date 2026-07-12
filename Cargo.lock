@@ -2061,9 +2061,11 @@ dependencies = [
  "mpeg-ts",
  "rtcp-packet",
  "rtp-packet",
+ "scte35-splice",
  "serde",
  "serde_json",
  "thiserror",
+ "timed-metadata",
 ]
 
 [[package]]
