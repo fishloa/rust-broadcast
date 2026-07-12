@@ -16,7 +16,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
 use crate::error::{Error, Result};
-use crate::types::UlBytes;
+use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// A single KLV triplet: a 16-byte Key, a BER-encoded Length, and the Value
 /// bytes it describes (`docs/st377-1.md` §6.3).
@@ -56,7 +56,7 @@ impl<'a> KlvItem<'a> {
                 what: "KLV key",
             });
         }
-        let key: UlBytes = bytes[..16].try_into().expect("16-byte slice");
+        let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (len, len_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_size;
         let len = usize::try_from(len).map_err(|_| Error::BufferTooShort {

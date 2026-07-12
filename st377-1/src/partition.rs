@@ -10,7 +10,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
 use crate::error::{Error, Result};
-use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch};
+use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of every Partition Pack Key (Table 4), i.e. everything
 /// except byte 8 (registry version, wildcard on parse), byte 14
@@ -231,7 +231,7 @@ impl<'a> Parse<'a> for PartitionPack {
                 what: "Partition Pack key",
             });
         }
-        let key: UlBytes = bytes[0..16].try_into().expect("16-byte slice");
+        let key: UlBytes = ul_bytes_from_prefix(bytes);
         let (kind, status) = Self::parse_key(&key)?;
 
         let (len, len_size) = decode_ber_length(&bytes[16..])?;
@@ -285,7 +285,7 @@ impl<'a> Parse<'a> for PartitionPack {
         let index_sid = u32_at(48);
         let body_offset = u64_at(52);
         let body_sid = u32_at(60);
-        let operational_pattern: UlBytes = v[64..80].try_into().expect("16 bytes");
+        let operational_pattern: UlBytes = ul_bytes_from_prefix(&v[64..]);
         let essence_containers = parse_uid_batch(&v[80..])?;
 
         Ok(PartitionPack {

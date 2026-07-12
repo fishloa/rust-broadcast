@@ -18,7 +18,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
 use crate::error::{Error, Result};
-use crate::types::UlBytes;
+use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// Byte 6 of a Local Set Key (§9.3 Note 1): which length encoding its
 /// items use.
@@ -323,14 +323,15 @@ impl<'a> LocalSet<'a> {
 
     /// This Set's item length mode (Table 16 byte 6).
     ///
-    /// # Panics
-    /// Panics if `self.key` was not built/parsed as a valid Local Set key
-    /// (byte 6 not `0x53`/`0x13`) — cannot happen for a `LocalSet` obtained
-    /// via [`LocalSet::parse_prefix`], which validates this at parse time.
+    /// `key` is a public field (callers can build a `LocalSet` directly, not
+    /// only via [`LocalSet::parse_prefix`]), so this cannot assume byte 6 is
+    /// one of the two valid values — falls back to [`ItemLengthMode::TwoByte`]
+    /// (the spec's own documented default) rather than panicking on a
+    /// self-constructed `LocalSet` with an invalid key.
     #[must_use]
     pub fn item_length_mode(&self) -> ItemLengthMode {
         ItemLengthMode::from_registry_designator_byte(self.key[5])
-            .expect("LocalSet key byte 6 validated at construction")
+            .unwrap_or(ItemLengthMode::TwoByte)
     }
 
     /// The first item with local tag `tag`, if any.
@@ -375,14 +376,17 @@ impl<'a> LocalSet<'a> {
                 what: "Local Set key",
             });
         }
-        let key: UlBytes = bytes[..16].try_into().expect("16-byte slice");
+        let key: UlBytes = ul_bytes_from_prefix(bytes);
         if !is_local_set_key(&key) {
             return Err(Error::KeyPrefixMismatch {
                 what: "Local Set (Table 16)",
             });
         }
+        // is_local_set_key already confirmed key[5] is a valid mode byte;
+        // TwoByte is unreachable here but kept as the same documented
+        // fallback item_length_mode() uses, rather than a second code path.
         let mode = ItemLengthMode::from_registry_designator_byte(key[5])
-            .expect("checked by is_local_set_key");
+            .unwrap_or(ItemLengthMode::TwoByte);
 
         let (len, len_size) = decode_ber_length(&bytes[16..])?;
         let value_start = 16 + len_size;

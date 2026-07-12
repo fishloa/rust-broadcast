@@ -10,7 +10,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
 use crate::error::{Error, Result};
-use crate::types::UlBytes;
+use crate::types::{UlBytes, ul_bytes_from_prefix};
 
 /// Fixed bytes 1-13 of the Primer Pack Key (Table 13), i.e. everything
 /// except byte 8 (registry version, wildcard on parse).
@@ -96,7 +96,7 @@ impl PrimerPack {
                 what: "Primer Pack key",
             });
         }
-        let key: UlBytes = bytes[0..16].try_into().expect("16-byte slice");
+        let key: UlBytes = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
         let (len, len_size) = decode_ber_length(&bytes[16..])?;
@@ -135,7 +135,7 @@ impl PrimerPack {
         let mut entries = Vec::with_capacity(count as usize);
         for chunk in body.chunks_exact(18) {
             let tag = u16::from_be_bytes([chunk[0], chunk[1]]);
-            let uid: UlBytes = chunk[2..18].try_into().expect("16 bytes");
+            let uid: UlBytes = ul_bytes_from_prefix(&chunk[2..]);
             entries.push((tag, uid));
         }
         Ok((PrimerPack { entries }, value_end))

@@ -11,6 +11,24 @@ use crate::error::{Error, Result};
 /// A 16-byte SMPTE Universal Label or UUID.
 pub type UlBytes = [u8; 16];
 
+/// Copy the first 16 bytes of `bytes` into an owned [`UlBytes`].
+///
+/// Callers must have already verified `bytes.len() >= 16` (every call site
+/// does, immediately before calling this) — rather than a length-checked
+/// `try_into().expect(...)` (a panic-capable API call, even though
+/// unreachable here), this reads byte-by-byte via plain indexing, the
+/// established idiom throughout this workspace for a bounds-proven-safe
+/// fixed-size extraction.
+pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
+    let mut out = [0u8; 16];
+    let mut i = 0;
+    while i < 16 {
+        out[i] = bytes[i];
+        i += 1;
+    }
+    out
+}
+
 /// A "Package ID" (§4.2): a 32-byte Basic UMID (SMPTE ST 330) or 32 zero
 /// bytes ("terminate a reference chain"). This crate treats the UMID's own
 /// internal bit layout as out of scope (ST 330 is a separate normative
@@ -378,7 +396,7 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
     }
     let mut out = Vec::with_capacity(count as usize);
     for chunk in body.chunks_exact(16) {
-        out.push(<UlBytes>::try_from(chunk).expect("chunks_exact(16)"));
+        out.push(ul_bytes_from_prefix(chunk));
     }
     Ok(out)
 }

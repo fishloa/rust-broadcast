@@ -10,6 +10,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::ber::{ber_length_size, decode_ber_length, encode_ber_length};
 use crate::error::{Error, Result};
+use crate::types::ul_bytes_from_prefix;
 
 const RIP_KEY_PREFIX: [u8; 7] = [0x06, 0x0E, 0x2B, 0x34, 0x02, 0x05, 0x01];
 const RIP_KEY_MID: [u8; 4] = [0x0D, 0x01, 0x02, 0x01];
@@ -83,7 +84,7 @@ impl RandomIndexPack {
                 what: "Random Index Pack key",
             });
         }
-        let key: [u8; 16] = bytes[0..16].try_into().expect("16-byte slice");
+        let key: [u8; 16] = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
         let (len, len_size) = decode_ber_length(&bytes[16..])?;
