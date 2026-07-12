@@ -47,6 +47,7 @@ pub const SYNC_WORD: [u8; 2] = [0xFC, 0xBF];
 /// self-describing frame-rate field, so the caller supplies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum FrameRate {
     /// 30-frame counting (NTSC-related, drop or non-drop, §5.2).
     Fps30,
@@ -78,6 +79,7 @@ broadcast_common::impl_spec_display!(FrameRate);
 /// binary group flag bits BGF2/BGF1/BGF0 (§8.3.3, Table 1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum BinaryGroupUsage {
     /// `000` — time address reference unspecified, binary group content
     /// unspecified (§8.4.1).
