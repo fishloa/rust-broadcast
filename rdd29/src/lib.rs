@@ -71,10 +71,10 @@
 // the actual `examples/*.rs` files (shown, not compiled).
 #![doc = "\n## Runnable examples\n"]
 #![doc = "Run with `cargo run -p rdd29 --example <name>`.\n"]
-#![doc = "\n### `build_frame`\n\n```rust,ignore"]
-#![doc = include_str!("../examples/build_frame.rs")]
-#![doc = "```\n\n### `parse_frame`\n\n```rust,ignore"]
-#![doc = include_str!("../examples/parse_frame.rs")]
+#![doc = "\n### `build_atmos_frame`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/build_atmos_frame.rs")]
+#![doc = "```\n\n### `parse_atmos_frame`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/parse_atmos_frame.rs")]
 #![doc = "```"]
 
 extern crate alloc;
