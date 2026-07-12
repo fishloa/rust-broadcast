@@ -33,6 +33,7 @@ scte35-splice = { path = "../scte35-splice" }
 st291        = { path = "../st291", features = ["rtp"] }
 rtcp-packet  = { path = "../rtcp-packet" }
 rtp-packet   = { path = "../rtp-packet", features = ["rfc8285"] }
+st12-1       = { path = "../st12-1" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -146,5 +147,11 @@ doc  = false
 [[bin]]
 name = "rtp_packet"
 path = "fuzz_targets/rtp_packet.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "st12_1"
+path = "fuzz_targets/st12_1.rs"
 test = false
 doc  = false

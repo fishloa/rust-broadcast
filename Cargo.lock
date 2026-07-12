@@ -1826,6 +1826,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "st12-1"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "st291"
 version = "0.2.0"
 dependencies = [
