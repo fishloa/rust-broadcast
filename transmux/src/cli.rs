@@ -487,15 +487,21 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             } else {
                 DashPackager::default().package(media)?
             };
-            // DASH SegmentTemplate references init/chunk files per representation;
-            // emit one CMAF artifact per track under both the init and first-chunk
-            // names the default templates produce.
-            let cmaf = CmafMux::new(1).package(media)?;
+            // DASH SegmentTemplate references init/chunk files per representation,
+            // and each Representation's Segments must carry only that
+            // Representation's own track (ISO/IEC 23009-1 §5.3.9.1) — so mux a
+            // genuinely single-track CMAF artifact per track, not one
+            // multi-track artifact cloned under every track's file names (a
+            // real ffprobe `dash` demuxer resolves each Representation's
+            // segments independently and would otherwise see every other
+            // track's samples bleed into each one — see issue #614).
             let mut segments = Vec::new();
             for t in &media.tracks {
                 let id = t.spec.track_id;
+                let single = media.select_tracks_by(|tr| tr.spec.track_id == id)?;
+                let cmaf = CmafMux::new(1).package(&single)?;
                 segments.push((format!("init-stream{id}.m4s"), cmaf.clone()));
-                segments.push((format!("chunk-stream{id}-1.m4s"), cmaf.clone()));
+                segments.push((format!("chunk-stream{id}-1.m4s"), cmaf));
             }
             Ok(Output::Manifest { text, segments })
         }
