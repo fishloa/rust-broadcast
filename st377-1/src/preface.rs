@@ -12,7 +12,8 @@ use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, finish_owned_set, get_optional_fixed,
-    get_required_fixed, get_required_raw, owned_set_serialized_len, serialize_owned_set,
+    get_optional_raw, get_required_fixed, get_required_raw, owned_set_serialized_len,
+    serialize_owned_set,
 };
 use crate::types::{MxfTimestamp, UlBytes, parse_uid_batch, serialize_uid_batch};
 
@@ -77,8 +78,11 @@ pub struct Preface {
     /// Primary Package (`0x3B08`, Opt) — weak reference (Instance UID) to
     /// this file's primary Material Package, if any.
     pub primary_package: Option<UlBytes>,
-    /// Identifications (`0x3B06`, Req) — strong references to every
-    /// `Identification` Set recording a modification to this file.
+    /// Identifications (`0x3B06`, **E/req** — encoder-required, but a
+    /// decoder must not fail if it's absent, per Annex A.2's "Req?" column)
+    /// — strong references to every `Identification` Set recording a
+    /// modification to this file. Empty if the property was absent on
+    /// parse.
     pub identifications: Vec<UlBytes>,
     /// Content Storage (`0x3B03`, Req) — strong reference to the
     /// `ContentStorage` Set.
@@ -127,12 +131,10 @@ impl<'a> Parse<'a> for Preface {
                 .map(u32::from_be_bytes);
         let primary_package =
             get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?;
-        let identifications = parse_uid_batch(get_required_raw(
-            items,
-            TAG_IDENTIFICATIONS,
-            "Identifications",
-            "Preface",
-        )?)?;
+        let identifications = match get_optional_raw(items, TAG_IDENTIFICATIONS) {
+            Some(raw) => parse_uid_batch(raw)?,
+            None => Vec::new(),
+        };
         let content_storage =
             get_required_fixed::<16>(items, TAG_CONTENT_STORAGE, "Content Storage", "Preface")?;
         let operational_pattern = get_required_fixed::<16>(
@@ -301,6 +303,27 @@ mod tests {
         let bytes = preface.to_bytes();
         let parsed = Preface::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, preface.dark);
+    }
+
+    #[test]
+    fn identifications_absent_tolerated_e_req_not_hard_required() {
+        // Annex A.2's "Req?" column marks Identifications "E/req": an
+        // encoder must write it, but a decoder must not fail if it's
+        // missing. Build a Preface local set with every other required
+        // property present but Identifications omitted entirely.
+        let mut preface = sample();
+        preface.identifications = Vec::new();
+        let owned = preface.owned_items();
+        let items: Vec<LocalSetOwnedItem> = owned
+            .into_iter()
+            .filter(|item| item.tag != TAG_IDENTIFICATIONS)
+            .collect();
+        let (key, encoded) = finish_owned_set(StructuralSetKind::Preface, items, &Vec::new());
+        let mut buf = alloc::vec![0u8; owned_set_serialized_len(key, &encoded)];
+        serialize_owned_set(key, &encoded, &mut buf).unwrap();
+
+        let parsed = Preface::parse(&buf).expect("absent Identifications must not error");
+        assert_eq!(parsed.identifications, Vec::<UlBytes>::new());
     }
 
     #[test]

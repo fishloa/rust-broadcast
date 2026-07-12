@@ -165,8 +165,6 @@ pub enum StructuralSetKind {
     ApplicationPlugInObject,
     /// Application Referenced Object (C.3) — identified only.
     ApplicationReferencedObject,
-    /// Index Table Segment (§11.2.2 Table 25 — shares this Key family).
-    IndexTableSegment,
     /// Any byte 14/15 pair not in Table 17 (private/dark extension, or a
     /// Set defined by another SMPTE document, e.g. an Essence Container or
     /// Operational Pattern spec — §9.6.1 Note 3).
@@ -206,7 +204,6 @@ impl StructuralSetKind {
             Self::TextLocator => "Text Locator",
             Self::ApplicationPlugInObject => "Application Plug-In Object",
             Self::ApplicationReferencedObject => "Application Referenced Object",
-            Self::IndexTableSegment => "Index Table Segment",
             Self::Unknown(_) => "unknown",
         }
     }
@@ -242,7 +239,6 @@ impl StructuralSetKind {
             (0x01, 0x33) => Self::TextLocator,
             (0x01, 0x61) => Self::ApplicationPlugInObject,
             (0x01, 0x62) => Self::ApplicationReferencedObject,
-            (0x01, 0x10) => Self::IndexTableSegment,
             other => Self::Unknown([other.0, other.1]),
         }
     }
@@ -278,7 +274,6 @@ impl StructuralSetKind {
             Self::TextLocator => [0x01, 0x33],
             Self::ApplicationPlugInObject => [0x01, 0x61],
             Self::ApplicationReferencedObject => [0x01, 0x62],
-            Self::IndexTableSegment => [0x01, 0x10],
             Self::Unknown([a, b]) => [a, b],
         }
     }
@@ -578,7 +573,6 @@ mod tests {
             StructuralSetKind::TextLocator,
             StructuralSetKind::ApplicationPlugInObject,
             StructuralSetKind::ApplicationReferencedObject,
-            StructuralSetKind::IndexTableSegment,
         ];
         for v in variants {
             let bytes = v.to_bytes();

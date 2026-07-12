@@ -1,6 +1,6 @@
 [package]
 name    = "st377-1"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "SMPTE ST 377-1:2019 Material Exchange Format (MXF) file format — KLV framing, Partition Pack, Primer Pack, local-set structural metadata (Preface/Identification/ContentStorage/EssenceContainerData), Random Index Pack. no_std."
 license      = "MIT OR Apache-2.0"

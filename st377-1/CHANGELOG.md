@@ -5,6 +5,29 @@ All notable changes to `st377-1` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-07-13
+
+### Fixed
+
+- Removed `StructuralSetKind::IndexTableSegment`: an adversarial PDF-fidelity
+  audit against the real SMPTE ST 377-1:2019 PDF found the variant never
+  matched a real on-wire Index Table Segment. Its Key uses a distinct family
+  (Table 25, byte 11 = `0x02` "MXF File Structure") from the common Local Set
+  Key pattern this enum models (Table 16/17, byte 11 = `0x01`); the removed
+  variant's `from_bytes`/`to_bytes` (byte 14/15 = `0x01`/`0x10`) were also
+  transposed relative to Table 25's actual fixed bytes (`0x10`/`0x01`). Index
+  Table Segments remain out of scope for this crate (they live in the
+  Partition's Index Table, not Header Metadata).
+- `Preface::parse` no longer hard-requires `Identifications` (`0x3B06`):
+  Annex A.2 marks it "E/req" (encoder-required, decoder-tolerant-of-absence),
+  not plain "Req" — a real MXF file legitimately omitting it was previously
+  rejected with `MissingRequiredProperty`. Now defaults to an empty `Vec` if
+  absent on parse.
+- `docs/st377-1.md`: fixed 4 collapsed 15-byte Key hex-string shorthands
+  (Partition Pack, Primer Pack, Local Set common Key, Random Index Pack) each
+  missing one of two adjacent `0x01` bytes (Structure Version vs Structure
+  Kind); fixed Preface's `Identifications` Req column (`Req` → `E/req`).
+
 ## [0.1.0] - 2026-07-12
 
 ### Added
