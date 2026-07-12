@@ -11,7 +11,7 @@
 //! |---|---|---|
 //! | `std`   | yes     | `std::error::Error` impls |
 //! | `serde` | yes     | JSON report output via `serde` / `serde_json` |
-//! | `cli`   | yes     | `clap`-based CLI binary |
+//! | `cli`   | yes     | `clap`-based CLI binary, incl. `watch` (issue #665) |
 //!
 //! # Quick start (library)
 //!
@@ -34,6 +34,7 @@ mod container_codec;
 mod diagnostics;
 mod playlist;
 mod report;
+mod watch;
 
 pub use container_codec::check_container_codec;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
@@ -48,6 +49,7 @@ pub use diagnostics::scte35_check::Scte35Check;
 pub use diagnostics::sync_byte::SyncByteCheck;
 pub use playlist::check_playlist;
 pub use report::{Finding, Location, Report, Severity};
+pub use watch::WatchState;
 
 /// A pluggable diagnostic check that examines a Transport Stream byte buffer.
 ///

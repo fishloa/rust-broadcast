@@ -19,7 +19,8 @@ required-features = ["cli"]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.2", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "8", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "8", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "8", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "1", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.3", default-features = false }
 transmux         = { path = "../transmux", version = "0.15", default-features = false }
@@ -30,7 +31,7 @@ thiserror        = { version = "2", optional = true }
 
 [features]
 default = ["std", "serde", "cli"]
-std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std"]
+std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std"]
 serde   = ["dep:serde", "dep:serde_json"]
 cli     = ["dep:clap", "dep:thiserror", "std"]
 
