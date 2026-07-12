@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `media-doctor watch` — a live, continuous compliance probe (issue #665,
+  `docs/IDEAS.md` item #4): ingests a raw MPEG-TS feed over **UDP**
+  (`--udp <host:port>`, unicast or multicast — auto-joins the IPv4 multicast
+  group when the address is in range) and serves an accumulated snapshot as
+  Prometheus text exposition format on `GET /metrics` (`--metrics-addr`,
+  default `127.0.0.1:9090`).
+  - **Scope note**: this release is UDP-only. The full product-vision idea
+    also covers SRT; SRT ingest needs `srt-runtime`'s sans-IO handshake/ARQ
+    engine and is left as a follow-up issue, not implemented here.
+  - New dependency on `dvb-conformance`: every TS packet is fed to
+    `ConformanceMonitor`, exposing the full ETSI TR 101 290 indicator set
+    (`media_doctor_conformance_events_total{indicator=...,priority=...}`,
+    `media_doctor_conformance_in_sync`), timed against wall-clock arrival
+    time rather than stream-embedded PCR.
+  - PMT-declared SCTE-35/H.264/HEVC/AAC-ADTS PIDs are discovered dynamically
+    (via `dvb-si`'s `SiDemux`, not a fixed PID), feeding incremental
+    SCTE-35 `splice_insert` open/closed tracking
+    (`media_doctor_scte35_events_total`, `media_doctor_scte35_open_events`),
+    decode-timestamp (DTS, else PTS) backward-jump detection
+    (`media_doctor_pts_dts_anomalies_total`,
+    `media_doctor_pts_dts_anomaly{pid=...}`), and declared-codec-vs-bitstream
+    framing mismatch (`media_doctor_codec_signalling_mismatch{pid=...}`) —
+    the same checks as `Scte35Check`/`PtsCheck`/`CodecSignallingCheck`,
+    restructured to hold state across packets instead of scanning a whole
+    buffer. `PcrCheck`/`CcAnomalyCheck` are intentionally not re-wired
+    separately: `ConformanceMonitor` already computes the equivalent
+    PCR-repetition/discontinuity and continuity-count indicators from the
+    same per-packet data.
+  - The ingest/metrics core (`media_doctor::WatchState`) is plain
+    `no_std`+`alloc` logic with no socket dependency — `feed_datagram` takes
+    a raw byte slice and `render_prometheus` renders the current snapshot,
+    both unit-tested directly against a real capture
+    (`fixtures/ts/m6-single.ts`) chunked into UDP-payload-sized pieces, with
+    no socket opened. The `cli`-gated binary is a thin `UdpSocket`/
+    `TcpListener` shell (two `std::thread`s sharing `Arc<Mutex<WatchState>>`
+    — no async runtime) around this core.
+  - Datagrams need not be 188-byte-aligned: `mpeg_ts::resync::TsResync`
+    recovers sync-byte-aligned TS packets from whatever bytes are actually
+    present, buffering partial packets across calls.
+  - Prometheus exposition is hand-rolled (`# HELP`/`# TYPE` + label lines) —
+    no `prometheus` crate dependency, matching this workspace's
+    dependency-light CLI ethos; the format is simple enough that a small
+    formatter is less code than a crate integration.
 
 ## [0.3.0] - 2026-07-04
 ### Added

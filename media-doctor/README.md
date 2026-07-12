@@ -35,6 +35,52 @@ Findings: 0 error(s), 0 warning(s), 0 info(s)
 
 `--json` emits the report as JSON (requires the `serde` feature, on by default).
 
+### `watch` — live compliance probe (issue #665)
+
+```console
+$ media-doctor watch --udp 239.1.1.1:5000 --metrics-addr 127.0.0.1:9090
+media-doctor watch: ingesting UDP 239.1.1.1:5000, metrics on http://127.0.0.1:9090/metrics
+```
+
+Continuously ingests a live raw-MPEG-TS-over-**UDP** feed (unicast or
+multicast — the address's multicast-range membership decides whether the
+socket joins an IGMP group) and serves an always-current snapshot as
+[Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/)
+on `GET /metrics`:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--udp <host:port>` | *(required)* | UDP address to listen on for raw MPEG-TS |
+| `--metrics-addr <host:port>` | `127.0.0.1:9090` | HTTP address serving `GET /metrics` |
+
+Metrics exposed (see `media_doctor::WatchState` for the full accounting):
+
+| Metric | Kind | Source |
+|---|---|---|
+| `media_doctor_packets_total` | counter | well-formed TS packets processed |
+| `media_doctor_datagrams_total` | counter | ingest datagrams fed |
+| `media_doctor_resync_events_total` / `media_doctor_dropped_bytes_total` | counter | TS byte-stream resync (`mpeg_ts::resync::TsResync`) |
+| `media_doctor_conformance_in_sync` | gauge | ETSI TR 101 290 monitor sync state |
+| `media_doctor_conformance_events_total{indicator,priority}` | counter | full TR 101 290 indicator set (`dvb-conformance`), timed on wall-clock arrival |
+| `media_doctor_scte35_events_total` / `media_doctor_scte35_open_events` | counter / gauge | SCTE-35 `splice_insert` events / currently-open ones |
+| `media_doctor_pts_dts_anomalies_total` / `media_doctor_pts_dts_anomaly{pid}` | counter / gauge | non-monotonic decode-timestamp events |
+| `media_doctor_codec_signalling_mismatch{pid}` | gauge | PMT-declared codec vs actual bitstream framing |
+| `media_doctor_last_packet_clock_seconds` | gauge | elapsed ingest time of the last packet processed |
+
+**Scope (v1):** UDP only. The full product-vision idea (`docs/IDEAS.md` item
+#4) also covers SRT; that needs `srt-runtime`'s sans-IO handshake/ARQ engine
+and is a follow-up issue, not implemented here. `PcrCheck`/`CcAnomalyCheck`
+are not separately re-wired for `watch` — `ConformanceMonitor` already
+computes the equivalent PCR-repetition/discontinuity and continuity-count
+indicators from the same per-packet data.
+
+The ingest/metrics core (`media_doctor::WatchState::feed_datagram` /
+`render_prometheus`) is plain logic with no socket dependency, so it's
+unit-tested by feeding a real capture chunked into UDP-payload-sized pieces —
+no socket is ever opened in tests. The `watch` binary itself is a thin
+`UdpSocket`/`TcpListener` shell (two `std::thread`s sharing
+`Arc<Mutex<WatchState>>`; no async runtime) around that core.
+
 ## Library
 
 ```rust
