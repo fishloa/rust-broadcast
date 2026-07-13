@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`CencEncryptor` — CENC/CBCS encrypt path** (issue #564): a new
+  `Encrypt` impl that protects a cleartext `Media` in place, the write-side
+  counterpart to the existing `CencDecryptor`. Takes an
+  `EncryptConfig { scheme, kid, key, iv, pattern, subsample }`: `scheme`
+  selects `cenc` (AES-128-CTR, full-block) or `cbcs` (AES-128-CBC,
+  `crypt`:`skip` pattern); `iv` is an `IvGen` (`Counter { base }` — an 8-byte
+  per-sample counter; `Explicit(Vec<Vec<u8>>)` — one caller-supplied IV per
+  sample; `Constant([u8; 16])` — the standard real-world `cbcs` convention,
+  `tenc.default_constant_IV` with no per-sample `senc` IV); `subsample`
+  selects the per-codec clear/protected byte-range policy (`SubsamplePolicy`).
+  Encrypting a track populates `Track::encryption` (`TrackEncryption`
+  carrying the resolved `tenc` + a `SampleEncryptionEntry` per sample) for the
+  muxer's box emission and the DASH/HLS signalling below to read.
+- **`protect_init_segment` / `protect_media_segment` — CENC/CBCS box
+  emission** (issue #564): post-processing passes over an already-muxed CMAF
+  init/media segment that splice in the CENC/CBCS boxes from a
+  `TrackEncryption`, without CENC plumbing through the lower-level
+  `TrackSpec`/pipeline: `protect_init_segment` (`init_segment.rs`) rewrites
+  the target track's sample entry to `encv`/`enca` + `sinf`
+  (`frma`/`schm`/`schi`/`tenc`), recomputing every ancestor box
+  (`stsd`/`stbl`/`minf`/`mdia`/`trak`/`moov`) from its typed children;
+  `protect_media_segment` (`movie_fragment.rs`, given a `FragmentProtection`
+  per protected `traf`) adds the fragment's `senc`/`saiz`/`saio` (`saio`
+  anchored `moof`-relative, verified against Bento4's `mp4decrypt` — see the
+  e2e entry below). Every other byte, box, and track round-trips unchanged.
+- **DASH/HLS CENC/CBCS DRM signalling** (issue #564): both driven straight off
+  `Track::encryption` — no DRM logic in either. **DASH**
+  (`DashPackager::package`) auto-derives the generic-CENC identification
+  element per `AdaptationSet` — `<ContentProtection
+  schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"|"cbcs"
+  cenc:default_KID="...">` (ISO/IEC 23001-7) — from the set's encrypted
+  tracks; `ContentProtectionSystem` gained an optional `pssh: Option<Vec<u8>>`
+  field so caller-supplied DRM-system entries
+  (`schemeIdUri="urn:uuid:..."`, e.g. built with the `drm` module's pssh
+  builders) render a base64 `<cenc:pssh>` child. **HLS** — the new
+  `cenc_ext_x_key(scheme, kid, key_uri)` renders
+  `#EXT-X-KEY:METHOD=SAMPLE-AES,URI="...",KEYFORMAT="urn:mpeg:dash:mp4protection:2011",KEYFORMATVERSIONS="1",KEYID=0x<kid>`
+  for `cbcs`, returning `None` for `cenc` (AES-CTR has no valid HLS `METHOD` —
+  `cenc`-protected CMAF is signalled on the DASH side only). A new runnable
+  example, `examples/cenc_encrypt.rs`, drives the whole path (demux -> encrypt
+  -> mux -> protect -> DASH/HLS signalling) against the real
+  `fixtures/ts/h264/main.ts` fixture.
 - **CENC/CBCS encrypt-path end-to-end proof** (issue #564): new
   `tests/cenc_encrypt_e2e.rs` exercises the full `CencEncryptor::encrypt` ->
   `CmafMux::package` -> `protect_init_segment`/`protect_media_segment`

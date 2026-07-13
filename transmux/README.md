@@ -20,8 +20,9 @@ Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
 (`Segmenter`), IR timeline conditioning — PTS/DTS rebase-to-zero / offset /
 33-bit MPEG wrap-unroll / discontinuity-gap insertion (`rebase_to_zero`,
 `apply_offset`, `unroll_33bit_wraps`, `insert_discontinuity_gap`, over each
-`Track::start_decode_time` anchor) — CENC decrypt (`CencDecryptor`), and RTP
-de/packetize + SDP (`RtpPacketizer`/`RtpDepacketizer`).
+`Track::start_decode_time` anchor) — CENC/CBCS decrypt (`CencDecryptor`) and
+encrypt (`CencEncryptor`, plus DASH/HLS DRM signalling), and RTP de/packetize +
+SDP (`RtpPacketizer`/`RtpDepacketizer`).
 
 ## Scope — container muxing only
 
@@ -108,12 +109,13 @@ round-trips through the IR.
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
 | WebM demux | `Unpackage` | `WebmDemux` (EBML) | ✅ |
 | CMAF / progressive / TS mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` | ✅ |
-| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/ContentProtection/InbandEventStream) · `LlDashPackager` · `SmoothPackager` | ✅ |
+| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` · `SmoothPackager` | ✅ |
 | TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`) | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |
 | IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
-| CENC decrypt | `Decrypt` | `CencDecryptor` (`cenc` AES-CTR) | ✅ |
+| CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | `CencDecryptor` · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
+| CENC/CBCS DRM signalling | — | DASH: `DashPackager::content_protection` auto-derives the generic-CENC `ContentProtection` from `Track::encryption`. HLS: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs` (`cenc`/CTR has no HLS `METHOD` — DASH-only) | ✅ |
 | HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |

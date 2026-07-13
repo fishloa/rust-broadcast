@@ -34,8 +34,16 @@
 //!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
 //!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
-//!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]); HLS Sample-AES +
-//!   full-segment AES-128 encrypt/decrypt (`sample-aes`, [`sample_aes`]).
+//!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
+//!   [`Track::encryption`] for the muxer's `sinf`/`senc`/`saio`/`saiz` box
+//!   emission — [`init_segment::protect_init_segment`] /
+//!   [`movie_fragment::protect_media_segment`]); DRM signalling driven off
+//!   that same `Track::encryption` — [`DashPackager`] auto-derives the
+//!   generic-CENC `ContentProtection` (plus caller-supplied per-DRM-system
+//!   `cenc:pssh`), [`cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` for
+//!   `cbcs` (`cenc`/CTR is DASH-only — see [`hls`]'s module docs); HLS
+//!   Sample-AES + full-segment AES-128 encrypt/decrypt (`sample-aes`,
+//!   [`sample_aes`]).
 //! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP;
 //!   RTCP control packets ([`RtcpPacket`]).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
@@ -83,7 +91,7 @@
 //! |---------|---------|-------------|
 //! | `std`   | yes     | `std::error::Error` impls |
 //! | `serde` | yes     | `serde::Serialize` for box types |
-//! | `cenc`  | yes     | CENC (ISO/IEC 23001-7) AES-CTR sample decryption ([`CencDecryptor`]) via the RustCrypto `aes`/`ctr` crates |
+//! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`cenc_ext_x_key`]) reads the always-available `Track::encryption`/`cenc` box types and needs no feature |
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
@@ -184,8 +192,9 @@ pub use cenc_decrypt::{CencDecryptor, KeyMap};
 #[cfg(feature = "cenc")]
 pub use cenc_encrypt::{CencEncryptor, EncryptConfig, IvGen, SubsamplePolicy};
 pub use dash::{
-    Addressing, ContentProtectionSystem, DashPackager, InbandEventStream, MPD_NAMESPACE, MediaKind,
-    PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
+    Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
+    MP4_PROTECTION_SCHEME_URI, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
+    TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
@@ -203,8 +212,8 @@ pub use flac::{
 pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{
-    IFrameVariant, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment, PartSpec,
-    Variant, mark_init_discontinuities,
+    CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS, IFrameVariant, LowLatencyConfig, MasterPlaylist,
+    MediaPlaylist, MediaSegment, PartSpec, Variant, cenc_ext_x_key, mark_init_discontinuities,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
