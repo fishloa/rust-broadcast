@@ -23,6 +23,8 @@
 //! external-tool-backed tests elsewhere in this crate (see
 //! `tests/golden_gate.rs`'s `ffprobe_available`/`skip_unless!`).
 
+#![cfg(feature = "cenc")]
+
 use std::process::Command;
 
 use broadcast_common::{Decrypt, Unpackage};
