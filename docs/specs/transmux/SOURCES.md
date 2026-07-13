@@ -3,9 +3,12 @@
 ## Explicit statement
 
 All field tables in this documentation set are traced to the sources listed below.
-ISO/IEC 14496-14 and ISO/IEC 14496-15 are mentioned only as the normative home of codec-config
-boxes that could NOT be transcribed from a free source (they appear as GAP entries in COVERAGE.md).
-No copy — authorized or unauthorized — of those standards was downloaded, fetched, or consulted.
+ISO/IEC 14496-14, -15, -3, and -1 (the codec-config boxes' normative home) were later vendored
+and consulted — see Source 7 below and `specs/rules/{nal-avcc-hvcc-rules,mp4-esds-rules,aac-asc-rules}.md`
+(committed rule summaries citing § + line into gitignored full-text extractions; the raw PDFs
+themselves are not committed, per this workspace's spec-vendoring posture — see
+`specs/MEDIA-SPECS-LOCAL.md`). This superseded the original FFmpeg-only fallback plan for those
+six boxes.
 
 **Exception:** ISO/IEC 14496-12 §8.8 (Movie Fragments) was used as a normative source for
 fragmentation-control boxes (`mvex`, `trex`, `moof`, `mfhd`, `traf`, `tfhd`, `trun`) per
@@ -120,6 +123,24 @@ explicit owner direction in the project brief.  These are transcribed in `fragme
   (MP4RA — the authoritative fourCC registry, free)
 - **What it covered:** Enumeration and descriptions of all registered box fourCCs;
   confirmation that all target box types are registered and their defining spec is noted as `[ISO]`.
+
+### 7. ISO/IEC 14496-15:2017 (AVC/HEVC file format — `avc1`/`avcC`/`hvc1`/`hvcC`)
+- **Status:** Vendored (gitignored locally, per `specs/MEDIA-SPECS-LOCAL.md`), not committed.
+- **What it covered:** `avc1`/`avc3`/`avc2`/`avc4` sample entries (§5.4) and
+  `AVCDecoderConfigurationRecord` (`avcC`, §5.3.3) vision-read from the scanned (image-only)
+  PDF body; `hvc1`/`hev1` sample entries (§8) and `HEVCDecoderConfigurationRecord` (`hvcC`,
+  §8.3.3) recovered via OCR (no free text-layer HEVC edition exists). Both cross-checked
+  against the FFmpeg `movenc.c`/`avc.c`/`hevc.c` reference writer and a real byte-exact fixture
+  oracle. See `specs/rules/nal-avcc-hvcc-rules.md` and
+  `transmux/docs/codec/avcC-hvcC-14496-15.md`.
+
+### 8. ISO/IEC 14496-14:2003 + 14496-1:2010 + 14496-3:2001 (`mp4a`/`esds`/AudioSpecificConfig)
+- **Status:** Vendored (gitignored locally), not committed.
+- **What it covered:** `MP4AudioSampleEntry` (`mp4a`, 14496-14 §5.6.1), `ES_Descriptor`/
+  `DecoderConfigDescriptor` (`esds`, 14496-1), and the AAC `AudioSpecificConfig` bit syntax +
+  Audio Object Type / sampling-frequency-index / channel-configuration tables (14496-3
+  §1.5.1.1/§1.6). See `specs/rules/mp4-esds-rules.md`, `specs/rules/aac-asc-rules.md`, and
+  `transmux/docs/codec/{esds-mp4a,es-descriptor-14496-1,heaac-asc}.md`.
 
 ---
 
