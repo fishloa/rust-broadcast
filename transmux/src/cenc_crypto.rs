@@ -69,11 +69,9 @@ const KEY_LEN: usize = 16;
 /// its own inverse — but CBC chaining reads ciphertext, so the two directions
 /// need mirrored (not identical) block loops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum CbcsOp {
-    /// Turn plaintext into ciphertext. Used by the encrypt path (Task 2) and
-    /// the round-trip unit tests; not yet reached by the decrypt-only callers,
-    /// hence the `dead_code` allowance below until the encryptor lands.
+    /// Turn plaintext into ciphertext. Used by the encrypt path
+    /// ([`crate::cenc_encrypt::CencEncryptor`]) and the round-trip unit tests.
     Encrypt,
     /// Turn ciphertext back into plaintext.
     Decrypt,

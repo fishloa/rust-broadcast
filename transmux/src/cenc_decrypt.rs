@@ -75,51 +75,19 @@ use alloc::vec::Vec;
 use broadcast_common::{Decrypt, Parse};
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
+// Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
+// resolving for existing callers even though the type now lives in
+// `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
+pub use crate::cenc::CencScheme;
 use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
 use crate::movie_fragment::{MovieFragmentBox, TrackFragmentHeaderBox};
 
-/// Four-CC identifying the `cenc` (AES-CTR, full-block) protection scheme.
-const SCHEME_CENC: [u8; 4] = *b"cenc";
-/// Four-CC identifying the `cbcs` (AES-CBC, pattern) protection scheme.
-const SCHEME_CBCS: [u8; 4] = *b"cbcs";
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
 /// key length and block length coincide).
 const KEY_LEN: usize = 16;
-
-/// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub enum CencScheme {
-    /// `cenc` — AES-128 full-block counter (CTR) mode.
-    Cenc,
-    /// `cbcs` — AES-128 pattern cipher-block-chaining mode.
-    Cbcs,
-}
-
-impl CencScheme {
-    /// The scheme's four-CC token as it appears in `schm` (`"cenc"` / `"cbcs"`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            CencScheme::Cenc => "cenc",
-            CencScheme::Cbcs => "cbcs",
-        }
-    }
-
-    /// Map a `schm.scheme_type` four-CC to a known scheme, if recognised.
-    fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
-        match *four_cc {
-            SCHEME_CENC => Some(CencScheme::Cenc),
-            SCHEME_CBCS => Some(CencScheme::Cbcs),
-            _ => None,
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(CencScheme);
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///

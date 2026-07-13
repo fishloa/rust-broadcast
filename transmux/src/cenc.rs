@@ -31,6 +31,66 @@ const BOX_HDR: usize = 8;
 const FULL_HDR: usize = 4;
 
 // ---------------------------------------------------------------------------
+// CencScheme — protection scheme identity (ISO/IEC 23001-7 §4)
+// ---------------------------------------------------------------------------
+
+/// Four-CC identifying the `cenc` (AES-128 full-block counter, CTR) protection
+/// scheme (`schm.scheme_type`). Only [`CencScheme::from_four_cc`] (the
+/// decrypt path's `schm` recovery, gated on the `cenc` feature) reads this.
+#[cfg(feature = "cenc")]
+const SCHEME_CENC: [u8; 4] = *b"cenc";
+/// Four-CC identifying the `cbcs` (AES-128 pattern cipher-block-chaining)
+/// protection scheme (`schm.scheme_type`). Only [`CencScheme::from_four_cc`]
+/// reads this.
+#[cfg(feature = "cenc")]
+const SCHEME_CBCS: [u8; 4] = *b"cbcs";
+
+/// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
+///
+/// Lives here (not in `cenc_decrypt`/`cenc_encrypt`) so the decrypt path
+/// ([`crate::cenc_decrypt::CencDecryptor`], which recovers it from a
+/// protected file's `schm`), the encrypt path
+/// ([`crate::cenc_encrypt::CencEncryptor`], which is given it by the caller),
+/// and the IR carrier ([`crate::media::TrackEncryption`]) all share one
+/// definition rather than three (issue #564) — and it is available whether or
+/// not the `cenc` feature (which only gates the AES cipher work) is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum CencScheme {
+    /// `cenc` — AES-128 full-block counter (CTR) mode.
+    Cenc,
+    /// `cbcs` — AES-128 pattern cipher-block-chaining mode.
+    Cbcs,
+}
+
+impl CencScheme {
+    /// The scheme's four-CC token as it appears in `schm` (`"cenc"` / `"cbcs"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            CencScheme::Cenc => "cenc",
+            CencScheme::Cbcs => "cbcs",
+        }
+    }
+
+    /// Map a `schm.scheme_type` four-CC to a known scheme, if recognised.
+    ///
+    /// Only used by the decrypt path's `schm` recovery
+    /// ([`crate::cenc_decrypt`]), hence gated on the `cenc` feature alongside
+    /// it (this type itself stays available regardless of the feature).
+    #[cfg(feature = "cenc")]
+    pub(crate) fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
+        match *four_cc {
+            SCHEME_CENC => Some(CencScheme::Cenc),
+            SCHEME_CBCS => Some(CencScheme::Cbcs),
+            _ => None,
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(CencScheme);
+
+// ---------------------------------------------------------------------------
 // tenc — TrackEncryptionBox (ISO/IEC 23001-7 §12.2)
 // ---------------------------------------------------------------------------
 

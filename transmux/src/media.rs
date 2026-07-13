@@ -19,9 +19,13 @@
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
 //! access units); those types stay public and unchanged. `no_std` + `alloc`.
 //!
-//! Sample [`Decrypt`](broadcast_common::Decrypt) is implemented for CENC
-//! (ISO/IEC 23001-7 AES-CTR) by [`CencDecryptor`](crate::cenc_decrypt::CencDecryptor)
-//! behind the `cenc` feature (issue #465); the `Encrypt` impl remains deferred.
+//! Sample [`Decrypt`](broadcast_common::Decrypt) is implemented for CENC/CBCS
+//! (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) by
+//! [`CencDecryptor`](crate::cenc_decrypt::CencDecryptor), and the inverse
+//! [`Encrypt`](broadcast_common::Encrypt) by
+//! [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor) — both behind the
+//! `cenc` feature (issues #465/#564). Either direction records its per-track
+//! crypto metadata onto [`Track::encryption`].
 
 use alloc::format;
 use alloc::string::String;
@@ -89,6 +93,13 @@ pub struct Track {
     /// input to the timeline transforms in [`crate::rebase`] (rebase-to-zero,
     /// offset, 33-bit MPEG wrap-unroll — ISO/IEC 13818-1 33-bit timestamps).
     pub start_decode_time: u64,
+    /// CENC/CBCS crypto metadata for this track's samples, or `None` for
+    /// cleartext. Populated by [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)'s
+    /// [`Encrypt`](broadcast_common::Encrypt) impl (issue #564) or by a
+    /// demuxer of an already-protected source (e.g.
+    /// [`crate::cenc_decrypt::CencDecryptor::demux`]); read by the muxer's
+    /// crypto-box emission (`sinf`/`senc`/`saio`/`saiz`).
+    pub encryption: Option<TrackEncryption>,
 }
 
 impl Track {
@@ -98,6 +109,7 @@ impl Track {
             spec,
             samples,
             start_decode_time: 0,
+            encryption: None,
         }
     }
 
@@ -108,6 +120,7 @@ impl Track {
             spec,
             samples,
             start_decode_time,
+            encryption: None,
         }
     }
 
@@ -132,6 +145,27 @@ impl Track {
     pub fn config(&self) -> &CodecConfig {
         &self.spec.config
     }
+}
+
+/// Per-track CENC/CBCS crypto carrier attached to [`Track::encryption`].
+///
+/// The IR-side dual of the metadata [`crate::cenc_decrypt::CencDecryptor`]
+/// harvests from an already-protected file's `sinf`/`tenc`/`senc` boxes: this
+/// is exactly the shape [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)
+/// produces (issue #564), and it is what the muxer's crypto-box emission
+/// (`sinf`/`senc`/`saio`/`saiz`) reads back to (re)build the boxes without
+/// needing to know how the samples were protected.
+#[derive(Debug, Clone)]
+pub struct TrackEncryption {
+    /// The protection scheme (`cenc` AES-CTR or `cbcs` AES-CBC pattern).
+    pub scheme: crate::cenc::CencScheme,
+    /// Track-level crypto defaults — KID, per-sample IV size, and (for
+    /// `cbcs`) the pattern's `crypt`:`skip` block counts — ISO/IEC 23001-7
+    /// §12.2.
+    pub tenc: crate::cenc::TrackEncryptionBox,
+    /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
+    /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
+    pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
 }
 
 /// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
@@ -279,6 +313,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                     // First-fragment tfdt baseMediaDecodeTime; 0 when the stream
                     // carried no tfdt at all (ISO/IEC 14496-12:2015 §8.8.12).
                     start_decode_time: b.start_decode_time.unwrap_or(0),
+                    encryption: None,
                 }
             })
             .collect();
