@@ -33,12 +33,13 @@ required-features = ["cli"]
 default = ["std", "serde", "cenc"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std"]
 serde  = ["dep:serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
-cenc   = ["dep:aes", "dep:ctr"]
+cenc   = ["dep:aes", "dep:ctr", "dep:cbc"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
-# content protection. Extends `cenc` (shares the `aes` block cipher) and pulls
-# the `cbc` mode crate. All crypto stays feature-gated: the default no_std
-# core build has none.
-sample-aes = ["cenc", "dep:cbc", "cbc/alloc", "cbc/block-padding"]
+# content protection. Extends `cenc` (which already pulls the `cbc` mode crate
+# for CENC's own `cbcs` pattern cipher) and adds the `alloc`/`block-padding`
+# `cbc` sub-features for its PKCS#7 whole-segment API. All crypto stays
+# feature-gated: the default no_std core build has none.
+sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 # `cli` builds the `transmux` command-line packager (std + clap). The library
 # itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
 cli    = ["dep:clap", "std"]

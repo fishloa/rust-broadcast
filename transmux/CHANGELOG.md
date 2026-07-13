@@ -5,6 +5,34 @@ All notable changes to `transmux` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`cenc_decrypt`: fragmented CMAF support (`moof`/`traf`/`senc`/`saiz`/`saio`) +
+  `cbcs` (AES-CBC pattern) decrypt** (issue #564): `CencDecryptor` previously
+  only supported progressive fMP4 (single `moov`/`mdat`, sample layout from
+  `stsz`/`stsc`/`stco`) — the real-world fragmented CMAF case (`moov` + one or
+  more `moof`/`mdat` pairs, each `traf` carrying its own `senc`/`saiz`/`saio`)
+  was entirely unsupported. `CencDecryptor::from_fmp4`/`demux` now walk every
+  `moof`, matching each `traf` to its `moov`-declared track by `tfhd.track_id`
+  and concatenating every fragment's samples in file order, reusing the
+  already-typed fragment parsers in `movie_fragment` (`MovieFragmentBox`,
+  `TrackFragmentHeaderBox`, `TrackFragmentRunBox`) rather than a second
+  `moof`/`traf`/`trun` walker.
+  Also implements the `cbcs` (AES-128-CBC pattern cipher) scheme, previously
+  unimplemented (`Decrypt::decrypt` unconditionally rejected any non-`cenc`
+  scheme): the `default_crypt_byte_block`:`default_skip_byte_block` pattern is
+  applied across a sample's protected bytes as one continuous CBC chain
+  (spanning pattern-skip runs and subsample boundaries — the IV seeds only the
+  first encrypted block, verified against a real Bento4-produced fixture
+  rather than assumed from the spec text), with the IV resolved from either
+  the per-sample `senc` entry or the track's `tenc.default_constant_IV`.
+  New fixtures `fixtures/transmux/h264_cenc.mp4` / `h264_cbcs.mp4` (real,
+  fragmented, Bento4 `mp4encrypt`-produced) back
+  `tests/cenc_fragmented_fixture.rs`, including a golden-interop cross-check
+  against Bento4's own `mp4decrypt`.
+
 ## [0.15.3] - 2026-07-12
 
 ### Added
