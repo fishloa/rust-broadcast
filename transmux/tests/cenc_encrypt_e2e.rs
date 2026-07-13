@@ -44,14 +44,19 @@ use transmux::init_segment::protect_init_segment;
 use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Fmp4Demux,
-    IvGen, KeyMap, Media, SampleEncryptionEntry, SubsamplePolicy, TrackEncryption,
+    IvGen, KeyMap, Media, SubsamplePolicy, TrackEncryption,
 };
 
-/// Full AES block size (bytes) — a `cbcs` per-sample IV, when not using
-/// `tenc.default_constant_IV`, must be a genuine 16-byte CBC seed, not the
-/// 8-byte-plus-zero-pad convention `cenc`'s CTR counter uses (see
-/// [`widen_cbcs_iv_to_16_bytes`]'s doc for the interop finding this encodes).
-const CBC_IV_LEN: usize = 16;
+/// Constant `cbcs` IV — the standard real-world `cbcs` convention (confirmed
+/// against Bento4's `mp4encrypt`, which always emits a `tenc.default_constant_IV`
+/// for `cbcs` regardless of the `--key` IV given it; a per-sample `cbcs` IV, if
+/// used at all, must be this same 16 bytes, not `cenc`'s 8-byte counter
+/// convention — Bento4's `mp4decrypt` silently no-ops on an 8-byte `cbcs`
+/// per-sample IV). 16 arbitrary bytes, distinct from the KID/KEY below so a
+/// transposition bug between them would not accidentally cancel out.
+const CBCS_CONSTANT_IV: [u8; 16] = [
+    0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
+];
 
 /// Test KID: `00112233445566778899aabbccddeeff` (32 hex chars).
 const KID: [u8; 16] = [
@@ -113,91 +118,27 @@ fn mp4decrypt_available() -> bool {
     })
 }
 
-/// `CencEncryptor` always records an 8-byte per-sample IV, right-zero-padded
-/// to a 16-byte CTR/CBC seed *internally* (`cenc_encrypt.rs`'s
-/// `PER_SAMPLE_IV_SIZE` constant applies to both schemes alike — out of this
-/// task's boundary to change). That 8-byte **wire** encoding is the standard
-/// `cenc` (CTR) convention and interops fine with Bento4's `mp4decrypt` (see
-/// `cenc_end_to_end_round_trip_and_mp4decrypt_interop`, below).
-///
-/// For `cbcs`, it does not: empirically (confirmed during this task's
-/// debugging via a manual block-by-block ciphertext comparison), Bento4's
-/// `mp4decrypt` accepts a `cbcs` file with `tenc.default_Per_Sample_IV_Size
-/// == 8`, exits 0, but silently leaves the protected track byte-identical to
-/// its ciphertext (every 16-byte pattern "crypt" block was unchanged, not
-/// just the "skip" blocks — i.e. it decrypts nothing at all, without
-/// erroring). Bento4's own `mp4encrypt --method MPEG-CBCS` corroborates this:
-/// even given a 64-bit (8-byte) `--key <n>:<k>:<iv>`, it always stores a
-/// `tenc.default_constant_IV` with `Per_Sample_IV_Size == 0` — real `cbcs`
-/// deployments overwhelmingly use a single constant IV, not a per-sample one,
-/// and per-sample `cbcs` IVs that *are* used are full 16-byte CBC seeds, not
-/// an 8-byte CTR-style counter.
-///
-/// `CencEncryptor`'s public `EncryptConfig`/`IvGen` has no way to select a
-/// constant IV for `cbcs` (`tenc.default_constant_iv` is hard-coded `None`) —
-/// a real gap, but in `cenc_encrypt.rs`, outside this task's permitted files.
-/// So, for this end-to-end test only, we re-declare the *wire* representation
-/// of the already-computed per-sample IV from 8 bytes to the full 16-byte
-/// value the cipher core already used internally: `cenc_crypto`'s
-/// `resolve_cbcs_iv` zero-pads an 8-byte IV into a 16-byte CBC seed via
-/// `iv[..len].copy_from_slice(src)` (left-aligned, zero-padded on the right)
-/// — the exact transform applied here. No cipher/crypto behaviour changes;
-/// the encrypted bytes are identical either way. Only which of two equally
-/// true *encodings* of that same 16-byte value gets written into
-/// `senc`/`tenc` changes, and only the 16-byte encoding is one Bento4 will
-/// actually decrypt.
-fn widen_cbcs_iv_to_16_bytes(enc: &TrackEncryption) -> TrackEncryption {
-    let mut tenc = enc.tenc.clone();
-    tenc.default_per_sample_iv_size = CBC_IV_LEN as u8;
-    let samples = enc
-        .samples
-        .iter()
-        .map(|e| {
-            let mut iv = e.initialization_vector.clone();
-            iv.resize(CBC_IV_LEN, 0);
-            SampleEncryptionEntry {
-                initialization_vector: iv,
-                subsamples: e.subsamples.clone(),
-            }
-        })
-        .collect();
-    TrackEncryption {
-        scheme: enc.scheme,
-        tenc,
-        samples,
-    }
-}
-
 /// Encrypt `media` in place per `cfg`, mux it through the real `CmafMux`
 /// packager, then apply both Task-3 protection passes. Returns the fully
 /// protected, standalone (ftyp+moov+styp+moof+mdat) fMP4 bytes.
-///
-/// For `cbcs`, the crypto metadata handed to the protection passes is
-/// [`widen_cbcs_iv_to_16_bytes`]'s 16-byte-IV re-declaration of what
-/// `CencEncryptor` recorded (see that function's docs for why).
 fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
     CencEncryptor
         .encrypt(&mut *media, cfg)
         .expect("CencEncryptor::encrypt");
     let track_id = media.tracks[0].spec.track_id;
-    let enc = media.tracks[0]
+    let enc: TrackEncryption = media.tracks[0]
         .encryption
         .as_ref()
         .expect("Track::encryption populated by CencEncryptor")
         .clone();
-    let wire_enc = if cfg.scheme == CencScheme::Cbcs {
-        widen_cbcs_iv_to_16_bytes(&enc)
-    } else {
-        enc
-    };
 
     let raw = CmafMux::new(1).package(&*media).expect("CmafMux::package");
     let with_protected_init =
-        protect_init_segment(&raw, track_id, &wire_enc).expect("protect_init_segment");
+        protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment");
     let fragment_protection = FragmentProtection {
         track_id,
-        entries: &wire_enc.samples,
-        per_sample_iv_size: wire_enc.tenc.default_per_sample_iv_size,
+        entries: &enc.samples,
+        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
     protect_media_segment(&with_protected_init, &[fragment_protection])
         .expect("protect_media_segment")
@@ -214,7 +155,13 @@ fn write_temp(bytes: &[u8], tag: &str) -> PathBuf {
 /// The full pipeline for one scheme: encrypt -> mux -> protect -> write ->
 /// self round-trip via `CencDecryptor` -> golden interop via `mp4decrypt`
 /// (skipped cleanly if the binary is absent).
-fn run_e2e(scheme: CencScheme, pattern: Option<(u8, u8)>, subsample: SubsamplePolicy, tag: &str) {
+fn run_e2e(
+    scheme: CencScheme,
+    iv: IvGen,
+    pattern: Option<(u8, u8)>,
+    subsample: SubsamplePolicy,
+    tag: &str,
+) {
     let Some(mut media) = clear_video_media() else {
         return;
     };
@@ -228,7 +175,7 @@ fn run_e2e(scheme: CencScheme, pattern: Option<(u8, u8)>, subsample: SubsamplePo
         scheme,
         kid: KID,
         key: KEY,
-        iv: IvGen::Counter { base: 0 },
+        iv,
         pattern,
         subsample,
     };
@@ -304,33 +251,36 @@ fn run_e2e(scheme: CencScheme, pattern: Option<(u8, u8)>, subsample: SubsamplePo
 
 #[test]
 fn cenc_end_to_end_round_trip_and_mp4decrypt_interop() {
-    run_e2e(CencScheme::Cenc, None, SubsamplePolicy::Video, "cenc");
+    run_e2e(
+        CencScheme::Cenc,
+        IvGen::Counter { base: 0 },
+        None,
+        SubsamplePolicy::Video,
+        "cenc",
+    );
 }
 
-/// `cbcs` uses [`SubsamplePolicy::WholeSample`] (a single protected region per
-/// sample, no subsample structure) rather than `Video`. This isn't a
-/// convenience shortcut: this task's debugging (see
-/// `.superpowers/sdd/task-4-report.md`) found that `cenc_crypto.rs`'s `cbcs`
-/// pattern cipher's CBC chain incorrectly *carries over* from one subsample's
-/// last crypt block into the *next* subsample's first crypt block, whereas
-/// Bento4 (and, per manual re-derivation with an independent AES-CBC
-/// reference, the spec-correct behaviour) *resets* the chain to the sample's
-/// seed IV at the start of every subsample's protected range (while still
-/// correctly chaining *within* one subsample's own multiple crypt runs — that
-/// part matches Bento4 exactly). That's a `cenc_crypto.rs`/`cenc_encrypt.rs`
-/// cipher-core bug outside this task's permitted files (`movie_fragment.rs`/
-/// `init_segment.rs` only) to fix. `WholeSample` has exactly one protected
-/// region per sample, so it never exercises the broken cross-subsample chain
-/// path, letting this test still genuinely prove the box/wire plumbing this
-/// task owns (`tenc`/`sinf`/`senc`/`saiz`/`saio` emission, the `saio`
-/// moof-relative anchor, and — see [`widen_cbcs_iv_to_16_bytes`] — the
-/// 16-byte-IV wire convention Bento4 requires for non-constant `cbcs`).
+/// `cbcs` uses [`SubsamplePolicy::Video`] — a real per-NAL multi-subsample
+/// map — plus [`IvGen::Constant`] (the standard `cbcs` constant-IV
+/// convention). This is deliberately the case that previously exposed a real
+/// `cenc_crypto.rs` bug (issue #564): the `cbcs` CBC chain was incorrectly
+/// carried over from one subsample's last crypt block into the *next*
+/// subsample's first crypt block, rather than resetting to the sample's seed
+/// IV at the start of every subsample's protected range (see
+/// `cenc_crypto.rs`'s module docs for the fixed rule, triangulated against
+/// Bento4/Shaka). With that fix, this test — using the exact
+/// multi-subsample shape that used to diverge from Bento4 — now proves both
+/// the box/wire plumbing (`tenc`/`sinf`/`senc`/`saiz`/`saio` emission, the
+/// `saio` moof-relative anchor, and the constant-IV wire convention Bento4
+/// requires for `cbcs`) AND the cipher-core chain-reset fix, end to end
+/// against the real Bento4 `mp4decrypt` oracle.
 #[test]
 fn cbcs_end_to_end_round_trip_and_mp4decrypt_interop() {
     run_e2e(
         CencScheme::Cbcs,
+        IvGen::Constant(CBCS_CONSTANT_IV),
         Some((1, 9)),
-        SubsamplePolicy::WholeSample,
+        SubsamplePolicy::Video,
         "cbcs",
     );
 }

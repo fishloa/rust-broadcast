@@ -47,11 +47,12 @@ use crate::pipeline::CodecConfig;
 /// key length and block length coincide).
 const KEY_LEN: usize = 16;
 
-/// Per-sample IV size this encryptor always emits (8-byte per-sample IV,
-/// zero-padded to 16 bytes by the cipher core — the common CMAF convention;
-/// ISO/IEC 23001-7 §12.2 permits 8 or 16). A fixed choice keeps
-/// [`EncryptConfig`] simple; `tenc.default_constant_IV` is therefore never
-/// needed here (only relevant when `default_Per_Sample_IV_Size == 0`).
+/// Per-sample IV size (bytes) for [`IvGen::Counter`] (every counter IV is an
+/// 8-byte big-endian value) and the fallback for an empty [`IvGen::Explicit`]
+/// list — the common CMAF `cenc` convention (ISO/IEC 23001-7 §12.2 permits 8
+/// or 16). [`IvGen::Constant`] instead derives `0` (see [`tenc_iv_fields`]) —
+/// a `cbcs` sample's constant IV then lives only in `tenc.default_constant_IV`,
+/// never per-sample in `senc`.
 const PER_SAMPLE_IV_SIZE: u8 = 8;
 
 /// Default `cbcs` pattern (`crypt_byte_block`:`skip_byte_block`) — 1 crypt
@@ -69,8 +70,19 @@ pub enum IvGen {
         base: u64,
     },
     /// Caller-supplied per-sample IVs, one per sample, in decode order. Each
-    /// IV must be at most 16 bytes.
+    /// IV must be at most 16 bytes, and every IV in the list must have the
+    /// same length (`tenc.default_per_sample_iv_size` is one value for the
+    /// whole track — ISO/IEC 23001-7 §12.2).
     Explicit(Vec<Vec<u8>>),
+    /// A single 16-byte IV shared by every sample of the track, recorded as
+    /// `tenc.default_constant_IV` with `default_per_sample_iv_size == 0`
+    /// (ISO/IEC 23001-7 §12.2) rather than a per-sample `senc` entry. The
+    /// standard `cbcs` convention — real `cbcs` deployments overwhelmingly use
+    /// a constant IV (confirmed against Bento4's `mp4encrypt`, which always
+    /// emits one for `cbcs` regardless of the `--key` IV given it), and
+    /// Bento4's `mp4decrypt` requires it (or a genuine 16-byte per-sample IV)
+    /// to actually decrypt `cbcs` — an 8-byte per-sample IV silently no-ops.
+    Constant([u8; KEY_LEN]),
 }
 
 impl Default for IvGen {
@@ -131,6 +143,7 @@ impl Encrypt for CencEncryptor {
             CencScheme::Cbcs => cfg.pattern.unwrap_or(DEFAULT_CBCS_PATTERN),
             CencScheme::Cenc => (0, 0),
         };
+        let (per_sample_iv_size, default_constant_iv) = tenc_iv_fields(&cfg.iv)?;
         let tenc = TrackEncryptionBox {
             // `cbcs` pattern fields only carry meaning under version 1
             // (ISO/IEC 23001-7 §12.2); `cenc` has no pattern, so version 0.
@@ -138,11 +151,9 @@ impl Encrypt for CencEncryptor {
             default_crypt_byte_block: pattern.0,
             default_skip_byte_block: pattern.1,
             default_is_protected: 1,
-            default_per_sample_iv_size: PER_SAMPLE_IV_SIZE,
+            default_per_sample_iv_size: per_sample_iv_size,
             default_kid: cfg.kid,
-            // Only meaningful when default_per_sample_iv_size == 0, which this
-            // encryptor never emits (see PER_SAMPLE_IV_SIZE's docs).
-            default_constant_iv: None,
+            default_constant_iv,
         };
 
         for track in &mut media.tracks {
@@ -237,7 +248,9 @@ fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSampleEntry>> {
     Ok(out)
 }
 
-/// Resolve sample `idx`'s IV from the configured [`IvGen`].
+/// Resolve sample `idx`'s per-sample `senc` IV from the configured [`IvGen`].
+/// [`IvGen::Constant`] resolves to an *empty* IV — its 16-byte seed lives only
+/// in `tenc.default_constant_IV` (see [`tenc_iv_fields`]), never per-sample.
 fn resolve_iv(iv_gen: &IvGen, idx: usize, sample_count: usize) -> Result<Vec<u8>> {
     match iv_gen {
         IvGen::Counter { base } => {
@@ -259,6 +272,47 @@ fn resolve_iv(iv_gen: &IvGen, idx: usize, sample_count: usize) -> Result<Vec<u8>
                 ));
             }
             Ok(iv.clone())
+        }
+        IvGen::Constant(_) => Ok(Vec::new()),
+    }
+}
+
+/// Derive `tenc`'s `(default_per_sample_iv_size, default_constant_IV)` pair
+/// from the chosen [`IvGen`] (ISO/IEC 23001-7 §12.2):
+///
+/// - [`IvGen::Constant`]: `default_per_sample_iv_size = 0`, `default_constant_IV
+///   = Some(iv)` — the mandatory pairing when no per-sample IV is carried.
+/// - [`IvGen::Counter`]: `default_per_sample_iv_size = 8` (every counter IV is
+///   an 8-byte big-endian value — see [`resolve_iv`]), no constant IV.
+/// - [`IvGen::Explicit`]: `default_per_sample_iv_size` is the shared length of
+///   every supplied IV (checked uniform here, since the wire format has only
+///   one track-wide size — a per-sample length mismatch would otherwise
+///   silently desync `senc`'s IV field width from `saiz`'s per-sample aux
+///   size), no constant IV. An empty list falls back to the 8-byte default
+///   (there is no sample to measure; [`resolve_iv`] will itself reject the
+///   count mismatch against the track's real sample count).
+fn tenc_iv_fields(iv_gen: &IvGen) -> Result<(u8, Option<Vec<u8>>)> {
+    match iv_gen {
+        IvGen::Constant(iv) => Ok((0, Some(iv.to_vec()))),
+        IvGen::Counter { .. } => Ok((PER_SAMPLE_IV_SIZE, None)),
+        IvGen::Explicit(ivs) => {
+            let len = match ivs.first() {
+                Some(first) => {
+                    if ivs.iter().any(|iv| iv.len() != first.len()) {
+                        return Err(Error::InvalidInput(
+                            "IvGen::Explicit IVs must all share one length (tenc.default_per_sample_iv_size is one value for the whole track)",
+                        ));
+                    }
+                    first.len()
+                }
+                None => PER_SAMPLE_IV_SIZE as usize,
+            };
+            if len > KEY_LEN {
+                return Err(Error::InvalidInput(
+                    "IvGen::Explicit IV longer than 16 bytes",
+                ));
+            }
+            Ok((len as u8, None))
         }
     }
 }

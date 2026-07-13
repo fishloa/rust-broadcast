@@ -18,25 +18,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cenc` and `cbcs` pass; the `cenc` case confirms the `saio` moof-relative
   anchor decision against real third-party tooling.
 
-### Known limitation (found during the above, not yet fixed)
-
-- **`cbcs`'s CBC pattern chain incorrectly continues across subsample
-  boundaries** (issue #564): `cenc_crypto.rs`'s pattern cipher (shared by both
-  `CencEncryptor` and `CencDecryptor`, since CBC is its own inverse over the
-  same chain) should reset its running CBC chain to the sample's seed IV at
-  the **start of every subsample's protected range** — it currently carries
-  the chain over from the previous subsample's last encrypted block instead.
-  Verified with an independent AES-CBC re-derivation against Bento4's
-  `mp4decrypt`: any `cbcs` sample with more than one subsample containing an
-  encrypted (non-skip) block round-trips correctly through this crate's own
-  `CencEncryptor`/`CencDecryptor` pair (self-consistent) but produces the
-  **wrong plaintext** against a real, spec-conformant external decryptor.
-  Does not affect `cenc` (CTR, no chaining), nor `cbcs` with
-  `SubsamplePolicy::WholeSample` (a single protected region has no subsample
-  boundary to cross) — `cenc_encrypt_e2e.rs`'s `cbcs` case uses `WholeSample`
-  specifically to sidestep this until it's fixed. Tracked for a follow-up fix
-  to `cenc_crypto.rs`'s pattern-chain state machine.
-
 ### Fixed
 
 - **`cenc_decrypt`: fragmented CMAF support (`moof`/`traf`/`senc`/`saiz`/`saio`) +
@@ -53,15 +34,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also implements the `cbcs` (AES-128-CBC pattern cipher) scheme, previously
   unimplemented (`Decrypt::decrypt` unconditionally rejected any non-`cenc`
   scheme): the `default_crypt_byte_block`:`default_skip_byte_block` pattern is
-  applied across a sample's protected bytes as one continuous CBC chain
-  (spanning pattern-skip runs and subsample boundaries — the IV seeds only the
-  first encrypted block, verified against a real Bento4-produced fixture
-  rather than assumed from the spec text), with the IV resolved from either
-  the per-sample `senc` entry or the track's `tenc.default_constant_IV`.
+  applied across a sample's protected bytes, chaining across pattern-skip runs
+  within one subsample's protected range and resetting to the sample's seed IV
+  at the start of every subsample's protected range (see the next entry — the
+  cross-subsample reset rule was corrected after this fix originally shipped),
+  with the IV resolved from either the per-sample `senc` entry or the track's
+  `tenc.default_constant_IV`.
   New fixtures `fixtures/transmux/h264_cenc.mp4` / `h264_cbcs.mp4` (real,
   fragmented, Bento4 `mp4encrypt`-produced) back
   `tests/cenc_fragmented_fixture.rs`, including a golden-interop cross-check
   against Bento4's own `mp4decrypt`.
+- **`cbcs`'s CBC pattern chain now resets per subsample, and `cenc_encrypt`
+  gained constant-IV/16-byte-IV support** (issue #564): `cenc_crypto.rs`'s
+  `cbcs` pattern cipher (shared by `CencEncryptor` and `CencDecryptor`)
+  previously carried its running CBC chain over from one subsample's last
+  encrypted block into the *next* subsample's first encrypted block; it now
+  resets the chain to the sample's resolved seed IV at the **start of every
+  subsample's protected range**, while still chaining correctly *within* one
+  subsample's own pattern-skip runs (unchanged, and unchanged for `cenc`'s CTR
+  counter, which stays continuous across subsamples as before). Triangulated
+  against Bento4's `mp4decrypt` and Shaka Packager (ISO/IEC 23001-7 itself is
+  unowned/paid, so the reference implementations are the source of truth): the
+  old cross-subsample-continuous chain reproduced only the first protected
+  subsample of a multi-subsample sample correctly and silently diverged from
+  Bento4 on every later subsample's first crypt block, while still
+  round-tripping through this crate's own encrypt/decrypt pair
+  (self-consistent, not spec/interop-correct) — undetectable without an
+  external oracle. `cenc_encrypt.rs`'s `IvGen` gained a `Constant([u8; 16])`
+  variant (the standard real-world `cbcs` convention: `tenc.default_constant_IV`
+  + `default_per_sample_iv_size = 0`, no per-sample `senc` IV), and
+  `default_per_sample_iv_size` is now derived from the chosen `IvGen` instead
+  of a hard-coded `8` (which Bento4's `mp4decrypt` silently no-ops on for
+  `cbcs`). `tests/cenc_encrypt_e2e.rs`'s `cbcs` case now uses
+  `SubsamplePolicy::Video` (a real per-NAL multi-subsample map — the case that
+  exposed the bug) and `IvGen::Constant`, proving both the fix and the
+  constant-IV wire convention end to end against the real `mp4decrypt` oracle;
+  `tests/cenc_fragmented_fixture.rs`'s existing single-subsample-per-sample
+  `h264_cbcs.mp4` regression (which the bug never affected, since it never
+  crosses a subsample boundary) remains byte-exact green.
 
 ## [0.15.3] - 2026-07-12
 

@@ -10,22 +10,44 @@
 //! next chain IV — so [`cbcs_pattern`] and [`cbcs_sample`] take a [`CbcsOp`]
 //! to select the direction.
 //!
-//! # The CBC continuous-chain rule (both directions)
+//! # The CBC chain rule (both directions)
 //!
-//! Across a sample's protected bytes, `crypt_byte_block` 16-byte blocks are
-//! CBC-en/decrypted, then `skip_byte_block` 16-byte blocks are passed through
-//! clear, repeating for the whole sample — across every pattern-skip run
-//! **and** every subsample boundary, mirroring how `cenc`'s CTR counter also
-//! runs continuously across a whole sample regardless of subsample
-//! boundaries. Only the very first encrypted block of the sample is seeded
-//! from the resolved IV; every subsequent encrypted block's CBC input is the
-//! immediately *preceding encrypted* block's ciphertext — skipped (pattern)
-//! and clear (subsample) bytes are excluded from the chain entirely, never
-//! entering the cipher and never updating the chain state. A trailing
-//! partial block (fewer than 16 bytes remaining in a crypt run) is left
-//! clear. When both `crypt_byte_block` and `skip_byte_block` are `0` (no
-//! pattern configured), the whole range is treated as one `1`:`0` run
-//! (ISO/IEC 23001-7 §10.2 note).
+//! *Within* one subsample's protected range (or the whole sample, when there
+//! is no subsample map), `crypt_byte_block` 16-byte blocks are CBC-en/decrypted,
+//! then `skip_byte_block` 16-byte blocks are passed through clear, repeating
+//! across every pattern-skip run in that range — this part mirrors how
+//! `cenc`'s CTR counter advances continuously across a whole sample. Only the
+//! range's very first encrypted block is seeded from the resolved IV; every
+//! subsequent encrypted block's CBC input is the immediately *preceding
+//! encrypted* block's ciphertext — skipped (pattern) bytes are excluded from
+//! the chain entirely, never entering the cipher and never updating the
+//! chain state. A trailing partial block (fewer than 16 bytes remaining in a
+//! crypt run) is left clear. When both `crypt_byte_block` and
+//! `skip_byte_block` are `0` (no pattern configured), the whole range is
+//! treated as one `1`:`0` run (ISO/IEC 23001-7 §10.2 note).
+//!
+//! **The chain does NOT carry across subsample boundaries**: [`cbcs_sample`]
+//! resets the chain to the sample's resolved seed IV at the start of *every*
+//! subsample's protected range (each subsample gets its own fresh
+//! [`cbcs_pattern`] call seeded from the same IV). This was triangulated
+//! against Bento4's `mp4decrypt` reference decryptor (empirically, with an
+//! independent AES-CBC re-derivation) and Shaka Packager's `cbcs` behaviour —
+//! ISO/IEC 23001-7 itself is not owned by this project, so the reference
+//! implementations are the source of truth here. An earlier version of this
+//! module carried the chain continuously across subsample boundaries too;
+//! that reproduced only the *first* protected subsample of a multi-subsample
+//! sample correctly and diverged from Bento4 on every subsequent subsample's
+//! first crypt block, while still round-tripping through this crate's own
+//! encrypt/decrypt pair (self-consistent, but not spec/interop-correct) — see
+//! `tests/cenc_encrypt_e2e.rs`'s `cbcs` case (a real per-NAL subsample map)
+//! for the regression coverage. The whole-sample case (an empty subsample
+//! map) is unaffected either way: with no subsample boundary to cross, there
+//! was never more than one chain in play. This is also consistent with the
+//! real fixture in `tests/cenc_fragmented_fixture.rs` (Bento4-produced),
+//! whose samples each carry exactly one subsample — a fixture that alone
+//! cannot distinguish "resets every subsample" from "never resets", since it
+//! never has more than one crypt-bearing subsample per sample to cross a
+//! boundary between.
 //!
 //! For **decrypt**, the next chain IV is the run's last *ciphertext* block,
 //! captured *before* in-place decryption overwrites it. For **encrypt**, the
@@ -34,11 +56,6 @@
 //! writes it. Both directions therefore chain on ciphertext; only the timing
 //! of the read (before vs. after the block-cipher pass) differs, since
 //! encrypt doesn't have the ciphertext until it computes it.
-//!
-//! This was verified against a real Bento4-produced `cbcs` fixture (see
-//! `tests/cenc_fragmented_fixture.rs`): resetting the IV at every crypt run,
-//! rather than chaining across skip runs, reproduces only each run's first
-//! block correctly and diverges thereafter.
 //!
 //! No AES is rolled by hand: the [`aes`] + [`ctr`] + [`cbc`] RustCrypto crates
 //! do the block cipher and mode work. This module is gated on the `cenc`
@@ -168,16 +185,16 @@ fn resolve_cbcs_iv(
 /// blocks untouched, repeating across `range`. A trailing partial block
 /// (fewer than 16 bytes remaining) is left clear.
 ///
-/// `chain_iv` in/out: the CBC chain input for the range's first en/decrypted
-/// block (typically the sample's resolved IV, or the previous range's last
-/// ciphertext block when the caller threads the same `chain_iv` across
-/// several ranges of one sample — see [`cbcs_sample`]). Skipped (pattern) and
-/// clear (subsample) bytes are excluded from the chain entirely — they are
-/// never fed to the cipher and never update `chain_iv` — so the *next*
-/// en/decrypted block's CBC input is always the immediately *preceding*
-/// block's ciphertext, not the fresh `chain_iv` a naive per-pattern-run
-/// reading of ISO/IEC 23001-7 §10.2 might suggest (see the module docs for
-/// why encrypt and decrypt both chain on ciphertext).
+/// `chain_iv` in/out: the CBC chain input for `range`'s first en/decrypted
+/// block — the caller ([`cbcs_sample`]) always seeds this from the sample's
+/// resolved IV fresh for every subsample's `range` (see the module docs for
+/// why the chain resets per subsample rather than carrying over). *Within*
+/// this one call, skipped (pattern) bytes are excluded from the chain
+/// entirely — they are never fed to the cipher and never update `chain_iv` —
+/// so the *next* en/decrypted block's CBC input is always the immediately
+/// *preceding* block's ciphertext, not the fresh `chain_iv` a naive
+/// per-pattern-run reading of ISO/IEC 23001-7 §10.2 might suggest (see the
+/// module docs for why encrypt and decrypt both chain on ciphertext).
 ///
 /// When both `crypt_byte_block` and `skip_byte_block` are `0` (no pattern
 /// configured — full-sample protection, e.g. some `cbcs` audio tracks) the
@@ -211,8 +228,10 @@ pub(crate) fn cbcs_pattern(
             CbcsOp::Decrypt => {
                 // Capture this run's last ciphertext block (before it is
                 // overwritten in place) to seed the chain for whatever
-                // encrypted block follows — possibly across an intervening
-                // skip run or subsample boundary.
+                // encrypted block follows later in this same range —
+                // possibly across an intervening skip run (never across a
+                // subsample boundary: each subsample gets its own fresh
+                // `cbcs_pattern` call in `cbcs_sample`).
                 let mut next_chain = [0u8; KEY_LEN];
                 next_chain.copy_from_slice(&range[offset + run_len - KEY_LEN..offset + run_len]);
 
@@ -253,9 +272,10 @@ pub(crate) fn cbcs_pattern(
 /// direction selected by `op`.
 ///
 /// Resolves the sample's chain-seed IV ([`resolve_cbcs_iv`]) then walks the
-/// subsample map (or the whole sample, if unset), threading one continuous
-/// [`cbcs_pattern`] chain across every subsample boundary — see the module
-/// docs for the continuous-chain rule.
+/// subsample map (or the whole sample, if unset), running one fresh
+/// [`cbcs_pattern`] call *per subsample*, each reseeded from the same
+/// resolved IV — see the module docs for why the chain resets at every
+/// subsample boundary rather than carrying over.
 pub(crate) fn cbcs_sample(
     tenc: &TrackEncryptionBox,
     entry: &SampleEncryptionEntry,
@@ -263,11 +283,12 @@ pub(crate) fn cbcs_sample(
     data: &mut [u8],
     op: CbcsOp,
 ) -> Result<()> {
-    let mut chain_iv = resolve_cbcs_iv(entry, tenc)?;
+    let seed_iv = resolve_cbcs_iv(entry, tenc)?;
     let crypt_blocks = tenc.default_crypt_byte_block;
     let skip_blocks = tenc.default_skip_byte_block;
 
     if entry.subsamples.is_empty() {
+        let mut chain_iv = seed_iv;
         cbcs_pattern(key, &mut chain_iv, crypt_blocks, skip_blocks, data, op);
         return Ok(());
     }
@@ -289,6 +310,11 @@ pub(crate) fn cbcs_sample(
                 what: "CBCS subsample range exceeds sample",
             });
         }
+        // Reset the chain to the sample's seed IV at the start of every
+        // subsample's protected range (see the module docs) — within this
+        // one subsample, `cbcs_pattern` still chains correctly across its own
+        // crypt/skip runs.
+        let mut chain_iv = seed_iv;
         cbcs_pattern(
             key,
             &mut chain_iv,

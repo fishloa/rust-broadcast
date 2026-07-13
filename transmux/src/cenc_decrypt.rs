@@ -5,8 +5,8 @@
 //! *parsers* (in [`crate::cenc`]) are reused here; this module adds the
 //! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
 //! the shared cipher core in `cenc_crypto` (factored out so an
-//! encrypt path can reuse it — see that module's docs for the CBC
-//! continuous-chain rule).
+//! encrypt path can reuse it — see that module's docs for the `cbcs` CBC
+//! chain-reset rule).
 //!
 //! # Container support
 //!
@@ -46,21 +46,26 @@
 //!   with the low 64 bits acting as the AES block counter, incrementing once per
 //!   16-byte cipher block across the concatenated *protected* bytes of a sample
 //!   (the clear subsample ranges are skipped, not counted).
-//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — across a
-//!   sample's protected bytes, `default_crypt_byte_block` 16-byte blocks are
+//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — *within* one
+//!   subsample's protected range (or the whole sample, when there is no
+//!   subsample map), `default_crypt_byte_block` 16-byte blocks are
 //!   CBC-decrypted, then `default_skip_byte_block` 16-byte blocks are passed
-//!   through clear, repeating for the whole sample (every subsample
-//!   boundary included); a final partial block (`< 16` bytes remaining in a
-//!   crypt run) is left clear. The IV — the `tenc` version-1
-//!   `default_constant_IV` when `default_Per_Sample_IV_Size == 0`, otherwise
-//!   the per-sample IV from `senc` — seeds only the *first* encrypted block;
-//!   the CBC chain then continues seamlessly from each encrypted block's
-//!   ciphertext to the next encrypted block, skip (and clear) bytes never
-//!   entering the chain — mirroring how `cenc`'s CTR counter also advances
-//!   continuously across a whole sample. (Verified against a real
-//!   Bento4-produced `cbcs` fixture: resetting the IV at every crypt run —
-//!   a plausible first reading of the spec text — reproduces only each
-//!   run's first block correctly and diverges thereafter.)
+//!   through clear, repeating across that range; a final partial block
+//!   (`< 16` bytes remaining in a crypt run) is left clear. The IV — the
+//!   `tenc` version-1 `default_constant_IV` when
+//!   `default_Per_Sample_IV_Size == 0`, otherwise the per-sample IV from
+//!   `senc` — seeds the *first* encrypted block of *every* subsample's
+//!   protected range (the chain resets at each subsample boundary, it does
+//!   not carry over); within one subsample's range the chain then continues
+//!   seamlessly from each encrypted block's ciphertext to the next, skip
+//!   bytes never entering the chain. `cenc`'s CTR counter, by contrast, does
+//!   advance continuously across the whole sample regardless of subsample
+//!   boundaries — the two ciphers differ here. This `cbcs` chain-reset rule
+//!   was triangulated against Bento4's `mp4decrypt` and Shaka Packager (ISO/IEC
+//!   23001-7 itself is not owned by this project, so the reference
+//!   implementations are the source of truth) — see `cenc_crypto`'s module
+//!   docs for the full derivation, including the earlier
+//!   cross-subsample-continuous version's divergence from Bento4.
 //! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2015 §8.12 — after decryption the
 //!   track's coded data is in the original (`frma`) format.
 //! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2015 §8.8.
@@ -226,9 +231,12 @@ impl CencDecryptor {
     /// Decrypt one sample's bytes in place, dispatching on the track's scheme.
     ///
     /// Delegates to the shared cipher core in `cenc_crypto`: `cenc`
-    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via `cenc_crypto::apply_ctr`, `cbcs`
+    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via `cenc_crypto::apply_ctr` — the
+    /// counter runs continuously across subsample boundaries; `cbcs`
     /// (AES-CBC pattern, ISO/IEC 23001-7 §10.2) via
-    /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt`.
+    /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt` — the CBC chain
+    /// instead *resets* to the sample's seed IV at the start of every
+    /// subsample's protected range (see `cenc_crypto`'s module docs).
     fn decrypt_sample(
         scheme: CencScheme,
         tenc: &TrackEncryptionBox,
