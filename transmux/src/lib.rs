@@ -102,6 +102,8 @@ pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
 #[cfg(feature = "cenc")]
+pub(crate) mod cenc_crypto;
+#[cfg(feature = "cenc")]
 pub mod cenc_decrypt;
 #[cfg(feature = "cli")]
 pub mod cli;
