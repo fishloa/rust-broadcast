@@ -11,9 +11,11 @@ Source key:
   `https://mp4ra.org/registered-types/boxes`
 
 Codec-specific boxes for `avc1`/`avcC` (H.264), `hvc1`/`hvcC` (H.265/HEVC), and
-`mp4a`/`esds` (AAC/MPEG-4 audio) are **GAP** entries — their field-level syntax is defined
-exclusively in the paid ISO standards ISO/IEC 14496-15 (for AVC/HEVC carriage) and
-ISO/IEC 14496-14 (for mp4a/esds).
+`mp4a`/`esds` (AAC/MPEG-4 audio) are **DONE** — curated from real, vendored ISO/IEC
+14496-15/-14/-3/-1 text (not FFmpeg-only), living in `specs/rules/` and
+`transmux/docs/codec/` rather than this file. See the summary table at the bottom
+for the exact doc pointers; this file keeps only the `av01`/`av1C` transcription
+in full since those two were curated here originally.
 
 ---
 
@@ -108,56 +110,53 @@ Bytes 4+: configOBUs (optional)
 
 ---
 
-## `avc1` — AVC/H.264 Sample Entry
+## `avc1`/`avcC` — AVC/H.264 Sample Entry + Decoder Configuration Record
 
-**GAP — paid-only.**
+**DONE.** Full field syntax curated from the real, vendored ISO/IEC 14496-15:2012/2017
+text (`avc1` §5.4, `avcC`/`AVCDecoderConfigurationRecord` §5.3.3), cross-checked against
+the FFmpeg `movenc.c`/`avc.c` reference writer and a byte-exact real-fixture round-trip:
 
-`avc1` is defined in ISO/IEC 14496-15:2019, §5.4 (AVC Video Stream Definition).  
-`avcC` (AVCDecoderConfigurationRecord) is likewise defined in ISO/IEC 14496-15:2019, §5.3.3.
-
-The `avc1` entry extends `VisualSampleEntry` and contains an `avcC` box carrying the
-`AVCDecoderConfigurationRecord`, which embeds the SPS and PPS NAL units needed to decode the
-stream.
-
-**Resolution path:** Consult ISO/IEC 14496-15 (purchase from ISO), or use the FFmpeg
-`libavformat/movenc.c` / `isom.h` implementation as a cross-check against the purchased spec.
-The public ITU-T H.264 (AVC) syntax tables (Annex E, Table A-1) describe the SPS/PPS content
-that goes inside `avcC`.
+- `specs/rules/nal-avcc-hvcc-rules.md` — curated syntax + semantics (vision-read scanned
+  PDF, since the 14496-15 body is image-only).
+- `transmux/docs/codec/avcC-hvcC-14496-15.md` — implementation-facing transcription,
+  triple-grounded (ISO text + `movenc.c` + real oracle bytes).
+- Implemented in `transmux/src/*avc*`/`sps.rs` (#374), value-verified against a real
+  `ffmpeg`-muxed fixture (#443).
 
 ---
 
-## `hvc1` — HEVC/H.265 Sample Entry
+## `hvc1`/`hvcC` — HEVC/H.265 Sample Entry + Decoder Configuration Record
 
-**GAP — paid-only.**
+**DONE.** `hvc1`/`hvc2` (ISO/IEC 14496-15 §8, HEVC Video Stream Definition) and `hvcC`
+(`HEVCDecoderConfigurationRecord`, §8.3.3) recovered via OCR from the scanned 14496-15:2017
+4th edition (no free HEVC text-layer edition exists), verbatim field-by-field confirmed
+against both the ISO text and the FFmpeg `movenc.c`/`hevc.c` reference writer, plus a real
+byte-exact `hevc_frag.mp4`/`hevc_main.mp4` fixture oracle (#394, #456).
 
-`hvc1` and `hvc2` are defined in ISO/IEC 14496-15:2019, §8 (HEVC Video Stream Definition).  
-`hvcC` (HEVCDecoderConfigurationRecord) is defined in ISO/IEC 14496-15:2019, §8.3.3.
-
-**Resolution path:** Consult ISO/IEC 14496-15, or use FFmpeg `libavformat/movenc.c` /
-`libavcodec/hevc.h`.
+- `specs/rules/nal-avcc-hvcc-rules.md`, `transmux/docs/codec/avcC-hvcC-14496-15.md` (same
+  files as `avcC`, above — both codecs share one curated doc).
 
 ---
 
-## `mp4a` — MPEG-4 Audio Sample Entry
+## `mp4a`/`esds` — MPEG-4 Audio Sample Entry + Elementary Stream Descriptor
 
-**GAP — paid-only.**
+**DONE.** `mp4a` (ISO/IEC 14496-14:2003 §5.6.1, `MP4AudioSampleEntry`) and `esds`
+(`ES_Descriptor`/`DecoderConfigDescriptor`, ISO/IEC 14496-1:2010) curated from the real
+vendored text; the `AudioSpecificConfig` (ASC) carried inside `esds` — AOT table, sampling-
+frequency/channel-configuration tables — curated from ISO/IEC 14496-3:2001 §1.5.1.1/§1.6.
 
-`mp4a` is defined in ISO/IEC 14496-14:2020, §5.6.1 (MP4AudioSampleEntry).  
-`esds` (ES_Descriptor / DecoderConfigDescriptor) is defined in ISO/IEC 14496-1 (MPEG-4 Systems).
-
-The `mp4a` entry extends `AudioSampleEntry` and carries an `esds` box that contains the
-`AudioSpecificConfig` (ASC) needed to decode AAC/HE-AAC streams.
-
-**Resolution path:** Consult ISO/IEC 14496-14 and ISO/IEC 14496-3 (AudioSpecificConfig), or
-use the FFmpeg `libavformat/movenc.c` / `libavcodec/mpeg4audio.h` implementation.
+- `specs/rules/mp4-esds-rules.md` — `esds`/`ES_Descriptor` syntax.
+- `specs/rules/aac-asc-rules.md` — AAC `AudioSpecificConfig` syntax + tables.
+- `transmux/docs/codec/esds-mp4a.md`, `transmux/docs/codec/es-descriptor-14496-1.md`,
+  `transmux/docs/codec/heaac-asc.md` — implementation-facing transcriptions.
 
 ---
 
 ## Codec configuration summary
 
-| Sample entry | Config box | Source                   | Status          |
-|-------------|------------|--------------------------|-----------------|
-| `av01`      | `av1C`     | [AOM-AV1]                | DONE            |
-| `avc1`      | `avcC`     | ISO/IEC 14496-15 (paid)  | GAP — paid-only |
-| `hvc1`      | `hvcC`     | ISO/IEC 14496-15 (paid)  | GAP — paid-only |
-| `mp4a`      | `esds`     | ISO/IEC 14496-14/-1 (paid)| GAP — paid-only |
+| Sample entry | Config box | Source                                    | Status |
+|-------------|------------|--------------------------------------------|--------|
+| `av01`      | `av1C`     | [AOM-AV1]                                   | DONE   |
+| `avc1`      | `avcC`     | ISO/IEC 14496-15 (vendored, vision-read)    | DONE   |
+| `hvc1`      | `hvcC`     | ISO/IEC 14496-15 (vendored, OCR-recovered)  | DONE   |
+| `mp4a`      | `esds`     | ISO/IEC 14496-14/-3/-1 (vendored)           | DONE   |
