@@ -256,3 +256,100 @@ fn explicit_iv_too_long_errors() {
         "expected InvalidInput, got {err:?}"
     );
 }
+
+/// An `IvGen::Explicit` list of empty (0-byte) per-sample IVs must error —
+/// only 8- or 16-byte IVs are valid (ISO/IEC 23001-7 §9.2/§12.2). Without this
+/// guard, an empty IV silently builds an all-zero AES-CTR counter, reusing the
+/// same keystream for every sample (a two-time-pad).
+#[test]
+fn explicit_iv_empty_errors() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let n = media.tracks[0].samples.len();
+    let cfg = EncryptConfig {
+        iv: IvGen::Explicit(vec![vec![]; n]),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// An `IvGen::Explicit` list of uniform 12-byte per-sample IVs must error —
+/// only 8 or 16 bytes are valid lengths on the wire.
+#[test]
+fn explicit_iv_wrong_uniform_length_errors() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let n = media.tracks[0].samples.len();
+    let cfg = EncryptConfig {
+        iv: IvGen::Explicit(vec![vec![0u8; 12]; n]),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// `IvGen::Explicit` with valid 8-byte and 16-byte per-sample IVs is accepted.
+#[test]
+fn explicit_iv_valid_lengths_are_ok() {
+    for len in [8usize, 16] {
+        let Some(mut media) = clear_video_media() else {
+            return;
+        };
+        let n = media.tracks[0].samples.len();
+        let cfg = EncryptConfig {
+            iv: IvGen::Explicit(vec![vec![0xABu8; len]; n]),
+            ..cenc_cfg()
+        };
+        CencEncryptor
+            .encrypt(&mut media, &cfg)
+            .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
+    }
+}
+
+/// A `cbcs` pattern with `crypt_byte_block == 0` and a nonzero
+/// `skip_byte_block` must error rather than silently leave the "protected"
+/// range in cleartext.
+#[test]
+fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = EncryptConfig {
+        scheme: CencScheme::Cbcs,
+        pattern: Some((0, 9)),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// A `cbcs` pattern component above 15 must error rather than silently
+/// truncate to its low 4 bits when packed into `tenc`.
+#[test]
+fn cbcs_pattern_component_too_large_errors() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = EncryptConfig {
+        scheme: CencScheme::Cbcs,
+        pattern: Some((17, 9)),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}

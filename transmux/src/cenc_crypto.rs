@@ -283,9 +283,23 @@ pub(crate) fn cbcs_sample(
     data: &mut [u8],
     op: CbcsOp,
 ) -> Result<()> {
-    let seed_iv = resolve_cbcs_iv(entry, tenc)?;
     let crypt_blocks = tenc.default_crypt_byte_block;
     let skip_blocks = tenc.default_skip_byte_block;
+    // `crypt_byte_block == 0` with a nonzero `skip_byte_block` is not the
+    // "no pattern configured" case (that's 0:0, remapped to a 1:0 whole-range
+    // run by `cbcs_pattern`) — it is a pattern whose crypt run length is zero,
+    // so `cbcs_pattern`'s `want` computes to 0 and its loop's very first
+    // `run_len` is `0`, breaking immediately and leaving the whole range
+    // clear while `tenc.default_is_protected` still claims it is protected
+    // (ISO/IEC 23001-7 §12.2). Reject rather than silently ship/accept
+    // unprotected data — reachable both when building `tenc` for encryption
+    // and when parsing an untrusted file's `tenc` for decryption.
+    if crypt_blocks == 0 && skip_blocks != 0 {
+        return Err(Error::InvalidInput(
+            "cbcs pattern crypt_byte_block=0 with nonzero skip leaves data unprotected",
+        ));
+    }
+    let seed_iv = resolve_cbcs_iv(entry, tenc)?;
 
     if entry.subsamples.is_empty() {
         let mut chain_iv = seed_iv;
@@ -403,5 +417,32 @@ mod tests {
 
         cbcs_sample(&tenc, &entry, &KEY, &mut buf, CbcsOp::Decrypt).unwrap();
         assert_eq!(buf, plaintext);
+    }
+
+    /// A `tenc` with `default_crypt_byte_block == 0` and a nonzero
+    /// `default_skip_byte_block` (e.g. a hostile or malformed file) must be
+    /// rejected on the **decrypt** path too — without this guard,
+    /// `cbcs_pattern`'s crypt-run length computes to 0, its loop breaks
+    /// immediately, and the "protected" range is returned untouched
+    /// (ciphertext masquerading as plaintext) while `default_is_protected`
+    /// still claims protection.
+    #[test]
+    fn cbcs_sample_decrypt_rejects_zero_crypt_nonzero_skip() {
+        let tenc = TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 0,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let entry = SampleEncryptionEntry {
+            initialization_vector: IV8.to_vec(),
+            subsamples: Vec::new(),
+        };
+        let mut data: Vec<u8> = (0u8..64).collect();
+        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
     }
 }

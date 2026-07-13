@@ -115,6 +115,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `h264_cbcs.mp4` regression (which the bug never affected, since it never
   crosses a subsample boundary) remains byte-exact green.
 
+### Security
+
+- **CENC encrypt-path input validation hardening** (issue #564 review): the
+  encrypt API previously accepted nonsense configuration and silently shipped
+  unprotected or corrupt output instead of erroring. `CencEncryptor::encrypt`
+  now rejects: a per-sample `IvGen::Explicit` IV whose length isn't exactly 8
+  or 16 bytes (an empty IV previously built an all-zero AES-CTR counter — a
+  two-time-pad reusing the same keystream across every sample); a `cbcs`
+  pattern with `crypt_byte_block == 0` and a nonzero `skip_byte_block` (the
+  shared `cenc_crypto::cbcs_sample`, used by both encrypt and decrypt, now
+  guards this — previously it left the "protected" range in cleartext while
+  `tenc.default_is_protected` still claimed protection); and a `cbcs` pattern
+  component (`crypt_byte_block`/`skip_byte_block`) above 15, which would
+  otherwise silently truncate to its low 4 bits when packed into `tenc`
+  (ISO/IEC 23001-7 §12.2). Also promotes a `debug_assert` in
+  `movie_fragment::protect_media_segment`'s `moof`/`saio`-offset consistency
+  check to a real `Error` return (release builds no longer risk silently
+  shipping a corrupt `moof`), and tightens that function's doc comment to
+  state it protects a single-fragment media segment (one `moof`/`mdat`), which
+  is its actual (and the normal CMAF) behaviour.
+
 ## [0.15.3] - 2026-07-12
 
 ### Added

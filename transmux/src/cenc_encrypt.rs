@@ -60,8 +60,22 @@ const PER_SAMPLE_IV_SIZE: u8 = 8;
 /// (ISO/IEC 23001-7 §10.2).
 const DEFAULT_CBCS_PATTERN: (u8, u8) = (1, 9);
 
+/// Maximum value of a `cbcs` pattern component (`crypt_byte_block` /
+/// `skip_byte_block`). `tenc` packs both into a single byte, one nibble each
+/// (ISO/IEC 23001-7 §12.2: `(default_crypt_byte_block << 4) |
+/// default_skip_byte_block`), so any component above 15 would silently
+/// truncate to its low 4 bits on the wire rather than error.
+const CBCS_PATTERN_MAX: u8 = 0x0F;
+
+/// Valid per-sample IV lengths for a `senc` entry — ISO/IEC 23001-7 §9.2/§12.2
+/// permit exactly 8 or 16 bytes; any other length (including empty) desyncs
+/// the AES-CTR/CBC IV derivation from `tenc.default_per_sample_iv_size` and
+/// `saiz`'s per-sample aux info size.
+const VALID_EXPLICIT_IV_LENS: [usize; 2] = [8, 16];
+
 /// How to derive each sample's initialization vector.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum IvGen {
     /// Per-sample 8-byte IV = big-endian `base + sample_index` (the cipher
     /// core zero-pads it to 16 bytes). The default.
@@ -70,9 +84,11 @@ pub enum IvGen {
         base: u64,
     },
     /// Caller-supplied per-sample IVs, one per sample, in decode order. Each
-    /// IV must be at most 16 bytes, and every IV in the list must have the
-    /// same length (`tenc.default_per_sample_iv_size` is one value for the
-    /// whole track — ISO/IEC 23001-7 §12.2).
+    /// IV must be exactly 8 or 16 bytes (ISO/IEC 23001-7 §9.2/§12.2 — no other
+    /// length is valid on the wire, and an empty or otherwise-sized IV would
+    /// desync the AES-CTR/CBC derivation), and every IV in the list must have
+    /// the same length (`tenc.default_per_sample_iv_size` is one value for the
+    /// whole track).
     Explicit(Vec<Vec<u8>>),
     /// A single 16-byte IV shared by every sample of the track, recorded as
     /// `tenc.default_constant_IV` with `default_per_sample_iv_size == 0`
@@ -140,7 +156,15 @@ impl Encrypt for CencEncryptor {
     /// every track in `media`.
     fn encrypt(&self, media: &mut Media, cfg: &EncryptConfig) -> Result<()> {
         let pattern = match cfg.scheme {
-            CencScheme::Cbcs => cfg.pattern.unwrap_or(DEFAULT_CBCS_PATTERN),
+            CencScheme::Cbcs => {
+                let p = cfg.pattern.unwrap_or(DEFAULT_CBCS_PATTERN);
+                if p.0 > CBCS_PATTERN_MAX || p.1 > CBCS_PATTERN_MAX {
+                    return Err(Error::InvalidInput(
+                        "cbcs pattern block counts must each be 0..=15",
+                    ));
+                }
+                p
+            }
             CencScheme::Cenc => (0, 0),
         };
         let (per_sample_iv_size, default_constant_iv) = tenc_iv_fields(&cfg.iv)?;
@@ -266,9 +290,9 @@ fn resolve_iv(iv_gen: &IvGen, idx: usize, sample_count: usize) -> Result<Vec<u8>
                 ));
             }
             let iv = &ivs[idx];
-            if iv.len() > KEY_LEN {
+            if !VALID_EXPLICIT_IV_LENS.contains(&iv.len()) {
                 return Err(Error::InvalidInput(
-                    "IvGen::Explicit IV longer than 16 bytes",
+                    "CENC per-sample IV must be 8 or 16 bytes",
                 ));
             }
             Ok(iv.clone())
@@ -288,9 +312,12 @@ fn resolve_iv(iv_gen: &IvGen, idx: usize, sample_count: usize) -> Result<Vec<u8>
 ///   every supplied IV (checked uniform here, since the wire format has only
 ///   one track-wide size — a per-sample length mismatch would otherwise
 ///   silently desync `senc`'s IV field width from `saiz`'s per-sample aux
-///   size), no constant IV. An empty list falls back to the 8-byte default
-///   (there is no sample to measure; [`resolve_iv`] will itself reject the
-///   count mismatch against the track's real sample count).
+///   size), no constant IV. That shared length is also validated here to be
+///   exactly 8 or 16 bytes — an empty (or any other length) IV would build an
+///   all-zero or malformed AES-CTR/CBC counter (a two-time-pad, in the
+///   all-zero case). An empty list falls back to the 8-byte default (there is
+///   no sample to measure; [`resolve_iv`] will itself reject the count
+///   mismatch against the track's real sample count).
 fn tenc_iv_fields(iv_gen: &IvGen) -> Result<(u8, Option<Vec<u8>>)> {
     match iv_gen {
         IvGen::Constant(iv) => Ok((0, Some(iv.to_vec()))),
@@ -307,9 +334,9 @@ fn tenc_iv_fields(iv_gen: &IvGen) -> Result<(u8, Option<Vec<u8>>)> {
                 }
                 None => PER_SAMPLE_IV_SIZE as usize,
             };
-            if len > KEY_LEN {
+            if !VALID_EXPLICIT_IV_LENS.contains(&len) {
                 return Err(Error::InvalidInput(
-                    "IvGen::Explicit IV longer than 16 bytes",
+                    "CENC per-sample IV must be 8 or 16 bytes",
                 ));
             }
             Ok((len as u8, None))
@@ -505,6 +532,110 @@ mod tests {
             iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 17]; n]),
             pattern: None,
             subsample: SubsamplePolicy::WholeSample,
+        };
+        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// `IvGen::Explicit` with empty (0-byte) per-sample IVs must error, not
+    /// silently build an all-zero AES-CTR counter (a two-time-pad — the same
+    /// keystream would be reused for every sample, making the plaintext
+    /// trivially recoverable).
+    #[test]
+    fn explicit_iv_empty_errors() {
+        let mut media = clear_media();
+        let n = media.tracks[0].samples.len();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cenc,
+            kid: KID,
+            key: KEY,
+            iv: IvGen::Explicit(alloc::vec![alloc::vec![]; n]),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+        };
+        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// `IvGen::Explicit` with a uniform, but non-8/16-byte, per-sample IV
+    /// length must error (only 8 and 16 bytes are valid on the wire —
+    /// ISO/IEC 23001-7 §9.2/§12.2).
+    #[test]
+    fn explicit_iv_wrong_uniform_length_errors() {
+        let mut media = clear_media();
+        let n = media.tracks[0].samples.len();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cenc,
+            kid: KID,
+            key: KEY,
+            iv: IvGen::Explicit(alloc::vec![alloc::vec![0u8; 12]; n]),
+            pattern: None,
+            subsample: SubsamplePolicy::WholeSample,
+        };
+        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// `IvGen::Explicit` accepts both valid per-sample IV lengths — 8 and 16
+    /// bytes (ISO/IEC 23001-7 §9.2/§12.2) — recording the matching
+    /// `tenc.default_per_sample_iv_size` for each.
+    #[test]
+    fn explicit_iv_valid_lengths_are_ok() {
+        for len in [8usize, 16] {
+            let mut media = clear_media();
+            let n = media.tracks[0].samples.len();
+            let cfg = EncryptConfig {
+                scheme: CencScheme::Cenc,
+                kid: KID,
+                key: KEY,
+                iv: IvGen::Explicit(alloc::vec![alloc::vec![0xABu8; len]; n]),
+                pattern: None,
+                subsample: SubsamplePolicy::WholeSample,
+            };
+            CencEncryptor
+                .encrypt(&mut media, &cfg)
+                .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
+            let enc = media.tracks[0].encryption.as_ref().expect("Some");
+            assert_eq!(
+                enc.tenc.default_per_sample_iv_size, len as u8,
+                "tenc.default_per_sample_iv_size must match the actual IV length used"
+            );
+        }
+    }
+
+    /// `cbcs` pattern `crypt_byte_block == 0` with a nonzero
+    /// `skip_byte_block` must error — otherwise the whole range is left
+    /// silently unprotected while `tenc.default_is_protected` still claims
+    /// protection (see `cenc_crypto::cbcs_sample`'s guard).
+    #[test]
+    fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
+        let mut media = clear_media();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cbcs,
+            kid: KID,
+            key: KEY,
+            iv: IvGen::Counter { base: 0 },
+            pattern: Some((0, 9)),
+            subsample: SubsamplePolicy::Video,
+        };
+        let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// A `cbcs` pattern component above 15 must error rather than silently
+    /// truncate to its low 4 bits when packed into `tenc` (ISO/IEC 23001-7
+    /// §12.2: `(crypt_byte_block << 4) | skip_byte_block`) — e.g. `(17, 9)`
+    /// would otherwise silently become `(1, 9)` on the wire.
+    #[test]
+    fn cbcs_pattern_component_too_large_errors() {
+        let mut media = clear_media();
+        let cfg = EncryptConfig {
+            scheme: CencScheme::Cbcs,
+            kid: KID,
+            key: KEY,
+            iv: IvGen::Counter { base: 0 },
+            pattern: Some((17, 9)),
+            subsample: SubsamplePolicy::Video,
         };
         let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));

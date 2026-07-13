@@ -934,9 +934,16 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<CencFragmentB
     Ok(CencFragmentBoxes { senc, saiz, saio })
 }
 
-/// Rewrite an already-built CMAF media segment (`styp` [+ `emsg`*] + `moof` +
-/// `mdat`) so each track named in `protections` gets CENC `senc`/`saiz`/
-/// `saio` boxes appended to its `traf` (issue #564 Task 3).
+/// Rewrite an already-built **single-fragment** CMAF media segment (`styp`
+/// [+ `emsg`*] + one `moof` + `mdat`) so each track named in `protections`
+/// gets CENC `senc`/`saiz`/`saio` boxes appended to its `traf` (issue #564
+/// Task 3).
+///
+/// This is the normal CMAF media-segment case (one `moof`/`mdat` pair per
+/// segment). Only the buffer's *first* `moof` is located and rewritten — a
+/// buffer containing more than one `moof` (a multi-fragment segment) is not
+/// supported; any `moof`s beyond the first are copied through untouched as
+/// part of the verbatim suffix, not protected.
 ///
 /// Every `trun.data_offset` in the (possibly-grown) `moof` — protected track
 /// or not — is shifted by the exact number of bytes the new boxes add, so
@@ -944,8 +951,8 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<CencFragmentB
 /// `default-base-is-moof` base (see the module docs above for why this, and
 /// `saio.offset[0]`, are moof-relative). `media_segment` may be a bare
 /// `styp`+`moof`+`mdat` triple or a larger buffer with more boxes before/after
-/// (e.g. a whole `CmafMux` output including `ftyp`/`moov`) — only the `moof`
-/// span is touched; everything before and after it is copied through
+/// (e.g. a whole `CmafMux` output including `ftyp`/`moov`) — only the (first)
+/// `moof` span is touched; everything before and after it is copied through
 /// verbatim. Returns the input unchanged when `protections` is empty.
 pub fn protect_media_segment(
     media_segment: &[u8],
@@ -1041,7 +1048,11 @@ pub fn protect_media_segment(
             moof_out[start..start + 4].copy_from_slice(&final_len.to_be_bytes());
         }
     }
-    debug_assert_eq!(c, new_moof_len);
+    if c != new_moof_len {
+        return Err(Error::InvalidInput(
+            "moof length/senc offset consistency check failed",
+        ));
+    }
 
     let mut out = Vec::with_capacity(prefix_len + new_moof_len + suffix.len());
     out.extend_from_slice(&media_segment[..prefix_len]);
