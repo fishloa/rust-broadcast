@@ -22,7 +22,7 @@ mpeg-ts          = { path = "../mpeg-ts", version = "0.2", default-features = fa
 dvb-si           = { path = "../dvb-si", version = "8", default-features = false, features = ["ts"] }
 dvb-conformance  = { path = "../dvb-conformance", version = "8", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "1", default-features = false }
-timed-metadata   = { path = "../timed-metadata", version = "0.3", default-features = false }
+timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false }
 transmux         = { path = "../transmux", version = "0.15", default-features = false }
 clap             = { version = "4", features = ["derive"], optional = true }
 serde            = { version = "1", features = ["derive", "alloc"], optional = true }

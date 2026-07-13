@@ -2,7 +2,7 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.4.0] - 2026-07-13
 
 ### Added
 - **EBU Teletext (ETSI EN 300 706) subtitle decode -> WebVTT** (feature
