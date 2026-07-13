@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CENC/CBCS encrypt-path end-to-end proof** (issue #564): new
+  `tests/cenc_encrypt_e2e.rs` exercises the full `CencEncryptor::encrypt` ->
+  `CmafMux::package` -> `protect_init_segment`/`protect_media_segment`
+  pipeline against `fixtures/ts/h264/main.ts`, then verifies the resulting
+  fMP4 two independent ways: a self round-trip through `CencDecryptor`, and a
+  golden-interop cross-check against Bento4's real `mp4decrypt` CLI. Both
+  `cenc` and `cbcs` pass; the `cenc` case confirms the `saio` moof-relative
+  anchor decision against real third-party tooling.
+
+### Known limitation (found during the above, not yet fixed)
+
+- **`cbcs`'s CBC pattern chain incorrectly continues across subsample
+  boundaries** (issue #564): `cenc_crypto.rs`'s pattern cipher (shared by both
+  `CencEncryptor` and `CencDecryptor`, since CBC is its own inverse over the
+  same chain) should reset its running CBC chain to the sample's seed IV at
+  the **start of every subsample's protected range** — it currently carries
+  the chain over from the previous subsample's last encrypted block instead.
+  Verified with an independent AES-CBC re-derivation against Bento4's
+  `mp4decrypt`: any `cbcs` sample with more than one subsample containing an
+  encrypted (non-skip) block round-trips correctly through this crate's own
+  `CencEncryptor`/`CencDecryptor` pair (self-consistent) but produces the
+  **wrong plaintext** against a real, spec-conformant external decryptor.
+  Does not affect `cenc` (CTR, no chaining), nor `cbcs` with
+  `SubsamplePolicy::WholeSample` (a single protected region has no subsample
+  boundary to cross) — `cenc_encrypt_e2e.rs`'s `cbcs` case uses `WholeSample`
+  specifically to sidestep this until it's fixed. Tracked for a follow-up fix
+  to `cenc_crypto.rs`'s pattern-chain state machine.
+
 ### Fixed
 
 - **`cenc_decrypt`: fragmented CMAF support (`moof`/`traf`/`senc`/`saiz`/`saio`) +
