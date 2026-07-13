@@ -806,6 +806,250 @@ impl Serialize for MovieFragmentBox {
         Ok(c)
     }
 }
+
+// ---------------------------------------------------------------------------
+// CENC movie-fragment protection (`senc`/`saiz`/`saio`) — ISO/IEC 23001-7
+// §12.3, ISO/IEC 14496-12:2015 §8.7.8-9 — issue #564 Task 3 (muxer emission).
+//
+// `senc`/`saiz`/`saio` are deliberately **not** modelled as fields on
+// [`TrackFragmentBox`]: every existing call site that constructs one (e.g.
+// `pipeline::build_media_segment_with_events`) uses a plain struct literal
+// with exactly `{ tfhd, tfdt, trun }`, so adding required fields there would
+// force editing that call site too. Instead this is a *post-processing* pass
+// over an already-built movie fragment (`moof`), driven by the caller's
+// [`crate::cenc::SampleEncryptionEntry`] list (from
+// [`crate::media::TrackEncryption::samples`]) — it composes with any CMAF
+// muxer output without the crypto metadata needing to flow through the
+// `trun`/`traf` builder plumbing itself.
+//
+// # `saio` anchor
+//
+// This crate's fragment builder (`pipeline::build_media_segment_with_events`)
+// always sets `tfhd`'s `default-base-is-moof` flag and computes
+// `trun.data_offset` **relative to the first byte of the enclosing `moof`
+// box** (not an absolute file offset — see that function's own doc comment).
+// `saio.offset[0]` is computed on exactly that same moof-relative basis for
+// consistency with the trun convention already in this pipeline, and because
+// it matches how CMAF encoders (e.g. Shaka Packager, Bento4 `mp4encrypt`)
+// anchor `saio` under `default-base-is-moof`. Task 4's `mp4decrypt` interop
+// test is the authoritative check of this choice against a real external
+// decryptor.
+// ---------------------------------------------------------------------------
+
+/// Number of bytes from the start of a `senc` box (ISO/IEC 23001-7 §12.3) to
+/// its first sample's IV: 8-byte box header + 4-byte FullBox version/flags +
+/// 4-byte `sample_count`.
+const SENC_ENTRIES_OFFSET: u64 = 16;
+
+/// Per-`subsample` fixed fields written by `senc` when
+/// [`crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION`] is set — ISO/IEC
+/// 23001-7 §12.3.2: `subsample_count` (2 bytes).
+const SAIZ_SUBSAMPLE_COUNT_SIZE: usize = 2;
+/// One `(bytes_of_clear_data, bytes_of_protected_data)` subsample entry:
+/// 2-byte clear count + 4-byte protected count — ISO/IEC 23001-7 §12.3.2.
+const SAIZ_SUBSAMPLE_ENTRY_SIZE: usize = 6;
+
+/// One protected track's per-sample CENC aux info for a single movie
+/// fragment, for [`protect_media_segment`] — the movie-fragment half of
+/// issue #564's muxer emission ([`crate::init_segment::protect_init_segment`]
+/// is the init-segment half).
+pub struct FragmentProtection<'a> {
+    /// The `tfhd.track_id` of the `traf` to protect.
+    pub track_id: u32,
+    /// Per-sample IV + subsample map for **this fragment's samples only**, in
+    /// decode order. Must have exactly as many entries as the matching
+    /// `traf`'s total `trun` sample count (checked). A `Media` muxed across
+    /// several CMAF media segments (e.g. via `Segmenter`) protects each
+    /// segment with the slice of `Track::encryption`'s samples covering that
+    /// segment.
+    pub entries: &'a [crate::cenc::SampleEncryptionEntry],
+    /// [`crate::cenc::TrackEncryptionBox::default_per_sample_iv_size`] for
+    /// this track — the fixed IV length written into `senc`.
+    pub per_sample_iv_size: u8,
+}
+
+/// The `senc`/`saiz`/`saio` triple built for one protected `traf`.
+struct CencFragmentBoxes {
+    senc: crate::cenc::SampleEncryptionBox,
+    saiz: crate::cenc::SampleAuxInfoSizesBox,
+    saio: crate::cenc::SampleAuxInfoOffsetsBox,
+}
+
+impl CencFragmentBoxes {
+    fn added_len(&self) -> usize {
+        self.senc.serialized_len() + self.saiz.serialized_len() + self.saio.serialized_len()
+    }
+}
+
+/// Build the `senc`/`saiz`/`saio` boxes for one protected track's fragment.
+/// `saio.offsets[0]` is a placeholder (`0`) — [`protect_media_segment`]
+/// back-patches it once every box's final position in the rebuilt `moof` is
+/// known.
+fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<CencFragmentBoxes> {
+    let use_subsamples = p.entries.iter().any(|e| !e.subsamples.is_empty());
+    let flags = if use_subsamples {
+        crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION
+    } else {
+        0
+    };
+    let senc = crate::cenc::SampleEncryptionBox {
+        version: 0,
+        flags,
+        per_sample_iv_size: p.per_sample_iv_size,
+        entries: p.entries.to_vec(),
+    };
+
+    let mut sizes = Vec::with_capacity(p.entries.len());
+    for e in p.entries {
+        let mut sz = p.per_sample_iv_size as usize;
+        if use_subsamples {
+            sz += SAIZ_SUBSAMPLE_COUNT_SIZE + e.subsamples.len() * SAIZ_SUBSAMPLE_ENTRY_SIZE;
+        }
+        if sz > u8::MAX as usize {
+            return Err(Error::InvalidInput(
+                "protect_media_segment: per-sample aux info size exceeds 255 bytes (saiz sample_info_size is u8)",
+            ));
+        }
+        sizes.push(sz as u8);
+    }
+    let uniform = sizes
+        .first()
+        .copied()
+        .filter(|first| sizes.iter().all(|s| s == first));
+    let saiz = crate::cenc::SampleAuxInfoSizesBox {
+        version: 0,
+        flags: 0,
+        aux_info_type: None,
+        aux_info_type_parameter: None,
+        default_sample_info_size: uniform.unwrap_or(0),
+        sample_info_sizes: if uniform.is_some() { Vec::new() } else { sizes },
+    };
+    let saio = crate::cenc::SampleAuxInfoOffsetsBox {
+        version: 0,
+        flags: 0,
+        aux_info_type: None,
+        aux_info_type_parameter: None,
+        offsets: alloc::vec![0u64],
+    };
+    Ok(CencFragmentBoxes { senc, saiz, saio })
+}
+
+/// Rewrite an already-built CMAF media segment (`styp` [+ `emsg`*] + `moof` +
+/// `mdat`) so each track named in `protections` gets CENC `senc`/`saiz`/
+/// `saio` boxes appended to its `traf` (issue #564 Task 3).
+///
+/// Every `trun.data_offset` in the (possibly-grown) `moof` — protected track
+/// or not — is shifted by the exact number of bytes the new boxes add, so
+/// every sample in the unchanged `mdat` still resolves correctly against the
+/// `default-base-is-moof` base (see the module docs above for why this, and
+/// `saio.offset[0]`, are moof-relative). `media_segment` may be a bare
+/// `styp`+`moof`+`mdat` triple or a larger buffer with more boxes before/after
+/// (e.g. a whole `CmafMux` output including `ftyp`/`moov`) — only the `moof`
+/// span is touched; everything before and after it is copied through
+/// verbatim. Returns the input unchanged when `protections` is empty.
+pub fn protect_media_segment(
+    media_segment: &[u8],
+    protections: &[FragmentProtection<'_>],
+) -> Result<Vec<u8>> {
+    if protections.is_empty() {
+        return Ok(media_segment.to_vec());
+    }
+
+    let mut prefix_len = 0usize;
+    let mut moof_len = None;
+    for step in crate::box_types::box_iter(media_segment) {
+        let (box_ref, consumed) = step?;
+        if box_ref.header.box_type.is(b"moof") {
+            moof_len = Some(consumed);
+            break;
+        }
+        prefix_len += consumed;
+    }
+    let moof_len = moof_len.ok_or(Error::UnexpectedBox { expected: "moof" })?;
+    let moof_bytes = &media_segment[prefix_len..prefix_len + moof_len];
+    let suffix = &media_segment[prefix_len + moof_len..];
+
+    let mut moof = MovieFragmentBox::parse_body(&moof_bytes[BOX_HEADER_SIZE..])?;
+
+    // Build senc/saiz/saio for each protected traf, index-aligned with
+    // `moof.traf`.
+    let mut built: Vec<Option<CencFragmentBoxes>> = (0..moof.traf.len()).map(|_| None).collect();
+    for p in protections {
+        let idx = moof
+            .traf
+            .iter()
+            .position(|t| t.tfhd.track_id == p.track_id)
+            .ok_or(Error::InvalidInput(
+                "protect_media_segment: track_id not present in moof",
+            ))?;
+        let sample_count: usize = moof.traf[idx].trun.iter().map(|r| r.samples.len()).sum();
+        if sample_count != p.entries.len() {
+            return Err(Error::InvalidInput(
+                "protect_media_segment: entries.len() must equal the traf's total trun sample count",
+            ));
+        }
+        built[idx] = Some(build_cenc_fragment_boxes(p)?);
+    }
+
+    // Pass A: each traf's "base" (tfhd+tfdt+trun) length, and its final
+    // length once its senc/saiz/saio (if protected) are appended.
+    let base_lens: Vec<usize> = moof.traf.iter().map(|t| t.serialized_len()).collect();
+    let final_lens: Vec<usize> = base_lens
+        .iter()
+        .zip(&built)
+        .map(|(&base, b)| base + b.as_ref().map(CencFragmentBoxes::added_len).unwrap_or(0))
+        .collect();
+
+    let mfhd_len = moof.mfhd.serialized_len();
+    let new_moof_len = BOX_HEADER_SIZE + mfhd_len + final_lens.iter().sum::<usize>();
+    let delta = new_moof_len as i64 - moof_len as i64;
+
+    // Pass B: compute each protected traf's saio.offset[0] (moof-relative)
+    // and shift every trun.data_offset by `delta`.
+    let mut running = (BOX_HEADER_SIZE + mfhd_len) as u64;
+    for (i, traf) in moof.traf.iter_mut().enumerate() {
+        if let Some(b) = built[i].as_mut() {
+            let senc_start = running + base_lens[i] as u64;
+            b.saio.offsets[0] = senc_start + SENC_ENTRIES_OFFSET;
+        }
+        running += final_lens[i] as u64;
+
+        for run in &mut traf.trun {
+            if run.tr_flags & TRUN_DATA_OFFSET_PRESENT != 0 {
+                run.data_offset = Some(run.data_offset.unwrap_or(0) + delta as i32);
+            }
+        }
+    }
+
+    // Pass C: serialize the rebuilt moof. `TrackFragmentBox::serialize_into`
+    // only knows about tfhd/tfdt/trun, so its own leading size field (the
+    // "base" length) is back-patched to the final length once senc/saiz/saio
+    // have been appended for a protected traf.
+    let mut moof_out = alloc::vec![0u8; new_moof_len];
+    moof_out[0..4].copy_from_slice(&(new_moof_len as u32).to_be_bytes());
+    moof_out[4..8].copy_from_slice(b"moof");
+    let mut c = BOX_HEADER_SIZE;
+    c += moof.mfhd.serialize_into(&mut moof_out[c..])?;
+    for (i, traf) in moof.traf.iter().enumerate() {
+        let start = c;
+        c += traf.serialize_into(&mut moof_out[c..])?;
+        if let Some(b) = &built[i] {
+            c += b.senc.serialize_into(&mut moof_out[c..])?;
+            c += b.saiz.serialize_into(&mut moof_out[c..])?;
+            c += b.saio.serialize_into(&mut moof_out[c..])?;
+            let final_len = (c - start) as u32;
+            moof_out[start..start + 4].copy_from_slice(&final_len.to_be_bytes());
+        }
+    }
+    debug_assert_eq!(c, new_moof_len);
+
+    let mut out = Vec::with_capacity(prefix_len + new_moof_len + suffix.len());
+    out.extend_from_slice(&media_segment[..prefix_len]);
+    out.extend_from_slice(&moof_out);
+    out.extend_from_slice(suffix);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

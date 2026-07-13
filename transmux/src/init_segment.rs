@@ -9,7 +9,9 @@
 //! the `timing` module and `AVCSampleEntry` etc. from
 //! `sample_entries`.
 
+use crate::box_types::box_iter;
 use crate::error::{Error, Result};
+use crate::media::TrackEncryption;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
@@ -3122,6 +3124,255 @@ impl Serialize for MovieBox {
         }
         Ok(c)
     }
+}
+
+// ---------------------------------------------------------------------------
+// CENC init-segment protection (`encv`/`enca` + `sinf`) — ISO/IEC
+// 14496-12:2015 §8.12 (sinf/frma/schm/schi), ISO/IEC 23001-7 §12.2 (tenc) —
+// issue #564 Task 3 (muxer emission).
+// ---------------------------------------------------------------------------
+
+/// `schm.scheme_version` written for every CENC-protected sample entry:
+/// version 1.0, packed as a 16.16 major.minor pair per ISO/IEC
+/// 14496-12:2015 §8.12.5.
+const CENC_SCHEME_VERSION: u32 = 0x0001_0000;
+
+/// Which media kind a [`SampleEntryVariant`] carries, to choose the
+/// CENC-protected wrapper four-CC (`encv` for video, `enca` for audio —
+/// ISO/IEC 14496-12:2015 §8.12.1). Subtitle (`stpp`/`wvtt`) and unrecognised
+/// entries have no protected-wrapper form defined in this crate.
+enum SampleEntryMediaKind {
+    Video,
+    Audio,
+    Unsupported,
+}
+
+fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
+    match entry {
+        SampleEntryVariant::Avc1(_)
+        | SampleEntryVariant::Hevc1(_)
+        | SampleEntryVariant::Vvc(_)
+        | SampleEntryVariant::Mp4v(_)
+        | SampleEntryVariant::Av01(_)
+        | SampleEntryVariant::Vp09(_) => SampleEntryMediaKind::Video,
+        SampleEntryVariant::Mp4a(_)
+        | SampleEntryVariant::Ac3(_)
+        | SampleEntryVariant::Ec3(_)
+        | SampleEntryVariant::Opus(_)
+        | SampleEntryVariant::Flac(_)
+        | SampleEntryVariant::Mha(_)
+        | SampleEntryVariant::Dts(_)
+        | SampleEntryVariant::Ac4(_) => SampleEntryMediaKind::Audio,
+        SampleEntryVariant::Stpp(_)
+        | SampleEntryVariant::Wvtt(_)
+        | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
+    }
+}
+
+/// Serialize a [`SampleEntryVariant`] to its own box bytes (header + body).
+/// Mirrors the dispatch [`SampleDescriptionBox::serialize_into`] uses,
+/// exposed standalone so [`protect_sample_entry`] can recover the original
+/// entry's bytes to wrap (rather than hand-rolling a duplicate encoder).
+fn sample_entry_bytes(entry: &SampleEntryVariant) -> Result<Vec<u8>> {
+    let len = match entry {
+        SampleEntryVariant::Avc1(a) => a.serialized_len(),
+        SampleEntryVariant::Hevc1(h) => h.serialized_len(),
+        SampleEntryVariant::Vvc(v) => v.serialized_len(),
+        SampleEntryVariant::Mp4v(m) => m.serialized_len(),
+        SampleEntryVariant::Av01(a) => a.serialized_len(),
+        SampleEntryVariant::Vp09(v) => v.serialized_len(),
+        SampleEntryVariant::Mp4a(m) => m.serialized_len(),
+        SampleEntryVariant::Ac3(a) => a.serialized_len(),
+        SampleEntryVariant::Ec3(e) => e.serialized_len(),
+        SampleEntryVariant::Stpp(s) => s.serialized_len(),
+        SampleEntryVariant::Wvtt(w) => w.serialized_len(),
+        SampleEntryVariant::Ac4(a) => a.serialized_len(),
+        SampleEntryVariant::Opus(o) => o.serialized_len(),
+        SampleEntryVariant::Flac(f) => f.serialized_len(),
+        SampleEntryVariant::Mha(m) => m.serialized_len(),
+        SampleEntryVariant::Dts(d) => d.serialized_len(),
+        SampleEntryVariant::Unknown(u) => u.serialized_len(),
+    };
+    let mut buf = alloc::vec![0u8; len];
+    let n = match entry {
+        SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf)?,
+        SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf)?,
+        SampleEntryVariant::Vvc(v) => v.serialize_into(&mut buf)?,
+        SampleEntryVariant::Mp4v(m) => m.serialize_into(&mut buf)?,
+        SampleEntryVariant::Av01(a) => a.serialize_into(&mut buf)?,
+        SampleEntryVariant::Vp09(v) => v.serialize_into(&mut buf)?,
+        SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf)?,
+        SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf)?,
+        SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf)?,
+        SampleEntryVariant::Stpp(s) => s.serialize_into(&mut buf)?,
+        SampleEntryVariant::Wvtt(w) => w.serialize_into(&mut buf)?,
+        SampleEntryVariant::Ac4(a) => a.serialize_into(&mut buf)?,
+        SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf)?,
+        SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf)?,
+        SampleEntryVariant::Mha(m) => m.serialize_into(&mut buf)?,
+        SampleEntryVariant::Dts(d) => d.serialize_into(&mut buf)?,
+        SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf)?,
+    };
+    buf.truncate(n);
+    Ok(buf)
+}
+
+/// Wrap a clear sample entry as a CENC-protected `encv`/`enca` entry —
+/// ISO/IEC 14496-12:2015 §8.12.1: rename the codec four-CC to `encv`/`enca`,
+/// keep the original four-CC in a child `sinf`>`frma`, and add `sinf`>`schm`
+/// (`scheme_type`/`scheme_version`) + `sinf`>`schi`>`tenc` (ISO/IEC
+/// 23001-7 §12.2).
+///
+/// Returned as [`SampleEntryVariant::Unknown`] — this crate's generic
+/// passthrough case — rather than as a new enum variant: the decrypt side
+/// (`crate::cenc_decrypt`) locates `sinf` by walking the raw sample-entry
+/// bytes directly, not through this enum, so a generic body box is
+/// sufficient, and it keeps every existing exhaustive match over
+/// [`SampleEntryVariant`] (e.g. `crate::media::codec_config_from_entry`)
+/// unchanged (issue #564).
+pub fn protect_sample_entry(
+    original: &SampleEntryVariant,
+    scheme: crate::cenc::CencScheme,
+    tenc: &crate::cenc::TrackEncryptionBox,
+) -> Result<SampleEntryVariant> {
+    let wrapper_fourcc: [u8; 4] = match sample_entry_media_kind(original) {
+        SampleEntryMediaKind::Video => *b"encv",
+        SampleEntryMediaKind::Audio => *b"enca",
+        SampleEntryMediaKind::Unsupported => {
+            return Err(Error::InvalidInput(
+                "protect_sample_entry: CENC protection is only defined for audio/video sample entries",
+            ));
+        }
+    };
+
+    let original_bytes = sample_entry_bytes(original)?;
+    if original_bytes.len() < BOX_HDR {
+        return Err(Error::BufferTooShort {
+            need: BOX_HDR,
+            have: original_bytes.len(),
+            what: "sample entry",
+        });
+    }
+    let mut original_format = [0u8; 4];
+    original_format.copy_from_slice(&original_bytes[4..8]);
+
+    let scheme_name = scheme.name().as_bytes();
+    let mut scheme_type = [0u8; 4];
+    scheme_type.copy_from_slice(&scheme_name[..4]);
+
+    let sinf = crate::cenc::ProtectionSchemeInfoBox {
+        original_format: crate::cenc::OriginalFormatBox {
+            data_format: original_format,
+        },
+        scheme_type: Some(crate::cenc::SchemeTypeBox {
+            version: 0,
+            flags: 0,
+            scheme_type,
+            scheme_version: CENC_SCHEME_VERSION,
+            scheme_uri: None,
+        }),
+        scheme_info: Some(crate::cenc::SchemeInformationBox {
+            tenc: Some(tenc.clone()),
+            extra_boxes: Vec::new(),
+        }),
+        extra_boxes: Vec::new(),
+    };
+    let mut sinf_bytes = alloc::vec![0u8; sinf.serialized_len()];
+    let n = sinf.serialize_into(&mut sinf_bytes)?;
+    sinf_bytes.truncate(n);
+
+    let mut body = Vec::with_capacity(original_bytes.len() - BOX_HDR + sinf_bytes.len());
+    body.extend_from_slice(&original_bytes[BOX_HDR..]);
+    body.extend_from_slice(&sinf_bytes);
+
+    Ok(SampleEntryVariant::Unknown(OpaqueBox::new(
+        wrapper_fourcc,
+        body,
+    )))
+}
+
+/// Rewrite an already-built CMAF/fMP4 init segment (`ftyp` + `moov`) so the
+/// given track's sample entry becomes CENC-protected (issue #564 Task 3):
+/// [`protect_sample_entry`] renames the entry to `encv`/`enca` and adds
+/// `sinf`; every ancestor box (`stsd`/`stbl`/`minf`/`mdia`/`trak`/`moov`) is
+/// **recomputed** from its typed children by [`MovieBox`]'s own `Serialize`
+/// impl (no manual size patching) — only the target track's sample entry and
+/// its ancestors' size fields differ from the input; every other byte, and
+/// every other track, round-trips unchanged.
+///
+/// Operates as a *post-processing* pass over an already-muxed init segment
+/// rather than being wired into `pipeline::build_init_segment` itself, so it
+/// composes with any caller that already has a
+/// [`crate::media::TrackEncryption`] in hand (e.g. from
+/// `CencEncryptor::encrypt`'s `Track::encryption`) without that crypto
+/// metadata needing to flow through the lower-level `TrackSpec`/pipeline
+/// plumbing. `init_segment` may be the bare `ftyp`+`moov` pair or a larger
+/// buffer with more boxes following (e.g. a whole `CmafMux` output including
+/// `styp`/`moof`/`mdat`) — only the `moov` span is touched; everything
+/// before and after it is copied through verbatim.
+pub fn protect_init_segment(
+    init_segment: &[u8],
+    track_id: u32,
+    encryption: &TrackEncryption,
+) -> Result<Vec<u8>> {
+    let mut prefix_len = 0usize;
+    let mut moov_len = None;
+    for step in box_iter(init_segment) {
+        let (box_ref, consumed) = step?;
+        if box_ref.header.box_type.is(b"moov") {
+            moov_len = Some(consumed);
+            break;
+        }
+        prefix_len += consumed;
+    }
+    let moov_len = moov_len.ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov_bytes = &init_segment[prefix_len..prefix_len + moov_len];
+    let suffix = &init_segment[prefix_len + moov_len..];
+
+    let mut moov = MovieBox::parse(moov_bytes)?;
+    {
+        let track = moov
+            .tracks
+            .iter_mut()
+            .find(|t| t.tkhd.track_id == track_id)
+            .ok_or(Error::InvalidInput(
+                "protect_init_segment: track_id not found in moov",
+            ))?;
+        let stbl = track
+            .mdia
+            .as_mut()
+            .and_then(|m| m.minf.as_mut())
+            .and_then(|m| m.stbl.as_mut())
+            .ok_or(Error::UnexpectedBox {
+                expected: "trak/mdia/minf/stbl",
+            })?;
+        let stsd = stbl
+            .children
+            .iter_mut()
+            .find_map(|c| match c {
+                StblChild::Stsd(s) => Some(s),
+                _ => None,
+            })
+            .ok_or(Error::UnexpectedBox { expected: "stsd" })?;
+        let original = stsd
+            .entries
+            .first()
+            .ok_or(Error::UnexpectedBox {
+                expected: "stsd sample entry",
+            })?
+            .clone();
+        stsd.entries[0] = protect_sample_entry(&original, encryption.scheme, &encryption.tenc)?;
+    }
+
+    let mut new_moov = alloc::vec![0u8; moov.serialized_len()];
+    let n = moov.serialize_into(&mut new_moov)?;
+    new_moov.truncate(n);
+
+    let mut out = Vec::with_capacity(prefix_len + new_moov.len() + suffix.len());
+    out.extend_from_slice(&init_segment[..prefix_len]);
+    out.extend_from_slice(&new_moov);
+    out.extend_from_slice(suffix);
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
