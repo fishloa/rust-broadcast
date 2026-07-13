@@ -4,7 +4,7 @@
 //! implementing the hub [`broadcast_common::Decrypt`] trait. Only the box
 //! *parsers* (in [`crate::cenc`]) are reused here; this module adds the
 //! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
-//! the shared cipher core in [`crate::cenc_crypto`] (factored out so an
+//! the shared cipher core in `cenc_crypto` (factored out so an
 //! encrypt path can reuse it — see that module's docs for the CBC
 //! continuous-chain rule).
 //!
@@ -65,7 +65,7 @@
 //!   track's coded data is in the original (`frma`) format.
 //! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2015 §8.8.
 //!
-//! No AES is rolled by hand: [`crate::cenc_crypto`] wraps the RustCrypto
+//! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto
 //! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
 //! This module is gated on the `cenc` feature.
 
@@ -225,12 +225,10 @@ impl CencDecryptor {
 
     /// Decrypt one sample's bytes in place, dispatching on the track's scheme.
     ///
-    /// Delegates to the shared cipher core in [`crate::cenc_crypto`]: `cenc`
-    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via
-    /// [`cenc_crypto::apply_ctr`](crate::cenc_crypto::apply_ctr), `cbcs`
+    /// Delegates to the shared cipher core in `cenc_crypto`: `cenc`
+    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via `cenc_crypto::apply_ctr`, `cbcs`
     /// (AES-CBC pattern, ISO/IEC 23001-7 §10.2) via
-    /// [`cenc_crypto::cbcs_sample`](crate::cenc_crypto::cbcs_sample) with
-    /// [`CbcsOp::Decrypt`].
+    /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt`.
     fn decrypt_sample(
         scheme: CencScheme,
         tenc: &TrackEncryptionBox,
