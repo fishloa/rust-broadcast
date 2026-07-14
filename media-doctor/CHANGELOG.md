@@ -5,6 +5,13 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-07-14
+### Changed
+- Widen the `transmux` dependency to `0.16` (was `0.15`): transmux 0.16.0 adds
+  the CENC/CBCS encrypt path (issue #564) and makes one breaking struct-literal
+  change (`dash::ContentProtectionSystem` gained a `pssh` field). media-doctor's
+  own code is unchanged; this is a dependency-floor bump only.
+
 ## [0.4.0] - 2026-07-12
 ### Added
 - `media-doctor watch` — a live, continuous compliance probe (issue #665,
