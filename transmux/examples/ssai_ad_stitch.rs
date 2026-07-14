@@ -528,7 +528,17 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     // 10. Write everything to disk.
     // ------------------------------------------------------------------
-    let out_dir = std::env::temp_dir().join("transmux-ssai-ad-stitch-demo");
+    // Unique output dir per `run()` call: the integration test in
+    // `tests/ssai_ad_stitch.rs` invokes `run()` from several tests that
+    // execute in parallel, so a single fixed directory would race (one call
+    // truncating a file mid-write while another reads it). Keying the dir on
+    // the process id + a per-call counter isolates every invocation.
+    static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let out_dir = std::env::temp_dir().join(format!(
+        "transmux-ssai-ad-stitch-demo-{}-{}",
+        std::process::id(),
+        RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     fs::create_dir_all(&out_dir)?;
     fs::write(out_dir.join("init-1.mp4"), &video_init)?;
     fs::write(out_dir.join("init-2.mp4"), &audio_init)?;
