@@ -2,8 +2,11 @@
 //!
 //! Turns a CENC-encrypted ISOBMFF/CMAF file back into cleartext coded samples,
 //! implementing the hub [`broadcast_common::Decrypt`] trait. Only the box
-//! *parsers* (in [`crate::cenc`]) are reused here; this module adds the AES
-//! sample-decryption (both ciphers) and the `sinf`/`frma` unwrap.
+//! *parsers* (in [`crate::cenc`]) are reused here; this module adds the
+//! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
+//! the shared cipher core in `cenc_crypto` (factored out so an
+//! encrypt path can reuse it — see that module's docs for the `cbcs` CBC
+//! chain-reset rule).
 //!
 //! # Container support
 //!
@@ -43,85 +46,53 @@
 //!   with the low 64 bits acting as the AES block counter, incrementing once per
 //!   16-byte cipher block across the concatenated *protected* bytes of a sample
 //!   (the clear subsample ranges are skipped, not counted).
-//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — across a
-//!   sample's protected bytes, `default_crypt_byte_block` 16-byte blocks are
+//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — *within* one
+//!   subsample's protected range (or the whole sample, when there is no
+//!   subsample map), `default_crypt_byte_block` 16-byte blocks are
 //!   CBC-decrypted, then `default_skip_byte_block` 16-byte blocks are passed
-//!   through clear, repeating for the whole sample (every subsample
-//!   boundary included); a final partial block (`< 16` bytes remaining in a
-//!   crypt run) is left clear. The IV — the `tenc` version-1
-//!   `default_constant_IV` when `default_Per_Sample_IV_Size == 0`, otherwise
-//!   the per-sample IV from `senc` — seeds only the *first* encrypted block;
-//!   the CBC chain then continues seamlessly from each encrypted block's
-//!   ciphertext to the next encrypted block, skip (and clear) bytes never
-//!   entering the chain — mirroring how `cenc`'s CTR counter also advances
-//!   continuously across a whole sample. (Verified against a real
-//!   Bento4-produced `cbcs` fixture: resetting the IV at every crypt run —
-//!   a plausible first reading of the spec text — reproduces only each
-//!   run's first block correctly and diverges thereafter.)
+//!   through clear, repeating across that range; a final partial block
+//!   (`< 16` bytes remaining in a crypt run) is left clear. The IV — the
+//!   `tenc` version-1 `default_constant_IV` when
+//!   `default_Per_Sample_IV_Size == 0`, otherwise the per-sample IV from
+//!   `senc` — seeds the *first* encrypted block of *every* subsample's
+//!   protected range (the chain resets at each subsample boundary, it does
+//!   not carry over); within one subsample's range the chain then continues
+//!   seamlessly from each encrypted block's ciphertext to the next, skip
+//!   bytes never entering the chain. `cenc`'s CTR counter, by contrast, does
+//!   advance continuously across the whole sample regardless of subsample
+//!   boundaries — the two ciphers differ here. This `cbcs` chain-reset rule
+//!   was triangulated against Bento4's `mp4decrypt` and Shaka Packager (ISO/IEC
+//!   23001-7 itself is not owned by this project, so the reference
+//!   implementations are the source of truth) — see `cenc_crypto`'s module
+//!   docs for the full derivation, including the earlier
+//!   cross-subsample-continuous version's divergence from Bento4.
 //! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2015 §8.12 — after decryption the
 //!   track's coded data is in the original (`frma`) format.
 //! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2015 §8.8.
 //!
-//! No AES is rolled by hand: the [`aes`] + [`ctr`] + [`cbc`] RustCrypto crates do
-//! the block cipher and mode work. This module is gated on the `cenc` feature.
+//! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto
+//! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
+//! This module is gated on the `cenc` feature.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockDecryptMut, KeyIvInit, StreamCipher};
 use broadcast_common::{Decrypt, Parse};
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
+// Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
+// resolving for existing callers even though the type now lives in
+// `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
+pub use crate::cenc::CencScheme;
 use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
+use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
 use crate::movie_fragment::{MovieFragmentBox, TrackFragmentHeaderBox};
 
-/// AES-128 in big-endian counter mode (CENC `cenc` cipher, ISO/IEC 23001-7 §10.1).
-type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
-/// AES-128-CBC decryptor (CENC `cbcs` cipher, ISO/IEC 23001-7 §10.2).
-type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
-
-/// Four-CC identifying the `cenc` (AES-CTR, full-block) protection scheme.
-const SCHEME_CENC: [u8; 4] = *b"cenc";
-/// Four-CC identifying the `cbcs` (AES-CBC, pattern) protection scheme.
-const SCHEME_CBCS: [u8; 4] = *b"cbcs";
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
 /// key length and block length coincide).
 const KEY_LEN: usize = 16;
-
-/// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub enum CencScheme {
-    /// `cenc` — AES-128 full-block counter (CTR) mode.
-    Cenc,
-    /// `cbcs` — AES-128 pattern cipher-block-chaining mode.
-    Cbcs,
-}
-
-impl CencScheme {
-    /// The scheme's four-CC token as it appears in `schm` (`"cenc"` / `"cbcs"`).
-    pub fn name(&self) -> &'static str {
-        match self {
-            CencScheme::Cenc => "cenc",
-            CencScheme::Cbcs => "cbcs",
-        }
-    }
-
-    /// Map a `schm.scheme_type` four-CC to a known scheme, if recognised.
-    fn from_four_cc(four_cc: &[u8; 4]) -> Option<Self> {
-        match *four_cc {
-            SCHEME_CENC => Some(CencScheme::Cenc),
-            SCHEME_CBCS => Some(CencScheme::Cbcs),
-            _ => None,
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(CencScheme);
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
@@ -258,6 +229,14 @@ impl CencDecryptor {
     }
 
     /// Decrypt one sample's bytes in place, dispatching on the track's scheme.
+    ///
+    /// Delegates to the shared cipher core in `cenc_crypto`: `cenc`
+    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via `cenc_crypto::apply_ctr` — the
+    /// counter runs continuously across subsample boundaries; `cbcs`
+    /// (AES-CBC pattern, ISO/IEC 23001-7 §10.2) via
+    /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt` — the CBC chain
+    /// instead *resets* to the sample's seed IV at the start of every
+    /// subsample's protected range (see `cenc_crypto`'s module docs).
     fn decrypt_sample(
         scheme: CencScheme,
         tenc: &TrackEncryptionBox,
@@ -266,125 +245,11 @@ impl CencDecryptor {
         data: &mut [u8],
     ) -> Result<()> {
         match scheme {
-            CencScheme::Cenc => Self::decrypt_sample_cenc(entry, key, data),
-            CencScheme::Cbcs => Self::decrypt_sample_cbcs(tenc, entry, key, data),
-        }
-    }
-
-    /// Decrypt one sample's bytes in place, given its crypto entry + content key
-    /// (`cenc` — AES-CTR, ISO/IEC 23001-7 §10.1).
-    ///
-    /// The protected byte ranges named by the subsample map form a single
-    /// logical cipher stream keyed by the AES block counter; the clear ranges
-    /// are copied through untouched. When the subsample map is empty the whole
-    /// sample is protected.
-    fn decrypt_sample_cenc(
-        entry: &SampleEncryptionEntry,
-        key: &[u8; KEY_LEN],
-        data: &mut [u8],
-    ) -> Result<()> {
-        // The 16-byte AES-CTR counter block: the IV, left-justified and
-        // zero-padded to 16 bytes (ISO/IEC 23001-7 §10.1).
-        let iv = &entry.initialization_vector;
-        if iv.len() > KEY_LEN {
-            return Err(Error::InvalidInput(
-                "CENC per-sample IV longer than 16 bytes",
-            ));
-        }
-        let mut counter = [0u8; KEY_LEN];
-        counter[..iv.len()].copy_from_slice(iv);
-
-        let mut cipher = Aes128Ctr::new(key.into(), (&counter).into());
-
-        if entry.subsamples.is_empty() {
-            // Whole-sample encryption: the entire sample is one protected range.
-            cipher.apply_keystream(data);
-            return Ok(());
-        }
-
-        // Walk the subsample map, keystreaming only the protected ranges. The
-        // CTR counter advances continuously across the protected bytes (the
-        // clear bytes are skipped, never counted), so a single cipher instance
-        // spans the whole sample.
-        let mut offset = 0usize;
-        for sub in &entry.subsamples {
-            let clear = sub.bytes_of_clear_data as usize;
-            let protected = sub.bytes_of_protected_data as usize;
-            offset = offset
-                .checked_add(clear)
-                .ok_or(Error::InvalidInput("CENC subsample clear length overflow"))?;
-            let end = offset.checked_add(protected).ok_or(Error::InvalidInput(
-                "CENC subsample protected length overflow",
-            ))?;
-            if end > data.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: data.len(),
-                    what: "CENC subsample range exceeds sample",
-                });
+            CencScheme::Cenc => {
+                cenc_crypto::apply_ctr(&entry.initialization_vector, key, &entry.subsamples, data)
             }
-            cipher.apply_keystream(&mut data[offset..end]);
-            offset = end;
+            CencScheme::Cbcs => cenc_crypto::cbcs_sample(tenc, entry, key, data, CbcsOp::Decrypt),
         }
-        Ok(())
-    }
-
-    /// Decrypt one sample's bytes in place, given its crypto entry + content key
-    /// (`cbcs` — AES-CBC pattern cipher, ISO/IEC 23001-7 §10.2).
-    ///
-    /// The `default_crypt_byte_block`:`default_skip_byte_block` pattern runs
-    /// across the *whole sample's* protected bytes as one continuous CBC
-    /// chain — spanning every pattern-skip run and every subsample boundary,
-    /// mirroring how `cenc`'s CTR counter also runs continuously across a
-    /// whole sample regardless of subsample boundaries
-    /// ([`CencDecryptor::decrypt_sample_cenc`]). Only the sample's resolved
-    /// IV ([`resolve_cbcs_iv`]) seeds the very first encrypted block; every
-    /// subsequent encrypted block's CBC input is the *previous* encrypted
-    /// block's ciphertext, skip (and clear) bytes are excluded from the chain
-    /// entirely rather than treated as chain state (verified against a real
-    /// Bento4-produced `cbcs` fixture — see `tests/cenc_fragmented_fixture.rs`).
-    fn decrypt_sample_cbcs(
-        tenc: &TrackEncryptionBox,
-        entry: &SampleEncryptionEntry,
-        key: &[u8; KEY_LEN],
-        data: &mut [u8],
-    ) -> Result<()> {
-        let mut chain_iv = resolve_cbcs_iv(entry, tenc)?;
-        let crypt_blocks = tenc.default_crypt_byte_block;
-        let skip_blocks = tenc.default_skip_byte_block;
-
-        if entry.subsamples.is_empty() {
-            cbcs_pattern_decrypt(key, &mut chain_iv, crypt_blocks, skip_blocks, data);
-            return Ok(());
-        }
-
-        let mut offset = 0usize;
-        for sub in &entry.subsamples {
-            let clear = sub.bytes_of_clear_data as usize;
-            let protected = sub.bytes_of_protected_data as usize;
-            offset = offset
-                .checked_add(clear)
-                .ok_or(Error::InvalidInput("CBCS subsample clear length overflow"))?;
-            let end = offset.checked_add(protected).ok_or(Error::InvalidInput(
-                "CBCS subsample protected length overflow",
-            ))?;
-            if end > data.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: data.len(),
-                    what: "CBCS subsample range exceeds sample",
-                });
-            }
-            cbcs_pattern_decrypt(
-                key,
-                &mut chain_iv,
-                crypt_blocks,
-                skip_blocks,
-                &mut data[offset..end],
-            );
-            offset = end;
-        }
-        Ok(())
     }
 }
 
@@ -427,106 +292,6 @@ impl Decrypt for CencDecryptor {
             }
         }
         Ok(())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// cbcs (AES-CBC pattern cipher) helpers — ISO/IEC 23001-7 §10.2.
-// ---------------------------------------------------------------------------
-
-/// Resolve the 16-byte CBC IV for one sample's `cbcs` decryption
-/// (ISO/IEC 23001-7 §10.2): the per-sample IV from `senc` when the track
-/// carries one (`default_Per_Sample_IV_Size != 0`, or an encoder that still
-/// emits per-sample IVs under `cbcs`), otherwise the track's
-/// `tenc.default_constant_IV` (mandatory when `default_Per_Sample_IV_Size ==
-/// 0` — ISO/IEC 23001-7 §12.2). Either form is left-justified and
-/// zero-padded to 16 bytes, mirroring the `cenc` CTR counter convention.
-fn resolve_cbcs_iv(
-    entry: &SampleEncryptionEntry,
-    tenc: &TrackEncryptionBox,
-) -> Result<[u8; KEY_LEN]> {
-    let src: &[u8] = if !entry.initialization_vector.is_empty() {
-        &entry.initialization_vector
-    } else if let Some(civ) = tenc.default_constant_iv.as_deref() {
-        civ
-    } else {
-        return Err(Error::InvalidInput(
-            "cbcs sample has no per-sample IV and tenc carries no default_constant_IV",
-        ));
-    };
-    if src.len() > KEY_LEN {
-        return Err(Error::InvalidInput("CBCS IV longer than 16 bytes"));
-    }
-    let mut iv = [0u8; KEY_LEN];
-    iv[..src.len()].copy_from_slice(src);
-    Ok(iv)
-}
-
-/// Apply the `cbcs` pattern cipher (ISO/IEC 23001-7 §10.2) to one protected
-/// byte range in place: decrypt `crypt_byte_block` 16-byte blocks, then leave
-/// `skip_byte_block` 16-byte blocks untouched, repeating across `range`. A
-/// trailing partial block (fewer than 16 bytes remaining) is left clear.
-///
-/// `chain_iv` in/out: the CBC chain input for the range's first encrypted
-/// block (typically the sample's resolved IV, or the previous range's last
-/// ciphertext block when the caller threads the same `chain_iv` across
-/// several ranges of one sample — see [`CencDecryptor::decrypt_sample_cbcs`]).
-/// Skipped (pattern) and clear (subsample) bytes are excluded from the chain
-/// entirely — they are never fed to the cipher and never update `chain_iv` —
-/// so the *next* encrypted block's CBC input is always the immediately
-/// *preceding encrypted* block's ciphertext, not the fresh `chain_iv` a naive
-/// per-pattern-run reading of ISO/IEC 23001-7 §10.2 might suggest. This was
-/// verified against a real Bento4-produced `cbcs` fixture (see
-/// `tests/cenc_fragmented_fixture.rs`): resetting the IV at every crypt run,
-/// rather than chaining across skip runs, reproduces only the range's first
-/// encrypted block correctly and diverges from the second block onward.
-///
-/// When both `crypt_byte_block` and `skip_byte_block` are `0` (no pattern
-/// configured — full-sample protection, e.g. some `cbcs` audio tracks) the
-/// entire range is treated as one `1`:`0` run (ISO/IEC 23001-7 §10.2 note).
-fn cbcs_pattern_decrypt(
-    key: &[u8; KEY_LEN],
-    chain_iv: &mut [u8; KEY_LEN],
-    crypt_byte_block: u8,
-    skip_byte_block: u8,
-    range: &mut [u8],
-) {
-    let (crypt_blocks, skip_blocks) = if crypt_byte_block == 0 && skip_byte_block == 0 {
-        (1usize, 0usize)
-    } else {
-        (crypt_byte_block as usize, skip_byte_block as usize)
-    };
-
-    let mut offset = 0usize;
-    while offset < range.len() {
-        let remaining = range.len() - offset;
-        let want = crypt_blocks * KEY_LEN;
-        let run_len = (want.min(remaining) / KEY_LEN) * KEY_LEN;
-        if run_len == 0 {
-            // Fewer than one whole block remains in this crypt run: the
-            // trailing partial block is left clear (CBCS pattern rule).
-            break;
-        }
-        // Capture this run's last ciphertext block (before it is overwritten
-        // in place) to seed the chain for whatever encrypted block follows —
-        // possibly across an intervening skip run or subsample boundary.
-        let mut next_chain = [0u8; KEY_LEN];
-        next_chain.copy_from_slice(&range[offset + run_len - KEY_LEN..offset + run_len]);
-
-        let mut dec = Aes128CbcDec::new(key.into(), (&*chain_iv).into());
-        for chunk in range[offset..offset + run_len].chunks_exact_mut(KEY_LEN) {
-            let block = GenericArray::from_mut_slice(chunk);
-            dec.decrypt_block_mut(block);
-        }
-        *chain_iv = next_chain;
-
-        offset += run_len;
-        if run_len < want {
-            // The crypt run itself was truncated by end-of-range: nothing
-            // left to skip.
-            break;
-        }
-        offset += (skip_blocks * KEY_LEN).min(range.len() - offset);
     }
 }
 

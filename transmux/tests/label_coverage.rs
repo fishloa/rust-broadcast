@@ -41,6 +41,13 @@ const SKIP: &[&str] = &[
     "ProtocolControl",
     "AmfValue",
     "SgpdEntry",
+    // `cenc_encrypt` (#564) config enums: `IvGen` carries either a scalar
+    // counter base or a full caller-supplied IV list (data-carrying ADT, like
+    // `CodecConfig` above); `SubsamplePolicy` is a plain behaviour switch, not
+    // a spec-defined wire code, so a `name()`/`Display` label would be
+    // fabricated rather than transcribed from a spec table.
+    "IvGen",
+    "SubsamplePolicy",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

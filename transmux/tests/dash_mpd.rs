@@ -23,8 +23,9 @@ use std::path::PathBuf;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Addressing, CmafMux, ContentProtectionSystem, DashPackager, Fmp4Demux, InbandEventStream,
-    Media, Sample, Segmenter, TrackSegments, TrackSpec, TsDemux,
+    Addressing, CencScheme, CmafMux, ContentProtectionSystem, DashPackager, Fmp4Demux,
+    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, SampleEncryptionEntry, Segmenter,
+    TrackEncryption, TrackEncryptionBox, TrackSegments, TrackSpec, TsDemux,
 };
 
 // ---------------------------------------------------------------------------
@@ -644,6 +645,7 @@ fn content_protection_and_inband_event_stream_hooks() {
             scheme_id_uri: "urn:mpeg:dash:mp4protection:2011".to_string(),
             value: Some("cenc".to_string()),
             default_kid: Some(kid),
+            pssh: None,
         }],
         inband_event_streams: vec![InbandEventStream {
             scheme_id_uri: "urn:scte:scte35:2013:bin".to_string(),
@@ -693,6 +695,133 @@ fn content_protection_and_inband_event_stream_hooks() {
     let ies = video_set.find("InbandEventStream").unwrap();
     assert_eq!(ies.attr("schemeIdUri"), Some("urn:scte:scte35:2013:bin"));
     assert!(!ies.has_attr("value"), "no @value was supplied");
+}
+
+// ---------------------------------------------------------------------------
+// CENC/CBCS DASH signalling (issue #564): auto-derived "common"
+// ContentProtection from Track::encryption, plus caller-supplied
+// DRM-system ContentProtection carrying a cenc:pssh child.
+// ---------------------------------------------------------------------------
+
+/// Build a minimal [`TrackEncryption`] carrying `scheme`/`kid`, with one
+/// (trivial) sample-encryption entry per sample so
+/// `TrackEncryption::samples.len()` matches the track's sample count (the
+/// documented invariant), even though DASH signalling never reads it.
+fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> TrackEncryption {
+    TrackEncryption {
+        scheme,
+        tenc: TrackEncryptionBox {
+            version: 0,
+            default_crypt_byte_block: 0,
+            default_skip_byte_block: 0,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: kid,
+            default_constant_iv: None,
+        },
+        samples: vec![
+            SampleEncryptionEntry {
+                initialization_vector: vec![0u8; 8],
+                subsamples: vec![],
+            };
+            sample_count
+        ],
+    }
+}
+
+#[test]
+fn track_encryption_auto_derives_common_content_protection() {
+    let mut media = demux_media();
+    let kid: [u8; 16] = [
+        0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99,
+    ];
+    // Encrypt every track with the same scheme/KID (the common real-world
+    // shape): no caller `content_protection` wiring is needed for this.
+    for t in &mut media.tracks {
+        let n = t.samples.len();
+        t.encryption = Some(track_encryption(CencScheme::Cbcs, kid, n));
+    }
+
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("package MPD");
+
+    assert_eq!(
+        xml.matches("xmlns:cenc=\"urn:mpeg:cenc:2013\"").count(),
+        1,
+        "xmlns:cenc must be declared exactly once on MPD"
+    );
+    let expected = format!(
+        "<ContentProtection schemeIdUri=\"{MP4_PROTECTION_SCHEME_URI}\" value=\"cbcs\" \
+         cenc:default_KID=\"aabbccdd-eeff-0011-2233-445566778899\"/>"
+    );
+    assert_eq!(
+        xml.matches(&expected).count(),
+        2,
+        "expected one auto-derived common ContentProtection per AdaptationSet (video+audio); xml:\n{xml}"
+    );
+}
+
+#[test]
+fn cleartext_track_emits_no_content_protection() {
+    let media = demux_media();
+    let mut pkg = DashPackager::default();
+    let xml = pkg.package(&media).expect("package MPD");
+    assert!(
+        !xml.contains("ContentProtection"),
+        "a cleartext Media must not emit any ContentProtection element"
+    );
+    assert!(
+        !xml.contains("xmlns:cenc"),
+        "xmlns:cenc must not be declared with nothing to signal"
+    );
+}
+
+#[test]
+fn caller_supplied_pssh_renders_base64_cenc_pssh_child() {
+    let media = demux_media();
+    let pssh_bytes: Vec<u8> = vec![
+        0, 0, 0, 32, b'p', b's', b's',
+        b'h', // fake box header, content irrelevant to this test
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+    ];
+    let expected_b64 = transmux::rtp::base64_encode(&pssh_bytes);
+
+    let mut pkg = DashPackager {
+        content_protection: vec![ContentProtectionSystem {
+            scheme_id_uri: "urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed".to_string(),
+            value: None,
+            default_kid: None,
+            pssh: Some(pssh_bytes),
+        }],
+        ..DashPackager::default()
+    };
+    let xml = pkg.package(&media).expect("package MPD");
+
+    assert!(
+        xml.contains("xmlns:cenc=\"urn:mpeg:cenc:2013\""),
+        "xmlns:cenc must be declared when a pssh child is emitted"
+    );
+    let expected_open =
+        "<ContentProtection schemeIdUri=\"urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed\">";
+    assert!(
+        xml.contains(expected_open),
+        "expected DRM-system ContentProtection open tag; xml:\n{xml}"
+    );
+    let expected_pssh = format!("<cenc:pssh>{expected_b64}</cenc:pssh>");
+    assert!(
+        xml.contains(&expected_pssh),
+        "expected base64 cenc:pssh child; xml:\n{xml}"
+    );
+    assert!(
+        xml.contains("</ContentProtection>"),
+        "pssh-bearing ContentProtection must be a non-empty element"
+    );
+    // No track is encrypted, so the auto-derived common element must be absent.
+    assert!(
+        !xml.contains(MP4_PROTECTION_SCHEME_URI),
+        "no track is encrypted; the common mp4protection element must not appear"
+    );
 }
 
 // ---------------------------------------------------------------------------

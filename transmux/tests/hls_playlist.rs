@@ -3,7 +3,7 @@
 //! Validates the generated `#EXTM3U` against the `media_doctor::check_playlist`
 //! RFC-8216 validator and against structural invariants.
 
-use transmux::{MasterPlaylist, MediaPlaylist, MediaSegment, Variant};
+use transmux::{CencScheme, MasterPlaylist, MediaPlaylist, MediaSegment, Variant, cenc_ext_x_key};
 
 #[test]
 fn media_playlist_rfc_valid() {
@@ -137,5 +137,70 @@ fn master_playlist_structure() {
     assert!(
         m3u8.contains("RESOLUTION=1280x720"),
         "must contain second resolution"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// CENC/CBCS HLS signalling (issue #564): #EXT-X-KEY for cbcs, none for cenc.
+// ---------------------------------------------------------------------------
+
+const TEST_KID: [u8; 16] = [
+    0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+];
+
+#[test]
+fn cbcs_emits_ext_x_key_sample_aes() {
+    let tag = cenc_ext_x_key(
+        CencScheme::Cbcs,
+        &TEST_KID,
+        "https://keyserver.example.com/key",
+    )
+    .expect("cbcs must emit an EXT-X-KEY tag");
+    assert_eq!(
+        tag,
+        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"https://keyserver.example.com/key\",\
+         KEYFORMAT=\"urn:mpeg:dash:mp4protection:2011\",KEYFORMATVERSIONS=\"1\",\
+         KEYID=0x0123456789abcdef0123456789abcdef"
+    );
+
+    // Wired into a real playlist via `extra_tags` (the established hook for
+    // arbitrary tag lines, e.g. #EXT-X-DATERANGE) renders before the segments.
+    let pl = MediaPlaylist {
+        version: 6,
+        target_duration: 6,
+        media_sequence: 0,
+        discontinuity_sequence: 0,
+        segments: vec![MediaSegment {
+            uri: "seg0.m4s".into(),
+            duration: 6.0,
+            discontinuous: false,
+            parts: vec![],
+        }],
+        endlist: true,
+        extra_tags: vec![tag],
+        low_latency: None,
+        iframes_only: false,
+    };
+    let m3u8 = pl.to_m3u8();
+    let key_pos = m3u8.find("#EXT-X-KEY:").expect("EXT-X-KEY line present");
+    let extinf_pos = m3u8.find("#EXTINF:").expect("EXTINF line present");
+    assert!(
+        key_pos < extinf_pos,
+        "#EXT-X-KEY must precede the segments it protects"
+    );
+    assert_eq!(m3u8.matches("#EXT-X-KEY:").count(), 1);
+}
+
+#[test]
+fn cenc_ctr_emits_no_ext_x_key() {
+    // `cenc` (AES-CTR) is not a valid HLS METHOD — DASH-only.
+    assert_eq!(
+        cenc_ext_x_key(
+            CencScheme::Cenc,
+            &TEST_KID,
+            "https://keyserver.example.com/key"
+        ),
+        None,
+        "cenc (CTR) must not produce an HLS EXT-X-KEY tag"
     );
 }

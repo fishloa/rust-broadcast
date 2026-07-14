@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`CencEncryptor` — CENC/CBCS encrypt path** (issue #564): a new
+  `Encrypt` impl that protects a cleartext `Media` in place, the write-side
+  counterpart to the existing `CencDecryptor`. Takes an
+  `EncryptConfig { scheme, kid, key, iv, pattern, subsample }`: `scheme`
+  selects `cenc` (AES-128-CTR, full-block) or `cbcs` (AES-128-CBC,
+  `crypt`:`skip` pattern); `iv` is an `IvGen` (`Counter { base }` — an 8-byte
+  per-sample counter; `Explicit(Vec<Vec<u8>>)` — one caller-supplied IV per
+  sample; `Constant([u8; 16])` — the standard real-world `cbcs` convention,
+  `tenc.default_constant_IV` with no per-sample `senc` IV); `subsample`
+  selects the per-codec clear/protected byte-range policy (`SubsamplePolicy`).
+  Encrypting a track populates `Track::encryption` (`TrackEncryption`
+  carrying the resolved `tenc` + a `SampleEncryptionEntry` per sample) for the
+  muxer's box emission and the DASH/HLS signalling below to read.
+- **`protect_init_segment` / `protect_media_segment` — CENC/CBCS box
+  emission** (issue #564): post-processing passes over an already-muxed CMAF
+  init/media segment that splice in the CENC/CBCS boxes from a
+  `TrackEncryption`, without CENC plumbing through the lower-level
+  `TrackSpec`/pipeline: `protect_init_segment` (`init_segment.rs`) rewrites
+  the target track's sample entry to `encv`/`enca` + `sinf`
+  (`frma`/`schm`/`schi`/`tenc`), recomputing every ancestor box
+  (`stsd`/`stbl`/`minf`/`mdia`/`trak`/`moov`) from its typed children;
+  `protect_media_segment` (`movie_fragment.rs`, given a `FragmentProtection`
+  per protected `traf`) adds the fragment's `senc`/`saiz`/`saio` (`saio`
+  anchored `moof`-relative, verified against Bento4's `mp4decrypt` — see the
+  e2e entry below). Every other byte, box, and track round-trips unchanged.
+- **DASH/HLS CENC/CBCS DRM signalling** (issue #564): both driven straight off
+  `Track::encryption` — no DRM logic in either. **DASH**
+  (`DashPackager::package`) auto-derives the generic-CENC identification
+  element per `AdaptationSet` — `<ContentProtection
+  schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc"|"cbcs"
+  cenc:default_KID="...">` (ISO/IEC 23001-7) — from the set's encrypted
+  tracks; `ContentProtectionSystem` gained an optional `pssh: Option<Vec<u8>>`
+  field so caller-supplied DRM-system entries
+  (`schemeIdUri="urn:uuid:..."`, e.g. built with the `drm` module's pssh
+  builders) render a base64 `<cenc:pssh>` child. **HLS** — the new
+  `cenc_ext_x_key(scheme, kid, key_uri)` renders
+  `#EXT-X-KEY:METHOD=SAMPLE-AES,URI="...",KEYFORMAT="urn:mpeg:dash:mp4protection:2011",KEYFORMATVERSIONS="1",KEYID=0x<kid>`
+  for `cbcs`, returning `None` for `cenc` (AES-CTR has no valid HLS `METHOD` —
+  `cenc`-protected CMAF is signalled on the DASH side only). A new runnable
+  example, `examples/cenc_encrypt.rs`, drives the whole path (demux -> encrypt
+  -> mux -> protect -> DASH/HLS signalling) against the real
+  `fixtures/ts/h264/main.ts` fixture.
+- **CENC/CBCS encrypt-path end-to-end proof** (issue #564): new
+  `tests/cenc_encrypt_e2e.rs` exercises the full `CencEncryptor::encrypt` ->
+  `CmafMux::package` -> `protect_init_segment`/`protect_media_segment`
+  pipeline against `fixtures/ts/h264/main.ts`, then verifies the resulting
+  fMP4 two independent ways: a self round-trip through `CencDecryptor`, and a
+  golden-interop cross-check against Bento4's real `mp4decrypt` CLI. Both
+  `cenc` and `cbcs` pass; the `cenc` case confirms the `saio` moof-relative
+  anchor decision against real third-party tooling.
+
 ### Fixed
 
 - **`cenc_decrypt`: fragmented CMAF support (`moof`/`traf`/`senc`/`saiz`/`saio`) +
@@ -23,15 +76,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Also implements the `cbcs` (AES-128-CBC pattern cipher) scheme, previously
   unimplemented (`Decrypt::decrypt` unconditionally rejected any non-`cenc`
   scheme): the `default_crypt_byte_block`:`default_skip_byte_block` pattern is
-  applied across a sample's protected bytes as one continuous CBC chain
-  (spanning pattern-skip runs and subsample boundaries — the IV seeds only the
-  first encrypted block, verified against a real Bento4-produced fixture
-  rather than assumed from the spec text), with the IV resolved from either
-  the per-sample `senc` entry or the track's `tenc.default_constant_IV`.
+  applied across a sample's protected bytes, chaining across pattern-skip runs
+  within one subsample's protected range and resetting to the sample's seed IV
+  at the start of every subsample's protected range (see the next entry — the
+  cross-subsample reset rule was corrected after this fix originally shipped),
+  with the IV resolved from either the per-sample `senc` entry or the track's
+  `tenc.default_constant_IV`.
   New fixtures `fixtures/transmux/h264_cenc.mp4` / `h264_cbcs.mp4` (real,
   fragmented, Bento4 `mp4encrypt`-produced) back
   `tests/cenc_fragmented_fixture.rs`, including a golden-interop cross-check
   against Bento4's own `mp4decrypt`.
+- **`cbcs`'s CBC pattern chain now resets per subsample, and `cenc_encrypt`
+  gained constant-IV/16-byte-IV support** (issue #564): `cenc_crypto.rs`'s
+  `cbcs` pattern cipher (shared by `CencEncryptor` and `CencDecryptor`)
+  previously carried its running CBC chain over from one subsample's last
+  encrypted block into the *next* subsample's first encrypted block; it now
+  resets the chain to the sample's resolved seed IV at the **start of every
+  subsample's protected range**, while still chaining correctly *within* one
+  subsample's own pattern-skip runs (unchanged, and unchanged for `cenc`'s CTR
+  counter, which stays continuous across subsamples as before). Triangulated
+  against Bento4's `mp4decrypt` and Shaka Packager (ISO/IEC 23001-7 itself is
+  unowned/paid, so the reference implementations are the source of truth): the
+  old cross-subsample-continuous chain reproduced only the first protected
+  subsample of a multi-subsample sample correctly and silently diverged from
+  Bento4 on every later subsample's first crypt block, while still
+  round-tripping through this crate's own encrypt/decrypt pair
+  (self-consistent, not spec/interop-correct) — undetectable without an
+  external oracle. `cenc_encrypt.rs`'s `IvGen` gained a `Constant([u8; 16])`
+  variant (the standard real-world `cbcs` convention: `tenc.default_constant_IV`
+  + `default_per_sample_iv_size = 0`, no per-sample `senc` IV), and
+  `default_per_sample_iv_size` is now derived from the chosen `IvGen` instead
+  of a hard-coded `8` (which Bento4's `mp4decrypt` silently no-ops on for
+  `cbcs`). `tests/cenc_encrypt_e2e.rs`'s `cbcs` case now uses
+  `SubsamplePolicy::Video` (a real per-NAL multi-subsample map — the case that
+  exposed the bug) and `IvGen::Constant`, proving both the fix and the
+  constant-IV wire convention end to end against the real `mp4decrypt` oracle;
+  `tests/cenc_fragmented_fixture.rs`'s existing single-subsample-per-sample
+  `h264_cbcs.mp4` regression (which the bug never affected, since it never
+  crosses a subsample boundary) remains byte-exact green.
+
+### Security
+
+- **CENC encrypt-path input validation hardening** (issue #564 review): the
+  encrypt API previously accepted nonsense configuration and silently shipped
+  unprotected or corrupt output instead of erroring. `CencEncryptor::encrypt`
+  now rejects: a per-sample `IvGen::Explicit` IV whose length isn't exactly 8
+  or 16 bytes (an empty IV previously built an all-zero AES-CTR counter — a
+  two-time-pad reusing the same keystream across every sample); a `cbcs`
+  pattern with `crypt_byte_block == 0` and a nonzero `skip_byte_block` (the
+  shared `cenc_crypto::cbcs_sample`, used by both encrypt and decrypt, now
+  guards this — previously it left the "protected" range in cleartext while
+  `tenc.default_is_protected` still claimed protection); and a `cbcs` pattern
+  component (`crypt_byte_block`/`skip_byte_block`) above 15, which would
+  otherwise silently truncate to its low 4 bits when packed into `tenc`
+  (ISO/IEC 23001-7 §12.2). Also promotes a `debug_assert` in
+  `movie_fragment::protect_media_segment`'s `moof`/`saio`-offset consistency
+  check to a real `Error` return (release builds no longer risk silently
+  shipping a corrupt `moof`), and tightens that function's doc comment to
+  state it protects a single-fragment media segment (one `moof`/`mdat`), which
+  is its actual (and the normal CMAF) behaviour.
 
 ## [0.15.3] - 2026-07-12
 

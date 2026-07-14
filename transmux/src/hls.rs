@@ -66,10 +66,62 @@
 //! - **`#EXT-X-PRELOAD-HINT:TYPE=PART,URI="<next-part-uri>"`**
 //!   (RFC 8216bis §4.4.5.3) — hints the URI of the next, not-yet-available part
 //!   so a client can request it ahead of time.
+//!
+//! # CENC/CBCS DRM signalling (ISO/IEC 23001-7, issue #564)
+//!
+//! [`cenc_ext_x_key`] renders the `#EXT-X-KEY` tag line for a `cbcs`
+//! (AES-128 pattern CBC)-protected CMAF track — the CMAF-HLS case Apple's
+//! HLS authoring guidance carries as `METHOD=SAMPLE-AES`. Push the returned
+//! line into [`MediaPlaylist::extra_tags`] (before the segments it
+//! protects). `cenc` (AES-128 full-block CTR) has **no** valid HLS `METHOD`
+//! — CTR is not one of HLS's two encryption methods (`SAMPLE-AES`/
+//! `AES-128`, both CBC) — so `cenc`-protected CMAF is signalling-only on the
+//! DASH side (`crate::dash`); `cenc_ext_x_key` returns `None` rather than
+//! emit an invalid tag.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+
+use crate::cenc::CencScheme;
+
+// ---------------------------------------------------------------------------
+// CENC/CBCS DRM signalling — ISO/IEC 23001-7 `cbcs` over CMAF-HLS (issue #564).
+// ---------------------------------------------------------------------------
+
+/// `KEYFORMAT` for the generic CENC identification (mirrors DASH's
+/// `ContentProtection@schemeIdUri` for the "common" scheme —
+/// ISO/IEC 23001-7 / `urn:mpeg:dash:mp4protection:2011`).
+pub const CENC_KEYFORMAT: &str = "urn:mpeg:dash:mp4protection:2011";
+
+/// `KEYFORMATVERSIONS` for [`CENC_KEYFORMAT`] (there is only version `"1"`).
+pub const CENC_KEYFORMATVERSIONS: &str = "1";
+
+/// Build the `#EXT-X-KEY` tag line for a `cbcs`-protected CMAF track
+/// (RFC 8216 §4.3.2.4 `METHOD=SAMPLE-AES`, `KEYFORMAT`/`KEYFORMATVERSIONS`
+/// per [`CENC_KEYFORMAT`]/[`CENC_KEYFORMATVERSIONS`], plus the `KEYID`
+/// attribute Apple's HLS CMAF/fMP4 authoring guidance uses to identify the
+/// CENC key ID).
+///
+/// Returns `None` for [`CencScheme::Cenc`] (AES-128 full-block CTR): CTR is
+/// not a valid HLS `METHOD` (HLS only speaks `SAMPLE-AES`/`AES-128`, both
+/// CBC), so `cenc`-protected CMAF has no HLS key tag — it is DASH-only (see
+/// the module docs).
+///
+/// `key_uri` is caller-supplied (a key-server URL, `skd://`, or `data:`
+/// URI — no DRM logic lives here) and `kid` is the track's
+/// [`crate::cenc::TrackEncryptionBox::default_kid`]
+/// (`crate::media::TrackEncryption::tenc::default_kid`).
+pub fn cenc_ext_x_key(scheme: CencScheme, kid: &[u8; 16], key_uri: &str) -> Option<String> {
+    if scheme != CencScheme::Cbcs {
+        return None;
+    }
+    Some(format!(
+        "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"{key_uri}\",KEYFORMAT=\"{CENC_KEYFORMAT}\",\
+         KEYFORMATVERSIONS=\"{CENC_KEYFORMATVERSIONS}\",KEYID=0x{}",
+        crate::rtp::hex_encode(kid)
+    ))
+}
 
 /// A single partial segment ("part") of a [`MediaSegment`] — RFC 8216bis
 /// §4.4.4.9 (`#EXT-X-PART`).

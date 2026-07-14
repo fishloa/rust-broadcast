@@ -42,12 +42,31 @@
 //! resolved from its `ISO_639_language_descriptor` (ETSI EN 300 468 §6.2.19) in
 //! [`crate::pipeline::TrackSpec::es_info_descriptors`]. Two opt-in extension
 //! points round out the manifest: [`DashPackager::content_protection`] emits a
-//! bare `<ContentProtection>` identification element per system (§5.8.4.1,
-//! optionally `cenc:default_KID` per ISO/IEC 23001-7 — full CENC `pssh`
-//! carriage is a separate epic), and [`DashPackager::inband_event_streams`]
-//! emits `<InbandEventStream>` (§5.3.3 / §5.10.3.3) on the video
-//! `AdaptationSet` for an inband `emsg` scheme the caller flags (mp4-emsg's
-//! [`crate::EmsgBox`] already carries the wire box; this only advertises it).
+//! `<ContentProtection>` identification element per system (§5.8.4.1,
+//! optionally `cenc:default_KID` per ISO/IEC 23001-7, and optionally a
+//! base64 `<cenc:pssh>` child built from a caller-supplied, fully-serialized
+//! `pssh` box — see [`ContentProtectionSystem::pssh`]), and
+//! [`DashPackager::inband_event_streams`] emits `<InbandEventStream>`
+//! (§5.3.3 / §5.10.3.3) on the video `AdaptationSet` for an inband `emsg`
+//! scheme the caller flags (mp4-emsg's [`crate::EmsgBox`] already carries the
+//! wire box; this only advertises it).
+//!
+//! # CENC/CBCS signalling (issue #564)
+//!
+//! When any [`Track::encryption`](crate::media::Track::encryption) in an
+//! `AdaptationSet` is `Some`, `package` automatically emits the "common"
+//! generic-CENC identification element —
+//! `<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
+//! value="cenc"|"cbcs" cenc:default_KID="...">` — derived from that track's
+//! [`crate::media::TrackEncryption::scheme`] and
+//! [`crate::cenc::TrackEncryptionBox::default_kid`]; no caller wiring is
+//! needed for this element. (Real-world packaging protects every
+//! `Representation` in a set with the same scheme/KID; a set is assumed
+//! homogeneous — the first encrypted `Representation`'s scheme/KID is used.)
+//! Per-DRM-system elements (`schemeIdUri="urn:uuid:..."` carrying a
+//! `<cenc:pssh>`) are **not** auto-derived — there is no DRM logic in this
+//! crate — the caller supplies them via [`DashPackager::content_protection`]
+//! (e.g. built with [`crate::drm`]'s pssh builders).
 //!
 //! The MPD is emitted with a tiny hand-rolled XML writer; the crate stays
 //! dependency-free (like `HlsPackager`).
@@ -105,6 +124,11 @@ const ROLE_MAIN: &str = "main";
 /// `default_kid` (ISO/IEC 23001-7 Common Encryption, `cenc:default_KID`).
 const CENC_NAMESPACE: &str = "urn:mpeg:cenc:2013";
 
+/// `schemeIdUri` for the generic CENC/CBCS "common" protection identification
+/// element (ISO/IEC 23009-1 §5.8.4.2, ISO/IEC 23001-7) — the element
+/// auto-derived from [`crate::media::Track::encryption`] (issue #564).
+pub const MP4_PROTECTION_SCHEME_URI: &str = "urn:mpeg:dash:mp4protection:2011";
+
 /// `ISO_639_language_descriptor` tag — ETSI EN 300 468 §6.2.19.
 const ISO_639_LANGUAGE_DESCRIPTOR_TAG: u8 = 0x0A;
 
@@ -158,10 +182,14 @@ pub struct TrackSegments {
 }
 
 /// A `ContentProtection` element to attach to every regular `AdaptationSet`
-/// (ISO/IEC 23009-1 §5.8.4.1) — a **hook**, not full CENC: it renders the bare
-/// identification element (`schemeIdUri` + optional `value` +
-/// optional `cenc:default_KID`, ISO/IEC 23001-7 Common Encryption); carrying a
-/// full `<cenc:pssh>` payload is a separate epic.
+/// (ISO/IEC 23009-1 §5.8.4.1) — caller-supplied identification for a
+/// **DRM system** (`schemeIdUri="urn:uuid:..."`), typically carrying a
+/// [`Self::pssh`] child. There is no DRM logic in this crate: the caller
+/// builds the `pssh` box bytes itself (e.g. with [`crate::drm`]'s builders)
+/// and supplies them verbatim. The "common" generic-CENC element
+/// (`schemeIdUri="urn:mpeg:dash:mp4protection:2011"`) does **not** need an
+/// entry here — it is auto-derived from
+/// [`crate::media::Track::encryption`] (issue #564); see the module docs.
 #[derive(Debug, Clone)]
 pub struct ContentProtectionSystem {
     /// `ContentProtection@schemeIdUri` (ISO/IEC 23009-1 §5.8.4.1) — e.g. a DRM
@@ -173,6 +201,13 @@ pub struct ContentProtectionSystem {
     /// Optional default key ID (ISO/IEC 23001-7 `cenc:default_KID`), rendered
     /// as the canonical dashed hex UUID form.
     pub default_kid: Option<[u8; 16]>,
+    /// Optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) — base64 of a
+    /// caller-supplied, fully-serialized `pssh` box (e.g.
+    /// [`crate::cenc::ProtectionSystemSpecificHeaderBox::to_vec`], or one of
+    /// the [`crate::drm`] builders' output run through it). `None` renders a
+    /// bare identification element with no `<cenc:pssh>` child. No DRM logic
+    /// lives here — the box bytes are carried verbatim.
+    pub pssh: Option<Vec<u8>>,
 }
 
 /// An `InbandEventStream` element (ISO/IEC 23009-1 §5.3.3 / §5.10.3.3) —
@@ -411,6 +446,12 @@ struct ReprInfo {
     /// `@lang` resolved from the track's `ISO_639_language_descriptor`
     /// (audio only — see [`lang_from_es_info`]).
     lang: Option<String>,
+    /// The track's [`crate::media::TrackEncryption::scheme`], if protected
+    /// (issue #564) — drives the auto-derived "common" `ContentProtection`.
+    encryption_scheme: Option<crate::cenc::CencScheme>,
+    /// The track's [`crate::cenc::TrackEncryptionBox::default_kid`], if
+    /// protected (issue #564).
+    encryption_kid: Option<[u8; 16]>,
     // Video geometry.
     width: Option<u32>,
     height: Option<u32>,
@@ -509,6 +550,11 @@ impl DashPackager {
             None
         };
 
+        let (encryption_scheme, encryption_kid) = match &track.encryption {
+            Some(enc) => (Some(enc.scheme), Some(enc.tenc.default_kid)),
+            None => (None, None),
+        };
+
         let mut info = ReprInfo {
             id: track.spec.track_id.to_string(),
             kind,
@@ -518,6 +564,8 @@ impl DashPackager {
             total_duration,
             segment_durations,
             lang,
+            encryption_scheme,
+            encryption_kid,
             width: None,
             height: None,
             frame_rate: None,
@@ -645,12 +693,15 @@ impl DashPackager {
             ("minBufferTime", "PT2.0S".to_string()),
         ];
         // `xmlns:cenc` (ISO/IEC 23001-7) only when a ContentProtection system
-        // actually carries a `default_KID` in that namespace.
-        if self
+        // actually carries a `default_KID`/`pssh` in that namespace, or a
+        // track is protected (which auto-derives the "common" element that
+        // carries `cenc:default_KID` — issue #564).
+        let cenc_namespace_needed = self
             .content_protection
             .iter()
-            .any(|c| c.default_kid.is_some())
-        {
+            .any(|c| c.default_kid.is_some() || c.pssh.is_some())
+            || reprs.iter().any(|r| r.encryption_scheme.is_some());
+        if cenc_namespace_needed {
             mpd_attrs.push(("xmlns:cenc", CENC_NAMESPACE.to_string()));
         }
         if self.dynamic {
@@ -732,7 +783,27 @@ impl DashPackager {
             ],
         );
 
-        // ContentProtection hooks (§5.8.4.1).
+        // Auto-derived "common" ContentProtection (ISO/IEC 23001-7 generic
+        // CENC signalling element) from the IR's `Track::encryption` — issue
+        // #564. Uses the first encrypted Representation's scheme/KID in this
+        // set (real-world packaging protects every Representation in a set
+        // identically; see the module docs).
+        if let Some((scheme, kid)) = set
+            .iter()
+            .find_map(|r| r.encryption_scheme.zip(r.encryption_kid))
+        {
+            write_content_protection(
+                w,
+                &ContentProtectionSystem {
+                    scheme_id_uri: MP4_PROTECTION_SCHEME_URI.to_string(),
+                    value: Some(scheme.name().to_string()),
+                    default_kid: Some(kid),
+                    pssh: None,
+                },
+            );
+        }
+
+        // ContentProtection hooks (§5.8.4.1) — caller-supplied DRM systems.
         for cp in &self.content_protection {
             write_content_protection(w, cp);
         }
@@ -1065,7 +1136,9 @@ fn common_lang(set: &[&ReprInfo]) -> Option<String> {
     }
 }
 
-/// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1).
+/// Write one `ContentProtection` element (ISO/IEC 23009-1 §5.8.4.1),
+/// including its optional `cenc:pssh` child (ISO/IEC 23001-7 §12.1) when
+/// [`ContentProtectionSystem::pssh`] is set.
 fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
     let mut attrs = alloc::vec![("schemeIdUri", cp.scheme_id_uri.clone())];
     if let Some(v) = &cp.value {
@@ -1074,7 +1147,14 @@ fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
     if let Some(kid) = &cp.default_kid {
         attrs.push(("cenc:default_KID", format_kid(kid)));
     }
-    w.empty("ContentProtection", &attrs);
+    match &cp.pssh {
+        Some(pssh) => {
+            w.open("ContentProtection", &attrs);
+            w.text("cenc:pssh", &crate::rtp::base64_encode(pssh));
+            w.close("ContentProtection");
+        }
+        None => w.empty("ContentProtection", &attrs),
+    }
 }
 
 /// Format a 16-byte key ID as the canonical dashed-hex UUID form
@@ -1201,6 +1281,19 @@ impl XmlWriter {
     fn close(&mut self, name: &str) {
         self.depth = self.depth.saturating_sub(1);
         self.indent();
+        self.buf.push_str("</");
+        self.buf.push_str(name);
+        self.buf.push_str(">\n");
+    }
+
+    /// Write a leaf element with escaped text content, on one line
+    /// (`<name>text</name>`).
+    fn text(&mut self, name: &str, text: &str) {
+        self.indent();
+        self.buf.push('<');
+        self.buf.push_str(name);
+        self.buf.push('>');
+        escape_into(&mut self.buf, text);
         self.buf.push_str("</");
         self.buf.push_str(name);
         self.buf.push_str(">\n");
