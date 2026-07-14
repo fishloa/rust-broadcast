@@ -30,7 +30,7 @@ serde         = { version = "1", default-features = false, features = ["derive",
 # carriage path converges on the same `Cea608CueExtractor`/`Cea708CueExtractor`
 # as the PES `cc_data()` path (#568). Test-only: the library itself has no
 # transmux dependency.
-transmux = { path = "../transmux", version = "0.16", default-features = false }
+transmux = { path = "../transmux", default-features = false }
 
 [features]
 default = ["std", "serde", "chrono"]

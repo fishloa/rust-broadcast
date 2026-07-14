@@ -57,7 +57,7 @@ serde_json   = "1.0"
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "1", default-features = false, features = ["std"] }
-timed-metadata = { path = "../timed-metadata", version = "0.4", default-features = false, features = ["std"] }
+timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true
