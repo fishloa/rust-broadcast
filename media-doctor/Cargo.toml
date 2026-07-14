@@ -1,6 +1,6 @@
 [package]
 name         = "media-doctor"
-version      = "0.4.0"
+version      = "0.4.1"
 edition      = "2024"
 description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
@@ -23,7 +23,7 @@ dvb-si           = { path = "../dvb-si", version = "8", default-features = false
 dvb-conformance  = { path = "../dvb-conformance", version = "8", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "1", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false }
-transmux         = { path = "../transmux", version = "0.15", default-features = false }
+transmux         = { path = "../transmux", version = "0.16", default-features = false }
 clap             = { version = "4", features = ["derive"], optional = true }
 serde            = { version = "1", features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1", optional = true }
