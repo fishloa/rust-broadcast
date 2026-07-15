@@ -7,12 +7,19 @@
 //! SDP parser; this module owns only the codec-config construction, because
 //! transmux owns `AVCConfigurationBox`/`EsdsBox`.
 
+use crate::aac_asc::{AudioSpecificConfig, SamplingFrequencyIndex};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
+use crate::mp4esds::{
+    DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
+    SLConfigDescriptor, StreamType,
+};
 use crate::nal::{NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
-use crate::rtp::base64_decode;
+use crate::pipeline::CodecConfig;
+use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
+use broadcast_common::Parse;
 
 /// Length prefix size transmux uses for coded NALs (4-byte).
 const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
@@ -20,6 +27,81 @@ const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
 const AVC_NAL_SPS: u8 = 7;
 /// H.264 `nal_unit_type` for a picture parameter set (PPS).
 const AVC_NAL_PPS: u8 = 8;
+
+/// MPEG-4 Audio object-type indication (ISO/IEC 14496-1 §7.2.6.6 Table 5).
+const OTI_AUDIO_ISO14496_3: u8 = 0x40;
+/// MPEG-4 audio stream type (ISO/IEC 14496-1 §7.2.6.6 Table 6).
+const STREAM_TYPE_AUDIO: u8 = 5;
+/// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
+const SL_CONFIG_PREDEFINED_MP4: u8 = 2;
+/// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
+const AAC_SAMPLE_SIZE_BITS: u16 = 16;
+
+/// `samplingFrequencyIndex` → Hz — ISO/IEC 14496-3:2001 §1.6.3.3 Table 1.10.
+const SAMPLING_FREQUENCY_TABLE_HZ: [u32; 13] = [
+    96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+];
+
+/// Look up the sampling rate for a `samplingFrequencyIndex` per Table 1.10.
+/// Indices 13-14 are reserved and 15 is the explicit-rate escape (neither has
+/// a table entry).
+fn sampling_frequency_table_hz(index: &SamplingFrequencyIndex) -> Option<u32> {
+    let raw = index.raw() as usize;
+    SAMPLING_FREQUENCY_TABLE_HZ.get(raw).copied()
+}
+
+/// Sample rate from the ASC: the explicit escape value if present, otherwise
+/// the ISO/IEC 14496-3 Table 1.10 frequency for the index.
+fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
+    if let Some(freq) = asc.sampling_frequency {
+        return Ok(freq);
+    }
+    sampling_frequency_table_hz(&asc.sampling_frequency_index).ok_or(Error::InvalidValue {
+        field: "sampling_frequency_index",
+        value: u64::from(asc.sampling_frequency_index.raw()),
+        reason: "no frequency for index",
+    })
+}
+
+/// Parse an SDP AAC `config` fmtp value (RFC 3640 §4.1: hex-encoded
+/// `AudioSpecificConfig`) into `CodecConfig::Aac`, recovering sample rate and
+/// channel count from the ASC and carrying the ASC bytes in the `esds`.
+pub fn aac_config_from_fmtp(config_hex: &str) -> Result<CodecConfig> {
+    let asc_bytes = hex_decode(config_hex)?;
+    let asc = AudioSpecificConfig::parse(&asc_bytes)?;
+    let sample_rate = asc_sample_rate(&asc)?;
+    let channel_count = u16::from(asc.channel_configuration.raw());
+
+    let esds = EsdsBox::new(ESDescriptor {
+        es_id: 0,
+        stream_dependence_flag: false,
+        url_flag: false,
+        ocr_stream_flag: false,
+        stream_priority: 0,
+        depends_on_es_id: None,
+        url: None,
+        ocr_es_id: None,
+        decoder_config: Some(DecoderConfigDescriptor {
+            object_type_indication: ObjectTypeIndication(OTI_AUDIO_ISO14496_3),
+            stream_type: StreamType(STREAM_TYPE_AUDIO),
+            up_stream: false,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+            decoder_specific_info: Some(DecoderSpecificInfo { data: asc_bytes }),
+        }),
+        sl_config: Some(SLConfigDescriptor {
+            body: alloc::vec![SL_CONFIG_PREDEFINED_MP4],
+        }),
+    });
+
+    Ok(CodecConfig::Aac {
+        esds,
+        channel_count,
+        sample_rate,
+        sample_size: AAC_SAMPLE_SIZE_BITS,
+    })
+}
 
 /// Parse an SDP `sprop-parameter-sets` value (RFC 6184 §8.1: comma-separated
 /// base64 parameter-set NAL units) into an `avcC` configuration box.
@@ -133,5 +215,36 @@ mod tests {
         let sprop = base64_encode(&sei);
         let result = avc_config_from_sprop(&sprop);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn aac_fmtp_config_recovers_rate_channels_and_asc() {
+        // AudioSpecificConfig for AAC-LC, 44100 Hz (freq index 4), stereo (2ch):
+        // audioObjectType=2 (5 bits), samplingFreqIndex=4 (4 bits),
+        // channelConfig=2 (4 bits) => bits: 00010 0100 0010 000 = 0x12 0x10
+        let config_hex = "1210";
+        let cfg = aac_config_from_fmtp(config_hex).unwrap();
+        match cfg {
+            crate::pipeline::CodecConfig::Aac {
+                sample_rate,
+                channel_count,
+                esds,
+                ..
+            } => {
+                assert_eq!(sample_rate, 44100);
+                assert_eq!(channel_count, 2);
+                // The ASC bytes must survive into the esds decoder-specific info.
+                let dsi = esds
+                    .es_descriptor
+                    .decoder_config
+                    .as_ref()
+                    .unwrap()
+                    .decoder_specific_info
+                    .as_ref()
+                    .unwrap();
+                assert_eq!(dsi.data, alloc::vec![0x12u8, 0x10]);
+            }
+            _ => panic!("expected CodecConfig::Aac"),
+        }
     }
 }
