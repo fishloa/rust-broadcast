@@ -2,8 +2,9 @@
 //! into timed [`Sample`]s.
 //!
 //! Drives [`rtsp_runtime::io::AsyncRtspClient`] (RFC 2326 Appendix A client
-//! state machine, plain `rtsp://` + interleaved `$`-framed media per §10.12)
-//! and feeds each received RTP packet into a [`RtpStreamDepacketizer`]
+//! state machine, `rtsp://` (plain TCP) + `rtsps://` (RTSP-over-TLS, gated on
+//! this crate's `tls` feature, default-on) + interleaved `$`-framed media per
+//! §10.12) and feeds each received RTP packet into a [`RtpStreamDepacketizer`]
 //! (RFC 6184 / RFC 3640) built from the DESCRIBE SDP
 //! ([`crate::source::sdp::parse_sdp_tracks`]).
 //!
@@ -12,7 +13,7 @@
 //! interleaved) → PLAY handshake and returns a live [`RtspSession`] that
 //! [`RtspSession::next_samples`] pulls one interleaved frame at a time.
 
-use rtsp_runtime::client::ClientEvent;
+use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::io::AsyncRtspClient;
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use tokio::net::TcpStream;
@@ -30,6 +31,10 @@ const RTCP_CHANNEL_OFFSET: u8 = 1;
 /// Default port for a bare `rtsp://host/...` URL with no explicit port
 /// (RFC 2326 §1 / IANA `rtsp`), re-exported by `rtsp-runtime`.
 const RTSP_DEFAULT_PORT: u16 = rtsp_runtime::RTSP_DEFAULT_PORT;
+
+/// Default port for a bare `rtsps://host/...` URL with no explicit port
+/// (IANA `rtsps`), re-exported by `rtsp-runtime`.
+const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 
 /// Map an interleaved RTP channel to its track id (even channels only; RTCP
 /// odd channels return `None`).
@@ -66,10 +71,14 @@ impl RtspSource {
     pub async fn connect(&self) -> Result<RtspSession> {
         let base_url = Url::parse(&self.url)
             .map_err(|e| MultimuxError::Source(format!("bad rtsp(s) URL {:?}: {e}", self.url)))?;
+        let is_tls = scheme_is_tls(&base_url)?;
         let addr = connect_addr(&base_url)?;
-        let mut client = AsyncRtspClient::<TcpStream>::connect(addr.as_str())
-            .await
-            .map_err(source_err("connect"))?;
+        let mut client = if is_tls {
+            let server_name = sni_server_name(&base_url)?;
+            connect_tls_client(&addr, &server_name).await?
+        } else {
+            connect_plain_client(&addr).await?
+        };
 
         let describe = client
             .describe(&self.url)
@@ -146,7 +155,7 @@ pub struct RtspSession {
     /// Per-track init derived from the DESCRIBE SDP (channel assignments
     /// reflect whatever SETUP ultimately negotiated).
     pub tracks: Vec<TrackInit>,
-    client: AsyncRtspClient<TcpStream>,
+    client: RtspClient,
     depacketizer: RtpStreamDepacketizer,
 }
 
@@ -199,19 +208,22 @@ fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
 }
 
 /// Derives the `host:port` connect address from the base `rtsp://`/`rtsps://`
-/// URL, defaulting to [`RTSP_DEFAULT_PORT`] when no port is given (RFC 2326
-/// §1). `Url::host_str` already renders IPv6 literals bracketed (the URL's
-/// authority component, per RFC 3986 §3.2.2 `IP-literal`), so simply joining
-/// `host:port` yields a valid socket-address string — e.g. `[::1]:8554` — for
-/// both IPv6 literals and plain hostnames/IPv4 addresses.
+/// URL, defaulting to [`RTSP_DEFAULT_PORT`] (`rtsp://`) or [`RTSPS_DEFAULT_PORT`]
+/// (`rtsps://`) when no port is given (RFC 2326 §1 / IANA). `Url::host_str`
+/// already renders IPv6 literals bracketed (the URL's authority component, per
+/// RFC 3986 §3.2.2 `IP-literal`), so simply joining `host:port` yields a valid
+/// socket-address string — e.g. `[::1]:8554` — for both IPv6 literals and
+/// plain hostnames/IPv4 addresses.
 fn connect_addr(url: &Url) -> Result<String> {
-    if url.scheme() != "rtsp" && url.scheme() != "rtsps" {
-        return Err(MultimuxError::Source(format!("not an rtsp(s) URL: {url}")));
-    }
+    let default_port = if scheme_is_tls(url)? {
+        RTSPS_DEFAULT_PORT
+    } else {
+        RTSP_DEFAULT_PORT
+    };
     let host = url
         .host_str()
         .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
-    let port = url.port().unwrap_or(RTSP_DEFAULT_PORT);
+    let port = url.port().unwrap_or(default_port);
     Ok(format!("{host}:{port}"))
 }
 
@@ -247,6 +259,131 @@ fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
     }
 }
 
+/// Decides which connected-client kind a base RTSP URL needs: `Ok(false)` for
+/// plain `rtsp://` (TCP), `Ok(true)` for `rtsps://` (RTSP-over-TLS per the
+/// `tls` feature), `Err` for any other scheme.
+fn scheme_is_tls(url: &Url) -> Result<bool> {
+    match url.scheme() {
+        "rtsp" => Ok(false),
+        "rtsps" => Ok(true),
+        other => Err(MultimuxError::Source(format!(
+            "not an rtsp(s) URL scheme: {other}"
+        ))),
+    }
+}
+
+/// Derives the SNI server name for TLS handshake from a base `rtsp(s)://` URL,
+/// stripping brackets from IPv6 literals. `Url::host_str()` returns IPv6
+/// addresses in bracketed form (per RFC 3986 authority syntax, e.g.
+/// `"[2001:db8::1]"`), but rustls `ServerName::try_from()` rejects the
+/// brackets. This function extracts the host and strips leading `[` and
+/// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
+fn sni_server_name(url: &Url) -> Result<String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
+    // Strip brackets from IPv6 literals: "[2001:db8::1]" -> "2001:db8::1".
+    // Hostnames and IPv4 are unchanged.
+    let sni = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok(sni.to_string())
+}
+
+/// A connected RTSP client: either plain TCP (`rtsp://`) or RTSP-over-TLS
+/// (`rtsps://`, gated on the `tls` feature). Plain and TLS clients are
+/// different concrete `AsyncRtspClient<S>` instantiations (the socket types
+/// don't unify), so `RtspSession` holds this enum and forwards the handful of
+/// calls it needs to whichever inner client is live.
+enum RtspClient {
+    Plain(AsyncRtspClient<TcpStream>),
+    #[cfg(feature = "tls")]
+    Tls(AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>>),
+}
+
+impl RtspClient {
+    async fn describe(&mut self, uri: &str) -> rtsp_runtime::error::Result<ClientEvent> {
+        match self {
+            RtspClient::Plain(c) => c.describe(uri).await,
+            #[cfg(feature = "tls")]
+            RtspClient::Tls(c) => c.describe(uri).await,
+        }
+    }
+
+    async fn setup(
+        &mut self,
+        uri: &str,
+        transport: &Transport,
+    ) -> rtsp_runtime::error::Result<ClientEvent> {
+        match self {
+            RtspClient::Plain(c) => c.setup(uri, transport).await,
+            #[cfg(feature = "tls")]
+            RtspClient::Tls(c) => c.setup(uri, transport).await,
+        }
+    }
+
+    async fn play(&mut self, uri: &str) -> rtsp_runtime::error::Result<ClientEvent> {
+        match self {
+            RtspClient::Plain(c) => c.play(uri).await,
+            #[cfg(feature = "tls")]
+            RtspClient::Tls(c) => c.play(uri).await,
+        }
+    }
+
+    async fn recv_interleaved(&mut self) -> rtsp_runtime::error::Result<Option<ClientEvent>> {
+        match self {
+            RtspClient::Plain(c) => c.recv_interleaved().await,
+            #[cfg(feature = "tls")]
+            RtspClient::Tls(c) => c.recv_interleaved().await,
+        }
+    }
+
+    fn session(&self) -> &ClientSession {
+        match self {
+            RtspClient::Plain(c) => c.session(),
+            #[cfg(feature = "tls")]
+            RtspClient::Tls(c) => c.session(),
+        }
+    }
+}
+
+/// Connects a plain `rtsp://` (TCP) client to `addr`.
+async fn connect_plain_client(addr: &str) -> Result<RtspClient> {
+    let client = AsyncRtspClient::<TcpStream>::connect(addr)
+        .await
+        .map_err(source_err("connect"))?;
+    Ok(RtspClient::Plain(client))
+}
+
+/// Connects an `rtsps://` (RTSP-over-TLS) client to `addr`, presenting
+/// `server_name` for SNI/certificate validation against the public-CA trust
+/// store ([`rtsp_runtime::io::default_tls_client_config`]).
+///
+/// Only available when this crate's `tls` feature is enabled; otherwise
+/// returns a `MultimuxError::Source` naming the missing feature (rather than
+/// failing to compile), so callers get a clear runtime message if `tls` was
+/// deliberately disabled.
+#[cfg(feature = "tls")]
+async fn connect_tls_client(addr: &str, server_name: &str) -> Result<RtspClient> {
+    let config = rtsp_runtime::io::default_tls_client_config();
+    let client = AsyncRtspClient::<tokio_rustls::client::TlsStream<TcpStream>>::connect_tls(
+        addr,
+        server_name,
+        config,
+    )
+    .await
+    .map_err(source_err("connect"))?;
+    Ok(RtspClient::Tls(client))
+}
+
+#[cfg(not(feature = "tls"))]
+async fn connect_tls_client(addr: &str, _server_name: &str) -> Result<RtspClient> {
+    Err(MultimuxError::Source(format!(
+        "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,6 +406,24 @@ mod tests {
             control: None,
             channel,
         }
+    }
+
+    #[test]
+    fn sni_server_name_strips_ipv6_brackets() {
+        let url = Url::parse("rtsps://[2001:db8::1]:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "2001:db8::1");
+    }
+
+    #[test]
+    fn sni_server_name_hostname_unchanged() {
+        let url = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "cam.local");
+    }
+
+    #[test]
+    fn sni_server_name_ipv4_unchanged() {
+        let url = Url::parse("rtsps://192.0.2.4:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "192.0.2.4");
     }
 
     #[test]
@@ -348,6 +503,34 @@ mod tests {
     }
 
     #[test]
+    fn connect_addr_defaults_rtsps_port_322() {
+        let base = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert_eq!(
+            connect_addr(&base).unwrap(),
+            format!("cam.local:{RTSPS_DEFAULT_PORT}")
+        );
+        assert_eq!(connect_addr(&base).unwrap(), "cam.local:322");
+    }
+
+    #[test]
+    fn scheme_is_tls_false_for_rtsp() {
+        let base = Url::parse("rtsp://cam.local/stream").unwrap();
+        assert!(!scheme_is_tls(&base).unwrap());
+    }
+
+    #[test]
+    fn scheme_is_tls_true_for_rtsps() {
+        let base = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert!(scheme_is_tls(&base).unwrap());
+    }
+
+    #[test]
+    fn scheme_is_tls_rejects_other_scheme() {
+        let base = Url::parse("http://cam.local/stream").unwrap();
+        assert!(scheme_is_tls(&base).is_err());
+    }
+
+    #[test]
     fn rtsp_source_new_and_stream_name() {
         let src = RtspSource::new("cam1", "rtsp://cam.local/stream");
         assert_eq!(src.stream_name(), "cam1");
@@ -396,6 +579,29 @@ mod tests {
         let url = std::env::var("MULTIMUX_TEST_RTSP")
             .expect("set MULTIMUX_TEST_RTSP to a live rtsp:// URL to run this test");
         let source = RtspSource::new("live", url);
+        let mut session = source.connect().await.expect("connect");
+        assert!(!session.track_specs().is_empty());
+        for _ in 0..10 {
+            match session.next_samples().await.expect("next_samples") {
+                Some(samples) if !samples.is_empty() => return,
+                Some(_) => continue,
+                None => panic!("stream ended before any sample was emitted"),
+            }
+        }
+        panic!("no samples emitted within 10 frames");
+    }
+
+    /// Live smoke test against a real `rtsps://` (TLS) source: connects,
+    /// pulls a few samples, and confirms the depayload pipeline runs
+    /// end-to-end over TLS. Skipped unless `MULTIMUX_TEST_RTSPS` is set (no
+    /// CI fixture TLS server), and reviewed by inspection — mirrors
+    /// `live_rtsp_smoke` above for the plain-TCP path.
+    #[ignore]
+    #[tokio::test]
+    async fn live_rtsps_smoke() {
+        let url = std::env::var("MULTIMUX_TEST_RTSPS")
+            .expect("set MULTIMUX_TEST_RTSPS to a live rtsps:// URL to run this test");
+        let source = RtspSource::new("live-tls", url);
         let mut session = source.connect().await.expect("connect");
         assert!(!session.track_specs().is_empty());
         for _ in 0..10 {

@@ -20,15 +20,31 @@ serde_json    = "1"
 thiserror     = "2"
 url           = "2"
 clap          = { version = "4", features = ["derive"], optional = true }
+tokio-rustls  = { version = "0.26", optional = true }
 
 [features]
-default = ["cli"]
-cli     = ["dep:clap"]
+# `tls` is default-on: multimux is a live-origin ingest tool and `rtsps://`
+# sources should work out of the box. It pulls rtsp-runtime's `tls` feature
+# (rustls/webpki-roots via rtsp-runtime's `default_tls_client_config` helper,
+# so multimux never assembles a `rustls::ClientConfig` itself) plus
+# `tokio-rustls` directly, needed here only to name the connected stream's
+# concrete type (`tokio_rustls::client::TlsStream<TcpStream>`).
+default     = ["cli", "tls"]
+cli         = ["dep:clap"]
+tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
+testsupport = []
 
 [[bin]]
 name              = "multimux"
 path              = "src/bin/multimux.rs"
 required-features = ["cli"]
+
+[[example]]
+name              = "serve_mock"
+required-features = ["testsupport"]
+
+[[example]]
+name = "serve_rtsp"
 
 [dev-dependencies]
 tower = { version = "0.5", default-features = false, features = ["util"] }
