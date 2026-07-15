@@ -938,13 +938,13 @@ fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 /// `marker`/`timestamp`/`payload` are read at call sites below (the rest are
 /// carried through for the unit test at the bottom of this file) — see #646.
 #[derive(Debug, Clone, Copy)]
-struct RtpHeader<'a> {
-    marker: bool,
+pub(crate) struct RtpHeader<'a> {
+    pub(crate) marker: bool,
     #[allow(dead_code)]
     payload_type: u8,
     #[allow(dead_code)]
     sequence: u16,
-    timestamp: u32,
+    pub(crate) timestamp: u32,
     #[allow(dead_code)]
     ssrc: u32,
     /// The payload after the fixed header, CSRC list, and header extension
@@ -955,7 +955,7 @@ struct RtpHeader<'a> {
 }
 
 /// Parse and validate the RTP fixed header, rejecting bad versions.
-fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
+pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
     let parsed = RtpPacket::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
         marker: parsed.marker,
