@@ -219,15 +219,31 @@ async fn blocking_reload_resolves_when_part_arrives() {
 
     store.add_part(part(1, 1));
 
-    let resp = handle.await.expect("blocking request task did not panic");
+    // Bound the wait in *real* time (no `tokio::time::pause()`): a working
+    // watch wakeup resolves within milliseconds of `add_part`, whereas a
+    // broken wakeup only resolves at the handler's internal 5 s
+    // `BLOCKING_RELOAD_TIMEOUT` fallback. 500 ms comfortably separates the
+    // two without being flaky on a loaded CI box.
+    let resp = tokio::time::timeout(std::time::Duration::from_millis(500), handle)
+        .await
+        .expect("blocking reload must resolve promptly on the watch wakeup, not the 5s timeout fallback")
+        .expect("blocking request task did not panic");
     assert_eq!(
         resp.status(),
         StatusCode::OK,
         "blocking reload must resolve (not timeout/404) once the awaited part lands"
     );
     let playlist = body_string(resp).await;
+    // Assert the *real* `#EXT-X-PART` line for the arrived part, not merely
+    // the bare URI — that URI also appears in the always-emitted
+    // `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-1.1.m4s"` line for the
+    // next-expected part, which is present even before `add_part(1, 1)` runs
+    // (see `StreamStore::media_playlist_m3u8`). Only a genuine PART line
+    // proves the new part was actually rendered.
+    let real_part_line = "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.1.m4s\"";
     assert!(
-        playlist.contains("part-1-1.1.m4s"),
-        "resolved playlist must include the newly-arrived part-1-1.1.m4s: {playlist}"
+        playlist.contains(real_part_line),
+        "resolved playlist must include the real #EXT-X-PART line for the \
+         newly-arrived part (not just the preload-hint URI): {playlist}"
     );
 }
