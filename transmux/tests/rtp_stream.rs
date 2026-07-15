@@ -4,7 +4,7 @@
 //! `TsDemux` + `RtpPacketizer::package` calls `tests/rtp.rs` uses), then feeds
 //! the video stream's packets through [`RtpStreamDepacketizer`] fed with the
 //! codec config recovered from the *generated SDP* (exercising the P2
-//! `avc_config_from_sprop`/`aac_config_from_fmtp` round-trip), and checks the
+//! `avc_config_from_sprop`/`aac_config_from_asc_hex` round-trip), and checks the
 //! recovered timing/config/sync against the demuxed oracle, then builds a
 //! valid fMP4 init + media segment from the recovered samples.
 #![cfg(feature = "std")]
@@ -12,7 +12,7 @@
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::rtp_sdp::{aac_config_from_fmtp, avc_config_from_sprop};
+use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
     FragmentTrackData, Media, RtpOutput, RtpPacketizer, RtpStream, RtpStreamDepacketizer,
     RtpStreamTrack, Severity, TsDemux, build_init_segment, build_media_segment,
@@ -147,7 +147,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // AAC: SDP config= → CodecConfig::Aac, rate/channels sane.
     let cfg_hex = fmtp_value(&out.sdp, "config=")
         .expect("SDP must carry AAC config= for the fixture's AAC track");
-    let aac = aac_config_from_fmtp(cfg_hex).expect("aac from config");
+    let aac = aac_config_from_asc_hex(cfg_hex).expect("aac from config");
     match aac {
         CodecConfig::Aac {
             sample_rate,

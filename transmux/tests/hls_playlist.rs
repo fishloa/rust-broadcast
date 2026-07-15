@@ -39,6 +39,7 @@ fn media_playlist_rfc_valid() {
         ],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
 
     let m3u8 = pl.to_m3u8();
@@ -81,6 +82,7 @@ fn media_playlist_invalid_target_duration_reported() {
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
 
     let m3u8 = pl.to_m3u8();
@@ -180,6 +182,7 @@ fn cbcs_emits_ext_x_key_sample_aes() {
         extra_tags: vec![tag],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let m3u8 = pl.to_m3u8();
     let key_pos = m3u8.find("#EXT-X-KEY:").expect("EXT-X-KEY line present");

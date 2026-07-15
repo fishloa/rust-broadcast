@@ -104,7 +104,22 @@ timestamp** (32-bit wire field, RFC 3550 §5.1), which wraps every ~13.6 hours a
 ## SDP fmtp → CodecConfig mapping (`rtp_sdp`)
 
 The SDP `fmtp` (format-specific media parameters) carries codec-configuration
-NALs and parameters. The helper module `rtp_sdp` decodes these per RFC:
+NALs and parameters. The helper module `rtp_sdp` provides two entry points per
+codec: a **full-fmtp-line function** (takes the entire `a=fmtp` attribute value
+and parses it) and a **value-level building block** (takes just the extracted
+parameter value). Both are described per RFC below.
+
+### Helper functions
+
+- **`fmtp_param(fmtp: &str, key: &str) -> Option<&str>`** — Anchored
+  `;`-separated parameter lookup (RFC 4566 §5.14). Accepts the full `a=fmtp`
+  line (with optional leading payload-type token) or just the parameter list.
+  Matches `key` as a whole parameter name (never a substring), returns the
+  trimmed value of the first match, or `None` if absent/empty. Operates on
+  `char` boundaries to preserve multibyte UTF-8 values.
+- **`rtpmap_clock_rate(rtpmap: &str) -> Option<u32>`** — Parses the clock rate
+  from an `a=rtpmap` value (RFC 4566 §6). Handles the optional leading
+  payload-type token. Returns `None` on missing or malformed input.
 
 ### H.264: `sprop-parameter-sets` → avcC (RFC 6184 §8.1)
 
@@ -113,13 +128,19 @@ NALs and parameters. The helper module `rtp_sdp` decodes these per RFC:
 a=fmtp:96 packetization-mode=1; sprop-parameter-sets=<b64(SPS)>,<b64(PPS)>
 ```
 
-- `sprop-parameter-sets`: comma-separated base64 encodings of raw NAL units
-  (nal_unit_type 7 for SPS, 8 for PPS). May carry multiple SPS/PPS pairs.
-- **Mapping**: `avc_config_from_sprop(sprop_parameter_sets)` extracts the SPS
-  and PPS NALs, decodes the first SPS bytes `[1..4]` for `profile_indication` /
-  `profile_compatibility` / `level_indication`, and returns an
-  `AVCConfigurationBox` (avcC). The NAL length-prefix size is fixed to 4 bytes
-  (NAL-length-size-minus-one = 3), per transmux convention.
+**Full-line entry point:**
+- `avc_config_from_fmtp(fmtp: &str)` — Takes the entire `a=fmtp` line, extracts
+  `sprop-parameter-sets` via `fmtp_param`, and delegates to
+  `avc_config_from_sprop`.
+
+**Value-level entry point:**
+- `avc_config_from_sprop(sprop: &str)` — Takes the extracted
+  `sprop-parameter-sets` value (comma-separated base64 NAL units: nal_unit_type
+  7 for SPS, 8 for PPS). Parses each NAL, extracts profile/level from the first
+  SPS bytes `[1..4]` (`profile_indication` / `profile_compatibility` /
+  `level_indication`), and returns an `AVCConfigurationBox` (avcC). NAL
+  length-prefix size is fixed to 4 bytes (NAL-length-size-minus-one = 3), per
+  transmux convention.
 
 ### AAC: `config` fmtp → esds (RFC 3640 §4.1)
 
@@ -129,14 +150,19 @@ a=fmtp:97 streamtype=5; mode=AAC-hbr; config=<hex(ASC)>;
   sizeLength=13; indexLength=3; indexDeltaLength=3
 ```
 
-- `config`: hex-encoded `AudioSpecificConfig` (ASC; ISO/IEC 14496-3 §1.6.2.1),
-  typically 2–4 bytes. Contains the `samplingFrequencyIndex` (indices 0–12 are
-  standard rates; 15 is an explicit-rate escape) and `channelConfiguration`.
-- **Mapping**: `aac_config_from_fmtp(config)` decodes the ASC, extracts the
-  sample rate (via the index table or explicit value) and channel count, and
-  constructs an `EsdsBox` (esds) holding the ASC bytes in the
-  `DecoderSpecificInfo`, with ObjectTypeIndication = 0x40 (AAC) and StreamType
-  = 5 (audio). Sample size is fixed to 16 bits, per CMAF/fMP4 convention.
+**Full-line entry point:**
+- `aac_config_from_fmtp(fmtp: &str)` — Takes the entire `a=fmtp` line, extracts
+  `config` via `fmtp_param`, and delegates to `aac_config_from_asc_hex`.
+
+**Value-level entry point:**
+- `aac_config_from_asc_hex(config_hex: &str)` — Takes the extracted `config`
+  value (hex-encoded `AudioSpecificConfig`; ISO/IEC 14496-3 §1.6.2.1). Decodes
+  the ASC to recover `samplingFrequencyIndex` (indices 0–12 map to standard
+  rates via ISO/IEC 14496-3 Table 1.10; index 15 is an explicit-rate escape)
+  and `channelConfiguration`, then constructs a `CodecConfig::Aac` holding an
+  `EsdsBox` with the ASC bytes in `DecoderSpecificInfo`,
+  ObjectTypeIndication = 0x40 (AAC), and StreamType = 5 (audio). Sample size is
+  fixed to 16 bits, per CMAF/fMP4 convention.
 
 ## Mapping to transmux (Package ⇄ Unpackage)
 

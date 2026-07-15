@@ -167,6 +167,7 @@ fn autodetect_init_change_marks_discontinuity() {
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let out = pl.to_m3u8();
 
@@ -232,6 +233,7 @@ fn autodetect_init_change_marks_discontinuity() {
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let out_neg = pl_neg.to_m3u8();
     assert!(
@@ -334,6 +336,7 @@ fn explicit_mark_discontinuity_bites() {
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let out = pl.to_m3u8();
 
@@ -392,6 +395,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         }
         .to_m3u8()
     }
@@ -483,6 +487,7 @@ fn discontinuity_tag_placement_immediately_before_extinf() {
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let out = pl.to_m3u8();
 

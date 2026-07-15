@@ -215,7 +215,8 @@ pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{
     CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS, IFrameVariant, LowLatencyConfig, MasterPlaylist,
-    MediaPlaylist, MediaSegment, PartSpec, Variant, cenc_ext_x_key, mark_init_discontinuities,
+    MediaPlaylist, MediaSegment, OpenSegment, PartSpec, Variant, cenc_ext_x_key,
+    mark_init_discontinuities,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,
@@ -282,7 +283,10 @@ pub use rtp::{
     NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
     RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
 };
-pub use rtp_sdp::{aac_config_from_fmtp, avc_config_from_sprop};
+pub use rtp_sdp::{
+    aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp, avc_config_from_sprop,
+    fmtp_param, rtpmap_clock_rate,
+};
 pub use rtp_stream::{RtpStreamDepacketizer, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{

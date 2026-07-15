@@ -220,6 +220,7 @@ impl Package for TsHlsPackager {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         }
         .to_m3u8();
 
@@ -736,6 +737,7 @@ impl StreamingTsHlsSegmenter {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         }
         .to_m3u8()
     }

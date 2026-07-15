@@ -1,11 +1,21 @@
-//! SDP fmtp → transmux `CodecConfig` (RFC 6184 §8.1 / RFC 3640 §4.1).
+//! SDP fmtp/rtpmap → transmux `CodecConfig` (RFC 4566 §5.14/§6, RFC 6184
+//! §8.1, RFC 3640 §4.1).
 //!
 //! Turns the media-format parameters carried in an RTSP DESCRIBE SDP into the
 //! codec configuration transmux muxers need: H.264 `sprop-parameter-sets`
 //! (base64 SPS/PPS) → `avcC`, AAC `config` (hex AudioSpecificConfig) → `esds`.
-//! The caller (e.g. multimux) extracts the raw fmtp attribute strings via an
-//! SDP parser; this module owns only the codec-config construction, because
-//! transmux owns `AVCConfigurationBox`/`EsdsBox`.
+//! The caller (e.g. multimux) extracts the raw `a=fmtp`/`a=rtpmap` attribute
+//! strings via an SDP parser; this module owns the fmtp *parameter-list*
+//! parsing (a proper anchored `key=value` parser, [`fmtp_param`]) and the
+//! codec-config construction, because transmux owns
+//! `AVCConfigurationBox`/`EsdsBox`.
+//!
+//! Two entry points per codec: a full-fmtp-line function
+//! ([`avc_config_from_fmtp`]/[`aac_config_from_fmtp`]) that extracts the
+//! relevant parameter via [`fmtp_param`], and a value-level building block
+//! ([`avc_config_from_sprop`]/[`aac_config_from_asc_hex`]) that takes just
+//! that parameter's already-extracted value. [`rtpmap_clock_rate`] parses the
+//! companion `a=rtpmap` attribute's clock rate.
 //!
 //! See [`transmux/docs/rtp/rtp-payload-formats.md`](../rtp/rtp-payload-formats.md)
 //! for the RFC background and SDP fmtp→CodecConfig mapping specification.
@@ -69,7 +79,10 @@ fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
 /// Parse an SDP AAC `config` fmtp value (RFC 3640 §4.1: hex-encoded
 /// `AudioSpecificConfig`) into `CodecConfig::Aac`, recovering sample rate and
 /// channel count from the ASC and carrying the ASC bytes in the `esds`.
-pub fn aac_config_from_fmtp(config_hex: &str) -> Result<CodecConfig> {
+///
+/// Takes the raw hex VALUE of the `config` parameter (not the full `a=fmtp`
+/// line) — for the full-line entry point see [`aac_config_from_fmtp`].
+pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
     let asc_bytes = hex_decode(config_hex)?;
     let asc = AudioSpecificConfig::parse(&asc_bytes)?;
     let sample_rate = asc_sample_rate(&asc)?;
@@ -156,6 +169,106 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
     Ok(AVCConfigurationBox::new(record))
 }
 
+/// Strip a leading `<pt> ` payload-type token from an SDP `a=fmtp`/`a=rtpmap`
+/// attribute value, if present (RFC 4566 §5.14 `a=fmtp:<format> <format
+/// specific parameters>` / §6 `a=rtpmap:<payload type> <encoding name>/...` —
+/// the payload type is a token of its own, not part of the parameter list or
+/// encoding name). The token is only recognised when it is all ASCII digits
+/// followed by whitespace, so a parameter-list-only input (no leading token)
+/// is returned unchanged.
+fn strip_leading_pt_token(value: &str) -> &str {
+    let trimmed = value.trim_start();
+    match trimmed.split_once(char::is_whitespace) {
+        Some((pt, rest)) if !pt.is_empty() && pt.bytes().all(|b| b.is_ascii_digit()) => {
+            rest.trim_start()
+        }
+        _ => trimmed,
+    }
+}
+
+/// Look up a single parameter by key in an SDP `a=fmtp:<pt> <parameters>`
+/// value (RFC 4566 §5.14; the `<parameters>` grammar is per-format, but every
+/// RTP payload format in this module uses the common `;`-separated
+/// `key=value` convention, e.g. RFC 6184 §8.1 `sprop-parameter-sets` / RFC
+/// 3640 §4.1 `config`).
+///
+/// Accepts either shape as input:
+/// - the full attribute value including the leading `<pt> ` payload-type
+///   token (e.g. `"96 packetization-mode=1;sprop-parameter-sets=..."`), or
+/// - just the `;`-separated parameter list with no leading token (e.g.
+///   `"packetization-mode=1;sprop-parameter-sets=..."`).
+///
+/// `key` is matched as a whole parameter name, never a substring — matching
+/// is anchored by splitting each `;`-separated pair at its *first* `=` and
+/// comparing the trimmed left-hand side to `key` exactly. Returns the
+/// trimmed value of the first match, or `None` if `key` is absent or its
+/// value is empty after trimming.
+///
+/// Operates on `&str` throughout (`split`/`split_once`/`trim` all walk `char`
+/// boundaries, never raw byte offsets), so multibyte UTF-8 parameter values
+/// are preserved verbatim.
+pub fn fmtp_param<'a>(fmtp: &'a str, key: &str) -> Option<&'a str> {
+    let params = strip_leading_pt_token(fmtp);
+    for pair in params.split(';') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        // A pair without '=' is not a key=value parameter (malformed, or a
+        // bare flag some formats allow) — skip it rather than aborting the
+        // whole scan, so a later valid pair can still match `key`.
+        let Some((k, v)) = pair.split_once('=') else {
+            continue;
+        };
+        if k.trim() == key {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Parse a full SDP `a=fmtp:<pt> <parameters>` H.264 value (RFC 6184 §8.1)
+/// into an `avcC` configuration box, extracting `sprop-parameter-sets` via
+/// [`fmtp_param`] and delegating to [`avc_config_from_sprop`].
+pub fn avc_config_from_fmtp(fmtp: &str) -> Result<AVCConfigurationBox> {
+    let sprop = fmtp_param(fmtp, "sprop-parameter-sets").ok_or(Error::InvalidInput(
+        "fmtp has no sprop-parameter-sets parameter",
+    ))?;
+    avc_config_from_sprop(sprop)
+}
+
+/// Parse a full SDP `a=fmtp:<pt> <parameters>` AAC value (RFC 3640 §4.1) into
+/// `CodecConfig::Aac`, extracting `config` via [`fmtp_param`] and delegating
+/// to [`aac_config_from_asc_hex`].
+pub fn aac_config_from_fmtp(fmtp: &str) -> Result<CodecConfig> {
+    let config_hex =
+        fmtp_param(fmtp, "config").ok_or(Error::InvalidInput("fmtp has no config parameter"))?;
+    aac_config_from_asc_hex(config_hex)
+}
+
+/// Parse an SDP `a=rtpmap:<pt> <encoding name>/<clock rate>[/<encoding
+/// parameters>]` value and return the clock rate.
+///
+/// Handles the leading `<pt> ` payload-type token before the encoding name;
+/// the optional `/<encoding parameters>` suffix (e.g. channel count) is
+/// ignored here. Returns `None` on any malformed input (missing `/`,
+/// non-numeric clock rate, or a value that doesn't fit `u32`) rather than
+/// panicking.
+pub fn rtpmap_clock_rate(rtpmap: &str) -> Option<u32> {
+    let encoding = strip_leading_pt_token(rtpmap);
+    // "<encoding name>/<clock rate>[/<encoding parameters>]" — the clock
+    // rate is always the second '/'-separated field; a missing '/' leaves
+    // no second field, so this returns `None` rather than misreading the
+    // encoding name as a rate.
+    let mut fields = encoding.split('/');
+    let _name = fields.next()?;
+    let clock_str = fields.next()?;
+    clock_str.trim().parse::<u32>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,12 +334,12 @@ mod tests {
     }
 
     #[test]
-    fn aac_fmtp_config_recovers_rate_channels_and_asc() {
+    fn aac_asc_hex_recovers_rate_channels_and_asc() {
         // AudioSpecificConfig for AAC-LC, 44100 Hz (freq index 4), stereo (2ch):
         // audioObjectType=2 (5 bits), samplingFreqIndex=4 (4 bits),
         // channelConfig=2 (4 bits) => bits: 00010 0100 0010 000 = 0x12 0x10
         let config_hex = "1210";
-        let cfg = aac_config_from_fmtp(config_hex).unwrap();
+        let cfg = aac_config_from_asc_hex(config_hex).unwrap();
         match cfg {
             crate::pipeline::CodecConfig::Aac {
                 sample_rate,
@@ -249,5 +362,104 @@ mod tests {
             }
             _ => panic!("expected CodecConfig::Aac"),
         }
+    }
+
+    #[test]
+    fn fmtp_param_matches_key_anchored() {
+        let fmtp =
+            "96 packetization-mode=1; sprop-parameter-sets=Zm9v,YmFy; profile-level-id=42e01e";
+        assert_eq!(fmtp_param(fmtp, "sprop-parameter-sets"), Some("Zm9v,YmFy"));
+        assert_eq!(fmtp_param(fmtp, "profile-level-id"), Some("42e01e"));
+        // "mode" is a suffix of "packetization-mode" but must NOT false-match.
+        assert_eq!(fmtp_param(fmtp, "mode"), None);
+    }
+
+    #[test]
+    fn fmtp_param_trims_whitespace() {
+        let fmtp = "97   streamtype = 5 ;  config =1210  ;sizeLength=13";
+        assert_eq!(fmtp_param(fmtp, "config"), Some("1210"));
+        assert_eq!(fmtp_param(fmtp, "streamtype"), Some("5"));
+        assert_eq!(fmtp_param(fmtp, "sizeLength"), Some("13"));
+    }
+
+    #[test]
+    fn fmtp_param_skips_pair_without_equals() {
+        // A malformed/bare-flag segment before the target key must not
+        // abort the scan of later, well-formed pairs.
+        let fmtp = "96 bareflag; config=1210";
+        assert_eq!(fmtp_param(fmtp, "config"), Some("1210"));
+    }
+
+    #[test]
+    fn fmtp_param_preserves_base64_padding() {
+        // Split at the FIRST `=` only: a base64 value's trailing `==` padding
+        // must survive verbatim, not be truncated at the padding `=`.
+        let fmtp = "96 sprop-parameter-sets=Zm9v,YmFy==;x=1";
+        assert_eq!(
+            fmtp_param(fmtp, "sprop-parameter-sets"),
+            Some("Zm9v,YmFy==")
+        );
+    }
+
+    #[test]
+    fn fmtp_param_empty_value_is_none() {
+        // A present-but-empty parameter (`key=`) is treated as no-match.
+        assert_eq!(fmtp_param("96 config=;x=1", "config"), None);
+    }
+
+    #[test]
+    fn fmtp_param_charset_preserves_multibyte() {
+        // A parameter value with a multibyte UTF-8 char must round-trip
+        // verbatim, proving the parser never slices on a raw byte offset.
+        let fmtp = "96 sprop-description=caf\u{e9}; other=1";
+        assert_eq!(fmtp_param(fmtp, "sprop-description"), Some("caf\u{e9}"));
+    }
+
+    #[test]
+    fn avc_config_from_fmtp_extracts_sprop() {
+        let fmtp =
+            "96 packetization-mode=1; sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+        let boxed = avc_config_from_fmtp(fmtp).unwrap();
+        assert!(!boxed.config.sps.is_empty());
+        assert!(!boxed.config.pps.is_empty());
+    }
+
+    #[test]
+    fn aac_config_from_fmtp_extracts_config() {
+        let fmtp = "97 streamtype=5; mode=AAC-hbr; config=1210; sizeLength=13";
+        let cfg = aac_config_from_fmtp(fmtp).unwrap();
+        match cfg {
+            crate::pipeline::CodecConfig::Aac {
+                sample_rate,
+                channel_count,
+                ..
+            } => {
+                assert_eq!(sample_rate, 44100);
+                assert_eq!(channel_count, 2);
+            }
+            _ => panic!("expected CodecConfig::Aac"),
+        }
+    }
+
+    #[test]
+    fn aac_config_from_fmtp_missing_config_errors() {
+        let fmtp = "97 streamtype=5; mode=AAC-hbr";
+        assert!(aac_config_from_fmtp(fmtp).is_err());
+    }
+
+    #[test]
+    fn avc_config_from_fmtp_missing_sprop_errors() {
+        let fmtp = "96 packetization-mode=1";
+        assert!(avc_config_from_fmtp(fmtp).is_err());
+    }
+
+    #[test]
+    fn rtpmap_clock_rate_parses() {
+        assert_eq!(rtpmap_clock_rate("96 H264/90000"), Some(90000));
+        assert_eq!(rtpmap_clock_rate("97 mpeg4-generic/48000/2"), Some(48000));
+        assert_eq!(rtpmap_clock_rate("H264/90000"), Some(90000));
+        assert_eq!(rtpmap_clock_rate("malformed"), None);
+        assert_eq!(rtpmap_clock_rate("96 H264/notanumber"), None);
+        assert_eq!(rtpmap_clock_rate(""), None);
     }
 }
