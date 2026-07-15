@@ -17,9 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   low-delay H.264 (no B-frame reorder; `composition_offset = 0`), one AAC access
   unit per packet, and in-arrival-order packet feed. `RtpStreamTrack` is
   `#[non_exhaustive]` — construct via `RtpStreamTrack::new`.
-- SDP fmtp → `CodecConfig` helpers `rtp_sdp::{avc_config_from_sprop,
-  aac_config_from_fmtp}` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC;
-  RFC 3640 §4.1 `config` → esds), both re-exported at the crate root.
+- SDP fmtp/rtpmap → `CodecConfig` helpers in `rtp_sdp`, all re-exported at the
+  crate root (issue #702): `fmtp_param` — a proper, anchored (no
+  substring-match false positives), charset-safe parser for the `a=fmtp:<pt>
+  <params>` `;`-separated `key=value` list (RFC 4566 §5.14); full-fmtp-line
+  entry points `avc_config_from_fmtp` (RFC 6184 §8.1
+  `sprop-parameter-sets` → avcC) and `aac_config_from_fmtp` (RFC 3640 §4.1
+  `config` → esds) built on it; and `rtpmap_clock_rate`, parsing the
+  companion `a=rtpmap:<pt> <encoding>/<clock>[/<channels>]` clock rate (RFC
+  4566 §6). The prior value-level `aac_config_from_fmtp(config_hex)` is
+  renamed `aac_config_from_asc_hex` (breaking) to make room for the new
+  full-fmtp-line function of the same codec-pair naming; `avc_config_from_sprop`
+  is unchanged. This replaces the fragile hand-rolled substring fmtp parsing
+  multimux previously needed to do itself.
 - `hls::OpenSegment` + `MediaPlaylist::open_segment` (issue #702): renders
   an in-progress, `#EXTINF`-less LL-HLS segment as trailing `#EXT-X-PART`
   lines at the live edge (RFC 8216bis §4.4.4.9), so a live LL-HLS origin can
