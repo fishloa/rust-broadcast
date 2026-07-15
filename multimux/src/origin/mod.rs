@@ -52,6 +52,8 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// Returns only on a bind failure or if the HTTP server itself stops (e.g. a
 /// fatal accept-loop I/O error); the per-route ingest tasks run detached.
 pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
+    config.validate()?;
+
     let mut streams: HashMap<String, Arc<StreamStore>> = HashMap::new();
     let target_duration_secs = config.target_duration_secs;
     let part_target_ms = config.part_target_ms;

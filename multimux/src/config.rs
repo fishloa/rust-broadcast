@@ -18,7 +18,7 @@ pub struct Route {
 
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// `host:port` the HTTP origin binds.
     pub bind: String,
@@ -123,5 +123,24 @@ mod tests {
     #[test]
     fn validate_rejects_no_routes() {
         assert!(Config::default().validate().is_err());
+    }
+
+    #[test]
+    fn rejects_unknown_config_key() {
+        // A typo'd key (e.g. "window_segment" instead of "window_segments")
+        // must error rather than silently fall back to the default —
+        // `#[serde(deny_unknown_fields)]` on `Config` enforces this.
+        let json = r#"{
+            "bind": "127.0.0.1:9000",
+            "window_segment": 6,
+            "routes": [
+                { "name": "cam1", "rtsp_url": "rtsp://host/stream1" }
+            ]
+        }"#;
+        let result: std::result::Result<Config, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "unknown key must be rejected, not silently ignored"
+        );
     }
 }

@@ -104,12 +104,15 @@ pub async fn run_pipeline<S: SampleSource>(
 /// `pub` unconditionally (not `#[cfg(test)]`/feature-gated): Task 8's
 /// integration test needs to construct one from outside this module, and an
 /// unconditional `pub` mock is the simplest way to share it without adding a
-/// `testsupport` cargo feature.
+/// `testsupport` cargo feature. `#[doc(hidden)]`: it's test/example
+/// scaffolding, not part of the crate's published API contract.
+#[doc(hidden)]
 pub struct MockSource {
     specs: Vec<TrackSpec>,
     batches: std::vec::IntoIter<Vec<(u32, Sample)>>,
 }
 
+#[doc(hidden)]
 impl MockSource {
     /// Build a mock yielding each of `batches` in order, one per
     /// `next_samples` call, then ending the stream.
