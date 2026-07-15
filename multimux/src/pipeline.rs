@@ -53,6 +53,13 @@ impl SampleSource for crate::source::rtsp::RtspSession {
 ///
 /// # Errors
 /// Propagates a source read error or a segmenter build failure.
+///
+/// # Send Bound Footgun
+/// The `SampleSource` trait's async method has no explicit `+ Send` bound, which
+/// is sound *only* because `run_pipeline<S>` is instantiated at concrete `Send`
+/// types (`MockSource`, `RtspSession`). Adding another generic layer over
+/// `run_pipeline` could hide Send-ness from `tokio::spawn` and would then require
+/// an explicit `+ Send` bound on the inner type.
 pub async fn run_pipeline<S: SampleSource>(
     store: Arc<StreamStore>,
     target_duration_secs: f64,
@@ -190,5 +197,46 @@ mod tests {
             .await
             .expect("pipeline tolerates empty batches");
         assert!(store.init_bytes().is_some());
+    }
+
+    #[tokio::test]
+    async fn eos_flush_emits_buffered_tail_segment() {
+        // Regression test for the EOS flush path: ensure that samples buffered
+        // after the last auto-closed segment are actually emitted via seg.flush().
+        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let specs = vec![video_track_spec()];
+
+        // 60 frames @ 30fps = 2s total:
+        // - Frame 0 (sync, t=0): segment start
+        // - Frame 45 (sync, t=1.5s): exceeds 1s target, triggers auto-close
+        // - Frames 46-59 (non-sync, t=1.5s..2s): buffered tail, only emitted via flush()
+        //
+        // Without the seg.flush() + drain block, frames 46-59 would be discarded,
+        // resulting in only seg-1-1. With flush(), a second segment (seg-1-2) is
+        // emitted from the buffered samples.
+        let mut batches = Vec::new();
+        for i in 0..60u32 {
+            let is_sync = i == 0 || i == 45;
+            let data = vec![0xCCu8.wrapping_add(i as u8); 32];
+            let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+            batches.push(vec![(1u32, sample)]);
+        }
+
+        let source = MockSource::new(specs, batches);
+        run_pipeline(store.clone(), 1.0, 500, source)
+            .await
+            .expect("pipeline runs to completion");
+
+        assert!(store.init_bytes().is_some(), "init segment stored");
+        let playlist = store.media_playlist_m3u8(1);
+
+        // Assertion bites the flush path: playlist MUST contain seg-1-2.
+        // This proves the buffered tail after frame 45 was flushed and emitted as
+        // a second segment. Without seg.flush(), only seg-1-1 would exist.
+        assert!(
+            playlist.contains("seg-1-2"),
+            "seg.flush() must emit buffered tail as seg-1-2, got playlist: {}",
+            playlist
+        );
     }
 }
