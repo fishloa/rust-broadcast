@@ -39,6 +39,61 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// Run the multimux origin: one [`StreamStore`] + one spawned pipeline task
+/// per `config.routes` entry, then bind `config.bind` and serve them all
+/// under [`router`].
+///
+/// Each route's pipeline task independently connects its [`crate::source::rtsp::RtspSource`],
+/// runs it through [`crate::pipeline::run_pipeline`], and — on either a connect
+/// failure or a pipeline error — logs to stderr and lets only that route's
+/// task end; a single bad source never brings the server (or any other route)
+/// down.
+///
+/// Returns only on a bind failure or if the HTTP server itself stops (e.g. a
+/// fatal accept-loop I/O error); the per-route ingest tasks run detached.
+pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
+    let mut streams: HashMap<String, Arc<StreamStore>> = HashMap::new();
+    let target_duration_secs = config.target_duration_secs;
+    let part_target_ms = config.part_target_ms;
+
+    for route in &config.routes {
+        let store = Arc::new(StreamStore::new(
+            target_duration_secs,
+            part_target_ms,
+            config.window_segments,
+        ));
+        streams.insert(route.name.clone(), store.clone());
+
+        let name = route.name.clone();
+        let rtsp_url = route.rtsp_url.clone();
+        tokio::spawn(async move {
+            let source = crate::source::rtsp::RtspSource::new(name.clone(), rtsp_url);
+            match source.connect().await {
+                Ok(session) => {
+                    if let Err(e) = crate::pipeline::run_pipeline(
+                        store,
+                        target_duration_secs,
+                        part_target_ms,
+                        session,
+                    )
+                    .await
+                    {
+                        eprintln!("multimux: route {name:?} pipeline stopped: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("multimux: route {name:?} failed to connect: {e}");
+                }
+            }
+        });
+    }
+
+    let state = Arc::new(AppState { streams });
+    let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
+    axum::serve(listener, router(state)).await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
