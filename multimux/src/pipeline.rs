@@ -1,1 +1,194 @@
-//! Pipeline for processing RTSP sources into LL-HLS segments.
+//! Per-route pipeline: pull samples from a [`SampleSource`], feed a
+//! [`transmux::ll_hls::LlHlsSegmenter`], and publish the init/parts/segments it
+//! produces into a [`crate::store::StreamStore`].
+//!
+//! One `run_pipeline` future is spawned per configured route; it runs until the
+//! source reports end-of-stream (`Ok(None)`) or a hard error.
+
+use std::sync::Arc;
+
+use transmux::ll_hls::LlHlsSegmenter;
+use transmux::pipeline::{Sample, TrackSpec};
+
+use crate::Result;
+use crate::store::StreamStore;
+
+/// CMAF movie timescale used for every route's fragmented `moov`/`moof`
+/// (matches [`transmux::pipeline::build_init_segment`]'s convention of a
+/// video-rate movie timescale; 90 kHz is the standard MPEG-2/CMAF video clock).
+const MOVIE_TIMESCALE: u32 = 90_000;
+
+/// A pull source of depayloaded, timed samples for one or more tracks — the
+/// pipeline's input side.
+///
+/// `#[allow(async_fn_in_trait)]`: this trait is internal to the crate (not a
+/// public API contract consumed by unrelated callers), so the usual
+/// `async_fn_in_trait` lint concern — that the trait can't spell out `Send`
+/// bounds on the returned future for callers who need it — doesn't apply here.
+#[allow(async_fn_in_trait)]
+pub trait SampleSource {
+    /// The track specs to build the init segment from. Called once, before
+    /// the first sample is pulled.
+    fn track_specs(&self) -> Vec<TrackSpec>;
+
+    /// Pull the next batch of samples, paired with their track id. Returns
+    /// `Ok(None)` at end-of-stream; a batch may be empty (e.g. a non-media
+    /// event was consumed) without signaling end-of-stream.
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>>;
+}
+
+impl SampleSource for crate::source::rtsp::RtspSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::rtsp::RtspSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::rtsp::RtspSession::next_samples(self).await
+    }
+}
+
+/// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
+/// ready part, and ready segment into `store`, until the source reports
+/// end-of-stream.
+///
+/// # Errors
+/// Propagates a source read error or a segmenter build failure.
+pub async fn run_pipeline<S: SampleSource>(
+    store: Arc<StreamStore>,
+    target_duration_secs: f64,
+    part_target_ms: u32,
+    mut source: S,
+) -> Result<()> {
+    let specs = source.track_specs();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        specs,
+        MOVIE_TIMESCALE,
+        target_duration_secs,
+        part_target_ms,
+    )?;
+    store.set_init(seg.init_segment()?);
+
+    while let Some(batch) = source.next_samples().await? {
+        for (track_id, sample) in batch {
+            seg.push(track_id, sample)?;
+        }
+        for part in seg.take_ready_parts() {
+            store.add_part(part);
+        }
+        for segment in seg.take_ready_segments() {
+            store.add_segment(segment);
+        }
+    }
+
+    seg.flush()?;
+    for part in seg.take_ready_parts() {
+        store.add_part(part);
+    }
+    for segment in seg.take_ready_segments() {
+        store.add_segment(segment);
+    }
+    Ok(())
+}
+
+/// A [`SampleSource`] driven from a fixed script of pre-built batches, for
+/// tests: yields one batch per [`next_samples`](SampleSource::next_samples)
+/// call, then `Ok(None)`.
+///
+/// `pub` unconditionally (not `#[cfg(test)]`/feature-gated): Task 8's
+/// integration test needs to construct one from outside this module, and an
+/// unconditional `pub` mock is the simplest way to share it without adding a
+/// `testsupport` cargo feature.
+pub struct MockSource {
+    specs: Vec<TrackSpec>,
+    batches: std::vec::IntoIter<Vec<(u32, Sample)>>,
+}
+
+impl MockSource {
+    /// Build a mock yielding each of `batches` in order, one per
+    /// `next_samples` call, then ending the stream.
+    pub fn new(specs: Vec<TrackSpec>, batches: Vec<Vec<(u32, Sample)>>) -> Self {
+        MockSource {
+            specs,
+            batches: batches.into_iter(),
+        }
+    }
+}
+
+impl SampleSource for MockSource {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        self.specs.clone()
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        Ok(self.batches.next())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::StreamStore;
+    use transmux::avc_config_from_sprop;
+    use transmux::pipeline::CodecConfig;
+
+    /// A real-ish sprop-parameter-sets pair (SPS+PPS), reused from
+    /// `multimux::source::rtsp`'s own tests, decoded into an `avcC` config.
+    const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+
+    /// 90 kHz video timescale — 1/30 s per access unit at 30 fps.
+    const VIDEO_TIMESCALE: u32 = 90_000;
+    const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+
+    fn video_track_spec() -> TrackSpec {
+        let config = avc_config_from_sprop(SPROP).expect("valid sprop");
+        TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config,
+                width: 0,
+                height: 0,
+            },
+        )
+    }
+
+    #[tokio::test]
+    async fn drives_source_through_segmenter_into_store() {
+        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let specs = vec![video_track_spec()];
+
+        // 90 samples @ 3000 ticks/30fps = 3 s of video, comfortably over the
+        // 1 s target duration / 500 ms part target — enough to close at least
+        // one full segment and several parts before end-of-stream.
+        let mut batches = Vec::new();
+        for i in 0..90u32 {
+            let is_sync = i == 0 || i == 45;
+            let data = vec![0xAAu8.wrapping_add(i as u8); 32];
+            let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+            batches.push(vec![(1u32, sample)]);
+        }
+
+        let source = MockSource::new(specs, batches);
+        run_pipeline(store.clone(), 1.0, 500, source)
+            .await
+            .expect("pipeline runs to completion");
+
+        assert!(store.init_bytes().is_some(), "init segment stored");
+        let playlist = store.media_playlist_m3u8(1);
+        assert!(
+            playlist.contains("seg-") || playlist.contains("#EXT-X-PART"),
+            "playlist has landed media: {playlist}"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_batches_are_a_no_op() {
+        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let specs = vec![video_track_spec()];
+        let source = MockSource::new(specs, vec![Vec::new(), Vec::new()]);
+        run_pipeline(store.clone(), 1.0, 500, source)
+            .await
+            .expect("pipeline tolerates empty batches");
+        assert!(store.init_bytes().is_some());
+    }
+}
