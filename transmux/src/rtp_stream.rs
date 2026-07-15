@@ -12,12 +12,11 @@
 //!   AAC: the sample rate).
 //! - A sample's `duration` is the RTP-timestamp delta to the *next* access
 //!   unit's timestamp — so a sample can only be emitted once the following
-//!   AU's timestamp is known (one-AU emission latency). [`Self::flush`]
+//!   AU's timestamp is known (one-AU emission latency). `flush`
 //!   emits the final pending AU using the last-computed duration (there is
 //!   no "next" AU to measure against).
-//! - The 32-bit wire RTP timestamp is unwrapped to a monotonic `u64` (see
-//!   [`unwrap_ts`]).
-//! - `is_sync` comes straight from the reassembled [`crate::rtp::ReassembledAu`]
+//! - The 32-bit wire RTP timestamp is unwrapped to a monotonic `u64`.
+//! - `is_sync` comes straight from the reassembled access unit
 //!   (IDR detection for video; always `true` for audio).
 //! - `composition_offset` is always `0` — **v1 assumes low-delay H.264 with no
 //!   B-frame reorder**: RTP carries only a presentation timestamp on the
@@ -25,7 +24,7 @@
 //!   composition offset) when B-frames are present is future work.
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
-//!   from [`Self::track_specs`] + emitted samples); cross-track A/V alignment
+//!   from `track_specs` + emitted samples); cross-track A/V alignment
 //!   using RTCP Sender Report NTP/RTP correlation is out of v1 scope.
 
 use crate::error::Result;
