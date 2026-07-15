@@ -101,18 +101,20 @@ pub async fn run_pipeline<S: SampleSource>(
 /// tests: yields one batch per [`next_samples`](SampleSource::next_samples)
 /// call, then `Ok(None)`.
 ///
-/// `pub` unconditionally (not `#[cfg(test)]`/feature-gated): Task 8's
-/// integration test needs to construct one from outside this module, and an
-/// unconditional `pub` mock is the simplest way to share it without adding a
-/// `testsupport` cargo feature. `#[doc(hidden)]`: it's test/example
-/// scaffolding, not part of the crate's published API contract.
+/// Feature-gated behind `testsupport` (plus the crate's own `#[cfg(test)]`
+/// unit tests): it's test/example scaffolding, not part of the crate's
+/// published API contract, so it's compiled out of a normal production build.
+/// External integration tests/examples that need it must build with
+/// `--features testsupport`.
 #[doc(hidden)]
+#[cfg(any(test, feature = "testsupport"))]
 pub struct MockSource {
     specs: Vec<TrackSpec>,
     batches: std::vec::IntoIter<Vec<(u32, Sample)>>,
 }
 
 #[doc(hidden)]
+#[cfg(any(test, feature = "testsupport"))]
 impl MockSource {
     /// Build a mock yielding each of `batches` in order, one per
     /// `next_samples` call, then ending the stream.
@@ -124,6 +126,7 @@ impl MockSource {
     }
 }
 
+#[cfg(any(test, feature = "testsupport"))]
 impl SampleSource for MockSource {
     fn track_specs(&self) -> Vec<TrackSpec> {
         self.specs.clone()

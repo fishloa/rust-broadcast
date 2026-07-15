@@ -22,13 +22,21 @@ url           = "2"
 clap          = { version = "4", features = ["derive"], optional = true }
 
 [features]
-default = ["cli"]
-cli     = ["dep:clap"]
+default     = ["cli"]
+cli         = ["dep:clap"]
+testsupport = []
 
 [[bin]]
 name              = "multimux"
 path              = "src/bin/multimux.rs"
 required-features = ["cli"]
+
+[[example]]
+name              = "serve_mock"
+required-features = ["testsupport"]
+
+[[example]]
+name = "serve_rtsp"
 
 [dev-dependencies]
 tower = { version = "0.5", default-features = false, features = ["util"] }

@@ -1,3 +1,4 @@
+#![cfg(feature = "testsupport")]
 //! Deterministic end-to-end integration gate for the LL-HLS origin (#663):
 //! `MockSource` -> [`run_pipeline`] -> [`StreamStore`] -> the axum
 //! [`router`], driven with `tower::ServiceExt::oneshot` (no real TCP socket,
