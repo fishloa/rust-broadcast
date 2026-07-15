@@ -106,16 +106,16 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 
     // Feed the packetized RTP for the video stream through the streaming depayloader.
     let video_stream = video_stream(&out);
-    let mut d = RtpStreamDepacketizer::new(vec![RtpStreamTrack {
-        track_id: 1,
-        kind: RtpMediaKind::H264,
-        config: CodecConfig::Avc {
+    let mut d = RtpStreamDepacketizer::new(vec![RtpStreamTrack::new(
+        1,
+        RtpMediaKind::H264,
+        CodecConfig::Avc {
             config: avc.clone(),
             width: 0,
             height: 0,
         },
-        clock_rate: 90_000,
-    }]);
+        90_000,
+    )]);
     let mut recovered = Vec::new();
     for pkt in &video_stream.packets {
         recovered.extend(d.push(1, pkt).unwrap());
@@ -145,19 +145,19 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     );
 
     // AAC: SDP config= → CodecConfig::Aac, rate/channels sane.
-    if let Some(cfg_hex) = fmtp_value(&out.sdp, "config=") {
-        let aac = aac_config_from_fmtp(cfg_hex).expect("aac from config");
-        match aac {
-            CodecConfig::Aac {
-                sample_rate,
-                channel_count,
-                ..
-            } => {
-                assert!((8_000..=96_000).contains(&sample_rate));
-                assert!((1..=8).contains(&channel_count));
-            }
-            _ => panic!("expected AAC"),
+    let cfg_hex = fmtp_value(&out.sdp, "config=")
+        .expect("SDP must carry AAC config= for the fixture's AAC track");
+    let aac = aac_config_from_fmtp(cfg_hex).expect("aac from config");
+    match aac {
+        CodecConfig::Aac {
+            sample_rate,
+            channel_count,
+            ..
+        } => {
+            assert!((8_000..=96_000).contains(&sample_rate));
+            assert!((1..=8).contains(&channel_count));
         }
+        _ => panic!("expected AAC"),
     }
 
     // Recovered video samples build a valid fMP4 init + media segment + part.

@@ -29,6 +29,10 @@
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples); cross-track A/V alignment
 //!   using RTCP Sender Report NTP/RTP correlation is out of v1 scope.
+//! - When an RFC 3640 `AAC-hbr` packet aggregates more than one access unit,
+//!   all AUs in that packet share the RTP timestamp, so non-final AUs get
+//!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
+//!   own packetizer emits.
 
 use crate::error::Result;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -36,6 +40,7 @@ use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_vi
 use alloc::vec::Vec;
 
 /// One track's decode config for [`RtpStreamDepacketizer`].
+#[non_exhaustive]
 pub struct RtpStreamTrack {
     /// Track ID (matches the IR `track_id` this depayloader emits).
     pub track_id: u32,
@@ -45,6 +50,18 @@ pub struct RtpStreamTrack {
     pub config: CodecConfig,
     /// RTP clock rate (Hz) — also used as the IR track timescale.
     pub clock_rate: u32,
+}
+
+impl RtpStreamTrack {
+    /// Build a track config from its fields.
+    pub fn new(track_id: u32, kind: RtpMediaKind, config: CodecConfig, clock_rate: u32) -> Self {
+        Self {
+            track_id,
+            kind,
+            config,
+            clock_rate,
+        }
+    }
 }
 
 /// Per-track mutable depacketization state.
@@ -262,12 +279,12 @@ mod tests {
 
     #[test]
     fn video_stream_recovers_durations_and_sync() {
-        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack {
-            track_id: 1,
-            kind: RtpMediaKind::H264,
-            config: dummy_avc(),
-            clock_rate: 90_000,
-        }]);
+        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+            1,
+            RtpMediaKind::H264,
+            dummy_avc(),
+            90_000,
+        )]);
 
         // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR). 3000-tick spacing.
         let idr = [0x65u8, 0xAA];
@@ -293,12 +310,12 @@ mod tests {
 
     #[test]
     fn track_specs_use_clock_rate_as_timescale() {
-        let d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack {
-            track_id: 7,
-            kind: RtpMediaKind::H264,
-            config: dummy_avc(),
-            clock_rate: 90_000,
-        }]);
+        let d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+            7,
+            RtpMediaKind::H264,
+            dummy_avc(),
+            90_000,
+        )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].track_id, 7);

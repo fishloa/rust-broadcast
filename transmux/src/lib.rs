@@ -282,7 +282,7 @@ pub use rtp::{
     NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
     RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
 };
-pub use rtp_sdp::avc_config_from_sprop;
+pub use rtp_sdp::{aac_config_from_fmtp, avc_config_from_sprop};
 pub use rtp_stream::{RtpStreamDepacketizer, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
