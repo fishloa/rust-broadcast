@@ -821,6 +821,12 @@ mod tests {
             !out.contains("#EXTINF:0.500,\npart-1-5.0.m4s"),
             "open segment must not be rendered as a closed #EXTINF segment:\n{out}"
         );
+        // Exact count: only 1 closed segment, so exactly 1 #EXTINF occurrence.
+        assert_eq!(
+            out.matches("#EXTINF:").count(),
+            1,
+            "only closed segments should have #EXTINF lines; open segment must not:\n{out}"
+        );
         let lines: Vec<&str> = out.lines().collect();
         for (i, line) in lines.iter().enumerate() {
             if *line == "part-1-5.0.m4s" {
@@ -882,5 +888,57 @@ mod tests {
         };
         let out = pl.to_m3u8();
         assert!(out.contains("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-5.1.m4s\""));
+    }
+
+    #[test]
+    fn open_segment_parts_precede_preload_hint() {
+        let mut ll = ll_config();
+        ll.preload_hint_part = Some("part-1-5.1.m4s".into());
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![MediaSegment {
+                uri: "seg-1-4.m4s".into(),
+                duration: 4.0,
+                discontinuous: false,
+                parts: vec![],
+            }],
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: Some(ll),
+            iframes_only: false,
+            open_segment: Some(OpenSegment {
+                parts: vec![PartSpec {
+                    uri: "part-1-5.0.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                }],
+            }),
+        };
+        let out = pl.to_m3u8();
+        // Both the open-segment part and preload-hint must be present.
+        assert!(
+            out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES"),
+            "open-segment part must be present:\n{out}"
+        );
+        assert!(
+            out.contains("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-5.1.m4s\""),
+            "preload-hint must be present:\n{out}"
+        );
+        // The open-segment #EXT-X-PART line must appear BEFORE the #EXT-X-PRELOAD-HINT line.
+        let part_pos = out
+            .find("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES")
+            .expect("open-segment part line not found");
+        let preload_pos = out
+            .find("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-5.1.m4s\"")
+            .expect("preload-hint line not found");
+        assert!(
+            part_pos < preload_pos,
+            "open-segment #EXT-X-PART must precede #EXT-X-PRELOAD-HINT:\npart at {}, preload at {}\noutput:\n{out}",
+            part_pos,
+            preload_pos
+        );
     }
 }
