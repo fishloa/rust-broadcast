@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-15
+
+### Added
+
+- Streaming, timing- and config-aware RTP depayloader `RtpStreamDepacketizer`
+  (RFC 6184 H.264 / RFC 3640 AAC): incremental `push`/`flush`, real per-sample
+  duration from RTP-timestamp deltas, `is_sync` from IDR detection. v1 assumes
+  low-delay H.264 (no B-frame reorder; `composition_offset = 0`), one AAC access
+  unit per packet, and in-arrival-order packet feed. `RtpStreamTrack` is
+  `#[non_exhaustive]` — construct via `RtpStreamTrack::new`.
+- SDP fmtp → `CodecConfig` helpers `rtp_sdp::{avc_config_from_sprop,
+  aac_config_from_fmtp}` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC;
+  RFC 3640 §4.1 `config` → esds), both re-exported at the crate root.
+
 ## [0.16.0] - 2026-07-14
 
 ### Added

@@ -146,6 +146,8 @@ pub mod repackage;
 pub mod rtcp;
 pub mod rtmp;
 pub mod rtp;
+pub mod rtp_sdp;
+pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]
 pub mod sample_aes;
 pub mod sample_entries;
@@ -280,6 +282,8 @@ pub use rtp::{
     NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
     RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
 };
+pub use rtp_sdp::{aac_config_from_fmtp, avc_config_from_sprop};
+pub use rtp_stream::{RtpStreamDepacketizer, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
     ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,

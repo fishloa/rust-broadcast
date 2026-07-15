@@ -733,15 +733,41 @@ fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
     )
 }
 
-/// Depacketize an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
-/// access units. NALs are grouped into access units by the RTP timestamp; the
-/// marker bit confirms an AU boundary.
-fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    let mut aus: Vec<Vec<u8>> = Vec::new();
+/// A reassembled access unit with its RTP presentation timestamp and a
+/// random-access (sync) flag. RFC 6184 §5.7 (video) / RFC 3640 §3.2 (audio).
+pub(crate) struct ReassembledAu {
+    // Read by the streaming depayloader (rtp_stream, #700 Task 4); the batch
+    // path here consumes only `data`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub timestamp: u32,
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub is_sync: bool,
+    pub data: Vec<u8>,
+}
+
+/// H.264 FU-A/STAP-A/single-NAL reassembly (RFC 6184 §5.7/§5.8), preserving
+/// the RTP timestamp and marking IDR access units as sync points.
+pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    let mut aus: Vec<ReassembledAu> = Vec::new();
     let mut cur_nals: Vec<Vec<u8>> = Vec::new();
     let mut cur_ts: Option<u32> = None;
     let mut fu_buf: Vec<u8> = Vec::new();
     let mut fu_active = false;
+
+    fn flush_au(aus: &mut Vec<ReassembledAu>, nals: &mut Vec<Vec<u8>>, ts: u32) {
+        if nals.is_empty() {
+            return;
+        }
+        let is_sync = nals
+            .iter()
+            .any(|n| !n.is_empty() && (n[0] & NAL_TYPE_MASK) == NAL_TYPE_IDR);
+        aus.push(ReassembledAu {
+            timestamp: ts,
+            is_sync,
+            data: length_prefix_nals(nals),
+        });
+        nals.clear();
+    }
 
     for pkt in packets {
         let hdr = parse_rtp_header(pkt)?;
@@ -749,21 +775,16 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
         if payload.is_empty() {
             continue;
         }
-
-        // New timestamp → flush the previous access unit's NALs.
         if let Some(ts) = cur_ts {
             if ts != hdr.timestamp && !cur_nals.is_empty() {
-                aus.push(length_prefix_nals(&cur_nals));
-                cur_nals.clear();
+                flush_au(&mut aus, &mut cur_nals, ts);
             }
         }
         cur_ts = Some(hdr.timestamp);
 
-        let nal_octet = payload[0];
-        let nal_type = nal_octet & NAL_TYPE_MASK;
+        let nal_type = payload[0] & NAL_TYPE_MASK;
         match nal_type {
             NAL_TYPE_STAP_A => {
-                // STAP-A: [STAP hdr][size|NAL]...
                 let mut off = 1usize;
                 while off < payload.len() {
                     if off + STAP_A_SIZE_LEN > payload.len() {
@@ -780,7 +801,7 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
                         return Err(Error::BufferTooShort {
                             need: end,
                             have: payload.len(),
-                            what: "STAP-A aggregated NAL",
+                            what: "STAP-A NAL",
                         });
                     }
                     cur_nals.push(payload[off..end].to_vec());
@@ -792,7 +813,7 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
                     return Err(Error::BufferTooShort {
                         need: 2,
                         have: payload.len(),
-                        what: "FU-A indicator + header",
+                        what: "FU-A header",
                     });
                 }
                 let fu_indicator = payload[0];
@@ -802,15 +823,12 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
                 let orig_type = fu_header & NAL_TYPE_MASK;
                 let fnri = fu_indicator & NAL_FNRI_MASK;
                 if is_start {
-                    // Reconstruct the original NAL octet from FU indicator+header.
                     fu_buf.clear();
                     fu_buf.push(fnri | orig_type);
                     fu_active = true;
                 }
                 if !fu_active {
-                    return Err(Error::InvalidInput(
-                        "FU-A fragment before a start (S) fragment",
-                    ));
+                    return Err(Error::InvalidInput("FU-A fragment before start"));
                 }
                 fu_buf.extend_from_slice(&payload[2..]);
                 if is_end {
@@ -818,23 +836,81 @@ fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
                     fu_active = false;
                 }
             }
-            _ => {
-                // Single-NAL packet (types 1..23).
-                cur_nals.push(payload.to_vec());
-            }
+            _ => cur_nals.push(payload.to_vec()),
         }
 
-        // Marker → end of access unit.
         if hdr.marker && !cur_nals.is_empty() && !fu_active {
-            aus.push(length_prefix_nals(&cur_nals));
-            cur_nals.clear();
+            let ts = hdr.timestamp;
+            flush_au(&mut aus, &mut cur_nals, ts);
             cur_ts = None;
         }
     }
-    if !cur_nals.is_empty() {
-        aus.push(length_prefix_nals(&cur_nals));
+    if let Some(ts) = cur_ts {
+        flush_au(&mut aus, &mut cur_nals, ts);
     }
     Ok(aus)
+}
+
+/// RFC 3640 AAC-hbr AU-header reassembly, preserving the RTP timestamp.
+/// Audio AUs are always sync points.
+pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    let mut aus = Vec::new();
+    for pkt in packets {
+        let hdr = parse_rtp_header(pkt)?;
+        let payload = hdr.payload;
+        if payload.len() < AAC_AU_HEADERS_LENGTH_LEN {
+            return Err(Error::BufferTooShort {
+                need: AAC_AU_HEADERS_LENGTH_LEN,
+                have: payload.len(),
+                what: "AAC AU-headers-length",
+            });
+        }
+        let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+        let header_bytes = au_headers_len_bits.div_ceil(8);
+        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
+        let mut off = AAC_AU_HEADERS_LENGTH_LEN;
+        if off + header_bytes > payload.len() {
+            return Err(Error::BufferTooShort {
+                need: off + header_bytes,
+                have: payload.len(),
+                what: "AAC AU headers",
+            });
+        }
+        let mut sizes = Vec::with_capacity(num_headers);
+        for h in 0..num_headers {
+            let hoff = off + h * AAC_AU_HEADER_LEN;
+            let ah = u16::from_be_bytes([payload[hoff], payload[hoff + 1]]);
+            sizes.push((ah >> AAC_INDEX_LENGTH) as usize);
+        }
+        off += header_bytes;
+        for size in sizes {
+            let end = off + size;
+            if end > payload.len() {
+                return Err(Error::BufferTooShort {
+                    need: end,
+                    have: payload.len(),
+                    what: "AAC AU payload",
+                });
+            }
+            aus.push(ReassembledAu {
+                timestamp: hdr.timestamp,
+                is_sync: true,
+                data: payload[off..end].to_vec(),
+            });
+            off = end;
+        }
+    }
+    Ok(aus)
+}
+
+/// Depacketize an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
+/// access units. NALs are grouped into access units by the RTP timestamp; the
+/// marker bit confirms an AU boundary.
+fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+    Ok(reassemble_video(packets)?
+        .into_iter()
+        .map(|au| au.data)
+        .collect())
 }
 
 /// 4-byte length-prefix a list of NALs into an IR video sample.
@@ -850,52 +926,10 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
 
 /// Depacketize an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs.
 fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    let mut aus = Vec::with_capacity(packets.len());
-    for pkt in packets {
-        let hdr = parse_rtp_header(pkt)?;
-        let payload = hdr.payload;
-        if payload.len() < AAC_AU_HEADERS_LENGTH_LEN {
-            return Err(Error::BufferTooShort {
-                need: AAC_AU_HEADERS_LENGTH_LEN,
-                have: payload.len(),
-                what: "AAC AU-headers-length",
-            });
-        }
-        let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-        // Number of AU-headers = header-section bits / bits-per-header (16).
-        let header_bytes = au_headers_len_bits.div_ceil(8);
-        let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
-        let mut off = AAC_AU_HEADERS_LENGTH_LEN;
-        if off + header_bytes > payload.len() {
-            return Err(Error::BufferTooShort {
-                need: off + header_bytes,
-                have: payload.len(),
-                what: "AAC AU-header section",
-            });
-        }
-        // Parse AU sizes (AU-size = top 13 bits of each 16-bit header).
-        let mut sizes = Vec::with_capacity(num_headers);
-        for h in 0..num_headers {
-            let hoff = off + h * AAC_AU_HEADER_LEN;
-            let hdr = u16::from_be_bytes([payload[hoff], payload[hoff + 1]]);
-            let size = (hdr >> AAC_INDEX_LENGTH) as usize;
-            sizes.push(size);
-        }
-        off += header_bytes;
-        for size in sizes {
-            let end = off + size;
-            if end > payload.len() {
-                return Err(Error::BufferTooShort {
-                    need: end,
-                    have: payload.len(),
-                    what: "AAC AU data",
-                });
-            }
-            aus.push(payload[off..end].to_vec());
-            off = end;
-        }
-    }
-    Ok(aus)
+    Ok(reassemble_audio(packets)?
+        .into_iter()
+        .map(|au| au.data)
+        .collect())
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
@@ -904,13 +938,13 @@ fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 /// `marker`/`timestamp`/`payload` are read at call sites below (the rest are
 /// carried through for the unit test at the bottom of this file) — see #646.
 #[derive(Debug, Clone, Copy)]
-struct RtpHeader<'a> {
-    marker: bool,
+pub(crate) struct RtpHeader<'a> {
+    pub(crate) marker: bool,
     #[allow(dead_code)]
     payload_type: u8,
     #[allow(dead_code)]
     sequence: u16,
-    timestamp: u32,
+    pub(crate) timestamp: u32,
     #[allow(dead_code)]
     ssrc: u32,
     /// The payload after the fixed header, CSRC list, and header extension
@@ -921,7 +955,7 @@ struct RtpHeader<'a> {
 }
 
 /// Parse and validate the RTP fixed header, rejecting bad versions.
-fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
+pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
     let parsed = RtpPacket::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
         marker: parsed.marker,
@@ -1157,6 +1191,33 @@ pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reassemble_video_reports_timestamp_and_sync() {
+        // Two single-NAL AUs at different RTP timestamps; first is an IDR (type 5),
+        // second a non-IDR slice (type 1). Marker bit ends each AU.
+        // RTP fixed header: V=2 (0x80), PT=96; seq; timestamp; ssrc=0.
+        fn pkt(seq: u16, ts: u32, marker: bool, nal: &[u8]) -> Vec<u8> {
+            let mut p = alloc::vec![0x80u8, if marker { 0x80 | 96 } else { 96 }];
+            p.extend_from_slice(&seq.to_be_bytes());
+            p.extend_from_slice(&ts.to_be_bytes());
+            p.extend_from_slice(&[0, 0, 0, 0]); // ssrc
+            p.extend_from_slice(nal);
+            p
+        }
+        let idr = [0x65u8, 0xAA]; // nal_ref_idc=3, type=5 (IDR)
+        let non = [0x41u8, 0xBB]; // nal_ref_idc=2, type=1 (non-IDR)
+        let packets = alloc::vec![pkt(1, 1000, true, &idr), pkt(2, 4000, true, &non)];
+        let aus = reassemble_video(&packets).unwrap();
+        assert_eq!(aus.len(), 2);
+        assert_eq!(aus[0].timestamp, 1000);
+        assert!(aus[0].is_sync, "IDR AU must be sync");
+        assert_eq!(aus[1].timestamp, 4000);
+        assert!(!aus[1].is_sync, "non-IDR AU must not be sync");
+        // data is length-prefixed NAL (4-byte length + NAL)
+        assert_eq!(&aus[0].data[..4], &[0, 0, 0, 2]);
+        assert_eq!(&aus[0].data[4..], &idr);
+    }
 
     #[test]
     fn base64_round_trip() {

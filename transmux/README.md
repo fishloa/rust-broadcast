@@ -119,6 +119,8 @@ round-trips through the IR.
 | HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
+| RTP streaming depayload (live) | — | `RtpStreamDepacketizer` (`push`/`flush` → timed `Sample`s: per-AU duration from RTP-timestamp deltas, `is_sync` from IDR; v1 low-delay H.264 / 1 AU-per-packet AAC / in-order feed) | ✅ |
+| SDP fmtp → codec config | — | `rtp_sdp::avc_config_from_sprop` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC) · `rtp_sdp::aac_config_from_fmtp` (RFC 3640 §4.1 `config` → esds) | ✅ |
 | KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
 | KLV-over-RTP | — | `packetize_klv` / `depacketize_klv` (RFC 6597 `smpte336m`, timestamp-shared fragmentation, marker on last) | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |
