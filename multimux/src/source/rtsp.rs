@@ -16,6 +16,7 @@ use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::io::AsyncRtspClient;
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use tokio::net::TcpStream;
+use url::Url;
 
 use crate::error::{MultimuxError, Result};
 use crate::source::{Source, TrackInit, sdp::parse_sdp_tracks};
@@ -63,8 +64,10 @@ impl RtspSource {
     /// `(2i, 2i+1)` per the SDP's media order), and PLAYs — returning a live
     /// session ready for [`RtspSession::next_samples`].
     pub async fn connect(&self) -> Result<RtspSession> {
-        let (host, port) = host_port(&self.url)?;
-        let mut client = AsyncRtspClient::<TcpStream>::connect((host.as_str(), port))
+        let base_url = Url::parse(&self.url)
+            .map_err(|e| MultimuxError::Source(format!("bad rtsp(s) URL {:?}: {e}", self.url)))?;
+        let addr = connect_addr(&base_url)?;
+        let mut client = AsyncRtspClient::<TcpStream>::connect(addr.as_str())
             .await
             .map_err(source_err("connect"))?;
 
@@ -76,7 +79,7 @@ impl RtspSource {
         let mut tracks = parse_sdp_tracks(&sdp)?;
 
         for track in &mut tracks {
-            let uri = setup_uri(&self.url, track.control.as_deref());
+            let uri = resolve_control(&base_url, track.control.as_deref())?;
             let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
                 track.channel,
                 track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
@@ -178,40 +181,38 @@ impl RtspSession {
     }
 }
 
-/// Builds a per-media SETUP URI from the base RTSP URL and its `a=control`
-/// value: an absolute `rtsp(s)://` control is used verbatim, a relative one is
-/// joined onto the base URL, and a missing control falls back to the base URL
-/// itself (RFC 2326 §C.1.1).
-fn setup_uri(base_url: &str, control: Option<&str>) -> String {
+/// Resolves a per-media SETUP URI from the base RTSP URL and its `a=control`
+/// value, per RFC 2326 §C.1.1: a missing control, or the aggregate-control
+/// token `"*"` (RFC 2326 §C.1), falls back to the base (whole-presentation)
+/// URL; any other value — absolute or relative — is resolved against the
+/// base URL per RFC 3986 §5 (`Url::join` handles both: an absolute
+/// `rtsp(s)://...` reference is returned as-is, a relative one like
+/// `trackID=1` replaces the base's last path segment).
+fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
     match control {
-        None => base_url.to_string(),
-        Some(c) if c.starts_with("rtsp://") || c.starts_with("rtsps://") => c.to_string(),
-        Some(c) if base_url.ends_with('/') => format!("{base_url}{c}"),
-        Some(c) => format!("{base_url}/{c}"),
+        None | Some("*") => Ok(base_url.to_string()),
+        Some(c) => base_url
+            .join(c)
+            .map(|u| u.to_string())
+            .map_err(|e| MultimuxError::Source(format!("bad a=control {c:?}: {e}"))),
     }
 }
 
-/// Extracts `(host, port)` from a `rtsp://`/`rtsps://` URL for the initial TCP
-/// connect, defaulting to [`RTSP_DEFAULT_PORT`] when no port is given.
-///
-/// This is a minimal authority parser (host, optional `:port`) sufficient for
-/// the plain hostnames/IPv4 addresses real cameras and media servers publish;
-/// it does not handle bracketed IPv6 literals or userinfo.
-fn host_port(url: &str) -> Result<(String, u16)> {
-    let rest = url
-        .strip_prefix("rtsp://")
-        .or_else(|| url.strip_prefix("rtsps://"))
-        .ok_or_else(|| MultimuxError::Source(format!("not an rtsp(s) URL: {url:?}")))?;
-    let authority = rest.split(['/', '?']).next().unwrap_or(rest);
-    match authority.rsplit_once(':') {
-        Some((host, port_str)) => {
-            let port = port_str
-                .parse::<u16>()
-                .map_err(|e| MultimuxError::Source(format!("bad port in {url:?}: {e}")))?;
-            Ok((host.to_string(), port))
-        }
-        None => Ok((authority.to_string(), RTSP_DEFAULT_PORT)),
+/// Derives the `host:port` connect address from the base `rtsp://`/`rtsps://`
+/// URL, defaulting to [`RTSP_DEFAULT_PORT`] when no port is given (RFC 2326
+/// §1). `Url::host_str` already renders IPv6 literals bracketed (the URL's
+/// authority component, per RFC 3986 §3.2.2 `IP-literal`), so simply joining
+/// `host:port` yields a valid socket-address string — e.g. `[::1]:8554` — for
+/// both IPv6 literals and plain hostnames/IPv4 addresses.
+fn connect_addr(url: &Url) -> Result<String> {
+    if url.scheme() != "rtsp" && url.scheme() != "rtsps" {
+        return Err(MultimuxError::Source(format!("not an rtsp(s) URL: {url}")));
     }
+    let host = url
+        .host_str()
+        .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
+    let port = url.port().unwrap_or(RTSP_DEFAULT_PORT);
+    Ok(format!("{host}:{port}"))
 }
 
 /// Unwraps a `ClientEvent::Response` with a success status into its body;
@@ -286,49 +287,64 @@ mod tests {
     }
 
     #[test]
-    fn setup_uri_absolute_control_used_verbatim() {
+    fn setup_uri_absolute_control() {
+        let base = Url::parse("rtsp://h/media.sdp").unwrap();
+        // Absolute control is an RFC-3986 absolute URI reference, so
+        // `Url::join` returns it as-is rather than resolving against base.
         assert_eq!(
-            setup_uri("rtsp://cam/base", Some("rtsp://other/track1")),
-            "rtsp://other/track1"
+            resolve_control(&base, Some("rtsp://h/media.sdp/trackID=2")).unwrap(),
+            "rtsp://h/media.sdp/trackID=2"
         );
     }
 
     #[test]
-    fn setup_uri_relative_control_joined() {
+    fn setup_uri_resolves_relative_control() {
+        let base = Url::parse("rtsp://h/media.sdp").unwrap();
+        // RFC-3986 resolution replaces the base's last path segment, unlike a
+        // naive concat (which would wrongly produce ".../media.sdp/trackID=1").
         assert_eq!(
-            setup_uri("rtsp://cam/base", Some("streamid=0")),
-            "rtsp://cam/base/streamid=0"
+            resolve_control(&base, Some("trackID=1")).unwrap(),
+            base.join("trackID=1").unwrap().to_string()
         );
         assert_eq!(
-            setup_uri("rtsp://cam/base/", Some("streamid=0")),
-            "rtsp://cam/base/streamid=0"
-        );
-    }
-
-    #[test]
-    fn setup_uri_missing_control_falls_back_to_base() {
-        assert_eq!(setup_uri("rtsp://cam/base", None), "rtsp://cam/base");
-    }
-
-    #[test]
-    fn host_port_defaults_to_rtsp_port() {
-        assert_eq!(
-            host_port("rtsp://cam.local/stream").unwrap(),
-            ("cam.local".to_string(), RTSP_DEFAULT_PORT)
+            resolve_control(&base, Some("trackID=1")).unwrap(),
+            "rtsp://h/trackID=1"
         );
     }
 
     #[test]
-    fn host_port_parses_explicit_port() {
-        assert_eq!(
-            host_port("rtsp://cam.local:8554/stream").unwrap(),
-            ("cam.local".to_string(), 8554)
-        );
+    fn setup_uri_missing_or_aggregate_control_falls_back_to_base() {
+        let base = Url::parse("rtsp://cam/base").unwrap();
+        assert_eq!(resolve_control(&base, None).unwrap(), base.to_string());
+        assert_eq!(resolve_control(&base, Some("*")).unwrap(), base.to_string());
     }
 
     #[test]
-    fn host_port_rejects_non_rtsp_scheme() {
-        assert!(host_port("http://cam.local/stream").is_err());
+    fn connect_addr_defaults_port_554() {
+        let base = Url::parse("rtsp://cam.local/stream").unwrap();
+        assert_eq!(
+            connect_addr(&base).unwrap(),
+            format!("cam.local:{RTSP_DEFAULT_PORT}")
+        );
+        assert_eq!(connect_addr(&base).unwrap(), "cam.local:554");
+    }
+
+    #[test]
+    fn connect_addr_parses_explicit_port() {
+        let base = Url::parse("rtsp://cam.local:8554/stream").unwrap();
+        assert_eq!(connect_addr(&base).unwrap(), "cam.local:8554");
+    }
+
+    #[test]
+    fn connect_addr_handles_ipv6_userinfo_port() {
+        let base = Url::parse("rtsp://user:pass@[2001:db8::1]:8554/stream").unwrap();
+        assert_eq!(connect_addr(&base).unwrap(), "[2001:db8::1]:8554");
+    }
+
+    #[test]
+    fn connect_addr_rejects_non_rtsp_scheme() {
+        let base = Url::parse("http://cam.local/stream").unwrap();
+        assert!(connect_addr(&base).is_err());
     }
 
     #[test]
