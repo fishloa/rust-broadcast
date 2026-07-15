@@ -24,7 +24,7 @@
 //!   TS-segment HLS ([`TsHlsPackager`]), DASH MPD ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
 //!   ([`SmoothPackager`]), RTMP ([`RtmpMux`]), low-latency HLS
-//!   ([`LlHlsSegmenter`]).
+//!   ([`LlHlsSegmenter`], live-edge open segments via [`hls::OpenSegment`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
 //!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —
@@ -44,8 +44,9 @@
 //!   `cbcs` (`cenc`/CTR is DASH-only — see [`hls`]'s module docs); HLS
 //!   Sample-AES + full-segment AES-128 encrypt/decrypt (`sample-aes`,
 //!   [`sample_aes`]).
-//! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]) + SDP;
-//!   RTCP control packets ([`RtcpPacket`]).
+//! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]),
+//!   streaming depayload ([`RtpStreamDepacketizer`]) + SDP fmtp→config helpers
+//!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /

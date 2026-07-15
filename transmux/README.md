@@ -96,7 +96,7 @@ round-trips through the IR.
 | NAL keyframe classification | `nal_unit_type` / `is_keyframe_nal` / `access_unit_is_keyframe` (`NalCodec` AVC/HEVC/VVC) | ✅ |
 | RTCP control packets | `RtcpPacket` — SR/RR/SDES/BYE/APP + `CompoundPacket` (RFC 3550 §6) | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216); `#EXT-X-DISCONTINUITY` / `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.4.3/§4.3.3.3) | ✅ |
-| LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3) | ✅ |
+| LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3); `MediaPlaylist::open_segment` (`hls::OpenSegment`) renders an in-progress live-edge segment as trailing `#EXT-X-PART` lines with no `#EXTINF` (RFC 8216bis §4.4.4.9) | ✅ |
 
 ### Hub spokes (`Unpackage` / `Package`)
 
@@ -120,7 +120,7 @@ round-trips through the IR.
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetize + SDP | `Package`/`Unpackage` | `RtpPacketizer` / `RtpDepacketizer` | ✅ |
 | RTP streaming depayload (live) | — | `RtpStreamDepacketizer` (`push`/`flush` → timed `Sample`s: per-AU duration from RTP-timestamp deltas, `is_sync` from IDR; v1 low-delay H.264 / 1 AU-per-packet AAC / in-order feed) | ✅ |
-| SDP fmtp → codec config | — | `rtp_sdp::avc_config_from_sprop` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC) · `rtp_sdp::aac_config_from_fmtp` (RFC 3640 §4.1 `config` → esds) | ✅ |
+| SDP fmtp → codec config | — | `rtp_sdp::fmtp_param` (generic `key=value` fmtp lookup) · `rtp_sdp::avc_config_from_fmtp` (full fmtp line → avcC) · `rtp_sdp::avc_config_from_sprop` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC) · `rtp_sdp::aac_config_from_fmtp` (full RFC 3640 §4.1 fmtp line → esds) · `rtp_sdp::aac_config_from_asc_hex` (value-level `config=` hex → esds; the old value-level behavior of `aac_config_from_fmtp`) · `rtp_sdp::rtpmap_clock_rate` (`rtpmap` → RTP clock rate) | ✅ |
 | KLV metadata (SMPTE ST 336 / MISB ST 0601) | — | `KlvItem` · `UasLocalSet` (BER length + BER-OID tags, tag 2 precision timestamp, tag 1 CRC-16/CCITT checksum) | ✅ |
 | KLV-over-RTP | — | `packetize_klv` / `depacketize_klv` (RFC 6597 `smpte336m`, timestamp-shared fragmentation, marker on last) | ✅ |
 | RTMP transport (carries FLV A/V) | `Unpackage`/`Package` | `RtmpDemux` / `RtmpMux` (chunk stream, AMF0, → FLV spoke) | ✅ |

@@ -9,6 +9,9 @@ repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "network-programming"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [dependencies]
 transmux      = { path = "../transmux",     version = "0.17" }
 rtsp-runtime  = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }

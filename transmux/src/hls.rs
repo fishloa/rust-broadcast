@@ -153,9 +153,17 @@ pub struct PartSpec {
 /// (RFC 8216bis §4.4.4.9 — an open segment is represented by its trailing
 /// `#EXT-X-PART` lines only, until it closes).
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct OpenSegment {
     /// The parts of the in-progress segment, in order.
     pub parts: Vec<PartSpec>,
+}
+
+impl OpenSegment {
+    /// Build an open segment from its in-progress parts.
+    pub fn new(parts: Vec<PartSpec>) -> Self {
+        Self { parts }
+    }
 }
 
 /// A single media segment in a media playlist.
@@ -798,13 +806,11 @@ mod tests {
             extra_tags: vec![],
             low_latency: Some(ll_config()),
             iframes_only: false,
-            open_segment: Some(OpenSegment {
-                parts: vec![PartSpec {
-                    uri: "part-1-5.0.m4s".into(),
-                    duration: 0.5,
-                    independent: true,
-                }],
-            }),
+            open_segment: Some(OpenSegment::new(vec![PartSpec {
+                uri: "part-1-5.0.m4s".into(),
+                duration: 0.5,
+                independent: true,
+            }])),
         };
         let out = pl.to_m3u8();
         // The open part is rendered as an #EXT-X-PART line.
@@ -854,13 +860,11 @@ mod tests {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
-            open_segment: Some(OpenSegment {
-                parts: vec![PartSpec {
-                    uri: "part-1-5.0.m4s".into(),
-                    duration: 0.5,
-                    independent: true,
-                }],
-            }),
+            open_segment: Some(OpenSegment::new(vec![PartSpec {
+                uri: "part-1-5.0.m4s".into(),
+                duration: 0.5,
+                independent: true,
+            }])),
         };
         let out = pl.to_m3u8();
         assert!(
@@ -909,13 +913,11 @@ mod tests {
             extra_tags: vec![],
             low_latency: Some(ll),
             iframes_only: false,
-            open_segment: Some(OpenSegment {
-                parts: vec![PartSpec {
-                    uri: "part-1-5.0.m4s".into(),
-                    duration: 0.5,
-                    independent: true,
-                }],
-            }),
+            open_segment: Some(OpenSegment::new(vec![PartSpec {
+                uri: "part-1-5.0.m4s".into(),
+                duration: 0.5,
+                independent: true,
+            }])),
         };
         let out = pl.to_m3u8();
         // Both the open-segment part and preload-hint must be present.

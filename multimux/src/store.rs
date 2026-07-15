@@ -218,17 +218,18 @@ impl StreamStore {
         // The in-progress segment's live parts + the next (not yet available)
         // part's preload-hint URI.
         let open_seq = g.live_parts.first().map(|p| p.segment_seq);
-        let open_segment = open_seq.map(|seq| OpenSegment {
-            parts: g
-                .live_parts
-                .iter()
-                .filter(|p| p.segment_seq == seq)
-                .map(|p| PartSpec {
-                    uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
-                    duration: p.duration,
-                    independent: p.independent,
-                })
-                .collect(),
+        let open_segment = open_seq.map(|seq| {
+            OpenSegment::new(
+                g.live_parts
+                    .iter()
+                    .filter(|p| p.segment_seq == seq)
+                    .map(|p| PartSpec {
+                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
+                        duration: p.duration,
+                        independent: p.independent,
+                    })
+                    .collect(),
+            )
         });
         let next_part_hint = open_seq.map(|seq| {
             let next_idx = g
