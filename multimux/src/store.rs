@@ -4,8 +4,13 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use tokio::sync::watch;
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment};
 use transmux::ll_hls::{PartInfo, SegmentInfo};
+
+/// LL-HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
+/// `#EXT-X-PART-INF`/`#EXT-X-PART` directives this store always emits require
+/// it).
+const LL_HLS_VERSION: u8 = 9;
 
 struct Inner {
     init: Option<Vec<u8>>,
@@ -20,13 +25,16 @@ pub struct StreamStore {
     target_duration_secs: f64,
     part_target_ms: u32,
     progress_tx: watch::Sender<u64>,
-    _progress_rx: watch::Receiver<u64>,
 }
 
 impl StreamStore {
     /// New empty store; `window_segments` = full segments retained.
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
-        let (tx, rx) = watch::channel(0u64);
+        // `send_modify` works even with zero receivers (it permits sending
+        // values with no listeners), so the initial receiver half doesn't
+        // need to be held anywhere — `subscribe()` mints new receivers off
+        // the sender's retained value on demand.
+        let (tx, _rx) = watch::channel(0u64);
         StreamStore {
             inner: Mutex::new(Inner {
                 init: None,
@@ -37,7 +45,6 @@ impl StreamStore {
             target_duration_secs,
             part_target_ms,
             progress_tx: tx,
-            _progress_rx: rx,
         }
     }
 
@@ -96,19 +103,27 @@ impl StreamStore {
             .map(|p| p.bytes.clone())
     }
 
-    /// The highest (segment seq, part index) currently available — used to
-    /// resolve blocking `_HLS_msn`/`_HLS_part` requests.
+    /// `(in-progress segment seq, count of live parts available for it)` —
+    /// used to resolve blocking `_HLS_msn`/`_HLS_part` requests.
+    ///
+    /// The second value is a **count**, not the last part's index: a future
+    /// blocking-reload resolver should treat "part `P` ready" as
+    /// `count > P` (0 means no parts of the in-progress segment are
+    /// available yet).
     pub fn latest_progress(&self) -> (u32, u32) {
         let g = self.inner.lock().unwrap();
-        let last_seg = g.segments.back().map(|s| s.segment_seq).unwrap_or(0);
-        let last_part = g.live_parts.last().map(|p| p.part_index).unwrap_or(0);
-        (
-            g.live_parts
-                .last()
-                .map(|p| p.segment_seq)
-                .unwrap_or(last_seg),
-            last_part,
-        )
+        let last_closed_seg = g.segments.back().map(|s| s.segment_seq).unwrap_or(0);
+        let in_progress_seg = g
+            .live_parts
+            .last()
+            .map(|p| p.segment_seq)
+            .unwrap_or(last_closed_seg);
+        let part_count = g
+            .live_parts
+            .iter()
+            .filter(|p| p.segment_seq == in_progress_seg)
+            .count() as u32;
+        (in_progress_seg, part_count)
     }
 
     /// Subscribe to the progress watch (value bumps on every new part/segment).
@@ -117,14 +132,28 @@ impl StreamStore {
     }
 
     /// Render the LL-HLS media playlist for `track_id`.
+    ///
+    /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
+    /// be advertised with an `#EXTINF`/URI pair — that segment has no fetchable
+    /// resource yet — it may only appear as trailing `#EXT-X-PART` lines.
+    /// `transmux::hls::MediaPlaylist::to_m3u8` renders one `#EXTINF`+URI per
+    /// `MediaSegment` unconditionally (parts, when present, are rendered
+    /// *before* that segment's `#EXTINF`, never as a substitute for it), so it
+    /// has no representation for an EXTINF-less trailing partial segment.
+    /// Rather than push a fabricated `MediaSegment` (which is what produced
+    /// the RFC violation this fixes), we render the CLOSED segments only via
+    /// `to_m3u8()`, then append the in-progress segment's `#EXT-X-PART` lines
+    /// and an `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part as
+    /// raw strings.
     pub fn media_playlist_m3u8(&self, track_id: u32) -> String {
         let g = self.inner.lock().unwrap();
         let media_sequence = g
             .segments
             .front()
             .map(|s| u64::from(s.segment_seq))
+            .or_else(|| g.live_parts.first().map(|p| u64::from(p.segment_seq)))
             .unwrap_or(1);
-        let mut segments: Vec<MediaSegment> = g
+        let segments: Vec<MediaSegment> = g
             .segments
             .iter()
             .map(|s| MediaSegment {
@@ -134,29 +163,24 @@ impl StreamStore {
                 parts: Vec::new(),
             })
             .collect();
-        // Attach the in-progress segment's live parts as a trailing (open) segment.
-        if let Some(first) = g.live_parts.first() {
-            let seq = first.segment_seq;
-            let parts = g
+        let part_target = f64::from(self.part_target_ms) / 1000.0;
+        // The in-progress segment's live parts + the next (not yet available)
+        // part's preload-hint URI, computed before we know the closed-segment
+        // playlist string so both can be appended after it.
+        let open_seq = g.live_parts.first().map(|p| p.segment_seq);
+        let next_part_hint = open_seq.map(|seq| {
+            let next_idx = g
                 .live_parts
                 .iter()
                 .filter(|p| p.segment_seq == seq)
-                .map(|p| PartSpec {
-                    uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
-                    duration: p.duration,
-                    independent: p.independent,
-                })
-                .collect();
-            segments.push(MediaSegment {
-                uri: format!("seg-{track_id}-{seq}.m4s"),
-                duration: self.target_duration_secs,
-                discontinuous: false,
-                parts,
-            });
-        }
-        let part_target = f64::from(self.part_target_ms) / 1000.0;
+                .map(|p| p.part_index)
+                .max()
+                .map(|idx| idx + 1)
+                .unwrap_or(0);
+            format!("part-{track_id}-{seq}.{next_idx}.m4s")
+        });
         let playlist = MediaPlaylist {
-            version: 9,
+            version: LL_HLS_VERSION,
             target_duration: self.target_duration_secs.ceil() as u32,
             media_sequence,
             discontinuity_sequence: 0,
@@ -166,12 +190,53 @@ impl StreamStore {
             low_latency: Some(LowLatencyConfig {
                 part_target,
                 part_hold_back: part_target * 3.0,
+                // The preload hint is appended manually below, alongside the
+                // open segment's part lines, so `to_m3u8()` itself must not
+                // also render one.
                 preload_hint_part: None,
             }),
             iframes_only: false,
         };
-        playlist.to_m3u8()
+        let mut m3u8 = playlist.to_m3u8();
+        if let Some(seq) = open_seq {
+            for p in g.live_parts.iter().filter(|p| p.segment_seq == seq) {
+                m3u8.push_str(&format!(
+                    "#EXT-X-PART:DURATION={},URI=\"part-{track_id}-{}.{}.m4s\"",
+                    format_secs(p.duration),
+                    p.segment_seq,
+                    p.part_index,
+                ));
+                if p.independent {
+                    m3u8.push_str(",INDEPENDENT=YES");
+                }
+                m3u8.push('\n');
+            }
+        }
+        if let Some(uri) = next_part_hint {
+            m3u8.push_str(&format!("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{uri}\"\n"));
+        }
+        m3u8
     }
+}
+
+/// Format a non-negative seconds value with up to three decimal places,
+/// trailing zeros trimmed (`0.5`, `1.334`, `6`) — mirrors the private
+/// `format_secs` in `transmux::hls` so the manually-appended `#EXT-X-PART`
+/// lines for the in-progress segment render identically to the ones
+/// `MediaPlaylist::to_m3u8` produces for closed segments (that helper isn't
+/// public, so it can't be reused directly).
+fn format_secs(v: f64) -> String {
+    let millis = (v * 1000.0 + 0.5) as u64;
+    let whole = millis / 1000;
+    let frac = millis % 1000;
+    if frac == 0 {
+        return format!("{whole}");
+    }
+    let mut f = format!("{frac:03}");
+    while f.ends_with('0') {
+        f.pop();
+    }
+    format!("{whole}.{f}")
 }
 
 #[cfg(test)]
@@ -225,6 +290,30 @@ mod tests {
         assert!(
             m.contains("part-1-1.0.m4s") || m.contains("part-1-1.1.m4s"),
             "part URI"
+        );
+    }
+
+    #[test]
+    fn open_segment_has_parts_but_no_extinf() {
+        let s = StreamStore::new(4.0, 500, 4);
+        s.set_init(vec![0; 4]);
+        s.add_part(part(1, 0));
+        s.add_part(part(1, 1));
+        let m = s.media_playlist_m3u8(1);
+        // The in-progress segment's parts are advertised...
+        assert!(m.contains("#EXT-X-PART"), "at least one PART line");
+        assert!(m.contains("part-1-1.0.m4s"), "part 0 URI present");
+        assert!(m.contains("part-1-1.1.m4s"), "part 1 URI present");
+        // ...but RFC 8216bis §4.4.4.9: no premature #EXTINF/URI for the
+        // not-yet-closed segment itself — "seg-1-1.m4s" must not appear
+        // anywhere (it isn't fetchable; that segment hasn't been closed).
+        assert!(
+            !m.contains("seg-1-1.m4s"),
+            "no full-segment URI for the open segment: {m}"
+        );
+        assert!(
+            !m.contains("#EXTINF"),
+            "no EXTINF for the open segment: {m}"
         );
     }
 
