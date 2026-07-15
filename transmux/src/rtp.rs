@@ -736,7 +736,11 @@ fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
 /// A reassembled access unit with its RTP presentation timestamp and a
 /// random-access (sync) flag. RFC 6184 §5.7 (video) / RFC 3640 §3.2 (audio).
 pub(crate) struct ReassembledAu {
+    // Read by the streaming depayloader (rtp_stream, #700 Task 4); the batch
+    // path here consumes only `data`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub timestamp: u32,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub is_sync: bool,
     pub data: Vec<u8>,
 }
@@ -790,8 +794,7 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
                             what: "STAP-A size prefix",
                         });
                     }
-                    let size =
-                        u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
+                    let size = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
                     off += STAP_A_SIZE_LEN;
                     let end = off + size;
                     if end > payload.len() {
@@ -862,8 +865,7 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
                 what: "AAC AU-headers-length",
             });
         }
-        let au_headers_len_bits =
-            u16::from_be_bytes([payload[0], payload[1]]) as usize;
+        let au_headers_len_bits = u16::from_be_bytes([payload[0], payload[1]]) as usize;
         let header_bytes = au_headers_len_bits.div_ceil(8);
         let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
         let mut off = AAC_AU_HEADERS_LENGTH_LEN;
@@ -905,7 +907,10 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
 /// access units. NALs are grouped into access units by the RTP timestamp; the
 /// marker bit confirms an AU boundary.
 fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    Ok(reassemble_video(packets)?.into_iter().map(|au| au.data).collect())
+    Ok(reassemble_video(packets)?
+        .into_iter()
+        .map(|au| au.data)
+        .collect())
 }
 
 /// 4-byte length-prefix a list of NALs into an IR video sample.
@@ -921,7 +926,10 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
 
 /// Depacketize an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs.
 fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    Ok(reassemble_audio(packets)?.into_iter().map(|au| au.data).collect())
+    Ok(reassemble_audio(packets)?
+        .into_iter()
+        .map(|au| au.data)
+        .collect())
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
