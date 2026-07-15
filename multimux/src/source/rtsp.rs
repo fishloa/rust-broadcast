@@ -74,10 +74,8 @@ impl RtspSource {
         let is_tls = scheme_is_tls(&base_url)?;
         let addr = connect_addr(&base_url)?;
         let mut client = if is_tls {
-            let server_name = base_url.host_str().ok_or_else(|| {
-                MultimuxError::Source(format!("rtsp(s) URL has no host: {base_url}"))
-            })?;
-            connect_tls_client(&addr, server_name).await?
+            let server_name = sni_server_name(&base_url)?;
+            connect_tls_client(&addr, &server_name).await?
         } else {
             connect_plain_client(&addr).await?
         };
@@ -274,6 +272,25 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
     }
 }
 
+/// Derives the SNI server name for TLS handshake from a base `rtsp(s)://` URL,
+/// stripping brackets from IPv6 literals. `Url::host_str()` returns IPv6
+/// addresses in bracketed form (per RFC 3986 authority syntax, e.g.
+/// `"[2001:db8::1]"`), but rustls `ServerName::try_from()` rejects the
+/// brackets. This function extracts the host and strips leading `[` and
+/// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
+fn sni_server_name(url: &Url) -> Result<String> {
+    let host = url
+        .host_str()
+        .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
+    // Strip brackets from IPv6 literals: "[2001:db8::1]" -> "2001:db8::1".
+    // Hostnames and IPv4 are unchanged.
+    let sni = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    Ok(sni.to_string())
+}
+
 /// A connected RTSP client: either plain TCP (`rtsp://`) or RTSP-over-TLS
 /// (`rtsps://`, gated on the `tls` feature). Plain and TLS clients are
 /// different concrete `AsyncRtspClient<S>` instantiations (the socket types
@@ -389,6 +406,24 @@ mod tests {
             control: None,
             channel,
         }
+    }
+
+    #[test]
+    fn sni_server_name_strips_ipv6_brackets() {
+        let url = Url::parse("rtsps://[2001:db8::1]:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "2001:db8::1");
+    }
+
+    #[test]
+    fn sni_server_name_hostname_unchanged() {
+        let url = Url::parse("rtsps://cam.local/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "cam.local");
+    }
+
+    #[test]
+    fn sni_server_name_ipv4_unchanged() {
+        let url = Url::parse("rtsps://192.0.2.4:8554/stream").unwrap();
+        assert_eq!(sni_server_name(&url).unwrap(), "192.0.2.4");
     }
 
     #[test]
