@@ -6,6 +6,9 @@
 //! The caller (e.g. multimux) extracts the raw fmtp attribute strings via an
 //! SDP parser; this module owns only the codec-config construction, because
 //! transmux owns `AVCConfigurationBox`/`EsdsBox`.
+//!
+//! See [`transmux/docs/rtp/rtp-payload-formats.md`](../rtp/rtp-payload-formats.md)
+//! for the RFC background and SDP fmtp→CodecConfig mapping specification.
 
 use crate::aac_asc::{AudioSpecificConfig, SamplingFrequencyIndex};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};

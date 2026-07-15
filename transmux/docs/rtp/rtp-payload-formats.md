@@ -77,9 +77,75 @@ a=fmtp:97 streamtype=5; mode=AAC-hbr; config=<hex(ASC)>; sizeLength=13; indexLen
 as 6 hex; `sprop-parameter-sets` = base64 of the raw SPS and PPS NALs;
 `config` = the AudioSpecificConfig as hex.
 
+## Streaming timing recovery — per-sample duration from RTP-timestamp deltas
+
+When depayloading RTP incrementally (as opposed to a bulk demux of a pre-recorded
+file), a caller consuming real-time packets needs accurate per-sample `duration`
+to build correctly-timed track samples. RTP carries only a **presentation
+timestamp** (32-bit wire field, RFC 3550 §5.1), which wraps every ~13.6 hours at
+90 kHz. The streaming depayloader (`RtpStreamDepacketizer`):
+
+- **Unwraps** the 32-bit RTP timestamp to a monotonic 64-bit value (via the
+  standard increment-and-wrap detection idiom: the signed 32-bit delta of the
+  wire value against the low 32 bits of the previous unwrapped value).
+- **Emits samples with real per-AU duration**: `duration` is the RTP-timestamp
+  delta to the *next* access unit's timestamp (i.e., one-AU buffering latency;
+  `flush` uses the last-computed duration for the final AU). The IR timescale
+  equals the RTP `clock_rate` (video: 90 kHz; AAC: the sample rate), so
+  timestamp deltas directly become sample durations.
+- **Sets `is_sync`** (keyframe marker) from reassembled access-unit content: IDR
+  detection for H.264 video; always `true` for audio (no inter-frame dependencies).
+- **Constrains `composition_offset = 0`** (no reorder offset): v1 assumes **low-delay
+  H.264 with no B-frame reorder**. RTP carries only PTS; recovering a separate
+  DTS when B-frames are present (and therefore computing a non-zero composition
+  offset) is future work. Cross-track A/V synchronization via RTCP Sender Report
+  NTP/RTP correlation is also out of scope.
+
+## SDP fmtp → CodecConfig mapping (`rtp_sdp`)
+
+The SDP `fmtp` (format-specific media parameters) carries codec-configuration
+NALs and parameters. The helper module `rtp_sdp` decodes these per RFC:
+
+### H.264: `sprop-parameter-sets` → avcC (RFC 6184 §8.1)
+
+**SDP fmtp attribute:**
+```
+a=fmtp:96 packetization-mode=1; sprop-parameter-sets=<b64(SPS)>,<b64(PPS)>
+```
+
+- `sprop-parameter-sets`: comma-separated base64 encodings of raw NAL units
+  (nal_unit_type 7 for SPS, 8 for PPS). May carry multiple SPS/PPS pairs.
+- **Mapping**: `avc_config_from_sprop(sprop_parameter_sets)` extracts the SPS
+  and PPS NALs, decodes the first SPS bytes `[1..4]` for `profile_indication` /
+  `profile_compatibility` / `level_indication`, and returns an
+  `AVCConfigurationBox` (avcC). The NAL length-prefix size is fixed to 4 bytes
+  (NAL-length-size-minus-one = 3), per transmux convention.
+
+### AAC: `config` fmtp → esds (RFC 3640 §4.1)
+
+**SDP fmtp attribute:**
+```
+a=fmtp:97 streamtype=5; mode=AAC-hbr; config=<hex(ASC)>;
+  sizeLength=13; indexLength=3; indexDeltaLength=3
+```
+
+- `config`: hex-encoded `AudioSpecificConfig` (ASC; ISO/IEC 14496-3 §1.6.2.1),
+  typically 2–4 bytes. Contains the `samplingFrequencyIndex` (indices 0–12 are
+  standard rates; 15 is an explicit-rate escape) and `channelConfiguration`.
+- **Mapping**: `aac_config_from_fmtp(config)` decodes the ASC, extracts the
+  sample rate (via the index table or explicit value) and channel count, and
+  constructs an `EsdsBox` (esds) holding the ASC bytes in the
+  `DecoderSpecificInfo`, with ObjectTypeIndication = 0x40 (AAC) and StreamType
+  = 5 (audio). Sample size is fixed to 16 bits, per CMAF/fMP4 convention.
+
 ## Mapping to transmux (Package ⇄ Unpackage)
 
 - **`RtpPacketizer` : Package** — IR `Media` → RTP packets (per track: single-NAL
   / STAP-A / FU-A for video; AU-hbr for audio) + an SDP string.
 - **`RtpDepacketizer` : Unpackage** — RTP packets → IR (reassemble FU-A, split
   STAP-A, strip AU-headers). Round-trips to the original coded samples.
+- **`RtpStreamDepacketizer` : streaming Unpackage** — Real-time RTP packet feed
+  (`push`) → timed `Sample`s with real per-AU `duration` (from RTP-timestamp
+  deltas) and `is_sync` (from IDR detection), carrying the actual `CodecConfig`
+  (e.g. from `rtp_sdp` helpers). See [RFC 6184](https://tools.ietf.org/html/rfc6184),
+  [RFC 3640](https://tools.ietf.org/html/rfc3640).

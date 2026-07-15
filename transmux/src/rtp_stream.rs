@@ -6,6 +6,9 @@
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
 //!
+//! See [`transmux/docs/rtp/rtp-payload-formats.md`](../rtp/rtp-payload-formats.md)
+//! for the RFC background and timing-model specification.
+//!
 //! # Timing model
 //!
 //! - Per track, the IR timescale is the RTP `clock_rate` (video: 90 kHz;
