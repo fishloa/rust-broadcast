@@ -391,6 +391,23 @@ mod tests {
     }
 
     #[test]
+    fn fmtp_param_preserves_base64_padding() {
+        // Split at the FIRST `=` only: a base64 value's trailing `==` padding
+        // must survive verbatim, not be truncated at the padding `=`.
+        let fmtp = "96 sprop-parameter-sets=Zm9v,YmFy==;x=1";
+        assert_eq!(
+            fmtp_param(fmtp, "sprop-parameter-sets"),
+            Some("Zm9v,YmFy==")
+        );
+    }
+
+    #[test]
+    fn fmtp_param_empty_value_is_none() {
+        // A present-but-empty parameter (`key=`) is treated as no-match.
+        assert_eq!(fmtp_param("96 config=;x=1", "config"), None);
+    }
+
+    #[test]
     fn fmtp_param_charset_preserves_multibyte() {
         // A parameter value with a multibyte UTF-8 char must round-trip
         // verbatim, proving the parser never slices on a raw byte offset.
