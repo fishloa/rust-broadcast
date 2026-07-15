@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use tokio::sync::watch;
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment};
+use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 use transmux::ll_hls::{PartInfo, SegmentInfo};
 
 /// LL-HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
@@ -190,15 +190,12 @@ impl StreamStore {
     /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
     /// be advertised with an `#EXTINF`/URI pair — that segment has no fetchable
     /// resource yet — it may only appear as trailing `#EXT-X-PART` lines.
-    /// `transmux::hls::MediaPlaylist::to_m3u8` renders one `#EXTINF`+URI per
-    /// `MediaSegment` unconditionally (parts, when present, are rendered
-    /// *before* that segment's `#EXTINF`, never as a substitute for it), so it
-    /// has no representation for an EXTINF-less trailing partial segment.
-    /// Rather than push a fabricated `MediaSegment` (which is what produced
-    /// the RFC violation this fixes), we render the CLOSED segments only via
-    /// `to_m3u8()`, then append the in-progress segment's `#EXT-X-PART` lines
-    /// and an `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part as
-    /// raw strings.
+    /// `transmux::hls::MediaPlaylist::open_segment` is exactly this
+    /// representation: its parts render as trailing `#EXT-X-PART` lines with
+    /// no `#EXTINF`/URI, so the in-progress segment's parts and the
+    /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
+    /// rendered by `to_m3u8()` itself — multimux only supplies the URI scheme
+    /// (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
     pub fn media_playlist_m3u8(&self, track_id: u32) -> String {
         let g = self.inner.lock().unwrap();
         let media_sequence = g
@@ -219,9 +216,20 @@ impl StreamStore {
             .collect();
         let part_target = f64::from(self.part_target_ms) / 1000.0;
         // The in-progress segment's live parts + the next (not yet available)
-        // part's preload-hint URI, computed before we know the closed-segment
-        // playlist string so both can be appended after it.
+        // part's preload-hint URI.
         let open_seq = g.live_parts.first().map(|p| p.segment_seq);
+        let open_segment = open_seq.map(|seq| OpenSegment {
+            parts: g
+                .live_parts
+                .iter()
+                .filter(|p| p.segment_seq == seq)
+                .map(|p| PartSpec {
+                    uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
+                    duration: p.duration,
+                    independent: p.independent,
+                })
+                .collect(),
+        });
         let next_part_hint = open_seq.map(|seq| {
             let next_idx = g
                 .live_parts
@@ -239,58 +247,18 @@ impl StreamStore {
             media_sequence,
             discontinuity_sequence: 0,
             segments,
+            open_segment,
             endlist: false,
             extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
             low_latency: Some(LowLatencyConfig {
                 part_target,
                 part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
-                // The preload hint is appended manually below, alongside the
-                // open segment's part lines, so `to_m3u8()` itself must not
-                // also render one.
-                preload_hint_part: None,
+                preload_hint_part: next_part_hint,
             }),
             iframes_only: false,
         };
-        let mut m3u8 = playlist.to_m3u8();
-        if let Some(seq) = open_seq {
-            for p in g.live_parts.iter().filter(|p| p.segment_seq == seq) {
-                m3u8.push_str(&format!(
-                    "#EXT-X-PART:DURATION={},URI=\"part-{track_id}-{}.{}.m4s\"",
-                    format_secs(p.duration),
-                    p.segment_seq,
-                    p.part_index,
-                ));
-                if p.independent {
-                    m3u8.push_str(",INDEPENDENT=YES");
-                }
-                m3u8.push('\n');
-            }
-        }
-        if let Some(uri) = next_part_hint {
-            m3u8.push_str(&format!("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{uri}\"\n"));
-        }
-        m3u8
+        playlist.to_m3u8()
     }
-}
-
-/// Format a non-negative seconds value with up to three decimal places,
-/// trailing zeros trimmed (`0.5`, `1.334`, `6`) — mirrors the private
-/// `format_secs` in `transmux::hls` so the manually-appended `#EXT-X-PART`
-/// lines for the in-progress segment render identically to the ones
-/// `MediaPlaylist::to_m3u8` produces for closed segments (that helper isn't
-/// public, so it can't be reused directly).
-fn format_secs(v: f64) -> String {
-    let millis = (v * 1000.0 + 0.5) as u64;
-    let whole = millis / 1000;
-    let frac = millis % 1000;
-    if frac == 0 {
-        return format!("{whole}");
-    }
-    let mut f = format!("{frac:03}");
-    while f.ends_with('0') {
-        f.pop();
-    }
-    format!("{whole}.{f}")
 }
 
 #[cfg(test)]
