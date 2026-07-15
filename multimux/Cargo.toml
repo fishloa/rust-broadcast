@@ -1,0 +1,33 @@
+[package]
+name         = "multimux"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.86"
+license      = "MIT OR Apache-2.0"
+description  = "Live RTSP -> LL-HLS just-in-time repackaging HTTP origin (tokio + axum)."
+repository   = "https://github.com/fishloa/rust-broadcast"
+keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
+categories   = ["multimedia", "network-programming"]
+
+[dependencies]
+transmux      = { path = "../transmux",     version = "0.17" }
+rtsp-runtime  = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
+sdp-types     = "0.1"
+tokio         = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
+axum          = "0.7"
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+thiserror     = "2"
+clap          = { version = "4", features = ["derive"], optional = true }
+
+[features]
+default = ["cli"]
+cli     = ["dep:clap"]
+
+[[bin]]
+name              = "multimux"
+path              = "src/bin/multimux.rs"
+required-features = ["cli"]
+
+[dev-dependencies]
+tower = { version = "0.5", default-features = false, features = ["util"] }
