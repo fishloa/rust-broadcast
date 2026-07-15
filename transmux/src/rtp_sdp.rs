@@ -9,16 +9,17 @@
 
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
+use crate::nal::{NalCodec, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::rtp::base64_decode;
 use alloc::vec::Vec;
 
-/// H.264 NAL unit type mask (RFC 6184) and the SPS/PPS type values.
-const NAL_TYPE_MASK: u8 = 0x1F;
-const NAL_TYPE_SPS: u8 = 7;
-const NAL_TYPE_PPS: u8 = 8;
 /// Length prefix size transmux uses for coded NALs (4-byte).
 const NAL_LENGTH_SIZE_MINUS_ONE: u8 = 3;
+/// H.264 `nal_unit_type` for a sequence parameter set (SPS).
+const AVC_NAL_SPS: u8 = 7;
+/// H.264 `nal_unit_type` for a picture parameter set (PPS).
+const AVC_NAL_PPS: u8 = 8;
 
 /// Parse an SDP `sprop-parameter-sets` value (RFC 6184 §8.1: comma-separated
 /// base64 parameter-set NAL units) into an `avcC` configuration box.
@@ -38,9 +39,9 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
         if nal.is_empty() {
             return Err(Error::InvalidInput("empty sprop parameter set"));
         }
-        match nal[0] & NAL_TYPE_MASK {
-            NAL_TYPE_SPS => sps.push(AvcSps(nal)),
-            NAL_TYPE_PPS => pps.push(AvcPps(nal)),
+        match nal_unit_type(NalCodec::Avc, &nal) {
+            Some(AVC_NAL_SPS) => sps.push(AvcSps(nal)),
+            Some(AVC_NAL_PPS) => pps.push(AvcPps(nal)),
             _ => return Err(Error::InvalidInput("sprop NAL is neither SPS nor PPS")),
         }
     }
@@ -101,5 +102,36 @@ mod tests {
         let pps = alloc::vec![0x68u8, 0xCE];
         let sprop = base64_encode(&pps);
         assert!(avc_config_from_sprop(&sprop).is_err());
+    }
+
+    #[test]
+    fn sprop_rejects_invalid_base64() {
+        // Invalid base64 token → returns Err, not panic.
+        let sprop = "not-valid-base64!!!";
+        assert!(avc_config_from_sprop(sprop).is_err());
+    }
+
+    #[test]
+    fn sprop_rejects_sps_too_short() {
+        // An SPS shorter than 4 bytes (need bytes [1..4] for profile/level).
+        let sps = alloc::vec![0x67u8, 0x42]; // type 7 (SPS), but only 2 bytes
+        let sprop = base64_encode(&sps);
+        let result = avc_config_from_sprop(&sprop);
+        assert!(result.is_err());
+        // Verify it's a BufferTooShort error.
+        if let Err(Error::BufferTooShort { need, have, what }) = result {
+            assert_eq!(need, 4);
+            assert_eq!(have, 2);
+            assert!(what.contains("SPS"));
+        }
+    }
+
+    #[test]
+    fn sprop_rejects_non_sps_non_pps_nal() {
+        // A non-SPS/non-PPS NAL (e.g., SEI type 6) → returns Err.
+        let sei = alloc::vec![0x06u8, 0x00]; // type 6 (SEI), not SPS or PPS
+        let sprop = base64_encode(&sei);
+        let result = avc_config_from_sprop(&sprop);
+        assert!(result.is_err());
     }
 }
