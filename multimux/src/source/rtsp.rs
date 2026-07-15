@@ -79,7 +79,7 @@ impl RtspSource {
             let uri = setup_uri(&self.url, track.control.as_deref());
             let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
                 track.channel,
-                track.channel + RTCP_CHANNEL_OFFSET,
+                track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
             ));
             let setup = client
                 .setup(&uri, &transport)
@@ -87,17 +87,29 @@ impl RtspSource {
                 .map_err(source_err("SETUP"))?;
             expect_ok_response(setup, "SETUP")?;
 
-            // The server may renumber the interleaved channels in its SETUP
-            // response (RFC 2326 §12.39); honour whatever it actually
-            // negotiated so `route_channel` matches incoming `MediaData`.
-            if let Some(spec) = client
+            // The server must negotiate TCP-interleaved transport. Extract the
+            // negotiated spec and verify it has both TCP lower-transport and
+            // interleaved channels; reject any non-interleaved response (e.g.
+            // a server that ignores TCP and negotiates UDP).
+            let spec = client
                 .session()
                 .negotiated_transport()
                 .and_then(Transport::first)
-            {
-                if let Some((lo, _hi)) = spec.interleaved {
-                    track.channel = lo;
-                }
+                .ok_or_else(|| {
+                    MultimuxError::Source(format!(
+                        "SETUP {}: server did not provide negotiated transport",
+                        track.track_id
+                    ))
+                })?;
+
+            // Ensure the negotiated transport is TCP-interleaved.
+            if let Some(channel) = interleaved_channel(spec) {
+                track.channel = channel;
+            } else {
+                return Err(MultimuxError::Source(format!(
+                    "SETUP {}: server did not negotiate interleaved TCP transport",
+                    track.track_id
+                )));
             }
         }
 
@@ -223,6 +235,17 @@ fn source_err(what: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> Mult
     move |e| MultimuxError::Source(format!("{what}: {e}"))
 }
 
+/// Extracts the RTP channel from a transport spec if it is TCP-interleaved,
+/// returns `None` otherwise (e.g. UDP or missing interleaved parameter).
+fn interleaved_channel(spec: &TransportSpec) -> Option<u8> {
+    use rtsp_runtime::transport::LowerTransport;
+    if spec.lower_transport == Some(LowerTransport::Tcp) {
+        spec.interleaved.map(|(lo, _hi)| lo)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -312,6 +335,39 @@ mod tests {
     fn rtsp_source_new_and_stream_name() {
         let src = RtspSource::new("cam1", "rtsp://cam.local/stream");
         assert_eq!(src.stream_name(), "cam1");
+    }
+
+    #[test]
+    fn interleaved_channel_accepts_tcp_with_channels() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Tcp),
+            interleaved: Some((0, 1)),
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), Some(0));
+    }
+
+    #[test]
+    fn interleaved_channel_rejects_udp() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Udp),
+            interleaved: Some((0, 1)),
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), None);
+    }
+
+    #[test]
+    fn interleaved_channel_rejects_missing_interleaved() {
+        use rtsp_runtime::transport::LowerTransport;
+        let spec = TransportSpec {
+            lower_transport: Some(LowerTransport::Tcp),
+            interleaved: None,
+            ..Default::default()
+        };
+        assert_eq!(interleaved_channel(&spec), None);
     }
 
     /// Live smoke test against a real RTSP source: connects, pulls a few
