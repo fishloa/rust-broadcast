@@ -239,6 +239,7 @@ fn independent_flag_tracks_sync_first_sample() {
             preload_hint_part: None,
         }),
         iframes_only: false,
+        open_segment: None,
     };
     let m3u8 = pl.to_m3u8();
     // Part 0 has INDEPENDENT=YES; parts 1 and 2 do not.
@@ -294,6 +295,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         extra_tags: vec![],
         low_latency: Some(ll.clone()),
         iframes_only: false,
+        open_segment: None,
     };
     let m3u8 = pl.to_m3u8();
 

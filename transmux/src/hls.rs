@@ -67,6 +67,13 @@
 //!   (RFC 8216bis §4.4.5.3) — hints the URI of the next, not-yet-available part
 //!   so a client can request it ahead of time.
 //!
+//! A live origin's trailing segment is often still *open* — being filled in by
+//! new parts as they are produced, not yet closed with a duration and URI.
+//! [`MediaPlaylist::open_segment`] carries that in-progress
+//! [`OpenSegment`]'s known parts; `to_m3u8` renders them as trailing
+//! `#EXT-X-PART` lines with **no** `#EXTINF`/URI (RFC 8216bis §4.4.4.9), same
+//! opt-in gating as the closed segments' parts above.
+//!
 //! # CENC/CBCS DRM signalling (ISO/IEC 23001-7, issue #564)
 //!
 //! [`cenc_ext_x_key`] renders the `#EXT-X-KEY` tag line for a `cbcs`
@@ -141,6 +148,16 @@ pub struct PartSpec {
     pub independent: bool,
 }
 
+/// An in-progress (open) LL-HLS segment: its parts are known and being served,
+/// but the segment is not yet complete, so it carries no `#EXTINF`/URI
+/// (RFC 8216bis §4.4.4.9 — an open segment is represented by its trailing
+/// `#EXT-X-PART` lines only, until it closes).
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenSegment {
+    /// The parts of the in-progress segment, in order.
+    pub parts: Vec<PartSpec>,
+}
+
 /// A single media segment in a media playlist.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MediaSegment {
@@ -177,6 +194,9 @@ pub struct MediaPlaylist {
     pub discontinuity_sequence: u64,
     /// Ordered list of segments.
     pub segments: Vec<MediaSegment>,
+    /// The in-progress (open) segment, if any — rendered as trailing
+    /// `#EXT-X-PART` lines with no `#EXTINF` (LL-HLS live edge).
+    pub open_segment: Option<OpenSegment>,
     /// If `true`, append `#EXT-X-ENDLIST`.
     pub endlist: bool,
     /// Extra tag lines emitted verbatim before segment entries
@@ -291,21 +311,25 @@ impl MediaPlaylist {
             // (RFC 8216bis §4.4.4.9), rendered only for a low-latency playlist.
             if self.low_latency.is_some() {
                 for part in &seg.parts {
-                    s.push_str(&format!(
-                        "#EXT-X-PART:DURATION={},URI=\"{}\"",
-                        format_secs(part.duration),
-                        part.uri,
-                    ));
-                    if part.independent {
-                        s.push_str(",INDEPENDENT=YES");
-                    }
-                    s.push('\n');
+                    push_part_line(&mut s, part);
                 }
             }
             // Format with exactly 3 decimal places per RFC 8216 examples.
             s.push_str(&format!("#EXTINF:{:.3},\n", seg.duration));
             s.push_str(&seg.uri);
             s.push('\n');
+        }
+
+        // The in-progress (open) segment at the live edge — its parts are
+        // known but it has not yet closed, so it carries no #EXTINF/URI
+        // (RFC 8216bis §4.4.4.9). Rendered only for a low-latency playlist,
+        // same opt-in gating as the closed segments' parts above.
+        if self.low_latency.is_some() {
+            if let Some(open) = &self.open_segment {
+                for part in &open.parts {
+                    push_part_line(&mut s, part);
+                }
+            }
         }
 
         // LL-HLS preload hint for the next not-yet-available part
@@ -322,6 +346,21 @@ impl MediaPlaylist {
 
         s
     }
+}
+
+/// Render one `#EXT-X-PART:DURATION=<sec>,URI="<uri>"[,INDEPENDENT=YES]` line
+/// (RFC 8216bis §4.4.4.9) into `s`, shared by both a closed segment's parts and
+/// an open (in-progress) segment's parts so the two can never drift in format.
+fn push_part_line(s: &mut String, part: &PartSpec) {
+    s.push_str(&format!(
+        "#EXT-X-PART:DURATION={},URI=\"{}\"",
+        format_secs(part.duration),
+        part.uri,
+    ));
+    if part.independent {
+        s.push_str(",INDEPENDENT=YES");
+    }
+    s.push('\n');
 }
 
 /// Format a non-negative seconds value with up to three decimal places, trailing
@@ -515,6 +554,7 @@ mod tests {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         }
     }
 
@@ -537,6 +577,7 @@ mod tests {
             ],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -562,6 +603,7 @@ mod tests {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         };
         let out = pl.to_m3u8();
         assert!(out.starts_with("#EXTM3U\n"));
@@ -681,6 +723,7 @@ mod tests {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         };
         let out = pl.to_m3u8();
         assert!(
@@ -697,5 +740,147 @@ mod tests {
             !out.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
             "header must be absent when n==0"
         );
+    }
+
+    // --- LL-HLS render tests (issue #702: OpenSegment) ---
+
+    fn ll_config() -> LowLatencyConfig {
+        LowLatencyConfig {
+            part_target: 0.5,
+            part_hold_back: 1.5,
+            preload_hint_part: None,
+        }
+    }
+
+    #[test]
+    fn ll_hls_renders_server_control_part_inf_and_parts() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![MediaSegment {
+                uri: "seg-1-4.m4s".into(),
+                duration: 4.0,
+                discontinuous: false,
+                parts: vec![PartSpec {
+                    uri: "part-1-1.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                }],
+            }],
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: Some(ll_config()),
+            iframes_only: false,
+            open_segment: None,
+        };
+        let out = pl.to_m3u8();
+        assert!(out.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES"));
+        assert!(out.contains("#EXT-X-PART-INF:PART-TARGET="));
+        assert!(out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.m4s\""));
+    }
+
+    #[test]
+    fn open_segment_renders_parts_without_extinf() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![MediaSegment {
+                uri: "seg-1-4.m4s".into(),
+                duration: 4.0,
+                discontinuous: false,
+                parts: vec![],
+            }],
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: Some(ll_config()),
+            iframes_only: false,
+            open_segment: Some(OpenSegment {
+                parts: vec![PartSpec {
+                    uri: "part-1-5.0.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                }],
+            }),
+        };
+        let out = pl.to_m3u8();
+        // The open part is rendered as an #EXT-X-PART line.
+        assert!(
+            out.contains("#EXT-X-PART:DURATION=0.5,URI=\"part-1-5.0.m4s\",INDEPENDENT=YES"),
+            "open segment's part must render:\n{out}"
+        );
+        // The closed segment is still rendered with its #EXTINF.
+        assert!(out.contains("#EXTINF:4.000,\n"));
+        assert!(out.contains("seg-1-4.m4s"));
+        // The open part's URI never appears on an #EXTINF/plain-URI line — only
+        // inside its #EXT-X-PART line (there is no #EXTINF for an open segment).
+        assert!(
+            !out.contains("#EXTINF:0.500,\npart-1-5.0.m4s"),
+            "open segment must not be rendered as a closed #EXTINF segment:\n{out}"
+        );
+        let lines: Vec<&str> = out.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if *line == "part-1-5.0.m4s" {
+                panic!("open part URI must not appear on its own URI line: {out}");
+            }
+            if line.starts_with("#EXTINF") && i + 1 < lines.len() {
+                assert_ne!(
+                    lines[i + 1],
+                    "part-1-5.0.m4s",
+                    "open part URI must not follow an #EXTINF line:\n{out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn open_segment_not_rendered_without_low_latency() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![seg("seg-1-4.m4s", 4.0)],
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: None,
+            iframes_only: false,
+            open_segment: Some(OpenSegment {
+                parts: vec![PartSpec {
+                    uri: "part-1-5.0.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                }],
+            }),
+        };
+        let out = pl.to_m3u8();
+        assert!(
+            !out.contains("part-1-5.0.m4s"),
+            "open segment parts must not render without low_latency:\n{out}"
+        );
+        assert!(!out.contains("#EXT-X-PART:"));
+    }
+
+    #[test]
+    fn preload_hint_rendered_from_low_latency() {
+        let mut ll = ll_config();
+        ll.preload_hint_part = Some("part-1-5.1.m4s".into());
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![seg("seg-1-4.m4s", 4.0)],
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: Some(ll),
+            iframes_only: false,
+            open_segment: None,
+        };
+        let out = pl.to_m3u8();
+        assert!(out.contains("#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-5.1.m4s\""));
     }
 }

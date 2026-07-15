@@ -151,6 +151,7 @@ fn iframes_only_opt_in() {
             extra_tags: vec![],
             low_latency: None,
             iframes_only,
+            open_segment: None,
         }
     }
 

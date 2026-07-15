@@ -486,6 +486,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         ],
         low_latency: None,
         iframes_only: false,
+        open_segment: None,
     };
     let m3u8 = playlist.to_m3u8();
 

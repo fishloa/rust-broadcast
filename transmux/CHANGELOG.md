@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SDP fmtp → `CodecConfig` helpers `rtp_sdp::{avc_config_from_sprop,
   aac_config_from_fmtp}` (RFC 6184 §8.1 `sprop-parameter-sets` → avcC;
   RFC 3640 §4.1 `config` → esds), both re-exported at the crate root.
+- `hls::OpenSegment` + `MediaPlaylist::open_segment` (issue #702): renders
+  an in-progress, `#EXTINF`-less LL-HLS segment as trailing `#EXT-X-PART`
+  lines at the live edge (RFC 8216bis §4.4.4.9), so a live LL-HLS origin can
+  publish its still-open trailing segment through the library instead of
+  hand-rolling `#EXT-X-PART` lines. Opt-in and gated the same way as the
+  existing closed-segment parts: rendered only when `low_latency` is `Some`.
+  `MediaPlaylist` gained the `open_segment: Option<OpenSegment>` field
+  (breaking for any external struct-literal construction).
 
 ## [0.16.0] - 2026-07-14
 

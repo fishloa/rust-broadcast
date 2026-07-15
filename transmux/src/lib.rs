@@ -215,7 +215,8 @@ pub use flv::{FlvDemux, FlvError, FlvMux};
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{
     CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS, IFrameVariant, LowLatencyConfig, MasterPlaylist,
-    MediaPlaylist, MediaSegment, PartSpec, Variant, cenc_ext_x_key, mark_init_discontinuities,
+    MediaPlaylist, MediaSegment, OpenSegment, PartSpec, Variant, cenc_ext_x_key,
+    mark_init_discontinuities,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkLargeOffsetBox, ChunkOffsetBox, DataEntryUrlBox,

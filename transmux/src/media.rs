@@ -557,6 +557,7 @@ impl Package for HlsPackager {
             extra_tags: vec![],
             low_latency: None,
             iframes_only: false,
+            open_segment: None,
         };
         Ok(playlist.to_m3u8())
     }
