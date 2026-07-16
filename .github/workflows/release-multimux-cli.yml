@@ -1,0 +1,52 @@
+name: Release multimux-cli
+
+# Publishes the multimux-cli crate to crates.io on a `multimux-cli-v*` tag.
+# multimux-cli is versioned/released INDEPENDENTLY. CI is the only source of
+# published artifacts — never `cargo publish` from a workstation.
+#
+# DEPENDENCY ORDER: multimux-cli depends on the `multimux` library. Publish
+# `multimux` (>= the referenced 0.2) FIRST, or crates.io will reject the
+# publish. multimux-cli is a std (tokio) CLI crate — no no_std gate.
+
+on:
+  push:
+    tags: ["multimux-cli-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish multimux-cli to crates.io
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — multimux-cli tests
+        run: cargo test -p multimux-cli --locked
+
+      - name: Gate — multimux-cli clippy
+        run: cargo clippy -p multimux-cli --all-targets --locked -- -D warnings
+
+      - name: Gate — tag matches multimux-cli version
+        run: |
+          TAG="${GITHUB_REF_NAME#multimux-cli-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['multimux-cli'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::multimux-cli is $V but tag is $TAG"; exit 1
+          fi
+
+      - name: Publish multimux-cli
+        run: |
+          if out=$(cargo publish -p multimux-cli --locked 2>&1); then
+            echo "$out"; echo "::notice::published multimux-cli"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::multimux-cli already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish multimux-cli"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

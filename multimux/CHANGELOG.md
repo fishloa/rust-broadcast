@@ -1,6 +1,13 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-07-16
+
+### Breaking
+- The bundled `multimux` **binary** (the RTSP→LL-HLS CLI) moved to a new
+  dedicated crate, **`multimux-cli`**. `multimux` is now a **library only**
+  (its `serve`/`config`/`origin`/`pipeline`/`source`/`store` API is unchanged).
+  `cargo install multimux-cli` provides the `multimux` binary as before. The
+  `cli` cargo feature (and the `clap` dependency) were removed from `multimux`.
 
 ## [0.1.0] - 2026-07-15
 ### Added

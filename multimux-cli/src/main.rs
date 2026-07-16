@@ -3,8 +3,7 @@
 //!
 //! Either point it at a JSON config file describing one or more routes, or
 //! use the single-route quick start (`--rtsp` + `--name`) for a single
-//! source. See `multimux/README.md` for the served endpoint table and v1
-//! scope.
+//! source. See `multimux`'s README for the served endpoint table and v1 scope.
 //!
 //! # Example
 //!
@@ -101,4 +100,32 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = build_config(cli)?;
     multimux::origin::serve(config).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn quick_start_flags_build_a_single_route_config() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(cfg.routes.len(), 1);
+        assert_eq!(cfg.routes[0].name, "cam1");
+        assert_eq!(cfg.routes[0].rtsp_url, "rtsp://cam.local/stream");
+    }
+
+    #[test]
+    fn cli_definition_is_valid() {
+        // Guards against a malformed clap derive (conflicts/requires wiring).
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

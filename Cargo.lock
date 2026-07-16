@@ -1438,10 +1438,9 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
- "clap",
  "rtsp-runtime",
  "sdp-types",
  "serde",
@@ -1452,6 +1451,15 @@ dependencies = [
  "tower",
  "transmux",
  "url",
+]
+
+[[package]]
+name = "multimux-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "multimux",
+ "tokio",
 ]
 
 [[package]]
