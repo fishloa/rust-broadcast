@@ -139,6 +139,13 @@ jobs:
       # `crates/acap-build/src/lib.rs`'s `build_native()` naming.
       - name: Build .eap (device feature)
         working-directory: acap-multimux
+        # ACAP_BUILD_IMPL=equivalent uses cargo-acap-build's built-in pure-Rust
+        # .eap packager instead of shelling out to the vendor `acap-build`
+        # binary (which isn't on PATH in this minimal image without sourcing the
+        # SDK environment-setup script). The Rust cross-compile of vdo-sys/vdo
+        # already succeeds; this only affects the final packaging step.
+        env:
+          ACAP_BUILD_IMPL: equivalent
         run: cargo-acap-build --target ${{ matrix.arch }} -- -p acap-multimux --features device
 
       - name: Upload .eap
