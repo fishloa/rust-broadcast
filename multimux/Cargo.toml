@@ -1,10 +1,10 @@
 [package]
 name         = "multimux"
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
-description  = "Live RTSP -> LL-HLS just-in-time repackaging HTTP origin (tokio + axum)."
+description  = "Live RTSP -> LL-HLS just-in-time repackaging HTTP origin (library: tokio + axum)."
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "network-programming"]
@@ -22,25 +22,17 @@ serde         = { version = "1", features = ["derive"] }
 serde_json    = "1"
 thiserror     = "2"
 url           = "2"
-clap          = { version = "4", features = ["derive"], optional = true }
 tokio-rustls  = { version = "0.26", optional = true }
 
 [features]
-# `tls` is default-on: multimux is a live-origin ingest tool and `rtsps://`
-# sources should work out of the box. It pulls rtsp-runtime's `tls` feature
-# (rustls/webpki-roots via rtsp-runtime's `default_tls_client_config` helper,
-# so multimux never assembles a `rustls::ClientConfig` itself) plus
-# `tokio-rustls` directly, needed here only to name the connected stream's
-# concrete type (`tokio_rustls::client::TlsStream<TcpStream>`).
-default     = ["cli", "tls"]
-cli         = ["dep:clap"]
+# `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
+# rtsp-runtime's `tls` feature (rustls/webpki-roots via its
+# `default_tls_client_config` helper) plus `tokio-rustls` directly, needed here
+# only to name the connected stream's concrete type
+# (`tokio_rustls::client::TlsStream<TcpStream>`).
+default     = ["tls"]
 tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
 testsupport = []
-
-[[bin]]
-name              = "multimux"
-path              = "src/bin/multimux.rs"
-required-features = ["cli"]
 
 [[example]]
 name              = "serve_mock"
