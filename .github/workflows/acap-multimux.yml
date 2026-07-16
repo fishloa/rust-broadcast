@@ -1,0 +1,147 @@
+name: acap-multimux
+
+# acap-multimux is an OUT-OF-WORKSPACE crate (its Cargo.toml has an empty
+# `[workspace]`) so it is not covered by the main `ci.yml`. It gets its own
+# workflow, gated to only run when it (or this file) changes.
+on:
+  pull_request:
+    paths:
+      - "acap-multimux/**"
+      - ".github/workflows/acap-multimux.yml"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The pure `convert` lib + `error` module are host-testable (no `device`
+  # feature, no VDO/ACAP SDK involved). This is the fast, always-green lane.
+  host:
+    name: host (lib + convert, no device feature)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: acap-multimux
+    steps:
+      - uses: actions/checkout@v5
+      # acap-multimux/rust-toolchain.toml pins 1.86 + clippy/rustfmt; GitHub
+      # runners ship rustup preinstalled and it auto-selects the override
+      # from the nearest rust-toolchain.toml, so no explicit toolchain step
+      # is needed here (matches the workspace ci.yml convention).
+      - name: Test (host, no device feature)
+        run: cargo test --locked
+      - name: Clippy (host, no device feature)
+        run: cargo clippy --locked -- -D warnings
+      - name: Fmt check
+        run: cargo fmt --all --check
+
+  # The `device` feature only builds inside the Axis ACAP Native SDK sysroot
+  # (vdo-sys needs `pkg-config vdo`, which only exists there). This job is
+  # the actual compile gate for the device-gated bin: it cross-builds the
+  # minimal proof-of-pipeline app and packages a real `.eap`.
+  eap:
+    name: eap (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    # Base image tag + per-arch sysroot layout sourced verbatim from acap-rs's
+    # `.devcontainer/Dockerfile` at rev 8e58acb8f0617253ad21fb71ac319fea19454a38:
+    #   FROM ${REPO}/${SDK}:${VERSION}-aarch64-ubuntu${UBUNTU_VERSION}   (VERSION=12.1.0, UBUNTU_VERSION=24.04)
+    #   FROM ${REPO}/${SDK}:${VERSION}-armv7hf-ubuntu${UBUNTU_VERSION}
+    # i.e. axisecp/acap-native-sdk:12.1.0-aarch64-ubuntu24.04 /
+    #      axisecp/acap-native-sdk:12.1.0-armv7hf-ubuntu24.04
+    # Running the raw per-arch SDK image directly (rather than the Dockerfile's
+    # combined debian:trixie image stitching both sysroots together) means the
+    # sysroot for THIS arch already lives at the same
+    # /opt/axis/acapsdk/sysroots/<arch> path the Dockerfile COPYs it FROM, and
+    # /opt/axis/acapsdk/environment-setup-<arch-triple> is present too -- both
+    # needed by `cargo-acap-build`'s reference `acap-build` invocation.
+    container: axisecp/acap-native-sdk:12.1.0-${{ matrix.arch }}-ubuntu24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            rust_target: aarch64-unknown-linux-gnu
+            gcc_prefix: aarch64-linux-gnu
+            sysroot: /opt/axis/acapsdk/sysroots/aarch64
+            # Suffix used both by CARGO_TARGET_<...>_LINKER/RUSTFLAGS and by
+            # CC_/CXX_/PKG_CONFIG_*_<...> (cargo uppercases+underscores the
+            # target triple for the former, pkg-config-rs/cc-rs use it
+            # lowercase for the latter).
+            cargo_target_suffix: AARCH64_UNKNOWN_LINUX_GNU
+            pkgconfig_suffix: aarch64_unknown_linux_gnu
+          - arch: armv7hf
+            rust_target: thumbv7neon-unknown-linux-gnueabihf
+            gcc_prefix: arm-linux-gnueabihf
+            sysroot: /opt/axis/acapsdk/sysroots/armv7hf
+            cargo_target_suffix: THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF
+            pkgconfig_suffix: thumbv7neon_unknown_linux_gnueabihf
+    steps:
+      - uses: actions/checkout@v5
+
+      # The acap-native-sdk image ships the C/C++ cross toolchain + sysroots
+      # but not Rust. Install rustup the same way acap-rs's
+      # `.devhost/install-rust.sh` does (rustup-init), pinned to the
+      # workspace MSRV (1.86) rather than acap-rs's own toolchain default.
+      # NOTE: likely first thing to need CI iteration -- unverified whether
+      # curl/build-essential/pkg-config are already present in this image.
+      - name: Install build prerequisites
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates pkg-config
+      - name: Install Rust (rustup, 1.86)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+            --default-toolchain 1.86.0 --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install target triple
+        run: rustup target add ${{ matrix.rust_target }}
+
+      # Cross-compile env, copied from the Dockerfile's ENV block (see
+      # comment on the `container:` key above for the exact source lines):
+      #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
+      #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-args=--sysroot=${SYSROOT_AARCH64}"
+      #   CC_aarch64_unknown_linux_gnu="aarch64-linux-gnu-gcc"
+      #   CXX_aarch64_unknown_linux_gnu="aarch64-linux-gnu-g++"
+      #   PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu="${SYSROOT_AARCH64}/usr/lib/pkgconfig:${SYSROOT_AARCH64}/usr/share/pkgconfig"
+      #   PKG_CONFIG_PATH_aarch64_unknown_linux_gnu="${SYSROOT_AARCH64}/usr/lib/pkgconfig:${SYSROOT_AARCH64}/usr/share/pkgconfig"
+      #   PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu="${SYSROOT_AARCH64}"
+      # (and the analogous THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF /
+      # thumbv7neon_unknown_linux_gnueabihf set for armv7hf). Written via
+      # $GITHUB_ENV with shell-built keys because GitHub Actions `env:` block
+      # keys cannot themselves be `${{ }}` expressions.
+      - name: Set cross-compile env
+        env:
+          CARGO_TARGET_SUFFIX: ${{ matrix.cargo_target_suffix }}
+          PKGCONFIG_SUFFIX: ${{ matrix.pkgconfig_suffix }}
+          GCC_PREFIX: ${{ matrix.gcc_prefix }}
+          SYSROOT: ${{ matrix.sysroot }}
+        run: |
+          echo "CARGO_TARGET_${CARGO_TARGET_SUFFIX}_LINKER=${GCC_PREFIX}-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_${CARGO_TARGET_SUFFIX}_RUSTFLAGS=-C link-args=--sysroot=${SYSROOT}" >> "$GITHUB_ENV"
+          echo "CC_${PKGCONFIG_SUFFIX}=${GCC_PREFIX}-gcc" >> "$GITHUB_ENV"
+          echo "CXX_${PKGCONFIG_SUFFIX}=${GCC_PREFIX}-g++" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_LIBDIR_${PKGCONFIG_SUFFIX}=${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH_${PKGCONFIG_SUFFIX}=${SYSROOT}/usr/lib/pkgconfig:${SYSROOT}/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_SYSROOT_DIR_${PKGCONFIG_SUFFIX}=${SYSROOT}" >> "$GITHUB_ENV"
+
+      - name: Install cargo-acap-build
+        run: |
+          cargo install --locked --git https://github.com/AxisCommunications/acap-rs \
+            --rev 8e58acb8f0617253ad21fb71ac319fea19454a38 cargo-acap-build
+
+      # `cargo-acap-build --target <arch> -- -p <pkg> --features device`
+      # mirrors the acap-rs Makefile's own `build` target invocation
+      # (`cargo-acap-build --target $(AXIS_DEVICE_ARCH) -- -p $(AXIS_PACKAGE) ...`).
+      # Output lands at `target/acap/<appName>_<major>_<minor>_<patch>_<arch>.eap`
+      # (acap-multimux_0_1_0_${{ matrix.arch }}.eap here), per
+      # `crates/acap-build/src/lib.rs`'s `build_native()` naming.
+      - name: Build .eap (device feature)
+        working-directory: acap-multimux
+        run: cargo-acap-build --target ${{ matrix.arch }} -- -p acap-multimux --features device
+
+      - name: Upload .eap
+        uses: actions/upload-artifact@v4
+        with:
+          name: acap-multimux-${{ matrix.arch }}
+          path: acap-multimux/target/acap/*.eap
+          if-no-files-found: error
