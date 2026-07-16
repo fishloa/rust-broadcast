@@ -83,11 +83,13 @@ jobs:
       # `.devhost/install-rust.sh` does (rustup-init), pinned to the
       # workspace MSRV (1.86) rather than acap-rs's own toolchain default.
       # NOTE: likely first thing to need CI iteration -- unverified whether
-      # curl/build-essential/pkg-config are already present in this image.
+      # The SDK image is minimal — cargo-acap-build is compiled for the x86_64
+      # HOST during `cargo install`, so it needs a host C compiler (`cc` via
+      # build-essential); curl/pkg-config are for rustup + vdo-sys.
       - name: Install build prerequisites
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends curl ca-certificates pkg-config
+          apt-get install -y --no-install-recommends build-essential curl ca-certificates pkg-config
       - name: Install Rust (rustup, 1.86)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
