@@ -139,7 +139,7 @@ impl ConfigStore for DefaultStore {
 /// dependency (see `Cargo.toml`).
 #[cfg(feature = "device")]
 pub struct AxParameterStore {
-    inner: axparameter::Parameter,
+    inner: axparameter::parameter::Parameter,
 }
 
 #[cfg(feature = "device")]
@@ -150,7 +150,7 @@ impl AxParameterStore {
 
     /// Open (or create) the `acap-multimux` axparameter handle.
     pub fn new() -> crate::Result<Self> {
-        let inner = axparameter::Parameter::new("acap-multimux")
+        let inner = axparameter::parameter::Parameter::new("acap-multimux")
             .map_err(|e| crate::AcapError::Config(format!("axparameter open: {e}")))?;
         Ok(AxParameterStore { inner })
     }
