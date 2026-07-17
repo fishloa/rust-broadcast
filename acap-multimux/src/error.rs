@@ -13,6 +13,11 @@ pub enum AcapError {
     /// A multimux error (pipeline/origin).
     #[error("multimux: {0}")]
     Multimux(#[from] multimux::MultimuxError),
+    /// A VDO stream/buffer error (device builds only — `vdo` is an optional,
+    /// `device`-feature-gated dependency; see `crate::vdo_source`).
+    #[cfg(feature = "device")]
+    #[error("vdo: {0}")]
+    Vdo(#[from] vdo::Error),
 }
 
 pub type Result<T> = core::result::Result<T, AcapError>;
