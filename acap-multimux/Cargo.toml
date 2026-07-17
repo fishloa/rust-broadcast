@@ -1,0 +1,44 @@
+[workspace]
+
+[package]
+name         = "acap-multimux"
+version      = "0.1.0"
+edition      = "2024"
+rust-version = "1.86"
+license      = "MIT OR Apache-2.0"
+description  = "Axis ACAP app: on-camera VDO capture -> LL-HLS origin (built on the multimux library)."
+repository   = "https://github.com/fishloa/rust-broadcast"
+publish      = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name              = "acap-multimux"
+path              = "src/bin/acap-multimux.rs"
+required-features = ["device"]
+
+[dependencies]
+multimux  = "0.2"
+transmux  = "0.17"
+tokio     = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
+axum      = "0.7"
+serde     = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log       = "0.4"
+
+# device-only (ACAP SDK Docker): acap-rs crates, git-pinned (unpublished 0.0.0).
+vdo          = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
+axparameter  = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
+acap-logging = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
+
+[features]
+default = []
+# `device` pulls the ACAP-only crates + enables the VdoSource + the bin. It
+# ONLY builds inside the Axis ACAP Native SDK sysroot (vdo-sys needs
+# pkg-config `vdo`). Host builds omit it and compile just the pure `convert`
+# lib + its tests.
+device = ["dep:vdo", "dep:axparameter", "dep:acap-logging"]
+
+[dev-dependencies]
