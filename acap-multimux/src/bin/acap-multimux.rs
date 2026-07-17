@@ -28,7 +28,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use acap_multimux::admin::{self, AxParameterStore, StatusHandle};
+use acap_multimux::admin::{self, AxParameterStore, ConfigStore, StatusHandle};
 use acap_multimux::convert::Codec;
 use acap_multimux::vdo_source::VdoSource;
 use log::{error, info};
