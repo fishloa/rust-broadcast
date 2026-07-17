@@ -10,11 +10,17 @@
         "configuration": {
             "reverseProxy": [
                 {
-                    "apiPath": "api",
+                    "apiPath": "hls",
                     "target": "http://localhost:2999",
                     "access": "viewer"
+                },
+                {
+                    "apiPath": "admin",
+                    "target": "http://localhost:2999",
+                    "access": "admin"
                 }
-            ]
+            ],
+            "settingPage": "index.html"
         }
     }
 }

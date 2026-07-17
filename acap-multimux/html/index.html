@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>acap-multimux</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #f5f5f5;
+    --panel: #ffffff;
+    --border: #d8d8d8;
+    --accent: #2563eb;
+    --ok: #16a34a;
+    --err: #dc2626;
+    --muted: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #e5e5e5;
+      --bg: #121212;
+      --panel: #1c1c1c;
+      --border: #333333;
+      --accent: #60a5fa;
+      --ok: #4ade80;
+      --err: #f87171;
+      --muted: #9ca3af;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.5rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  h1 {
+    font-size: 1.25rem;
+    margin: 0 0 1rem;
+  }
+  h2 {
+    font-size: 1rem;
+    margin: 0 0 0.75rem;
+  }
+  main {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+    max-width: 1000px;
+  }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+  }
+  label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin: 0.6rem 0 0.2rem;
+  }
+  input, select {
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  button {
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    border: none;
+    border-radius: 4px;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+  .status-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 0.2rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .status-row:last-child { border-bottom: none; }
+  .status-row span:first-child { color: var(--muted); }
+  .dot {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    margin-right: 0.4rem;
+    background: var(--muted);
+  }
+  .dot.running { background: var(--ok); }
+  .dot.stopped { background: var(--err); }
+  #save-note {
+    margin-top: 0.6rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+    min-height: 1.2em;
+  }
+  #save-note.error { color: var(--err); }
+  #save-note.ok { color: var(--ok); }
+  .note {
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+<h1>acap-multimux</h1>
+<main>
+
+  <section id="stream-config">
+    <h2>Stream config</h2>
+    <label for="f-channel">VDO channel</label>
+    <input id="f-channel" type="number" min="0" step="1">
+
+    <label for="f-width">Width (px)</label>
+    <input id="f-width" type="number" min="1" step="1">
+
+    <label for="f-height">Height (px)</label>
+    <input id="f-height" type="number" min="1" step="1">
+
+    <label for="f-framerate">Frame rate (fps)</label>
+    <input id="f-framerate" type="number" min="1" step="1">
+
+    <label for="f-codec">Codec</label>
+    <select id="f-codec">
+      <option value="h264">H.264</option>
+      <option value="h265">H.265</option>
+    </select>
+  </section>
+
+  <section id="llhls-tuning">
+    <h2>LL-HLS tuning</h2>
+    <label for="f-target-duration">Target segment duration (s)</label>
+    <input id="f-target-duration" type="number" min="0.1" step="0.1">
+
+    <label for="f-part-target">Target part duration (ms)</label>
+    <input id="f-part-target" type="number" min="1" step="1">
+
+    <label for="f-window">Playlist window (segments)</label>
+    <input id="f-window" type="number" min="1" step="1">
+
+    <label for="f-port">HTTP bind port</label>
+    <input id="f-port" type="number" min="1" max="65535" step="1">
+
+    <button id="save-btn" type="button">Save</button>
+    <div id="save-note"></div>
+  </section>
+
+  <section id="status-health">
+    <h2>Status / health</h2>
+    <div class="status-row"><span>Pipeline</span><span id="s-running"><span class="dot"></span>unknown</span></div>
+    <div class="status-row"><span>Current segment</span><span id="s-segment">-</span></div>
+    <div class="status-row"><span>Current part</span><span id="s-part">-</span></div>
+    <div class="status-row"><span>Frames processed</span><span id="s-frames">-</span></div>
+    <div class="status-row"><span>Last error</span><span id="s-error">-</span></div>
+  </section>
+
+  <section id="access-security">
+    <h2>Access / security</h2>
+    <p class="note">
+      This app has no login of its own. Access to the LL-HLS stream
+      (<code>hls</code>) and to this admin page/API (<code>admin</code>) is
+      controlled entirely by the camera's own reverse-proxy access levels
+      (VAPIX users/roles) as configured in <code>manifest.json</code>. Manage
+      viewer/admin permissions from the camera's own user administration.
+    </p>
+  </section>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  const fields = {
+    channel: document.getElementById("f-channel"),
+    width: document.getElementById("f-width"),
+    height: document.getElementById("f-height"),
+    framerate: document.getElementById("f-framerate"),
+    codec: document.getElementById("f-codec"),
+    target_duration_secs: document.getElementById("f-target-duration"),
+    part_target_ms: document.getElementById("f-part-target"),
+    window_segments: document.getElementById("f-window"),
+    port: document.getElementById("f-port"),
+  };
+  const saveBtn = document.getElementById("save-btn");
+  const saveNote = document.getElementById("save-note");
+
+  function fillForm(cfg) {
+    fields.channel.value = cfg.channel;
+    fields.width.value = cfg.width;
+    fields.height.value = cfg.height;
+    fields.framerate.value = cfg.framerate;
+    fields.codec.value = cfg.codec;
+    fields.target_duration_secs.value = cfg.target_duration_secs;
+    fields.part_target_ms.value = cfg.part_target_ms;
+    fields.window_segments.value = cfg.window_segments;
+    fields.port.value = cfg.port;
+  }
+
+  function readForm() {
+    return {
+      channel: Number(fields.channel.value),
+      width: Number(fields.width.value),
+      height: Number(fields.height.value),
+      framerate: Number(fields.framerate.value),
+      codec: fields.codec.value,
+      target_duration_secs: Number(fields.target_duration_secs.value),
+      part_target_ms: Number(fields.part_target_ms.value),
+      window_segments: Number(fields.window_segments.value),
+      port: Number(fields.port.value),
+    };
+  }
+
+  async function loadConfig() {
+    try {
+      const resp = await fetch("admin/config");
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      fillForm(await resp.json());
+    } catch (err) {
+      saveNote.textContent = "Failed to load config: " + err;
+      saveNote.className = "error";
+    }
+  }
+
+  async function saveConfig() {
+    saveBtn.disabled = true;
+    saveNote.textContent = "Saving...";
+    saveNote.className = "";
+    try {
+      const resp = await fetch("admin/config", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(readForm()),
+      });
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(text || ("HTTP " + resp.status));
+      }
+      saveNote.textContent = "Saved. Changes apply on the app's next restart.";
+      saveNote.className = "ok";
+    } catch (err) {
+      saveNote.textContent = "Save failed: " + err;
+      saveNote.className = "error";
+    } finally {
+      saveBtn.disabled = false;
+    }
+  }
+
+  function fillStatus(status) {
+    const dot = document.querySelector("#s-running .dot");
+    const runningEl = document.getElementById("s-running");
+    dot.className = "dot " + (status.running ? "running" : "stopped");
+    runningEl.lastChild.textContent = status.running ? " running" : " stopped";
+    document.getElementById("s-segment").textContent = status.current_segment;
+    document.getElementById("s-part").textContent = status.current_part;
+    document.getElementById("s-frames").textContent = status.frames;
+    document.getElementById("s-error").textContent = status.last_error || "none";
+  }
+
+  async function loadStatus() {
+    try {
+      const resp = await fetch("admin/status");
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      fillStatus(await resp.json());
+    } catch (err) {
+      document.getElementById("s-error").textContent = "status fetch failed: " + err;
+    }
+  }
+
+  saveBtn.addEventListener("click", saveConfig);
+
+  loadConfig();
+  loadStatus();
+  setInterval(loadStatus, 5000);
+})();
+</script>
+</body>
+</html>
