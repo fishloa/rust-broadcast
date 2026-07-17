@@ -4,6 +4,7 @@
 //! is host-testable; the `vdo_source` module + the binary are `device`-gated
 //! and build only inside the Axis ACAP Native SDK.
 
+pub mod admin;
 pub mod convert;
 pub mod error;
 

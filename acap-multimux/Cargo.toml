@@ -42,3 +42,4 @@ default = []
 device = ["dep:vdo", "dep:axparameter", "dep:acap-logging"]
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
