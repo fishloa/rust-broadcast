@@ -537,7 +537,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1235,9 +1235,9 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d0f9ecb5b04135c9097617f08e699fffcf763d3398318afc0334b51fa1607c6"
+checksum = "d7084b26def352c07e23c226cc8a5ee658d5e17fd66b8c0fa0747efbca655c5e"
 dependencies = [
  "axum",
  "rtsp-runtime",
