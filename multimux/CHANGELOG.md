@@ -1,6 +1,19 @@
 # Changelog
 
-## [0.2.0] - 2026-07-16
+## [0.2.1] - 2026-07-18
+
+### Fixed
+- **LL-HLS preload-hint parts no longer 404.** A request for a Partial Segment
+  the media playlist promised via `#EXT-X-PRELOAD-HINT` but that the origin had
+  not produced yet returned `404` immediately, instead of holding the request
+  open until the part became available (RFC 8216bis §6.2.2 / §6.3.1 blocking
+  Partial-Segment delivery). Every low-latency client (hls.js, Safari native)
+  therefore hammered the hinted part with 404s until it happened to exist,
+  spamming errors and forcing a fall back to full-segment loads — defeating the
+  low-latency path. The part byte handler now blocks (reusing the same progress
+  watch as the blocking playlist reload) until the part is produced, or returns
+  `404` *promptly* once its segment closes without it (a real segment boundary)
+  or the blocking timeout elapses. Observed against a live on-camera stream.
 
 ### Breaking
 - The bundled `multimux` **binary** (the RTSP→LL-HLS CLI) moved to a new

@@ -87,6 +87,40 @@ async fn wait_for_progress(store: &StreamStore, msn: u64, part: u32) {
     let _ = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait).await;
 }
 
+/// Block until part `idx` of segment `seq` is available, returning its bytes —
+/// or `None` if the part will never be produced or [`BLOCKING_RELOAD_TIMEOUT`]
+/// elapses. This is the origin side of LL-HLS preload-hinted part delivery
+/// (RFC 8216bis §6.2.2, §6.3.1): the client fetches the `#EXT-X-PRELOAD-HINT`
+/// part before it exists, and the origin holds the request open until it does.
+///
+/// Returns `None` *promptly* (without waiting out the timeout) once the part
+/// can no longer appear as a live part: its segment has closed (it is now only
+/// addressable as a whole segment via `seg-…`), or the in-progress segment has
+/// advanced past `seq`. That happens at a real segment boundary when the hinted
+/// "next part" is never produced (the segment closed instead) — a legitimate
+/// 404 the client answers by fetching the next segment/part.
+async fn wait_for_part(store: &StreamStore, seq: u32, idx: u32) -> Option<Vec<u8>> {
+    let mut rx = store.subscribe();
+    let wait = async {
+        loop {
+            if let Some(bytes) = store.part_bytes(seq, idx) {
+                return Some(bytes);
+            }
+            let (in_progress_seg_seq, _) = store.latest_progress();
+            if in_progress_seg_seq > seq || store.segment_bytes(seq).is_some() {
+                return None;
+            }
+            if rx.changed().await.is_err() {
+                return None;
+            }
+        }
+    };
+    tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait)
+        .await
+        .ok()
+        .flatten()
+}
+
 /// `GET /:stream/media.m3u8` — the LL-HLS media playlist for
 /// [`DEFAULT_TRACK_ID`], blocking on `_HLS_msn`/`_HLS_part` when present.
 pub async fn media_playlist(
@@ -120,20 +154,44 @@ pub async fn dynamic_file(
     let Some(store) = state.streams.get(&stream) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // A part request is the preload-hinted Partial Segment the client fetches
+    // ahead of time (RFC 8216bis §6.2.2, §6.3.1). The origin promised it via
+    // `#EXT-X-PRELOAD-HINT`, so when it isn't produced yet the request must be
+    // *held* until the part becomes available — not answered with an immediate
+    // 404 (which spams errors and defeats low latency, forcing the client back
+    // to full-segment loads). See [`wait_for_part`].
+    if let Some((seq, idx)) = parse_part(&file) {
+        return match wait_for_part(store, seq, idx).await {
+            Some(bytes) => ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response(),
+            None => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
     match resolve_file(store, &file) {
         Some(bytes) => ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
+/// Parse a `part-{track}-{seq}.{idx}.m4s` dynamic filename into `(seq, idx)`,
+/// or `None` if it isn't a part filename (or its numeric fields don't parse).
+/// `{track}` is validated but unused (see [`resolve_file`]).
+fn parse_part(file: &str) -> Option<(u32, u32)> {
+    let rest = file.strip_prefix("part-")?.strip_suffix(".m4s")?;
+    let (track_seq, idx) = rest.rsplit_once('.')?;
+    let (track, seq) = track_seq.split_once('-')?;
+    track.parse::<u32>().ok()?;
+    Some((seq.parse().ok()?, idx.parse().ok()?))
+}
+
 /// Parse a dynamic origin filename and fetch its bytes from `store`:
 /// - `init-{track}.mp4` -> [`StreamStore::init_bytes`]
 /// - `seg-{track}-{seq}.m4s` -> [`StreamStore::segment_bytes`]
-/// - `part-{track}-{seq}.{idx}.m4s` -> [`StreamStore::part_bytes`]
 ///
-/// `{track}` is validated as a number but otherwise unused: `store` holds a
-/// single track's data (see [`DEFAULT_TRACK_ID`]). Returns `None` (-> 404)
-/// for any filename that doesn't match one of the three shapes, or whose
+/// Part filenames (`part-{track}-{seq}.{idx}.m4s`) are handled separately in
+/// [`dynamic_file`] (they block until available — see [`parse_part`]), not
+/// here. `{track}` is validated as a number but otherwise unused: `store`
+/// holds a single track's data (see [`DEFAULT_TRACK_ID`]). Returns `None`
+/// (-> 404) for any filename that doesn't match one of these shapes, or whose
 /// numeric fields don't parse.
 fn resolve_file(store: &StreamStore, file: &str) -> Option<Vec<u8>> {
     if let Some(rest) = file.strip_prefix("init-") {
@@ -147,15 +205,6 @@ fn resolve_file(store: &StreamStore, file: &str) -> Option<Vec<u8>> {
         track.parse::<u32>().ok()?;
         let seq: u32 = seq.parse().ok()?;
         return store.segment_bytes(seq);
-    }
-    if let Some(rest) = file.strip_prefix("part-") {
-        let rest = rest.strip_suffix(".m4s")?;
-        let (track_seq, idx) = rest.rsplit_once('.')?;
-        let (track, seq) = track_seq.split_once('-')?;
-        track.parse::<u32>().ok()?;
-        let seq: u32 = seq.parse().ok()?;
-        let idx: u32 = idx.parse().ok()?;
-        return store.part_bytes(seq, idx);
     }
     None
 }
@@ -331,6 +380,68 @@ mod tests {
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(body_bytes(resp).await, vec![0x10; 4]);
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_part_blocks_until_available_then_serves() {
+        // part-1-2.2 is the preload-hinted next part of in-progress segment 2
+        // (which currently has parts .0 and .1). The request must BLOCK until
+        // the part is produced, not 404 immediately. Produce it after a short
+        // delay from another task, then assert the handler returned its bytes.
+        let state = make_state();
+        let store = state.streams.get("cam1").unwrap().clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store.add_part(part(2, 2));
+        });
+        let resp = dynamic_file(
+            State(state),
+            Path(("cam1".to_string(), "part-1-2.2.m4s".to_string())),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "part request must block until the part is produced, not 404"
+        );
+        assert_eq!(body_bytes(resp).await, vec![0x12; 4]); // 0x10 + idx(2)
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_part_404_promptly_when_segment_closes_without_it() {
+        // part-1-2.9 will never be produced. When segment 2 closes (advancing
+        // the in-progress segment), the handler must 404 promptly — not hang
+        // until the blocking timeout.
+        let state = make_state();
+        let store = state.streams.get("cam1").unwrap().clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store.add_segment(seg(2)); // closes segment 2
+        });
+        let started = std::time::Instant::now();
+        let resp = dynamic_file(
+            State(state),
+            Path(("cam1".to_string(), "part-1-2.9.m4s".to_string())),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert!(
+            started.elapsed() < BLOCKING_RELOAD_TIMEOUT,
+            "must 404 promptly on segment close, not wait out the timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_part_of_already_closed_segment_404() {
+        // Segment 1 is already closed in make_state(); its parts are no longer
+        // individually addressable, so a part request 404s without blocking.
+        let state = make_state();
+        let resp = dynamic_file(
+            State(state),
+            Path(("cam1".to_string(), "part-1-1.0.m4s".to_string())),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
