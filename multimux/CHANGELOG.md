@@ -1,5 +1,32 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Supervised route lifecycle** (issue #663, P0.2+P0.3+P0.4): each route's
+  ingest task is now driven by `origin::supervisor::supervise`, which
+  reconnects with capped exponential backoff (`origin::supervisor::Backoff`,
+  default 500ms min / 30s max / factor 2.0) on connect failure, pipeline
+  error, *or* source end-of-stream, instead of the old one-shot task that
+  died for good on the first failure (leaving the HTTP origin serving a
+  frozen last playlist as `200 OK` forever). The connect step is abstracted
+  behind `origin::supervisor::SourceConnector` (implemented for
+  `source::rtsp::RtspSource`) so reconnect is testable without a real RTSP
+  server. A route never gives up permanently by default — sources like
+  cameras come back.
+- **Store health** (`store::MediaStore::{health, set_health}` /
+  `store::HealthState`): each route's `MediaStore` now tracks
+  `Connecting`/`Live`/`Reconnecting`/`Failed`, set by the supervisor at each
+  connect/pipeline transition; a state change bumps the store's existing
+  progress watch so a blocked reader (e.g. an LL-HLS long-poll reload) wakes
+  on a health transition too, not just new media.
+- **Graceful shutdown**: `origin::serve` now installs a shutdown signal
+  (Ctrl-C, plus `SIGTERM` on unix) that both drains in-flight HTTP requests
+  via `axum::serve(..).with_graceful_shutdown(..)` and breaks every route's
+  supervise loop; `serve` joins each supervisor task (aborting one that
+  doesn't return within a short grace period) before returning `Ok(())`,
+  rather than leaving ingest tasks running detached past shutdown.
+
 ## [0.2.2] - 2026-07-18
 
 ### Fixed

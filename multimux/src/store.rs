@@ -56,6 +56,49 @@ struct Inner {
     /// part request can wake — and every segment boundary 404s its hinted part.
     recent_parts: VecDeque<PartInfo>,
     window_segments: usize,
+    /// Current ingest health, set by the route's supervisor (see
+    /// `crate::origin::supervisor`) and read by outputs/metrics.
+    health: HealthState,
+}
+
+/// Ingest health of the route feeding a [`MediaStore`], set by the
+/// supervisor loop (`crate::origin::supervisor::supervise`) as it
+/// connects/reconnects the source.
+///
+/// `Failed` is reserved for an unrecoverable connect error class; the
+/// default supervisor never gives up on a route (sources like cameras come
+/// back), so in practice it cycles `Connecting` -> `Live` <-> `Reconnecting`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthState {
+    /// Never yet connected; the supervisor's first connect attempt is in
+    /// flight.
+    Connecting,
+    /// Connected and actively receiving media.
+    Live,
+    /// Lost the source (connect failure, pipeline error, or source EOF) and
+    /// the supervisor is retrying with backoff.
+    Reconnecting,
+    /// Unrecoverable — the supervisor has given up on this route.
+    Failed,
+}
+
+impl HealthState {
+    /// The spec/field-enum label (workspace #204 convention): a stable,
+    /// lowercase token per state, suitable for logs/metrics.
+    pub fn name(&self) -> &'static str {
+        match self {
+            HealthState::Connecting => "connecting",
+            HealthState::Live => "live",
+            HealthState::Reconnecting => "reconnecting",
+            HealthState::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for HealthState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 /// In-RAM rolling window for one served stream: bytes + timing, shared by
@@ -83,6 +126,7 @@ impl MediaStore {
                 live_parts: Vec::new(),
                 recent_parts: VecDeque::new(),
                 window_segments,
+                health: HealthState::Connecting,
             }),
             target_duration_secs,
             part_target_ms,
@@ -209,6 +253,25 @@ impl MediaStore {
         self.progress_tx.subscribe()
     }
 
+    /// Set the route's ingest health. Bumps the progress watch **only when
+    /// the state actually changes**, so a client/output blocked on
+    /// `subscribe()` (e.g. an LL-HLS blocking playlist reload) wakes on a
+    /// health transition too, not just new media.
+    pub fn set_health(&self, state: HealthState) {
+        let mut g = self.inner.lock().unwrap();
+        if g.health != state {
+            g.health = state;
+            drop(g);
+            self.bump();
+        }
+    }
+
+    /// The current ingest health (default [`HealthState::Connecting`] until
+    /// the supervisor sets it).
+    pub fn health(&self) -> HealthState {
+        self.inner.lock().unwrap().health
+    }
+
     /// The full-segment target duration, in seconds, this store was built
     /// with — timing configuration an [`crate::output::Output`] renderer
     /// needs (e.g. LL-HLS's `#EXT-X-TARGETDURATION`).
@@ -297,5 +360,48 @@ mod tests {
         let before = *rx.borrow_and_update();
         s.add_part(part(1, 0));
         assert_ne!(*rx.borrow(), before, "watch value changed");
+    }
+
+    #[test]
+    fn health_defaults_to_connecting() {
+        let s = MediaStore::new(4.0, 500, 4);
+        assert_eq!(s.health(), HealthState::Connecting);
+    }
+
+    #[test]
+    fn set_health_updates_and_bumps_watch_only_on_change() {
+        let s = MediaStore::new(4.0, 500, 4);
+        let mut rx = s.subscribe();
+        let before = *rx.borrow_and_update();
+
+        // No-op: setting the same state again must not bump.
+        s.set_health(HealthState::Connecting);
+        assert_eq!(*rx.borrow(), before, "unchanged state does not bump watch");
+
+        s.set_health(HealthState::Live);
+        assert_eq!(s.health(), HealthState::Live);
+        assert_ne!(
+            *rx.borrow_and_update(),
+            before,
+            "state change bumps watch so blocked readers wake"
+        );
+
+        let mid = *rx.borrow();
+        s.set_health(HealthState::Reconnecting);
+        assert_eq!(s.health(), HealthState::Reconnecting);
+        assert_ne!(*rx.borrow(), mid);
+    }
+
+    #[test]
+    fn health_state_name_and_display_agree() {
+        for (state, label) in [
+            (HealthState::Connecting, "connecting"),
+            (HealthState::Live, "live"),
+            (HealthState::Reconnecting, "reconnecting"),
+            (HealthState::Failed, "failed"),
+        ] {
+            assert_eq!(state.name(), label);
+            assert_eq!(state.to_string(), label);
+        }
     }
 }

@@ -6,14 +6,27 @@
 //! [`crate::output::llhls`] for the LL-HLS output itself (playlists, byte
 //! ranges, bounded blocking playlist reload — RFC 8216bis §6.2.5.2).
 
+pub mod supervisor;
+
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
+use tokio::sync::watch;
 
 use crate::output::Output;
 use crate::output::llhls::LlHlsOutput;
 use crate::store::MediaStore;
+use supervisor::{Backoff, supervise};
+
+/// How long `serve` waits for a route's supervisor task to notice shutdown
+/// and return on its own, after axum has finished draining in-flight HTTP
+/// requests, before forcibly aborting it. Generous relative to the tiny
+/// `tokio::select!` the supervisor uses to make its backoff sleep
+/// cancellable — this is just a backstop for a task wedged in a connect()
+/// or pipeline call that doesn't itself observe shutdown mid-flight.
+const SUPERVISOR_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 /// One stream's shared store plus the `Output`s configured to serve it.
 pub type StreamRoute = (Arc<MediaStore>, Vec<Arc<dyn Output>>);
@@ -42,25 +55,37 @@ pub fn router(state: Arc<AppState>) -> Router {
     router
 }
 
-/// Run the multimux origin: one [`MediaStore`] + one spawned pipeline task
+/// Run the multimux origin: one [`MediaStore`] + one supervised ingest task
 /// per `config.routes` entry, then bind `config.bind` and serve them all
 /// under [`router`]. Each route is served by a single [`LlHlsOutput`] (the
 /// default — and today the only — output wiring).
 ///
-/// Each route's pipeline task independently connects its [`crate::source::rtsp::RtspSource`],
-/// runs it through [`crate::pipeline::run_pipeline`], and — on either a connect
-/// failure or a pipeline error — logs to stderr and lets only that route's
-/// task end; a single bad source never brings the server (or any other route)
-/// down.
+/// Each route's task is driven by [`supervisor::supervise`]: it connects
+/// [`crate::source::rtsp::RtspSource`], runs it through
+/// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
+/// pipeline error, or source end-of-stream, reconnects with capped backoff
+/// instead of dying — a bad/flaky source degrades that route's
+/// [`crate::store::MediaStore::health`] rather than freezing it forever, and
+/// never brings the server (or any other route) down.
 ///
-/// Returns only on a bind failure or if the HTTP server itself stops (e.g. a
-/// fatal accept-loop I/O error); the per-route ingest tasks run detached.
+/// Installs a graceful-shutdown signal (Ctrl-C, plus SIGTERM on unix): on
+/// receipt, axum stops accepting new connections and drains in-flight
+/// requests (including blocked LL-HLS long-poll reloads) via
+/// [`axum::serve::Serve::with_graceful_shutdown`], the same signal breaks
+/// every route's supervise loop, and `serve` joins each supervisor task
+/// (forcibly aborting one that doesn't return within a short grace period)
+/// before returning `Ok(())`.
+///
+/// Otherwise returns only on a bind failure or if the HTTP server itself
+/// stops (e.g. a fatal accept-loop I/O error).
 pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     config.validate()?;
 
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
     let target_duration_secs = config.target_duration_secs;
     let part_target_ms = config.part_target_ms;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut supervisor_handles = Vec::new();
 
     for route in &config.routes {
         let store = Arc::new(MediaStore::new(
@@ -73,32 +98,76 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 
         let name = route.name.clone();
         let rtsp_url = route.rtsp_url.clone();
-        tokio::spawn(async move {
-            let source = crate::source::rtsp::RtspSource::new(name.clone(), rtsp_url);
-            match source.connect().await {
-                Ok(session) => {
-                    if let Err(e) = crate::pipeline::run_pipeline(
-                        store,
-                        target_duration_secs,
-                        part_target_ms,
-                        session,
-                    )
-                    .await
-                    {
-                        eprintln!("multimux: route {name:?} pipeline stopped: {e}");
-                    }
-                }
-                Err(e) => {
-                    eprintln!("multimux: route {name:?} failed to connect: {e}");
-                }
-            }
-        });
+        let shutdown_rx = shutdown_rx.clone();
+        let connector = crate::source::rtsp::RtspSource::new(name.clone(), rtsp_url);
+        let handle = tokio::spawn(supervise(
+            connector,
+            store,
+            target_duration_secs,
+            part_target_ms,
+            Backoff::production_default(),
+            name,
+            shutdown_rx,
+        ));
+        supervisor_handles.push(handle);
     }
 
     let state = Arc::new(AppState { streams });
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
-    axum::serve(listener, router(state)).await?;
+    let shutdown_future = async move {
+        shutdown_signal().await;
+        // Best-effort: only fails if every receiver (every supervisor task)
+        // has already exited, which just means there's nothing left to
+        // notify.
+        let _ = shutdown_tx.send(true);
+    };
+    let serve_result = axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown_future)
+        .await;
+
+    // axum has stopped accepting connections and drained in-flight requests
+    // by the time `.await` above returns (whether that's because shutdown
+    // fired, or because the accept loop itself errored out) — join every
+    // route's supervisor task in orderly fashion, aborting any stragglers
+    // rather than leaving them running detached past `serve`'s return.
+    for handle in supervisor_handles {
+        let abort_handle = handle.abort_handle();
+        if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, handle)
+            .await
+            .is_err()
+        {
+            abort_handle.abort();
+        }
+    }
+
+    serve_result?;
     Ok(())
+}
+
+/// Resolves once an external shutdown signal is received: Ctrl-C
+/// (`SIGINT`) on every platform, plus `SIGTERM` on unix (the signal a
+/// process manager / `docker stop` / `systemd` sends for a graceful stop).
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        () = ctrl_c => {}
+        () = terminate => {}
+    }
 }
 
 #[cfg(test)]

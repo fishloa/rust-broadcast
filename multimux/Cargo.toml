@@ -16,7 +16,7 @@ all-features = true
 transmux          = { path = "../transmux",     version = "0.17" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
 sdp-types         = "0.1"
-tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
+tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.7"
 serde             = { version = "1", features = ["derive"] }
 serde_json        = "1"
