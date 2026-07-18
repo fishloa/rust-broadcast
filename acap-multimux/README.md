@@ -6,7 +6,7 @@ hop. It reuses the [`multimux`](https://crates.io/crates/multimux) library (the
 same LL-HLS segmenter + RAM rolling window + axum origin + blocking-reload that
 the standalone `multimux-cli` server uses), fed by a `VdoSource` instead of RTSP.
 
-Issue #669. Target SoCs: **ARTPEC-7 / 8 / 9**, both **H.264** and **H.265**.
+Issue #669. Target SoCs: **ARTPEC-6 / 7 / 8 / 9**; **H.264** on all, **H.265** on ARTPEC-7/8/9 only.
 
 ## Architecture
 
@@ -34,8 +34,10 @@ VDO (libvdo) --coded AU + ts--> VdoSource --> transmux Sample/TrackSpec
 `acap-multimux` is **out of the main cargo workspace** (its own `Cargo.toml` +
 `rust-toolchain.toml`). It depends on published `multimux` 0.2 + `transmux` 0.17
 (crates.io) and **git-pinned** acap-rs crates (`vdo`/`axparameter`/`acap-logging`
-at rev `8e58acb`). It is **not** published to crates.io — it is a deployable
-`.eap`.
+at rev `e9a838d` via a fork `fishloa/acap-rs`). It is **not** published to crates.io — it is a deployable
+`.eap`. The fork is needed for firmware 11 SDK 1.15.1 compatibility; the fork drops a
+firmware-12-only `VDO_ERROR_NO_VIDEO` diagnostic arm so the `vdo` crate compiles against
+the fw11 SDK.
 
 - **Host** (macOS/Linux, no `device` feature): compiles + tests the pure lib
   (`convert`, `admin`): `cd acap-multimux && cargo test`.
@@ -46,7 +48,8 @@ at rev `8e58acb`). It is **not** published to crates.io — it is a deployable
 ### Build the `.eap`
 
 CI (`.github/workflows/acap-multimux.yml`) builds both-arch `.eap`s on every PR
-and uploads them as artifacts — grab those, or build locally in the SDK Docker:
+for both firmware 11 (SDK 1.15.1) and firmware 12 (SDK 12.1.0), and uploads them
+as artifacts — grab those, or build locally in the SDK Docker:
 
 ```bash
 docker run --rm -v "$PWD:/w" -w /w/acap-multimux \
@@ -55,14 +58,15 @@ docker run --rm -v "$PWD:/w" -w /w/acap-multimux \
     curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.86 --target aarch64-unknown-linux-gnu
     . "$HOME/.cargo/env"
     # (set the sysroot / PKG_CONFIG / linker env per .github/workflows/acap-multimux.yml)
-    cargo install --locked --git https://github.com/AxisCommunications/acap-rs --rev 8e58acb8f0617253ad21fb71ac319fea19454a38 cargo-acap-build
+    cargo install --locked --git https://github.com/fishloa/acap-rs --rev e9a838d cargo-acap-build
     ACAP_BUILD_IMPL=equivalent cargo-acap-build --target aarch64 -- -p acap-multimux --features device
   '
 # → acap-multimux/target/acap/acap-multimux_0_1_0_aarch64.eap
 ```
 
-(The workflow is the authoritative, working recipe — the container env vars it
-sets are required; this snippet elides them for brevity.)
+(For firmware 11, replace SDK tag `12.1.0` with `1.15.1-...ubuntu22.04`. The
+workflow is the authoritative, working recipe — the container env vars it sets
+are required; this snippet elides them for brevity.)
 
 ### Deploy to a camera
 
@@ -79,17 +83,17 @@ Apps → Add app.)
 
 ## Hardware verification checklist (the real "done", #669)
 
-On a target ARTPEC-7/8/9 camera:
+On a target ARTPEC-6/7/8/9 camera:
 
 1. `.eap` installs and the app shows **running** in the camera's Apps list.
-2. `curl -u <user>:<pw> https://<cam>/local/acap-multimux/hls/cam/media.m3u8`
+2. `curl -u <user>:<pw> https://<cam>/local/acapmultimux/hls/cam/media.m3u8`
    returns an LL-HLS media playlist (`#EXT-X-PART`, `#EXT-X-PART-INF`,
    `#EXT-X-SERVER-CONTROL`).
 3. A real LL-HLS player (Safari / hls.js / `ffplay`) plays **live** video via
-   `https://<cam>/local/acap-multimux/hls/cam/media.m3u8` at low latency.
-4. The admin `settingPage` loads at `https://<cam>/local/acap-multimux/` and a
+   `https://<cam>/local/acapmultimux/hls/cam/media.m3u8` at low latency.
+4. The admin `settingPage` loads at `https://<cam>/local/acapmultimux/` and a
    config change (e.g. part target) takes effect after restart.
-5. Verify with **both H.264 and H.265** stream config.
+5. Verify H.264 stream config on all SoCs; on ARTPEC-7/8/9, verify **H.265** as well.
 
 > **Known verify-on-device detail:** the origin is served nested under `/hls`;
 > if the camera's reverse-proxy strips the `apiPath` segment before forwarding,

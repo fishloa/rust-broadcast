@@ -29,9 +29,15 @@ thiserror = "2"
 log       = "0.4"
 
 # device-only (ACAP SDK Docker): acap-rs crates, git-pinned (unpublished 0.0.0).
-vdo          = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
-axparameter  = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
-acap-logging = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
+# fishloa/acap-rs fork of upstream rev 8e58acb (branch `fw11-vdo-compat`) with two
+# additive commits: (1) drop the fw12-only VDO_ERROR_NO_VIDEO diagnostic arm so
+# `vdo` compiles against BOTH the firmware-11 SDK 1.15.1 and firmware-12 SDK 12.1.0
+# sysroots (upstream 8e58acb only builds against the fw12 VDO API); (2) add
+# StreamBuilder::gop_length to force a fixed key-frame interval (dynamic-GOP /
+# Zipstream cameras otherwise emit SPS/PPS too sparsely to find in a bounded scan).
+vdo          = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
+axparameter  = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
+acap-logging = { git = "https://github.com/fishloa/acap-rs", rev = "3c513f92bf3dc2e6d1dbb1e3d5c00c0c294a6a69", optional = true }
 
 [features]
 default = []

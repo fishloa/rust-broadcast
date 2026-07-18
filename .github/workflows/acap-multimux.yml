@@ -39,42 +39,44 @@ jobs:
   # (vdo-sys needs `pkg-config vdo`, which only exists there). This job is
   # the actual compile gate for the device-gated bin: it cross-builds the
   # minimal proof-of-pipeline app and packages a real `.eap`.
+  #
+  # MULTI-SDK MATRIX (#669): cameras on firmware 11.x (LTS) and firmware 12.x
+  # need DIFFERENT Native SDK images, so this job builds an `.eap` per
+  # (firmware, arch) cell:
+  #   fw12 / SDK 12.1.0 / ubuntu24.04  -- KNOWN GOOD (this is the pre-existing,
+  #     previously-single-SDK matrix; base image tag + per-arch sysroot layout
+  #     sourced verbatim from acap-rs's `.devcontainer/Dockerfile` at rev
+  #     8e58acb8f0617253ad21fb71ac319fea19454a38).
+  #   fw11 / SDK 1.15.1 / ubuntu22.04  -- EXPERIMENTAL. 1.15.1 is the Native
+  #     SDK version Axis ships for AXIS OS 11.x LTS (11.11.169); there is no
+  #     "11.x" SDK tag, 1.15.1 IS the firmware-11 SDK. Whether vdo-sys/vdo
+  #     compiles cleanly against the 1.15.1 sysroot is UNVERIFIED -- this CI
+  #     run is the experiment. The image's internal layout (toolchain binary
+  #     names, exact sysroot dir name) is not guaranteed identical to 12.1.0's,
+  #     so the "Discover SDK sysroot + toolchain" step below probes the
+  #     container at runtime instead of hardcoding a path/prefix per SDK.
+  #
+  # Running the raw per-arch SDK image directly (rather than the Dockerfile's
+  # combined debian image stitching both sysroots together) means the sysroot
+  # for THIS arch already lives under /opt/axis/acapsdk/sysroots/ (exact leaf
+  # name discovered at runtime, see below), and
+  # /opt/axis/acapsdk/environment-setup-<arch-triple> is present too -- both
+  # referenced by `cargo-acap-build`'s reference `acap-build` invocation.
   eap:
-    name: eap (${{ matrix.arch }})
+    name: eap (fw${{ matrix.fw }} sdk${{ matrix.sdk }} ${{ matrix.arch }})
     runs-on: ubuntu-latest
-    # Base image tag + per-arch sysroot layout sourced verbatim from acap-rs's
-    # `.devcontainer/Dockerfile` at rev 8e58acb8f0617253ad21fb71ac319fea19454a38:
-    #   FROM ${REPO}/${SDK}:${VERSION}-aarch64-ubuntu${UBUNTU_VERSION}   (VERSION=12.1.0, UBUNTU_VERSION=24.04)
-    #   FROM ${REPO}/${SDK}:${VERSION}-armv7hf-ubuntu${UBUNTU_VERSION}
-    # i.e. axisecp/acap-native-sdk:12.1.0-aarch64-ubuntu24.04 /
-    #      axisecp/acap-native-sdk:12.1.0-armv7hf-ubuntu24.04
-    # Running the raw per-arch SDK image directly (rather than the Dockerfile's
-    # combined debian:trixie image stitching both sysroots together) means the
-    # sysroot for THIS arch already lives at the same
-    # /opt/axis/acapsdk/sysroots/<arch> path the Dockerfile COPYs it FROM, and
-    # /opt/axis/acapsdk/environment-setup-<arch-triple> is present too -- both
-    # needed by `cargo-acap-build`'s reference `acap-build` invocation.
-    container: axisecp/acap-native-sdk:12.1.0-${{ matrix.arch }}-ubuntu24.04
+    container: axisecp/acap-native-sdk:${{ matrix.sdk }}-${{ matrix.arch }}-ubuntu${{ matrix.ubuntu }}
     strategy:
+      # Keep going on the experimental fw11/1.15.1 cells even if they fail --
+      # they must never block the known-good fw12/12.1.0 builds.
       fail-fast: false
       matrix:
         include:
-          - arch: aarch64
-            rust_target: aarch64-unknown-linux-gnu
-            gcc_prefix: aarch64-linux-gnu
-            sysroot: /opt/axis/acapsdk/sysroots/aarch64
-            # Suffix used both by CARGO_TARGET_<...>_LINKER/RUSTFLAGS and by
-            # CC_/CXX_/PKG_CONFIG_*_<...> (cargo uppercases+underscores the
-            # target triple for the former, pkg-config-rs/cc-rs use it
-            # lowercase for the latter).
-            cargo_target_suffix: AARCH64_UNKNOWN_LINUX_GNU
-            pkgconfig_suffix: aarch64_unknown_linux_gnu
-          - arch: armv7hf
-            rust_target: thumbv7neon-unknown-linux-gnueabihf
-            gcc_prefix: arm-linux-gnueabihf
-            sysroot: /opt/axis/acapsdk/sysroots/armv7hf
-            cargo_target_suffix: THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF
-            pkgconfig_suffix: thumbv7neon_unknown_linux_gnueabihf
+          - { fw: "12", sdk: "12.1.0", ubuntu: "24.04", arch: aarch64 }
+          - { fw: "12", sdk: "12.1.0", ubuntu: "24.04", arch: armv7hf }
+          # EXPERIMENTAL -- see job-level comment above.
+          - { fw: "11", sdk: "1.15.1", ubuntu: "22.04", arch: aarch64 }
+          - { fw: "11", sdk: "1.15.1", ubuntu: "22.04", arch: armv7hf }
     steps:
       - uses: actions/checkout@v5
 
@@ -82,10 +84,11 @@ jobs:
       # but not Rust. Install rustup the same way acap-rs's
       # `.devhost/install-rust.sh` does (rustup-init), pinned to the
       # workspace MSRV (1.86) rather than acap-rs's own toolchain default.
-      # NOTE: likely first thing to need CI iteration -- unverified whether
       # The SDK image is minimal — cargo-acap-build is compiled for the x86_64
       # HOST during `cargo install`, so it needs a host C compiler (`cc` via
-      # build-essential); curl/pkg-config are for rustup + vdo-sys.
+      # build-essential); curl/pkg-config are for rustup + vdo-sys. Confirmed
+      # present on both the ubuntu24.04 (12.1.0) and ubuntu22.04 (1.15.1) base
+      # images.
       - name: Install build prerequisites
         run: |
           apt-get update
@@ -95,11 +98,93 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
             --default-toolchain 1.86.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: Install target triple
-        run: rustup target add ${{ matrix.rust_target }}
 
-      # Cross-compile env, copied from the Dockerfile's ENV block (see
-      # comment on the `container:` key above for the exact source lines):
+      # Rust target triple + the cargo/pkg-config env-var name suffixes derived
+      # from it are a pure function of `arch` (Rust target naming), independent
+      # of which SDK image we're in -- so these are derived here rather than
+      # carried as extra matrix.include fields.
+      - name: Derive Rust target triple for arch
+        id: arch_vars
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          case "$ARCH" in
+            aarch64)
+              echo "rust_target=aarch64-unknown-linux-gnu" >> "$GITHUB_OUTPUT"
+              echo "cargo_target_suffix=AARCH64_UNKNOWN_LINUX_GNU" >> "$GITHUB_OUTPUT"
+              echo "pkgconfig_suffix=aarch64_unknown_linux_gnu" >> "$GITHUB_OUTPUT"
+              ;;
+            armv7hf)
+              echo "rust_target=thumbv7neon-unknown-linux-gnueabihf" >> "$GITHUB_OUTPUT"
+              echo "cargo_target_suffix=THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF" >> "$GITHUB_OUTPUT"
+              echo "pkgconfig_suffix=thumbv7neon_unknown_linux_gnueabihf" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::unknown matrix.arch=$ARCH"
+              exit 1
+              ;;
+          esac
+      - name: Install target triple
+        run: rustup target add ${{ steps.arch_vars.outputs.rust_target }}
+
+      # Discover the SDK's actual sysroot path + cross-gcc prefix at runtime
+      # instead of hardcoding them, since the 1.15.1 (ubuntu22.04) image's
+      # internal layout relative to 12.1.0's is UNVERIFIED. Also dumps a debug
+      # listing of /opt/axis/acapsdk (and searches for vdo.pc) unconditionally
+      # so the first CI run against 1.15.1 reveals its real layout even if the
+      # discovery heuristics below need iteration.
+      - name: Discover SDK sysroot + toolchain layout
+        id: discover
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          echo "== /opt/axis/acapsdk =="
+          ls -la /opt/axis/acapsdk/ 2>/dev/null || echo "(not found)"
+          echo "== /opt/axis/acapsdk/sysroots =="
+          ls -la /opt/axis/acapsdk/sysroots/ 2>/dev/null || echo "(not found)"
+          echo "== environment-setup-* scripts =="
+          ls -la /opt/axis/acapsdk/environment-setup-* 2>/dev/null || echo "(not found)"
+          echo "== searching for vdo.pc (proves the vdo pkg-config file this SDK ships) =="
+          find / -xdev -iname 'vdo.pc' 2>/dev/null | head -5 || true
+
+          SYSROOT=$(find /opt/axis/acapsdk/sysroots -mindepth 1 -maxdepth 1 -type d -iname "${ARCH}*" 2>/dev/null | head -1)
+          if [ -z "$SYSROOT" ]; then
+            echo "::error::could not locate a sysroot dir under /opt/axis/acapsdk/sysroots matching '${ARCH}*' -- see the listing above and adjust the discovery heuristic for this SDK image"
+            exit 1
+          fi
+          echo "Discovered SYSROOT=$SYSROOT"
+
+          # Known-good gcc prefix per arch, verified against the 12.1.0 image.
+          # Try it first; if it's not on PATH (possible on the unverified
+          # 1.15.1 image), fall back to a filesystem search for a cross-gcc
+          # binary under the usual toolchain install locations.
+          case "$ARCH" in
+            aarch64) DEFAULT_GCC_PREFIX="aarch64-linux-gnu" ;;
+            armv7hf) DEFAULT_GCC_PREFIX="arm-linux-gnueabihf" ;;
+            *) echo "::error::unknown matrix.arch=$ARCH"; exit 1 ;;
+          esac
+
+          if command -v "${DEFAULT_GCC_PREFIX}-gcc" >/dev/null 2>&1; then
+            GCC_PREFIX="$DEFAULT_GCC_PREFIX"
+          else
+            echo "expected ${DEFAULT_GCC_PREFIX}-gcc not on PATH; searching filesystem for a cross-gcc"
+            FOUND_GCC=$(find /usr/bin /usr/local/bin /opt -maxdepth 4 -type f -iname "*-gcc" 2>/dev/null | head -1)
+            if [ -z "$FOUND_GCC" ]; then
+              echo "candidates found (for debugging):"
+              find /usr/bin /usr/local/bin /opt -maxdepth 4 -type f -iname "*-gcc*" 2>/dev/null
+              echo "::error::could not discover a cross-gcc for arch ${ARCH} -- see candidates above and hardcode/adjust the prefix for this SDK image"
+              exit 1
+            fi
+            GCC_PREFIX=$(basename "$FOUND_GCC" | sed 's/-gcc$//')
+            echo "Discovered GCC_PREFIX=$GCC_PREFIX from $FOUND_GCC"
+          fi
+
+          echo "sysroot=$SYSROOT" >> "$GITHUB_OUTPUT"
+          echo "gcc_prefix=$GCC_PREFIX" >> "$GITHUB_OUTPUT"
+
+      # Cross-compile env. Variable NAMES follow the Dockerfile's ENV block
+      # convention (see job-level comment above for the exact source lines,
+      # verified for the fw12/12.1.0 cells):
       #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="aarch64-linux-gnu-gcc"
       #   CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-args=--sysroot=${SYSROOT_AARCH64}"
       #   CC_aarch64_unknown_linux_gnu="aarch64-linux-gnu-gcc"
@@ -108,15 +193,17 @@ jobs:
       #   PKG_CONFIG_PATH_aarch64_unknown_linux_gnu="${SYSROOT_AARCH64}/usr/lib/pkgconfig:${SYSROOT_AARCH64}/usr/share/pkgconfig"
       #   PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu="${SYSROOT_AARCH64}"
       # (and the analogous THUMBV7NEON_UNKNOWN_LINUX_GNUEABIHF /
-      # thumbv7neon_unknown_linux_gnueabihf set for armv7hf). Written via
-      # $GITHUB_ENV with shell-built keys because GitHub Actions `env:` block
-      # keys cannot themselves be `${{ }}` expressions.
+      # thumbv7neon_unknown_linux_gnueabihf set for armv7hf), but VALUES
+      # (sysroot path, gcc prefix) come from the runtime discovery step above,
+      # not a hardcoded matrix field. Written via $GITHUB_ENV with shell-built
+      # keys because GitHub Actions `env:` block keys cannot themselves be
+      # `${{ }}` expressions.
       - name: Set cross-compile env
         env:
-          CARGO_TARGET_SUFFIX: ${{ matrix.cargo_target_suffix }}
-          PKGCONFIG_SUFFIX: ${{ matrix.pkgconfig_suffix }}
-          GCC_PREFIX: ${{ matrix.gcc_prefix }}
-          SYSROOT: ${{ matrix.sysroot }}
+          CARGO_TARGET_SUFFIX: ${{ steps.arch_vars.outputs.cargo_target_suffix }}
+          PKGCONFIG_SUFFIX: ${{ steps.arch_vars.outputs.pkgconfig_suffix }}
+          GCC_PREFIX: ${{ steps.discover.outputs.gcc_prefix }}
+          SYSROOT: ${{ steps.discover.outputs.sysroot }}
         run: |
           echo "CARGO_TARGET_${CARGO_TARGET_SUFFIX}_LINKER=${GCC_PREFIX}-gcc" >> "$GITHUB_ENV"
           echo "CARGO_TARGET_${CARGO_TARGET_SUFFIX}_RUSTFLAGS=-C link-args=--sysroot=${SYSROOT}" >> "$GITHUB_ENV"
@@ -151,6 +238,8 @@ jobs:
       - name: Upload .eap
         uses: actions/upload-artifact@v4
         with:
-          name: acap-multimux-${{ matrix.arch }}
+          # fw included so fw11 vs fw12 artifacts for the same arch don't
+          # collide/overwrite each other.
+          name: acapmultimux-fw${{ matrix.fw }}-${{ matrix.arch }}
           path: acap-multimux/target/acap/*.eap
           if-no-files-found: error

@@ -36,10 +36,13 @@
 //! - `vdo::Stream::start() -> RunningStream` (consumes `self`).
 //! - `vdo::RunningStream::next_buffer(&self) -> Result<StreamBuffer<'_>, vdo::Error>`
 //!   (blocking, see above).
-//! - `vdo::StreamBuffer::{data_copy, frame_type, timestamp}` — `data_copy()`
-//!   returns the coded access unit with VDO's own header stripped (not part of
-//!   the Annex B bytes), which is exactly the access unit `crate::convert`
-//!   expects.
+//! - `vdo::StreamBuffer::{data_copy, as_slice, header_size, frame_type,
+//!   timestamp}` — `data_copy()` returns the coded slice with the buffer's
+//!   header (`header_size` bytes) stripped, which is exactly the CMAF sample
+//!   `crate::convert` expects. On a *key* frame that header is where VDO
+//!   carries the SPS/PPS parameter sets, so [`scan_for_param_sets`] reads the
+//!   full frame via `as_slice()` (not `data_copy()`) to recover them — see its
+//!   doc.
 //! - `vdo::VdoFrameType::{VDO_FRAME_TYPE_H264_IDR, VDO_FRAME_TYPE_H265_IDR}` are
 //!   the sync-sample frame types for H.264/H.265 respectively (confirmed
 //!   against `vdo`'s own `capture_h264_frames` hardware test, which matches on
@@ -62,32 +65,34 @@ const TRACK_ID: u32 = 1;
 /// Media/track timescale for both H.264 and H.265 (90 kHz video clock).
 const CLOCK_RATE: u32 = 90_000;
 
-/// How many VDO buffers to read, at most, while searching for the codec's
-/// full in-band parameter-set run (SPS/PPS for H.264; VPS/SPS/PPS for H.265)
-/// needed to build the `TrackSpec`/`avcC`/`hvcC`. Axis encoders resend
-/// parameter sets in-band with every IDR, so the params are expected within
-/// the first handful of buffers; a bound avoids blocking forever on a
-/// misconfigured stream.
-const PARAM_SET_SCAN_LIMIT: usize = 32;
+/// How many VDO buffers to read, at most, while resolving the codec's full
+/// parameter-set run (SPS/PPS for H.264; VPS/SPS/PPS for H.265) needed to
+/// build the `TrackSpec`/`avcC`/`hvcC`. The parameter sets ride in the
+/// key-frame buffer's header (see [`scan_for_param_sets`]), so the very first
+/// key frame normally resolves them; the bound spans a generous multi-GOP
+/// window to tolerate a mid-GOP start (and the separate-parameter-set-buffer
+/// fallback) while avoiding blocking forever on a stream that never keys.
+const PARAM_SET_SCAN_LIMIT: usize = 150;
 
-/// A VDO access unit read while scanning for parameter sets, held onto so it
-/// can be delivered as a real sample instead of being silently dropped.
+/// The first IDR access unit found while collecting parameter sets, held onto
+/// so it can be delivered as the first real sample instead of being dropped.
 ///
 /// # Why buffer instead of discard
 ///
 /// [`VdoSource::new`] must return with a complete [`TrackSpec`] already built
 /// (before `multimux::pipeline::run_pipeline` calls `track_specs()`), so it
-/// has to read ahead into the live buffer stream to find the parameter sets.
-/// The buffer that *satisfies* [`convert::extract_param_sets`] is, in
-/// practice, the first IDR access unit (Axis encoders emit SPS/PPS/VPS
-/// in-band with the IDR slice in the same buffer) — i.e. exactly the sample
-/// an LL-HLS segmenter needs as its first pushed sample (a sync sample).
-/// Discarding it and pulling a fresh buffer for the first `next_samples()`
-/// call would silently drop the IDR and could hand the segmenter a
-/// non-sync first sample. Buffers read *before* the successful one are
-/// genuinely discardable: without the parameter sets yet resolved, whatever
-/// they contain isn't decodable relative to any init segment `VdoSource` will
-/// ever publish for this stream start.
+/// reads ahead into the live buffer stream until it can resolve the parameter
+/// sets — from the key frame's own header (the primary path) or, as a
+/// fallback, from separately-delivered parameter-set buffers (see
+/// [`scan_for_param_sets`]). That first resolving key frame is the first
+/// decodable sync sample for this stream start — exactly the sample an LL-HLS
+/// segmenter needs as its first pushed sample. Discarding it and pulling a
+/// fresh buffer for the first `next_samples()` call would drop that IDR and
+/// could hand the segmenter a non-sync first sample. It is delivered as its
+/// header-stripped `data_copy()` (SPS/PPS/VPS are carried in the `avcC`/`hvcC`
+/// init segment, not the coded samples); any parameter-set/SEI buffer and any
+/// picture read before the parameter sets resolve are not decodable relative
+/// to the init this source will publish, and are dropped.
 struct PendingAu {
     data: Vec<u8>,
     timestamp_us: u64,
@@ -136,11 +141,22 @@ impl VdoSource {
             Codec::H265 => VdoFormat::VDO_FORMAT_H265,
         };
 
+        // Force a ~1-second GOP so key frames — and the SPS/PPS/VPS parameter
+        // sets VDO emits ahead of each one, as their own buffers — recur
+        // predictably. Without this, a camera in dynamic-GOP / Zipstream mode
+        // can go many seconds between key frames, so `scan_for_param_sets`
+        // finds no parameter-set run within its bounded window (observed on
+        // ARTPEC-6 / firmware 11, #669). Falls back to 30 if the caller left
+        // framerate at 0 (camera default) rather than forcing a key frame every
+        // frame.
+        let gop_length = if framerate > 0 { framerate } else { 30 };
+
         let stream = StreamBuilder::new()
             .channel(channel)
             .format(format)
             .resolution(Resolution::Exact { width, height })
             .framerate(framerate)
+            .gop_length(gop_length)
             .build()?;
 
         let running = stream.start()?;
@@ -160,25 +176,151 @@ impl VdoSource {
     }
 }
 
-/// Read buffers from `running` until `crate::convert::extract_param_sets`
-/// finds a complete parameter-set run, returning the parameter sets plus the
-/// successful buffer (preserved as a [`PendingAu`] — see its doc comment).
+/// Read buffers from `running` until the parameter sets (SPS/PPS for H.264;
+/// VPS/SPS/PPS for H.265) can be resolved, returning them plus the key-frame
+/// access unit as a [`PendingAu`].
+///
+/// Where VDO puts the parameter sets (verified on hardware, ARTPEC-6/H.264,
+/// #669): they are carried in the **key-frame buffer's header** — the bytes
+/// `data_copy()` strips off the front (`header_size`) to leave just the coded
+/// slice. So the full key-frame buffer is `[SPS][PPS][…][IDR slice]` in Annex
+/// B, and `extract_param_sets` finds the run in `as_slice()` even though
+/// `data_copy()` (the sample bytes) does not contain it. As a fallback for
+/// cameras/configs that instead deliver each parameter set as its own buffer
+/// (frame types `VDO_FRAME_TYPE_H264_SPS`/`_PPS`, …), those are also collected
+/// and tried. The sample handed on for the key frame is the header-stripped
+/// `data_copy()` (parameter sets ride in the `avcC`/`hvcC` init, not samples).
 fn scan_for_param_sets(running: &RunningStream, codec: Codec) -> Result<(ParamSets, PendingAu)> {
-    for _ in 0..PARAM_SET_SCAN_LIMIT {
+    // Fallback path: latest Annex B bytes for each separately-delivered
+    // parameter-set NAL, kept individually so a resent run replaces it.
+    let mut vps: Option<Vec<u8>> = None; // H.265 only
+    let mut sps: Option<Vec<u8>> = None;
+    let mut pps: Option<Vec<u8>> = None;
+
+    for i in 0..PARAM_SET_SCAN_LIMIT {
         let buf = running.next_buffer()?;
+        let ft = buf.frame_type();
         let data = buf.data_copy()?;
-        if let Some(params) = convert::extract_param_sets(codec, &data) {
-            let pending = PendingAu {
-                timestamp_us: buf.timestamp(),
-                frame_type: buf.frame_type(),
-                data,
-            };
-            return Ok((params, pending));
+        if let Some(kind) = param_set_kind(codec, ft) {
+            // Separately-delivered parameter-set buffer (fallback path).
+            match kind {
+                ParamSetKind::Vps => vps = Some(data),
+                ParamSetKind::Sps => sps = Some(data),
+                ParamSetKind::Pps => pps = Some(data),
+            }
+            continue;
         }
+        if is_idr(codec, ft) {
+            // Primary path: the key frame's own buffer carries the parameter
+            // sets in the header that `data_copy()` strips — parse the *full*
+            // frame (`as_slice()` up to `size()`).
+            let full = buf.as_slice()?;
+            let full_au = &full[..buf.size().min(full.len())];
+            if let Some(params) = convert::extract_param_sets(codec, full_au) {
+                log::info!("vdo scan: parameter sets from key-frame header at buf[{i}]");
+                return Ok((
+                    params,
+                    PendingAu {
+                        timestamp_us: buf.timestamp(),
+                        frame_type: ft,
+                        data,
+                    },
+                ));
+            }
+            // Fallback path: pair the separately-collected parameter sets with
+            // this key frame. Their concatenation is valid Annex B (each is a
+            // whole Annex-B NAL buffer).
+            let mut blob = Vec::new();
+            if let Some(v) = &vps {
+                blob.extend_from_slice(v);
+            }
+            if let (Some(s), Some(p)) = (&sps, &pps) {
+                blob.extend_from_slice(s);
+                blob.extend_from_slice(p);
+            }
+            if let Some(params) = convert::extract_param_sets(codec, &blob) {
+                log::info!("vdo scan: parameter sets from separate buffers, IDR at buf[{i}]");
+                return Ok((
+                    params,
+                    PendingAu {
+                        timestamp_us: buf.timestamp(),
+                        frame_type: ft,
+                        data,
+                    },
+                ));
+            }
+            // Key frame before parameter sets resolve (mid-GOP start): drop and
+            // keep scanning.
+        }
+        // non-key pictures / SEI while scanning: dropped
     }
     Err(AcapError::Convert(format!(
         "no complete {codec:?} parameter-set run found in the first {PARAM_SET_SCAN_LIMIT} VDO buffers"
     )))
+}
+
+/// Which parameter-set NAL a VDO parameter-set frame type carries.
+enum ParamSetKind {
+    /// H.265 video parameter set (no H.264 equivalent).
+    Vps,
+    /// Sequence parameter set.
+    Sps,
+    /// Picture parameter set.
+    Pps,
+}
+
+/// Classify a VDO `frame_type` as a parameter-set buffer, if it is one. VDO
+/// delivers SPS/PPS (and, for H.265, VPS) as dedicated buffers rather than
+/// in-band with the coded picture (see [`scan_for_param_sets`]).
+fn param_set_kind(codec: Codec, ft: VdoFrameType) -> Option<ParamSetKind> {
+    // VDO frame-type values are associated consts, not enum variants usable in
+    // patterns, so classify with `==` comparisons (as `is_idr` does).
+    match codec {
+        Codec::H264 => {
+            if ft == VdoFrameType::VDO_FRAME_TYPE_H264_SPS {
+                Some(ParamSetKind::Sps)
+            } else if ft == VdoFrameType::VDO_FRAME_TYPE_H264_PPS {
+                Some(ParamSetKind::Pps)
+            } else {
+                None
+            }
+        }
+        Codec::H265 => {
+            if ft == VdoFrameType::VDO_FRAME_TYPE_H265_VPS {
+                Some(ParamSetKind::Vps)
+            } else if ft == VdoFrameType::VDO_FRAME_TYPE_H265_SPS {
+                Some(ParamSetKind::Sps)
+            } else if ft == VdoFrameType::VDO_FRAME_TYPE_H265_PPS {
+                Some(ParamSetKind::Pps)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// Whether `frame_type` is a coded-picture buffer (IDR/I/P/B) — the buffers
+/// that become CMAF samples. Parameter-set (SPS/PPS/VPS) and SEI buffers are
+/// **not** samples: parameter sets live in the `avcC`/`hvcC` init segment, and
+/// a standalone SEI buffer is not a coded picture. `next_samples` skips
+/// everything that is not a picture.
+fn is_picture(codec: Codec, ft: VdoFrameType) -> bool {
+    // `==` chains rather than `matches!` — VDO frame types are associated
+    // consts, not pattern-usable enum variants.
+    match codec {
+        Codec::H264 => {
+            ft == VdoFrameType::VDO_FRAME_TYPE_H264_IDR
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H264_I
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H264_P
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H264_B
+        }
+        Codec::H265 => {
+            ft == VdoFrameType::VDO_FRAME_TYPE_H265_IDR
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H265_I
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H265_P
+                || ft == VdoFrameType::VDO_FRAME_TYPE_H265_B
+        }
+    }
 }
 
 /// Whether `frame_type` is the codec's IDR (instantaneous decoder refresh)
@@ -221,12 +363,21 @@ impl multimux::pipeline::SampleSource for VdoSource {
     /// against), and every sample after that carries the correct duration
     /// for the frame just read.
     async fn next_samples(&mut self) -> multimux::Result<Option<Vec<(u32, Sample)>>> {
+        // The pending IDR from `new()` is always a coded picture; live reads
+        // skip the parameter-set (SPS/PPS/VPS) and SEI buffers VDO interleaves
+        // ahead of each IDR — those are carried in the init segment or are not
+        // coded pictures, so they must not be emitted as samples.
         let (data, timestamp_us, frame_type) = if let Some(pending) = self.pending_first.take() {
             (pending.data, pending.timestamp_us, pending.frame_type)
         } else {
-            let buf = self.running.next_buffer().map_err(source_err)?;
-            let data = buf.data_copy().map_err(source_err)?;
-            (data, buf.timestamp(), buf.frame_type())
+            loop {
+                let buf = self.running.next_buffer().map_err(source_err)?;
+                let ft = buf.frame_type();
+                if is_picture(self.codec, ft) {
+                    let data = buf.data_copy().map_err(source_err)?;
+                    break (data, buf.timestamp(), ft);
+                }
+            }
         };
 
         let is_sync = is_idr(self.codec, frame_type);
