@@ -68,7 +68,7 @@ const CLOCK_RATE: u32 = 90_000;
 /// parameter sets in-band with every IDR, so the params are expected within
 /// the first handful of buffers; a bound avoids blocking forever on a
 /// misconfigured stream.
-const PARAM_SET_SCAN_LIMIT: usize = 32;
+const PARAM_SET_SCAN_LIMIT: usize = 150;
 
 /// A VDO access unit read while scanning for parameter sets, held onto so it
 /// can be delivered as a real sample instead of being silently dropped.
@@ -164,10 +164,25 @@ impl VdoSource {
 /// finds a complete parameter-set run, returning the parameter sets plus the
 /// successful buffer (preserved as a [`PendingAu`] — see its doc comment).
 fn scan_for_param_sets(running: &RunningStream, codec: Codec) -> Result<(ParamSets, PendingAu)> {
-    for _ in 0..PARAM_SET_SCAN_LIMIT {
+    for i in 0..PARAM_SET_SCAN_LIMIT {
         let buf = running.next_buffer()?;
         let data = buf.data_copy()?;
+        // Hardware-verify diagnostic (#669): log the framing of the first few
+        // VDO buffers so we can confirm what `data_copy()` actually delivers on
+        // this camera — Annex-B start codes (00 00 00 01) vs AVCC length-prefix,
+        // and whether SPS/PPS are in-band. Only the leading buffers, to keep the
+        // log readable on a live stream.
+        if i < 8 {
+            let head: Vec<String> = data.iter().take(24).map(|b| format!("{b:02x}")).collect();
+            log::info!(
+                "vdo scan buf[{i}]: frame_type={:?} len={} head=[{}]",
+                buf.frame_type(),
+                data.len(),
+                head.join(" "),
+            );
+        }
         if let Some(params) = convert::extract_param_sets(codec, &data) {
+            log::info!("vdo scan: found parameter sets at buf[{i}]");
             let pending = PendingAu {
                 timestamp_us: buf.timestamp(),
                 frame_type: buf.frame_type(),
