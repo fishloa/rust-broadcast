@@ -36,9 +36,15 @@ use multimux::origin::AppState;
 use multimux::store::StreamStore;
 
 /// The single served stream's name in LL-HLS URLs
-/// (`/hls/<STREAM_NAME>/media.m3u8`) — this app captures exactly one VDO
+/// (`…/hls/<STREAM_NAME>/media.m3u8`) — this app captures exactly one VDO
 /// channel per `Config`, so one fixed stream name is enough.
 const STREAM_NAME: &str = "cam";
+
+/// The URL prefix AXIS OS's Apache reverse proxy forwards verbatim to this
+/// app — `/local/<appName>` with `appName` from `manifest.json`
+/// (`acapmultimux`). The proxy does not strip it, so every route is served
+/// under this prefix. Keep in lockstep with `manifest.json`'s `setup.appName`.
+const URL_PREFIX: &str = "/local/acapmultimux";
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -69,14 +75,18 @@ async fn main() {
     streams.insert(STREAM_NAME.to_string(), stream_store);
     let app_state = Arc::new(AppState { streams });
 
-    // `/hls` prefix per manifest.json's `reverseProxy` `apiPath: "hls"` entry
-    // (hardware-verify note: confirm whether the camera's reverse proxy
-    // strips the `apiPath` segment or forwards it verbatim — Task 7 checks
-    // this against a real device and adjusts either side if it doesn't
-    // match).
-    let app = axum::Router::new()
+    // AXIS OS's Apache reverse proxy forwards the FULL request path to the
+    // target verbatim — it does NOT strip the `/local/<appName>/<apiPath>`
+    // prefix (confirmed on hardware, #669, and matches Axis's own C/CivetWeb
+    // and axum reverse-proxy examples, which register routes at the full
+    // prefixed path). So the app must serve its routes under the real proxied
+    // path: `/local/acapmultimux/hls/<stream>/…` and
+    // `/local/acapmultimux/admin/…`. The origin's playlists use relative URIs
+    // (`media.m3u8`, `seg-*.m4s`), which resolve correctly under the prefix.
+    let inner = axum::Router::new()
         .nest("/hls", multimux::origin::router(app_state))
         .merge(admin::admin_router(store, status));
+    let app = axum::Router::new().nest(URL_PREFIX, inner);
 
     let bind_addr = format!("127.0.0.1:{}", cfg.port);
     let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
