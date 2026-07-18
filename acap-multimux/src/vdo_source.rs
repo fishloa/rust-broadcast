@@ -36,10 +36,13 @@
 //! - `vdo::Stream::start() -> RunningStream` (consumes `self`).
 //! - `vdo::RunningStream::next_buffer(&self) -> Result<StreamBuffer<'_>, vdo::Error>`
 //!   (blocking, see above).
-//! - `vdo::StreamBuffer::{data_copy, frame_type, timestamp}` — `data_copy()`
-//!   returns the coded access unit with VDO's own header stripped (not part of
-//!   the Annex B bytes), which is exactly the access unit `crate::convert`
-//!   expects.
+//! - `vdo::StreamBuffer::{data_copy, as_slice, header_size, frame_type,
+//!   timestamp}` — `data_copy()` returns the coded slice with the buffer's
+//!   header (`header_size` bytes) stripped, which is exactly the CMAF sample
+//!   `crate::convert` expects. On a *key* frame that header is where VDO
+//!   carries the SPS/PPS parameter sets, so [`scan_for_param_sets`] reads the
+//!   full frame via `as_slice()` (not `data_copy()`) to recover them — see its
+//!   doc.
 //! - `vdo::VdoFrameType::{VDO_FRAME_TYPE_H264_IDR, VDO_FRAME_TYPE_H265_IDR}` are
 //!   the sync-sample frame types for H.264/H.265 respectively (confirmed
 //!   against `vdo`'s own `capture_h264_frames` hardware test, which matches on
@@ -62,16 +65,13 @@ const TRACK_ID: u32 = 1;
 /// Media/track timescale for both H.264 and H.265 (90 kHz video clock).
 const CLOCK_RATE: u32 = 90_000;
 
-/// How many VDO buffers to read, at most, while collecting the codec's full
+/// How many VDO buffers to read, at most, while resolving the codec's full
 /// parameter-set run (SPS/PPS for H.264; VPS/SPS/PPS for H.265) needed to
-/// build the `TrackSpec`/`avcC`/`hvcC`. Axis VDO delivers parameter sets as
-/// their own dedicated buffers (frame types `VDO_FRAME_TYPE_H264_SPS`/`_PPS`,
-/// `_H265_VPS`/`_SPS`/`_PPS`) — **not** in-band with the IDR slice — and
-/// resends them ahead of each IDR, so the full set arrives within one GOP.
-/// Starting capture mid-GOP means the first IDR seen can precede the next
-/// parameter-set run; the bound spans a generous multi-GOP window so that
-/// case still resolves, while avoiding blocking forever on a stream that
-/// never emits parameter sets.
+/// build the `TrackSpec`/`avcC`/`hvcC`. The parameter sets ride in the
+/// key-frame buffer's header (see [`scan_for_param_sets`]), so the very first
+/// key frame normally resolves them; the bound spans a generous multi-GOP
+/// window to tolerate a mid-GOP start (and the separate-parameter-set-buffer
+/// fallback) while avoiding blocking forever on a stream that never keys.
 const PARAM_SET_SCAN_LIMIT: usize = 150;
 
 /// The first IDR access unit found while collecting parameter sets, held onto
@@ -81,17 +81,18 @@ const PARAM_SET_SCAN_LIMIT: usize = 150;
 ///
 /// [`VdoSource::new`] must return with a complete [`TrackSpec`] already built
 /// (before `multimux::pipeline::run_pipeline` calls `track_specs()`), so it
-/// reads ahead into the live buffer stream, gathering the parameter-set
-/// buffers (SPS/PPS/VPS, each its own VDO buffer) until it has the full set.
-/// The IDR buffer that immediately follows a complete parameter-set run is the
-/// first decodable sync sample for this stream start — exactly the sample an
-/// LL-HLS segmenter needs as its first pushed sample. Discarding it and
-/// pulling a fresh buffer for the first `next_samples()` call would drop that
-/// IDR and could hand the segmenter a non-sync first sample. The parameter-set
-/// and SEI buffers consumed while scanning are *not* samples (SPS/PPS/VPS are
-/// carried in the `avcC`/`hvcC` init segment, not the coded samples), and any
-/// picture buffer read before the parameter sets resolve isn't decodable
-/// relative to any init segment this source will publish — both are dropped.
+/// reads ahead into the live buffer stream until it can resolve the parameter
+/// sets — from the key frame's own header (the primary path) or, as a
+/// fallback, from separately-delivered parameter-set buffers (see
+/// [`scan_for_param_sets`]). That first resolving key frame is the first
+/// decodable sync sample for this stream start — exactly the sample an LL-HLS
+/// segmenter needs as its first pushed sample. Discarding it and pulling a
+/// fresh buffer for the first `next_samples()` call would drop that IDR and
+/// could hand the segmenter a non-sync first sample. It is delivered as its
+/// header-stripped `data_copy()` (SPS/PPS/VPS are carried in the `avcC`/`hvcC`
+/// init segment, not the coded samples); any parameter-set/SEI buffer and any
+/// picture read before the parameter sets resolve are not decodable relative
+/// to the init this source will publish, and are dropped.
 struct PendingAu {
     data: Vec<u8>,
     timestamp_us: u64,
@@ -200,25 +201,6 @@ fn scan_for_param_sets(running: &RunningStream, codec: Codec) -> Result<(ParamSe
         let buf = running.next_buffer()?;
         let ft = buf.frame_type();
         let data = buf.data_copy()?;
-        // Hardware-verify diagnostic (#669): frame type, header size (where the
-        // key-frame parameter sets live), and the leading bytes of the full
-        // frame — for the first few buffers only, to keep a live log short.
-        if i < 12 {
-            let full = buf.as_slice().ok();
-            let head: Vec<String> = full
-                .map(|s| &s[..buf.size().min(s.len())])
-                .unwrap_or(data.as_slice())
-                .iter()
-                .take(16)
-                .map(|b| format!("{b:02x}"))
-                .collect();
-            log::info!(
-                "vdo scan buf[{i}]: frame_type={ft:?} size={} header_size={:?} full_head=[{}]",
-                buf.size(),
-                buf.header_size(),
-                head.join(" "),
-            );
-        }
         if let Some(kind) = param_set_kind(codec, ft) {
             // Separately-delivered parameter-set buffer (fallback path).
             match kind {
