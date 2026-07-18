@@ -2,7 +2,7 @@
     "schemaVersion": "1.5.0",
     "acapPackageConf": {
         "setup": {
-            "appName": "acap-multimux",
+            "appName": "acapmultimux",
             "vendor": "rust-broadcast",
             "runMode": "respawn",
             "version": "0.1.0"

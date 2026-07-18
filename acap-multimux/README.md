@@ -82,12 +82,12 @@ Apps → Add app.)
 On a target ARTPEC-7/8/9 camera:
 
 1. `.eap` installs and the app shows **running** in the camera's Apps list.
-2. `curl -u <user>:<pw> https://<cam>/local/acap-multimux/hls/cam/media.m3u8`
+2. `curl -u <user>:<pw> https://<cam>/local/acapmultimux/hls/cam/media.m3u8`
    returns an LL-HLS media playlist (`#EXT-X-PART`, `#EXT-X-PART-INF`,
    `#EXT-X-SERVER-CONTROL`).
 3. A real LL-HLS player (Safari / hls.js / `ffplay`) plays **live** video via
-   `https://<cam>/local/acap-multimux/hls/cam/media.m3u8` at low latency.
-4. The admin `settingPage` loads at `https://<cam>/local/acap-multimux/` and a
+   `https://<cam>/local/acapmultimux/hls/cam/media.m3u8` at low latency.
+4. The admin `settingPage` loads at `https://<cam>/local/acapmultimux/` and a
    config change (e.g. part target) takes effect after restart.
 5. Verify with **both H.264 and H.265** stream config.
 
