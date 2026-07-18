@@ -291,6 +291,19 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
         server_name: &str,
         config: rustls::ClientConfig,
     ) -> Result<Self> {
+        Self::connect_tls_with(addr, server_name, config, ClientSession::new()).await
+    }
+
+    /// Connects an `rtsps://` (TLS) client to `addr` using a pre-configured
+    /// session (e.g. one carrying [`Credentials`](crate::Credentials) via
+    /// [`ClientSession::with_credentials`]), otherwise identical to
+    /// [`connect_tls`](Self::connect_tls).
+    pub async fn connect_tls_with<A: tokio::net::ToSocketAddrs>(
+        addr: A,
+        server_name: &str,
+        config: rustls::ClientConfig,
+        session: ClientSession,
+    ) -> Result<Self> {
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
@@ -304,7 +317,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
             .connect(dns, tcp)
             .await
             .map_err(|e| io_err("TLS handshake", e))?;
-        Ok(Self::with_stream(stream, ClientSession::new()))
+        Ok(Self::with_stream(stream, session))
     }
 }
 

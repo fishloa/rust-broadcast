@@ -13,6 +13,7 @@
 //! interleaved) → PLAY handshake and returns a live [`RtspSession`] that
 //! [`RtspSession::next_samples`] pulls one interleaved frame at a time.
 
+use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::io::AsyncRtspClient;
 use rtsp_runtime::transport::{Transport, TransportSpec};
@@ -71,24 +72,33 @@ impl RtspSource {
     pub async fn connect(&self) -> Result<RtspSession> {
         let base_url = Url::parse(&self.url)
             .map_err(|e| MultimuxError::Source(format!("bad rtsp(s) URL {:?}: {e}", self.url)))?;
+        // Pull credentials from the URL's userinfo (RFC 3986 §3.2.1), if any,
+        // then strip it: RTSP request URIs (DESCRIBE/SETUP/PLAY) must not
+        // carry `user:pass@`, and stripping keeps secrets out of logs/request
+        // lines. `base_url` (still carrying userinfo) is only used below to
+        // derive the connect address / SNI name, both of which ignore it.
+        let credentials = extract_credentials(&base_url)?;
+        let request_url = strip_userinfo(&base_url)?;
+        let request_uri = request_url.to_string();
+
         let is_tls = scheme_is_tls(&base_url)?;
         let addr = connect_addr(&base_url)?;
         let mut client = if is_tls {
             let server_name = sni_server_name(&base_url)?;
-            connect_tls_client(&addr, &server_name).await?
+            connect_tls_client(&addr, &server_name, credentials).await?
         } else {
-            connect_plain_client(&addr).await?
+            connect_plain_client(&addr, credentials).await?
         };
 
         let describe = client
-            .describe(&self.url)
+            .describe(&request_uri)
             .await
             .map_err(source_err("DESCRIBE"))?;
         let sdp = expect_ok_response(describe, "DESCRIBE")?;
         let mut tracks = parse_sdp_tracks(&sdp)?;
 
         for track in &mut tracks {
-            let uri = resolve_control(&base_url, track.control.as_deref())?;
+            let uri = resolve_control(&request_url, track.control.as_deref())?;
             let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
                 track.channel,
                 track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
@@ -125,7 +135,10 @@ impl RtspSource {
             }
         }
 
-        let play = client.play(&self.url).await.map_err(source_err("PLAY"))?;
+        let play = client
+            .play(&request_uri)
+            .await
+            .map_err(source_err("PLAY"))?;
         expect_ok_response(play, "PLAY")?;
 
         let depacketizer = RtpStreamDepacketizer::new(
@@ -205,6 +218,46 @@ fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
             .map(|u| u.to_string())
             .map_err(|e| MultimuxError::Source(format!("bad a=control {c:?}: {e}"))),
     }
+}
+
+/// Extracts RTSP [`Credentials`] from a base URL's userinfo (RFC 3986
+/// §3.2.1), percent-decoding both the username and password (userinfo
+/// components may be percent-encoded, e.g. a literal `@` or `:` in a
+/// password). Returns `Ok(None)` when the URL carries no username — the
+/// common case, meaning "connect with no auth" exactly as before this URL
+/// carried credentials.
+fn extract_credentials(url: &Url) -> Result<Option<Credentials>> {
+    if url.username().is_empty() {
+        return Ok(None);
+    }
+    let username = percent_decode(url.username())?;
+    let password = match url.password() {
+        Some(p) => percent_decode(p)?,
+        None => String::new(),
+    };
+    Ok(Some(Credentials::new(username, password)))
+}
+
+/// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8.
+fn percent_decode(s: &str) -> Result<String> {
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8()
+        .map(|c| c.into_owned())
+        .map_err(|e| MultimuxError::Source(format!("invalid percent-encoded userinfo {s:?}: {e}")))
+}
+
+/// Returns a copy of `url` with its userinfo (username/password) removed, so
+/// it is safe to use in RTSP request lines (DESCRIBE/SETUP/PLAY must not
+/// carry `user:pass@`) and as the base for `a=control` resolution.
+fn strip_userinfo(url: &Url) -> Result<Url> {
+    let mut clean = url.clone();
+    clean.set_username("").map_err(|()| {
+        MultimuxError::Source(format!("failed to strip username from rtsp(s) URL {url}"))
+    })?;
+    clean.set_password(None).map_err(|()| {
+        MultimuxError::Source(format!("failed to strip password from rtsp(s) URL {url}"))
+    })?;
+    Ok(clean)
 }
 
 /// Derives the `host:port` connect address from the base `rtsp://`/`rtsps://`
@@ -348,12 +401,24 @@ impl RtspClient {
     }
 }
 
-/// Connects a plain `rtsp://` (TCP) client to `addr`.
-async fn connect_plain_client(addr: &str) -> Result<RtspClient> {
-    let client = AsyncRtspClient::<TcpStream>::connect(addr)
+/// Connects a plain `rtsp://` (TCP) client to `addr`, attaching `credentials`
+/// (if any) so the engine can answer a `401` challenge on DESCRIBE (RFC 2326
+/// §14).
+async fn connect_plain_client(addr: &str, credentials: Option<Credentials>) -> Result<RtspClient> {
+    let session = session_with_credentials(credentials);
+    let client = AsyncRtspClient::<TcpStream>::connect_with(addr, session)
         .await
         .map_err(source_err("connect"))?;
     Ok(RtspClient::Plain(client))
+}
+
+/// Builds a fresh [`ClientSession`], attaching `credentials` via
+/// [`ClientSession::with_credentials`] when present.
+fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
+    match credentials {
+        Some(creds) => ClientSession::new().with_credentials(creds),
+        None => ClientSession::new(),
+    }
 }
 
 /// Connects an `rtsps://` (RTSP-over-TLS) client to `addr`, presenting
@@ -365,12 +430,18 @@ async fn connect_plain_client(addr: &str) -> Result<RtspClient> {
 /// failing to compile), so callers get a clear runtime message if `tls` was
 /// deliberately disabled.
 #[cfg(feature = "tls")]
-async fn connect_tls_client(addr: &str, server_name: &str) -> Result<RtspClient> {
+async fn connect_tls_client(
+    addr: &str,
+    server_name: &str,
+    credentials: Option<Credentials>,
+) -> Result<RtspClient> {
     let config = rtsp_runtime::io::default_tls_client_config();
-    let client = AsyncRtspClient::<tokio_rustls::client::TlsStream<TcpStream>>::connect_tls(
+    let session = session_with_credentials(credentials);
+    let client = AsyncRtspClient::<tokio_rustls::client::TlsStream<TcpStream>>::connect_tls_with(
         addr,
         server_name,
         config,
+        session,
     )
     .await
     .map_err(source_err("connect"))?;
@@ -378,7 +449,11 @@ async fn connect_tls_client(addr: &str, server_name: &str) -> Result<RtspClient>
 }
 
 #[cfg(not(feature = "tls"))]
-async fn connect_tls_client(addr: &str, _server_name: &str) -> Result<RtspClient> {
+async fn connect_tls_client(
+    addr: &str,
+    _server_name: &str,
+    _credentials: Option<Credentials>,
+) -> Result<RtspClient> {
     Err(MultimuxError::Source(format!(
         "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
     )))

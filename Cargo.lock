@@ -1441,6 +1441,8 @@ name = "multimux"
 version = "0.2.2"
 dependencies = [
  "axum",
+ "base64",
+ "percent-encoding",
  "rtsp-runtime",
  "sdp-types",
  "serde",

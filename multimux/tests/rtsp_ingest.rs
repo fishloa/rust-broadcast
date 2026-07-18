@@ -111,6 +111,24 @@ async fn write_all(sock: &mut TcpStream, bytes: &[u8]) {
     sock.flush().await.expect("flush response");
 }
 
+/// Looks up a header's value by exact (case-sensitive) name in a headers-only
+/// request/response text blob, as returned by `read_request`. `rtsp-types`
+/// emits header names in the fixed casing `Authorization` /
+/// `WWW-Authenticate` (RFC 2326 §12.5/§12.44), so an exact match is enough.
+fn header_value<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|l| l.strip_prefix(name)?.strip_prefix(':'))
+        .map(str::trim)
+}
+
+/// Base64-encodes `user:pass` (RFC 7617 §2 `basic-credentials`), for
+/// comparing against the `Authorization` header value the client under test
+/// actually sends.
+fn basic_credentials(user: &str, pass: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"))
+}
+
 /// Runs the hand-rolled RTSP server side: DESCRIBE (SDP body) -> SETUP
 /// (interleaved TCP transport) -> PLAY -> three interleaved RTP access units
 /// (IDR, then two non-IDR, at distinct 90 kHz timestamps with the marker bit
@@ -240,6 +258,164 @@ async fn run() {
     let (track_id1, sample1) = &samples[1];
     assert_eq!(*track_id1, 1);
     assert!(!sample1.is_sync, "the second access unit was non-IDR");
+
+    server.await.expect("server task");
+}
+
+/// Runs a hand-rolled RTSP server that requires Basic auth on DESCRIBE (RFC
+/// 2326 §14 / §16, sharing HTTP's schemes verbatim; RFC 7617 for Basic): a
+/// DESCRIBE without an `Authorization` header gets `401 Unauthorized` +
+/// `WWW-Authenticate: Basic realm="mock"`; the client's transparently-retried
+/// DESCRIBE is checked for a Basic `Authorization` header matching
+/// `expect_user`/`expect_pass` before the SDP/SETUP/PLAY handshake completes
+/// exactly like `serve_one_session` above (minus the RTP frames — this test
+/// only checks that `connect()` succeeds, not depayloading).
+async fn serve_one_session_requiring_auth(
+    mut sock: TcpStream,
+    expect_user: &str,
+    expect_pass: &str,
+) {
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(
+        req.starts_with("DESCRIBE"),
+        "expected first (unauthenticated) DESCRIBE, got: {req}"
+    );
+    assert!(
+        header_value(&req, "Authorization").is_none(),
+        "the first DESCRIBE must not carry an Authorization header: {req}"
+    );
+    let challenge_resp = format!(
+        "RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Basic realm=\"mock\"\r\n\r\n"
+    );
+    write_all(&mut sock, challenge_resp.as_bytes()).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(
+        req.starts_with("DESCRIBE"),
+        "expected the retried DESCRIBE, got: {req}"
+    );
+    let auth = header_value(&req, "Authorization")
+        .expect("the retried DESCRIBE must carry an Authorization header");
+    let expected = format!("Basic {}", basic_credentials(expect_user, expect_pass));
+    assert_eq!(
+        auth, expected,
+        "Authorization must encode the URL userinfo's username/password"
+    );
+
+    let sdp = sdp_body();
+    let describe_resp = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n",
+        sdp.len()
+    );
+    write_all(&mut sock, describe_resp.as_bytes()).await;
+    write_all(&mut sock, &sdp).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(req.starts_with("SETUP"), "expected SETUP, got: {req}");
+    let transport =
+        TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1).to_header_value();
+    let setup_resp = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000002\r\nTransport: {transport}\r\n\r\n"
+    );
+    write_all(&mut sock, setup_resp.as_bytes()).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(req.starts_with("PLAY"), "expected PLAY, got: {req}");
+    let play_resp = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000002\r\n\r\n");
+    write_all(&mut sock, play_resp.as_bytes()).await;
+}
+
+/// Credentials embedded in the `rtsp://user:pass@host/...` URL's userinfo
+/// (RFC 3986 §3.2.1) must flow through to a Basic `Authorization` header
+/// answering the server's `401` challenge, and the request line sent on the
+/// wire must not carry `user:pass@` (verified indirectly: the hand-rolled
+/// server only ever sees `DESCRIBE`/`SETUP`/`PLAY` request lines built from
+/// `RtspSource`, and a URL still carrying userinfo would fail
+/// `rtsp_types::Url::parse` inside `ClientSession::assemble`, so a request
+/// ever reaching the server at all already proves the stripped form was
+/// used).
+///
+/// Reverting the `rtsp.rs` fix (no credentials attached to `ClientSession`)
+/// makes this test fail: the client would never answer the 401, `connect()`
+/// would surface it as an error, and this test's `.expect("connect")` would
+/// panic.
+#[tokio::test]
+async fn rtsp_ingest_basic_auth_from_url_userinfo_succeeds() {
+    tokio::time::timeout(TEST_TIMEOUT, run_auth_success())
+        .await
+        .expect("rtsp basic-auth e2e timed out — auth wiring did not complete");
+}
+
+async fn run_auth_success() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.expect("accept");
+        serve_one_session_requiring_auth(sock, "camuser", "camsecret").await;
+    });
+
+    let source = RtspSource::new("cam", format!("rtsp://camuser:camsecret@{addr}/test"));
+    let session = source.connect().await.expect(
+        "connect must succeed: URL userinfo credentials should answer the server's 401 challenge",
+    );
+    assert_eq!(
+        session.track_specs().len(),
+        1,
+        "the SDP was parsed after the authenticated DESCRIBE succeeded"
+    );
+
+    server.await.expect("server task");
+}
+
+/// The same server (requiring Basic auth) against the same URL *minus* its
+/// userinfo: with no credentials configured, the client cannot answer the
+/// `401` challenge, so `connect()` must fail rather than silently proceed.
+///
+/// This is the counterpart that proves the auth-success test above is really
+/// exercising credential flow and not e.g. a server that accepts anything:
+/// the exact same server rejects an unauthenticated client.
+#[tokio::test]
+async fn rtsp_ingest_missing_url_credentials_fails_with_401() {
+    tokio::time::timeout(TEST_TIMEOUT, run_no_credentials_fails())
+        .await
+        .expect("rtsp no-auth e2e timed out — server never got a request");
+}
+
+async fn run_no_credentials_fails() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.expect("accept");
+        let (req, cseq) = read_request(&mut sock).await;
+        assert!(req.starts_with("DESCRIBE"), "expected DESCRIBE, got: {req}");
+        assert!(
+            header_value(&req, "Authorization").is_none(),
+            "an unauthenticated client must not send an Authorization header: {req}"
+        );
+        let challenge_resp = format!(
+            "RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Basic realm=\"mock\"\r\n\r\n"
+        );
+        write_all(&mut sock, challenge_resp.as_bytes()).await;
+        // No credentials configured => the client does not retry; this is the
+        // whole exchange.
+    });
+
+    let source = RtspSource::new("cam", format!("rtsp://{addr}/test"));
+    let err = match source.connect().await {
+        Ok(_) => panic!("connect must fail: no credentials to answer the server's 401 challenge"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("401") || msg.to_ascii_lowercase().contains("unauthorized"),
+        "error should report the 401/Unauthorized DESCRIBE status, got: {msg}"
+    );
 
     server.await.expect("server task");
 }

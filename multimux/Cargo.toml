@@ -13,16 +13,17 @@ categories   = ["multimedia", "network-programming"]
 all-features = true
 
 [dependencies]
-transmux      = { path = "../transmux",     version = "0.17" }
-rtsp-runtime  = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
-sdp-types     = "0.1"
-tokio         = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
-axum          = "0.7"
-serde         = { version = "1", features = ["derive"] }
-serde_json    = "1"
-thiserror     = "2"
-url           = "2"
-tokio-rustls  = { version = "0.26", optional = true }
+transmux          = { path = "../transmux",     version = "0.17" }
+rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
+sdp-types         = "0.1"
+tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync"] }
+axum              = "0.7"
+serde             = { version = "1", features = ["derive"] }
+serde_json        = "1"
+thiserror         = "2"
+url               = "2"
+percent-encoding  = "2"
+tokio-rustls      = { version = "0.26", optional = true }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -42,4 +43,5 @@ required-features = ["testsupport"]
 name = "serve_rtsp"
 
 [dev-dependencies]
-tower = { version = "0.5", default-features = false, features = ["util"] }
+tower  = { version = "0.5", default-features = false, features = ["util"] }
+base64 = "0.22"
