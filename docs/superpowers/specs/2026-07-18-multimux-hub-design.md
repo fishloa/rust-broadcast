@@ -59,6 +59,31 @@ The **segmenter feeds the store once**; each `Output` renders its own view.
 LL-HLS and DASH share the same CMAF init/segments (both are fMP4/CMAF), so the
 store's bytes are reused, not re-muxed per output.
 
+### Shared wire model — symmetric server render / client parse (no dupes)
+
+Every protocol with both a server and a client half shares **one** wire model
+in the owning library; the server *renders* it and the client *parses* into it
+— the workspace's `Parse`/`Serialize` symmetry, never two parallel
+implementations:
+
+- **HLS playlists:** `transmux::hls` / `ll_hls` already own the playlist model
+  (`MediaPlaylist`, `MultivariantPlaylist`, `OpenSegment`, `PartSpec`,
+  `LowLatencyConfig`) + `to_m3u8()` render, used by the multimux origin. The
+  `ll-hls-client` (#717) **must not** define its own playlist types — instead
+  add **`MediaPlaylist::parse` / `MultivariantPlaylist::parse` to
+  `transmux::hls`** (symmetric with the existing render, round-trip tested:
+  `parse(render(x)) == x`). Server and client then share the one model. This
+  belongs upstream in transmux, not in the client crate.
+- **DASH MPD:** same — the MPD model in `transmux::dash` renders for the server
+  (P4) and would parse for any future DASH client; one model.
+- **RTSP/RTP:** already follows this — `rtsp-types`/`sdp-types` are the shared
+  codecs under both `rtsp-runtime` client+server state machines; `transmux`
+  `rtp`/`rtcp` are the shared RTP model.
+
+Rule: if the client needs to understand a wire format the server already
+produces, extend the server's model with the inverse operation in the same
+library — do not re-describe the format in the client.
+
 ### Shared auth layer (RTSP + HTTP clients)
 
 Auth is **not** transport-specific — RTSP, TS-over-HTTP, HLS-pull, and the
@@ -143,10 +168,13 @@ moving on. Single release (multimux minor bump) after P6.
 3. **TS over UDP** (multicast) → `StreamingTsDemux`.
 4. **TS over HTTP** → `StreamingTsDemux`.
 5. **HLS pull** → built as the **`ll-hls-client` crate (#717)**: a sans-IO
-   LL-HLS playback client (playlist parser → blocking-reload scheduler →
-   part-prefetch fetch pipeline → ordered init+media output → sans-IO core +
-   tokio adapter), consuming its emitted init/segments via `Fmp4Demux`/
-   `ts_demux`. Built as its own crate (workspace pattern, like `rtsp-runtime`/
+   LL-HLS playback client (blocking-reload scheduler → part-prefetch fetch
+   pipeline → ordered init+media output → sans-IO core + tokio adapter),
+   consuming its emitted init/segments via `Fmp4Demux`/`ts_demux`. **Slice 1
+   (playlist parsing) is added to `transmux::hls` as the inverse of the
+   existing `to_m3u8()` render — the shared model, not a new one** (see "Shared
+   wire model" above). The client crate holds only the client *engine*
+   (scheduling/fetch/output), reusing transmux for parse + demux. Built as its own crate (workspace pattern, like `rtsp-runtime`/
    `srt-runtime`), then wrapped as a multimux `SampleSource`. **Doubles as the
    #569 golden-gate reference client** — drives the transmux `LlHlsSegmenter`
    origin over loopback to measure sub-second glass-to-glass latency, closing
