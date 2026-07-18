@@ -122,8 +122,17 @@ moving on. Single release (multimux minor bump) after P6.
 2. **raw RTP + SDP** (SDP from config/file) → `rtp_sdp` + `rtp_stream`.
 3. **TS over UDP** (multicast) → `StreamingTsDemux`.
 4. **TS over HTTP** → `StreamingTsDemux`.
-5. **HLS pull** → `ts_demux`/`Fmp4Demux`.
-Each with reconnect (via P0 supervisor), timeouts, bounded buffering.
+5. **HLS pull** → built as the **`ll-hls-client` crate (#717)**: a sans-IO
+   LL-HLS playback client (playlist parser → blocking-reload scheduler →
+   part-prefetch fetch pipeline → ordered init+media output → sans-IO core +
+   tokio adapter), consuming its emitted init/segments via `Fmp4Demux`/
+   `ts_demux`. Built as its own crate (workspace pattern, like `rtsp-runtime`/
+   `srt-runtime`), then wrapped as a multimux `SampleSource`. **Doubles as the
+   #569 golden-gate reference client** — drives the transmux `LlHlsSegmenter`
+   origin over loopback to measure sub-second glass-to-glass latency, closing
+   the origin↔client loop and validating the P2 LL-HLS spec-conformance work.
+Each input adapter gets reconnect (via P0 supervisor), timeouts, bounded
+buffering.
 
 ### P4 — DASH output
 1. `DashOutput` behind the `Output` trait: MPD (`.mpd`) + init/segments from
@@ -166,6 +175,12 @@ Each with reconnect (via P0 supervisor), timeouts, bounded buffering.
 - `SIGTERM` drains cleanly. `/metrics` + `/healthz` present.
 - LL-HLS validator + DASH conformance pass. All gates green. SDP fuzz runs.
 - No secret ever logged. Structured errors. No new parsing in multimux.
+
+## Related issues
+- **#663** — multimux JIT origin (this epic).
+- **#717** — ll-hls-client sans-IO playback client. Built during P3.5 as the
+  HLS-pull input + the #569 golden-gate reference client (see P3).
+- **#569** — player-validated golden gate; #717 becomes its reference client.
 
 ## Non-goals (this effort)
 - Transcoding / bitrate ladder (samples stay opaque; one rendition per input).
