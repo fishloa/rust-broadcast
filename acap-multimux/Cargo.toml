@@ -29,9 +29,13 @@ thiserror = "2"
 log       = "0.4"
 
 # device-only (ACAP SDK Docker): acap-rs crates, git-pinned (unpublished 0.0.0).
-vdo          = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
-axparameter  = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
-acap-logging = { git = "https://github.com/AxisCommunications/acap-rs", rev = "8e58acb8f0617253ad21fb71ac319fea19454a38", optional = true }
+# fishloa/acap-rs fork of upstream rev 8e58acb + one commit (e9a838d) that drops
+# the fw12-only VDO_ERROR_NO_VIDEO diagnostic arm so `vdo` compiles against BOTH
+# the firmware-11 SDK 1.15.1 and firmware-12 SDK 12.1.0 sysroots. Upstream 8e58acb
+# only builds against the fw12 VDO API. See the fork branch `fw11-vdo-compat`.
+vdo          = { git = "https://github.com/fishloa/acap-rs", rev = "e9a838d95ccd63b8ae261f770c0eafccb743f5c8", optional = true }
+axparameter  = { git = "https://github.com/fishloa/acap-rs", rev = "e9a838d95ccd63b8ae261f770c0eafccb743f5c8", optional = true }
+acap-logging = { git = "https://github.com/fishloa/acap-rs", rev = "e9a838d95ccd63b8ae261f770c0eafccb743f5c8", optional = true }
 
 [features]
 default = []
