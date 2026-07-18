@@ -19,7 +19,7 @@ path              = "src/bin/acap-multimux.rs"
 required-features = ["device"]
 
 [dependencies]
-multimux  = "0.2"
+multimux  = "0.2.1" # 0.2.1: LL-HLS preload-hint parts block instead of 404
 transmux  = "0.17"
 tokio     = { version = "1", features = ["rt-multi-thread", "net", "macros", "time", "sync"] }
 axum      = "0.7"
