@@ -140,11 +140,22 @@ impl VdoSource {
             Codec::H265 => VdoFormat::VDO_FORMAT_H265,
         };
 
+        // Force a ~1-second GOP so key frames — and the SPS/PPS/VPS parameter
+        // sets VDO emits ahead of each one, as their own buffers — recur
+        // predictably. Without this, a camera in dynamic-GOP / Zipstream mode
+        // can go many seconds between key frames, so `scan_for_param_sets`
+        // finds no parameter-set run within its bounded window (observed on
+        // ARTPEC-6 / firmware 11, #669). Falls back to 30 if the caller left
+        // framerate at 0 (camera default) rather than forcing a key frame every
+        // frame.
+        let gop_length = if framerate > 0 { framerate } else { 30 };
+
         let stream = StreamBuilder::new()
             .channel(channel)
             .format(format)
             .resolution(Resolution::Exact { width, height })
             .framerate(framerate)
+            .gop_length(gop_length)
             .build()?;
 
         let running = stream.start()?;
