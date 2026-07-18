@@ -129,10 +129,10 @@ impl StreamStore {
     }
 
     /// Close a full segment into the window (evicting the oldest). Its
-    /// in-progress parts move out of `live_parts` into `recent_parts` — still
-    /// fetchable (so an in-flight preload-hint request for the segment's final
-    /// part resolves; see [`Inner::recent_parts`]) but no longer rendered as
-    /// open parts. `recent_parts` is capped like `live_parts`, oldest-first.
+    /// in-progress parts move out of `live_parts` into a bounded `recent_parts`
+    /// buffer — still fetchable (so an in-flight preload-hint request for the
+    /// segment's final part resolves) but no longer rendered as open parts.
+    /// `recent_parts` is capped like `live_parts`, oldest-first.
     pub fn add_segment(&self, seg: SegmentInfo) {
         let mut g = self.inner.lock().unwrap();
         let seq = seg.segment_seq;
@@ -172,9 +172,9 @@ impl StreamStore {
     /// A part's bytes by (segment seq, part index). Checks the in-progress
     /// segment's `live_parts` first, then the just-closed `recent_parts` — the
     /// latter so an LL-HLS client's in-flight preload-hint request for a
-    /// segment's final part still resolves after `add_segment` closed it (see
-    /// [`Inner::recent_parts`]). Parts older than `recent_parts`' bound are no
-    /// longer individually addressable (only the whole segment is).
+    /// segment's final part still resolves after `add_segment` closed it. Parts
+    /// older than the `recent_parts` bound are no longer individually
+    /// addressable (only the whole segment is).
     pub fn part_bytes(&self, seq: u32, part_index: u32) -> Option<Vec<u8>> {
         let g = self.inner.lock().unwrap();
         let matches = |p: &&PartInfo| p.segment_seq == seq && p.part_index == part_index;
