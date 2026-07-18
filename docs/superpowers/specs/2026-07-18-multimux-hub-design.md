@@ -59,6 +59,26 @@ The **segmenter feeds the store once**; each `Output` renders its own view.
 LL-HLS and DASH share the same CMAF init/segments (both are fMP4/CMAF), so the
 store's bytes are reused, not re-muxed per output.
 
+### Shared auth layer (RTSP + HTTP clients)
+
+Auth is **not** transport-specific — RTSP, TS-over-HTTP, HLS-pull, and the
+`ll-hls-client` (#717) all face credentialed origins. So auth logic is shared,
+not re-implemented per client, and **scheme-agnostic**:
+
+- A shared `Credentials` model carrying the scheme:
+  `Basic{user,pass}` · `Digest{user,pass}` · `Bearer{token}` (extensible).
+- A shared challenge→response helper (RFC 7235 `WWW-Authenticate`/
+  `Authorization`; RFC 2326 §14 for RTSP; Bearer per RFC 6750).
+- Consumed by `rtsp-runtime` (already wraps `http-auth` for Basic/Digest —
+  generalize its `Credentials` to include Bearer), the multimux HTTP input
+  adapters, and `ll-hls-client`.
+
+**Placement decision (at P3):** either a small shared crate (`broadcast-auth`)
+or standardize all clients on the `http-auth` crate + a common `Credentials`
+enum. Resolve when the first HTTP client is built; until then, P0.1's RTSP
+URL-userinfo path is the seed to generalize. Credentials come from URL userinfo
+(basic/digest) or explicit config (all schemes, incl. bearer token).
+
 ### Input adapters
 
 Each is a `SampleSource` = a transport source + an existing transmux demux:
