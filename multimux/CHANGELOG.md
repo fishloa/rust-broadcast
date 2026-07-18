@@ -1,6 +1,20 @@
 # Changelog
 
-## [0.2.1] - 2026-07-18
+## [0.2.2] - 2026-07-18
+
+### Fixed
+- **LL-HLS preload-hint parts no longer 404 at every segment boundary.** The
+  segmenter emits a segment's *final* part and closes the segment in the same
+  step; `add_segment` then evicted that segment's parts from `live_parts`
+  immediately — so the final part (exactly the one the `#EXT-X-PRELOAD-HINT`
+  points at) existed for only microseconds, and the in-flight blocking part
+  request that raced the close still 404'd. 0.2.1 made not-yet-produced parts
+  *block*; this makes the just-produced final part *survive*: `add_segment` now
+  moves a closed segment's parts into a bounded `recent_parts` buffer that
+  `part_bytes` also checks, so the hinted final part is served (HTTP 200) after
+  its segment closes instead of 404ing. Eliminates the per-segment 404 spam +
+  the boundary latency bump. Bounded oldest-first like `live_parts`; closed
+  parts are still not rendered in the playlist (the whole segment is).
 
 ### Fixed
 - **LL-HLS preload-hint parts no longer 404.** A request for a Partial Segment

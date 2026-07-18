@@ -432,9 +432,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dynamic_file_part_of_already_closed_segment_404() {
-        // Segment 1 is already closed in make_state(); its parts are no longer
-        // individually addressable, so a part request 404s without blocking.
+    async fn dynamic_file_part_served_from_recent_after_close() {
+        // Segment 2 has live parts .0 and .1; close it. Its final part must
+        // still be served (from recent_parts) — the in-flight preload-hint
+        // request that races the segment close must not 404.
+        let state = make_state();
+        let store = state.streams.get("cam1").unwrap().clone();
+        store.add_segment(seg(2)); // close segment 2, moving its parts to recent_parts
+        let resp = dynamic_file(
+            State(state),
+            Path(("cam1".to_string(), "part-1-2.1.m4s".to_string())),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "a just-closed segment's part must still be served, not 404"
+        );
+        assert_eq!(body_bytes(resp).await, vec![0x11; 4]); // part(2,1): 0x10 + idx(1)
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_part_of_old_segment_404() {
+        // Segment 1 closed in make_state() with no parts recorded and is old
+        // enough to be past the recent-parts retention window, so a request for
+        // one of its parts 404s without blocking (it will never be produced and
+        // isn't individually addressable anymore).
         let state = make_state();
         let resp = dynamic_file(
             State(state),

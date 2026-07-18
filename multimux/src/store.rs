@@ -51,6 +51,15 @@ struct Inner {
     init: Option<Vec<u8>>,
     segments: VecDeque<SegmentInfo>,
     live_parts: Vec<PartInfo>,
+    /// Parts of *just-closed* segments, kept briefly (bounded, oldest-evicted)
+    /// after `add_segment` moves them out of `live_parts`. They are no longer
+    /// rendered in the playlist (the segment is advertised as a whole `seg-…`),
+    /// but stay **fetchable** so an in-flight LL-HLS preload-hint request for a
+    /// segment's *final* part still resolves: the segmenter emits that final
+    /// part and closes the segment in the same pipeline step, so without this
+    /// the part is evicted microseconds after it appears — before the blocked
+    /// part request can wake — and every segment boundary 404s its hinted part.
+    recent_parts: VecDeque<PartInfo>,
     window_segments: usize,
 }
 
@@ -76,6 +85,7 @@ impl StreamStore {
                 init: None,
                 segments: VecDeque::new(),
                 live_parts: Vec::new(),
+                recent_parts: VecDeque::new(),
                 window_segments,
             }),
             target_duration_secs,
@@ -118,11 +128,25 @@ impl StreamStore {
         self.inner.lock().unwrap().live_parts.len()
     }
 
-    /// Close a full segment into the window (evicting the oldest), clearing the
-    /// in-progress parts belonging to it.
+    /// Close a full segment into the window (evicting the oldest). Its
+    /// in-progress parts move out of `live_parts` into a bounded `recent_parts`
+    /// buffer — still fetchable (so an in-flight preload-hint request for the
+    /// segment's final part resolves) but no longer rendered as open parts.
+    /// `recent_parts` is capped like `live_parts`, oldest-first.
     pub fn add_segment(&self, seg: SegmentInfo) {
         let mut g = self.inner.lock().unwrap();
-        g.live_parts.retain(|p| p.segment_seq > seg.segment_seq);
+        let seq = seg.segment_seq;
+        let (closed, still_live): (Vec<PartInfo>, Vec<PartInfo>) =
+            core::mem::take(&mut g.live_parts)
+                .into_iter()
+                .partition(|p| p.segment_seq <= seq);
+        g.live_parts = still_live;
+        for p in closed {
+            g.recent_parts.push_back(p);
+        }
+        while g.recent_parts.len() > self.max_live_parts {
+            g.recent_parts.pop_front();
+        }
         g.segments.push_back(seg);
         while g.segments.len() > g.window_segments {
             g.segments.pop_front();
@@ -145,15 +169,19 @@ impl StreamStore {
             .map(|s| s.bytes.clone())
     }
 
-    /// A part's bytes by (segment seq, part index) — parts live only while their
-    /// segment is in progress, so only `live_parts` is checked (a closed
-    /// segment's parts are no longer individually addressable, only the whole
-    /// segment is).
+    /// A part's bytes by (segment seq, part index). Checks the in-progress
+    /// segment's `live_parts` first, then the just-closed `recent_parts` — the
+    /// latter so an LL-HLS client's in-flight preload-hint request for a
+    /// segment's final part still resolves after `add_segment` closed it. Parts
+    /// older than the `recent_parts` bound are no longer individually
+    /// addressable (only the whole segment is).
     pub fn part_bytes(&self, seq: u32, part_index: u32) -> Option<Vec<u8>> {
         let g = self.inner.lock().unwrap();
+        let matches = |p: &&PartInfo| p.segment_seq == seq && p.part_index == part_index;
         g.live_parts
             .iter()
-            .find(|p| p.segment_seq == seq && p.part_index == part_index)
+            .find(matches)
+            .or_else(|| g.recent_parts.iter().find(matches))
             .map(|p| p.bytes.clone())
     }
 
@@ -337,6 +365,60 @@ mod tests {
         assert!(
             !m.contains("#EXTINF"),
             "no EXTINF for the open segment: {m}"
+        );
+    }
+
+    #[test]
+    fn final_part_fetchable_after_its_segment_closes() {
+        // The segmenter emits a segment's final part and then closes the
+        // segment in the same step. A preload-hint request for that final part
+        // is typically in flight when the close happens, so it must remain
+        // fetchable afterwards (from recent_parts) rather than 404 — the LL-HLS
+        // preload-hint boundary bug.
+        let s = StreamStore::new(4.0, 500, 4);
+        s.set_init(vec![0; 4]);
+        s.add_part(part(1, 0));
+        s.add_part(part(1, 1)); // .1 is this segment's final part
+        s.add_segment(seg(1, 2)); // close segment 1 (moves its parts to recent_parts)
+        assert_eq!(
+            s.part_bytes(1, 1),
+            Some(vec![1; 4]),
+            "final part of a just-closed segment must still be individually fetchable"
+        );
+        assert_eq!(s.part_bytes(1, 0), Some(vec![0; 4]), "earlier parts too");
+        // A genuinely-nonexistent part of the closed segment is still absent.
+        assert_eq!(s.part_bytes(1, 9), None);
+        // Closing does not resurrect parts into the rendered open segment: the
+        // playlist advertises the whole segment, not its parts.
+        let m = s.media_playlist_m3u8(1);
+        assert!(
+            m.contains("seg-1-1.m4s"),
+            "closed segment rendered whole: {m}"
+        );
+        assert!(
+            !m.contains("part-1-1."),
+            "closed parts not rendered as open: {m}"
+        );
+    }
+
+    #[test]
+    fn recent_parts_bounded_across_many_closes() {
+        // Closing many segments must not grow recent_parts unboundedly.
+        let s = StreamStore::new(4.0, 500, 4);
+        s.set_init(vec![0; 4]);
+        let cap = compute_max_live_parts(4.0, 500);
+        for seq in 1..=20u32 {
+            for idx in 0..4u32 {
+                s.add_part(part(seq, idx));
+            }
+            s.add_segment(seg(seq, 4));
+        }
+        // Only the most recent ~cap parts remain individually fetchable; a very
+        // old one has been evicted from recent_parts.
+        assert!(s.part_bytes(1, 0).is_none(), "old closed part evicted");
+        assert!(
+            s.part_bytes(20, 3).is_some(),
+            "most-recent closed part retained (within the {cap}-part bound)"
         );
     }
 
