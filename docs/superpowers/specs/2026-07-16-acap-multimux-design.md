@@ -92,12 +92,17 @@ multimux::SampleSource for VdoSource`.
      v1; auth is the device's).
 
 ### Build / deploy
-- Build in the **Axis ACAP Native SDK Docker** image
-  (`axisecp/acap-native-sdk:12.1.0-{aarch64,armv7hf}`) with our Rust toolchain
-  (≥1.86; acap-rs's 1.85.1 pin is only *their* dev pin — newer Rust compiles
-  their edition-2021 crates). Cross-targets: `aarch64-unknown-linux-gnu`,
+- Build in the **Axis ACAP Native SDK Docker** image. CI builds against both
+  **firmware 11** (SDK `1.15.1-{aarch64,armv7hf}-ubuntu22.04`) and **firmware 12**
+  (SDK `12.1.0-{aarch64,armv7hf}-ubuntu24.04`), producing `.eap`s for each.
+  Rust toolchain ≥1.86 (acap-rs's 1.85.1 pin is only their dev pin — newer Rust
+  compiles their edition-2021 crates). Cross-targets: `aarch64-unknown-linux-gnu`,
   `thumbv7neon-unknown-linux-gnueabihf` (glibc, Yocto sysroots from the SDK
   image). Package with `cargo-acap-build` → `.eap`.
+- **acap-rs pin:** uses `fishloa/acap-rs` fork (rev `e9a838d`) instead of the
+  upstream `AxisCommunications/acap-rs` (rev `8e58acb`). The fork drops a
+  firmware-12-only `VDO_ERROR_NO_VIDEO` diagnostic enum arm so the `vdo` crate
+  compiles against the firmware 11 SDK as well.
 - Deploy to the target camera with `cargo-acap-sdk install/start` over SSH.
 
 ## Constraints
@@ -109,11 +114,12 @@ multimux::SampleSource for VdoSource`.
   (edition 2024, our MSRV), git-deps on acap-rs, version-deps on published
   multimux/transmux, and does NOT participate in the workspace lockstep or the
   `--all-features`/`no_std` workspace gates. Mirrors the `bindings/` pattern.
-- **Target SoCs: ARTPEC-7 / 8 / 9**, supporting **both H.264 and H.265** (both
-  codecs are available across ARTPEC-7–9 per the VDO format matrix; ARTPEC-6 —
-  which lacks H.265 — is out of scope). `VdoSource` builds a `TrackSpec` for
-  either codec: H.264 → `avcC`, H.265 → `hvcC` (transmux's existing
-  `hevc_config`).
+- **Target SoCs: ARTPEC-6 / 7 / 8 / 9**. ARTPEC-6 supports **H.264 only**;
+  ARTPEC-7/8/9 support **both H.264 and H.265** (H.265 encoder not available on
+  ARTPEC-6). `VdoSource` builds a `TrackSpec` for the available codec: H.264 →
+  `avcC`, H.265 → `hvcC` (transmux's existing `hevc_config`). The default config
+  uses H.264, so ARTPEC-6 works out of the box; setting H.265 on ARTPEC-6 will
+  fail at VDO stream open (logged as a pipeline error; the HTTP origin stays up).
 - macOS cannot cross-compile ACAP — all camera builds happen in the SDK Docker.
 
 ## Testing / verification
@@ -126,7 +132,7 @@ multimux::SampleSource for VdoSource`.
   commit them, assert correct `Sample`s) — the VDO *capture* is mocked, the
   *conversion* bites. The origin/store path is already gated in multimux.
 - **Cycle 2 hardware gate (the real "done", per the hard rule)**: cross-build
-  the `.eap`, `cargo-acap-sdk install` to the **target ARTPEC-7/8/9 camera**,
+  the `.eap`, `cargo-acap-sdk install` to the **target ARTPEC-6/7/8/9 camera**,
   start it, and verify end-to-end — a real HLS/LL-HLS player pulls
   `https://<cam>/local/acap-multimux/.../media.m3u8` through the camera's
   reverse-proxy and plays live low-latency video. DONE is not claimed until this
