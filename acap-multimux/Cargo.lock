@@ -1235,9 +1235,9 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7084b26def352c07e23c226cc8a5ee658d5e17fd66b8c0fa0747efbca655c5e"
+checksum = "2c985bebdd1d5ae388c827613e02c88d7a11474fa2a0c638ebd5e88233bb1f71"
 dependencies = [
  "axum",
  "rtsp-runtime",
