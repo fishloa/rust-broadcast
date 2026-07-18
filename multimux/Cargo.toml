@@ -24,6 +24,8 @@ thiserror         = "2"
 url               = "2"
 percent-encoding  = "2"
 tracing           = "0.1"
+metrics           = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 tokio-rustls      = { version = "0.26", optional = true }
 
 [features]

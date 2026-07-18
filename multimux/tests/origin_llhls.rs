@@ -110,7 +110,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
     }
 
     let source = MockSource::new(specs, batches);
-    run_pipeline(store.clone(), 1.0, 500, source)
+    run_pipeline(store.clone(), 1.0, 500, source, "cam")
         .await
         .expect("pipeline runs to completion");
 
@@ -122,7 +122,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
             vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
         ),
     );
-    let app = router(Arc::new(AppState { streams }));
+    let app = router(Arc::new(AppState::new(streams)));
 
     // 1. Media playlist: LL-HLS tags present.
     let resp = app
@@ -211,7 +211,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
             vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
         ),
     );
-    let app = router(Arc::new(AppState { streams }));
+    let app = router(Arc::new(AppState::new(streams)));
 
     // latest_progress() is currently (1, 1): in-progress segment 1 has one
     // part (index 0). Asking for msn=1/part=1 is NOT yet satisfied

@@ -51,6 +51,10 @@ impl SampleSource for crate::source::rtsp::RtspSession {
 /// ready part, and ready segment into `store`, until the source reports
 /// end-of-stream.
 ///
+/// `route` is used only to label the `multimux_parts_produced_total`/
+/// `multimux_segments_produced_total` counters (`crate::prometheus`) bumped
+/// as parts/segments land in `store` — it carries no other behaviour.
+///
 /// # Errors
 /// Propagates a source read error or a segmenter build failure.
 ///
@@ -65,6 +69,7 @@ pub async fn run_pipeline<S: SampleSource>(
     target_duration_secs: f64,
     part_target_ms: u32,
     mut source: S,
+    route: &str,
 ) -> Result<()> {
     let specs = source.track_specs();
     let mut seg = LlHlsSegmenter::with_part_target(
@@ -81,18 +86,26 @@ pub async fn run_pipeline<S: SampleSource>(
         }
         for part in seg.take_ready_parts() {
             store.add_part(part);
+            metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
+                .increment(1);
         }
         for segment in seg.take_ready_segments() {
             store.add_segment(segment);
+            metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
+                .increment(1);
         }
     }
 
     seg.flush()?;
     for part in seg.take_ready_parts() {
         store.add_part(part);
+        metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
+            .increment(1);
     }
     for segment in seg.take_ready_segments() {
         store.add_segment(segment);
+        metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
+            .increment(1);
     }
     Ok(())
 }
@@ -182,7 +195,7 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 
@@ -199,7 +212,7 @@ mod tests {
         let store = Arc::new(MediaStore::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
         let source = MockSource::new(specs, vec![Vec::new(), Vec::new()]);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline tolerates empty batches");
         assert!(store.init_bytes().is_some());
@@ -229,7 +242,7 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 

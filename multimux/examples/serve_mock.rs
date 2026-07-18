@@ -79,16 +79,22 @@ async fn main() {
         WINDOW_SEGMENTS,
     ));
     let source = MockSource::new(specs, batches);
-    run_pipeline(store.clone(), TARGET_DURATION_SECS, PART_TARGET_MS, source)
-        .await
-        .expect("mock pipeline runs to completion");
+    run_pipeline(
+        store.clone(),
+        TARGET_DURATION_SECS,
+        PART_TARGET_MS,
+        source,
+        STREAM_NAME,
+    )
+    .await
+    .expect("mock pipeline runs to completion");
 
     let mut streams = HashMap::new();
     streams.insert(
         STREAM_NAME.to_string(),
         (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
     );
-    let app = router(Arc::new(AppState { streams }));
+    let app = router(Arc::new(AppState::new(streams)));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await

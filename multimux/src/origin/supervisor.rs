@@ -119,6 +119,29 @@ impl Backoff {
     }
 }
 
+/// Mirrors `state` into the [`crate::prometheus::ROUTE_UP`] gauge for `name`:
+/// 1.0 while `state` is [`HealthState::Live`], 0.0 otherwise. Called
+/// alongside every `store.set_health(..)` in [`supervise`] — this is the one
+/// place that has both the route's name (for the label) and every health
+/// transition, since [`MediaStore`] itself doesn't carry its own route name.
+fn record_route_up(name: &str, state: HealthState) {
+    let up = if matches!(state, HealthState::Live) {
+        1.0
+    } else {
+        0.0
+    };
+    metrics::gauge!(crate::prometheus::ROUTE_UP, "route" => name.to_string()).set(up);
+}
+
+/// Bumps [`crate::prometheus::SOURCE_RECONNECTS_TOTAL`] for `name`: called
+/// every time [`supervise`]'s loop is about to retry after losing its
+/// connection (a failed `connect()`, or a `run_pipeline` that returned after
+/// having been live) — i.e. every transition into [`HealthState::Reconnecting`].
+fn record_reconnect(name: &str) {
+    metrics::counter!(crate::prometheus::SOURCE_RECONNECTS_TOTAL, "route" => name.to_string())
+        .increment(1);
+}
+
 /// Runs one route's supervised ingest loop until `shutdown` fires:
 ///
 /// ```text
@@ -163,6 +186,7 @@ pub async fn supervise<C: SourceConnector>(
 ) {
     tracing::info!("connecting");
     store.set_health(HealthState::Connecting);
+    record_route_up(&name, HealthState::Connecting);
     let mut attempt: u64 = 0;
 
     loop {
@@ -175,18 +199,29 @@ pub async fn supervise<C: SourceConnector>(
                 attempt = 0;
                 tracing::info!("connected, ingest live");
                 store.set_health(HealthState::Live);
+                record_route_up(&name, HealthState::Live);
                 backoff.reset();
-                if let Err(e) =
-                    run_pipeline(store.clone(), target_duration_secs, part_target_ms, source).await
+                if let Err(e) = run_pipeline(
+                    store.clone(),
+                    target_duration_secs,
+                    part_target_ms,
+                    source,
+                    &name,
+                )
+                .await
                 {
                     tracing::warn!(error = %e, "pipeline stopped");
                 }
                 store.set_health(HealthState::Reconnecting);
+                record_route_up(&name, HealthState::Reconnecting);
+                record_reconnect(&name);
             }
             Err(e) => {
                 attempt += 1;
                 tracing::warn!(error = %e, attempt, "failed to connect");
                 store.set_health(HealthState::Reconnecting);
+                record_route_up(&name, HealthState::Reconnecting);
+                record_reconnect(&name);
             }
         }
 

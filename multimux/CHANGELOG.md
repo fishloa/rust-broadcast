@@ -49,6 +49,33 @@
     (`tracing-subscriber` `fmt` + `EnvFilter`, `RUST_LOG`-overridable,
     default `info`); the CLI's own top-level fatal-error report stays a
     plain `eprintln!` so it's never swallowed by a log filter.
+- **Prometheus metrics + health/readiness endpoints** (issue #663, P1c):
+  - New `prometheus` module: installs a single process-wide
+    `metrics-exporter-prometheus` recorder (idempotent — safe to call from
+    every `AppState::new`, including many tests sharing one process) and
+    renders its snapshot for `GET /metrics`.
+  - Metrics recorded throughout the crate via the `metrics` facade:
+    `multimux_route_up` (gauge, `route`; mirrors `HealthState` — 1.0 while
+    `Live`), `multimux_source_reconnects_total` (counter, `route`; bumped by
+    `origin::supervisor::supervise` on each `Reconnecting` transition),
+    `multimux_segments_produced_total`/`multimux_parts_produced_total`
+    (counters, `route`; bumped in `pipeline::run_pipeline`, which now takes a
+    `route: &str` parameter for this label),
+    `multimux_active_blocking_requests` (gauge; inc/dec around
+    `output::llhls`'s blocking `wait_for_progress`/`wait_for_part` waits via
+    an RAII guard), and `multimux_http_requests_total`/
+    `multimux_http_request_duration_seconds`/`multimux_bytes_served_total`
+    (labels `route`, `path`, and `status` for the requests counter; recorded
+    by a new `origin::router` global middleware layer for every request,
+    root endpoints included). Cardinality is bounded on purpose: `route` is a
+    configured stream name or `"unknown"`, `path` is one of a small fixed set
+    of kinds (`playlist`/`segment`/`part`/`init`/`metrics`/`health`/`other`).
+  - `GET /healthz` (liveness, always 200) and `GET /readyz` (readiness: 200
+    once at least one configured route is `Live`, 503 otherwise) mounted at
+    the origin root alongside `/metrics`, above the per-stream `/{stream}/`
+    nests.
+  - `origin::AppState` gained a `metrics_handle` field and an `AppState::new`
+    constructor (replacing the old bare struct literal at every call site).
 
 ## [0.2.2] - 2026-07-18
 

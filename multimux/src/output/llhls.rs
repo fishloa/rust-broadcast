@@ -169,11 +169,32 @@ pub struct BlockingReloadQuery {
     pub hls_part: Option<u32>,
 }
 
+/// RAII guard bumping/dropping [`crate::prometheus::ACTIVE_BLOCKING_REQUESTS`]
+/// for the lifetime of a blocking LL-HLS wait ([`wait_for_progress`]/
+/// [`wait_for_part`]) — incremented on construction, decremented on drop, so
+/// the gauge stays accurate even if the awaited future is itself dropped
+/// (e.g. the client disconnects mid-wait), not just on a normal return.
+struct BlockingRequestGuard;
+
+impl BlockingRequestGuard {
+    fn new() -> Self {
+        metrics::gauge!(crate::prometheus::ACTIVE_BLOCKING_REQUESTS).increment(1.0);
+        BlockingRequestGuard
+    }
+}
+
+impl Drop for BlockingRequestGuard {
+    fn drop(&mut self) {
+        metrics::gauge!(crate::prometheus::ACTIVE_BLOCKING_REQUESTS).decrement(1.0);
+    }
+}
+
 /// Block until `store`'s in-progress segment/part reaches at least
 /// `(msn, part)`, or [`BLOCKING_RELOAD_TIMEOUT`] elapses. Never hangs
 /// indefinitely and never errors — on timeout (or a closed watch channel) it
 /// simply returns, and the caller renders the playlist as it currently is.
 async fn wait_for_progress(store: &MediaStore, msn: u64, part: u32) {
+    let _guard = BlockingRequestGuard::new();
     let mut rx = store.subscribe();
     let wait = async {
         loop {
@@ -204,6 +225,7 @@ async fn wait_for_progress(store: &MediaStore, msn: u64, part: u32) {
 /// "next part" is never produced (the segment closed instead) — a legitimate
 /// 404 the client answers by fetching the next segment/part.
 async fn wait_for_part(store: &MediaStore, seq: u32, idx: u32) -> Option<Vec<u8>> {
+    let _guard = BlockingRequestGuard::new();
     let mut rx = store.subscribe();
     let wait = async {
         loop {
