@@ -22,8 +22,9 @@ const CHANNEL_STEP: u8 = 2;
 /// Parse the DESCRIBE SDP body into per-track init, assigning interleaved
 /// channels 0,2,4,… in media order.
 pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
-    let session =
-        Session::parse(sdp).map_err(|e| MultimuxError::Source(format!("sdp parse: {e}")))?;
+    let session = Session::parse(sdp).map_err(|e| MultimuxError::Sdp {
+        reason: format!("parse: {e}"),
+    })?;
     let mut tracks = Vec::new();
     let mut track_id = 1u32;
     let mut channel = 0u8;
@@ -41,8 +42,9 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
 
         let (kind, config): (RtpMediaKind, CodecConfig) = match media.media.as_str() {
             "video" => {
-                let fmtp =
-                    fmtp.ok_or_else(|| MultimuxError::Source("video media missing fmtp".into()))?;
+                let fmtp = fmtp.ok_or_else(|| MultimuxError::Sdp {
+                    reason: "video media missing fmtp".into(),
+                })?;
                 let avc = avc_config_from_fmtp(fmtp)?;
                 (
                     RtpMediaKind::H264,
@@ -54,14 +56,15 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
                 )
             }
             "audio" => {
-                let fmtp =
-                    fmtp.ok_or_else(|| MultimuxError::Source("audio media missing fmtp".into()))?;
+                let fmtp = fmtp.ok_or_else(|| MultimuxError::Sdp {
+                    reason: "audio media missing fmtp".into(),
+                })?;
                 (RtpMediaKind::Aac, aac_config_from_fmtp(fmtp)?)
             }
             other => {
-                return Err(MultimuxError::Source(format!(
-                    "unsupported media {other:?}"
-                )));
+                return Err(MultimuxError::Sdp {
+                    reason: format!("unsupported media {other:?}"),
+                });
             }
         };
         tracks.push(TrackInit {
@@ -76,7 +79,9 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
         channel = channel.saturating_add(CHANNEL_STEP);
     }
     if tracks.is_empty() {
-        return Err(MultimuxError::Source("SDP has no supported media".into()));
+        return Err(MultimuxError::Sdp {
+            reason: "SDP has no supported media".into(),
+        });
     }
     Ok(tracks)
 }

@@ -50,10 +50,21 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
 }
 
 /// An RTSP stream to pull: a name (for logging/metrics) plus its source URL.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RtspSource {
     name: String,
     url: String,
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
+/// camera's `user:pass@` userinfo, so it must never render verbatim.
+impl std::fmt::Debug for RtspSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RtspSource")
+            .field("name", &self.name)
+            .field("url", &crate::redact::redact_url(&self.url))
+            .finish()
+    }
 }
 
 impl RtspSource {
@@ -70,21 +81,26 @@ impl RtspSource {
     /// `(2i, 2i+1)` per the SDP's media order), and PLAYs — returning a live
     /// session ready for [`RtspSession::next_samples`].
     pub async fn connect(&self) -> Result<RtspSession> {
-        let base_url = Url::parse(&self.url)
-            .map_err(|e| MultimuxError::Source(format!("bad rtsp(s) URL {:?}: {e}", self.url)))?;
+        let base_url = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
+            reason: format!(
+                "bad rtsp(s) URL {}: {e}",
+                crate::redact::redact_url(&self.url)
+            ),
+        })?;
         // Pull credentials from the URL's userinfo (RFC 3986 §3.2.1), if any,
         // then strip it: RTSP request URIs (DESCRIBE/SETUP/PLAY) must not
         // carry `user:pass@`, and stripping keeps secrets out of logs/request
-        // lines. `base_url` (still carrying userinfo) is only used below to
-        // derive the connect address / SNI name, both of which ignore it.
+        // lines. Every subsequent use of the URL — connect address, SNI name,
+        // scheme check, and any error message that embeds it — uses
+        // `request_url` (userinfo already stripped), never `base_url`.
         let credentials = extract_credentials(&base_url)?;
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 
-        let is_tls = scheme_is_tls(&base_url)?;
-        let addr = connect_addr(&base_url)?;
+        let is_tls = scheme_is_tls(&request_url)?;
+        let addr = connect_addr(&request_url)?;
         let mut client = if is_tls {
-            let server_name = sni_server_name(&base_url)?;
+            let server_name = sni_server_name(&request_url)?;
             connect_tls_client(&addr, &server_name, credentials).await?
         } else {
             connect_plain_client(&addr, credentials).await?
@@ -93,7 +109,7 @@ impl RtspSource {
         let describe = client
             .describe(&request_uri)
             .await
-            .map_err(source_err("DESCRIBE"))?;
+            .map_err(protocol_err("DESCRIBE"))?;
         let sdp = expect_ok_response(describe, "DESCRIBE")?;
         let mut tracks = parse_sdp_tracks(&sdp)?;
 
@@ -106,7 +122,7 @@ impl RtspSource {
             let setup = client
                 .setup(&uri, &transport)
                 .await
-                .map_err(source_err("SETUP"))?;
+                .map_err(protocol_err("SETUP"))?;
             expect_ok_response(setup, "SETUP")?;
 
             // The server must negotiate TCP-interleaved transport. Extract the
@@ -117,28 +133,32 @@ impl RtspSource {
                 .session()
                 .negotiated_transport()
                 .and_then(Transport::first)
-                .ok_or_else(|| {
-                    MultimuxError::Source(format!(
-                        "SETUP {}: server did not provide negotiated transport",
+                .ok_or_else(|| MultimuxError::Protocol {
+                    phase: "SETUP",
+                    reason: format!(
+                        "track {}: server did not provide negotiated transport",
                         track.track_id
-                    ))
+                    ),
                 })?;
 
             // Ensure the negotiated transport is TCP-interleaved.
             if let Some(channel) = interleaved_channel(spec) {
                 track.channel = channel;
             } else {
-                return Err(MultimuxError::Source(format!(
-                    "SETUP {}: server did not negotiate interleaved TCP transport",
-                    track.track_id
-                )));
+                return Err(MultimuxError::Protocol {
+                    phase: "SETUP",
+                    reason: format!(
+                        "track {}: server did not negotiate interleaved TCP transport",
+                        track.track_id
+                    ),
+                });
             }
         }
 
         let play = client
             .play(&request_uri)
             .await
-            .map_err(source_err("PLAY"))?;
+            .map_err(protocol_err("PLAY"))?;
         expect_ok_response(play, "PLAY")?;
 
         let depacketizer = RtpStreamDepacketizer::new(
@@ -188,7 +208,7 @@ impl RtspSession {
             .client
             .recv_interleaved()
             .await
-            .map_err(source_err("recv"))?;
+            .map_err(protocol_err("recv"))?;
         let Some(event) = event else {
             return Ok(None);
         };
@@ -198,7 +218,12 @@ impl RtspSession {
         let Some(track_id) = route_channel(channel, &self.tracks) else {
             return Ok(Some(Vec::new()));
         };
-        let samples = self.depacketizer.push(track_id, &data)?;
+        let samples =
+            self.depacketizer
+                .push(track_id, &data)
+                .map_err(|e| MultimuxError::Depay {
+                    reason: e.to_string(),
+                })?;
         Ok(Some(samples.into_iter().map(|s| (track_id, s)).collect()))
     }
 }
@@ -216,7 +241,9 @@ fn resolve_control(base_url: &Url, control: Option<&str>) -> Result<String> {
         Some(c) => base_url
             .join(c)
             .map(|u| u.to_string())
-            .map_err(|e| MultimuxError::Source(format!("bad a=control {c:?}: {e}"))),
+            .map_err(|e| MultimuxError::Sdp {
+                reason: format!("bad a=control {c:?}: {e}"),
+            }),
     }
 }
 
@@ -239,24 +266,45 @@ fn extract_credentials(url: &Url) -> Result<Option<Credentials>> {
 }
 
 /// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8.
+///
+/// The error message deliberately does **not** echo `s` — it is (part of) a
+/// still percent-encoded credential, and even encoded it must never appear
+/// in an error/log.
 fn percent_decode(s: &str) -> Result<String> {
     percent_encoding::percent_decode_str(s)
         .decode_utf8()
         .map(|c| c.into_owned())
-        .map_err(|e| MultimuxError::Source(format!("invalid percent-encoded userinfo {s:?}: {e}")))
+        .map_err(|e| MultimuxError::Auth {
+            reason: format!("invalid percent-encoded userinfo: {e}"),
+        })
 }
 
 /// Returns a copy of `url` with its userinfo (username/password) removed, so
 /// it is safe to use in RTSP request lines (DESCRIBE/SETUP/PLAY must not
 /// carry `user:pass@`) and as the base for `a=control` resolution.
+///
+/// `url` here still carries the userinfo being stripped, so on the (very
+/// rare — `url::Url::set_username`/`set_password` only fail for
+/// cannot-be-a-base URLs, which an `rtsp(s)://` URL never is) error path the
+/// message must redact it rather than `Display`ing `url` verbatim.
 fn strip_userinfo(url: &Url) -> Result<Url> {
     let mut clean = url.clone();
-    clean.set_username("").map_err(|()| {
-        MultimuxError::Source(format!("failed to strip username from rtsp(s) URL {url}"))
-    })?;
-    clean.set_password(None).map_err(|()| {
-        MultimuxError::Source(format!("failed to strip password from rtsp(s) URL {url}"))
-    })?;
+    clean
+        .set_username("")
+        .map_err(|()| MultimuxError::Connect {
+            reason: format!(
+                "failed to strip username from rtsp(s) URL {}",
+                crate::redact::redact_url(url.as_str())
+            ),
+        })?;
+    clean
+        .set_password(None)
+        .map_err(|()| MultimuxError::Connect {
+            reason: format!(
+                "failed to strip password from rtsp(s) URL {}",
+                crate::redact::redact_url(url.as_str())
+            ),
+        })?;
     Ok(clean)
 }
 
@@ -273,32 +321,59 @@ fn connect_addr(url: &Url) -> Result<String> {
     } else {
         RTSP_DEFAULT_PORT
     };
-    let host = url
-        .host_str()
-        .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
+    // Safe to `Display` `url` directly here: every caller passes the
+    // already userinfo-stripped `request_url` (see `RtspSource::connect`),
+    // never the raw credentialed `base_url`.
+    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
+        reason: format!("rtsp(s) URL has no host: {url}"),
+    })?;
     let port = url.port().unwrap_or(default_port);
     Ok(format!("{host}:{port}"))
 }
 
 /// Unwraps a `ClientEvent::Response` with a success status into its body;
-/// anything else (non-2xx status, or an unexpected event shape) becomes a
-/// `MultimuxError::Source` naming which request failed.
+/// anything else (non-2xx status, or an unexpected event shape) becomes an
+/// error naming which request failed. A `401`/`403` status maps to
+/// [`MultimuxError::Auth`] (a distinct, matchable kind from a generic
+/// protocol failure); any other non-success status or unexpected event shape
+/// maps to [`MultimuxError::Protocol`].
 fn expect_ok_response(event: ClientEvent, what: &'static str) -> Result<Vec<u8>> {
+    use rtsp_runtime::StatusCode;
     match event {
         ClientEvent::Response { status, body, .. } if status.is_success() => Ok(body),
-        ClientEvent::Response { status, .. } => Err(MultimuxError::Source(format!(
-            "{what}: non-success status {status}"
-        ))),
-        other => Err(MultimuxError::Source(format!(
-            "{what}: unexpected event {other:?}"
-        ))),
+        ClientEvent::Response {
+            status: status @ (StatusCode::Unauthorized | StatusCode::Forbidden),
+            ..
+        } => Err(MultimuxError::Auth {
+            reason: format!("{what}: {status}"),
+        }),
+        ClientEvent::Response { status, .. } => Err(MultimuxError::Protocol {
+            phase: what,
+            reason: format!("non-success status {status}"),
+        }),
+        other => Err(MultimuxError::Protocol {
+            phase: what,
+            reason: format!("unexpected event {other:?}"),
+        }),
     }
 }
 
-/// Maps an `rtsp-runtime` error into `MultimuxError::Source`, naming which
-/// step failed.
-fn source_err(what: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> MultimuxError {
-    move |e| MultimuxError::Source(format!("{what}: {e}"))
+/// Maps an `rtsp-runtime` error from an RTSP request/response phase
+/// (DESCRIBE/SETUP/PLAY/recv) into [`MultimuxError::Protocol`], naming which
+/// phase failed.
+fn protocol_err(phase: &'static str) -> impl Fn(rtsp_runtime::error::Error) -> MultimuxError {
+    move |e| MultimuxError::Protocol {
+        phase,
+        reason: e.to_string(),
+    }
+}
+
+/// Maps an `rtsp-runtime` error from the transport-connect step (TCP/TLS)
+/// into [`MultimuxError::Connect`].
+fn connect_err(e: rtsp_runtime::error::Error) -> MultimuxError {
+    MultimuxError::Connect {
+        reason: e.to_string(),
+    }
 }
 
 /// Extracts the RTP channel from a transport spec if it is TCP-interleaved,
@@ -319,9 +394,9 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
     match url.scheme() {
         "rtsp" => Ok(false),
         "rtsps" => Ok(true),
-        other => Err(MultimuxError::Source(format!(
-            "not an rtsp(s) URL scheme: {other}"
-        ))),
+        other => Err(MultimuxError::Connect {
+            reason: format!("not an rtsp(s) URL scheme: {other}"),
+        }),
     }
 }
 
@@ -332,9 +407,11 @@ fn scheme_is_tls(url: &Url) -> Result<bool> {
 /// brackets. This function extracts the host and strips leading `[` and
 /// trailing `]` if present, leaving hostnames and IPv4 addresses unchanged.
 fn sni_server_name(url: &Url) -> Result<String> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| MultimuxError::Source(format!("rtsp(s) URL has no host: {url}")))?;
+    // Safe to `Display` `url` directly: called only with the already
+    // userinfo-stripped `request_url` (see `RtspSource::connect`).
+    let host = url.host_str().ok_or_else(|| MultimuxError::Connect {
+        reason: format!("rtsp(s) URL has no host: {url}"),
+    })?;
     // Strip brackets from IPv6 literals: "[2001:db8::1]" -> "2001:db8::1".
     // Hostnames and IPv4 are unchanged.
     let sni = host
@@ -408,7 +485,7 @@ async fn connect_plain_client(addr: &str, credentials: Option<Credentials>) -> R
     let session = session_with_credentials(credentials);
     let client = AsyncRtspClient::<TcpStream>::connect_with(addr, session)
         .await
-        .map_err(source_err("connect"))?;
+        .map_err(connect_err)?;
     Ok(RtspClient::Plain(client))
 }
 
@@ -426,9 +503,9 @@ fn session_with_credentials(credentials: Option<Credentials>) -> ClientSession {
 /// store ([`rtsp_runtime::io::default_tls_client_config`]).
 ///
 /// Only available when this crate's `tls` feature is enabled; otherwise
-/// returns a `MultimuxError::Source` naming the missing feature (rather than
-/// failing to compile), so callers get a clear runtime message if `tls` was
-/// deliberately disabled.
+/// returns a [`MultimuxError::Connect`] naming the missing feature (rather
+/// than failing to compile), so callers get a clear runtime message if `tls`
+/// was deliberately disabled.
 #[cfg(feature = "tls")]
 async fn connect_tls_client(
     addr: &str,
@@ -444,7 +521,7 @@ async fn connect_tls_client(
         session,
     )
     .await
-    .map_err(source_err("connect"))?;
+    .map_err(connect_err)?;
     Ok(RtspClient::Tls(client))
 }
 
@@ -454,9 +531,11 @@ async fn connect_tls_client(
     _server_name: &str,
     _credentials: Option<Credentials>,
 ) -> Result<RtspClient> {
-    Err(MultimuxError::Source(format!(
-        "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
-    )))
+    Err(MultimuxError::Connect {
+        reason: format!(
+            "rtsps:// (TLS) requires multimux's `tls` feature; cannot connect to {addr}"
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -609,6 +688,42 @@ mod tests {
     fn rtsp_source_new_and_stream_name() {
         let src = RtspSource::new("cam1", "rtsp://cam.local/stream");
         assert_eq!(src.stream_name(), "cam1");
+    }
+
+    /// Biting test: an `RtspSource`'s credential must never appear in its
+    /// `Debug` output. Fails immediately if the manual `Debug` impl is
+    /// reverted to `#[derive(Debug)]`, which would render `url` (and its
+    /// `user:pass@`) verbatim.
+    #[test]
+    fn rtsp_source_debug_redacts_credentials() {
+        let src = RtspSource::new("cam1", "rtsp://user:secretpass@host/s");
+        let debug = format!("{src:?}");
+        assert!(!debug.contains("user"), "debug leaked username: {debug}");
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked password: {debug}"
+        );
+        assert!(debug.contains("***@host"), "debug: {debug}");
+    }
+
+    /// Biting test: the connect-time error path for a URL that fails
+    /// `Url::parse` must not leak the raw credentialed string — this drives
+    /// `RtspSource::connect`'s very first fallible step (before any real I/O)
+    /// with a URL malformed enough to fail parsing while still carrying
+    /// `user:pass@`.
+    #[tokio::test]
+    async fn connect_bad_url_error_redacts_credentials() {
+        // A userinfo-bearing URL with an invalid (space-containing, thus
+        // unparsable) host — fails `Url::parse` before any network I/O.
+        let src = RtspSource::new("cam1", "rtsp://user:secretpass@bad host/s");
+        // Not `.expect_err()`/`.unwrap_err()`: both require `RtspSession`
+        // (the `Ok` type) to implement `Debug`, which it doesn't.
+        let msg = match src.connect().await {
+            Ok(_) => panic!("bad host must fail to parse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(!msg.contains("user"), "error leaked username: {msg}");
+        assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
     }
 
     #[test]

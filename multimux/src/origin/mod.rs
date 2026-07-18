@@ -81,11 +81,17 @@ pub fn router(state: Arc<AppState>) -> Router {
 pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     config.validate()?;
 
+    tracing::info!(
+        bind = %config.bind,
+        routes = config.routes.len(),
+        "multimux origin starting"
+    );
+
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
     let target_duration_secs = config.target_duration_secs;
     let part_target_ms = config.part_target_ms;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let mut supervisor_handles = Vec::new();
+    let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
     for route in &config.routes {
         let store = Arc::new(MediaStore::new(
@@ -106,16 +112,17 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
             target_duration_secs,
             part_target_ms,
             Backoff::production_default(),
-            name,
+            name.clone(),
             shutdown_rx,
         ));
-        supervisor_handles.push(handle);
+        supervisor_handles.push((name, handle));
     }
 
     let state = Arc::new(AppState { streams });
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
     let shutdown_future = async move {
         shutdown_signal().await;
+        tracing::info!("shutdown signal received, draining");
         // Best-effort: only fails if every receiver (every supervisor task)
         // has already exited, which just means there's nothing left to
         // notify.
@@ -130,12 +137,16 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
     // fired, or because the accept loop itself errored out) — join every
     // route's supervisor task in orderly fashion, aborting any stragglers
     // rather than leaving them running detached past `serve`'s return.
-    for handle in supervisor_handles {
+    for (name, handle) in supervisor_handles {
         let abort_handle = handle.abort_handle();
         if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, handle)
             .await
             .is_err()
         {
+            tracing::warn!(
+                route = %name,
+                "supervisor task did not exit within the shutdown grace period; aborting"
+            );
             abort_handle.abort();
         }
     }

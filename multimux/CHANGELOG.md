@@ -26,6 +26,29 @@
   supervise loop; `serve` joins each supervisor task (aborting one that
   doesn't return within a short grace period) before returning `Ok(())`,
   rather than leaving ingest tasks running detached past shutdown.
+- **Structured errors + secret redaction + tracing** (issue #663, P1a):
+  - `error::MultimuxError` replaces the stringly `Config(String)`/
+    `Source(String)` variants with field-carrying `thiserror` variants
+    (`ConfigRead`/`ConfigParse`/`ConfigInvalid`/`Connect`/`Protocol`/`Sdp`/
+    `Auth`/`Depay`, plus the existing `Transmux`/`Io`), so callers can match
+    on failure *kind* instead of parsing a string, following the
+    `rtsp-runtime` convention.
+  - **Secret redaction**: an RTSP source URL's `user:pass@` userinfo can no
+    longer leak into an error message, `Debug` output, or a log line.
+    `config::Route` and `source::rtsp::RtspSource` now have manual `Debug`
+    impls that redact `rtsp_url`/`url` to `***@host`; every connect-time
+    error path (bad URL parse, connect/TLS/SNI failure, userinfo-stripping
+    failure) redacts or uses the already userinfo-stripped URL rather than
+    the raw credentialed one.
+  - `tracing` throughout: `origin::supervisor::supervise` is
+    `#[tracing::instrument]`ed per route (connect/live `info!`, disconnect/
+    reconnect `warn!` with backoff delay + attempt count, health
+    transitions logged) and `origin::serve` logs startup/shutdown/aborted
+    supervisor tasks, replacing the ingest supervisor's `eprintln!`s. The
+    library only emits events — `multimux-cli` owns subscriber init
+    (`tracing-subscriber` `fmt` + `EnvFilter`, `RUST_LOG`-overridable,
+    default `info`); the CLI's own top-level fatal-error report stays a
+    plain `eprintln!` so it's never swallowed by a log filter.
 
 ## [0.2.2] - 2026-07-18
 

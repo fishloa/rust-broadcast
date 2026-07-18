@@ -66,10 +66,9 @@ fn build_config(cli: Cli) -> Result<Config> {
     if let Some(path) = cli.config {
         return Config::from_json_file(&path);
     }
-    let rtsp_url = cli.rtsp.ok_or_else(|| {
-        MultimuxError::Config(
-            "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
-        )
+    let rtsp_url = cli.rtsp.ok_or_else(|| MultimuxError::ConfigInvalid {
+        field: "rtsp",
+        reason: "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
     })?;
     // clap's `requires = "name"` on `--rtsp` guarantees `cli.name` is present
     // whenever `cli.rtsp` is.
@@ -88,8 +87,25 @@ fn build_config(cli: Cli) -> Result<Config> {
     Ok(config)
 }
 
+/// Initializes the process-wide `tracing` subscriber: human-readable output
+/// on stderr, filtered by `RUST_LOG` (`EnvFilter` syntax, e.g.
+/// `RUST_LOG=multimux=debug`), defaulting to `info` when unset. Only the
+/// binary does this — the `multimux` library only ever emits `tracing`
+/// events, never installs a subscriber itself, so it composes into whatever
+/// host process embeds it.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 #[tokio::main]
 async fn main() {
+    init_tracing();
     if let Err(e) = run().await {
         eprintln!("error: {e}");
         std::process::exit(1);

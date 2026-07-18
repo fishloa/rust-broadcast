@@ -11,6 +11,12 @@
 //! client/output can (eventually) see that a route stopped producing new
 //! media rather than silently going stale.
 //!
+//! [`supervise`] is `#[tracing::instrument]`ed with the route name as a
+//! `tracing` span field, so every event it emits (connect success/failure,
+//! pipeline stop, backoff) is attributed to its route without repeating the
+//! name in every message. Never logs the source URL/credentials — see
+//! [`supervise`]'s own doc comment.
+//!
 //! Reconnecting needs to re-run the "connect" step, so it's abstracted
 //! behind [`SourceConnector`] rather than baked in as a one-shot
 //! `Result<Session>` — this is also what makes the loop unit-testable
@@ -141,6 +147,11 @@ impl Backoff {
 /// sources like cameras come back. [`HealthState::Failed`] is reserved for
 /// an unrecoverable error class future callers may want to distinguish; the
 /// loop here does not currently produce it.
+#[tracing::instrument(
+    name = "route",
+    skip(connector, store, target_duration_secs, part_target_ms, backoff, name, shutdown),
+    fields(route = %name)
+)]
 pub async fn supervise<C: SourceConnector>(
     connector: C,
     store: Arc<MediaStore>,
@@ -150,7 +161,9 @@ pub async fn supervise<C: SourceConnector>(
     name: String,
     mut shutdown: watch::Receiver<bool>,
 ) {
+    tracing::info!("connecting");
     store.set_health(HealthState::Connecting);
+    let mut attempt: u64 = 0;
 
     loop {
         if *shutdown.borrow() {
@@ -159,17 +172,20 @@ pub async fn supervise<C: SourceConnector>(
 
         match connector.connect().await {
             Ok(source) => {
+                attempt = 0;
+                tracing::info!("connected, ingest live");
                 store.set_health(HealthState::Live);
                 backoff.reset();
                 if let Err(e) =
                     run_pipeline(store.clone(), target_duration_secs, part_target_ms, source).await
                 {
-                    eprintln!("multimux: route {name:?} pipeline stopped: {e}");
+                    tracing::warn!(error = %e, "pipeline stopped");
                 }
                 store.set_health(HealthState::Reconnecting);
             }
             Err(e) => {
-                eprintln!("multimux: route {name:?} failed to connect: {e}");
+                attempt += 1;
+                tracing::warn!(error = %e, attempt, "failed to connect");
                 store.set_health(HealthState::Reconnecting);
             }
         }
@@ -179,6 +195,11 @@ pub async fn supervise<C: SourceConnector>(
         }
 
         let delay = backoff.next();
+        tracing::warn!(
+            delay_ms = delay.as_millis() as u64,
+            attempt,
+            "reconnecting after backoff"
+        );
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
             _ = shutdown.changed() => {
@@ -248,9 +269,9 @@ mod tests {
         async fn connect(&self) -> crate::Result<MockSource> {
             let attempt = self.connect_count.fetch_add(1, Ordering::SeqCst);
             if attempt < self.fail_times {
-                return Err(crate::MultimuxError::Source(
-                    "flaky connector: simulated failure".into(),
-                ));
+                return Err(crate::MultimuxError::Connect {
+                    reason: "flaky connector: simulated failure".into(),
+                });
             }
             Ok(MockSource::new(self.specs.clone(), self.batches.clone()))
         }
@@ -300,9 +321,9 @@ mod tests {
         async fn connect(&self) -> crate::Result<PacedSource> {
             let attempt = self.connect_count.fetch_add(1, Ordering::SeqCst);
             if attempt < self.fail_times {
-                return Err(crate::MultimuxError::Source(
-                    "flaky connector: simulated failure".into(),
-                ));
+                return Err(crate::MultimuxError::Connect {
+                    reason: "flaky connector: simulated failure".into(),
+                });
             }
             Ok(PacedSource {
                 specs: self.specs.clone(),

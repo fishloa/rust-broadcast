@@ -8,12 +8,26 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// One input→output route: an RTSP source URL served under `name`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Route {
     /// Served stream name (URL path segment).
     pub name: String,
-    /// RTSP source URL to pull.
+    /// RTSP source URL to pull. May carry `user:pass@` userinfo — see
+    /// [`Route`]'s `Debug` impl, which redacts it.
     pub rtsp_url: String,
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): `rtsp_url` may carry a
+/// live camera's `user:pass@` userinfo, and `Route` values end up in
+/// `Config`'s (derived) `Debug` and in ad-hoc `{:?}` logging — so the
+/// credential must never appear verbatim.
+impl std::fmt::Debug for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Route")
+            .field("name", &self.name)
+            .field("rtsp_url", &crate::redact::redact_url(&self.rtsp_url))
+            .finish()
+    }
 }
 
 /// multimux runtime configuration.
@@ -47,9 +61,15 @@ impl Default for Config {
 impl Config {
     /// Load a JSON config file.
     pub fn from_json_file(path: &Path) -> Result<Config> {
-        let bytes = std::fs::read(path)?;
-        let cfg: Config = serde_json::from_slice(&bytes)
-            .map_err(|e| MultimuxError::Config(format!("{path:?}: {e}")))?;
+        let bytes = std::fs::read(path).map_err(|source| MultimuxError::ConfigRead {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let cfg: Config =
+            serde_json::from_slice(&bytes).map_err(|e| MultimuxError::ConfigParse {
+                path: path.to_path_buf(),
+                reason: e.to_string(),
+            })?;
         cfg.validate()?;
         Ok(cfg)
     }
@@ -57,21 +77,36 @@ impl Config {
     /// Reject empty route sets, duplicate stream names, and nonsensical timing.
     pub fn validate(&self) -> Result<()> {
         if self.routes.is_empty() {
-            return Err(MultimuxError::Config("no routes configured".into()));
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes",
+                reason: "no routes configured".into(),
+            });
         }
-        if self.target_duration_secs <= 0.0 || self.part_target_ms == 0 || self.window_segments == 0
-        {
-            return Err(MultimuxError::Config(
-                "timing/window must be positive".into(),
-            ));
+        if self.target_duration_secs <= 0.0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "target_duration_secs",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.part_target_ms == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "part_target_ms",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.window_segments == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "window_segments",
+                reason: "must be positive".into(),
+            });
         }
         let mut seen = std::collections::HashSet::new();
         for r in &self.routes {
             if !seen.insert(r.name.as_str()) {
-                return Err(MultimuxError::Config(format!(
-                    "duplicate stream name {:?}",
-                    r.name
-                )));
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "routes",
+                    reason: format!("duplicate stream name {:?}", r.name),
+                });
             }
         }
         Ok(())
@@ -142,5 +177,45 @@ mod tests {
             result.is_err(),
             "unknown key must be rejected, not silently ignored"
         );
+    }
+
+    /// Biting test: a `Route`'s credential must never appear in its `Debug`
+    /// output. This fails immediately if `Route`'s manual `Debug` impl is
+    /// reverted to `#[derive(Debug)]` (which would render `rtsp_url`
+    /// verbatim, userinfo included).
+    #[test]
+    fn route_debug_redacts_credentials() {
+        let route = Route {
+            name: "cam1".into(),
+            rtsp_url: "rtsp://user:secretpass@host/s".into(),
+        };
+        let debug = format!("{route:?}");
+        assert!(!debug.contains("user"), "debug leaked username: {debug}");
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked password: {debug}"
+        );
+        assert!(debug.contains("***@host"), "debug: {debug}");
+    }
+
+    /// Same biting property, but through `Config`'s *derived* `Debug` — this
+    /// proves the redaction is wired end-to-end (a route embedded in a
+    /// config, as it always is at runtime) and not just on a bare `Route`.
+    #[test]
+    fn config_debug_redacts_route_credentials() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "cam1".into(),
+                rtsp_url: "rtsp://user:secretpass@host/s".into(),
+            }],
+            ..Config::default()
+        };
+        let debug = format!("{cfg:?}");
+        assert!(!debug.contains("user"), "config debug leaked username");
+        assert!(
+            !debug.contains("secretpass"),
+            "config debug leaked password"
+        );
+        assert!(debug.contains("***@host"));
     }
 }
