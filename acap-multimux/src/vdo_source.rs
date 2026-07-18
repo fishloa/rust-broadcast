@@ -175,19 +175,23 @@ impl VdoSource {
     }
 }
 
-/// Read buffers from `running`, accumulating the parameter-set buffers VDO
-/// delivers on their own (SPS/PPS for H.264; VPS/SPS/PPS for H.265) into one
-/// Annex B blob, until the first IDR buffer that arrives *after* a complete
-/// run — returning the parameter sets (parsed from the blob by
-/// [`convert::extract_param_sets`]) plus that IDR as a [`PendingAu`].
+/// Read buffers from `running` until the parameter sets (SPS/PPS for H.264;
+/// VPS/SPS/PPS for H.265) can be resolved, returning them plus the key-frame
+/// access unit as a [`PendingAu`].
 ///
-/// VDO does not embed SPS/PPS in the IDR slice buffer (verified on hardware,
-/// ARTPEC-6/H.264, #669): each parameter set is its own buffer, resent ahead
-/// of every IDR. An IDR seen before the parameter sets are collected (the
-/// mid-GOP-start case) is dropped and scanning continues to the next run.
+/// Where VDO puts the parameter sets (verified on hardware, ARTPEC-6/H.264,
+/// #669): they are carried in the **key-frame buffer's header** — the bytes
+/// `data_copy()` strips off the front (`header_size`) to leave just the coded
+/// slice. So the full key-frame buffer is `[SPS][PPS][…][IDR slice]` in Annex
+/// B, and `extract_param_sets` finds the run in `as_slice()` even though
+/// `data_copy()` (the sample bytes) does not contain it. As a fallback for
+/// cameras/configs that instead deliver each parameter set as its own buffer
+/// (frame types `VDO_FRAME_TYPE_H264_SPS`/`_PPS`, …), those are also collected
+/// and tried. The sample handed on for the key frame is the header-stripped
+/// `data_copy()` (parameter sets ride in the `avcC`/`hvcC` init, not samples).
 fn scan_for_param_sets(running: &RunningStream, codec: Codec) -> Result<(ParamSets, PendingAu)> {
-    // Latest Annex B bytes for each parameter-set NAL, kept individually so a
-    // resent run replaces (not appends to) the previous one.
+    // Fallback path: latest Annex B bytes for each separately-delivered
+    // parameter-set NAL, kept individually so a resent run replaces it.
     let mut vps: Option<Vec<u8>> = None; // H.265 only
     let mut sps: Option<Vec<u8>> = None;
     let mut pps: Option<Vec<u8>> = None;
@@ -196,49 +200,77 @@ fn scan_for_param_sets(running: &RunningStream, codec: Codec) -> Result<(ParamSe
         let buf = running.next_buffer()?;
         let ft = buf.frame_type();
         let data = buf.data_copy()?;
-        // Hardware-verify diagnostic (#669): log the framing of the first few
-        // VDO buffers — Annex-B start codes (00 00 00 01) vs AVCC, frame type,
-        // length. Only the leading buffers, to keep a live stream's log short.
+        // Hardware-verify diagnostic (#669): frame type, header size (where the
+        // key-frame parameter sets live), and the leading bytes of the full
+        // frame — for the first few buffers only, to keep a live log short.
         if i < 12 {
-            let head: Vec<String> = data.iter().take(16).map(|b| format!("{b:02x}")).collect();
+            let full = buf.as_slice().ok();
+            let head: Vec<String> = full
+                .map(|s| &s[..buf.size().min(s.len())])
+                .unwrap_or(data.as_slice())
+                .iter()
+                .take(16)
+                .map(|b| format!("{b:02x}"))
+                .collect();
             log::info!(
-                "vdo scan buf[{i}]: frame_type={ft:?} len={} head=[{}]",
-                data.len(),
+                "vdo scan buf[{i}]: frame_type={ft:?} size={} header_size={:?} full_head=[{}]",
+                buf.size(),
+                buf.header_size(),
                 head.join(" "),
             );
         }
-        match param_set_kind(codec, ft) {
-            Some(ParamSetKind::Vps) => vps = Some(data),
-            Some(ParamSetKind::Sps) => sps = Some(data),
-            Some(ParamSetKind::Pps) => pps = Some(data),
-            None if is_idr(codec, ft) => {
-                // Concatenate the collected parameter-set buffers (VDO already
-                // hands each back as Annex B, so their concatenation is valid
-                // Annex B) and let the tested NAL parser pull the run out.
-                let mut blob = Vec::new();
-                if let Some(v) = &vps {
-                    blob.extend_from_slice(v);
-                }
-                if let (Some(s), Some(p)) = (&sps, &pps) {
-                    blob.extend_from_slice(s);
-                    blob.extend_from_slice(p);
-                }
-                if let Some(params) = convert::extract_param_sets(codec, &blob) {
-                    log::info!("vdo scan: parameter sets complete, first IDR at buf[{i}]");
-                    return Ok((
-                        params,
-                        PendingAu {
-                            timestamp_us: buf.timestamp(),
-                            frame_type: ft,
-                            data,
-                        },
-                    ));
-                }
-                // IDR before a full parameter-set run (started mid-GOP): drop
-                // it and keep scanning for the next run + IDR.
+        if let Some(kind) = param_set_kind(codec, ft) {
+            // Separately-delivered parameter-set buffer (fallback path).
+            match kind {
+                ParamSetKind::Vps => vps = Some(data),
+                ParamSetKind::Sps => sps = Some(data),
+                ParamSetKind::Pps => pps = Some(data),
             }
-            None => {} // non-IDR pictures / SEI while scanning: dropped
+            continue;
         }
+        if is_idr(codec, ft) {
+            // Primary path: the key frame's own buffer carries the parameter
+            // sets in the header that `data_copy()` strips — parse the *full*
+            // frame (`as_slice()` up to `size()`).
+            let full = buf.as_slice()?;
+            let full_au = &full[..buf.size().min(full.len())];
+            if let Some(params) = convert::extract_param_sets(codec, full_au) {
+                log::info!("vdo scan: parameter sets from key-frame header at buf[{i}]");
+                return Ok((
+                    params,
+                    PendingAu {
+                        timestamp_us: buf.timestamp(),
+                        frame_type: ft,
+                        data,
+                    },
+                ));
+            }
+            // Fallback path: pair the separately-collected parameter sets with
+            // this key frame. Their concatenation is valid Annex B (each is a
+            // whole Annex-B NAL buffer).
+            let mut blob = Vec::new();
+            if let Some(v) = &vps {
+                blob.extend_from_slice(v);
+            }
+            if let (Some(s), Some(p)) = (&sps, &pps) {
+                blob.extend_from_slice(s);
+                blob.extend_from_slice(p);
+            }
+            if let Some(params) = convert::extract_param_sets(codec, &blob) {
+                log::info!("vdo scan: parameter sets from separate buffers, IDR at buf[{i}]");
+                return Ok((
+                    params,
+                    PendingAu {
+                        timestamp_us: buf.timestamp(),
+                        frame_type: ft,
+                        data,
+                    },
+                ));
+            }
+            // Key frame before parameter sets resolve (mid-GOP start): drop and
+            // keep scanning.
+        }
+        // non-key pictures / SEI while scanning: dropped
     }
     Err(AcapError::Convert(format!(
         "no complete {codec:?} parameter-set run found in the first {PARAM_SET_SCAN_LIMIT} VDO buffers"
