@@ -1,6 +1,6 @@
 #![cfg(feature = "testsupport")]
 //! Deterministic end-to-end integration gate for the LL-HLS origin (#663):
-//! `MockSource` -> [`run_pipeline`] -> [`StreamStore`] -> the axum
+//! `MockSource` -> [`run_pipeline`] -> [`MediaStore`] -> the axum
 //! [`router`], driven with `tower::ServiceExt::oneshot` (no real TCP socket,
 //! no timing-dependent assertions) so the whole demux-free pipeline-to-HTTP
 //! path is exercised without flakiness.
@@ -18,8 +18,10 @@ use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
 use multimux::origin::{AppState, router};
+use multimux::output::Output;
+use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
-use multimux::store::StreamStore;
+use multimux::store::MediaStore;
 use transmux::avc_config_from_sprop;
 use transmux::ll_hls::PartInfo;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -92,7 +94,7 @@ fn get(uri: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn end_to_end_pipeline_serves_valid_llhls() {
-    let store = Arc::new(StreamStore::new(1.0, 500, 8));
+    let store = Arc::new(MediaStore::new(1.0, 500, 8));
     let specs = vec![video_track_spec()];
 
     // 120 frames @ 30 fps = 4 s of video, with sync samples every 30 frames
@@ -113,7 +115,13 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
         .expect("pipeline runs to completion");
 
     let mut streams = HashMap::new();
-    streams.insert("cam".to_string(), store.clone());
+    streams.insert(
+        "cam".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
+        ),
+    );
     let app = router(Arc::new(AppState { streams }));
 
     // 1. Media playlist: LL-HLS tags present.
@@ -184,19 +192,25 @@ fn part(seq: u32, idx: u32) -> PartInfo {
     }
 }
 
-/// Bites the blocking-reload wakeup path (`origin::handlers::wait_for_progress`):
+/// Bites the blocking-reload wakeup path (`output::llhls`'s internal `wait_for_progress`):
 /// without the `watch`-based wakeup + re-render, a `_HLS_msn`/`_HLS_part`
 /// request for a not-yet-available part would either serve the stale
 /// playlist (missing the new part) or hang to `BLOCKING_RELOAD_TIMEOUT`
 /// (5 s) rather than resolving as soon as the part lands.
 #[tokio::test]
 async fn blocking_reload_resolves_when_part_arrives() {
-    let store = Arc::new(StreamStore::new(4.0, 500, 8));
+    let store = Arc::new(MediaStore::new(4.0, 500, 8));
     store.set_init(vec![0xAA; 8]);
     store.add_part(part(1, 0));
 
     let mut streams = HashMap::new();
-    streams.insert("cam".to_string(), store.clone());
+    streams.insert(
+        "cam".to_string(),
+        (
+            store.clone(),
+            vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
+        ),
+    );
     let app = router(Arc::new(AppState { streams }));
 
     // latest_progress() is currently (1, 1): in-progress segment 1 has one
@@ -239,7 +253,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
     // the bare URI — that URI also appears in the always-emitted
     // `#EXT-X-PRELOAD-HINT:TYPE=PART,URI="part-1-1.1.m4s"` line for the
     // next-expected part, which is present even before `add_part(1, 1)` runs
-    // (see `StreamStore::media_playlist_m3u8`). Only a genuine PART line
+    // (see `multimux::output::llhls::media_playlist_m3u8`). Only a genuine PART line
     // proves the new part was actually rendered.
     let real_part_line = "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.1.m4s\"";
     assert!(

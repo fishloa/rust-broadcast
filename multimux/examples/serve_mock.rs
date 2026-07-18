@@ -4,10 +4,11 @@
 //! Builds enough synthetic H.264-shaped samples to close a few full
 //! segments, drives them through the real [`transmux::ll_hls::LlHlsSegmenter`]
 //! (via [`multimux::pipeline::run_pipeline`]) into a
-//! [`multimux::store::StreamStore`], then serves that store's single "cam"
-//! route under the real axum [`multimux::origin::router`] on an ephemeral
-//! localhost port. Once the mock source reaches end-of-stream the store's
-//! contents are fixed — the HTTP origin keeps serving that fixed window.
+//! [`multimux::store::MediaStore`], then serves that store's single "cam"
+//! route under the real axum [`multimux::origin::router`] (via the default
+//! [`multimux::output::llhls::LlHlsOutput`]) on an ephemeral localhost port.
+//! Once the mock source reaches end-of-stream the store's contents are fixed
+//! — the HTTP origin keeps serving that fixed window.
 //!
 //! # Usage
 //!
@@ -21,8 +22,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use multimux::origin::{AppState, router};
+use multimux::output::Output;
+use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
-use multimux::store::StreamStore;
+use multimux::store::MediaStore;
 use transmux::avc_config_from_sprop;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -70,7 +73,7 @@ async fn main() {
         batches.push(vec![(1u32, sample)]);
     }
 
-    let store = Arc::new(StreamStore::new(
+    let store = Arc::new(MediaStore::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
@@ -81,7 +84,10 @@ async fn main() {
         .expect("mock pipeline runs to completion");
 
     let mut streams = HashMap::new();
-    streams.insert(STREAM_NAME.to_string(), store);
+    streams.insert(
+        STREAM_NAME.to_string(),
+        (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+    );
     let app = router(Arc::new(AppState { streams }));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

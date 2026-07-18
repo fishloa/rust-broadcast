@@ -8,6 +8,7 @@
 pub mod config;
 pub mod error;
 pub mod origin;
+pub mod output;
 pub mod pipeline;
 pub mod source;
 pub mod store;

@@ -1,21 +1,16 @@
-//! Per-stream in-RAM rolling window of LL-HLS init/segments/parts, with a
-//! `tokio::sync::watch` that signals new data for blocking playlist reloads.
+//! Per-stream, protocol-neutral in-RAM rolling window of the segmenter's
+//! init/segments/parts, with a `tokio::sync::watch` that signals new data for
+//! blocking playlist/manifest reloads.
+//!
+//! [`MediaStore`] holds bytes + timing only — no playlist/manifest syntax.
+//! Rendering a manifest (LL-HLS `#EXT-M3U8`, DASH `MPD`, …) is an
+//! [`crate::output::Output`] concern layered on top; see
+//! [`crate::output::llhls`] for the LL-HLS renderer that used to live here.
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use tokio::sync::watch;
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 use transmux::ll_hls::{PartInfo, SegmentInfo};
-
-/// LL-HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
-/// `#EXT-X-PART-INF`/`#EXT-X-PART` directives this store always emits require
-/// it).
-const LL_HLS_VERSION: u8 = 9;
-
-/// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
-/// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
-/// (`#EXT-X-PART-INF`'s `PART-TARGET`).
-const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
 
 /// Minimum live-parts cap, regardless of the timing-derived bound — keeps a
 /// usable window even for pathologically small `target_duration_secs`/
@@ -37,7 +32,7 @@ const MAX_LIVE_PARTS_SAFETY_MARGIN: usize = 4;
 /// an LL-HLS playlist need only advertise the most recent parts of the open
 /// segment (RFC 8216bis has no requirement to retain every part ever
 /// produced for an in-progress segment).
-fn compute_max_live_parts(target_duration_secs: f64, part_target_ms: u32) -> usize {
+pub(crate) fn compute_max_live_parts(target_duration_secs: f64, part_target_ms: u32) -> usize {
     let part_target_secs = f64::from(part_target_ms) / 1000.0;
     let nominal_parts = if part_target_secs > 0.0 {
         (target_duration_secs / part_target_secs).ceil() as usize
@@ -63,8 +58,9 @@ struct Inner {
     window_segments: usize,
 }
 
-/// In-RAM rolling window for one served LL-HLS stream.
-pub struct StreamStore {
+/// In-RAM rolling window for one served stream: bytes + timing, shared by
+/// every [`crate::output::Output`] serving that stream (LL-HLS, DASH, …).
+pub struct MediaStore {
     inner: Mutex<Inner>,
     target_duration_secs: f64,
     part_target_ms: u32,
@@ -72,7 +68,7 @@ pub struct StreamStore {
     progress_tx: watch::Sender<u64>,
 }
 
-impl StreamStore {
+impl MediaStore {
     /// New empty store; `window_segments` = full segments retained.
     pub fn new(target_duration_secs: f64, part_target_ms: u32, window_segments: usize) -> Self {
         // `send_modify` works even with zero receivers (it permits sending
@@ -80,7 +76,7 @@ impl StreamStore {
         // need to be held anywhere — `subscribe()` mints new receivers off
         // the sender's retained value on demand.
         let (tx, _rx) = watch::channel(0u64);
-        StreamStore {
+        MediaStore {
             inner: Mutex::new(Inner {
                 init: None,
                 segments: VecDeque::new(),
@@ -213,80 +209,28 @@ impl StreamStore {
         self.progress_tx.subscribe()
     }
 
-    /// Render the LL-HLS media playlist for `track_id`.
-    ///
-    /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
-    /// be advertised with an `#EXTINF`/URI pair — that segment has no fetchable
-    /// resource yet — it may only appear as trailing `#EXT-X-PART` lines.
-    /// `transmux::hls::MediaPlaylist::open_segment` is exactly this
-    /// representation: its parts render as trailing `#EXT-X-PART` lines with
-    /// no `#EXTINF`/URI, so the in-progress segment's parts and the
-    /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
-    /// rendered by `to_m3u8()` itself — multimux only supplies the URI scheme
-    /// (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
-    pub fn media_playlist_m3u8(&self, track_id: u32) -> String {
+    /// The full-segment target duration, in seconds, this store was built
+    /// with — timing configuration an [`crate::output::Output`] renderer
+    /// needs (e.g. LL-HLS's `#EXT-X-TARGETDURATION`).
+    pub(crate) fn target_duration_secs(&self) -> f64 {
+        self.target_duration_secs
+    }
+
+    /// The part target duration, in milliseconds, this store was built with.
+    pub(crate) fn part_target_ms(&self) -> u32 {
+        self.part_target_ms
+    }
+
+    /// Run `f` against a consistent snapshot of the closed `segments` and the
+    /// in-progress segment's `live_parts`, taken under a single lock
+    /// acquisition — used by output renderers (e.g. LL-HLS's media playlist
+    /// renderer) that need both collections together.
+    pub(crate) fn with_segments_and_parts<R>(
+        &self,
+        f: impl FnOnce(&VecDeque<SegmentInfo>, &[PartInfo]) -> R,
+    ) -> R {
         let g = self.inner.lock().unwrap();
-        let media_sequence = g
-            .segments
-            .front()
-            .map(|s| u64::from(s.segment_seq))
-            .or_else(|| g.live_parts.first().map(|p| u64::from(p.segment_seq)))
-            .unwrap_or(1);
-        let segments: Vec<MediaSegment> = g
-            .segments
-            .iter()
-            .map(|s| MediaSegment {
-                uri: format!("seg-{track_id}-{}.m4s", s.segment_seq),
-                duration: s.duration,
-                discontinuous: false,
-                parts: Vec::new(),
-            })
-            .collect();
-        let part_target = f64::from(self.part_target_ms) / 1000.0;
-        // The in-progress segment's live parts + the next (not yet available)
-        // part's preload-hint URI.
-        let open_seq = g.live_parts.first().map(|p| p.segment_seq);
-        let open_segment = open_seq.map(|seq| {
-            OpenSegment::new(
-                g.live_parts
-                    .iter()
-                    .filter(|p| p.segment_seq == seq)
-                    .map(|p| PartSpec {
-                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
-                        duration: p.duration,
-                        independent: p.independent,
-                    })
-                    .collect(),
-            )
-        });
-        let next_part_hint = open_seq.map(|seq| {
-            let next_idx = g
-                .live_parts
-                .iter()
-                .filter(|p| p.segment_seq == seq)
-                .map(|p| p.part_index)
-                .max()
-                .map(|idx| idx + 1)
-                .unwrap_or(0);
-            format!("part-{track_id}-{seq}.{next_idx}.m4s")
-        });
-        let playlist = MediaPlaylist {
-            version: LL_HLS_VERSION,
-            target_duration: self.target_duration_secs.ceil() as u32,
-            media_sequence,
-            discontinuity_sequence: 0,
-            segments,
-            open_segment,
-            endlist: false,
-            extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
-            low_latency: Some(LowLatencyConfig {
-                part_target,
-                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
-                preload_hint_part: next_part_hint,
-            }),
-            iframes_only: false,
-        };
-        playlist.to_m3u8()
+        f(&g.segments, &g.live_parts)
     }
 }
 
@@ -314,7 +258,7 @@ mod tests {
 
     #[test]
     fn window_evicts_oldest_and_serves_bytes() {
-        let s = StreamStore::new(4.0, 500, 2);
+        let s = MediaStore::new(4.0, 500, 2);
         s.set_init(vec![0xAA; 10]);
         s.add_segment(seg(1, 8));
         s.add_segment(seg(2, 8));
@@ -326,85 +270,9 @@ mod tests {
     }
 
     #[test]
-    fn playlist_has_llhls_tags_and_parts() {
-        let s = StreamStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(part(1, 0));
-        s.add_part(part(1, 1));
-        let m = s.media_playlist_m3u8(1);
-        assert!(m.contains("#EXT-X-PART-INF"), "PART-INF present");
-        assert!(
-            m.contains("#EXT-X-SERVER-CONTROL"),
-            "SERVER-CONTROL present"
-        );
-        assert!(m.contains("#EXT-X-PART"), "at least one PART");
-        assert!(
-            m.contains("part-1-1.0.m4s") || m.contains("part-1-1.1.m4s"),
-            "part URI"
-        );
-    }
-
-    #[test]
-    fn open_segment_has_parts_but_no_extinf() {
-        let s = StreamStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(part(1, 0));
-        s.add_part(part(1, 1));
-        let m = s.media_playlist_m3u8(1);
-        // The in-progress segment's parts are advertised...
-        assert!(m.contains("#EXT-X-PART"), "at least one PART line");
-        assert!(m.contains("part-1-1.0.m4s"), "part 0 URI present");
-        assert!(m.contains("part-1-1.1.m4s"), "part 1 URI present");
-        // ...but RFC 8216bis §4.4.4.9: no premature #EXTINF/URI for the
-        // not-yet-closed segment itself — "seg-1-1.m4s" must not appear
-        // anywhere (it isn't fetchable; that segment hasn't been closed).
-        assert!(
-            !m.contains("seg-1-1.m4s"),
-            "no full-segment URI for the open segment: {m}"
-        );
-        assert!(
-            !m.contains("#EXTINF"),
-            "no EXTINF for the open segment: {m}"
-        );
-    }
-
-    #[test]
-    fn final_part_fetchable_after_its_segment_closes() {
-        // The segmenter emits a segment's final part and then closes the
-        // segment in the same step. A preload-hint request for that final part
-        // is typically in flight when the close happens, so it must remain
-        // fetchable afterwards (from recent_parts) rather than 404 — the LL-HLS
-        // preload-hint boundary bug.
-        let s = StreamStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(part(1, 0));
-        s.add_part(part(1, 1)); // .1 is this segment's final part
-        s.add_segment(seg(1, 2)); // close segment 1 (moves its parts to recent_parts)
-        assert_eq!(
-            s.part_bytes(1, 1),
-            Some(vec![1; 4]),
-            "final part of a just-closed segment must still be individually fetchable"
-        );
-        assert_eq!(s.part_bytes(1, 0), Some(vec![0; 4]), "earlier parts too");
-        // A genuinely-nonexistent part of the closed segment is still absent.
-        assert_eq!(s.part_bytes(1, 9), None);
-        // Closing does not resurrect parts into the rendered open segment: the
-        // playlist advertises the whole segment, not its parts.
-        let m = s.media_playlist_m3u8(1);
-        assert!(
-            m.contains("seg-1-1.m4s"),
-            "closed segment rendered whole: {m}"
-        );
-        assert!(
-            !m.contains("part-1-1."),
-            "closed parts not rendered as open: {m}"
-        );
-    }
-
-    #[test]
     fn recent_parts_bounded_across_many_closes() {
         // Closing many segments must not grow recent_parts unboundedly.
-        let s = StreamStore::new(4.0, 500, 4);
+        let s = MediaStore::new(4.0, 500, 4);
         s.set_init(vec![0; 4]);
         let cap = compute_max_live_parts(4.0, 500);
         for seq in 1..=20u32 {
@@ -424,46 +292,10 @@ mod tests {
 
     #[test]
     fn watch_bumps_on_new_data() {
-        let s = StreamStore::new(4.0, 500, 4);
+        let s = MediaStore::new(4.0, 500, 4);
         let mut rx = s.subscribe();
         let before = *rx.borrow_and_update();
         s.add_part(part(1, 0));
         assert_ne!(*rx.borrow(), before, "watch value changed");
-    }
-
-    #[test]
-    fn live_parts_capped_when_segment_never_closes() {
-        // target_duration_secs=4.0, part_target_ms=500 -> cap =
-        // ceil(4.0 / 0.5) + 4 margin = 12 (see compute_max_live_parts).
-        let s = StreamStore::new(4.0, 500, 4);
-        let cap = compute_max_live_parts(4.0, 500);
-        assert_eq!(cap, 12, "sanity-check the expected cap for these params");
-        s.set_init(vec![0; 4]);
-
-        // Push far more parts than the cap into a single never-closed
-        // segment (no add_segment call) — RAM must stay bounded.
-        for i in 0..(cap as u32 * 5) {
-            s.add_part(part(1, i));
-        }
-        assert_eq!(
-            s.live_part_count(),
-            cap,
-            "live_parts must stay capped even though the segment never closed"
-        );
-
-        // The playlist must still render correctly from the capped parts:
-        // only the most recent (highest-index) parts survive.
-        let m = s.media_playlist_m3u8(1);
-        assert!(m.contains("#EXT-X-PART"), "still has PART lines: {m}");
-        let last_idx = cap as u32 * 5 - 1;
-        assert!(
-            m.contains(&format!("part-1-1.{last_idx}.m4s")),
-            "most recent part must survive the cap: {m}"
-        );
-        let first_idx = cap as u32 * 5 - cap as u32;
-        assert!(
-            !m.contains(&format!("part-1-1.{}.m4s", first_idx - 1)),
-            "an older part beyond the cap must have been dropped: {m}"
-        );
     }
 }
