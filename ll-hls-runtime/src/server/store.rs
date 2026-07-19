@@ -370,7 +370,7 @@ impl MediaStore {
 
     /// Store the track specs the feeding pipeline built its segmenter from —
     /// called once, before the first sample is pushed. See
-    /// [`Inner::track_specs`] for why this exists (DASH's `codecs` string
+    /// `Inner::track_specs` for why this exists (DASH's `codecs` string
     /// needs real codec identity; LL-HLS never reads this).
     pub fn set_track_specs(&self, specs: Vec<TrackSpec>) {
         self.inner.lock().unwrap().track_specs = specs;
@@ -386,7 +386,7 @@ impl MediaStore {
     /// window, oldest first — enough for a manifest renderer to enumerate
     /// fetchable segments (issue #663 P4: DASH's `SegmentTemplate`/
     /// `$Number$` addressing) without depending on the LL-HLS-specific
-    /// playlist rendering in [`super::engine`].
+    /// playlist rendering in the playlist renderer.
     pub fn window_segments(&self) -> Vec<SegmentWindowEntry> {
         self.inner
             .lock()
