@@ -1,5 +1,5 @@
 [workspace]
-members = ["broadcast-common", "dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "st291", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "srt-runtime", "rtp-packet", "rtcp-packet", "st12-1", "st337", "rdd29", "st377-1"]
+members = ["broadcast-common", "dvb-common", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-scte35", "dvb-stream", "mpeg-pes", "dvb-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-cc", "dvb-ci", "st291", "ule", "dvb-ule", "dvb-simulcrypt", "mp4-emsg", "dvb-emsg", "dvb-vbi", "dvb-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "srt-runtime", "rtp-packet", "rtcp-packet", "st12-1", "st337", "rdd29", "st377-1", "ll-hls-client"]
 exclude = ["fuzz", "demo", "bindings/python", "bindings/transmux-py"]
 resolver = "2"
 

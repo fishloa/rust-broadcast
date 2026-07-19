@@ -1,0 +1,35 @@
+[package]
+name         = "ll-hls-client"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO Low-Latency HLS (RFC 8216bis) playback client engine — a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode. Zero IO deps in the core (issue #717 slices 2-4)."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["hls", "llhls", "sans-io", "streaming", "client"]
+categories   = ["multimedia", "network-programming", "parser-implementations"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+transmux          = { path = "../transmux", version = "0.17", default-features = false }
+thiserror         = { version = "2", default-features = false }
+serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc` — the sans-IO scheduler/fetch/output state machine itself
+# never touches a socket or a clock, so it does not need `std` at all; this
+# feature exists only to match the workspace's `no_std`-capable-core convention
+# (verified by the `--no-default-features` gate) and to let `transmux/std`
+# follow along when a caller does want `std`.
+std = ["broadcast-common/std", "thiserror/std", "transmux/std"]
+# Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
+serde = ["dep:serde"]
