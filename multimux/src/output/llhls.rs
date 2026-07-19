@@ -84,10 +84,7 @@ impl Output for LlHlsOutput {
     ///   catch-all is used instead of per-filename routes).
     fn router(&self, store: Arc<MediaStore>) -> Router {
         Router::new()
-            .route(
-                "/master.m3u8",
-                get(master_playlist).options(cors_preflight),
-            )
+            .route("/master.m3u8", get(master_playlist).options(cors_preflight))
             .route("/media.m3u8", get(media_playlist).options(cors_preflight))
             .route("/:file", get(dynamic_file).options(cors_preflight))
             .with_state(store)
