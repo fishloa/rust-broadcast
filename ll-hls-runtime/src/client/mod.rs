@@ -71,4 +71,4 @@ pub use engine::LlHlsClient;
 pub use error::{Error, Result};
 pub use output::Output;
 #[cfg(feature = "tokio")]
-pub use tokio_client::{Auth, TokioClient, TokioClientConfig, TokioClientStats, TokioError};
+pub use tokio_client::{TokioClient, TokioClientConfig, TokioClientStats, TokioError};

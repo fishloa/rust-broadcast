@@ -79,6 +79,22 @@ impl SourceConnector for crate::source::ts_udp::TsUdpSource {
     }
 }
 
+impl SourceConnector for crate::source::ts_http::TsHttpSource {
+    type Source = crate::source::ts_http::TsHttpSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::ts_http::TsHttpSource::connect(self).await
+    }
+}
+
+impl SourceConnector for crate::source::hls_pull::HlsPullSource {
+    type Source = crate::source::hls_pull::HlsPullSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::hls_pull::HlsPullSource::connect(self).await
+    }
+}
+
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
 /// it to `min` after a successful (re)connect so a long outage doesn't

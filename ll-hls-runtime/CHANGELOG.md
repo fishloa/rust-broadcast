@@ -6,6 +6,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **`client::tokio_client::TokioClient` now authenticates via `broadcast-auth`**
+  (issue #663 P3c): `TokioClientConfig::auth` takes a
+  `broadcast_auth::Credentials` (Basic/Digest/Bearer) instead of the ad hoc
+  `Auth` enum (Basic/Bearer only) — fulfilling the TODO the field's doc
+  comment carried since P3a. Basic/Bearer are still pre-applied on every
+  request via reqwest's own helpers; Digest now works end-to-end: on a `401`,
+  `TokioClient` reads `WWW-Authenticate`, computes the response via
+  `broadcast_auth::Authenticator`, resends once, and caches the resulting
+  authenticator (applied preemptively, advancing `nc`, on later requests).
+  New `TokioError::Auth` variant for a challenge/response failure. Breaking:
+  `tokio_client::Auth` is removed; construct `broadcast_auth::Credentials`
+  instead (added as a `tokio`-feature-gated optional dependency).
+
 ### Added
 
 #### Server (issue #663/#717 Stage 2)

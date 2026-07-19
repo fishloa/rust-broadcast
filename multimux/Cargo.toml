@@ -18,8 +18,19 @@ rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.2", features = ["t
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over
-# `ll_hls_runtime::server`; see `output::llhls`.
-ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["std"] }
+# `ll_hls_runtime::server`; see `output::llhls`. The `tokio` feature also
+# pulls in `ll_hls_runtime::client::tokio_client::TokioClient` — the
+# HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
+# re-implementing LL-HLS playback.
+ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["std", "tokio"] }
+# Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
+# to recover `TrackSpec`s from a pulled stream's init segment via
+# `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
+broadcast-common  = { path = "../broadcast-common", version = "8" }
+# Shared Basic/Digest/Bearer auth model + challenge/response helper
+# (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
+# and `ll_hls_runtime::client::tokio_client` use.
+broadcast-auth    = { path = "../broadcast-auth", version = "0.1" }
 sdp-types         = "0.1"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.7"
@@ -32,6 +43,14 @@ tracing           = "0.1"
 metrics           = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 tokio-rustls      = { version = "0.26", optional = true }
+# TS-over-HTTP ingest (`source::ts_http`, issue #663 P3c): a streaming GET
+# fed straight into `StreamingTsDemux`. `rustls-tls` for consistency with the
+# rest of the workspace's TLS backend (rustls/aws-lc-rs); `stream` for
+# `Response::bytes_stream()`.
+reqwest           = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+# `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
+# extension methods of its own).
+futures-util      = { version = "0.3", default-features = false, features = ["std"] }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -53,6 +72,3 @@ name = "serve_rtsp"
 [dev-dependencies]
 tower            = { version = "0.5", default-features = false, features = ["util"] }
 base64           = "0.22"
-# Only needed by the ts_udp loopback test to mux a real, workspace-produced
-# MPEG-2 TS fixture (via `Package::package`) rather than hand-faking TS bytes.
-broadcast-common = { path = "../broadcast-common", version = "8" }

@@ -11,16 +11,20 @@
 //!
 //! # Auth
 //!
-//! [`TokioClientConfig::auth`] supports HTTP Basic (RFC 7617) and Bearer
-//! (RFC 6750) via reqwest's own request-builder helpers
-//! (`RequestBuilder::basic_auth`/`bearer_auth`).
-//!
-//! **TODO** (tracked against issue #717's follow-ups): once the workspace
-//! grows a shared multi-scheme HTTP auth crate (Basic/Digest/Bearer,
-//! alongside `rtsp-runtime`'s own `http-auth`-based negotiation), replace
-//! this ad hoc `Auth` enum with that shared implementation rather than
-//! reqwest's built-in helpers — Digest auth in particular is not something
-//! reqwest supports natively.
+//! [`TokioClientConfig::auth`] takes a [`broadcast_auth::Credentials`] — the
+//! same shared scheme-agnostic model `rtsp-runtime` and `multimux`'s HTTP
+//! input adapters (`source::http_auth`) use (issue #663 P3b/P3c). Basic
+//! (RFC 7617) and Bearer (RFC 6750) are pre-applied on every request via
+//! reqwest's own request-builder helpers (`RequestBuilder::basic_auth`/
+//! `bearer_auth`) — no challenge round-trip needed. Digest (RFC 7616) is not
+//! something reqwest supports natively: the first request for a given
+//! resource is sent bare, and only if the server answers `401` with a
+//! `WWW-Authenticate` challenge does [`TokioClient`] compute the
+//! `Authorization` response via [`broadcast_auth::Authenticator`] and resend
+//! once — the resulting authenticator is then cached and applied
+//! preemptively to every subsequent request for as long as it keeps being
+//! accepted (RFC 7616 §3.3's `nc` advances across those calls), so a live
+//! pull doesn't round-trip a fresh challenge on every single fetch.
 //!
 //! # Error recovery
 //!
@@ -43,28 +47,11 @@
 
 use std::time::Duration;
 
-use reqwest::Client;
+use broadcast_auth::{Authenticator, Credentials, RequestContext};
+use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::{Client, StatusCode};
 
 use super::{Action, LlHlsClient, Output, ResourceId};
-
-/// Authentication attached to every request [`TokioClient`] makes. See the
-/// module docs' "Auth" section for the planned replacement.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum Auth {
-    /// HTTP Basic (RFC 7617).
-    Basic {
-        /// Username.
-        username: String,
-        /// Password, if any.
-        password: Option<String>,
-    },
-    /// HTTP Bearer (RFC 6750).
-    Bearer {
-        /// The bearer token.
-        token: String,
-    },
-}
 
 /// Errors from the tokio IO adapter itself — distinct from
 /// [`crate::client::Error`], the sans-IO core's own parse/demux error type
@@ -95,6 +82,11 @@ pub enum TokioError {
     /// [`crate::client::Error`] for the underlying reason.
     #[error(transparent)]
     Client(#[from] super::Error),
+    /// A `401`'s `WWW-Authenticate` challenge could not be parsed, or no
+    /// `Authorization` response could be computed from it (e.g. an
+    /// unsupported Digest `algorithm`/`qop`) — see [`broadcast_auth::Error`].
+    #[error("auth challenge/response failed: {0}")]
+    Auth(#[from] broadcast_auth::Error),
 }
 
 /// Tunables for [`TokioClient`]. [`Default`] gives sane values for a
@@ -121,7 +113,7 @@ pub struct TokioClientConfig {
     /// Ceiling the doubled [`Self::retry_backoff`] is capped at.
     pub max_retry_backoff: Duration,
     /// Optional auth attached to every request (see the module docs).
-    pub auth: Option<Auth>,
+    pub auth: Option<Credentials>,
 }
 
 impl Default for TokioClientConfig {
@@ -180,6 +172,12 @@ pub struct TokioClient {
     stats: TokioClientStats,
     last_preload_hint_url: Option<String>,
     ended: bool,
+    /// Cached from the most recent Digest `401` challenge/response (see the
+    /// module docs' "Auth" section) — `None` until the first Digest
+    /// challenge is answered, or when [`TokioClientConfig::auth`] isn't
+    /// [`Credentials::Digest`]. Applied preemptively to every subsequent
+    /// request once set, advancing `nc` (RFC 7616 §3.3) each time.
+    digest_authenticator: Option<Authenticator>,
 }
 
 impl TokioClient {
@@ -217,6 +215,7 @@ impl TokioClient {
             stats: TokioClientStats::default(),
             last_preload_hint_url: None,
             ended: false,
+            digest_authenticator: None,
         })
     }
 
@@ -333,30 +332,98 @@ impl TokioClient {
             .map(|hint| super::url::resolve(&self.playlist_url, &hint));
     }
 
-    fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    /// Applies whatever auth can be attached *before* sending — Basic/Bearer
+    /// always (they never need a challenge), plus a cached Digest
+    /// [`Authenticator`] once one exists (advancing `nc`). A `Digest`
+    /// config with no cached authenticator yet is left unauthenticated for
+    /// this attempt; [`Self::fetch_bytes`] answers the resulting `401`.
+    fn apply_auth_preemptive(
+        &mut self,
+        req: reqwest::RequestBuilder,
+        method: &str,
+        uri: &str,
+    ) -> reqwest::RequestBuilder {
         match &self.config.auth {
-            Some(Auth::Basic { username, password }) => req.basic_auth(username, password.clone()),
-            Some(Auth::Bearer { token }) => req.bearer_auth(token),
+            Some(Credentials::Basic { username, password }) => {
+                req.basic_auth(username, Some(password))
+            }
+            Some(Credentials::Bearer { token }) => req.bearer_auth(token),
+            Some(_) => {
+                // `Credentials::Digest` (or any future non_exhaustive
+                // variant): no preemptive header without a cached
+                // authenticator from a prior challenge.
+                if let Some(auth) = self.digest_authenticator.as_mut() {
+                    if let Ok(value) = auth.authorization(&RequestContext::new(method, uri)) {
+                        return req.header(AUTHORIZATION, value);
+                    }
+                }
+                req
+            }
             None => req,
         }
     }
 
+    /// Answers a `401` response by computing the `Authorization` value from
+    /// its `WWW-Authenticate` challenge (via [`broadcast_auth`]) and
+    /// resending once — only when [`TokioClientConfig::auth`] is
+    /// [`Credentials::Digest`] (Basic/Bearer are already pre-applied and a
+    /// `401` for those means wrong credentials, not a missing challenge
+    /// round-trip). The freshly built [`Authenticator`] is cached on
+    /// success so later requests apply it preemptively.
+    async fn retry_after_unauthorized(
+        &mut self,
+        method: &str,
+        uri: &str,
+        req: reqwest::RequestBuilder,
+        response: reqwest::Response,
+    ) -> Result<reqwest::Response, TokioError> {
+        let Some(creds @ Credentials::Digest { .. }) = self.config.auth.clone() else {
+            return Ok(response);
+        };
+        let Some(challenge) = response
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string)
+        else {
+            return Ok(response);
+        };
+        let mut authenticator = Authenticator::from_challenge(&challenge, creds)?;
+        let value = authenticator.authorization(&RequestContext::new(method, uri))?;
+        self.digest_authenticator = Some(authenticator);
+        req.header(AUTHORIZATION, value)
+            .send()
+            .await
+            .map_err(|source| TokioError::Http {
+                url: uri.to_string(),
+                source,
+            })
+    }
+
     async fn fetch_bytes(
-        &self,
+        &mut self,
         url: &str,
         byte_range: Option<(u64, u64)>,
         timeout: Duration,
     ) -> Result<Vec<u8>, TokioError> {
-        let mut req = self.http.get(url).timeout(timeout);
-        if let Some((offset, length)) = byte_range {
-            let end = offset + length.saturating_sub(1);
-            req = req.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
-        }
-        let req = self.apply_auth(req);
+        let req = self.apply_auth_preemptive(
+            build_request(&self.http, url, byte_range, timeout),
+            "GET",
+            url,
+        );
         let resp = req.send().await.map_err(|source| TokioError::Http {
             url: url.to_string(),
             source,
         })?;
+
+        let resp = if resp.status() == StatusCode::UNAUTHORIZED {
+            let retry_req = build_request(&self.http, url, byte_range, timeout);
+            self.retry_after_unauthorized("GET", url, retry_req, resp)
+                .await?
+        } else {
+            resp
+        };
+
         let status = resp.status();
         if !status.is_success() {
             return Err(TokioError::Status {
@@ -374,7 +441,7 @@ impl TokioClient {
     /// Retry a playlist fetch indefinitely (capped exponential backoff) —
     /// see the module docs' "Error recovery" section for why a playlist
     /// reload, unlike a resource fetch, has no bounded-retry fallback.
-    async fn fetch_playlist_resilient(&self, url: &str, timeout: Duration) -> Vec<u8> {
+    async fn fetch_playlist_resilient(&mut self, url: &str, timeout: Duration) -> Vec<u8> {
         let mut backoff = self.config.retry_backoff;
         loop {
             match self.fetch_bytes(url, None, timeout).await {
@@ -390,7 +457,7 @@ impl TokioClient {
     /// Retry a resource fetch up to [`TokioClientConfig::max_resource_retries`]
     /// times (capped exponential backoff), then give up.
     async fn fetch_resource_bounded(
-        &self,
+        &mut self,
         url: &str,
         byte_range: Option<(u64, u64)>,
     ) -> Result<Vec<u8>, TokioError> {
@@ -411,4 +478,24 @@ impl TokioClient {
         }
         Err(last_err.expect("loop runs at least once (max_resource_retries.max(1))"))
     }
+}
+
+/// Builds a plain (unauthenticated) GET request for `url`, with an optional
+/// `Range` header (RFC 8216bis §4.4.4.9 partial-part byte ranges) — factored
+/// out so [`TokioClient::fetch_bytes`] can build a fresh, independent request
+/// both for the first attempt and for the post-`401` Digest retry (a
+/// `reqwest::RequestBuilder` is consumed by `.send()`, so the retry can't
+/// reuse the first one).
+fn build_request(
+    client: &Client,
+    url: &str,
+    byte_range: Option<(u64, u64)>,
+    timeout: Duration,
+) -> reqwest::RequestBuilder {
+    let mut req = client.get(url).timeout(timeout);
+    if let Some((offset, length)) = byte_range {
+        let end = offset + length.saturating_sub(1);
+        req = req.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
+    }
+    req
 }

@@ -32,6 +32,11 @@ event-listener    = { version = "5", optional = true, default-features = false, 
 # core (`client/engine.rs`) never depends on either.
 tokio             = { version = "1", optional = true, default-features = false, features = ["time"] }
 reqwest           = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
+# Only pulled in by the `tokio` feature: `TokioClient`'s Digest challenge/
+# response (reqwest itself only has Basic/Bearer helpers) delegates to the
+# same shared model `rtsp-runtime` and `multimux`'s HTTP input adapters use
+# (issue #663 P3b/P3c) — see `client::tokio_client`'s module doc.
+broadcast-auth    = { path = "../broadcast-auth", version = "0.1", optional = true }
 
 [dev-dependencies]
 # Only exercised by the `tokio`-feature-gated integration tests
@@ -58,4 +63,4 @@ serde = ["dep:serde"]
 # `LlHlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
 # the core (`client/engine.rs`) stays IO-free regardless of this feature;
 # enabling it only adds the `client::tokio_client` module alongside it.
-tokio = ["std", "dep:tokio", "dep:reqwest"]
+tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth"]

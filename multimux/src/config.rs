@@ -1,16 +1,17 @@
 //! multimux configuration: routes + segmentation/window/bind parameters.
 //!
 //! CLI-first with an optional JSON config file. A route maps one input
-//! ([`InputSpec`] — RTSP pull, raw RTP/UDP, or MPEG-TS/UDP) to a served
-//! stream name.
+//! ([`InputSpec`] — RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP, or
+//! HLS-pull) to a served stream name.
 
 use crate::error::{MultimuxError, Result};
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
-/// One route's ingest transport (issue #663 P3a): tagged so a JSON config can
-/// name which transport a route uses (`"type": "rtsp" | "rtp" | "ts_udp"`).
+/// One route's ingest transport (issue #663 P3a/P3c): tagged so a JSON
+/// config can name which transport a route uses (`"type": "rtsp" | "rtp" |
+/// "ts_udp" | "ts_http" | "hls_pull"`).
 ///
 /// - [`InputSpec::Rtsp`] pulls a live RTSP source (DESCRIBE/SETUP/PLAY,
 ///   interleaved TCP) — see [`crate::source::rtsp`].
@@ -21,6 +22,15 @@ use std::path::Path;
 /// - [`InputSpec::TsUdp`] receives an MPEG-2 Transport Stream over UDP
 ///   (uni/multicast); the track set comes from the stream's own in-band PMT,
 ///   so no SDP is needed — see [`crate::source::ts_udp`].
+/// - [`InputSpec::TsHttp`] receives an MPEG-2 Transport Stream over a
+///   streaming HTTP GET (chunked/progressive) — see
+///   [`crate::source::ts_http`].
+/// - [`InputSpec::HlsPull`] pulls a remote (LL-)HLS Media Playlist — see
+///   [`crate::source::hls_pull`].
+///
+/// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
+/// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
+/// the same way [`InputSpec::Rtsp`]'s URL is.
 #[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputSpec {
@@ -53,6 +63,20 @@ pub enum InputSpec {
         #[serde(default)]
         multicast_group: Option<String>,
     },
+    /// Receive an MPEG-2 Transport Stream over a streaming HTTP GET
+    /// (chunked/progressive).
+    TsHttp {
+        /// `http://` or `https://` URL to GET. May carry `user:pass@`
+        /// userinfo — see [`InputSpec`]'s `Debug` impl, which redacts it.
+        url: String,
+    },
+    /// Pull a remote (LL-)HLS Media Playlist.
+    HlsPull {
+        /// `http://` or `https://` Media Playlist URL to pull. May carry
+        /// `user:pass@` userinfo — see [`InputSpec`]'s `Debug` impl, which
+        /// redacts it.
+        url: String,
+    },
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
@@ -83,6 +107,14 @@ impl std::fmt::Debug for InputSpec {
                 .debug_struct("TsUdp")
                 .field("addr", addr)
                 .field("multicast_group", multicast_group)
+                .finish(),
+            InputSpec::TsHttp { url } => f
+                .debug_struct("TsHttp")
+                .field("url", &crate::redact::redact_url(url))
+                .finish(),
+            InputSpec::HlsPull { url } => f
+                .debug_struct("HlsPull")
+                .field("url", &crate::redact::redact_url(url))
                 .finish(),
         }
     }
@@ -122,6 +154,8 @@ impl InputSpec {
                 }
                 Ok(())
             }
+            InputSpec::TsHttp { url } => validate_http_url(url),
+            InputSpec::HlsPull { url } => validate_http_url(url),
         }
     }
 }
@@ -138,6 +172,21 @@ fn validate_rtsp_url(url: &str) -> Result<()> {
         other => Err(MultimuxError::ConfigInvalid {
             field: "routes.input.url",
             reason: format!("scheme must be rtsp or rtsps, got {other:?}"),
+        }),
+    }
+}
+
+/// A TS-over-HTTP/HLS-pull URL must parse and use the `http`/`https` scheme.
+fn validate_http_url(url: &str) -> Result<()> {
+    let parsed = url::Url::parse(url).map_err(|e| MultimuxError::ConfigInvalid {
+        field: "routes.input.url",
+        reason: format!("bad http(s) URL {url:?}: {e}"),
+    })?;
+    match parsed.scheme() {
+        "http" | "https" => Ok(()),
+        other => Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.url",
+            reason: format!("scheme must be http or https, got {other:?}"),
         }),
     }
 }
@@ -424,6 +473,119 @@ mod tests {
             other => panic!("expected InputSpec::TsUdp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_json_config_with_ts_http_input() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-ts-http",
+                    "input": { "type": "ts_http", "url": "http://host/stream.ts" }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.routes.len(), 1);
+        match &cfg.routes[0].input {
+            InputSpec::TsHttp { url } => assert_eq!(url, "http://host/stream.ts"),
+            other => panic!("expected InputSpec::TsHttp, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_json_config_with_hls_pull_input() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-hls-pull",
+                    "input": { "type": "hls_pull", "url": "https://origin/live/media.m3u8" }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.routes.len(), 1);
+        match &cfg.routes[0].input {
+            InputSpec::HlsPull { url } => assert_eq!(url, "https://origin/live/media.m3u8"),
+            other => panic!("expected InputSpec::HlsPull, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_bad_ts_http_scheme() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::TsHttp {
+                    url: "rtsp://host/stream.ts".into(),
+                },
+            }],
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_bad_hls_pull_scheme() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::HlsPull {
+                    url: "ftp://host/media.m3u8".into(),
+                },
+            }],
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_unparsable_ts_http_url() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::TsHttp {
+                    url: "not a url".into(),
+                },
+            }],
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    /// Biting test: an `InputSpec::TsHttp`/`HlsPull`'s credential must never
+    /// appear in `Debug` output, mirroring `route_debug_redacts_rtsp_credentials`.
+    #[test]
+    fn route_debug_redacts_ts_http_and_hls_pull_credentials() {
+        let ts_http = Route {
+            name: "cam-ts-http".into(),
+            input: InputSpec::TsHttp {
+                url: "http://user:secretpass@host/stream.ts".into(),
+            },
+        };
+        let debug = format!("{ts_http:?}");
+        assert!(!debug.contains("user"), "debug leaked username: {debug}");
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked password: {debug}"
+        );
+        assert!(debug.contains("***@host"), "debug: {debug}");
+
+        let hls_pull = Route {
+            name: "cam-hls-pull".into(),
+            input: InputSpec::HlsPull {
+                url: "https://user:secretpass@origin/media.m3u8".into(),
+            },
+        };
+        let debug = format!("{hls_pull:?}");
+        assert!(!debug.contains("user"), "debug leaked username: {debug}");
+        assert!(
+            !debug.contains("secretpass"),
+            "debug leaked password: {debug}"
+        );
+        assert!(debug.contains("***@origin"), "debug: {debug}");
     }
 
     #[test]

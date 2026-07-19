@@ -237,7 +237,8 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 /// Each route's task is driven by [`supervisor::supervise`]: depending on
 /// that route's [`crate::config::InputSpec`], it connects
 /// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
-/// or [`crate::source::ts_udp::TsUdpSource`] — one `match` arm per variant,
+/// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
+/// or [`crate::source::hls_pull::HlsPullSource`] — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
 /// connectors have different `Source` associated types, so this dispatch
 /// stays monomorphized rather than boxed) — runs it through
@@ -326,6 +327,32 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
                     addr.clone(),
                     multicast_group.clone(),
                 );
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::TsHttp { url } => {
+                let connector =
+                    crate::source::ts_http::TsHttpSource::new(name.clone(), url.clone());
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::HlsPull { url } => {
+                let connector =
+                    crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone());
                 tokio::spawn(supervise(
                     connector,
                     store,

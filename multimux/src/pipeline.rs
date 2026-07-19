@@ -67,6 +67,26 @@ impl SampleSource for crate::source::ts_udp::TsUdpSession {
     }
 }
 
+impl SampleSource for crate::source::ts_http::TsHttpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::ts_http::TsHttpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::ts_http::TsHttpSession::next_samples(self).await
+    }
+}
+
+impl SampleSource for crate::source::hls_pull::HlsPullSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::hls_pull::HlsPullSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::hls_pull::HlsPullSession::next_samples(self).await
+    }
+}
+
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
 /// ready part, and ready segment into `store`, until the source reports
 /// end-of-stream.

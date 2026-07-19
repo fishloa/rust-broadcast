@@ -43,6 +43,47 @@
     scheme, UDP address parseability, multicast-group IP validity, RTP SDP
     non-empty/parseable) in addition to the existing duplicate-name/timing
     checks.
+- **HTTP-based ingest: TS-over-HTTP + HLS-pull** (issue #663 P3c / #717 —
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "Input
+  adapters" / "Shared auth layer"): two new `InputSpec` variants,
+  `TsHttp { url }` and `HlsPull { url }`, both `http(s)://` URLs that may
+  carry `user:pass@` userinfo (redacted in `Debug`, validated for scheme by
+  `Config::validate`).
+  - `source::ts_http::TsHttpSource` — MPEG-2 Transport Stream over a
+    streaming HTTP GET (chunked/progressive `reqwest`, `stream` feature):
+    reads response chunks into `transmux::StreamingTsDemux` until the
+    in-band PMT resolves every declared track (mirrors `TsUdpSource`'s own
+    connect-time PMT wait, bounded the same 10 s). Unlike UDP, the HTTP body
+    stream *does* end — `next_samples` returns `Ok(None)` on end-of-stream,
+    so `origin::supervisor::supervise` reconnects exactly as for any other
+    source's EOF.
+  - `source::hls_pull::HlsPullSource` — wraps
+    `ll_hls_runtime::client::tokio_client::TokioClient` (the sans-IO LL-HLS
+    playback client engine, driven over real HTTP) as a `SourceConnector`/
+    `SampleSource`: `connect()` drives the client until its first
+    `Output::Init`, recovering the pulled stream's `TrackSpec`s by feeding
+    those init bytes through `transmux::Fmp4Demux` once (the *same* demuxer
+    the client itself already uses internally — no hand-rolled `moov`
+    parse); `next_samples()` relays `Output::Samples` straight through. No
+    re-demuxing: the client's own `Fmp4Demux`-based decode is reused
+    verbatim.
+  - `source::http_auth` — shared auth glue for both HTTP sources: reqwest
+    answers Basic/Bearer natively, but not Digest (RFC 7616), so
+    `authenticated_get` sends once and, on a `401`, answers the
+    `WWW-Authenticate` challenge via the new `broadcast-auth` crate (issue
+    #663 P3b) before resending — the same shared `Credentials`/
+    `Authenticator` model `rtsp-runtime` already uses. Credentials come from
+    the ingest URL's userinfo (mirrors `source::rtsp`'s own handling,
+    generalized to any URL).
+  - `ll-hls-runtime`'s `client::tokio_client::TokioClient` was itself
+    upgraded in lockstep to authenticate via `broadcast-auth` (Basic/Digest/
+    Bearer, replacing its previous ad hoc Basic/Bearer-only `Auth` enum) —
+    see `ll-hls-runtime`'s own changelog — so `HlsPullSource` gets Digest
+    support for free rather than multimux re-implementing the challenge/
+    response for the pull path.
+  - No new codec/container parsing in multimux: `ts_http` is transport
+    (streaming GET) plus `StreamingTsDemux`; `hls_pull` is a thin wrapper
+    over `ll-hls-runtime`'s existing client engine + `Fmp4Demux`.
 
 ### Changed
 - **LL-HLS origin engine moved to `ll-hls-runtime::server`** (issue
