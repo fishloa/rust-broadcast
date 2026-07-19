@@ -360,7 +360,7 @@ async fn wait_for_part(store: &MediaStore, seq: u32, idx: u32) -> Option<Vec<u8>
 /// `_HLS_msn` is meaningless (a part is only addressable relative to a
 /// segment) and a `_HLS_msn` unreasonably far beyond the current live edge is
 /// either a broken client or abuse — both are rejected with `400 Bad
-/// Request` immediately, rather than blocking to [`BLOCKING_RELOAD_TIMEOUT`]
+/// Request` immediately, rather than blocking to the blocking-reload timeout
 /// and returning `200` regardless (which gives a misbehaving client no
 /// signal to back off).
 pub async fn media_playlist(
