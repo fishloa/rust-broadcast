@@ -77,6 +77,33 @@
   - `origin::AppState` gained a `metrics_handle` field and an `AppState::new`
     constructor (replacing the old bare struct literal at every call site).
 
+### Fixed
+- **LL-HLS spec-conformance** (issue #663, P2 — RFC 8216bis):
+  - `#EXT-X-TARGETDURATION` is now `round(max(configured target, max actual
+    segment duration ever seen))`, not `ceil(configured target)`. The
+    segmenter cuts on the next keyframe *after* the configured target, so a
+    real segment routinely runs longer than the configured value — advertising
+    the configured target alone under-declared TARGETDURATION and violated RFC
+    8216bis §4.4.3.1 (a MUST: every Media Segment's rounded EXTINF ≤
+    TARGETDURATION). `store::MediaStore` now tracks a lifetime
+    `max_segment_duration` (never reset on window eviction) that the LL-HLS
+    renderer folds into the tag.
+  - Blocking-reload `_HLS_msn` semantics (§6.2.5.2): a bare `_HLS_msn` (no
+    `_HLS_part`) now waits until segment `msn` is a fully-present **closed**
+    Media Segment, rather than resolving as soon as the segment merely *opens*
+    with one live part (the old `unwrap_or(0)` conflated it with
+    `_HLS_part=0`). `_HLS_msn`+`_HLS_part` keeps the existing part-count
+    semantics.
+  - `_HLS_msn`/`_HLS_part` abuse bounds (§6.2.5.2): `_HLS_part` without
+    `_HLS_msn`, or an `_HLS_msn` more than a small bound beyond the current
+    live edge, is now rejected promptly with `400 Bad Request` instead of
+    always blocking to the 5 s timeout and returning `200`.
+  - `Cache-Control` + permissive CORS on every origin response: immutable
+    `max-age=31536000, immutable` on init/segment/part byte ranges, `no-cache`
+    on playlists, and `Access-Control-Allow-Origin: *` (+ methods/headers, with
+    an `OPTIONS` preflight handler) on everything — browser LL-HLS players
+    (hls.js) are commonly on a different origin than the API.
+
 ## [0.2.2] - 2026-07-18
 
 ### Fixed

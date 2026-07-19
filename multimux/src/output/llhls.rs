@@ -15,8 +15,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::{Path, Query, State};
-use axum::http::{StatusCode, header};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use serde::Deserialize;
@@ -41,8 +42,24 @@ const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
 /// keeps a stalled/slow source from hanging the HTTP response forever.
 const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// RFC 8216bis §6.2.5.2 (SHOULD): the origin should reject a `_HLS_msn` that
+/// is unreasonably far in the future rather than always blocking to the
+/// timeout — a legitimate client only ever asks for the segment/part right
+/// after the one it already has, so anything more than a few segments beyond
+/// the current live edge is either a malfunctioning client or abuse.
+const ABUSE_MSN_FUTURE_BOUND: u64 = 4;
+
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 const MP4_CONTENT_TYPE: &str = "video/mp4";
+
+/// `Cache-Control` for playlists (`master.m3u8`/`media.m3u8`): they must
+/// always be re-fetched for liveness, never served stale from a cache.
+const CACHE_CONTROL_PLAYLIST: &str = "no-cache";
+
+/// `Cache-Control` for init/segment/part byte ranges: once produced, a given
+/// URI's bytes never change (each segment/part is generated exactly once
+/// under a unique filename), so these are safe to cache indefinitely.
+const CACHE_CONTROL_IMMUTABLE: &str = "max-age=31536000, immutable";
 
 /// HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
 /// `#EXT-X-PART-INF`/`#EXT-X-PART` directives this renderer always emits
@@ -67,11 +84,60 @@ impl Output for LlHlsOutput {
     ///   catch-all is used instead of per-filename routes).
     fn router(&self, store: Arc<MediaStore>) -> Router {
         Router::new()
-            .route("/master.m3u8", get(master_playlist))
-            .route("/media.m3u8", get(media_playlist))
-            .route("/:file", get(dynamic_file))
+            .route(
+                "/master.m3u8",
+                get(master_playlist).options(cors_preflight),
+            )
+            .route("/media.m3u8", get(media_playlist).options(cors_preflight))
+            .route("/:file", get(dynamic_file).options(cors_preflight))
             .with_state(store)
+            .layer(middleware::from_fn(add_response_headers))
     }
+}
+
+/// `OPTIONS` preflight handler for every LL-HLS route: browsers (hls.js and
+/// friends, per-origin from the API) send a CORS preflight before the real
+/// `GET` for cross-origin requests with custom headers. Returns `204 No
+/// Content` with no body; [`add_response_headers`] (mounted below as a
+/// router-wide layer) adds the actual `Access-Control-Allow-*` headers to
+/// this response the same as every other response this router serves.
+async fn cors_preflight() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+/// Router-wide middleware (mounted via `.layer` in [`LlHlsOutput::router`],
+/// so it wraps every route including the `:file` catch-all's 404 fallback):
+/// adds `Access-Control-Allow-*` (permissive CORS — LL-HLS players are
+/// commonly browsers on a different origin than the API, e.g. hls.js) and a
+/// `Cache-Control` appropriate to the resource kind — `no-cache` for
+/// playlists (must always be re-fetched for liveness), `max-age=31536000,
+/// immutable` for init/segment/part byte ranges (a produced segment/part
+/// never changes) — to every response this router serves.
+async fn add_response_headers(req: Request, next: Next) -> Response {
+    let is_playlist = req.uri().path().ends_with(".m3u8");
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if is_playlist {
+            CACHE_CONTROL_PLAYLIST
+        } else {
+            CACHE_CONTROL_IMMUTABLE
+        }),
+    );
+    resp
 }
 
 /// Render the LL-HLS media playlist for `track_id` from `store`'s current
@@ -129,9 +195,19 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
                 .unwrap_or(0);
             format!("part-{track_id}-{seq}.{next_idx}.m4s")
         });
+        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
+        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
+        // segmenter cuts on the next keyframe *after* the configured target,
+        // so a real segment routinely exceeds it — advertising the
+        // configured target alone can under-declare. Use whichever is
+        // larger, rounded (not the configured value's `ceil()` alone).
+        let target_duration = store
+            .target_duration_secs()
+            .max(store.max_segment_duration())
+            .round() as u32;
         let playlist = MediaPlaylist {
             version: LL_HLS_VERSION,
-            target_duration: store.target_duration_secs().ceil() as u32,
+            target_duration,
             media_sequence,
             discontinuity_sequence: 0,
             segments,
@@ -212,6 +288,32 @@ async fn wait_for_progress(store: &MediaStore, msn: u64, part: u32) {
     let _ = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait).await;
 }
 
+/// Block until segment `msn` is a fully-present (closed) Media Segment, or
+/// [`BLOCKING_RELOAD_TIMEOUT`] elapses.
+///
+/// RFC 8216bis §6.2.5.2: a blocking-reload request carrying `_HLS_msn` with
+/// **no** `_HLS_part` must be held until segment `msn` is a closed Media
+/// Segment in the Playlist — unlike the `_HLS_msn`+`_HLS_part` case
+/// ([`wait_for_progress`]), an in-progress segment merely having live parts
+/// does not satisfy a bare `_HLS_msn` request: that segment has no `#EXTINF`/
+/// URI yet, so a client that doesn't understand parts would see no new
+/// segment at all.
+async fn wait_for_closed_segment(store: &MediaStore, msn: u64) {
+    let _guard = BlockingRequestGuard::new();
+    let mut rx = store.subscribe();
+    let wait = async {
+        loop {
+            if u64::from(store.last_closed_segment_seq()) >= msn {
+                return;
+            }
+            if rx.changed().await.is_err() {
+                return;
+            }
+        }
+    };
+    let _ = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait).await;
+}
+
 /// Block until part `idx` of segment `seq` is available, returning its bytes —
 /// or `None` if the part will never be produced or [`BLOCKING_RELOAD_TIMEOUT`]
 /// elapses. This is the origin side of LL-HLS preload-hinted part delivery
@@ -249,13 +351,36 @@ async fn wait_for_part(store: &MediaStore, seq: u32, idx: u32) -> Option<Vec<u8>
 
 /// `GET /media.m3u8` — the LL-HLS media playlist for [`DEFAULT_TRACK_ID`],
 /// blocking on `_HLS_msn`/`_HLS_part` when present.
+///
+/// RFC 8216bis §6.2.5.2 abuse-prevention (SHOULD/MUST): `_HLS_part` without
+/// `_HLS_msn` is meaningless (a part is only addressable relative to a
+/// segment) and a `_HLS_msn` unreasonably far beyond the current live edge is
+/// either a broken client or abuse — both are rejected with `400 Bad
+/// Request` immediately, rather than blocking to [`BLOCKING_RELOAD_TIMEOUT`]
+/// and returning `200` regardless (which gives a misbehaving client no
+/// signal to back off).
 pub async fn media_playlist(
     State(store): State<Arc<MediaStore>>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
+    if q.hls_part.is_some() && q.hls_msn.is_none() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     if let Some(msn) = q.hls_msn {
-        let part = q.hls_part.unwrap_or(0);
-        wait_for_progress(&store, msn, part).await;
+        let (current_max_msn, _) = store.latest_progress();
+        if msn > u64::from(current_max_msn) + ABUSE_MSN_FUTURE_BOUND {
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+        // §6.2.5.2: `_HLS_msn` alone waits for segment `msn` to CLOSE;
+        // `_HLS_msn`+`_HLS_part` waits only for that part of the
+        // (possibly still open) segment. These are genuinely different
+        // conditions — treating a bare `_HLS_msn` as `_HLS_part=0` would
+        // resolve as soon as the segment merely opens with one live part,
+        // before it has an `#EXTINF`/URI at all.
+        match q.hls_part {
+            Some(part) => wait_for_progress(&store, msn, part).await,
+            None => wait_for_closed_segment(&store, msn).await,
+        }
     }
     let body = media_playlist_m3u8(&store, DEFAULT_TRACK_ID);
     ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
@@ -661,6 +786,208 @@ mod tests {
         assert!(
             !m.contains(&format!("part-1-1.{}.m4s", first_idx - 1)),
             "an older part beyond the cap must have been dropped: {m}"
+        );
+    }
+
+    // --- P2 LL-HLS spec-conformance fixes (audit-llhls #1/#2/#3/#4) ---
+
+    #[test]
+    fn target_duration_is_max_of_configured_and_actual_segment_duration() {
+        // Configured target is 4.0s, but the segmenter cuts on the next
+        // keyframe after the target so a real segment can run long (7.5s
+        // here) — RFC 8216bis §4.4.3.1 (MUST) requires TARGETDURATION to be
+        // >= every EXTINF, rounded. The old hardcoded
+        // `ceil(target_duration_secs)` would render `4`, violating the MUST.
+        let s = MediaStore::new(4.0, 500, 4);
+        s.set_init(vec![0; 4]);
+        let mut long_seg = plain_seg(1, 2);
+        long_seg.duration = 7.5;
+        s.add_segment(long_seg);
+        let m = media_playlist_m3u8(&s, 1);
+        assert!(
+            m.contains("#EXT-X-TARGETDURATION:8"),
+            "TARGETDURATION must be round(7.5)=8, not the configured target (4): {m}"
+        );
+    }
+
+    #[test]
+    fn target_duration_falls_back_to_configured_when_segments_are_short() {
+        let s = MediaStore::new(4.0, 500, 4);
+        s.set_init(vec![0; 4]);
+        s.add_segment(plain_seg(1, 2)); // plain_seg's fixed duration is 4.0
+        let m = media_playlist_m3u8(&s, 1);
+        assert!(
+            m.contains("#EXT-X-TARGETDURATION:4"),
+            "unchanged behaviour when no segment exceeds the configured target: {m}"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_playlist_msn_only_waits_for_closed_segment_not_just_open_parts() {
+        // make_store()'s segment 2 is OPEN with 2 live parts
+        // (latest_progress() == (2, 2)) but not yet CLOSED. RFC 8216bis
+        // §6.2.5.2: a bare `_HLS_msn=2` (no `_HLS_part`) must wait for
+        // segment 2 to actually close, not resolve merely because it has
+        // live parts. Reverting to `q.hls_part.unwrap_or(0)` treats this
+        // identically to `_HLS_part=0`, which IS satisfied by
+        // `part_count(2) > 0` — it would return immediately and this test
+        // would fail (elapsed far under the close delay).
+        let store = make_store();
+        let store_for_task = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            store_for_task.add_segment(seg(2)); // closes segment 2
+        });
+
+        let started = std::time::Instant::now();
+        let resp = media_playlist(
+            State(store),
+            Query(BlockingReloadQuery {
+                hls_msn: Some(2),
+                hls_part: None,
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            started.elapsed() >= Duration::from_millis(70),
+            "must have waited for segment 2 to close, not returned as soon as \
+             it had live parts: elapsed {:?}",
+            started.elapsed()
+        );
+        let body = body_string(resp).await;
+        assert!(
+            body.contains("seg-1-2.m4s"),
+            "resolved playlist must show segment 2 as a closed, fetchable segment: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_playlist_far_future_msn_rejected_400_fast() {
+        // latest_progress() for make_store() is (2, 2). A `_HLS_msn` 1000
+        // ahead of the live edge is not a legitimate blocking-reload request
+        // (RFC 8216bis §6.2.5.2 abuse prevention) — it must 400 immediately,
+        // not consume the full BLOCKING_RELOAD_TIMEOUT before giving up.
+        let store = make_store();
+        let started = std::time::Instant::now();
+        let resp = media_playlist(
+            State(store),
+            Query(BlockingReloadQuery {
+                hls_msn: Some(1002),
+                hls_part: None,
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "must reject promptly, not block out the 5s timeout: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn media_playlist_msn_within_bound_still_blocks_normally() {
+        // Sanity check for the abuse-bound change: a legitimate
+        // just-ahead-of-live-edge msn must still work as before (block, then
+        // resolve), not get swept up by the new bound check.
+        let store = make_store(); // latest_progress() == (2, 2)
+        let store_for_task = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store_for_task.add_part(part(2, 2));
+        });
+        let resp = media_playlist(
+            State(store),
+            Query(BlockingReloadQuery {
+                hls_msn: Some(2),
+                hls_part: Some(2),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn media_playlist_part_without_msn_rejected_400() {
+        // RFC 8216bis §6.2.5.2: `_HLS_part` without `_HLS_msn` is
+        // meaningless (a part is only addressable relative to a segment).
+        let store = make_store();
+        let resp = media_playlist(
+            State(store),
+            Query(BlockingReloadQuery {
+                hls_msn: None,
+                hls_part: Some(0),
+            }),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn segment_response_carries_immutable_cache_control_and_cors() {
+        let store = make_store();
+        let router = LlHlsOutput.router(store);
+        let req = axum::http::Request::builder()
+            .uri("/seg-1-1.m4s")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            CACHE_CONTROL_IMMUTABLE,
+            "segment responses must be immutably cacheable"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*",
+            "segment responses must carry permissive CORS"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_playlist_response_carries_no_cache_and_cors() {
+        let store = make_store();
+        let router = LlHlsOutput.router(store);
+        let req = axum::http::Request::builder()
+            .uri("/media.m3u8")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            CACHE_CONTROL_PLAYLIST,
+            "playlist responses must always be re-fetched for liveness"
+        );
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*",
+            "playlist responses must carry permissive CORS"
+        );
+    }
+
+    #[tokio::test]
+    async fn options_preflight_returns_no_content_with_cors_headers() {
+        let store = make_store();
+        let router = LlHlsOutput.router(store);
+        let req = axum::http::Request::builder()
+            .method("OPTIONS")
+            .uri("/media.m3u8")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = tower::ServiceExt::oneshot(router, req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
         );
     }
 }

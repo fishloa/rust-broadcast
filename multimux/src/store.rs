@@ -59,6 +59,16 @@ struct Inner {
     /// Current ingest health, set by the route's supervisor (see
     /// `crate::origin::supervisor`) and read by outputs/metrics.
     health: HealthState,
+    /// The largest `SegmentInfo.duration` ever seen by `add_segment`, over
+    /// the whole lifetime of this store (never reset when the window slides
+    /// or a segment is evicted). RFC 8216bis §4.4.3.1 requires
+    /// `#EXT-X-TARGETDURATION` to be at least the rounded duration of every
+    /// Media Segment ever advertised — since a real segment can exceed the
+    /// *configured* target duration (the segmenter cuts on the next keyframe
+    /// after the target, not exactly at it), an all-time max is the only way
+    /// to guarantee the MUST holds for every segment this store has ever
+    /// produced, including ones already evicted from the window.
+    max_segment_duration: f64,
 }
 
 /// Ingest health of the route feeding a [`MediaStore`], set by the
@@ -127,6 +137,7 @@ impl MediaStore {
                 recent_parts: VecDeque::new(),
                 window_segments,
                 health: HealthState::Connecting,
+                max_segment_duration: 0.0,
             }),
             target_duration_secs,
             part_target_ms,
@@ -176,6 +187,7 @@ impl MediaStore {
     pub fn add_segment(&self, seg: SegmentInfo) {
         let mut g = self.inner.lock().unwrap();
         let seq = seg.segment_seq;
+        g.max_segment_duration = g.max_segment_duration.max(seg.duration);
         let (closed, still_live): (Vec<PartInfo>, Vec<PartInfo>) =
             core::mem::take(&mut g.live_parts)
                 .into_iter()
@@ -284,6 +296,31 @@ impl MediaStore {
         self.part_target_ms
     }
 
+    /// The largest `SegmentInfo.duration` ever seen by [`Self::add_segment`],
+    /// `0.0` if no segment has closed yet. An [`crate::output::Output`]
+    /// renderer combines this with [`Self::target_duration_secs`] to compute
+    /// a spec-conformant `#EXT-X-TARGETDURATION` (RFC 8216bis §4.4.3.1).
+    pub(crate) fn max_segment_duration(&self) -> f64 {
+        self.inner.lock().unwrap().max_segment_duration
+    }
+
+    /// The sequence number of the most-recently-closed segment, `0` if none
+    /// has closed yet. Unlike [`Self::latest_progress`]'s first element
+    /// (which reflects the *in-progress* segment once any of its parts have
+    /// landed), this is specifically the last **closed** segment — used to
+    /// implement RFC 8216bis §6.2.5.2's bare-`_HLS_msn` blocking-reload
+    /// semantics, which must wait for segment `msn` to be a fully-present
+    /// Media Segment, not merely an in-progress one with live parts.
+    pub(crate) fn last_closed_segment_seq(&self) -> u32 {
+        self.inner
+            .lock()
+            .unwrap()
+            .segments
+            .back()
+            .map(|s| s.segment_seq)
+            .unwrap_or(0)
+    }
+
     /// Run `f` against a consistent snapshot of the closed `segments` and the
     /// in-progress segment's `live_parts`, taken under a single lock
     /// acquisition — used by output renderers (e.g. LL-HLS's media playlist
@@ -390,6 +427,54 @@ mod tests {
         s.set_health(HealthState::Reconnecting);
         assert_eq!(s.health(), HealthState::Reconnecting);
         assert_ne!(*rx.borrow(), mid);
+    }
+
+    #[test]
+    fn max_segment_duration_tracks_lifetime_max_not_just_current_window() {
+        let s = MediaStore::new(4.0, 500, 2);
+        s.set_init(vec![0; 4]);
+        assert_eq!(s.max_segment_duration(), 0.0, "nothing closed yet");
+
+        let mut over = seg(1, 8);
+        over.duration = 4.0;
+        s.add_segment(over);
+        assert_eq!(s.max_segment_duration(), 4.0);
+
+        // A real segment that overshoots the configured target (the
+        // segmenter cuts on the next keyframe after the target, so this is
+        // routine, not pathological).
+        let mut over = seg(2, 8);
+        over.duration = 7.5;
+        s.add_segment(over);
+        assert_eq!(s.max_segment_duration(), 7.5);
+
+        // Window slides (window_segments=2 evicts seq 1 and seq 2 eventually)
+        // but the lifetime max must NOT reset/shrink back down.
+        let mut small = seg(3, 8);
+        small.duration = 3.0;
+        s.add_segment(small); // evicts seq 1 from the window
+        let mut small2 = seg(4, 8);
+        small2.duration = 3.0;
+        s.add_segment(small2); // evicts seq 2 from the window
+        assert!(
+            s.segment_bytes(2).is_none(),
+            "seq 2 (the 7.5s segment) evicted from the window"
+        );
+        assert_eq!(
+            s.max_segment_duration(),
+            7.5,
+            "lifetime max must survive window eviction"
+        );
+    }
+
+    #[test]
+    fn last_closed_segment_seq_tracks_the_newest_close() {
+        let s = MediaStore::new(4.0, 500, 4);
+        assert_eq!(s.last_closed_segment_seq(), 0, "nothing closed yet");
+        s.add_segment(seg(1, 8));
+        assert_eq!(s.last_closed_segment_seq(), 1);
+        s.add_segment(seg(2, 8));
+        assert_eq!(s.last_closed_segment_seq(), 2);
     }
 
     #[test]
