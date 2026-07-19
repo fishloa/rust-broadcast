@@ -77,22 +77,32 @@ static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 /// Install the process-wide Prometheus recorder exactly once, returning a
 /// clone of its handle on every call.
 ///
-/// `metrics::set_global_recorder` (which `PrometheusBuilder::install_recorder`
-/// calls internally) can only succeed the *first* time it's called in a
-/// process — every subsequent attempt errors. Every [`crate::origin::AppState`]
-/// constructed in the same process (including many independent
-/// `#[tokio::test]`s in this crate's own test binary, which all share one
-/// process) calls this, so it must be idempotent: the [`OnceLock`] installs
-/// the recorder on the first call and every call — first or not — gets a
-/// clone of the same [`PrometheusHandle`], reading the one shared, process-wide
-/// set of metrics.
+/// `metrics::set_global_recorder` can only succeed the *first* time it's called
+/// in a process — every subsequent attempt errors. Every
+/// [`crate::origin::AppState`] constructed in the same process (including many
+/// independent `#[tokio::test]`s in this crate's own test binary, which all
+/// share one process) calls this, so it must be idempotent: the [`OnceLock`]
+/// installs the recorder on the first call and every call — first or not — gets
+/// a clone of the same [`PrometheusHandle`], reading the one shared,
+/// process-wide set of metrics.
+///
+/// Uses `build_recorder()` + `metrics::set_global_recorder` rather than
+/// `PrometheusBuilder::install_recorder()`: the latter spawns a background
+/// **upkeep thread** (non-daemon) that never exits, which keeps every process
+/// alive and makes `cargo nextest` (one process per test) time out on *every*
+/// test in this binary — including the pure-sync store tests. `build_recorder`
+/// installs no thread; we don't need periodic upkeep for a scrape-rendered
+/// exposition.
 pub fn install() -> PrometheusHandle {
     HANDLE
         .get_or_init(|| {
-            PrometheusBuilder::new().install_recorder().expect(
+            let recorder = PrometheusBuilder::new().build_recorder();
+            let handle = recorder.handle();
+            metrics::set_global_recorder(recorder).expect(
                 "installing the process-wide Prometheus recorder must succeed the one time \
                      `OnceLock::get_or_init` actually runs the closure",
-            )
+            );
+            handle
         })
         .clone()
 }
