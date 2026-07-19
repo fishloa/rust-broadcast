@@ -10,9 +10,11 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::SystemTime;
 
 use event_listener::{Event, EventListener};
 use transmux::ll_hls::{PartInfo, SegmentInfo};
+use transmux::pipeline::TrackSpec;
 
 /// Minimum live-parts cap, regardless of the timing-derived bound — keeps a
 /// usable window even for pathologically small `target_duration_secs`/
@@ -71,6 +73,13 @@ struct Inner {
     /// to guarantee the MUST holds for every segment this store has ever
     /// produced, including ones already evicted from the window.
     max_segment_duration: f64,
+    /// The track specs the feeding pipeline built its segmenter from (issue
+    /// #663 P4) — set once via [`MediaStore::set_track_specs`], before the
+    /// first sample lands. Protocol-neutral (any `Output` can read it), but
+    /// only [`crate`]'s DASH sibling in `multimux::output::dash` actually
+    /// needs it today: a DASH `Representation` must advertise a real RFC 6381
+    /// `codecs` string, which the LL-HLS playlist never needs.
+    track_specs: Vec<TrackSpec>,
 }
 
 /// Ingest health of the pipeline feeding a [`MediaStore`], set by the
@@ -114,6 +123,18 @@ impl std::fmt::Display for HealthState {
     }
 }
 
+/// One closed segment's identity/timing — a protocol-neutral snapshot entry
+/// returned by [`MediaStore::window_segments`] (issue #663 P4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SegmentWindowEntry {
+    /// This segment's sequence number — matches the `seg-{track}-{seq}.m4s`
+    /// filename [`MediaStore::resolve_resource`](super::MediaStore::resolve_resource)
+    /// serves.
+    pub segment_seq: u32,
+    /// This segment's actual duration, in seconds.
+    pub duration_secs: f64,
+}
+
 /// In-RAM rolling window for one served stream: bytes + timing, shared by
 /// every adapter serving that stream.
 pub struct MediaStore {
@@ -131,6 +152,11 @@ pub struct MediaStore {
     /// missed — the standard `event-listener` idiom), and every mutation
     /// calls `notify(usize::MAX)` to wake every parked waiter.
     progress_event: Event,
+    /// Wall-clock time this store was constructed — used as the live
+    /// presentation's `availabilityStartTime` anchor (issue #663 P4; see
+    /// [`Self::created_at`]). Not bumped/mutated after construction, so it
+    /// needs no lock.
+    created_at: SystemTime,
 }
 
 impl MediaStore {
@@ -145,12 +171,14 @@ impl MediaStore {
                 window_segments,
                 health: HealthState::Connecting,
                 max_segment_duration: 0.0,
+                track_specs: Vec::new(),
             }),
             target_duration_secs,
             part_target_ms,
             max_live_parts: compute_max_live_parts(target_duration_secs, part_target_ms),
             progress_version: AtomicU64::new(0),
             progress_event: Event::new(),
+            created_at: SystemTime::now(),
         }
     }
 
@@ -313,15 +341,63 @@ impl MediaStore {
     }
 
     /// The full-segment target duration, in seconds, this store was built
-    /// with — timing configuration the playlist renderer needs (e.g.
-    /// LL-HLS's `#EXT-X-TARGETDURATION`).
-    pub(crate) fn target_duration_secs(&self) -> f64 {
+    /// with — timing configuration a manifest renderer needs (e.g. LL-HLS's
+    /// `#EXT-X-TARGETDURATION`, or a DASH `Output`'s `minimumUpdatePeriod`/
+    /// `timeShiftBufferDepth`). `pub` (not `pub(crate)`) since issue #663 P4:
+    /// `multimux::output::dash` needs it too, not just this crate's own
+    /// `engine`.
+    pub fn target_duration_secs(&self) -> f64 {
         self.target_duration_secs
     }
 
     /// The part target duration, in milliseconds, this store was built with.
-    pub(crate) fn part_target_ms(&self) -> u32 {
+    /// `pub` for the same cross-`Output` reason as
+    /// [`Self::target_duration_secs`].
+    pub fn part_target_ms(&self) -> u32 {
         self.part_target_ms
+    }
+
+    /// Wall-clock time this store was constructed (issue #663 P4) — used as
+    /// a live DASH presentation's `availabilityStartTime` anchor. An
+    /// approximation (the *route*'s start time, not the first segment's
+    /// exact cut time — the first segment typically closes
+    /// `target_duration_secs` or so later), acceptable for a manifest
+    /// attribute that only needs to establish a consistent, monotonic
+    /// timeline, not wall-clock precision.
+    pub fn created_at(&self) -> SystemTime {
+        self.created_at
+    }
+
+    /// Store the track specs the feeding pipeline built its segmenter from —
+    /// called once, before the first sample is pushed. See
+    /// [`Inner::track_specs`] for why this exists (DASH's `codecs` string
+    /// needs real codec identity; LL-HLS never reads this).
+    pub fn set_track_specs(&self, specs: Vec<TrackSpec>) {
+        self.inner.lock().unwrap().track_specs = specs;
+    }
+
+    /// The track specs set by [`Self::set_track_specs`], empty if never
+    /// called (e.g. in a test that only exercises playlist rendering).
+    pub fn track_specs(&self) -> Vec<TrackSpec> {
+        self.inner.lock().unwrap().track_specs.clone()
+    }
+
+    /// Snapshot of the closed segments currently retained in the rolling
+    /// window, oldest first — enough for a manifest renderer to enumerate
+    /// fetchable segments (issue #663 P4: DASH's `SegmentTemplate`/
+    /// `$Number$` addressing) without depending on the LL-HLS-specific
+    /// playlist rendering in [`super::engine`].
+    pub fn window_segments(&self) -> Vec<SegmentWindowEntry> {
+        self.inner
+            .lock()
+            .unwrap()
+            .segments
+            .iter()
+            .map(|s| SegmentWindowEntry {
+                segment_seq: s.segment_seq,
+                duration_secs: s.duration,
+            })
+            .collect()
     }
 
     /// The largest `SegmentInfo.duration` ever seen by [`Self::add_segment`],
@@ -538,5 +614,66 @@ mod tests {
             assert_eq!(state.name(), label);
             assert_eq!(state.to_string(), label);
         }
+    }
+
+    // --- issue #663 P4: DASH-facing accessors ---
+
+    #[test]
+    fn track_specs_round_trip_and_default_empty() {
+        use transmux::pipeline::CodecConfig;
+
+        let s = MediaStore::new(4.0, 500, 4);
+        assert!(
+            s.track_specs().is_empty(),
+            "no specs set yet -> empty, not a panic/placeholder"
+        );
+
+        let spec = TrackSpec::new(
+            1,
+            90_000,
+            CodecConfig::Vp8 {
+                width: 0,
+                height: 0,
+            },
+        );
+        s.set_track_specs(vec![spec.clone()]);
+        let got = s.track_specs();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].track_id, spec.track_id);
+        assert_eq!(got[0].timescale, spec.timescale);
+    }
+
+    #[test]
+    fn window_segments_reflects_closed_segments_oldest_first_and_evicts() {
+        let s = MediaStore::new(4.0, 500, 2);
+        assert!(s.window_segments().is_empty(), "nothing closed yet");
+
+        s.add_segment(seg(1, 4));
+        s.add_segment(seg(2, 4));
+        let window = s.window_segments();
+        assert_eq!(
+            window.iter().map(|e| e.segment_seq).collect::<Vec<_>>(),
+            vec![1, 2],
+            "oldest first"
+        );
+        assert_eq!(window[0].duration_secs, 4.0);
+
+        s.add_segment(seg(3, 4)); // evicts seq 1 (window_segments == 2)
+        assert_eq!(
+            s.window_segments()
+                .iter()
+                .map(|e| e.segment_seq)
+                .collect::<Vec<_>>(),
+            vec![2, 3],
+            "eviction reflected in the snapshot"
+        );
+    }
+
+    #[test]
+    fn created_at_is_set_at_construction() {
+        let before = SystemTime::now();
+        let s = MediaStore::new(4.0, 500, 4);
+        let after = SystemTime::now();
+        assert!(s.created_at() >= before && s.created_at() <= after);
     }
 }

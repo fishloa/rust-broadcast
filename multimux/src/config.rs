@@ -5,9 +5,16 @@
 //! HLS-pull) to a served stream name.
 
 use crate::error::{MultimuxError, Result};
+use crate::output::OutputKind;
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+
+/// Default [`Route::outputs`] when a route's config omits the field: LL-HLS
+/// only, preserving pre-#663-P4 behaviour for every existing config.
+fn default_outputs() -> Vec<OutputKind> {
+    vec![OutputKind::LlHls]
+}
 
 /// One route's ingest transport (issue #663 P3a/P3c): tagged so a JSON
 /// config can name which transport a route uses (`"type": "rtsp" | "rtp" |
@@ -252,13 +259,25 @@ fn validate_sdp(sdp: &str) -> Result<()> {
     Ok(())
 }
 
-/// One input→output route: an [`InputSpec`] served under `name`.
+/// One input→output route: an [`InputSpec`] served under `name`, packaged to
+/// every [`OutputKind`] in [`Self::outputs`] (issue #663 P4 — "ingest-once,
+/// many-outputs": ` outputs` is **per-route** rather than one global
+/// default, since different routes plausibly want different output sets,
+/// e.g. a DASH-only route feeding an existing DASH-only player fleet
+/// alongside an LL-HLS+DASH route for a browser audience — a single
+/// process-wide default couldn't express that).
 #[derive(Clone, Deserialize)]
 pub struct Route {
     /// Served stream name (URL path segment).
     pub name: String,
     /// The ingest transport this route pulls from.
     pub input: InputSpec,
+    /// Which delivery protocol(s) to package this route's ingested media as.
+    /// Defaults to LL-HLS only (`default_outputs`), preserving every
+    /// existing config's behaviour unchanged. Validated non-empty by
+    /// [`Config::validate`].
+    #[serde(default = "default_outputs")]
+    pub outputs: Vec<OutputKind>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec`] already
@@ -270,6 +289,7 @@ impl std::fmt::Debug for Route {
         f.debug_struct("Route")
             .field("name", &self.name)
             .field("input", &self.input)
+            .field("outputs", &self.outputs)
             .finish()
     }
 }
@@ -353,6 +373,12 @@ impl Config {
                     reason: format!("duplicate stream name {:?}", r.name),
                 });
             }
+            if r.outputs.is_empty() {
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "routes.outputs",
+                    reason: format!("route {:?} has no outputs configured", r.name),
+                });
+            }
             r.input.validate()?;
         }
         Ok(())
@@ -385,6 +411,96 @@ mod tests {
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    // --- issue #663 P4: per-route `outputs` ---
+
+    /// A route with no `outputs` key defaults to LL-HLS only — every
+    /// pre-#663-P4 config keeps working unchanged.
+    #[test]
+    fn route_outputs_defaults_to_llhls_only_when_omitted() {
+        let json = r#"{
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::LlHls]);
+        cfg.validate().unwrap();
+    }
+
+    /// A route may name both outputs explicitly (issue #663 P4's headline
+    /// config shape: one ingest, LL-HLS + DASH).
+    #[test]
+    fn route_outputs_parses_llhls_and_dash() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["llhls", "dash"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            cfg.routes[0].outputs,
+            vec![OutputKind::LlHls, OutputKind::Dash]
+        );
+        cfg.validate().unwrap();
+    }
+
+    /// A DASH-only route is valid too — `outputs` genuinely selects the set,
+    /// it isn't just an LL-HLS toggle.
+    #[test]
+    fn route_outputs_dash_only_is_valid() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["dash"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::Dash]);
+        cfg.validate().unwrap();
+    }
+
+    /// An explicitly empty `outputs` list must be rejected at `validate()`
+    /// time (a route with nothing to serve is a config mistake, not a
+    /// silently-do-nothing route).
+    #[test]
+    fn validate_rejects_empty_outputs_list() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": []
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    /// An unknown `outputs` token (e.g. a typo'd `"lldash"`, not yet
+    /// implemented) is rejected at parse time, not silently dropped.
+    #[test]
+    fn rejects_unknown_output_kind() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["lldash"]
+                }
+            ]
+        }"#;
+        let result: std::result::Result<Config, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "unknown output kind must be rejected");
     }
 
     #[test]
@@ -521,6 +637,7 @@ mod tests {
                 input: InputSpec::TsHttp {
                     url: "rtsp://host/stream.ts".into(),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -535,6 +652,7 @@ mod tests {
                 input: InputSpec::HlsPull {
                     url: "ftp://host/media.m3u8".into(),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -549,6 +667,7 @@ mod tests {
                 input: InputSpec::TsHttp {
                     url: "not a url".into(),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -564,6 +683,7 @@ mod tests {
             input: InputSpec::TsHttp {
                 url: "http://user:secretpass@host/stream.ts".into(),
             },
+            outputs: default_outputs(),
         };
         let debug = format!("{ts_http:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -578,6 +698,7 @@ mod tests {
             input: InputSpec::HlsPull {
                 url: "https://user:secretpass@origin/media.m3u8".into(),
             },
+            outputs: default_outputs(),
         };
         let debug = format!("{hls_pull:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -596,6 +717,7 @@ mod tests {
                 input: InputSpec::Rtsp {
                     url: "http://host/stream".into(),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -611,6 +733,7 @@ mod tests {
                     addr: "not-an-addr".into(),
                     multicast_group: None,
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -627,6 +750,7 @@ mod tests {
                     // A unicast address, not a valid multicast group.
                     multicast_group: Some("10.0.0.1".into()),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -643,6 +767,7 @@ mod tests {
                     sdp: String::new(),
                     multicast_group: None,
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -659,6 +784,7 @@ mod tests {
                     sdp: "not an sdp body".into(),
                     multicast_group: None,
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -677,6 +803,7 @@ mod tests {
                     sdp: "@/no/such/file/does-not-exist.sdp".into(),
                     multicast_group: None,
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -692,12 +819,14 @@ mod tests {
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
                     },
+                    outputs: default_outputs(),
                 },
                 Route {
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://b".into(),
                     },
+                    outputs: default_outputs(),
                 },
             ],
             ..Config::default()
@@ -754,6 +883,7 @@ mod tests {
             input: InputSpec::Rtsp {
                 url: "rtsp://user:secretpass@host/s".into(),
             },
+            outputs: default_outputs(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains("user"), "debug leaked username: {debug}");
@@ -775,6 +905,7 @@ mod tests {
                 input: InputSpec::Rtsp {
                     url: "rtsp://user:secretpass@host/s".into(),
                 },
+                outputs: default_outputs(),
             }],
             ..Config::default()
         };
@@ -801,6 +932,7 @@ mod tests {
                 sdp: long_sdp.clone(),
                 multicast_group: None,
             },
+            outputs: default_outputs(),
         };
         let debug = format!("{route:?}");
         assert!(!debug.contains(&long_sdp), "debug: {debug}");

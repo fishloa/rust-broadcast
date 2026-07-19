@@ -53,4 +53,4 @@ pub use engine::{
     BlockingQuery, CachePolicy, DEFAULT_TRACK_ID, PlaylistOutcome, ResourceOutcome,
     master_playlist_m3u8, media_playlist_m3u8,
 };
-pub use store::{HealthState, MediaStore};
+pub use store::{HealthState, MediaStore, SegmentWindowEntry};

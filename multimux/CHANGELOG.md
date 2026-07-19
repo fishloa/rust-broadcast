@@ -3,6 +3,57 @@
 ## [Unreleased]
 
 ### Added
+- **DASH output alongside LL-HLS, from the same shared CMAF segments**
+  (issue #663 P4 — `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`,
+  "DASH output"): one ingested stream can now serve LL-HLS *and* MPEG-DASH
+  simultaneously, both reading the exact same `MediaStore`-produced
+  init/segment bytes (ingest-once, many-outputs — no per-output re-mux).
+  - **The multi-output nest collision fix (the load-bearing refactor)**: two
+    `Output`s each mounting their own `/:file` catch-all under the same
+    `/{stream}` nest previously panicked axum. Fixed by splitting
+    responsibilities: the `Output` trait's `router` method is now
+    `manifest_routes` — each output contributes *only* its manifest
+    route(s) (`master.m3u8`+`media.m3u8` for LL-HLS, `manifest.mpd` for
+    DASH) — while the init/segment/part byte serving (`init-*.mp4`/
+    `seg-*.m4s`/`part-*.m4s`, protocol-neutral since both outputs are
+    fMP4/CMAF) moves to a new shared `origin::resource` route, mounted
+    **once per stream** by `origin::router` (merging every output's
+    manifest routes with the one shared resource route, then `nest`ing the
+    merged router once — instead of nesting per-output). LL-HLS's URLs and
+    behaviour (routes, blocking reload, `Cache-Control`/CORS policy) are
+    unchanged; the shared `Cache-Control`/CORS middleware (generalized to
+    treat `.mpd` the same as `.m3u8`) now lives at the origin level so it
+    covers the shared resource route too.
+  - `output::dash::DashOutput`: renders a live (`type="dynamic"`) MPD via
+    `transmux::dash::DashPackager`, `$Number$`-addressed `SegmentTemplate`
+    (not `$Time$`/`SegmentTimeline` — the store's `seg-{track}-{seq}.m4s`
+    filenames are sequence-numbered, not time-addressed, so `$Number$` is
+    the only mode whose URIs the shared resource route actually resolves),
+    with `minimumUpdatePeriod`/`timeShiftBufferDepth`/
+    `availabilityStartTime` derived from the store's target duration/window/
+    construction time. Single-rendition model matching LL-HLS's own
+    `DEFAULT_TRACK_ID` convention: the `Representation`'s `@id` is forced to
+    `DEFAULT_TRACK_ID` regardless of the source's own track numbering, so
+    `$RepresentationID$` substitution produces the same `init-1.mp4`/
+    `seg-1-<N>.m4s` filenames LL-HLS already references. **LL-DASH
+    (`transmux::LlDashPackager` chunked parts/`availabilityTimeOffset`) is
+    not implemented** — the store's `part-*.m4s` files are LL-HLS-shaped,
+    not CMAF byte-range chunks — tracked as a follow-up (P4.2).
+  - `ll_hls_runtime::server::MediaStore` gained the accessors a DASH
+    renderer needs beyond LL-HLS's own bytes+timing: `set_track_specs`/
+    `track_specs` (recorded once by `pipeline::run_pipeline` so DASH can
+    build a real RFC 6381 `codecs` string), `window_segments` (a
+    protocol-neutral snapshot of the closed-segment window), `created_at`
+    (the live presentation's `availabilityStartTime` anchor); the previously
+    crate-private `target_duration_secs`/`part_target_ms` accessors are now
+    `pub` for the same cross-`Output` reason.
+  - Config: `config::Route::outputs: Vec<output::OutputKind>` selects which
+    protocol(s) to serve a route as (`"llhls"`/`"dash"`, per-route rather
+    than a single global default — different routes may reasonably want
+    different output sets), defaulting to LL-HLS only so every existing
+    config is unaffected. `Config::validate` rejects an empty `outputs`
+    list. `multimux-cli` gained `--outputs llhls,dash` (and the `--dash`
+    shorthand for "both") on the single-route quick start.
 - **Generalized input model + UDP-family ingest** (issue #663 P3a —
   `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "Input
   adapters"): a route's ingest transport is now a tagged `config::InputSpec`

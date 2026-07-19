@@ -1,10 +1,18 @@
 //! HTTP origin server for stream delivery.
 //!
 //! Wires a per-stream [`crate::store::MediaStore`] to the axum sub-routers of
-//! each stream's configured [`crate::output::Output`]s (LL-HLS today; DASH in
-//! future), mounting each output's routes under `/{stream}/`. See
-//! [`crate::output::llhls`] for the LL-HLS output itself (playlists, byte
-//! ranges, bounded blocking playlist reload — RFC 8216bis §6.2.5.2).
+//! each stream's configured [`crate::output::Output`]s (LL-HLS, DASH — issue
+//! #663 P4), mounting under `/{stream}/`:
+//! - the **shared resource route** (`resource`) — `init-*.mp4`/`seg-*.m4s`/
+//!   `part-*.m4s` byte serving, identical for every output since LL-HLS and
+//!   DASH are both fMP4/CMAF over the same produced bytes. Mounted **once
+//!   per stream**, not per-output (two outputs each mounting their own
+//!   `/:file` catch-all under the same nest previously panicked axum — the
+//!   "multi-output nest collision" this module fixes).
+//! - each configured output's **manifest routes**
+//!   ([`crate::output::Output::manifest_routes`]) — `master.m3u8`/
+//!   `media.m3u8` for LL-HLS ([`crate::output::llhls`]), `manifest.mpd` for
+//!   DASH ([`crate::output::dash`]).
 //!
 //! Also mounts three root-level (not `/{stream}/`-scoped) operability
 //! endpoints (issue #663, P1c) — see [`router`]:
@@ -16,6 +24,7 @@
 //! `track_http`, an axum middleware layer recording HTTP request/latency/
 //! byte metrics.
 
+pub(crate) mod resource;
 pub mod supervisor;
 
 use std::collections::HashMap;
@@ -25,7 +34,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -33,7 +42,6 @@ use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::watch;
 
 use crate::output::Output;
-use crate::output::llhls::LlHlsOutput;
 use crate::store::{HealthState, MediaStore};
 use supervisor::{Backoff, supervise};
 
@@ -77,11 +85,16 @@ impl AppState {
 /// Build the axum router serving `state`'s streams plus the root operability
 /// endpoints:
 ///
-/// - For each stream, every configured `Output`'s router is merged
-///   (`nest`ed) under `/{stream}/`, all sharing that stream's one
-///   [`MediaStore`]. A request for a stream name not present in
-///   `state.streams` matches no nest and 404s, same as an unknown filename
-///   within a known stream 404s inside the output's own router.
+/// - For each stream, the shared resource route (`resource::router`) is
+///   merged with every configured `Output`'s manifest routes
+///   ([`Output::manifest_routes`]) — all sharing that stream's one
+///   [`MediaStore`] — into **one** router, wrapped in
+///   `add_response_headers`, then `nest`ed under `/{stream}/` **once**
+///   (merging first, rather than nesting each output separately, is what
+///   avoids axum's duplicate-nest panic — see this module's docs). A request
+///   for a stream name not present in `state.streams` matches no nest and
+///   404s, same as an unknown filename within a known stream 404s inside the
+///   merged router's own fallback.
 /// - `GET /metrics`, `GET /healthz`, `GET /readyz` are mounted at the root
 ///   (never under `/{stream}/`) — see `metrics_handler`, `healthz`,
 ///   `readyz` (all crate-private handlers, below).
@@ -94,9 +107,12 @@ impl AppState {
 pub fn router(state: Arc<AppState>) -> Router {
     let mut router = Router::new();
     for (name, (store, outputs)) in &state.streams {
+        let mut stream_router = resource::router(store.clone());
         for output in outputs {
-            router = router.nest(&format!("/{name}"), output.router(store.clone()));
+            stream_router = stream_router.merge(output.manifest_routes(store.clone()));
         }
+        stream_router = stream_router.layer(middleware::from_fn(add_response_headers));
+        router = router.nest(&format!("/{name}"), stream_router);
     }
 
     let root = Router::new()
@@ -109,6 +125,56 @@ pub fn router(state: Arc<AppState>) -> Router {
         .merge(root)
         .layer(middleware::from_fn_with_state(state, track_http))
 }
+
+/// Router-wide middleware (mounted via `.layer` on each stream's *merged*
+/// router in [`router`], so it wraps every route this stream serves —
+/// manifests, resources, and the `:file` catch-all's 404 fallback alike):
+/// adds `Access-Control-Allow-*` (permissive CORS — LL-HLS/DASH players are
+/// commonly browsers on a different origin than the API, e.g. hls.js/dash.js)
+/// and a `Cache-Control` appropriate to the resource kind — `no-cache` for a
+/// manifest (`.m3u8`/`.mpd`; must always be re-fetched for liveness),
+/// `max-age=31536000, immutable` for init/segment/part byte ranges (a
+/// produced segment/part never changes) — to every response this router
+/// serves. Applied once at the origin level (not per-`Output`) precisely
+/// because it must cover the shared resource route too, which no single
+/// `Output` owns.
+async fn add_response_headers(req: Request, next: Next) -> Response {
+    let path = req.uri().path();
+    let is_manifest = path.ends_with(".m3u8") || path.ends_with(".mpd");
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if is_manifest {
+            CACHE_CONTROL_MANIFEST
+        } else {
+            CACHE_CONTROL_IMMUTABLE
+        }),
+    );
+    resp
+}
+
+/// `Cache-Control` for manifests (`master.m3u8`/`media.m3u8`/`manifest.mpd`):
+/// they must always be re-fetched for liveness, never served stale from a
+/// cache.
+const CACHE_CONTROL_MANIFEST: &str = "no-cache";
+
+/// `Cache-Control` for init/segment/part byte ranges: once produced, a given
+/// URI's bytes never change (each segment/part is generated exactly once
+/// under a unique filename), so these are safe to cache indefinitely.
+const CACHE_CONTROL_IMMUTABLE: &str = "max-age=31536000, immutable";
 
 /// `GET /metrics` — the process's current Prometheus text-exposition
 /// snapshot: every metric recorded anywhere in the process via the `metrics`
@@ -231,8 +297,9 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 
 /// Run the multimux origin: one [`MediaStore`] + one supervised ingest task
 /// per `config.routes` entry, then bind `config.bind` and serve them all
-/// under [`router`]. Each route is served by a single [`LlHlsOutput`] (the
-/// default — and today the only — output wiring).
+/// under [`router`]. Each route is served by the [`Output`]s named in its
+/// [`crate::config::Route::outputs`] (LL-HLS by default — see
+/// [`crate::output::OutputKind`]).
 ///
 /// Each route's task is driven by [`supervisor::supervise`]: depending on
 /// that route's [`crate::config::InputSpec`], it connects
@@ -279,7 +346,7 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
             part_target_ms,
             config.window_segments,
         ));
-        let outputs: Vec<Arc<dyn Output>> = vec![Arc::new(LlHlsOutput)];
+        let outputs: Vec<Arc<dyn Output>> = route.outputs.iter().map(|k| k.build()).collect();
         streams.insert(route.name.clone(), (store.clone(), outputs));
 
         let name = route.name.clone();
@@ -433,6 +500,7 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::output::llhls::LlHlsOutput;
     use crate::store::MediaStore;
     use tower::ServiceExt;
 
@@ -652,5 +720,251 @@ mod tests {
             REQUESTS as f64,
             "multimux_http_requests_total must increase by exactly the number of requests made"
         );
+    }
+
+    // --- issue #663 P4: DASH alongside LL-HLS, from the shared store ---
+
+    async fn body_bytes(resp: Response) -> Vec<u8> {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec()
+    }
+
+    /// Minimal well-formedness check: every opening tag has a matching
+    /// closing tag in LIFO order, with no tag left open at the end. There is
+    /// no XML-parsing crate anywhere in this workspace (checked before
+    /// writing this), so this is a hand-rolled substitute for "parse it,
+    /// don't just check non-empty" — genuinely biting (a mismatched/
+    /// unclosed tag panics), without pulling in a new dependency for one
+    /// test. Skips `<?...?>`/`<!...>` declarations (no matching close
+    /// required).
+    fn assert_well_formed_xml(xml: &str) {
+        let mut stack: Vec<String> = Vec::new();
+        let mut rest = xml;
+        while let Some(start) = rest.find('<') {
+            let end = rest[start..]
+                .find('>')
+                .unwrap_or_else(|| panic!("unterminated tag starting at {:?}", &rest[start..]))
+                + start;
+            let tag = &rest[start + 1..end];
+            rest = &rest[end + 1..];
+            if tag.starts_with('?') || tag.starts_with('!') {
+                continue;
+            }
+            if let Some(name) = tag.strip_prefix('/') {
+                let name = name.trim();
+                let opened = stack
+                    .pop()
+                    .unwrap_or_else(|| panic!("closing tag </{name}> with nothing open"));
+                assert_eq!(
+                    opened, name,
+                    "mismatched closing tag: opened <{opened}>, closed </{name}>"
+                );
+                continue;
+            }
+            let self_closing = tag.trim_end().ends_with('/');
+            let name = tag
+                .trim_end_matches('/')
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            if !self_closing {
+                stack.push(name);
+            }
+        }
+        assert!(stack.is_empty(), "unclosed tags remain: {stack:?}");
+    }
+
+    /// The headline P4 test: one stream configured with **both** outputs
+    /// serves LL-HLS's `media.m3u8` AND DASH's `manifest.mpd`, and the MPD's
+    /// `SegmentTemplate` (once its `$RepresentationID$`/`$Number$` tokens are
+    /// substituted exactly like a real DASH client would) names the *same*
+    /// `seg-*.m4s` file the LL-HLS playlist already references — proving
+    /// ingest-once/many-outputs from one shared `MediaStore`, not a
+    /// per-output re-mux.
+    #[tokio::test]
+    async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 4]);
+        store.set_track_specs(vec![transmux::TrackSpec::new(
+            9,
+            90_000,
+            transmux::CodecConfig::Vp8 {
+                width: 640,
+                height: 480,
+            },
+        )]);
+        store.add_segment(transmux::ll_hls::SegmentInfo {
+            bytes: vec![0x33; 16],
+            duration: 4.0,
+            segment_seq: 1,
+            part_count: 1,
+        });
+
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![
+                    Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                    Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
+                ],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+
+        // LL-HLS media playlist.
+        let resp = app.clone().oneshot(get("/cam1/media.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let hls_body = body_string(resp).await;
+        assert!(hls_body.contains("#EXTM3U"));
+        assert!(hls_body.contains("seg-1-1.m4s"), "hls body: {hls_body}");
+
+        // DASH manifest: well-formed XML, carrying the required DASH
+        // elements (not just a non-empty body).
+        let resp = app
+            .clone()
+            .oneshot(get("/cam1/manifest.mpd"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/dash+xml"
+        );
+        let mpd_body = body_string(resp).await;
+        assert_well_formed_xml(&mpd_body);
+        assert!(mpd_body.contains("<MPD"), "{mpd_body}");
+        assert!(
+            mpd_body.contains(r#"xmlns="urn:mpeg:dash:schema:mpd:2011""#),
+            "{mpd_body}"
+        );
+        assert!(mpd_body.contains(r#"type="dynamic""#), "{mpd_body}");
+        assert!(mpd_body.contains("<Period"), "{mpd_body}");
+        assert!(mpd_body.contains("<AdaptationSet"), "{mpd_body}");
+        assert!(mpd_body.contains("<Representation"), "{mpd_body}");
+        assert!(mpd_body.contains("<SegmentTemplate"), "{mpd_body}");
+        assert!(mpd_body.contains(r#"startNumber="1""#), "{mpd_body}");
+        assert!(
+            mpd_body.contains("seg-$RepresentationID$-$Number$.m4s"),
+            "{mpd_body}"
+        );
+
+        // Substitute the MPD's template tokens exactly like a real DASH
+        // client would ($RepresentationID$ -> the Representation's own @id,
+        // 1; $Number$ -> startNumber, 1 for the first/only segment) and
+        // confirm the resolved filename is the SAME one the LL-HLS playlist
+        // above referenced, AND that the shared resource route actually
+        // serves it.
+        let resolved_uri = "seg-1-1.m4s";
+        assert!(
+            hls_body.contains(resolved_uri),
+            "LL-HLS playlist must reference the same resolved filename: {hls_body}"
+        );
+        let resp = app
+            .oneshot(get(&format!("/cam1/{resolved_uri}")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, vec![0x33; 16]);
+    }
+
+    /// A DASH-only route (no LL-HLS output configured) never mounts the
+    /// `master.m3u8`/`media.m3u8` routes — proves `manifest_routes` is
+    /// genuinely per-output, not a hardcoded LL-HLS+DASH pair.
+    #[tokio::test]
+    async fn dash_only_route_has_no_llhls_routes() {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_track_specs(vec![transmux::TrackSpec::new(
+            1,
+            90_000,
+            transmux::CodecConfig::Vp8 {
+                width: 640,
+                height: 480,
+            },
+        )]);
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+
+        let resp = app
+            .clone()
+            .oneshot(get("/cam1/manifest.mpd"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
+    }
+
+    /// The shared response-header middleware treats `.mpd` the same as
+    /// `.m3u8` (`no-cache`) and everything else as immutable — proving the
+    /// generalisation from `output::llhls`'s old per-output middleware
+    /// (which only ever checked `.m3u8`) actually covers DASH too.
+    #[tokio::test]
+    async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 4]);
+        store.set_track_specs(vec![transmux::TrackSpec::new(
+            1,
+            90_000,
+            transmux::CodecConfig::Vp8 {
+                width: 640,
+                height: 480,
+            },
+        )]);
+        store.add_segment(transmux::ll_hls::SegmentInfo {
+            bytes: vec![0x33; 16],
+            duration: 4.0,
+            segment_seq: 1,
+            part_count: 1,
+        });
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![
+                    Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                    Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
+                ],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+
+        for (uri, expected_cache) in [
+            ("/cam1/media.m3u8", CACHE_CONTROL_MANIFEST),
+            ("/cam1/manifest.mpd", CACHE_CONTROL_MANIFEST),
+            ("/cam1/seg-1-1.m4s", CACHE_CONTROL_IMMUTABLE),
+        ] {
+            let resp = app.clone().oneshot(get(uri)).await.unwrap();
+            assert_eq!(resp.status(), axum::http::StatusCode::OK, "{uri}");
+            assert_eq!(
+                resp.headers()
+                    .get(axum::http::header::CACHE_CONTROL)
+                    .unwrap(),
+                expected_cache,
+                "{uri}"
+            );
+            assert_eq!(
+                resp.headers()
+                    .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .unwrap(),
+                "*",
+                "{uri}"
+            );
+        }
     }
 }

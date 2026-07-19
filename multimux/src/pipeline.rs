@@ -112,6 +112,11 @@ pub async fn run_pipeline<S: SampleSource>(
     route: &str,
 ) -> Result<()> {
     let specs = source.track_specs();
+    // Recorded so a DASH `Output` (issue #663 P4, `crate::output::dash`) can
+    // build a real RFC 6381 `codecs` string for its `Representation` — the
+    // one thing this store needs beyond the bytes+timing LL-HLS's playlist
+    // rendering already covers.
+    store.set_track_specs(specs.clone());
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
         MOVIE_TIMESCALE,

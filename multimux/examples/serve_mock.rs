@@ -1,12 +1,14 @@
-//! Serve a synthetic LL-HLS stream with no RTSP source and no network
+//! Serve a synthetic LL-HLS + DASH stream with no RTSP source and no network
 //! dependency, for trying the origin without a real camera.
 //!
 //! Builds enough synthetic H.264-shaped samples to close a few full
 //! segments, drives them through the real [`transmux::ll_hls::LlHlsSegmenter`]
 //! (via [`multimux::pipeline::run_pipeline`]) into a
 //! [`multimux::store::MediaStore`], then serves that store's single "cam"
-//! route under the real axum [`multimux::origin::router`] (via the default
-//! [`multimux::output::llhls::LlHlsOutput`]) on an ephemeral localhost port.
+//! route under the real axum [`multimux::origin::router`] — both
+//! [`multimux::output::llhls::LlHlsOutput`] and
+//! [`multimux::output::dash::DashOutput`] (issue #663 P4: one ingest, LL-HLS
+//! *and* DASH from the same CMAF segments) — on an ephemeral localhost port.
 //! Once the mock source reaches end-of-stream the store's contents are fixed
 //! — the HTTP origin keeps serving that fixed window.
 //!
@@ -16,6 +18,7 @@
 //! cargo run --example serve_mock
 //! # then, in another terminal:
 //! curl http://127.0.0.1:<port>/cam/master.m3u8
+//! curl http://127.0.0.1:<port>/cam/manifest.mpd
 //! ```
 
 use std::collections::HashMap;
@@ -23,6 +26,7 @@ use std::sync::Arc;
 
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
+use multimux::output::dash::DashOutput;
 use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
 use multimux::store::MediaStore;
@@ -92,7 +96,13 @@ async fn main() {
     let mut streams = HashMap::new();
     streams.insert(
         STREAM_NAME.to_string(),
-        (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+        (
+            store,
+            vec![
+                Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                Arc::new(DashOutput) as Arc<dyn Output>,
+            ],
+        ),
     );
     let app = router(Arc::new(AppState::new(streams)));
 
@@ -101,6 +111,7 @@ async fn main() {
         .expect("bind ephemeral localhost port");
     let addr = listener.local_addr().expect("listener has a local address");
     println!("multimux serve_mock: http://{addr}/{STREAM_NAME}/master.m3u8");
+    println!("multimux serve_mock: http://{addr}/{STREAM_NAME}/manifest.mpd");
 
     axum::serve(listener, app).await.expect("axum server");
 }

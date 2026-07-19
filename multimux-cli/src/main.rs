@@ -16,6 +16,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use multimux::config::{Config, InputSpec, Route};
+use multimux::output::OutputKind;
 use multimux::{MultimuxError, Result};
 
 #[derive(Parser)]
@@ -57,6 +58,46 @@ struct Cli {
     /// Rolling window depth: full segments retained in RAM.
     #[arg(long, value_name = "N", default_value_t = Config::default().window_segments)]
     window: usize,
+
+    /// Single-route quick start: which delivery protocol(s) to serve the
+    /// ingested stream as, comma-separated (`llhls`, `dash`) — issue #663 P4:
+    /// one ingest, many outputs. Ignored when `--config` is used (a config
+    /// file sets `outputs` per route; see `multimux::config::Route::outputs`).
+    #[arg(
+        long,
+        value_name = "LIST",
+        value_delimiter = ',',
+        default_value = "llhls",
+        conflicts_with = "dash"
+    )]
+    outputs: Vec<String>,
+
+    /// Single-route quick start shorthand for `--outputs llhls,dash` (serve
+    /// LL-HLS *and* DASH from the same ingest).
+    #[arg(long)]
+    dash: bool,
+}
+
+/// Parse `--outputs`'s comma-separated tokens into [`OutputKind`]s (or
+/// resolve the `--dash` shorthand to `[llhls, dash]`) — the CLI's own
+/// mapping of the wire tokens `multimux::config`'s serde `OutputKind` already
+/// accepts in a JSON config's `outputs` array, kept in sync with those exact
+/// token spellings (`"llhls"`/`"dash"`) rather than re-deriving them.
+fn parse_outputs(cli: &Cli) -> Result<Vec<OutputKind>> {
+    if cli.dash {
+        return Ok(vec![OutputKind::LlHls, OutputKind::Dash]);
+    }
+    cli.outputs
+        .iter()
+        .map(|s| match s.trim() {
+            "llhls" => Ok(OutputKind::LlHls),
+            "dash" => Ok(OutputKind::Dash),
+            other => Err(MultimuxError::ConfigInvalid {
+                field: "outputs",
+                reason: format!("unknown output kind {other:?} (expected llhls or dash)"),
+            }),
+        })
+        .collect()
 }
 
 /// Build a [`Config`] from the parsed CLI: `--config <FILE>` if given,
@@ -66,6 +107,9 @@ fn build_config(cli: Cli) -> Result<Config> {
     if let Some(path) = cli.config {
         return Config::from_json_file(&path);
     }
+    // Computed before any field of `cli` is moved out below (a shared
+    // reference to the whole struct is only valid pre-move).
+    let outputs = parse_outputs(&cli)?;
     let rtsp_url = cli.rtsp.ok_or_else(|| MultimuxError::ConfigInvalid {
         field: "rtsp",
         reason: "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
@@ -84,6 +128,7 @@ fn build_config(cli: Cli) -> Result<Config> {
         routes: vec![Route {
             name,
             input: InputSpec::Rtsp { url: rtsp_url },
+            outputs,
         }],
     };
     config.validate()?;
@@ -142,6 +187,74 @@ mod tests {
             InputSpec::Rtsp { url } => assert_eq!(url, "rtsp://cam.local/stream"),
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
+    }
+
+    /// Quick start with no `--outputs`/`--dash` defaults to LL-HLS only —
+    /// matches `Route::outputs`'s own default, so an existing invocation's
+    /// behaviour is unchanged (issue #663 P4).
+    #[test]
+    fn quick_start_defaults_to_llhls_only() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::LlHls]);
+    }
+
+    /// `--dash` is the shorthand for "both outputs from the same ingest".
+    #[test]
+    fn dash_flag_selects_llhls_and_dash() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--dash",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0].outputs,
+            vec![OutputKind::LlHls, OutputKind::Dash]
+        );
+    }
+
+    /// `--outputs llhls,dash` is the explicit spelling of the same thing.
+    #[test]
+    fn outputs_flag_parses_comma_separated_list() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--outputs",
+            "llhls,dash",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0].outputs,
+            vec![OutputKind::LlHls, OutputKind::Dash]
+        );
+    }
+
+    /// An unknown `--outputs` token is a config error, not a silent no-op.
+    #[test]
+    fn outputs_flag_rejects_unknown_token() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--outputs",
+            "lldash",
+        ]);
+        assert!(build_config(cli).is_err());
     }
 
     #[test]
