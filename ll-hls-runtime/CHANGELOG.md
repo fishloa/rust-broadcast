@@ -6,6 +6,45 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+#### Server (issue #663/#717 Stage 2)
+
+- **`server` — the sans-IO LL-HLS origin engine** (Stage 2 of the
+  ll-hls-runtime unification, issue #663/#717 —
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "ll-hls-runtime
+  — client + server in one crate"), moved out of `multimux` behind the new
+  `std` feature (needs `std::sync::Mutex`, unlike the no_std-capable
+  `client`):
+  - **`server::MediaStore`** — the protocol-neutral rolling in-RAM window
+    (init/segments/live parts/`recent_parts`/health/max-segment-duration),
+    moved verbatim from `multimux::store::MediaStore` **including the
+    part-404-boundary fix** (`recent_parts`, so an in-flight preload-hint
+    request for a segment's final part still resolves after the segment
+    closes). The `tokio::sync::watch<u64>` progress signal is replaced with a
+    runtime-agnostic wakeup: `MediaStore::progress_version()` (a monotonic
+    counter) and `MediaStore::listen()` (an `event_listener::EventListener` —
+    a plain `Future<Output = ()>` any executor, or none via its blocking
+    `.wait()`, can drive), via the new `event-listener` dependency.
+  - **`server::MediaStore::resolve_playlist`/`resolve_resource`** — the
+    blocking-reload (RFC 8216bis §6.2.5.2) and part-availability decision
+    logic as synchronous poll methods returning `PlaylistOutcome`
+    (`Ready`/`WouldBlock`/`BadRequest`) / `ResourceOutcome`
+    (`Ready`/`WouldBlock`/`NotFound`) — never blocking, never touching a
+    clock. An async adapter (e.g. `multimux`) turns `WouldBlock` into an
+    actual bounded wait via `MediaStore::listen()` + its own
+    `tokio::time::timeout`; see the `server` module docs for the exact
+    caller-driven wait-loop shape.
+  - **`server::media_playlist_m3u8`/`master_playlist_m3u8`** — the LL-HLS
+    playlist renderers, moved verbatim from
+    `multimux::output::llhls::media_playlist_m3u8` **including the
+    reentrant-lock deadlock fix** (`max_segment_duration()`/
+    `target_duration_secs()` read *before* `MediaStore::with_segments_and_parts`'s
+    lock).
+  - **`server::CachePolicy`** (`Immutable`/`NoCache`) — the cache-control
+    policy a resolved `ResourceOutcome::Ready` carries, for an adapter to
+    apply as HTTP `Cache-Control`.
+
 ### Changed
 
 - **Renamed `ll-hls-client` → `ll-hls-runtime`** (Stage 1 of the ll-hls-runtime
@@ -15,7 +54,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   client+server split); an empty `server` module is reserved for the LL-HLS
   origin engine currently in `multimux`, to be folded in as Stage 2.
 
-### Added
+#### Client (issue #717)
 
 - **`LlHlsClient` — sans-IO Low-Latency HLS playback client engine** (issue
   #717, slices 2-4). A caller-driven state machine in the same sans-IO shape

@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Changed
+- **LL-HLS origin engine moved to `ll-hls-runtime::server`** (issue
+  #663/#717 Stage 2 —
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "ll-hls-runtime
+  — client + server in one crate"): `multimux` is now a thin tokio+axum
+  adapter over the sans-IO engine, mirroring how it already wraps
+  `rtsp-runtime` on the input side. Behaviour-preserving — every existing
+  test still passes, same served bytes/URLs/timing:
+  - `store::MediaStore`/`store::HealthState` are now re-exports of
+    `ll_hls_runtime::server::{MediaStore, HealthState}` (the rolling window,
+    the part-404-boundary fix, and health tracking moved there verbatim);
+    `crate::store::...` call sites are unaffected.
+  - `output::llhls` no longer renders playlists or decides blocking-reload/
+    part-availability outcomes itself — it calls
+    `MediaStore::resolve_playlist`/`resolve_resource` and drives the actual
+    bounded `.await` (the one thing the sans-IO engine can't do): on
+    `WouldBlock`, it registers `MediaStore::listen()` before re-resolving (no
+    missed-wakeup race), then awaits the listener under its own
+    `tokio::time::timeout` (still the 5 s `BLOCKING_RELOAD_TIMEOUT`). The
+    reentrant-lock deadlock fix in playlist rendering is preserved (now in
+    `ll_hls_runtime::server::media_playlist_m3u8`).
+  - New dependency: `ll-hls-runtime` (path + version, `std` feature).
+
 ### Added
 - **Supervised route lifecycle** (issue #663, P0.2+P0.3+P0.4): each route's
   ingest task is now driven by `origin::supervisor::supervise`, which

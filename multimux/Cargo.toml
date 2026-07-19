@@ -15,6 +15,11 @@ all-features = true
 [dependencies]
 transmux          = { path = "../transmux",     version = "0.17" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
+# The LL-HLS origin engine itself (rolling window/store, blocking-reload +
+# part-availability decision logic, playlist rendering — issue #663/#717
+# Stage 2). multimux is now a thin tokio+axum adapter over
+# `ll_hls_runtime::server`; see `output::llhls`.
+ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["std"] }
 sdp-types         = "0.1"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.7"

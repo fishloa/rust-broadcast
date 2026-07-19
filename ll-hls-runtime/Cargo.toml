@@ -21,6 +21,13 @@ broadcast-common = { path = "../broadcast-common", version = "8", default-featur
 transmux          = { path = "../transmux", version = "0.17", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# Only pulled in by the `std` feature: `server::store::MediaStore` needs
+# `std::sync::Mutex` (so `server` is std-only — see its module doc), and uses
+# `event_listener::Event`/`EventListener` — a runtime-agnostic wakeup
+# primitive, NOT `tokio::sync::watch` — so any async runtime (or a plain
+# blocking caller) can wait on it; `multimux`'s tokio+axum adapter is the only
+# place that actually assumes a runtime (via `tokio::time::timeout`).
+event-listener    = { version = "5", optional = true, default-features = false, features = ["std"] }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
 # core (`client/engine.rs`) never depends on either.
 tokio             = { version = "1", optional = true, default-features = false, features = ["time"] }
@@ -44,7 +51,7 @@ default = ["std"]
 # feature exists only to match the workspace's `no_std`-capable-core convention
 # (verified by the `--no-default-features` gate) and to let `transmux/std`
 # follow along when a caller does want `std`.
-std = ["broadcast-common/std", "thiserror/std", "transmux/std"]
+std = ["broadcast-common/std", "thiserror/std", "transmux/std", "dep:event-listener"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
 serde = ["dep:serde"]
 # `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO

@@ -1,15 +1,21 @@
-//! `LlHlsOutput`: the LL-HLS [`crate::output::Output`] implementation —
-//! media playlist rendering, request handlers for the master/media playlists
-//! and the init/segment/part byte ranges they reference, and the axum routes
-//! that serve them.
+//! `LlHlsOutput`: the LL-HLS [`crate::output::Output`] implementation — a
+//! thin tokio+axum adapter over the sans-IO LL-HLS origin engine
+//! ([`ll_hls_runtime::server`], issue #663/#717 Stage 2): axum routes for the
+//! master/media playlists and the init/segment/part byte ranges they
+//! reference, translating [`ll_hls_runtime::server::MediaStore::resolve_playlist`]/
+//! [`ll_hls_runtime::server::MediaStore::resolve_resource`]'s `Ready`/
+//! `WouldBlock`/`BadRequest`/`NotFound` outcomes into real HTTP responses —
+//! including the actual bounded `.await` on a `WouldBlock`, which is the one
+//! thing the sans-IO engine can't do itself.
 //!
 //! Master/media playlist tags are RFC 8216 §4.3.4 (`#EXT-X-STREAM-INF`) and
-//! §4.3.3 (`#EXTM3U`/`#EXT-X-VERSION`, rendered by [`media_playlist_m3u8`]);
-//! the blocking reload query parameters (`_HLS_msn`/`_HLS_part`) are the
-//! Blocking Playlist Reload mechanism of RFC 8216bis §6.2.5.2 — the client
-//! asks the origin to hold the response open until the requested Media
-//! Sequence Number/part is available, bounded so the origin never hangs
-//! indefinitely.
+//! §4.3.3 (`#EXTM3U`/`#EXT-X-VERSION`, rendered by
+//! [`ll_hls_runtime::server::media_playlist_m3u8`]); the blocking reload
+//! query parameters (`_HLS_msn`/`_HLS_part`) are the Blocking Playlist Reload
+//! mechanism of RFC 8216bis §6.2.5.2 — the client asks the origin to hold the
+//! response open until the requested Media Sequence Number/part is
+//! available, bounded by a 5 s timeout (`BLOCKING_RELOAD_TIMEOUT`) so the
+//! origin never hangs indefinitely.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,34 +26,29 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use ll_hls_runtime::server::{
+    BlockingQuery, DEFAULT_TRACK_ID, PlaylistOutcome, ResourceOutcome, master_playlist_m3u8,
+};
 use serde::Deserialize;
-use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 
 use crate::output::Output;
 use crate::store::MediaStore;
 
-/// Track id for the single rendition multimux currently serves per stream
-/// (no multi-track/multi-rendition support yet).
-pub const DEFAULT_TRACK_ID: u32 = 1;
+// Re-exported so existing `crate::output::llhls::media_playlist_m3u8(..)` call
+// sites (e.g. `crate::pipeline`'s own tests) keep working unchanged — the
+// renderer itself now lives in `ll_hls_runtime::server` alongside the
+// `MediaStore` it renders from.
+pub use ll_hls_runtime::server::media_playlist_m3u8;
 
-/// Placeholder `BANDWIDTH` (bits/second) advertised in the master playlist's
-/// `#EXT-X-STREAM-INF` — multimux does not yet measure actual encoded
-/// bitrate, so a single fixed estimate is used for the single variant served.
-const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
-
-/// Upper bound on how long a blocking `media.m3u8` request
-/// (`_HLS_msn`/`_HLS_part`) waits for the requested part/segment before
-/// falling back to rendering whatever is currently available. RFC 8216bis
-/// §6.2.5.2 requires the origin to eventually respond either way — this cap
-/// keeps a stalled/slow source from hanging the HTTP response forever.
+/// Upper bound on how long a blocking `media.m3u8`/dynamic-file request
+/// (`_HLS_msn`/`_HLS_part`, or a preload-hinted part) waits for the requested
+/// data before falling back (playlist: render whatever is currently
+/// available; resource: `404`). RFC 8216bis §6.2.5.2 requires the origin to
+/// eventually respond either way — this cap keeps a stalled/slow source from
+/// hanging the HTTP response forever. This is the one clock the sans-IO
+/// engine ([`ll_hls_runtime::server`]) doesn't have — it lives here, in the
+/// adapter.
 const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// RFC 8216bis §6.2.5.2 (SHOULD): the origin should reject a `_HLS_msn` that
-/// is unreasonably far in the future rather than always blocking to the
-/// timeout — a legitimate client only ever asks for the segment/part right
-/// after the one it already has, so anything more than a few segments beyond
-/// the current live edge is either a malfunctioning client or abuse.
-const ABUSE_MSN_FUTURE_BOUND: u64 = 4;
 
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 const MP4_CONTENT_TYPE: &str = "video/mp4";
@@ -58,18 +59,10 @@ const CACHE_CONTROL_PLAYLIST: &str = "no-cache";
 
 /// `Cache-Control` for init/segment/part byte ranges: once produced, a given
 /// URI's bytes never change (each segment/part is generated exactly once
-/// under a unique filename), so these are safe to cache indefinitely.
+/// under a unique filename), so these are safe to cache indefinitely. Mirrors
+/// [`ll_hls_runtime::server::CachePolicy::Immutable`], which every
+/// [`ResourceOutcome::Ready`] this adapter serves carries.
 const CACHE_CONTROL_IMMUTABLE: &str = "max-age=31536000, immutable";
-
-/// HLS requires HLS protocol version 9 (RFC 8216bis §4.4.3.7/§4.4.3.8: the
-/// `#EXT-X-PART-INF`/`#EXT-X-PART` directives this renderer always emits
-/// require it).
-const LL_HLS_VERSION: u8 = 9;
-
-/// RFC 8216bis / Apple LL-HLS §4.4.3.7: `#EXT-X-SERVER-CONTROL`'s
-/// `PART-HOLD-BACK` attribute MUST be at least 3x the part target duration
-/// (`#EXT-X-PART-INF`'s `PART-TARGET`).
-const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
 
 /// The LL-HLS [`Output`]: master/media playlists + init/segment/part byte
 /// ranges, over a shared [`MediaStore`].
@@ -109,7 +102,12 @@ async fn cors_preflight() -> StatusCode {
 /// `Cache-Control` appropriate to the resource kind — `no-cache` for
 /// playlists (must always be re-fetched for liveness), `max-age=31536000,
 /// immutable` for init/segment/part byte ranges (a produced segment/part
-/// never changes) — to every response this router serves.
+/// never changes) — to every response this router serves. This is the
+/// adapter's application of [`ll_hls_runtime::server::CachePolicy`]: every
+/// non-`.m3u8` route this router serves is a resolved [`ResourceOutcome::Ready`]
+/// carrying `CachePolicy::Immutable`, and every `.m3u8` route is a rendered
+/// playlist (implicitly `NoCache` — playlists never carry a cache policy of
+/// their own since they're always liveness-sensitive).
 async fn add_response_headers(req: Request, next: Next) -> Response {
     let is_playlist = req.uri().path().ends_with(".m3u8");
     let mut resp = next.run(req).await;
@@ -137,114 +135,20 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
     resp
 }
 
-/// Render the LL-HLS media playlist for `track_id` from `store`'s current
-/// segments/live parts.
-///
-/// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
-/// be advertised with an `#EXTINF`/URI pair — that segment has no fetchable
-/// resource yet — it may only appear as trailing `#EXT-X-PART` lines.
-/// `transmux::hls::MediaPlaylist::open_segment` is exactly this
-/// representation: its parts render as trailing `#EXT-X-PART` lines with
-/// no `#EXTINF`/URI, so the in-progress segment's parts and the
-/// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
-/// rendered by `to_m3u8()` itself — multimux only supplies the URI scheme
-/// (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
-pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
-    // Read these *before* taking `with_segments_and_parts`'s lock below —
-    // `MediaStore::max_segment_duration` takes the same `inner` mutex
-    // itself, and `std::sync::Mutex` is not reentrant, so calling it from
-    // inside the `with_segments_and_parts` closure (as a previous version of
-    // this function did) self-deadlocks the calling thread the first time
-    // this function is ever invoked with any segment present. Caught by a
-    // real network round trip against a live `MediaStore` (issue #717 slice
-    // 5's acceptance test) — the existing test suite only ever called this
-    // function directly (never over HTTP with two concurrently-scheduled
-    // tasks), which happened to never trip the deadlock detector but hung
-    // just the same once actually exercised end-to-end.
-    let target_duration_secs = store.target_duration_secs();
-    let max_segment_duration = store.max_segment_duration();
-    store.with_segments_and_parts(|store_segments, live_parts| {
-        let media_sequence = store_segments
-            .front()
-            .map(|s| u64::from(s.segment_seq))
-            .or_else(|| live_parts.first().map(|p| u64::from(p.segment_seq)))
-            .unwrap_or(1);
-        let segments: Vec<MediaSegment> = store_segments
-            .iter()
-            .map(|s| MediaSegment {
-                uri: format!("seg-{track_id}-{}.m4s", s.segment_seq),
-                duration: s.duration,
-                discontinuous: false,
-                parts: Vec::new(),
-                ..Default::default()
-            })
-            .collect();
-        let part_target = f64::from(store.part_target_ms()) / 1000.0;
-        // The in-progress segment's live parts + the next (not yet available)
-        // part's preload-hint URI.
-        let open_seq = live_parts.first().map(|p| p.segment_seq);
-        let open_segment = open_seq.map(|seq| {
-            OpenSegment::new(
-                live_parts
-                    .iter()
-                    .filter(|p| p.segment_seq == seq)
-                    .map(|p| PartSpec {
-                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
-                        duration: p.duration,
-                        independent: p.independent,
-                        ..Default::default()
-                    })
-                    .collect(),
-            )
-        });
-        let next_part_hint = open_seq.map(|seq| {
-            let next_idx = live_parts
-                .iter()
-                .filter(|p| p.segment_seq == seq)
-                .map(|p| p.part_index)
-                .max()
-                .map(|idx| idx + 1)
-                .unwrap_or(0);
-            format!("part-{track_id}-{seq}.{next_idx}.m4s")
-        });
-        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
-        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
-        // segmenter cuts on the next keyframe *after* the configured target,
-        // so a real segment routinely exceeds it — advertising the
-        // configured target alone can under-declare. Use whichever is
-        // larger, rounded (not the configured value's `ceil()` alone).
-        let target_duration = target_duration_secs.max(max_segment_duration).round() as u32;
-        let playlist = MediaPlaylist {
-            version: LL_HLS_VERSION,
-            target_duration,
-            media_sequence,
-            discontinuity_sequence: 0,
-            segments,
-            open_segment,
-            endlist: false,
-            extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
-            low_latency: Some(LowLatencyConfig {
-                part_target,
-                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
-                preload_hint_part: next_part_hint,
-                ..Default::default()
-            }),
-            iframes_only: false,
-            ..Default::default()
-        };
-        playlist.to_m3u8()
-    })
-}
-
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// `media.m3u8`.
 pub async fn master_playlist(State(_store): State<Arc<MediaStore>>) -> Response {
-    let body =
-        format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={PLACEHOLDER_BANDWIDTH_BPS}\nmedia.m3u8\n");
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
+    (
+        [(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)],
+        master_playlist_m3u8(),
+    )
+        .into_response()
 }
 
-/// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2).
+/// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as
+/// deserialized from the HTTP query string — the wire-format counterpart of
+/// [`ll_hls_runtime::server::BlockingQuery`], which [`media_playlist`] maps
+/// this into before handing off to the sans-IO engine.
 #[derive(Debug, Default, Deserialize)]
 pub struct BlockingReloadQuery {
     /// The Media Sequence Number the client already has, plus one — the
@@ -256,10 +160,19 @@ pub struct BlockingReloadQuery {
     pub hls_part: Option<u32>,
 }
 
+impl From<BlockingReloadQuery> for BlockingQuery {
+    fn from(q: BlockingReloadQuery) -> Self {
+        BlockingQuery {
+            hls_msn: q.hls_msn,
+            hls_part: q.hls_part,
+        }
+    }
+}
+
 /// RAII guard bumping/dropping [`crate::prometheus::ACTIVE_BLOCKING_REQUESTS`]
-/// for the lifetime of a blocking LL-HLS wait ([`wait_for_progress`]/
-/// [`wait_for_part`]) — incremented on construction, decremented on drop, so
-/// the gauge stays accurate even if the awaited future is itself dropped
+/// for the lifetime of a blocking LL-HLS wait ([`media_playlist_blocking`]/
+/// [`resource_blocking`]) — incremented on construction, decremented on drop,
+/// so the gauge stays accurate even if the awaited future is itself dropped
 /// (e.g. the client disconnects mid-wait), not just on a normal return.
 struct BlockingRequestGuard;
 
@@ -276,88 +189,80 @@ impl Drop for BlockingRequestGuard {
     }
 }
 
-/// Block until `store`'s in-progress segment/part reaches at least
-/// `(msn, part)`, or [`BLOCKING_RELOAD_TIMEOUT`] elapses. Never hangs
-/// indefinitely and never errors — on timeout (or a closed watch channel) it
-/// simply returns, and the caller renders the playlist as it currently is.
-async fn wait_for_progress(store: &MediaStore, msn: u64, part: u32) {
+/// Resolve `store`'s media playlist for `track_id`/`query`, waiting
+/// (bounded by [`BLOCKING_RELOAD_TIMEOUT`]) on a
+/// [`PlaylistOutcome::WouldBlock`] rather than rendering immediately.
+///
+/// This is the caller-driven wait loop
+/// [`ll_hls_runtime::server`]'s module docs describe: register a listener
+/// *before* re-checking [`MediaStore::resolve_playlist`] (no missed-wakeup
+/// race — see [`MediaStore::listen`]), so a notification that lands between
+/// the initial `WouldBlock` and the listener's registration is never lost.
+///
+/// `Ok(body)` for a satisfied (or eventually-timed-out — RFC 8216bis
+/// §6.2.5.2 requires the origin to eventually respond either way, so a
+/// timeout still renders the playlist as it currently is, rather than
+/// erroring) request; `Err(())` for [`PlaylistOutcome::BadRequest`], which
+/// short-circuits immediately with no wait (a malformed/abusive request
+/// should never be held open to the timeout).
+async fn media_playlist_blocking(
+    store: &MediaStore,
+    track_id: u32,
+    query: BlockingQuery,
+) -> Result<String, ()> {
+    match store.resolve_playlist(track_id, query) {
+        PlaylistOutcome::Ready(body) => return Ok(body),
+        PlaylistOutcome::BadRequest => return Err(()),
+        PlaylistOutcome::WouldBlock => {}
+    }
     let _guard = BlockingRequestGuard::new();
-    let mut rx = store.subscribe();
     let wait = async {
         loop {
-            let (in_progress_seg_seq, part_count) = store.latest_progress();
-            let satisfied = u64::from(in_progress_seg_seq) > msn
-                || (u64::from(in_progress_seg_seq) == msn && part_count > part);
-            if satisfied {
-                return;
+            let listener = store.listen();
+            match store.resolve_playlist(track_id, query) {
+                PlaylistOutcome::Ready(body) => return Some(body),
+                // Can't actually recur once the initial check above passed
+                // (the abuse bound only ever grows less strict as the live
+                // edge advances), but handled structurally rather than
+                // assumed.
+                PlaylistOutcome::BadRequest => return None,
+                PlaylistOutcome::WouldBlock => {}
             }
-            if rx.changed().await.is_err() {
-                return;
-            }
+            listener.await;
         }
     };
-    let _ = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait).await;
+    let resolved = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait)
+        .await
+        .ok()
+        .flatten();
+    Ok(resolved.unwrap_or_else(|| media_playlist_m3u8(store, track_id)))
 }
 
-/// Block until segment `msn` is a fully-present (closed) Media Segment, or
-/// [`BLOCKING_RELOAD_TIMEOUT`] elapses.
-///
-/// RFC 8216bis §6.2.5.2: a blocking-reload request carrying `_HLS_msn` with
-/// **no** `_HLS_part` must be held until segment `msn` is a closed Media
-/// Segment in the Playlist — unlike the `_HLS_msn`+`_HLS_part` case
-/// ([`wait_for_progress`]), an in-progress segment merely having live parts
-/// does not satisfy a bare `_HLS_msn` request: that segment has no `#EXTINF`/
-/// URI yet, so a client that doesn't understand parts would see no new
-/// segment at all.
-async fn wait_for_closed_segment(store: &MediaStore, msn: u64) {
+/// Resolve `store`'s dynamic resource `name`, waiting (bounded by
+/// [`BLOCKING_RELOAD_TIMEOUT`]) on a [`ResourceOutcome::WouldBlock`] (a
+/// preload-hinted part not yet produced) rather than 404ing immediately.
+/// Same caller-driven wait-loop shape as [`media_playlist_blocking`]. On
+/// timeout, falls back to [`ResourceOutcome::NotFound`] (a `404`) — unlike
+/// the playlist case, there is no "current" resource to serve instead.
+async fn resource_blocking(store: &MediaStore, name: &str) -> ResourceOutcome {
+    match store.resolve_resource(name) {
+        ResourceOutcome::WouldBlock => {}
+        terminal => return terminal,
+    }
     let _guard = BlockingRequestGuard::new();
-    let mut rx = store.subscribe();
     let wait = async {
         loop {
-            if u64::from(store.last_closed_segment_seq()) >= msn {
-                return;
+            let listener = store.listen();
+            match store.resolve_resource(name) {
+                ResourceOutcome::WouldBlock => {}
+                terminal => return terminal,
             }
-            if rx.changed().await.is_err() {
-                return;
-            }
-        }
-    };
-    let _ = tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait).await;
-}
-
-/// Block until part `idx` of segment `seq` is available, returning its bytes —
-/// or `None` if the part will never be produced or [`BLOCKING_RELOAD_TIMEOUT`]
-/// elapses. This is the origin side of LL-HLS preload-hinted part delivery
-/// (RFC 8216bis §6.2.2, §6.3.1): the client fetches the `#EXT-X-PRELOAD-HINT`
-/// part before it exists, and the origin holds the request open until it does.
-///
-/// Returns `None` *promptly* (without waiting out the timeout) once the part
-/// can no longer appear as a live part: its segment has closed (it is now only
-/// addressable as a whole segment via `seg-…`), or the in-progress segment has
-/// advanced past `seq`. That happens at a real segment boundary when the hinted
-/// "next part" is never produced (the segment closed instead) — a legitimate
-/// 404 the client answers by fetching the next segment/part.
-async fn wait_for_part(store: &MediaStore, seq: u32, idx: u32) -> Option<Vec<u8>> {
-    let _guard = BlockingRequestGuard::new();
-    let mut rx = store.subscribe();
-    let wait = async {
-        loop {
-            if let Some(bytes) = store.part_bytes(seq, idx) {
-                return Some(bytes);
-            }
-            let (in_progress_seg_seq, _) = store.latest_progress();
-            if in_progress_seg_seq > seq || store.segment_bytes(seq).is_some() {
-                return None;
-            }
-            if rx.changed().await.is_err() {
-                return None;
-            }
+            listener.await;
         }
     };
     tokio::time::timeout(BLOCKING_RELOAD_TIMEOUT, wait)
         .await
-        .ok()
-        .flatten()
+        .unwrap_or(ResourceOutcome::NotFound)
 }
 
 /// `GET /media.m3u8` — the LL-HLS media playlist for [`DEFAULT_TRACK_ID`],
@@ -369,32 +274,16 @@ async fn wait_for_part(store: &MediaStore, seq: u32, idx: u32) -> Option<Vec<u8>
 /// either a broken client or abuse — both are rejected with `400 Bad
 /// Request` immediately, rather than blocking to the blocking-reload timeout
 /// and returning `200` regardless (which gives a misbehaving client no
-/// signal to back off).
+/// signal to back off). See [`ll_hls_runtime::server::MediaStore::resolve_playlist`]
+/// for the decision logic itself.
 pub async fn media_playlist(
     State(store): State<Arc<MediaStore>>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    if q.hls_part.is_some() && q.hls_msn.is_none() {
-        return StatusCode::BAD_REQUEST.into_response();
+    match media_playlist_blocking(&store, DEFAULT_TRACK_ID, q.into()).await {
+        Ok(body) => ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response(),
+        Err(()) => StatusCode::BAD_REQUEST.into_response(),
     }
-    if let Some(msn) = q.hls_msn {
-        let (current_max_msn, _) = store.latest_progress();
-        if msn > u64::from(current_max_msn) + ABUSE_MSN_FUTURE_BOUND {
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-        // §6.2.5.2: `_HLS_msn` alone waits for segment `msn` to CLOSE;
-        // `_HLS_msn`+`_HLS_part` waits only for that part of the
-        // (possibly still open) segment. These are genuinely different
-        // conditions — treating a bare `_HLS_msn` as `_HLS_part=0` would
-        // resolve as soon as the segment merely opens with one live part,
-        // before it has an `#EXTINF`/URI at all.
-        match q.hls_part {
-            Some(part) => wait_for_progress(&store, msn, part).await,
-            None => wait_for_closed_segment(&store, msn).await,
-        }
-    }
-    let body = media_playlist_m3u8(&store, DEFAULT_TRACK_ID);
-    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
 /// `GET /:file` — catch-all for the dynamic init/segment/part filenames
@@ -403,65 +292,24 @@ pub async fn media_playlist(
 /// A single catch-all (rather than three routes with per-filename literals)
 /// because axum 0.7's `matchit`-based router cannot mix multiple params with
 /// literal text in one path segment (e.g. `seg-:track-:seq.m4s`) — only one
-/// param per segment is supported, capturing the whole segment. `file` is
-/// parsed here instead.
+/// param per segment is supported, capturing the whole segment. Parsing
+/// `file` into a segment/part/init lookup — including the "block until a
+/// preload-hinted part is produced" behaviour (RFC 8216bis §6.2.2, §6.3.1) —
+/// is [`ll_hls_runtime::server::MediaStore::resolve_resource`]'s job; this
+/// handler only drives the wait (`resource_blocking`) and maps the outcome
+/// to an HTTP response.
 pub async fn dynamic_file(
     State(store): State<Arc<MediaStore>>,
     Path(file): Path<String>,
 ) -> Response {
-    // A part request is the preload-hinted Partial Segment the client fetches
-    // ahead of time (RFC 8216bis §6.2.2, §6.3.1). The origin promised it via
-    // `#EXT-X-PRELOAD-HINT`, so when it isn't produced yet the request must be
-    // *held* until the part becomes available — not answered with an immediate
-    // 404 (which spams errors and defeats low latency, forcing the client back
-    // to full-segment loads). See [`wait_for_part`].
-    if let Some((seq, idx)) = parse_part(&file) {
-        return match wait_for_part(&store, seq, idx).await {
-            Some(bytes) => ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response(),
-            None => StatusCode::NOT_FOUND.into_response(),
-        };
+    match resource_blocking(&store, &file).await {
+        ResourceOutcome::Ready { bytes, .. } => {
+            ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
+        }
+        ResourceOutcome::NotFound | ResourceOutcome::WouldBlock => {
+            StatusCode::NOT_FOUND.into_response()
+        }
     }
-    match resolve_file(&store, &file) {
-        Some(bytes) => ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response(),
-        None => StatusCode::NOT_FOUND.into_response(),
-    }
-}
-
-/// Parse a `part-{track}-{seq}.{idx}.m4s` dynamic filename into `(seq, idx)`,
-/// or `None` if it isn't a part filename (or its numeric fields don't parse).
-/// `{track}` is validated but unused (see [`resolve_file`]).
-fn parse_part(file: &str) -> Option<(u32, u32)> {
-    let rest = file.strip_prefix("part-")?.strip_suffix(".m4s")?;
-    let (track_seq, idx) = rest.rsplit_once('.')?;
-    let (track, seq) = track_seq.split_once('-')?;
-    track.parse::<u32>().ok()?;
-    Some((seq.parse().ok()?, idx.parse().ok()?))
-}
-
-/// Parse a dynamic origin filename and fetch its bytes from `store`:
-/// - `init-{track}.mp4` -> [`MediaStore::init_bytes`]
-/// - `seg-{track}-{seq}.m4s` -> [`MediaStore::segment_bytes`]
-///
-/// Part filenames (`part-{track}-{seq}.{idx}.m4s`) are handled separately in
-/// [`dynamic_file`] (they block until available — see [`parse_part`]), not
-/// here. `{track}` is validated as a number but otherwise unused: `store`
-/// holds a single track's data (see [`DEFAULT_TRACK_ID`]). Returns `None`
-/// (-> 404) for any filename that doesn't match one of these shapes, or whose
-/// numeric fields don't parse.
-fn resolve_file(store: &MediaStore, file: &str) -> Option<Vec<u8>> {
-    if let Some(rest) = file.strip_prefix("init-") {
-        let track = rest.strip_suffix(".mp4")?;
-        track.parse::<u32>().ok()?;
-        return store.init_bytes();
-    }
-    if let Some(rest) = file.strip_prefix("seg-") {
-        let rest = rest.strip_suffix(".m4s")?;
-        let (track, seq) = rest.split_once('-')?;
-        track.parse::<u32>().ok()?;
-        let seq: u32 = seq.parse().ok()?;
-        return store.segment_bytes(seq);
-    }
-    None
 }
 
 #[cfg(test)]
@@ -489,7 +337,8 @@ mod tests {
     }
 
     /// A populated store: a closed segment 1, plus two live parts of
-    /// in-progress segment 2 -- so `latest_progress()` is `(2, 2)`.
+    /// in-progress segment 2 -- so `latest_progress()` (via `resolve_playlist`)
+    /// treats the store as `(2, 2)`.
     fn make_store() -> Arc<MediaStore> {
         let store = Arc::new(MediaStore::new(4.0, 500, 4));
         store.set_init(vec![0xAA; 8]);
@@ -535,8 +384,8 @@ mod tests {
 
     #[tokio::test]
     async fn media_playlist_already_satisfied_blocking_request_resolves_immediately() {
-        // latest_progress() for the store is (2, 2): asking for msn=1 (an
-        // earlier segment) is already satisfied and must not wait.
+        // Store state is (2, 2): asking for msn=1 (an earlier segment) is
+        // already satisfied and must not wait.
         let store = make_store();
         let resp = media_playlist(
             State(store),
@@ -666,183 +515,12 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
-    // --- Playlist-rendering tests moved from `store.rs` (they exercise
-    // `media_playlist_m3u8`, which now lives here) ---
-
-    fn plain_seg(seq: u32, parts: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: parts,
-        }
-    }
-    fn plain_part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
-    }
-
-    #[test]
-    fn playlist_has_llhls_tags_and_parts() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1));
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(m.contains("#EXT-X-PART-INF"), "PART-INF present");
-        assert!(
-            m.contains("#EXT-X-SERVER-CONTROL"),
-            "SERVER-CONTROL present"
-        );
-        assert!(m.contains("#EXT-X-PART"), "at least one PART");
-        assert!(
-            m.contains("part-1-1.0.m4s") || m.contains("part-1-1.1.m4s"),
-            "part URI"
-        );
-    }
-
-    #[test]
-    fn open_segment_has_parts_but_no_extinf() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1));
-        let m = media_playlist_m3u8(&s, 1);
-        // The in-progress segment's parts are advertised...
-        assert!(m.contains("#EXT-X-PART"), "at least one PART line");
-        assert!(m.contains("part-1-1.0.m4s"), "part 0 URI present");
-        assert!(m.contains("part-1-1.1.m4s"), "part 1 URI present");
-        // ...but RFC 8216bis §4.4.4.9: no premature #EXTINF/URI for the
-        // not-yet-closed segment itself — "seg-1-1.m4s" must not appear
-        // anywhere (it isn't fetchable; that segment hasn't been closed).
-        assert!(
-            !m.contains("seg-1-1.m4s"),
-            "no full-segment URI for the open segment: {m}"
-        );
-        assert!(
-            !m.contains("#EXTINF"),
-            "no EXTINF for the open segment: {m}"
-        );
-    }
-
-    #[test]
-    fn final_part_fetchable_after_its_segment_closes() {
-        // The segmenter emits a segment's final part and then closes the
-        // segment in the same step. A preload-hint request for that final part
-        // is typically in flight when the close happens, so it must remain
-        // fetchable afterwards (from recent_parts) rather than 404 — the LL-HLS
-        // preload-hint boundary bug.
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1)); // .1 is this segment's final part
-        s.add_segment(plain_seg(1, 2)); // close segment 1 (moves its parts to recent_parts)
-        assert_eq!(
-            s.part_bytes(1, 1),
-            Some(vec![1; 4]),
-            "final part of a just-closed segment must still be individually fetchable"
-        );
-        assert_eq!(s.part_bytes(1, 0), Some(vec![0; 4]), "earlier parts too");
-        // A genuinely-nonexistent part of the closed segment is still absent.
-        assert_eq!(s.part_bytes(1, 9), None);
-        // Closing does not resurrect parts into the rendered open segment: the
-        // playlist advertises the whole segment, not its parts.
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("seg-1-1.m4s"),
-            "closed segment rendered whole: {m}"
-        );
-        assert!(
-            !m.contains("part-1-1."),
-            "closed parts not rendered as open: {m}"
-        );
-    }
-
-    #[test]
-    fn live_parts_capped_when_segment_never_closes() {
-        // target_duration_secs=4.0, part_target_ms=500 -> cap =
-        // ceil(4.0 / 0.5) + 4 margin = 12 (see
-        // `crate::store::compute_max_live_parts`).
-        let s = MediaStore::new(4.0, 500, 4);
-        let cap = crate::store::compute_max_live_parts(4.0, 500);
-        assert_eq!(cap, 12, "sanity-check the expected cap for these params");
-        s.set_init(vec![0; 4]);
-
-        // Push far more parts than the cap into a single never-closed
-        // segment (no add_segment call) — RAM must stay bounded.
-        for i in 0..(cap as u32 * 5) {
-            s.add_part(plain_part(1, i));
-        }
-        assert_eq!(
-            s.live_part_count(),
-            cap,
-            "live_parts must stay capped even though the segment never closed"
-        );
-
-        // The playlist must still render correctly from the capped parts:
-        // only the most recent (highest-index) parts survive.
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(m.contains("#EXT-X-PART"), "still has PART lines: {m}");
-        let last_idx = cap as u32 * 5 - 1;
-        assert!(
-            m.contains(&format!("part-1-1.{last_idx}.m4s")),
-            "most recent part must survive the cap: {m}"
-        );
-        let first_idx = cap as u32 * 5 - cap as u32;
-        assert!(
-            !m.contains(&format!("part-1-1.{}.m4s", first_idx - 1)),
-            "an older part beyond the cap must have been dropped: {m}"
-        );
-    }
-
-    // --- P2 LL-HLS spec-conformance fixes (audit-llhls #1/#2/#3/#4) ---
-
-    #[test]
-    fn target_duration_is_max_of_configured_and_actual_segment_duration() {
-        // Configured target is 4.0s, but the segmenter cuts on the next
-        // keyframe after the target so a real segment can run long (7.5s
-        // here) — RFC 8216bis §4.4.3.1 (MUST) requires TARGETDURATION to be
-        // >= every EXTINF, rounded. The old hardcoded
-        // `ceil(target_duration_secs)` would render `4`, violating the MUST.
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        let mut long_seg = plain_seg(1, 2);
-        long_seg.duration = 7.5;
-        s.add_segment(long_seg);
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("#EXT-X-TARGETDURATION:8"),
-            "TARGETDURATION must be round(7.5)=8, not the configured target (4): {m}"
-        );
-    }
-
-    #[test]
-    fn target_duration_falls_back_to_configured_when_segments_are_short() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_segment(plain_seg(1, 2)); // plain_seg's fixed duration is 4.0
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("#EXT-X-TARGETDURATION:4"),
-            "unchanged behaviour when no segment exceeds the configured target: {m}"
-        );
-    }
-
     #[tokio::test]
     async fn media_playlist_msn_only_waits_for_closed_segment_not_just_open_parts() {
-        // make_store()'s segment 2 is OPEN with 2 live parts
-        // (latest_progress() == (2, 2)) but not yet CLOSED. RFC 8216bis
-        // §6.2.5.2: a bare `_HLS_msn=2` (no `_HLS_part`) must wait for
-        // segment 2 to actually close, not resolve merely because it has
-        // live parts. Reverting to `q.hls_part.unwrap_or(0)` treats this
-        // identically to `_HLS_part=0`, which IS satisfied by
-        // `part_count(2) > 0` — it would return immediately and this test
-        // would fail (elapsed far under the close delay).
+        // make_store()'s segment 2 is OPEN with 2 live parts (part_count == 2)
+        // but not yet CLOSED. RFC 8216bis §6.2.5.2: a bare `_HLS_msn=2` (no
+        // `_HLS_part`) must wait for segment 2 to actually close, not resolve
+        // merely because it has live parts.
         let store = make_store();
         let store_for_task = store.clone();
         tokio::spawn(async move {
@@ -875,10 +553,10 @@ mod tests {
 
     #[tokio::test]
     async fn media_playlist_far_future_msn_rejected_400_fast() {
-        // latest_progress() for make_store() is (2, 2). A `_HLS_msn` 1000
-        // ahead of the live edge is not a legitimate blocking-reload request
-        // (RFC 8216bis §6.2.5.2 abuse prevention) — it must 400 immediately,
-        // not consume the full BLOCKING_RELOAD_TIMEOUT before giving up.
+        // Store state is (2, 2). A `_HLS_msn` 1000 ahead of the live edge is
+        // not a legitimate blocking-reload request (RFC 8216bis §6.2.5.2 abuse
+        // prevention) — it must 400 immediately, not consume the full
+        // BLOCKING_RELOAD_TIMEOUT before giving up.
         let store = make_store();
         let started = std::time::Instant::now();
         let resp = media_playlist(
@@ -902,7 +580,7 @@ mod tests {
         // Sanity check for the abuse-bound change: a legitimate
         // just-ahead-of-live-edge msn must still work as before (block, then
         // resolve), not get swept up by the new bound check.
-        let store = make_store(); // latest_progress() == (2, 2)
+        let store = make_store(); // (2, 2)
         let store_for_task = store.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
