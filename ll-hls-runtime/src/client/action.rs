@@ -1,5 +1,5 @@
 //! Actions the caller must perform IO for — [`Action`] out of
-//! [`crate::LlHlsClient::poll`].
+//! [`crate::client::LlHlsClient::poll`].
 
 use alloc::format;
 use alloc::string::String;
@@ -7,7 +7,7 @@ use alloc::string::String;
 /// Identifies one fetchable resource: the initialization segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
 /// segment. Used to correlate an [`Action::FetchResource`] with the matching
-/// [`crate::LlHlsClient::on_resource`] call.
+/// [`crate::client::LlHlsClient::on_resource`] call.
 ///
 /// `Part`/`Segment` are keyed by Media Sequence Number (RFC 8216 §4.3.3.2) +
 /// (for parts) the 0-based Part Index within that segment — stable identity
@@ -52,7 +52,7 @@ pub struct BlockingReload {
 }
 
 /// One unit of IO the caller must perform, in response to a
-/// [`crate::LlHlsClient::poll`] call. The client core never touches a socket
+/// [`crate::client::LlHlsClient::poll`] call. The client core never touches a socket
 /// or a clock itself — every `Action` names exactly what to fetch and, for a
 /// playlist reload, how to shape the request.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +76,7 @@ pub enum Action {
     },
     /// Fetch one resource (init/part/segment).
     FetchResource {
-        /// Correlates the eventual [`crate::LlHlsClient::on_resource`] call.
+        /// Correlates the eventual [`crate::client::LlHlsClient::on_resource`] call.
         id: ResourceId,
         /// The resource URL (already resolved against the playlist URL).
         url: String,
@@ -113,13 +113,13 @@ impl Action {
             } => {
                 let mut u = url.clone();
                 if let Some(b) = blocking {
-                    u = crate::url::append_query(&u, &format!("_HLS_msn={}", b.msn));
+                    u = super::url::append_query(&u, &format!("_HLS_msn={}", b.msn));
                     if let Some(part) = b.part {
-                        u = crate::url::append_query(&u, &format!("_HLS_part={part}"));
+                        u = super::url::append_query(&u, &format!("_HLS_part={part}"));
                     }
                 }
                 if *skip {
-                    u = crate::url::append_query(&u, "_HLS_skip=YES");
+                    u = super::url::append_query(&u, "_HLS_skip=YES");
                 }
                 Some(u)
             }

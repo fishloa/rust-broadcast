@@ -1,10 +1,10 @@
-//! `TokioClient` — a tokio + reqwest IO adapter driving [`crate::LlHlsClient`]
-//! over real HTTP (issue #717 slice 5).
+//! `TokioClient` — a tokio + reqwest IO adapter driving
+//! [`crate::client::LlHlsClient`] over real HTTP (issue #717 slice 5).
 //!
 //! Feature-gated behind `tokio` (NOT default): the sans-IO core in
-//! `client.rs` has zero dependency on tokio, reqwest, a socket, or a clock —
+//! `engine.rs` has zero dependency on tokio, reqwest, a socket, or a clock —
 //! this module is a thin async shell that performs the actual HTTP GETs the
-//! core's [`crate::Action`]s describe (playlist reload, incl. blocking
+//! core's [`crate::client::Action`]s describe (playlist reload, incl. blocking
 //! `_HLS_msn`/`_HLS_part`; resource fetch, incl. `Range` byte-ranges) and
 //! feeds the responses back into the core, looping until the caller stops
 //! polling or the stream ends.
@@ -26,13 +26,13 @@
 //!
 //! - A **resource** (init/part/segment) fetch that keeps failing is retried
 //!   up to [`TokioClientConfig::max_resource_retries`] times with capped
-//!   exponential backoff, then [`crate::LlHlsClient::on_error`] is called and
-//!   the adapter moves on — the sans-IO core un-marks that resource as
-//!   "requested", so the *next* playlist reload naturally re-requests it
-//!   (see `client.rs`'s `on_error` docs). One flaky fetch never stalls the
-//!   whole client.
+//!   exponential backoff, then [`crate::client::LlHlsClient::on_error`] is
+//!   called and the adapter moves on — the sans-IO core un-marks that
+//!   resource as "requested", so the *next* playlist reload naturally
+//!   re-requests it (see `engine.rs`'s `on_error` docs). One flaky fetch
+//!   never stalls the whole client.
 //! - A **playlist** reload has no such fallback in the sans-IO core — unlike
-//!   a resource, [`crate::LlHlsClient::on_error`] with `None` does not
+//!   a resource, [`crate::client::LlHlsClient::on_error`] with `None` does not
 //!   re-queue anything (there is no "next reload" to fall back to; the
 //!   *current* reload IS the mechanism that discovers what to fetch next).
 //!   So a playlist fetch is retried indefinitely with capped backoff
@@ -45,7 +45,7 @@ use std::time::Duration;
 
 use reqwest::Client;
 
-use crate::{Action, LlHlsClient, Output, ResourceId};
+use super::{Action, LlHlsClient, Output, ResourceId};
 
 /// Authentication attached to every request [`TokioClient`] makes. See the
 /// module docs' "Auth" section for the planned replacement.
@@ -66,8 +66,9 @@ pub enum Auth {
     },
 }
 
-/// Errors from the tokio IO adapter itself — distinct from [`crate::Error`],
-/// the sans-IO core's own parse/demux error type (wrapped here via
+/// Errors from the tokio IO adapter itself — distinct from
+/// [`crate::client::Error`], the sans-IO core's own parse/demux error type
+/// (wrapped here via
 /// [`TokioError::Client`]).
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -91,9 +92,9 @@ pub enum TokioError {
         status: reqwest::StatusCode,
     },
     /// The sans-IO core rejected the fetched playlist/resource — see
-    /// [`crate::Error`] for the underlying reason.
+    /// [`crate::client::Error`] for the underlying reason.
     #[error(transparent)]
-    Client(#[from] crate::Error),
+    Client(#[from] super::Error),
 }
 
 /// Tunables for [`TokioClient`]. [`Default`] gives sane values for a
@@ -157,11 +158,11 @@ pub struct TokioClientStats {
     pub preload_hint_resource_fetches: u64,
 }
 
-/// An async shell driving [`crate::LlHlsClient`] over real HTTP.
+/// An async shell driving [`crate::client::LlHlsClient`] over real HTTP.
 ///
 /// ```no_run
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// use ll_hls_client::tokio_client::TokioClient;
+/// use ll_hls_runtime::client::tokio_client::TokioClient;
 ///
 /// let mut client = TokioClient::new("http://127.0.0.1:8080/live/media.m3u8")?;
 /// while let Some(output) = client.next_output().await? {
@@ -320,7 +321,7 @@ impl TokioClient {
     /// Re-parse a just-fetched playlist purely to note its
     /// `#EXT-X-PRELOAD-HINT` URL for [`TokioClientStats`] bookkeeping — the
     /// sans-IO core does its own, authoritative parse independently inside
-    /// [`crate::LlHlsClient::on_playlist`]; this is a deliberate, small,
+    /// [`crate::client::LlHlsClient::on_playlist`]; this is a deliberate, small,
     /// side-channel duplication (stats only, never fed back into scheduling)
     /// rather than growing an API on the core to expose its parsed state.
     fn note_preload_hint(&mut self, playlist_bytes: &[u8]) {
@@ -329,7 +330,7 @@ impl TokioClient {
             .and_then(|text| transmux::hls::MediaPlaylist::parse(text).ok())
             .and_then(|pl| pl.low_latency)
             .and_then(|ll| ll.preload_hint_part)
-            .map(|hint| crate::url::resolve(&self.playlist_url, &hint));
+            .map(|hint| super::url::resolve(&self.playlist_url, &hint));
     }
 
     fn apply_auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {

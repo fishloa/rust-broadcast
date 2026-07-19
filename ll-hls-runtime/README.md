@@ -1,15 +1,21 @@
-# ll-hls-client
+# ll-hls-runtime
 
 A sans-IO Low-Latency HLS (**RFC 8216bis**, HTTP Live Streaming 2nd Edition)
-playback client engine — issue [#717](https://github.com/fishloa/rust-broadcast/issues/717),
-slices 2-4 (reload scheduler, fetch pipeline, output adapter) plus slice 5's
-`tokio` feature (the async IO adapter).
+client — and, soon, server/origin — engine in one crate, mirroring
+`rtsp-runtime`'s client+server split (renamed from `ll-hls-client`, never
+published — Stage 1 of the ll-hls-runtime unification; the LL-HLS origin
+engine currently in `multimux` moves into a `server` module in a later
+stage). Today the crate holds only the **client**, under
+`ll_hls_runtime::client` — issue
+[#717](https://github.com/fishloa/rust-broadcast/issues/717), slices 2-4
+(reload scheduler, fetch pipeline, output adapter) plus slice 5's `tokio`
+feature (the async IO adapter).
 
-`LlHlsClient` is a driveable, caller-driven state machine in the same sans-IO
-shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never opens a
-socket or reads a clock. The caller drains `Action`s (what to fetch, and how),
-performs the IO itself, and feeds the response back in; decoded `Output`s (the
-init segment, then ordered access units) drain out in turn.
+`client::LlHlsClient` is a driveable, caller-driven state machine in the same
+sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
+opens a socket or reads a clock. The caller drains `Action`s (what to fetch,
+and how), performs the IO itself, and feeds the response back in; decoded
+`Output`s (the init segment, then ordered access units) drain out in turn.
 
 ## What's here
 
@@ -39,12 +45,11 @@ init segment, then ordered access units) drain out in turn.
 
 ## Reuse, not re-description
 
-This crate defines **no playlist model of its own**. Parsing is
+The `client` module defines **no playlist model of its own**. Parsing is
 `transmux::hls::MediaPlaylist::parse` (issue #717 slice 1 — the symmetric
 inverse of the LL-HLS origin's own `to_m3u8()` renderer, so origin and client
 share one wire model); demuxing a fetched CMAF part or segment into access
-units is `transmux::Fmp4Demux`. `ll-hls-client` holds only the client
-**engine**.
+units is `transmux::Fmp4Demux`. `client` holds only the client **engine**.
 
 ## Zero IO in the core
 
@@ -58,7 +63,7 @@ HTTP fetch loop would).
 
 ## The `tokio` feature (issue #717 slice 5)
 
-Enabling the (non-default) `tokio` cargo feature adds `tokio_client::TokioClient`:
+Enabling the (non-default) `tokio` cargo feature adds `client::tokio_client::TokioClient`:
 a thin async shell (tokio + reqwest/rustls) driving `LlHlsClient` over real
 HTTP — blocking-reload/preload-hint query params, `Range` byte-ranges,
 per-request timeouts, and retry/backoff on transient failures (HTTP
@@ -84,7 +89,7 @@ that a genuinely non-LL origin still plays via the full-segment fallback.
 
 ```toml
 [dependencies]
-ll-hls-client = "0.1"
+ll-hls-runtime = "0.1"
 ```
 
 ## License

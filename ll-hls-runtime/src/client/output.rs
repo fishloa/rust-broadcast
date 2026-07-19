@@ -1,11 +1,11 @@
-//! Output events — [`Output`] out of [`crate::LlHlsClient::next_output`].
+//! Output events — [`Output`] out of [`crate::client::LlHlsClient::next_output`].
 
 use alloc::vec::Vec;
 
 use transmux::Sample;
 
 /// One unit of decoded output, drained in order via
-/// [`crate::LlHlsClient::next_output`].
+/// [`crate::client::LlHlsClient::next_output`].
 ///
 /// The ordering contract: exactly one [`Output::Init`] is emitted before any
 /// [`Output::Samples`] for a given track, and `Samples` are emitted in decode

@@ -1,5 +1,7 @@
-//! `ll-hls-client` — a sans-IO Low-Latency HLS (RFC 8216bis) playback client
-//! engine (issue #717, slices 2-4).
+//! LL-HLS playback client engine — a sans-IO Low-Latency HLS (RFC 8216bis)
+//! client (issue #717, slices 2-4; formerly the standalone `ll-hls-client`
+//! crate, folded in here as `ll-hls-runtime`'s `client` module — see
+//! `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`).
 //!
 //! [`LlHlsClient`] is a driveable, caller-driven state machine — the same
 //! sans-IO shape as `srt-runtime` (issue #565): the core never opens a socket
@@ -11,13 +13,13 @@
 //!
 //! # Reuse, not re-description
 //!
-//! This crate defines **no playlist model of its own**. Parsing is
+//! This module defines **no playlist model of its own**. Parsing is
 //! [`transmux::hls::MediaPlaylist::parse`] (issue #717 slice 1 — the
 //! symmetric inverse of the LL-HLS origin's own `to_m3u8()` renderer, so
 //! origin and client share one wire model); demuxing a fetched CMAF part or
-//! segment into access units is [`transmux::Fmp4Demux`]. `ll-hls-client`
-//! holds only the client **engine**: the reload scheduler, the fetch
-//! pipeline (prefetch/byte-range/dedup), and the output ordering — see
+//! segment into access units is [`transmux::Fmp4Demux`]. `client` holds only
+//! the client **engine**: the reload scheduler, the fetch pipeline
+//! (prefetch/byte-range/dedup), and the output ordering — see
 //! [`LlHlsClient`]'s docs for the full behaviour.
 //!
 //! # Zero IO in the core
@@ -43,7 +45,7 @@
 //! # Example
 //!
 //! ```
-//! use ll_hls_client::{Action, LlHlsClient};
+//! use ll_hls_runtime::client::{Action, LlHlsClient};
 //!
 //! let mut client = LlHlsClient::new("http://origin/live/stream.m3u8");
 //! // The caller performs this GET; here we just inspect the first action.
@@ -56,15 +58,8 @@
 //! }
 //! ```
 
-#![cfg_attr(not(feature = "std"), no_std)]
-#![forbid(unsafe_code)]
-#![warn(missing_docs)]
-#![cfg_attr(docsrs, feature(doc_cfg))]
-
-extern crate alloc;
-
 mod action;
-mod client;
+mod engine;
 mod error;
 mod output;
 #[cfg(feature = "tokio")]
@@ -72,11 +67,8 @@ pub mod tokio_client;
 mod url;
 
 pub use action::{Action, BlockingReload, ResourceId};
-pub use client::LlHlsClient;
+pub use engine::LlHlsClient;
 pub use error::{Error, Result};
 pub use output::Output;
 #[cfg(feature = "tokio")]
 pub use tokio_client::{Auth, TokioClient, TokioClientConfig, TokioClientStats, TokioError};
-
-/// The RFC this crate's client behaviour implements against.
-pub const SPEC: &str = "RFC 8216bis (HTTP Live Streaming 2nd Edition, draft-pantos-hls-rfc8216bis)";

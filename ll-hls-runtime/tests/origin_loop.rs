@@ -16,7 +16,7 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
-use ll_hls_client::{Action, LlHlsClient, Output, ResourceId};
+use ll_hls_runtime::client::{Action, LlHlsClient, Output, ResourceId};
 use transmux::hls::{LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{

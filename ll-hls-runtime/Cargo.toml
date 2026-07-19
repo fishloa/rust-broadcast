@@ -1,8 +1,8 @@
 [package]
-name         = "ll-hls-client"
+name         = "ll-hls-runtime"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Sans-IO Low-Latency HLS (RFC 8216bis) playback client engine — a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode. Zero IO deps in the core (issue #717 slices 2-4); an optional tokio+reqwest async IO adapter (slice 5) is feature-gated and additive."
+description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client (and, soon, server/origin) engines in one crate, mirroring rtsp-runtime's client+server split. Today: a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output under `client`, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode. Zero IO deps in the core (issue #717 slices 2-4); an optional tokio+reqwest async IO adapter (slice 5) is feature-gated and additive. Renamed from `ll-hls-client` (never published)."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["hls", "llhls", "sans-io", "streaming", "client"]
@@ -22,7 +22,7 @@ transmux          = { path = "../transmux", version = "0.17", default-features =
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
-# core (`client.rs`) never depends on either.
+# core (`client/engine.rs`) never depends on either.
 tokio             = { version = "1", optional = true, default-features = false, features = ["time"] }
 reqwest           = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
 
@@ -49,6 +49,6 @@ std = ["broadcast-common/std", "thiserror/std", "transmux/std"]
 serde = ["dep:serde"]
 # `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO
 # `LlHlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
-# the core (`client.rs`) stays IO-free regardless of this feature; enabling
-# it only adds the `tokio_client` module alongside it.
+# the core (`client/engine.rs`) stays IO-free regardless of this feature;
+# enabling it only adds the `client::tokio_client` module alongside it.
 tokio = ["std", "dep:tokio", "dep:reqwest"]

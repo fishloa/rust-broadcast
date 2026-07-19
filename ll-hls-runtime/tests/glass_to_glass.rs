@@ -14,7 +14,7 @@
 //! `multimux::pipeline::run_pipeline`'s own segmenter->store wiring, but with
 //! genuine wall-clock pacing between samples so the origin is *live-shaped*
 //! rather than dumping every part into the store instantly). No dev-dep
-//! cycle: `multimux` does not depend on `ll-hls-client`.
+//! cycle: `multimux` does not depend on `ll-hls-runtime`.
 //!
 //! The non-LL half uses a minimal hand-built axum app instead of
 //! `multimux`'s origin, since `multimux::output::llhls::LlHlsOutput` always
@@ -40,8 +40,8 @@ use axum::Router;
 use axum::response::IntoResponse;
 use axum::routing::get;
 
-use ll_hls_client::Output;
-use ll_hls_client::tokio_client::TokioClient;
+use ll_hls_runtime::client::Output;
+use ll_hls_runtime::client::tokio_client::TokioClient;
 use multimux::origin::{AppState, router};
 use multimux::output::Output as MmOutput;
 use multimux::output::llhls::LlHlsOutput;
@@ -256,7 +256,7 @@ async fn glass_to_glass_sub_second_over_loopback_with_blocking_reload_and_prefet
 // ===========================================================================
 // Non-LL origin: full-segment fallback, over real HTTP via the same
 // `TokioClient` (proving the *adapter*, not just the sans-IO core, handles
-// it — `ll-hls-client/tests/origin_loop.rs` already proves the core alone).
+// it — `ll-hls-runtime/tests/origin_loop.rs` already proves the core alone).
 // ===========================================================================
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

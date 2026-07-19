@@ -1,10 +1,19 @@
 # Changelog
 
-All notable changes to `ll-hls-client` are documented here. The format follows
+All notable changes to `ll-hls-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+
+- **Renamed `ll-hls-client` → `ll-hls-runtime`** (Stage 1 of the ll-hls-runtime
+  unification; never published, so a free rename — no `0.1.0` behaviour
+  change). The client engine moved under a `client` module
+  (`ll_hls_runtime::client::LlHlsClient` etc., mirroring `rtsp-runtime`'s
+  client+server split); an empty `server` module is reserved for the LL-HLS
+  origin engine currently in `multimux`, to be folded in as Stage 2.
 
 ### Added
 

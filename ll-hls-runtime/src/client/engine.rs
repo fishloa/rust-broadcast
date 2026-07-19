@@ -8,10 +8,10 @@ use broadcast_common::Unpackage;
 use transmux::hls::{ByteRange, MapTag, PreloadHintType};
 use transmux::{Fmp4Demux, MediaPlaylist, MediaSegment, OpenSegment};
 
-use crate::action::{Action, BlockingReload, ResourceId};
-use crate::error::{Error, Result};
-use crate::output::Output;
-use crate::url;
+use super::action::{Action, BlockingReload, ResourceId};
+use super::error::{Error, Result};
+use super::output::Output;
+use super::url;
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
@@ -391,7 +391,7 @@ impl LlHlsClient {
             // requests every known part each time it's polled, so by the
             // time the segment closes none can have been missed) — fetching
             // the whole segment *as well* would demux and emit its samples a
-            // second time. Caught by `ll-hls-client/tests/glass_to_glass.rs`
+            // second time. Caught by `ll-hls-runtime/tests/glass_to_glass.rs`
             // (issue #717 slice 5): every sample was double-delivered for
             // the first two segments of a real, live-paced run.
             let already_have_parts = self
