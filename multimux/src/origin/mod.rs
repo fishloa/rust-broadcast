@@ -234,8 +234,13 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 /// under [`router`]. Each route is served by a single [`LlHlsOutput`] (the
 /// default — and today the only — output wiring).
 ///
-/// Each route's task is driven by [`supervisor::supervise`]: it connects
-/// [`crate::source::rtsp::RtspSource`], runs it through
+/// Each route's task is driven by [`supervisor::supervise`]: depending on
+/// that route's [`crate::config::InputSpec`], it connects
+/// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
+/// or [`crate::source::ts_udp::TsUdpSource`] — one `match` arm per variant,
+/// each instantiating the generic `supervise::<ThatConnector>` (the
+/// connectors have different `Source` associated types, so this dispatch
+/// stays monomorphized rather than boxed) — runs it through
 /// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
 /// pipeline error, or source end-of-stream, reconnects with capped backoff
 /// instead of dying — a bad/flaky source degrades that route's
@@ -277,18 +282,61 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         streams.insert(route.name.clone(), (store.clone(), outputs));
 
         let name = route.name.clone();
-        let rtsp_url = route.rtsp_url.clone();
         let shutdown_rx = shutdown_rx.clone();
-        let connector = crate::source::rtsp::RtspSource::new(name.clone(), rtsp_url);
-        let handle = tokio::spawn(supervise(
-            connector,
-            store,
-            target_duration_secs,
-            part_target_ms,
-            Backoff::production_default(),
-            name.clone(),
-            shutdown_rx,
-        ));
+        let handle = match &route.input {
+            crate::config::InputSpec::Rtsp { url } => {
+                let connector = crate::source::rtsp::RtspSource::new(name.clone(), url.clone());
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::Rtp {
+                addr,
+                sdp,
+                multicast_group,
+            } => {
+                let connector = crate::source::rtp_udp::RtpUdpSource::new(
+                    name.clone(),
+                    addr.clone(),
+                    sdp.clone(),
+                    multicast_group.clone(),
+                );
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::TsUdp {
+                addr,
+                multicast_group,
+            } => {
+                let connector = crate::source::ts_udp::TsUdpSource::new(
+                    name.clone(),
+                    addr.clone(),
+                    multicast_group.clone(),
+                );
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+        };
         supervisor_handles.push((name, handle));
     }
 

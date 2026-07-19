@@ -39,6 +39,25 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
         let clock_rate = rtpmap
             .and_then(rtpmap_clock_rate)
             .unwrap_or(DEFAULT_CLOCK_RATE_HZ);
+        // `m=<media> <port> <proto> <fmt>` (RFC 4566 §5.14): `fmt` is the
+        // space-separated payload-type list; this crate assumes one codec
+        // per media (matches the fmtp/rtpmap lookups above, which take the
+        // *first* value regardless of which payload type they're tagged
+        // with), so only the first listed payload type is kept. It is the
+        // only signal a raw RTP/UDP source (no RTSP interleaved-channel
+        // framing) has to route an incoming packet to its track — see
+        // `crate::source::rtp_udp`.
+        let payload_type: u8 = media
+            .fmt
+            .split_whitespace()
+            .next()
+            .and_then(|pt| pt.parse().ok())
+            .ok_or_else(|| MultimuxError::Sdp {
+                reason: format!(
+                    "media {:?} has no payload type in its fmt field",
+                    media.media
+                ),
+            })?;
 
         let (kind, config): (RtpMediaKind, CodecConfig) = match media.media.as_str() {
             "video" => {
@@ -74,6 +93,7 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
             clock_rate,
             control,
             channel,
+            payload_type,
         });
         track_id += 1;
         channel = channel.saturating_add(CHANNEL_STEP);
@@ -84,6 +104,20 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
         });
     }
     Ok(tracks)
+}
+
+/// Loads an SDP body from `spec`: either the literal inline text, or —
+/// prefixed with `@` — a file path read fresh on every call, so an on-disk
+/// SDP can be updated between reconnects without a process restart. Used by
+/// [`crate::source::rtp_udp::RtpUdpSource::connect`], the raw-RTP-over-UDP
+/// ingest source that has no RTSP DESCRIBE to fetch its SDP from.
+pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
+    match spec.strip_prefix('@') {
+        Some(path) => std::fs::read(path).map_err(|e| MultimuxError::Sdp {
+            reason: format!("failed to read SDP file {path:?}: {e}"),
+        }),
+        None => Ok(spec.as_bytes().to_vec()),
+    }
 }
 
 #[cfg(test)]
@@ -111,6 +145,35 @@ a=control:streamid=0\r\n";
         assert_eq!(t.channel, 0, "first media gets RTP channel 0");
         assert_eq!(t.control.as_deref(), Some("streamid=0"));
         assert_eq!(t.track_id, 1);
+        assert_eq!(
+            t.payload_type, 96,
+            "the m=video line's fmt payload type must be captured"
+        );
+    }
+
+    #[test]
+    fn load_sdp_returns_inline_text_verbatim() {
+        let loaded = load_sdp(std::str::from_utf8(SDP).unwrap()).unwrap();
+        assert_eq!(loaded, SDP);
+    }
+
+    /// Biting test: `@path` must read the file's bytes, not treat the whole
+    /// `@path` string as literal SDP text (which would then fail to parse).
+    #[test]
+    fn load_sdp_at_prefix_reads_file() {
+        let dir = std::env::temp_dir().join(format!("multimux-sdp-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("test.sdp");
+        std::fs::write(&path, SDP).unwrap();
+        let loaded = load_sdp(&format!("@{}", path.display())).unwrap();
+        assert_eq!(loaded, SDP);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_sdp_at_prefix_missing_file_errors() {
+        let err = load_sdp("@/no/such/path/multimux-missing.sdp");
+        assert!(err.is_err());
     }
 
     #[test]

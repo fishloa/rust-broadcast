@@ -559,6 +559,7 @@ mod tests {
             clock_rate: 90_000,
             control: None,
             channel,
+            payload_type: 96,
         }
     }
 

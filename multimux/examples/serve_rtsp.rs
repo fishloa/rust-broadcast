@@ -13,7 +13,7 @@
 //! curl http://0.0.0.0:8080/cam/master.m3u8
 //! ```
 
-use multimux::config::{Config, Route};
+use multimux::config::{Config, InputSpec, Route};
 
 /// Served stream name for the single route this example configures.
 const STREAM_NAME: &str = "cam";
@@ -27,7 +27,7 @@ async fn main() {
     let config = Config {
         routes: vec![Route {
             name: STREAM_NAME.to_string(),
-            rtsp_url,
+            input: InputSpec::Rtsp { url: rtsp_url },
         }],
         ..Config::default()
     };

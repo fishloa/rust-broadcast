@@ -51,5 +51,8 @@ required-features = ["testsupport"]
 name = "serve_rtsp"
 
 [dev-dependencies]
-tower  = { version = "0.5", default-features = false, features = ["util"] }
-base64 = "0.22"
+tower            = { version = "0.5", default-features = false, features = ["util"] }
+base64           = "0.22"
+# Only needed by the ts_udp loopback test to mux a real, workspace-produced
+# MPEG-2 TS fixture (via `Package::package`) rather than hand-faking TS bytes.
+broadcast-common = { path = "../broadcast-common", version = "8" }

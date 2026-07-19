@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+### Added
+- **Generalized input model + UDP-family ingest** (issue #663 P3a —
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "Input
+  adapters"): a route's ingest transport is now a tagged `config::InputSpec`
+  (`Rtsp { url }` / `Rtp { addr, sdp, multicast_group }` / `TsUdp { addr,
+  multicast_group }`, `#[serde(tag = "type", rename_all = "snake_case")]`),
+  replacing the RTSP-only `Route::rtsp_url` field — a **breaking config
+  change**: JSON routes now nest under `"input": { "type": "rtsp", "url":
+  ... }` instead of a bare `"rtsp_url"` key. `origin::serve` dispatches each
+  route to the matching `SourceConnector` with one `match` arm per
+  `InputSpec` variant (kept monomorphized, not boxed, since each connector's
+  `Source` associated type differs) — reconnect/backoff/health via
+  `origin::supervisor::supervise` applies identically to every input kind.
+  - `source::rtp_udp::RtpUdpSource` — raw RTP over UDP (uni/multicast, no
+    RTSP control plane): binds a `tokio::net::UdpSocket` (+ optional
+    multicast join via the new `source::udp::bind_udp` helper shared with
+    `TsUdpSource`), parses the configured out-of-band SDP with the *same*
+    `source::sdp::parse_sdp_tracks` RTSP already uses (no parallel SDP
+    implementation), and depayloads with `transmux::RtpStreamDepacketizer`
+    exactly as `source::rtsp::RtspSession` does. Since raw RTP/UDP has no
+    RTSP interleaved-channel framing, incoming packets are routed to their
+    track by RTP payload type (RFC 3550 §5.1) matched against each SDP
+    media's declared payload type — `source::TrackInit` gained a
+    `payload_type` field (populated identically for both the RTSP and raw-RTP
+    ingest paths, since both share `parse_sdp_tracks`) and
+    `source::sdp::load_sdp` loads an SDP body from either inline text or an
+    `@path` file reference (re-read on every reconnect).
+  - `source::ts_udp::TsUdpSource` — MPEG-2 Transport Stream over UDP
+    (uni/multicast): binds the same shared UDP transport, then feeds
+    datagrams to `transmux::StreamingTsDemux` (the same streaming demux core
+    every other TS consumer in this workspace drives) until the in-band PMT
+    resolves every declared track (bounded by a 10 s connect timeout) — the
+    TS-over-UDP analogue of RTSP's DESCRIBE step — before the pipeline builds
+    its segmenter.
+  - No new codec/container parsing in multimux: both sources are transport
+    (socket bind + multicast join) plus wiring over transmux's existing
+    `RtpStreamDepacketizer`/`StreamingTsDemux`.
+  - `Config::validate` now validates every route's `InputSpec` fields (RTSP
+    scheme, UDP address parseability, multicast-group IP validity, RTP SDP
+    non-empty/parseable) in addition to the existing duplicate-name/timing
+    checks.
+
 ### Changed
 - **LL-HLS origin engine moved to `ll-hls-runtime::server`** (issue
   #663/#717 Stage 2 —

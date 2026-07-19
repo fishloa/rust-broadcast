@@ -47,6 +47,26 @@ impl SampleSource for crate::source::rtsp::RtspSession {
     }
 }
 
+impl SampleSource for crate::source::rtp_udp::RtpUdpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::rtp_udp::RtpUdpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::rtp_udp::RtpUdpSession::next_samples(self).await
+    }
+}
+
+impl SampleSource for crate::source::ts_udp::TsUdpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::ts_udp::TsUdpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::ts_udp::TsUdpSession::next_samples(self).await
+    }
+}
+
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
 /// ready part, and ready segment into `store`, until the source reports
 /// end-of-stream.

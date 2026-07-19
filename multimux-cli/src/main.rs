@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use multimux::config::{Config, Route};
+use multimux::config::{Config, InputSpec, Route};
 use multimux::{MultimuxError, Result};
 
 #[derive(Parser)]
@@ -81,7 +81,10 @@ fn build_config(cli: Cli) -> Result<Config> {
         target_duration_secs: cli.target_duration,
         part_target_ms: cli.part_ms,
         window_segments: cli.window,
-        routes: vec![Route { name, rtsp_url }],
+        routes: vec![Route {
+            name,
+            input: InputSpec::Rtsp { url: rtsp_url },
+        }],
     };
     config.validate()?;
     Ok(config)
@@ -135,7 +138,10 @@ mod tests {
         let cfg = build_config(cli).unwrap();
         assert_eq!(cfg.routes.len(), 1);
         assert_eq!(cfg.routes[0].name, "cam1");
-        assert_eq!(cfg.routes[0].rtsp_url, "rtsp://cam.local/stream");
+        match &cfg.routes[0].input {
+            InputSpec::Rtsp { url } => assert_eq!(url, "rtsp://cam.local/stream"),
+            other => panic!("expected InputSpec::Rtsp, got {other:?}"),
+        }
     }
 
     #[test]

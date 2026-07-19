@@ -63,6 +63,22 @@ impl SourceConnector for crate::source::rtsp::RtspSource {
     }
 }
 
+impl SourceConnector for crate::source::rtp_udp::RtpUdpSource {
+    type Source = crate::source::rtp_udp::RtpUdpSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::rtp_udp::RtpUdpSource::connect(self).await
+    }
+}
+
+impl SourceConnector for crate::source::ts_udp::TsUdpSource {
+    type Source = crate::source::ts_udp::TsUdpSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::ts_udp::TsUdpSource::connect(self).await
+    }
+}
+
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
 /// it to `min` after a successful (re)connect so a long outage doesn't

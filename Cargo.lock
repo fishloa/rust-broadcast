@@ -1684,6 +1684,7 @@ version = "0.2.2"
 dependencies = [
  "axum",
  "base64",
+ "broadcast-common",
  "ll-hls-runtime",
  "metrics",
  "metrics-exporter-prometheus",
