@@ -2,7 +2,8 @@
 
 A sans-IO Low-Latency HLS (**RFC 8216bis**, HTTP Live Streaming 2nd Edition)
 playback client engine — issue [#717](https://github.com/fishloa/rust-broadcast/issues/717),
-slices 2-4 (reload scheduler, fetch pipeline, output adapter).
+slices 2-4 (reload scheduler, fetch pipeline, output adapter) plus slice 5's
+`tokio` feature (the async IO adapter).
 
 `LlHlsClient` is a driveable, caller-driven state machine in the same sans-IO
 shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never opens a
@@ -47,20 +48,30 @@ units is `transmux::Fmp4Demux`. `ll-hls-client` holds only the client
 
 ## Zero IO in the core
 
-No `tokio`/`reqwest`/socket dependency anywhere in this crate. `no_std` +
-`alloc` (default `std` feature can be turned off). A real deployment wraps
-`LlHlsClient` in an HTTP-fetching loop — planned as a follow-up slice
-(mirroring `srt-runtime`'s `io` module / `rtsp-runtime`'s `tokio` feature).
-Until then, drive it by hand — see `tests/origin_loop.rs` for a complete
-in-process example against a real `transmux::ll_hls::LlHlsSegmenter` origin
-(no real sockets: the origin's playlist/part/segment bytes are handed to the
-client exactly as a caller's HTTP fetch loop would).
+No `tokio`/`reqwest`/socket dependency in `LlHlsClient` itself, ever. `no_std`
++ `alloc` (default `std` feature can be turned off) — verified by the
+`--no-default-features` gate. Drive it by hand — see `tests/origin_loop.rs`
+for a complete in-process example against a real
+`transmux::ll_hls::LlHlsSegmenter` origin (no real sockets: the origin's
+playlist/part/segment bytes are handed to the client exactly as a caller's
+HTTP fetch loop would).
+
+## The `tokio` feature (issue #717 slice 5)
+
+Enabling the (non-default) `tokio` cargo feature adds `tokio_client::TokioClient`:
+a thin async shell (tokio + reqwest/rustls) driving `LlHlsClient` over real
+HTTP — blocking-reload/preload-hint query params, `Range` byte-ranges,
+per-request timeouts, and retry/backoff on transient failures (HTTP
+Basic/Bearer auth via `TokioClientConfig::auth`, with a shared multi-scheme
+auth crate as a planned follow-up). `tests/glass_to_glass.rs` (gated on this
+feature) drives it against a **real** `multimux`-served LL-HLS origin over
+loopback HTTP, fed by a real-time-paced synthetic producer, and measures
+sub-second glass-to-glass latency — the epic's headline acceptance bar — plus
+asserts blocking-reload and preload-hint prefetch are actually exercised, and
+that a genuinely non-LL origin still plays via the full-segment fallback.
 
 ## What's *not* here — explicit follow-ups
 
-- **The async IO adapter** (tokio + an HTTP client) that actually performs the
-  `Action`s and feeds responses back — the sans-IO core this crate ships is
-  the reusable engine; wiring it to real sockets is the next slice.
 - **Multivariant Playlist rendition selection** — `transmux::hls::MasterPlaylist::parse`
   exists, but choosing a rendition/bitrate is a player-level policy this crate
   doesn't impose; `LlHlsClient` follows one Media Playlist URL.

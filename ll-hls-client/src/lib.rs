@@ -22,12 +22,23 @@
 //!
 //! # Zero IO in the core
 //!
-//! No `tokio`/`reqwest`/socket dependency anywhere in this crate. A real
-//! deployment wraps [`LlHlsClient`] in an HTTP-fetching loop (planned as
-//! issue #717 slice 5, mirroring `srt-runtime`'s `io` module / `rtsp-runtime`'s
-//! `tokio` feature) — until then, drive it by hand (see the crate's
-//! `tests/origin_loop.rs` for a complete in-process example against a real
-//! `transmux::ll_hls::LlHlsSegmenter` origin).
+//! No `tokio`/`reqwest`/socket dependency in [`LlHlsClient`] itself, ever —
+//! it is driveable by hand (see the crate's `tests/origin_loop.rs` for a
+//! complete in-process example against a real
+//! `transmux::ll_hls::LlHlsSegmenter` origin) with zero IO dependencies at
+//! all (verified by the `--no-default-features` gate).
+//!
+//! # The `tokio` feature (issue #717 slice 5)
+//!
+//! Enabling the `tokio` cargo feature (NOT default) adds
+//! [`tokio_client::TokioClient`], a thin async shell (tokio + reqwest/rustls)
+//! that drives [`LlHlsClient`] over real HTTP — blocking-reload/preload-hint
+//! query params, byte-range `Range` headers, per-request timeouts, and
+//! retry/backoff on transient failures. See [`tokio_client`]'s module docs
+//! for the full behaviour and its `tests/glass_to_glass.rs` for a
+//! loopback-HTTP, sub-second glass-to-glass proof against a real
+//! `multimux`-served LL-HLS origin. This feature is entirely additive — the
+//! sans-IO core above is completely unaffected by it either way.
 //!
 //! # Example
 //!
@@ -56,12 +67,16 @@ mod action;
 mod client;
 mod error;
 mod output;
+#[cfg(feature = "tokio")]
+pub mod tokio_client;
 mod url;
 
 pub use action::{Action, BlockingReload, ResourceId};
 pub use client::LlHlsClient;
 pub use error::{Error, Result};
 pub use output::Output;
+#[cfg(feature = "tokio")]
+pub use tokio_client::{Auth, TokioClient, TokioClientConfig, TokioClientStats, TokioError};
 
 /// The RFC this crate's client behaviour implements against.
 pub const SPEC: &str = "RFC 8216bis (HTTP Live Streaming 2nd Edition, draft-pantos-hls-rfc8216bis)";

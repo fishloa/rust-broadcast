@@ -103,6 +103,17 @@
     on playlists, and `Access-Control-Allow-Origin: *` (+ methods/headers, with
     an `OPTIONS` preflight handler) on everything — browser LL-HLS players
     (hls.js) are commonly on a different origin than the API.
+  - **`GET /media.m3u8` deadlocked on every request** (found by
+    `ll-hls-client`'s issue #717 slice 5 acceptance test, the first thing in
+    the workspace to ever drive this endpoint over a real HTTP round trip
+    rather than calling `output::llhls::media_playlist_m3u8` directly):
+    `media_playlist_m3u8` called `store::MediaStore::with_segments_and_parts`
+    (which locks `MediaStore`'s internal `std::sync::Mutex`) and, from
+    *inside* that closure, called `store.max_segment_duration()` — which
+    locks the same, non-reentrant mutex again. Every request to `/media.m3u8`
+    (blocking or not, empty store or not) self-deadlocked the handling task
+    forever. `target_duration_secs()`/`max_segment_duration()` are now read
+    *before* taking the `with_segments_and_parts` lock.
 
 ## [0.2.2] - 2026-07-18
 

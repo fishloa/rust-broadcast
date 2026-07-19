@@ -41,6 +41,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unmodeled on both the render and parse side — a documented gap, not a
   silent drop (nothing to preserve it into on `MasterPlaylist`, which has
   no `extra_tags` field).
+  - **Fix** (found while building the `ll-hls-client` tokio adapter, issue
+    #717 slice 5): `LowLatencyConfig` gained `can_block_reload: bool` — the
+    `CAN-BLOCK-RELOAD` attribute's actual `YES`/`NO` value was previously
+    discarded by `parse` (only the tag's *presence* set `low_latency =
+    Some(...)`), so a client had no way to distinguish a genuine
+    `CAN-BLOCK-RELOAD=NO` origin from one that supports blocking reload —
+    both parsed identically. `parse` now reads the real value, defaulting to
+    `false` (RFC 8216bis: absent means not supported) when the attribute (or
+    the whole `#EXT-X-SERVER-CONTROL` tag) is missing; `to_m3u8()` renders
+    the actual value instead of always emitting `YES`.
+    `LowLatencyConfig::default()` still defaults to `true` (matching every
+    existing in-repo caller that builds one from scratch via
+    `..Default::default()`, all of which do support blocking reload) — only
+    the *parser's* default differs, deliberately, since it reflects the wire
+    rather than a convenience default.
 
 ## [0.17.0] - 2026-07-15
 

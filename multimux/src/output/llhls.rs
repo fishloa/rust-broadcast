@@ -150,6 +150,19 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
 /// rendered by `to_m3u8()` itself — multimux only supplies the URI scheme
 /// (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
 pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
+    // Read these *before* taking `with_segments_and_parts`'s lock below —
+    // `MediaStore::max_segment_duration` takes the same `inner` mutex
+    // itself, and `std::sync::Mutex` is not reentrant, so calling it from
+    // inside the `with_segments_and_parts` closure (as a previous version of
+    // this function did) self-deadlocks the calling thread the first time
+    // this function is ever invoked with any segment present. Caught by a
+    // real network round trip against a live `MediaStore` (issue #717 slice
+    // 5's acceptance test) — the existing test suite only ever called this
+    // function directly (never over HTTP with two concurrently-scheduled
+    // tasks), which happened to never trip the deadlock detector but hung
+    // just the same once actually exercised end-to-end.
+    let target_duration_secs = store.target_duration_secs();
+    let max_segment_duration = store.max_segment_duration();
     store.with_segments_and_parts(|store_segments, live_parts| {
         let media_sequence = store_segments
             .front()
@@ -200,10 +213,7 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
         // so a real segment routinely exceeds it — advertising the
         // configured target alone can under-declare. Use whichever is
         // larger, rounded (not the configured value's `ceil()` alone).
-        let target_duration = store
-            .target_duration_secs()
-            .max(store.max_segment_duration())
-            .round() as u32;
+        let target_duration = target_duration_secs.max(max_segment_duration).round() as u32;
         let playlist = MediaPlaylist {
             version: LL_HLS_VERSION,
             target_duration,

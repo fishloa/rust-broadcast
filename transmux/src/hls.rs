@@ -314,12 +314,26 @@ pub struct PartSpec {
 pub struct OpenSegment {
     /// The parts of the in-progress segment, in order.
     pub parts: Vec<PartSpec>,
+    /// The Media Initialization Section in effect for this segment (RFC
+    /// 8216bis §4.4.4.5) — `#EXT-X-MAP` applies "until the next `EXT-X-MAP`
+    /// tag or the end of the Playlist", so this carries forward from the
+    /// last `#EXT-X-MAP` seen, whether or not any segment has *closed* yet.
+    /// `None` if no `#EXT-X-MAP` has appeared at all (rare in practice — a
+    /// live LL-HLS playlist's very first segment normally needs one).
+    pub map: Option<MapTag>,
 }
 
 impl OpenSegment {
-    /// Build an open segment from its in-progress parts.
+    /// Build an open segment from its in-progress parts, with no map (see
+    /// [`Self::with_map`] to attach one).
     pub fn new(parts: Vec<PartSpec>) -> Self {
-        Self { parts }
+        Self { parts, map: None }
+    }
+
+    /// Attach the Media Initialization Section in effect for this segment.
+    pub fn with_map(mut self, map: MapTag) -> Self {
+        self.map = Some(map);
+        self
     }
 }
 
@@ -408,7 +422,7 @@ pub struct MediaPlaylist {
 /// Presence of this config on a [`MediaPlaylist`] switches on the LL-HLS
 /// directives (`#EXT-X-SERVER-CONTROL`, `#EXT-X-PART-INF`, `#EXT-X-PART`,
 /// `#EXT-X-PRELOAD-HINT`); see the module docs for each tag's spec section.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LowLatencyConfig {
     /// Part-target duration in seconds — the `PART-TARGET` of `#EXT-X-PART-INF`
     /// (RFC 8216bis §4.4.3.7). Typically 0.2–0.5 s.
@@ -438,6 +452,16 @@ pub struct LowLatencyConfig {
     /// §4.4.3.8) — the Skip Boundary in seconds, advertising support for
     /// Playlist Delta Updates (`#EXT-X-SKIP`). `None` omits the attribute.
     pub can_skip_until: Option<f64>,
+    /// `CAN-BLOCK-RELOAD` attribute of `#EXT-X-SERVER-CONTROL` (RFC 8216bis
+    /// §4.4.3.8) — whether the server supports Blocking Playlist Reload
+    /// (RFC 8216bis §6.2.5.2). `to_m3u8` renders the actual value
+    /// (`YES`/`NO`) rather than assuming `YES`; `MediaPlaylist::parse`
+    /// derives it from the attribute's real wire value, defaulting to
+    /// `false` (per RFC 8216bis) when the attribute — or the whole
+    /// `#EXT-X-SERVER-CONTROL` tag — is absent. A client MUST NOT infer
+    /// blocking-reload support merely from [`MediaPlaylist::low_latency`]
+    /// being `Some`; it must check this field (issue #717 slice 1 gap).
+    pub can_block_reload: bool,
 }
 
 impl LowLatencyConfig {
@@ -449,6 +473,29 @@ impl LowLatencyConfig {
             floor
         } else {
             self.part_hold_back
+        }
+    }
+}
+
+impl Default for LowLatencyConfig {
+    /// Defaults `can_block_reload` to `true` — this crate's own LL-HLS
+    /// origin (and every in-repo test/fixture that builds a
+    /// [`LowLatencyConfig`] from scratch via `..Default::default()`) always
+    /// supports blocking reload, matching `to_m3u8()`'s historical
+    /// `CAN-BLOCK-RELOAD=YES` output. This default is never consulted for a
+    /// *parsed* playlist: [`MediaPlaylist::parse`] always derives
+    /// `can_block_reload` from the wire attribute (RFC 8216bis default:
+    /// `false`/absent-means-NO), independent of this `Default` impl.
+    fn default() -> Self {
+        Self {
+            part_target: 0.0,
+            part_hold_back: 0.0,
+            preload_hint_part: None,
+            preload_hint_type: PreloadHintType::default(),
+            preload_hint_byte_range_start: None,
+            preload_hint_byte_range_length: None,
+            can_skip_until: None,
+            can_block_reload: true,
         }
     }
 }
@@ -490,11 +537,13 @@ impl MediaPlaylist {
         // Low-Latency HLS header directives (RFC 8216bis §4.4.3.7/§4.4.3.8),
         // opt-in via `low_latency`.
         if let Some(ll) = &self.low_latency {
-            // #EXT-X-SERVER-CONTROL — CAN-BLOCK-RELOAD + PART-HOLD-BACK (>= 3×
-            // part-target, enforced by effective_part_hold_back) + optional
-            // CAN-SKIP-UNTIL (RFC 8216bis §4.4.3.8).
+            // #EXT-X-SERVER-CONTROL — CAN-BLOCK-RELOAD (the actual value,
+            // not always YES) + PART-HOLD-BACK (>= 3x part-target, enforced
+            // by effective_part_hold_back) + optional CAN-SKIP-UNTIL
+            // (RFC 8216bis §4.4.3.8).
             s.push_str(&format!(
-                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK={}",
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD={},PART-HOLD-BACK={}",
+                if ll.can_block_reload { "YES" } else { "NO" },
                 format_secs(ll.effective_part_hold_back()),
             ));
             if let Some(csu) = ll.can_skip_until {
@@ -570,6 +619,16 @@ impl MediaPlaylist {
         // same opt-in gating as the closed segments' parts above.
         if self.low_latency.is_some() {
             if let Some(open) = &self.open_segment {
+                // Same dedup-vs-previous rule as the closed segments' loop
+                // above: `#EXT-X-MAP` applies until a new one is seen, so
+                // only emit it here if it differs from the last *closed*
+                // segment's map (or there were no closed segments at all).
+                let prev_map = self.segments.last().and_then(|s| s.map.as_ref());
+                if open.map.as_ref() != prev_map {
+                    if let Some(map) = &open.map {
+                        push_map_line(&mut s, map);
+                    }
+                }
                 for part in &open.parts {
                     push_part_line(&mut s, part);
                 }
@@ -639,6 +698,11 @@ impl MediaPlaylist {
         let mut part_target: Option<f64> = None;
         let mut part_hold_back: Option<f64> = None;
         let mut can_skip_until: Option<f64> = None;
+        // RFC 8216bis §4.4.3.8: absent CAN-BLOCK-RELOAD (or an absent
+        // #EXT-X-SERVER-CONTROL tag entirely) means the server does NOT
+        // support Blocking Playlist Reload — default false, not the
+        // `LowLatencyConfig::default()` convenience value of true.
+        let mut can_block_reload = false;
         let mut preload_hint_part: Option<String> = None;
         let mut preload_hint_type = PreloadHintType::Part;
         let mut preload_hint_byte_range_start: Option<u64> = None;
@@ -708,6 +772,7 @@ impl MediaPlaylist {
                 if let Some(v) = attrs.get("CAN-SKIP-UNTIL") {
                     can_skip_until = Some(parse_decimal(v, line_no, line, "CAN-SKIP-UNTIL")?);
                 }
+                can_block_reload = attrs.get("CAN-BLOCK-RELOAD").map(String::as_str) == Some("YES");
                 saw_ll_tag = true;
             } else if let Some(rest) = line.strip_prefix("#EXT-X-PART:") {
                 let attrs = parse_attr_list(rest);
@@ -834,7 +899,11 @@ impl MediaPlaylist {
         let open_segment = if pending_parts.is_empty() {
             None
         } else {
-            Some(OpenSegment::new(pending_parts))
+            let open = OpenSegment::new(pending_parts);
+            Some(match &current_map {
+                Some(map) => open.with_map(map.clone()),
+                None => open,
+            })
         };
 
         let low_latency = if saw_ll_tag {
@@ -846,6 +915,7 @@ impl MediaPlaylist {
                 preload_hint_byte_range_start,
                 preload_hint_byte_range_length,
                 can_skip_until,
+                can_block_reload,
             })
         } else {
             None
@@ -1694,6 +1764,78 @@ mod tests {
         );
     }
 
+    /// Issue #717 slice 5 follow-up fix: `#EXT-X-MAP` applies "until the
+    /// next `EXT-X-MAP` tag or the end of the Playlist" (RFC 8216bis
+    /// §4.4.4.5) — including to the *open* (never-yet-closed) segment, even
+    /// when NO segment has closed yet (the very first segment of a
+    /// freshly-tuned-into live stream). Before this fix, `OpenSegment`
+    /// carried no `map` field at all, so a client parsing a playlist with
+    /// only an open segment had no way to learn the init segment's URI
+    /// until that segment's first *closed* appearance — needlessly
+    /// delaying every part's playback until then.
+    #[test]
+    fn open_segment_inherits_map_when_no_segment_has_closed_yet() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:1\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXT-X-MAP:URI=\"init-1.mp4\"\n\
+#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.0.m4s\",INDEPENDENT=YES\n\
+#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-1.1.m4s\"\n";
+        let pl = MediaPlaylist::parse(text).expect("must parse");
+        assert!(pl.segments.is_empty(), "no segment has closed yet");
+        let open = pl.open_segment.as_ref().expect("one open segment");
+        assert_eq!(
+            open.map,
+            Some(MapTag {
+                uri: "init-1.mp4".into(),
+                byte_range: None,
+            }),
+            "the open segment must inherit the EXT-X-MAP that precedes it, \
+             even though no segment has closed yet"
+        );
+    }
+
+    /// Round trip the same no-closed-segments-yet shape through
+    /// `to_m3u8`/`parse`, proving the renderer emits the `#EXT-X-MAP` line
+    /// for a bare open segment (not just for closed ones).
+    #[test]
+    fn round_trip_open_segment_only_with_map() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 1,
+            discontinuity_sequence: 0,
+            segments: vec![],
+            open_segment: Some(
+                OpenSegment::new(vec![PartSpec {
+                    uri: "part-1-1.0.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                    ..Default::default()
+                }])
+                .with_map(MapTag {
+                    uri: "init-1.mp4".into(),
+                    byte_range: None,
+                }),
+            ),
+            endlist: false,
+            extra_tags: vec![],
+            low_latency: Some(ll_config()),
+            iframes_only: false,
+            ..Default::default()
+        };
+        let text = pl.to_m3u8();
+        assert!(
+            text.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            "renderer must emit EXT-X-MAP for a bare open segment:\n{text}"
+        );
+        let parsed = MediaPlaylist::parse(&text).expect("parse must succeed");
+        assert_eq!(parsed, pl, "round trip must be lossless:\n{text}");
+    }
+
     // --- parsing (issue #717 slice 1): round-trip + real-world-sample tests ---
 
     fn ll_config_full() -> LowLatencyConfig {
@@ -1705,6 +1847,7 @@ mod tests {
             preload_hint_byte_range_start: Some(0),
             preload_hint_byte_range_length: Some(1000),
             can_skip_until: Some(24.0),
+            can_block_reload: true,
         }
     }
 
@@ -1748,13 +1891,21 @@ mod tests {
                 byte_range: None,
                 map: Some(map.clone()),
             }],
-            open_segment: Some(OpenSegment::new(vec![PartSpec {
-                uri: "part-10.0.m4s".into(),
-                duration: 0.5,
-                independent: true,
-                byte_range: None,
-                gap: true,
-            }])),
+            // `#EXT-X-MAP` applies "until the next EXT-X-MAP or the end of
+            // the Playlist" (RFC 8216bis §4.4.4.5) — the open segment is
+            // still governed by the same map as the preceding closed
+            // segment (no new `#EXT-X-MAP` appears between them), so it
+            // must carry it too for a lossless round trip.
+            open_segment: Some(
+                OpenSegment::new(vec![PartSpec {
+                    uri: "part-10.0.m4s".into(),
+                    duration: 0.5,
+                    independent: true,
+                    byte_range: None,
+                    gap: true,
+                }])
+                .with_map(map.clone()),
+            ),
             endlist: false,
             extra_tags: vec![],
             low_latency: Some(ll_config_full()),
@@ -1920,6 +2071,10 @@ midRoll273.mp4
         assert_eq!(open.parts[0].uri, "midRoll274.0.mp4");
         let ll = pl.low_latency.as_ref().expect("LL config must be present");
         assert_eq!(ll.preload_hint_part.as_deref(), Some("midRoll274.1.mp4"));
+        assert!(
+            ll.can_block_reload,
+            "CAN-BLOCK-RELOAD=YES in the fixture must parse to true"
+        );
         assert_eq!(pl.rendition_reports.len(), 1);
         assert_eq!(pl.rendition_reports[0].uri, "/1M/LL-HLS.m3u8");
         assert_eq!(pl.rendition_reports[0].last_msn, 274);
@@ -1952,6 +2107,86 @@ fileSequence1997.mp4\n";
         let ll = pl.low_latency.as_ref().expect("LL config must be present");
         assert_eq!(ll.can_skip_until, Some(24.0));
         assert!(!pl.endlist);
+    }
+
+    /// Issue #717 slice 1 fix: an origin that advertises LL-HLS tags but
+    /// explicitly declines blocking reload (`CAN-BLOCK-RELOAD=NO`) must
+    /// parse to `can_block_reload == false` — a client inferring support
+    /// from `low_latency.is_some()` alone would get this wrong.
+    #[test]
+    fn real_world_sample_can_block_reload_no_is_parsed_not_inferred() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=NO,PART-HOLD-BACK=1.5\n\
+#EXTINF:4.00000,\n\
+seg0.mp4\n";
+        let pl = MediaPlaylist::parse(text).expect("must parse");
+        let ll = pl
+            .low_latency
+            .as_ref()
+            .expect("LL config must be present (PART-INF seen)");
+        assert!(
+            !ll.can_block_reload,
+            "CAN-BLOCK-RELOAD=NO must not be inferred as true just because low_latency is Some"
+        );
+    }
+
+    /// RFC 8216bis §4.4.3.8: an absent `CAN-BLOCK-RELOAD` attribute (or an
+    /// entirely absent `#EXT-X-SERVER-CONTROL` tag) means the server does
+    /// NOT support blocking reload — default `false`, distinct from
+    /// [`LowLatencyConfig::default()`]'s convenience value of `true`.
+    #[test]
+    fn parse_defaults_can_block_reload_false_when_attribute_absent() {
+        let text = "#EXTM3U\n\
+#EXT-X-VERSION:9\n\
+#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-PART-INF:PART-TARGET=0.5\n\
+#EXTINF:4.00000,\n\
+seg0.mp4\n";
+        let pl = MediaPlaylist::parse(text).expect("must parse");
+        let ll = pl
+            .low_latency
+            .as_ref()
+            .expect("LL config must be present (PART-INF seen)");
+        assert!(
+            !ll.can_block_reload,
+            "absent CAN-BLOCK-RELOAD/SERVER-CONTROL must default to false, not true"
+        );
+    }
+
+    /// Round trip a `CAN-BLOCK-RELOAD=NO` config through `to_m3u8`/`parse`
+    /// to prove the renderer emits the actual value (not a hardcoded YES).
+    #[test]
+    fn round_trip_can_block_reload_no() {
+        let pl = MediaPlaylist {
+            version: 9,
+            target_duration: 4,
+            media_sequence: 0,
+            discontinuity_sequence: 0,
+            segments: vec![MediaSegment {
+                uri: "seg0.mp4".into(),
+                duration: 4.0,
+                ..Default::default()
+            }],
+            low_latency: Some(LowLatencyConfig {
+                part_target: 0.5,
+                part_hold_back: 1.5,
+                can_block_reload: false,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let text = pl.to_m3u8();
+        assert!(
+            text.contains("CAN-BLOCK-RELOAD=NO"),
+            "renderer must emit the actual value:\n{text}"
+        );
+        let parsed = MediaPlaylist::parse(&text).expect("parse must succeed");
+        assert_eq!(parsed, pl, "round trip must be lossless:\n{text}");
     }
 
     #[test]

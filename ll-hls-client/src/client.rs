@@ -29,9 +29,13 @@ use crate::url;
 /// # Behaviour
 ///
 /// - **Reload scheduling** (issue #717 slice 2): once a playlist advertises
-///   `EXT-X-SERVER-CONTROL`/`EXT-X-PART-INF` (i.e.
-///   [`transmux::hls::MediaPlaylist::low_latency`] is `Some`), every reload is
-///   a Blocking Playlist Reload (RFC 8216bis §6.2.5.2) naming the next not-yet-seen
+///   `EXT-X-SERVER-CONTROL`/`EXT-X-PART-INF` **and** the origin's
+///   `CAN-BLOCK-RELOAD` attribute is `YES`
+///   ([`transmux::hls::LowLatencyConfig::can_block_reload`] is `true` —
+///   *not* merely [`transmux::hls::MediaPlaylist::low_latency`] being
+///   `Some`, since an origin may carry parts/PART-INF while still
+///   advertising `CAN-BLOCK-RELOAD=NO`), every reload is a Blocking
+///   Playlist Reload (RFC 8216bis §6.2.5.2) naming the next not-yet-seen
 ///   Partial Segment's `_HLS_msn`/`_HLS_part`. Otherwise reloads are plain GETs
 ///   paced by an [`Action::WaitMs`] hint derived from `#EXT-X-TARGETDURATION`.
 ///   `EXT-X-SKIP`/`CAN-SKIP-UNTIL` Playlist Delta Updates (RFC 8216bis §4.4.5.2)
@@ -164,7 +168,22 @@ impl LlHlsClient {
             self.process_open_segment(next_msn, open)?;
         }
 
-        if let Some(map) = playlist.segments.last().and_then(|s| s.map.as_ref()) {
+        // Prefer the *open* segment's map when present: it's the most
+        // recent (`#EXT-X-MAP` carries forward, so the open segment's view
+        // is never older than the last closed segment's) and, crucially, is
+        // the only way to learn the init segment's URI at all when NO
+        // segment has closed yet (issue #717 slice 5 fix — previously this
+        // only ever looked at the last *closed* segment's map, so a client
+        // tuning into a stream mid-segment couldn't fetch the init segment,
+        // and therefore couldn't demux any of that segment's parts, until
+        // it closed — needlessly inflating glass-to-glass latency by up to
+        // a full segment duration on every fresh connection).
+        let map = playlist
+            .open_segment
+            .as_ref()
+            .and_then(|o| o.map.as_ref())
+            .or_else(|| playlist.segments.last().and_then(|s| s.map.as_ref()));
+        if let Some(map) = map {
             self.ensure_init_requested(map)?;
         }
 
@@ -202,17 +221,25 @@ impl LlHlsClient {
         if playlist.endlist {
             self.saw_endlist = true;
         } else {
-            let blocking = playlist.low_latency.is_some().then(|| {
-                let part = playlist
-                    .open_segment
-                    .as_ref()
-                    .map(|o| o.parts.len() as u64)
-                    .unwrap_or(0);
-                BlockingReload {
-                    msn: next_msn,
-                    part: Some(part),
-                }
-            });
+            // Issue #717 slice 1 fix: block only when the origin actually
+            // advertises `CAN-BLOCK-RELOAD=YES` — `low_latency.is_some()`
+            // alone is not enough (an origin sending `CAN-BLOCK-RELOAD=NO`
+            // still carries parts/PART-INF, e.g. while ramping up support).
+            let blocking = playlist
+                .low_latency
+                .as_ref()
+                .filter(|ll| ll.can_block_reload)
+                .map(|_| {
+                    let part = playlist
+                        .open_segment
+                        .as_ref()
+                        .map(|o| o.parts.len() as u64)
+                        .unwrap_or(0);
+                    BlockingReload {
+                        msn: next_msn,
+                        part: Some(part),
+                    }
+                });
             let can_skip = playlist
                 .low_latency
                 .as_ref()
@@ -351,8 +378,31 @@ impl LlHlsClient {
             return Ok(());
         }
         if seg.parts.is_empty() {
-            // Full-segment fallback (non-LL playlist, or a segment whose
-            // parts were never individually rendered).
+            // Either a genuinely non-LL segment (never had parts), OR an LL
+            // segment whose parts were already fetched individually while it
+            // was still open and whose *closed* rendering simply omits them
+            // — RFC 8216bis does not require a closed segment to keep
+            // listing `#EXT-X-PART` lines, and real origins commonly don't
+            // (e.g. `multimux`'s: `MediaSegment.parts` is always empty for a
+            // closed segment; only the still-open segment carries parts).
+            // Detect the latter via `delivered_parts`: if any part for this
+            // `msn` was ever delivered, every one of its non-`GAP` parts was
+            // already requested while it was open (`process_open_segment`
+            // requests every known part each time it's polled, so by the
+            // time the segment closes none can have been missed) — fetching
+            // the whole segment *as well* would demux and emit its samples a
+            // second time. Caught by `ll-hls-client/tests/glass_to_glass.rs`
+            // (issue #717 slice 5): every sample was double-delivered for
+            // the first two segments of a real, live-paced run.
+            let already_have_parts = self
+                .delivered_parts
+                .range((msn, 0)..(msn + 1, 0))
+                .next()
+                .is_some();
+            if already_have_parts {
+                self.delivered_segments.insert(msn);
+                return Ok(());
+            }
             let id = ResourceId::Segment { msn };
             if !self.requested.contains(&id) {
                 let url = url::resolve(&self.playlist_url, &seg.uri);

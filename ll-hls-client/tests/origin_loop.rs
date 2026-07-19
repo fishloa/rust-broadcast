@@ -486,6 +486,77 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
 }
 
 // ===========================================================================
+// Issue #717 slice 1 fix: `CAN-BLOCK-RELOAD=NO` must not be blocked on.
+// ===========================================================================
+
+/// An origin that carries LL-HLS tags (`PART-INF`/`PART`) but explicitly
+/// declines blocking reload (`CAN-BLOCK-RELOAD=NO`) must get a plain,
+/// non-blocking reload + a `WaitMs` backoff hint — not a blocking
+/// `_HLS_msn`/`_HLS_part` request. A client that infers blocking support
+/// from `low_latency.is_some()` alone (the pre-fix behaviour) fails this.
+#[test]
+fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
+    let pl = MediaPlaylist {
+        version: 9,
+        target_duration: 2,
+        media_sequence: 0,
+        discontinuity_sequence: 0,
+        segments: vec![MediaSegment {
+            uri: "seg0.m4s".to_string(),
+            duration: 1.0,
+            discontinuous: false,
+            parts: vec![PartSpec {
+                uri: "seg0.0.m4s".to_string(),
+                duration: 1.0,
+                independent: true,
+                byte_range: None,
+                gap: false,
+            }],
+            byte_range: None,
+            map: Some(MapTag {
+                uri: INIT_URL.to_string(),
+                byte_range: None,
+            }),
+        }],
+        open_segment: None,
+        endlist: false,
+        extra_tags: vec![],
+        low_latency: Some(LowLatencyConfig {
+            part_target: 0.5,
+            part_hold_back: 1.5,
+            can_block_reload: false,
+            ..Default::default()
+        }),
+        iframes_only: false,
+        rendition_reports: vec![],
+        skip: None,
+    };
+
+    let mut client = LlHlsClient::new(PLAYLIST_URL);
+    let _ = client.poll(); // discard the initial plain GET
+    client.on_playlist(pl.to_m3u8().as_bytes()).unwrap();
+    let actions = drain_actions(&mut client);
+
+    let reload = actions
+        .iter()
+        .find(|a| matches!(a, Action::FetchPlaylist { .. }))
+        .expect("a reload action must be queued");
+    match reload {
+        Action::FetchPlaylist { blocking, .. } => {
+            assert!(
+                blocking.is_none(),
+                "CAN-BLOCK-RELOAD=NO must never produce a blocking reload: {reload:?}"
+            );
+        }
+        _ => unreachable!(),
+    }
+    assert!(
+        actions.iter().any(|a| matches!(a, Action::WaitMs(_))),
+        "a non-blocking reload must be paced with a WaitMs backoff hint: {actions:#?}"
+    );
+}
+
+// ===========================================================================
 // Non-LL (full-segment) fallback.
 // ===========================================================================
 
