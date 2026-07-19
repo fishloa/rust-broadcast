@@ -26,7 +26,7 @@ use std::collections::HashMap;
 
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
-use crate::auth::{Authenticator, Credentials};
+use crate::auth::{Authenticator, Credentials, RequestContext};
 use crate::error::{Error, Result};
 use crate::interleaved::{self, MAGIC};
 use crate::state::{SessionState, client_next_state};
@@ -260,7 +260,8 @@ impl ClientSession {
             builder = builder.header(name.clone(), value.clone());
         }
         if let Some(auth) = &mut self.authenticator {
-            let value = auth.authorization(<&str>::from(&method), uri)?;
+            let ctx = RequestContext::new(<&str>::from(&method), uri);
+            let value = auth.authorization(&ctx)?;
             builder = builder.header(headers::AUTHORIZATION, value);
         }
         let request = if body.is_empty() {

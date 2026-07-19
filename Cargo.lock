@@ -234,6 +234,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-auth"
+version = "0.1.0"
+dependencies = [
+ "http-auth",
+ "thiserror",
+]
+
+[[package]]
 name = "broadcast-common"
 version = "8.4.0"
 dependencies = [
@@ -2254,7 +2262,7 @@ dependencies = [
 name = "rtsp-runtime"
 version = "0.2.0"
 dependencies = [
- "http-auth",
+ "broadcast-auth",
  "log",
  "rtsp-types",
  "rustls",
