@@ -166,6 +166,7 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
                 duration: s.duration,
                 discontinuous: false,
                 parts: Vec::new(),
+                ..Default::default()
             })
             .collect();
         let part_target = f64::from(store.part_target_ms()) / 1000.0;
@@ -181,6 +182,7 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
                         uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
                         duration: p.duration,
                         independent: p.independent,
+                        ..Default::default()
                     })
                     .collect(),
             )
@@ -218,8 +220,10 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
                 part_target,
                 part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
                 preload_hint_part: next_part_hint,
+                ..Default::default()
             }),
             iframes_only: false,
+            ..Default::default()
         };
         playlist.to_m3u8()
     })

@@ -545,6 +545,7 @@ impl Package for HlsPackager {
                 duration: ticks as f64 / ts as f64,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             });
         }
         let playlist = MediaPlaylist {
@@ -558,6 +559,7 @@ impl Package for HlsPackager {
             low_latency: None,
             iframes_only: false,
             open_segment: None,
+            ..Default::default()
         };
         Ok(playlist.to_m3u8())
     }

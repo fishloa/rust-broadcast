@@ -146,12 +146,14 @@ fn iframes_only_opt_in() {
                 duration: 4.0,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             }],
             endlist: true,
             extra_tags: vec![],
             low_latency: None,
             iframes_only,
             open_segment: None,
+            ..Default::default()
         }
     }
 

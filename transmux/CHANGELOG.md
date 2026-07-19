@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `hls::MediaPlaylist::parse` + `hls::MasterPlaylist::parse` (issue #717
+  slice 1): the symmetric inverse of the existing `to_m3u8()` renderers,
+  parsing an m3u8 string back into the same structs — so an LL-HLS client
+  can reuse the origin's wire model rather than growing a second one.
+  Recognizes `#EXTM3U`/`#EXT-X-VERSION`/`#EXT-X-TARGETDURATION`/
+  `#EXT-X-MEDIA-SEQUENCE`/`#EXT-X-DISCONTINUITY-SEQUENCE`/`#EXTINF`/
+  `#EXT-X-ENDLIST`/`#EXT-X-DISCONTINUITY`/`#EXT-X-BYTERANGE`/`#EXT-X-MAP`
+  plus the LL-HLS client-relevant tags `#EXT-X-PART-INF`,
+  `#EXT-X-SERVER-CONTROL` (`CAN-BLOCK-RELOAD`/`PART-HOLD-BACK`/
+  `CAN-SKIP-UNTIL`), `#EXT-X-PART` (`DURATION`/`URI`/`INDEPENDENT`/`GAP`/
+  `BYTERANGE`), `#EXT-X-PRELOAD-HINT` (`TYPE`/`URI`/byte-range),
+  `#EXT-X-RENDITION-REPORT`, `#EXT-X-SKIP` (delta updates), and
+  `#EXT-X-STREAM-INF`/`#EXT-X-I-FRAME-STREAM-INF` on the Multivariant side.
+  Unrecognized tags are preserved verbatim into `extra_tags` (never an
+  error); a malformed known tag (missing required attribute, unparsable
+  value) returns the new `Error::HlsParse { line_no, line, reason }`.
+  New public types: `ByteRange`, `MapTag`, `PreloadHintType`,
+  `RenditionReport`, `SkipInfo`. `MediaSegment` gained `byte_range: Option<ByteRange>`
+  and `map: Option<MapTag>`; `PartSpec` gained `byte_range`/`gap`;
+  `LowLatencyConfig` gained `can_skip_until`/`preload_hint_type`/
+  `preload_hint_byte_range_start`/`preload_hint_byte_range_length`;
+  `MediaPlaylist` gained `rendition_reports`/`skip` — all breaking for any
+  external struct-literal construction (all five structs now derive
+  `Default`, so existing call sites can add `..Default::default()`).
+  `to_m3u8()` gained matching render support for every new field
+  (`#EXT-X-MAP` dedup/carry-forward, `#EXT-X-BYTERANGE`,
+  `#EXT-X-SKIP`, `#EXT-X-RENDITION-REPORT`, `CAN-SKIP-UNTIL`, part
+  `BYTERANGE`/`GAP`, preload-hint `TYPE`/byte-range) so the round trip is
+  lossless. `#EXT-X-MEDIA` (Multivariant alternate renditions) remains
+  unmodeled on both the render and parse side — a documented gap, not a
+  silent drop (nothing to preserve it into on `MasterPlaylist`, which has
+  no `extra_tags` field).
+
 ## [0.17.0] - 2026-07-15
 
 ### Added

@@ -218,6 +218,7 @@ fn independent_flag_tracks_sync_first_sample() {
             uri: format!("seg1.{i}.m4s"),
             duration: p.duration,
             independent: p.independent,
+            ..Default::default()
         })
         .collect();
     let pl = MediaPlaylist {
@@ -230,6 +231,7 @@ fn independent_flag_tracks_sync_first_sample() {
             duration: 1.0,
             discontinuous: false,
             parts: parts_spec,
+            ..Default::default()
         }],
         endlist: false,
         extra_tags: vec![],
@@ -237,9 +239,11 @@ fn independent_flag_tracks_sync_first_sample() {
             part_target: 0.334,
             part_hold_back: 1.002,
             preload_hint_part: None,
+            ..Default::default()
         }),
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
     let m3u8 = pl.to_m3u8();
     // Part 0 has INDEPENDENT=YES; parts 1 and 2 do not.
@@ -267,11 +271,13 @@ fn playlist_low_latency_directives_present_and_opt_in() {
             uri: "seg0.0.m4s".into(),
             duration: 0.334,
             independent: true,
+            ..Default::default()
         },
         PartSpec {
             uri: "seg0.1.m4s".into(),
             duration: 0.334,
             independent: false,
+            ..Default::default()
         },
     ];
     let ll = LowLatencyConfig {
@@ -279,6 +285,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
         // Deliberately too small; renderer must raise to 3 x 0.334 = 1.002.
         part_hold_back: 0.5,
         preload_hint_part: Some("seg0.2.m4s".into()),
+        ..Default::default()
     };
     let pl = MediaPlaylist {
         version: 9,
@@ -290,12 +297,14 @@ fn playlist_low_latency_directives_present_and_opt_in() {
             duration: 1.0,
             discontinuous: false,
             parts,
+            ..Default::default()
         }],
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(ll.clone()),
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
     let m3u8 = pl.to_m3u8();
 

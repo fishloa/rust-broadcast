@@ -465,18 +465,21 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
                 duration: video_seg_secs[0],
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             },
             MediaSegment {
                 uri: "seg-1-2.m4s".to_string(),
                 duration: video_seg_secs[1],
                 discontinuous: true,
                 parts: vec![],
+                ..Default::default()
             },
             MediaSegment {
                 uri: "seg-1-3.m4s".to_string(),
                 duration: video_seg_secs[2],
                 discontinuous: true,
                 parts: vec![],
+                ..Default::default()
             },
         ],
         endlist: true,
@@ -487,6 +490,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         low_latency: None,
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
     let m3u8 = playlist.to_m3u8();
 
