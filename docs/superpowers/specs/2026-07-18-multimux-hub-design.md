@@ -84,6 +84,37 @@ Rule: if the client needs to understand a wire format the server already
 produces, extend the server's model with the inverse operation in the same
 library — do not re-describe the format in the client.
 
+### `ll-hls-runtime` — client + server in one crate (symmetry with rtsp-runtime)
+
+RTSP keeps both client and server sans-IO state machines in one crate
+(`rtsp-runtime`) over the shared `rtsp-types` codec. HLS must match: the
+`ll-hls-client` crate is renamed **`ll-hls-runtime`** and grows a **server
+(origin) engine** alongside the client, both over the shared `transmux::hls`
+model. The origin engine — the rolling window/store, the blocking-reload +
+part-availability decision logic, playlist rendering, TARGETDURATION/msn/abuse
+rules — **moves out of `multimux`** into `ll-hls-runtime::server`.
+
+- `ll-hls-runtime::client` = today's sans-IO `LlHlsClient` (reload scheduler,
+  prefetch, coalescing).
+- `ll-hls-runtime::server` = the sans-IO origin engine, **poll/step, no tokio**:
+  `resolve_playlist(query) -> Ready(String) | WouldBlock`,
+  `resolve_resource(name) -> Ready(bytes) | WouldBlock | NotFound`, a
+  monotonic progress version, and a **runtime-agnostic** change notification
+  (`event-listener::Event`, not `tokio::sync::watch`) so any async runtime can
+  await it. The 5 s blocking cap + prompt-404-on-close semantics are expressed
+  as engine state the caller drives.
+- **`multimux` becomes a thin adapter**: `multimux::origin`/`LlHlsOutput` wrap
+  the server engine with **axum** (a small tokio adapter loops
+  `resolve → await change/timeout → re-resolve`), and the HLS-pull input wraps
+  the client engine with **reqwest** — exactly like `rtsp-runtime` + its tokio
+  adapter. `multimux` keeps only app/hub concerns: supervisor, config, metrics,
+  the `Output` trait, DASH.
+
+All P0–P2 behaviour + tests (incl. the reentrant-lock deadlock fix and the
+part-404-boundary fix) must be preserved through the move; verify with
+`cargo nextest` locally (plain `cargo test` does not catch the process-exit /
+deadlock class).
+
 ### Shared auth layer (RTSP + HTTP clients)
 
 Auth is **not** transport-specific — RTSP, TS-over-HTTP, HLS-pull, and the
