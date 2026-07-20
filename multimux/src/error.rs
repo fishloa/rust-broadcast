@@ -95,6 +95,20 @@ pub enum MultimuxError {
     /// or [`Self::ConfigRead`].
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+
+    /// A config's `Custom { type_tag, .. }` variant (`InputSpec`/
+    /// `OutputKind`/`OutputAuthSpec`, issue #663 external scheme plugin
+    /// registry) named a `type_tag` with no matching factory registered in
+    /// the [`crate::registry::SchemeRegistry`] passed to
+    /// [`crate::origin::serve_with_registry`] (or in the empty registry
+    /// [`crate::origin::serve`] uses).
+    #[error("unknown {kind} scheme {tag:?} — no factory registered")]
+    UnknownScheme {
+        /// Which registry this was: `"input"`, `"output"`, or `"auth"`.
+        kind: &'static str,
+        /// The unresolved `type_tag`.
+        tag: String,
+    },
 }
 
 /// multimux result alias.

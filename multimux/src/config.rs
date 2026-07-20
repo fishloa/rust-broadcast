@@ -47,6 +47,13 @@ fn default_outputs() -> Vec<OutputKind> {
 /// `crate::source::http_auth::resolve_credentials`). [`InputSpec::Rtp`]/
 /// [`InputSpec::TsUdp`] are raw UDP transports with no HTTP/RTSP request line
 /// to attach credentials to, so they carry no `auth` field.
+///
+/// - [`InputSpec::Custom`] (issue #663 external scheme plugin registry) names
+///   an external input scheme by an opaque `type_tag`, resolved at
+///   `crate::origin::serve_with_registry` time via
+///   [`crate::registry::SchemeRegistry::input`] — the escape hatch that lets
+///   a third-party crate add a new ingest transport without editing this
+///   crate. `params` is passed through unexamined to the registered factory.
 #[non_exhaustive]
 #[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -105,6 +112,20 @@ pub enum InputSpec {
         /// [`AuthSpec`].
         #[serde(default)]
         auth: Option<AuthSpec>,
+    },
+    /// External input scheme resolved at runtime via
+    /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
+    /// factory; `params` is passed opaquely to it. JSON:
+    /// `{ "type": "custom", "type_tag": "webrtc", "params": { ... } }`.
+    Custom {
+        /// Selects the registered factory in
+        /// [`crate::registry::SchemeRegistry`] that builds this input.
+        type_tag: String,
+        /// Opaque config passed to the registered factory verbatim — may
+        /// carry external-scheme credentials, so it is always redacted (as
+        /// `"<params>"`) in `Debug`, never rendered.
+        #[serde(default)]
+        params: serde_json::Value,
     },
 }
 
@@ -243,6 +264,24 @@ pub enum OutputAuthSpec {
         #[serde(default = "default_forwarded_for_header")]
         forwarded_for_header: Option<String>,
     },
+    /// External output-auth scheme resolved at runtime via
+    /// [`crate::registry::SchemeRegistry`] (issue #663 external scheme
+    /// plugin registry) — the escape hatch that lets a third-party crate add
+    /// a new server-side output-auth scheme without editing this crate.
+    /// `type_tag` selects the registered factory; `params` is passed
+    /// opaquely to it. JSON: `{ "scheme": "custom", "type_tag": "hmac",
+    /// "params": { ... } }`.
+    Custom {
+        /// Selects the registered factory in
+        /// [`crate::registry::SchemeRegistry`] that builds this
+        /// `broadcast_auth::Verifier`.
+        type_tag: String,
+        /// Opaque config passed to the registered factory verbatim — may
+        /// carry external-scheme credentials, so it is always redacted (as
+        /// `"<params>"`) in `Debug`, never rendered.
+        #[serde(default)]
+        params: serde_json::Value,
+    },
 }
 
 /// [`OutputAuthSpec::Forwarded`]'s default `user_header` when the config
@@ -284,6 +323,11 @@ impl std::fmt::Debug for OutputAuthSpec {
                 .field("user_header", user_header)
                 .field("forwarded_for_header", forwarded_for_header)
                 .finish(),
+            OutputAuthSpec::Custom { type_tag, .. } => f
+                .debug_struct("Custom")
+                .field("type_tag", type_tag)
+                .field("params", &"<params>")
+                .finish(),
         }
     }
 }
@@ -322,6 +366,11 @@ impl OutputAuthSpec {
             } => broadcast_auth::Verifier::forwarded(
                 user_header.clone(),
                 forwarded_for_header.clone(),
+            ),
+            OutputAuthSpec::Custom { .. } => unreachable!(
+                "OutputAuthSpec::Custom cannot build a Verifier without a SchemeRegistry — \
+                 crate::origin::serve_with_registry resolves it via `registry.auth(type_tag)` \
+                 before this method is ever called on a Custom variant"
             ),
         }
     }
@@ -404,6 +453,11 @@ impl std::fmt::Debug for InputSpec {
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
                 .finish(),
+            InputSpec::Custom { type_tag, .. } => f
+                .debug_struct("Custom")
+                .field("type_tag", type_tag)
+                .field("params", &"<params>")
+                .finish(),
         }
     }
 }
@@ -453,6 +507,10 @@ impl InputSpec {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }
+            // Always structurally valid: the registered factory (resolved at
+            // `crate::origin::serve_with_registry` time, not here) validates
+            // `params` itself.
+            InputSpec::Custom { .. } => Ok(()),
         }
     }
 }
@@ -965,6 +1023,14 @@ mod tests {
 
     // --- issue #663 P4: per-route `outputs` ---
 
+    /// `OutputKind` no longer derives `PartialEq` (its `Custom` variant
+    /// carries a `serde_json::Value` — see the type's doc comment), so tests
+    /// compare a parsed `outputs` list by each kind's `name()` label instead
+    /// of `==`.
+    fn output_kind_names(kinds: &[OutputKind]) -> Vec<&str> {
+        kinds.iter().map(OutputKind::name).collect()
+    }
+
     /// A route with no `outputs` key defaults to LL-HLS only — every
     /// pre-#663-P4 config keeps working unchanged.
     #[test]
@@ -975,7 +1041,7 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::LlHls]);
+        assert_eq!(output_kind_names(&cfg.routes[0].outputs), vec!["llhls"]);
         cfg.validate().unwrap();
     }
 
@@ -994,8 +1060,8 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(
-            cfg.routes[0].outputs,
-            vec![OutputKind::LlHls, OutputKind::Dash]
+            output_kind_names(&cfg.routes[0].outputs),
+            vec!["llhls", "dash"]
         );
         cfg.validate().unwrap();
     }
@@ -1014,7 +1080,7 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::Dash]);
+        assert_eq!(output_kind_names(&cfg.routes[0].outputs), vec!["dash"]);
         cfg.validate().unwrap();
     }
 
@@ -1033,8 +1099,8 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(
-            cfg.routes[0].outputs,
-            vec![OutputKind::LlHls, OutputKind::Dash, OutputKind::LlDash]
+            output_kind_names(&cfg.routes[0].outputs),
+            vec!["llhls", "dash", "ll_dash"]
         );
         cfg.validate().unwrap();
     }
@@ -2108,5 +2174,120 @@ mod tests {
         let debug = format!("{forwarded:?}");
         assert!(debug.contains("X-Forwarded-User"), "debug: {debug}");
         assert!(debug.contains("X-Forwarded-For"), "debug: {debug}");
+    }
+
+    // --- issue #663 external scheme plugin registry: `Custom` variants ---
+
+    /// `InputSpec::Custom` deserializes with the right `type_tag`/`params`,
+    /// and always validates (the registry checks `params` at build time, not
+    /// `Config::validate`).
+    #[test]
+    fn input_spec_custom_deserializes_with_type_tag_and_params() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-custom",
+                    "input": {
+                        "type": "custom",
+                        "type_tag": "webrtc",
+                        "params": { "offer_url": "https://example/offer" }
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::Custom { type_tag, params } => {
+                assert_eq!(type_tag, "webrtc");
+                assert_eq!(
+                    params.get("offer_url").and_then(|v| v.as_str()),
+                    Some("https://example/offer")
+                );
+            }
+            other => panic!("expected InputSpec::Custom, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// `InputSpec::Custom`'s `params` defaults to `null` when omitted.
+    #[test]
+    fn input_spec_custom_params_defaults_to_null_when_omitted() {
+        let json = r#"{
+            "routes": [
+                { "name": "cam-custom", "input": { "type": "custom", "type_tag": "webrtc" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::Custom { params, .. } => assert!(params.is_null()),
+            other => panic!("expected InputSpec::Custom, got {other:?}"),
+        }
+    }
+
+    /// Biting test: `InputSpec::Custom`'s `Debug` must show `type_tag` but
+    /// never render `params` (which may hold an external scheme's
+    /// credentials) — checked with a secret planted in `params`.
+    #[test]
+    fn input_spec_custom_debug_redacts_params() {
+        let spec = InputSpec::Custom {
+            type_tag: "webrtc".into(),
+            params: serde_json::json!({ "password": "s3cret" }),
+        };
+        let debug = format!("{spec:?}");
+        assert!(debug.contains("webrtc"), "type_tag may render: {debug}");
+        assert!(!debug.contains("s3cret"), "debug leaked params: {debug}");
+    }
+
+    /// `OutputAuthSpec::Custom` deserializes with the right `type_tag`/
+    /// `params`, and always validates.
+    #[test]
+    fn output_auth_spec_custom_deserializes_with_type_tag_and_params() {
+        let json = r#"{
+            "output_auth": {
+                "scheme": "custom",
+                "type_tag": "hmac",
+                "params": { "key_id": "abc" }
+            },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Custom { type_tag, params }) => {
+                assert_eq!(type_tag, "hmac");
+                assert_eq!(params.get("key_id").and_then(|v| v.as_str()), Some("abc"));
+            }
+            other => panic!("expected Some(OutputAuthSpec::Custom), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// Biting test: `OutputAuthSpec::Custom`'s `Debug` must show `type_tag`
+    /// but never render `params`.
+    #[test]
+    fn output_auth_spec_custom_debug_redacts_params() {
+        let spec = OutputAuthSpec::Custom {
+            type_tag: "hmac".into(),
+            params: serde_json::json!({ "shared_secret": "topsecret" }),
+        };
+        let debug = format!("{spec:?}");
+        assert!(debug.contains("hmac"), "type_tag may render: {debug}");
+        assert!(!debug.contains("topsecret"), "debug leaked params: {debug}");
+    }
+
+    /// `OutputAuthSpec::Custom`'s `build_verifier` is never called by
+    /// production code (`crate::origin::serve_with_registry` resolves it via
+    /// the registry first) — documented via `#[should_panic]` so a future
+    /// refactor that accidentally routes a `Custom` value into
+    /// `build_verifier` fails loudly instead of silently misbehaving.
+    #[test]
+    #[should_panic(expected = "SchemeRegistry")]
+    fn output_auth_spec_custom_build_verifier_is_unreachable() {
+        let spec = OutputAuthSpec::Custom {
+            type_tag: "hmac".into(),
+            params: serde_json::Value::Null,
+        };
+        let _ = spec.build_verifier("realm");
     }
 }

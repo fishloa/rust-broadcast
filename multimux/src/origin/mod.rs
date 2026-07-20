@@ -62,6 +62,7 @@ use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
+use crate::registry::{AuthCtx, InputCtx, OutputCtx, SchemeRegistry};
 use crate::store::{HealthState, MediaStore};
 use supervisor::{Backoff, supervise};
 
@@ -529,6 +530,45 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
     Response::from_parts(parts, Body::from(bytes))
 }
 
+/// Build the [`Output`]s a route's [`crate::config::Route::outputs`] names,
+/// resolving any [`crate::output::OutputKind::Custom`] entry via `registry`
+/// (issue #663 external scheme plugin registry) and every built-in kind via
+/// [`crate::output::OutputKind::build_with_playlist_name`] — the fallible
+/// counterpart [`serve_with_registry`] uses in place of a bare
+/// `build_with_playlist_name` call (which would panic on `Custom`; see that
+/// method's docs).
+fn build_output(
+    kind: &crate::output::OutputKind,
+    playlist_name: &str,
+    registry: &SchemeRegistry,
+) -> crate::Result<Arc<dyn Output>> {
+    match kind {
+        crate::output::OutputKind::Custom { type_tag, params } => {
+            let factory =
+                registry
+                    .output(type_tag)
+                    .ok_or_else(|| crate::MultimuxError::UnknownScheme {
+                        kind: "output",
+                        tag: type_tag.clone(),
+                    })?;
+            factory(&OutputCtx {
+                params: params.clone(),
+                playlist_name,
+            })
+        }
+        builtin => Ok(builtin.build_with_playlist_name(playlist_name)),
+    }
+}
+
+/// Run the multimux origin with an empty [`SchemeRegistry`] — equivalent to
+/// `serve_with_registry(config, SchemeRegistry::new())`. A config whose
+/// route/output-auth uses a `Custom` scheme always fails with
+/// [`crate::MultimuxError::UnknownScheme`] under plain `serve`; use
+/// [`serve_with_registry`] with a populated registry to resolve one.
+pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
+    serve_with_registry(config, SchemeRegistry::new()).await
+}
+
 /// Run the multimux origin: one [`MediaStore`] + one supervised ingest task
 /// per `config.routes` entry, then bind `config.bind` and serve them all
 /// under [`router`]. Each route is served by the [`Output`]s named in its
@@ -549,6 +589,12 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 /// [`crate::store::MediaStore::health`] rather than freezing it forever, and
 /// never brings the server (or any other route) down.
 ///
+/// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
+/// [`crate::config::OutputAuthSpec::Custom`] (issue #663 external scheme
+/// plugin registry) are instead resolved through `registry`: an unregistered
+/// `type_tag` fails route setup with [`crate::MultimuxError::UnknownScheme`]
+/// rather than panicking or silently no-opping.
+///
 /// Installs a graceful-shutdown signal (Ctrl-C, plus SIGTERM on unix): on
 /// receipt, axum stops accepting new connections and drains in-flight
 /// requests (including blocked LL-HLS long-poll reloads) via
@@ -559,7 +605,10 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 ///
 /// Otherwise returns only on a bind failure or if the HTTP server itself
 /// stops (e.g. a fatal accept-loop I/O error).
-pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
+pub async fn serve_with_registry(
+    config: crate::config::Config,
+    registry: SchemeRegistry,
+) -> crate::Result<()> {
     config.validate()?;
 
     tracing::info!(
@@ -583,8 +632,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
-            .map(|k| k.build_with_playlist_name(&config.playlist_name))
-            .collect();
+            .map(|k| build_output(k, &config.playlist_name, &registry))
+            .collect::<crate::Result<Vec<_>>>()?;
         streams.insert(route.name.clone(), (store.clone(), outputs));
 
         let name = route.name.clone();
@@ -671,14 +720,45 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
                     shutdown_rx,
                 ))
             }
+            crate::config::InputSpec::Custom { type_tag, params } => {
+                let factory = registry.input(type_tag).ok_or_else(|| {
+                    crate::MultimuxError::UnknownScheme {
+                        kind: "input",
+                        tag: type_tag.clone(),
+                    }
+                })?;
+                factory(InputCtx {
+                    name: name.clone(),
+                    params: params.clone(),
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    shutdown_rx,
+                })?
+            }
         };
         supervisor_handles.push((name, handle));
     }
 
     let mut app_state = AppState::new(streams).with_limits(HttpLimits::from(&config));
     if let Some(output_auth) = &config.output_auth {
-        app_state =
-            app_state.with_output_auth(Arc::new(output_auth.build_verifier(OUTPUT_AUTH_REALM)));
+        let verifier = match output_auth {
+            crate::config::OutputAuthSpec::Custom { type_tag, params } => {
+                let factory =
+                    registry
+                        .auth(type_tag)
+                        .ok_or_else(|| crate::MultimuxError::UnknownScheme {
+                            kind: "auth",
+                            tag: type_tag.clone(),
+                        })?;
+                factory(&AuthCtx {
+                    params: params.clone(),
+                    realm: OUTPUT_AUTH_REALM,
+                })?
+            }
+            builtin => builtin.build_verifier(OUTPUT_AUTH_REALM),
+        };
+        app_state = app_state.with_output_auth(Arc::new(verifier));
     }
     let state = Arc::new(app_state);
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
@@ -1869,5 +1949,156 @@ mod tests {
                 .unwrap(),
             "*"
         );
+    }
+
+    // --- issue #663 external scheme plugin registry ---
+
+    /// A route naming a `Custom` input's `type_tag` (`"nope"`) with nothing
+    /// registered for it must fail route setup with
+    /// `MultimuxError::UnknownScheme` — not panic, and not block. This
+    /// resolves (or errors) before `serve_with_registry` ever binds the
+    /// listener or enters axum's blocking accept loop, since the route-build
+    /// loop runs first and returns via `?` on the first error, so this test
+    /// can simply `.await` the whole call without a timeout wrapper.
+    #[tokio::test]
+    async fn serve_with_registry_unregistered_custom_input_tag_errors_not_panics() {
+        let cfg = crate::config::Config {
+            routes: vec![crate::config::Route {
+                name: "cam1".into(),
+                input: crate::config::InputSpec::Custom {
+                    type_tag: "nope".into(),
+                    params: serde_json::Value::Null,
+                },
+                outputs: vec![crate::output::OutputKind::LlHls],
+            }],
+            bind: "127.0.0.1:0".into(),
+            ..crate::config::Config::default()
+        };
+        let err = serve_with_registry(cfg, SchemeRegistry::new())
+            .await
+            .expect_err("an unregistered custom input tag must error, not silently succeed");
+        match err {
+            crate::MultimuxError::UnknownScheme { kind, tag } => {
+                assert_eq!(kind, "input");
+                assert_eq!(tag, "nope");
+            }
+            other => panic!("expected MultimuxError::UnknownScheme, got {other:?}"),
+        }
+    }
+
+    /// Same property for a `Custom` output.
+    #[tokio::test]
+    async fn serve_with_registry_unregistered_custom_output_tag_errors_not_panics() {
+        let cfg = crate::config::Config {
+            routes: vec![crate::config::Route {
+                name: "cam1".into(),
+                input: crate::config::InputSpec::Rtsp {
+                    url: "rtsp://host/stream".into(),
+                    auth: None,
+                },
+                outputs: vec![crate::output::OutputKind::Custom {
+                    type_tag: "webrtc".into(),
+                    params: serde_json::Value::Null,
+                }],
+            }],
+            bind: "127.0.0.1:0".into(),
+            ..crate::config::Config::default()
+        };
+        let err = serve_with_registry(cfg, SchemeRegistry::new())
+            .await
+            .expect_err("an unregistered custom output tag must error, not silently succeed");
+        match err {
+            crate::MultimuxError::UnknownScheme { kind, tag } => {
+                assert_eq!(kind, "output");
+                assert_eq!(tag, "webrtc");
+            }
+            other => panic!("expected MultimuxError::UnknownScheme, got {other:?}"),
+        }
+    }
+
+    /// Same property for a `Custom` output-auth scheme.
+    #[tokio::test]
+    async fn serve_with_registry_unregistered_custom_auth_tag_errors_not_panics() {
+        let cfg = crate::config::Config {
+            routes: vec![crate::config::Route {
+                name: "cam1".into(),
+                input: crate::config::InputSpec::Rtsp {
+                    url: "rtsp://host/stream".into(),
+                    auth: None,
+                },
+                outputs: vec![crate::output::OutputKind::LlHls],
+            }],
+            bind: "127.0.0.1:0".into(),
+            output_auth: Some(crate::config::OutputAuthSpec::Custom {
+                type_tag: "hmac".into(),
+                params: serde_json::Value::Null,
+            }),
+            ..crate::config::Config::default()
+        };
+        let err = serve_with_registry(cfg, SchemeRegistry::new())
+            .await
+            .expect_err("an unregistered custom auth tag must error, not silently succeed");
+        match err {
+            crate::MultimuxError::UnknownScheme { kind, tag } => {
+                assert_eq!(kind, "auth");
+                assert_eq!(tag, "hmac");
+            }
+            other => panic!("expected MultimuxError::UnknownScheme, got {other:?}"),
+        }
+    }
+
+    /// A registered custom input factory, once looked up out of a
+    /// `SchemeRegistry` and invoked with an `InputCtx` — exactly the shape
+    /// `serve_with_registry`'s own `InputSpec::Custom` arm builds and passes
+    /// — actually drives real state: the spawned task reads `ctx.params` and
+    /// writes into `ctx.store`, proving the context multimux hands the
+    /// factory is wired correctly end-to-end, not just that the factory is
+    /// present in the map.
+    #[tokio::test]
+    async fn registered_custom_input_factory_runs_against_a_real_input_ctx() {
+        let mut registry = SchemeRegistry::new();
+        registry.register_input(
+            "silence",
+            Arc::new(|ctx: crate::registry::InputCtx| {
+                assert_eq!(
+                    ctx.params.get("marker").and_then(|v| v.as_str()),
+                    Some("ok")
+                );
+                ctx.store.set_health(HealthState::Live);
+                Ok(tokio::spawn(async move {
+                    // Hold the shutdown receiver alive until told to stop,
+                    // mirroring a real supervised connector task.
+                    let mut rx = ctx.shutdown_rx;
+                    let _ = rx.changed().await;
+                }))
+            }),
+        );
+
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let factory = registry.input("silence").expect("factory registered above");
+        let handle = factory(crate::registry::InputCtx {
+            name: "cam1".into(),
+            params: serde_json::json!({"marker": "ok"}),
+            store: store.clone(),
+            target_duration_secs: 4.0,
+            part_target_ms: 500,
+            shutdown_rx,
+        })
+        .expect("factory must succeed");
+
+        let became_live = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if store.health() == HealthState::Live {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .is_ok();
+        assert!(became_live, "factory-spawned task must reach the store");
+
+        handle.abort();
     }
 }

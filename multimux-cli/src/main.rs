@@ -206,7 +206,16 @@ mod tests {
             "cam1",
         ]);
         let cfg = build_config(cli).unwrap();
-        assert_eq!(cfg.routes[0].outputs, vec![OutputKind::LlHls]);
+        // `OutputKind` no longer derives `PartialEq` (its `Custom` variant
+        // carries a `serde_json::Value`), so compare by `name()`.
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls"]
+        );
     }
 
     /// `--dash` is the shorthand for "both outputs from the same ingest".
@@ -222,8 +231,12 @@ mod tests {
         ]);
         let cfg = build_config(cli).unwrap();
         assert_eq!(
-            cfg.routes[0].outputs,
-            vec![OutputKind::LlHls, OutputKind::Dash]
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "dash"]
         );
     }
 
@@ -241,8 +254,12 @@ mod tests {
         ]);
         let cfg = build_config(cli).unwrap();
         assert_eq!(
-            cfg.routes[0].outputs,
-            vec![OutputKind::LlHls, OutputKind::Dash]
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "dash"]
         );
     }
 

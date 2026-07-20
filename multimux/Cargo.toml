@@ -76,6 +76,9 @@ required-features = ["testsupport"]
 [[example]]
 name = "serve_rtsp"
 
+[[example]]
+name = "custom_scheme"
+
 [dev-dependencies]
 base64           = "0.22"
 # Independent RFC 7616 Digest response verification in the mock auth server

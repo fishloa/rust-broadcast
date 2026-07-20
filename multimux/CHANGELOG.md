@@ -3,6 +3,57 @@
 ## [Unreleased]
 
 ### Added
+- **External scheme plugin registry** (issue #663): a third-party crate can
+  now add a new input, output, or output-auth scheme to the multimux origin
+  **without editing multimux**, wired purely via config JSON. Built-ins
+  (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull inputs; LL-HLS/DASH/LL-DASH outputs;
+  Basic/Digest/Bearer/Forwarded output-auth) are unchanged — the typed,
+  validated fast path. Extension is additive:
+  - New `Custom { type_tag, params }` variants on `config::InputSpec` (JSON
+    `{ "type": "custom", "type_tag": "...", "params": { ... } }`),
+    `output::OutputKind` (JSON `{ "custom": { "type_tag": "...", "params":
+    { ... } } }` — not internally tagged like the other two, since the other
+    `OutputKind` variants are plain strings), and `config::OutputAuthSpec`
+    (JSON `{ "scheme": "custom", "type_tag": "...", "params": { ... } }`).
+    `params` is an opaque `serde_json::Value`, always structurally valid at
+    `Config::validate` time — the registered factory validates it, at
+    route-build time. Every `Custom` variant's hand-written `Debug` shows
+    `type_tag` but always redacts `params` as `"<params>"` (it may carry an
+    external scheme's credentials).
+  - A new `registry::SchemeRegistry` — built by the embedding application,
+    never by multimux itself — mapping each `type_tag` to a factory closure
+    that builds the real thing from the opaque `params`: `register_input`/
+    `register_output`/`register_auth` (and their `input`/`output`/`auth`
+    lookups). `InputFactory` closures construct their own concrete
+    `SourceConnector` and spawn `supervise` themselves (returning its
+    `JoinHandle`) rather than returning a connector — `SourceConnector` is
+    not object-safe, so this is how a factory erases the connector type;
+    `OutputFactory`/`AuthFactory` return `Arc<dyn output::Output>`/
+    `broadcast_auth::Verifier` directly (both already concrete/object-safe).
+  - `origin::serve_with_registry(config, registry)` — `origin::serve(config)`
+    is now `serve_with_registry(config, SchemeRegistry::new())`. An
+    unregistered `Custom` `type_tag` fails route setup with the new
+    `MultimuxError::UnknownScheme { kind, tag }` (`kind` is `"input"`,
+    `"output"`, or `"auth"`) rather than panicking or silently no-opping.
+  - New re-exports at the crate root for external factory authors:
+    `SchemeRegistry`, `InputCtx`/`OutputCtx`/`AuthCtx`,
+    `InputFactory`/`OutputFactory`/`AuthFactory`, `serve`/
+    `serve_with_registry`, `supervise`/`SourceConnector`/`Backoff`,
+    `Source`, `MediaStore`, `Output`, and the `broadcast_auth` crate itself
+    (so a registered `AuthFactory` can build a `Verifier` without an
+    external crate needing its own direct dependency on `broadcast-auth`).
+  - New example `examples/custom_scheme.rs`: registers a custom input
+    scheme with zero multimux edits.
+
+### Changed (breaking)
+- **`output::OutputKind` no longer derives `Copy`/`PartialEq`/`Eq`/`Hash`**
+  (only `Debug`/`Clone`/`Deserialize`/`Serialize` remain): its new `Custom`
+  variant carries a `serde_json::Value`, which is `Clone` but not `Copy`.
+  Compare `OutputKind` values via `.name()` or `matches!` instead of `==`.
+  `OutputKind::name()`'s return type changed from `&'static str` to `&str`
+  (`Custom` labels itself by its own `type_tag`, borrowed from `self`).
+
+### Added
 - **`OutputAuthSpec::Forwarded` — reverse-proxy forwarded-auth output-auth
   scheme** (issue #663 extensibility wave part 1, built on
   `broadcast_auth::Verifier::forwarded`): configures the shared output-auth

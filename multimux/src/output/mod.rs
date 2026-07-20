@@ -22,8 +22,18 @@ use crate::store::MediaStore;
 /// Which delivery protocol an [`Output`] implements — used for config
 /// (`crate::config::Route::outputs`) and diagnostics; never for dispatch
 /// (the manifest routes an `Output` mounts are the actual behaviour).
+///
+/// [`OutputKind::Custom`] (issue #663 external scheme plugin registry) names
+/// an external delivery protocol by an opaque `type_tag`, resolved at
+/// `crate::origin::serve_with_registry` time via
+/// [`crate::registry::SchemeRegistry::output`] — the escape hatch that lets a
+/// third-party crate add a new output without editing this crate. Its
+/// `params` is a `serde_json::Value`, which is `Clone` but not `Copy`, so this
+/// enum can no longer derive `Copy`/`PartialEq`/`Eq`/`Hash` (a breaking
+/// change from the pre-registry `OutputKind`) — compare kinds via
+/// [`Self::name`] or `matches!` instead of `==`.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub enum OutputKind {
     /// Low-Latency HLS (`master.m3u8` + `media.m3u8`).
     #[serde(rename = "llhls")]
@@ -37,16 +47,36 @@ pub enum OutputKind {
     /// chunked-transfer CMAF).
     #[serde(rename = "ll_dash")]
     LlDash,
+    /// External output scheme resolved at runtime via
+    /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
+    /// factory; `params` is passed opaquely to it. JSON (this variant is not
+    /// internally tagged like [`crate::config::InputSpec`], since the other
+    /// three variants are plain strings): `{ "custom": { "type_tag": "webrtc",
+    /// "params": { ... } } }`.
+    #[serde(rename = "custom")]
+    Custom {
+        /// Selects the registered factory in
+        /// [`crate::registry::SchemeRegistry`] that builds this output.
+        type_tag: String,
+        /// Opaque config passed to the registered factory verbatim.
+        #[serde(default)]
+        params: serde_json::Value,
+    },
 }
 
 impl OutputKind {
     /// The spec/field-enum label (workspace #204 convention): a stable,
     /// lowercase token per kind, suitable for logs/config.
-    pub fn name(&self) -> &'static str {
+    /// [`OutputKind::Custom`] labels itself by its own `type_tag` rather than
+    /// a fixed token, which is why this borrows from `self` (`&str`) instead
+    /// of returning `&'static str` like most `name()` methods in this
+    /// workspace.
+    pub fn name(&self) -> &str {
         match self {
             OutputKind::LlHls => "llhls",
             OutputKind::Dash => "dash",
             OutputKind::LlDash => "ll_dash",
+            OutputKind::Custom { type_tag, .. } => type_tag,
         }
     }
 
@@ -54,6 +84,13 @@ impl OutputKind {
     /// [`llhls::DEFAULT_PLAYLIST_NAME`] for LL-HLS's media playlist filename.
     /// Use [`Self::build_with_playlist_name`] to serve it under a
     /// configured name instead (`crate::config::Config::playlist_name`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is [`OutputKind::Custom`] — a custom output cannot be
+    /// built without a [`crate::registry::SchemeRegistry`]; use
+    /// `crate::origin::serve_with_registry`, which resolves it via
+    /// `registry.output(type_tag)` instead of calling this method.
     pub fn build(&self) -> Arc<dyn Output> {
         self.build_with_playlist_name(llhls::DEFAULT_PLAYLIST_NAME)
     }
@@ -62,11 +99,20 @@ impl OutputKind {
     /// at `playlist_name` (ignored for [`OutputKind::Dash`]/[`OutputKind::LlDash`],
     /// neither of which has an equivalent configurable filename —
     /// `manifest.mpd`/`manifest-ll.mpd` are fixed).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is [`OutputKind::Custom`] — see [`Self::build`].
     pub fn build_with_playlist_name(&self, playlist_name: &str) -> Arc<dyn Output> {
         match self {
             OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
             OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
+            OutputKind::Custom { .. } => unreachable!(
+                "OutputKind::Custom cannot be built without a SchemeRegistry — \
+                 crate::origin::serve_with_registry resolves it via \
+                 `registry.output(type_tag)` instead of this method"
+            ),
         }
     }
 }
@@ -111,10 +157,13 @@ mod tests {
 
     #[test]
     fn output_kind_serde_round_trips() {
+        // `OutputKind` no longer derives `PartialEq` (its `Custom` variant
+        // carries a `serde_json::Value`, so instances are compared by
+        // `name()` instead of `==` — see the type's doc comment).
         for kind in [OutputKind::LlHls, OutputKind::Dash, OutputKind::LlDash] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: OutputKind = serde_json::from_str(&json).unwrap();
-            assert_eq!(back, kind);
+            assert_eq!(back.name(), kind.name());
         }
         assert_eq!(
             serde_json::to_string(&OutputKind::LlHls).unwrap(),
@@ -124,8 +173,46 @@ mod tests {
 
     #[test]
     fn output_kind_build_matches_kind() {
-        assert_eq!(OutputKind::LlHls.build().kind(), OutputKind::LlHls);
-        assert_eq!(OutputKind::Dash.build().kind(), OutputKind::Dash);
-        assert_eq!(OutputKind::LlDash.build().kind(), OutputKind::LlDash);
+        assert!(matches!(
+            OutputKind::LlHls.build().kind(),
+            OutputKind::LlHls
+        ));
+        assert!(matches!(OutputKind::Dash.build().kind(), OutputKind::Dash));
+        assert!(matches!(
+            OutputKind::LlDash.build().kind(),
+            OutputKind::LlDash
+        ));
+    }
+
+    // --- issue #663 external scheme plugin registry: `OutputKind::Custom` ---
+
+    /// `OutputKind::Custom` deserializes with the right `type_tag`/`params`.
+    #[test]
+    fn output_kind_custom_deserializes_with_type_tag_and_params() {
+        let json = r#"{ "custom": { "type_tag": "webrtc", "params": { "k": "v" } } }"#;
+        let kind: OutputKind = serde_json::from_str(json).unwrap();
+        match &kind {
+            OutputKind::Custom { type_tag, params } => {
+                assert_eq!(type_tag, "webrtc");
+                assert_eq!(params.get("k").and_then(|v| v.as_str()), Some("v"));
+            }
+            other => panic!("expected OutputKind::Custom, got {other:?}"),
+        }
+        assert_eq!(kind.name(), "webrtc");
+    }
+
+    /// `#[should_panic]`: [`OutputKind::build_with_playlist_name`] cannot
+    /// build a [`OutputKind::Custom`] without a
+    /// `crate::registry::SchemeRegistry` — documented via this test so a
+    /// future refactor that silently returns a bogus `Output` instead of
+    /// panicking is caught.
+    #[test]
+    #[should_panic(expected = "SchemeRegistry")]
+    fn output_kind_custom_build_panics() {
+        let kind = OutputKind::Custom {
+            type_tag: "webrtc".into(),
+            params: serde_json::Value::Null,
+        };
+        let _ = kind.build();
     }
 }

@@ -75,7 +75,14 @@ async fn main() {
         "multimux serve_rtsp: http://{}/{STREAM_NAME}/master.m3u8",
         config.bind
     );
-    if config.routes[0].outputs.contains(&OutputKind::Dash) {
+    // `OutputKind` no longer derives `PartialEq` (its `Custom` variant
+    // carries a `serde_json::Value`), so check by pattern rather than
+    // `contains`.
+    if config.routes[0]
+        .outputs
+        .iter()
+        .any(|k| matches!(k, OutputKind::Dash))
+    {
         println!(
             "multimux serve_rtsp: http://{}/{STREAM_NAME}/manifest.mpd",
             config.bind
