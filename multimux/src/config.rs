@@ -932,6 +932,27 @@ mod tests {
         cfg.validate().unwrap();
     }
 
+    /// Issue #663 P4.2: a route may name `ll_dash` alongside `llhls`/`dash` —
+    /// the headline config shape for low-latency DASH.
+    #[test]
+    fn route_outputs_parses_ll_dash() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": { "type": "rtsp", "url": "rtsp://host/stream1" },
+                    "outputs": ["llhls", "dash", "ll_dash"]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            cfg.routes[0].outputs,
+            vec![OutputKind::LlHls, OutputKind::Dash, OutputKind::LlDash]
+        );
+        cfg.validate().unwrap();
+    }
+
     /// An explicitly empty `outputs` list must be rejected at `validate()`
     /// time (a route with nothing to serve is a config mistake, not a
     /// silently-do-nothing route).

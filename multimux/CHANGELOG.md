@@ -106,10 +106,11 @@
     `DEFAULT_TRACK_ID` convention: the `Representation`'s `@id` is forced to
     `DEFAULT_TRACK_ID` regardless of the source's own track numbering, so
     `$RepresentationID$` substitution produces the same `init-1.mp4`/
-    `seg-1-<N>.m4s` filenames LL-HLS already references. **LL-DASH
-    (`transmux::LlDashPackager` chunked parts/`availabilityTimeOffset`) is
-    not implemented** — the store's `part-*.m4s` files are LL-HLS-shaped,
-    not CMAF byte-range chunks — tracked as a follow-up (P4.2).
+    `seg-1-<N>.m4s` filenames LL-HLS already references. **True chunked-CMAF
+    LL-DASH (`transmux::LlDashPackager`/`LlSegmenter`) is not implemented**
+    — the store's `part-*.m4s` files are LL-HLS-shaped, not CMAF byte-range
+    chunks; P4.2 below ships a signalled-MPD LL-DASH output addressing those
+    existing parts instead, with true chunked transfer tracked as P4.3.
   - `ll_hls_runtime::server::MediaStore` gained the accessors a DASH
     renderer needs beyond LL-HLS's own bytes+timing: `set_track_specs`/
     `track_specs` (recorded once by `pipeline::run_pipeline` so DASH can
@@ -125,6 +126,46 @@
     config is unaffected. `Config::validate` rejects an empty `outputs`
     list. `multimux-cli` gained `--outputs llhls,dash` (and the `--dash`
     shorthand for "both") on the single-route quick start.
+- **LL-DASH output (low-latency DASH signalling)** (issue #663 P4.2 —
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "LL-DASH"): a
+  new `output::ll_dash::LlDashOutput`/`OutputKind::LlDash` (`"ll_dash"`)
+  renders `manifest-ll.mpd`, an LL-DASH-**signalled** MPD carrying
+  `availabilityTimeOffset`, `<ServiceDescription><Latency target="…"/></ServiceDescription>`
+  (ISO/IEC 23009-1 §5.13.2), and a `minimumUpdatePeriod` tuned to the part
+  target — served at its own path (not a mode flag on `manifest.mpd`) so a
+  route can enable `dash` (DVR) and `ll_dash` (live edge) together.
+  - **Scope decision: discrete-parts signalling, not true chunked-transfer
+    LL-DASH.** As flagged by P4's own follow-up note, the store's
+    `part-*.m4s` files are LL-HLS-shaped (a whole extra fMP4 `moof`+`mdat`
+    per part), not CMAF byte-range chunks within one in-progress segment —
+    wiring `transmux::LlDashPackager`/`LlSegmenter` for *true* chunked
+    delivery needs a second, chunk-shaped segmenter output, a larger lift
+    than this story's scope. Instead, `LlDashOutput` re-addresses the
+    **existing** parts: its `SegmentTemplate` uses `$Number$` addressing
+    with `@duration` = the real part target (not the whole-segment target),
+    `startNumber="0"`, and a media template that bakes the in-progress
+    segment's sequence number in as literal text (refreshed on every
+    fetch — the MPD is always `type="dynamic"`, never cached) around the
+    real `$RepresentationID$`/`$Number$` tokens, so a real client's
+    substitution produces exactly the `part-{track}-{seq}.{idx}.m4s`
+    filenames the shared resource route already serves for `ll_hls`. This
+    covers **only the live edge** (no `timeShiftBufferDepth` — an absent
+    value is spec-honest "unknown", not a fabricated DVR window this
+    origin cannot serve); pair with `dash`'s `manifest.mpd` for seek-back.
+    `availabilityTimeOffset` is honestly `"0"`: a part is produced
+    atomically (never partially available), so the low-latency win here
+    comes from the small nominal segment(=part) duration, not partial
+    delivery — reusing `transmux::LlDashPackager`'s `segment − chunk`
+    formula would misrepresent that, so this module hand-rolls its own
+    small `<ServiceDescription>`/`availabilityTimeOffset` XML injection
+    instead. True chunked-transfer CMAF remains tracked as **P4.3**.
+  - `ll_hls_runtime::server::MediaStore::latest_progress` (the in-progress
+    segment's sequence number + live part count) is now `pub` (was
+    `pub(crate)`) for the same cross-`Output` reason as `window_segments`/
+    `track_specs` before it.
+  - Config: `outputs: ["llhls", "dash", "ll_dash"]` is now accepted;
+    `Config::validate`/serde behave the same as any other `OutputKind`
+    (unknown tokens rejected, empty `outputs` rejected).
 - **Generalized input model + UDP-family ingest** (issue #663 P3a —
   `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`, "Input
   adapters"): a route's ingest transport is now a tagged `config::InputSpec`

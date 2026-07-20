@@ -306,7 +306,14 @@ impl MediaStore {
     /// The second value is a **count**, not the last part's index: the
     /// blocking-reload resolver treats "part `P` ready" as `count > P` (0
     /// means no parts of the in-progress segment are available yet).
-    pub(crate) fn latest_progress(&self) -> (u32, u32) {
+    ///
+    /// `pub` (not `pub(crate)`) since issue #663 P4.2: `multimux::output::ll_dash`
+    /// needs the in-progress segment's identity to address its live parts
+    /// (`part-{track}-{seq}.{idx}.m4s`) from a `SegmentTemplate` — the same
+    /// cross-crate exception already made for
+    /// [`Self::target_duration_secs`]/[`Self::part_target_ms`]/
+    /// [`Self::track_specs`].
+    pub fn latest_progress(&self) -> (u32, u32) {
         let g = self
             .inner
             .lock()

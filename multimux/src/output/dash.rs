@@ -60,7 +60,10 @@ use crate::origin::resource::cors_preflight;
 use crate::output::{Output, OutputKind};
 use crate::store::MediaStore;
 
-const DASH_MANIFEST_CONTENT_TYPE: &str = "application/dash+xml";
+/// `pub(crate)` (not private) since issue #663 P4.2: `crate::output::ll_dash`
+/// serves the same `application/dash+xml` content type for its LL-DASH
+/// manifest and reuses this constant rather than duplicating the literal.
+pub(crate) const DASH_MANIFEST_CONTENT_TYPE: &str = "application/dash+xml";
 
 /// The DASH [`Output`]: `manifest.mpd` only. Init/segment bytes are the
 /// origin's shared resource route — see the module docs.
@@ -164,7 +167,11 @@ fn render_mpd(store: &MediaStore) -> Option<String> {
 /// well-known "civil_from_days" algorithm (Howard Hinnant,
 /// <https://howardhinnant.github.io/date_algorithms.html>, public domain),
 /// exact for every representable date.
-fn format_iso8601(t: SystemTime) -> String {
+///
+/// `pub(crate)` (not private) since issue #663 P4.2: `crate::output::ll_dash`
+/// needs the same `availabilityStartTime` formatting and reuses this rather
+/// than duplicating the algorithm.
+pub(crate) fn format_iso8601(t: SystemTime) -> String {
     let secs = t
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)

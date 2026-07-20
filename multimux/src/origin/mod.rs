@@ -1141,6 +1141,118 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
+    /// Issue #663 P4.2: a route configured with all three outputs
+    /// (`ll_hls`+`dash`+`ll_dash`) serves the LL-DASH `manifest-ll.mpd`
+    /// alongside the regular `dash`/`ll_hls` manifests unchanged (the
+    /// regression this story must not break), and the LL-DASH manifest's
+    /// `SegmentTemplate` — once resolved exactly like a real DASH client
+    /// would substitute its tokens — names a real `part-*.m4s` file the
+    /// shared resource route actually serves.
+    #[tokio::test]
+    async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 4]);
+        store.set_track_specs(vec![transmux::TrackSpec::new(
+            9,
+            90_000,
+            transmux::CodecConfig::Vp8 {
+                width: 640,
+                height: 480,
+            },
+        )]);
+        store.add_segment(transmux::ll_hls::SegmentInfo {
+            bytes: vec![0x33; 16],
+            duration: 4.0,
+            segment_seq: 1,
+            part_count: 2,
+        });
+        // Live parts of the in-progress segment (seq 2) -- the LL-DASH
+        // manifest's low-latency addressable units.
+        store.add_part(transmux::ll_hls::PartInfo {
+            bytes: vec![0x50; 4],
+            duration: 0.5,
+            independent: true,
+            segment_seq: 2,
+            part_index: 0,
+        });
+        store.add_part(transmux::ll_hls::PartInfo {
+            bytes: vec![0x51; 4],
+            duration: 0.5,
+            independent: false,
+            segment_seq: 2,
+            part_index: 1,
+        });
+
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![
+                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
+                    Arc::new(crate::output::ll_dash::LlDashOutput) as Arc<dyn Output>,
+                ],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+
+        // --- Regression: standard DASH + LL-HLS unaffected. ---
+        let resp = app
+            .clone()
+            .oneshot(get("/cam1/manifest.mpd"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let dash_body = body_string(resp).await;
+        assert_well_formed_xml(&dash_body);
+        assert!(dash_body.contains("seg-$RepresentationID$-$Number$.m4s"));
+
+        let resp = app.clone().oneshot(get("/cam1/media.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let hls_body = body_string(resp).await;
+        assert!(hls_body.contains("#EXTM3U"));
+
+        // --- The new LL-DASH manifest. ---
+        let resp = app
+            .clone()
+            .oneshot(get("/cam1/manifest-ll.mpd"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .unwrap(),
+            "application/dash+xml"
+        );
+        let ll_body = body_string(resp).await;
+        assert_well_formed_xml(&ll_body);
+        assert!(ll_body.contains("<MPD"), "{ll_body}");
+        assert!(ll_body.contains(r#"type="dynamic""#), "{ll_body}");
+        assert!(
+            ll_body.contains("availabilityTimeOffset=\"0\""),
+            "{ll_body}"
+        );
+        assert!(ll_body.contains("<ServiceDescription"), "{ll_body}");
+        assert!(ll_body.contains("<Latency target="), "{ll_body}");
+        assert!(
+            ll_body.contains("part-$RepresentationID$-2.$Number$.m4s"),
+            "must address the in-progress segment (seq 2)'s parts: {ll_body}"
+        );
+
+        // Substitute the tokens like a real DASH client would
+        // ($RepresentationID$ -> 1, $Number$ -> startNumber=0) and confirm
+        // the shared resource route actually serves it.
+        let resolved_uri = "part-1-2.0.m4s";
+        let resp = app
+            .oneshot(get(&format!("/cam1/{resolved_uri}")))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, vec![0x50; 4]);
+    }
+
     /// The shared response-header middleware treats `.mpd` the same as
     /// `.m3u8` (`no-cache`) and everything else as immutable — proving the
     /// generalisation from `output::llhls`'s old per-output middleware

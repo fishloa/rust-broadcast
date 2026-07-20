@@ -1,5 +1,5 @@
 //! The `Output` abstraction: one implementation per delivery protocol
-//! (LL-HLS, DASH) layered over the protocol-neutral
+//! (LL-HLS, DASH, LL-DASH) layered over the protocol-neutral
 //! [`crate::store::MediaStore`].
 //!
 //! Each `Output` renders only its own **manifest** (m3u8 / MPD) — the
@@ -10,6 +10,7 @@
 //! why (the "multi-output nest collision" this split fixes — issue #663 P4).
 
 pub mod dash;
+pub mod ll_dash;
 pub mod llhls;
 
 use std::sync::Arc;
@@ -29,6 +30,12 @@ pub enum OutputKind {
     /// MPEG-DASH (`manifest.mpd`).
     #[serde(rename = "dash")]
     Dash,
+    /// Low-latency DASH (`manifest-ll.mpd`) — issue #663 P4.2. See
+    /// [`ll_dash`]'s module docs for what "low-latency" means here (a
+    /// signalled MPD addressing existing LL-HLS-shaped parts, not true
+    /// chunked-transfer CMAF).
+    #[serde(rename = "ll_dash")]
+    LlDash,
 }
 
 impl OutputKind {
@@ -38,6 +45,7 @@ impl OutputKind {
         match self {
             OutputKind::LlHls => "llhls",
             OutputKind::Dash => "dash",
+            OutputKind::LlDash => "ll_dash",
         }
     }
 
@@ -50,12 +58,14 @@ impl OutputKind {
     }
 
     /// Build the [`Output`] this kind names, serving LL-HLS's media playlist
-    /// at `playlist_name` (ignored for [`OutputKind::Dash`], which has no
-    /// equivalent configurable filename — `manifest.mpd` is fixed).
+    /// at `playlist_name` (ignored for [`OutputKind::Dash`]/[`OutputKind::LlDash`],
+    /// neither of which has an equivalent configurable filename —
+    /// `manifest.mpd`/`manifest-ll.mpd` are fixed).
     pub fn build_with_playlist_name(&self, playlist_name: &str) -> Arc<dyn Output> {
         match self {
             OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
+            OutputKind::LlDash => Arc::new(ll_dash::LlDashOutput),
         }
     }
 }
@@ -77,7 +87,8 @@ pub trait Output: Send + Sync + 'static {
     /// routes here are relative (e.g. `/media.m3u8`, not `/:stream/media.m3u8`)
     /// and must never collide with another enabled output's manifest
     /// filename or with the shared `/:file` catch-all (a bare numeric/opaque
-    /// filename would; `master.m3u8`/`media.m3u8`/`manifest.mpd` don't).
+    /// filename would; `master.m3u8`/`media.m3u8`/`manifest.mpd`/
+    /// `manifest-ll.mpd` don't).
     fn manifest_routes(&self, store: Arc<MediaStore>) -> Router;
 }
 
@@ -87,7 +98,11 @@ mod tests {
 
     #[test]
     fn output_kind_name_and_display_agree() {
-        for (kind, label) in [(OutputKind::LlHls, "llhls"), (OutputKind::Dash, "dash")] {
+        for (kind, label) in [
+            (OutputKind::LlHls, "llhls"),
+            (OutputKind::Dash, "dash"),
+            (OutputKind::LlDash, "ll_dash"),
+        ] {
             assert_eq!(kind.name(), label);
             assert_eq!(kind.to_string(), label);
         }
@@ -95,7 +110,7 @@ mod tests {
 
     #[test]
     fn output_kind_serde_round_trips() {
-        for kind in [OutputKind::LlHls, OutputKind::Dash] {
+        for kind in [OutputKind::LlHls, OutputKind::Dash, OutputKind::LlDash] {
             let json = serde_json::to_string(&kind).unwrap();
             let back: OutputKind = serde_json::from_str(&json).unwrap();
             assert_eq!(back, kind);
@@ -110,5 +125,6 @@ mod tests {
     fn output_kind_build_matches_kind() {
         assert_eq!(OutputKind::LlHls.build().kind(), OutputKind::LlHls);
         assert_eq!(OutputKind::Dash.build().kind(), OutputKind::Dash);
+        assert_eq!(OutputKind::LlDash.build().kind(), OutputKind::LlDash);
     }
 }
