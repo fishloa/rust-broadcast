@@ -207,6 +207,31 @@
     (streaming GET) plus `StreamingTsDemux`; `hls_pull` is a thin wrapper
     over `ll-hls-runtime`'s existing client engine + `Fmp4Demux`.
 
+### Security
+- **UDP ingest read-timeout** (issue #663 P5.2, audit-ingest #3):
+  `source::rtp_udp::RtpUdpSource`/`source::ts_udp::TsUdpSource`'s
+  `next_samples()` previously called `UdpSocket::recv` with no timeout — a
+  source that stopped sending (dropped multicast feed, wedged encoder) left
+  the read pending forever, so `origin::supervisor::supervise` never saw an
+  error to reconnect on. Both sessions' per-datagram `recv` is now wrapped in
+  `tokio::time::timeout(self.read_timeout, …)`; on expiry `next_samples()`
+  returns the same recoverable `MultimuxError::Connect` the supervisor
+  already reconnects on for every other read error. `RtpUdpSource` gained
+  the `timeouts: IngestTimeouts` field + `with_timeouts` builder it was
+  previously missing (mirroring `TsUdpSource`/`RtspSource`); no config or
+  behaviour change for a healthy source (default read timeout unchanged at
+  30 s).
+  - **Deferred (documented, not implemented this pass)**: RTCP Sender
+    Report -> wall-clock A/V sync (issue #663 P5.2, audit-ingest #9/#10) —
+    `source::rtsp::route_channel` (the interleaved RTCP channel) and
+    `source::rtp_udp::RtpUdpSource::connect` (the RTCP companion UDP port)
+    each still discard/never bind RTCP; both carry a
+    `// TODO(P5.3): RTCP SR wallclock A/V sync` at the exact drop point.
+    Judged too large a lift to land safely alongside the bounded-buffer and
+    read-timeout hardening above (it would mean redesigning
+    `transmux::rtp_stream`'s per-track timing/rebase model, not just this
+    crate) — raw per-track RTP-timestamp rebasing is unchanged.
+
 ### Changed
 - **LL-HLS origin engine moved to `ll-hls-runtime::server`** (issue
   #663/#717 Stage 2 —

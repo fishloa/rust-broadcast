@@ -42,6 +42,15 @@ const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 
 /// Map an interleaved RTP channel to its track id (even channels only; RTCP
 /// odd channels return `None`).
+// TODO(P5.3): RTCP SR wallclock A/V sync — this is where the odd (RTCP)
+// interleaved channel's `MediaData` is currently discarded (audit-ingest #9).
+// Per-track RTP timestamps are rebased to 0 independently (see
+// `transmux::rtp_stream`'s module doc), so cross-track A/V alignment today
+// relies on both tracks' encoders having started at the same wall-clock
+// instant. Wiring RTCP Sender Report NTP/RTP correlation here (parse via
+// `transmux::rtcp`, feed the resulting per-track offset into the
+// `Track`/`Sample` timing model) would close that gap; deferred as a large,
+// multi-crate lift (issue #663 P5).
 pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
     if channel % 2 != 0 {
         return None;

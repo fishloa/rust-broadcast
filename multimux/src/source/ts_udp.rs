@@ -14,6 +14,7 @@
 //! builds its segmenter.
 
 use std::collections::BTreeSet;
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
@@ -127,6 +128,7 @@ impl TsUdpSource {
             specs,
             known_track_ids,
             buf,
+            read_timeout: self.timeouts.read,
         })
     }
 }
@@ -149,6 +151,8 @@ pub struct TsUdpSession {
     /// handling.
     known_track_ids: BTreeSet<u32>,
     buf: Vec<u8>,
+    /// Bound on each [`Self::next_samples`] read — see [`IngestTimeouts::read`].
+    read_timeout: Duration,
 }
 
 impl TsUdpSession {
@@ -164,11 +168,20 @@ impl TsUdpSession {
     /// Never returns `Ok(None)`: like
     /// [`crate::source::rtp_udp::RtpUdpSession`], UDP is connectionless, so
     /// there is no transport-level end-of-stream signal.
+    ///
+    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5.2, audit-ingest
+    /// #3): a source that stops sending datagrams (dropped multicast feed,
+    /// wedged encoder) would otherwise leave this `.await` pending forever —
+    /// a timed-out read surfaces as a [`MultimuxError::Connect`], reconnected
+    /// by [`crate::origin::supervisor::supervise`] exactly like any other
+    /// read error.
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let n = self
-            .socket
-            .recv(&mut self.buf)
+        let read_timeout = self.read_timeout;
+        let n = tokio::time::timeout(read_timeout, self.socket.recv(&mut self.buf))
             .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: format!("ts/udp recv: no data within {read_timeout:?}"),
+            })?
             .map_err(|e| MultimuxError::Connect {
                 reason: format!("udp recv: {e}"),
             })?;
@@ -279,6 +292,68 @@ mod tests {
         assert!(
             !samples.is_empty(),
             "expected at least one sample from the muxed TS stream"
+        );
+    }
+
+    /// A source that stops sending datagrams after `connect()` resolves
+    /// tracks (dropped multicast feed, wedged encoder) must not hang
+    /// `next_samples()` forever (issue #663 P5.2, audit-ingest #3): with a
+    /// short configured [`IngestTimeouts::read`], the next call — for which
+    /// nothing further ever arrives — must return an `Err` within that
+    /// bound, not block indefinitely.
+    #[tokio::test]
+    async fn next_samples_times_out_when_source_goes_silent() {
+        let reserved = UdpSocket::bind("127.0.0.1:0").await.expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        const READ_TIMEOUT: Duration = Duration::from_millis(100);
+        let source = TsUdpSource::new("cam-ts", addr.to_string(), None).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: READ_TIMEOUT,
+            },
+        );
+        let ts_bytes = build_ts_bytes();
+        let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
+
+        let send_task = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            for chunk in ts_bytes.chunks(7 * 188) {
+                sender.send_to(chunk, addr).await.expect("send TS datagram");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            // `sender` is dropped here — no further datagrams ever arrive.
+        });
+
+        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect");
+        send_task.await.expect("sender task");
+        assert_eq!(session.track_specs().len(), 1, "one video track resolved");
+
+        // Drain whatever samples were already in flight — same as the
+        // loopback test above — so the timing assertion below is against a
+        // genuinely silent source, not a straggling in-flight datagram.
+        loop {
+            match tokio::time::timeout(Duration::from_millis(50), session.next_samples()).await {
+                Ok(Ok(Some(batch))) if !batch.is_empty() => continue,
+                _ => break,
+            }
+        }
+
+        // Nothing more is ever sent: the next read must time out (as an
+        // `Err`, not a hang) within a small bounded multiple of
+        // `READ_TIMEOUT` — never left pending forever.
+        let outcome = tokio::time::timeout(READ_TIMEOUT * 5, session.next_samples())
+            .await
+            .expect(
+                "next_samples must return within a bounded multiple of the read timeout, not hang",
+            );
+        assert!(
+            outcome.is_err(),
+            "expected a recoverable read-timeout error once the source goes silent"
         );
     }
 }

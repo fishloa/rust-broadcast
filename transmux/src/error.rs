@@ -118,4 +118,22 @@ pub enum Error {
         /// Human-readable explanation.
         reason: String,
     },
+
+    /// A streaming reassembly buffer (e.g.
+    /// [`rtp_stream`](crate::rtp_stream)'s per-track access-unit buffer)
+    /// grew past its configured cap while waiting for a completion signal
+    /// that never arrived (a dropped final FU-A fragment, a marker bit that
+    /// never comes, or any other malformed/hostile input) — issue #663 P5.2,
+    /// audit-ingest #4. The partial data was dropped rather than grown
+    /// without bound; the buffer's owner has already reset its internal
+    /// state, so the caller may simply continue feeding new input (it will
+    /// resync at the next natural boundary) or treat this as a recoverable
+    /// per-connection error, at its discretion.
+    #[error("{what} buffer exceeded its {cap}-byte cap and was dropped")]
+    BufferCapExceeded {
+        /// Human-readable name of the buffer that overflowed.
+        what: &'static str,
+        /// The configured cap, in bytes.
+        cap: usize,
+    },
 }

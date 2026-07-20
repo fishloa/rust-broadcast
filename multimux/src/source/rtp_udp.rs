@@ -24,13 +24,14 @@
 //! channel -> ignored" handling.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
 use crate::error::{MultimuxError, Result};
 use crate::source::sdp::{load_sdp, parse_sdp_tracks};
 use crate::source::udp::bind_udp;
-use crate::source::{Source, TrackInit};
+use crate::source::{IngestTimeouts, Source, TrackInit};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
 
@@ -56,6 +57,7 @@ pub struct RtpUdpSource {
     addr: String,
     sdp: String,
     multicast_group: Option<String>,
+    timeouts: IngestTimeouts,
 }
 
 /// Manual `Debug`: the configured SDP may be sizeable and carries no secret,
@@ -89,13 +91,32 @@ impl RtpUdpSource {
             addr: addr.into(),
             sdp: sdp.into(),
             multicast_group,
+            timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see `RtspSource::with_timeouts`
+    /// for the pattern this mirrors.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Binds the UDP socket (joining `multicast_group` if configured) and
     /// parses the configured SDP into per-track init — the raw-RTP analogue
     /// of [`crate::source::rtsp::RtspSource::connect`]'s DESCRIBE step, just
     /// with the SDP supplied out-of-band instead of fetched from the source.
+    // TODO(P5.3): RTCP SR wallclock A/V sync — this source binds only the RTP
+    // port; the RTCP companion port (conventionally RTP port + 1, RFC 3550
+    // §11) is never bound, so no Sender Report ever reaches this crate for
+    // raw RTP/UDP ingest. Wiring it would mean binding a second socket here,
+    // racing it against the RTP socket's `recv` in
+    // `RtpUdpSession::next_samples`, and feeding the resulting NTP/RTP
+    // mapping into the `Track`/`Sample` timing model — see the identical
+    // note on `crate::source::rtsp::route_channel` (the RTSP-interleaved
+    // case of the same gap); deferred as a large, multi-crate lift (issue
+    // #663 P5).
     pub async fn connect(&self) -> Result<RtpUdpSession> {
         let sdp_bytes = load_sdp(&self.sdp)?;
         let tracks = parse_sdp_tracks(&sdp_bytes)?;
@@ -119,6 +140,7 @@ impl RtpUdpSource {
             depacketizer,
             pt_to_track,
             buf: vec![0u8; MAX_UDP_DATAGRAM],
+            read_timeout: self.timeouts.read,
         })
     }
 }
@@ -140,6 +162,8 @@ pub struct RtpUdpSession {
     /// types — see the module doc's "Track routing" section.
     pt_to_track: HashMap<u8, u32>,
     buf: Vec<u8>,
+    /// Bound on each [`Self::next_samples`] read — see [`IngestTimeouts::read`].
+    read_timeout: Duration,
 }
 
 impl RtpUdpSession {
@@ -158,11 +182,20 @@ impl RtpUdpSession {
     /// transport-level end-of-stream signal (unlike RTSP's TCP close) — a
     /// dead source is only detected by the supervisor's health/backoff, not
     /// by this method.
+    ///
+    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5.2, audit-ingest
+    /// #3): a source that stops sending datagrams (dropped multicast feed,
+    /// wedged encoder) would otherwise leave this `.await` pending forever —
+    /// a timed-out read surfaces as a [`MultimuxError::Connect`], reconnected
+    /// by [`crate::origin::supervisor::supervise`] exactly like any other
+    /// read error.
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let n = self
-            .socket
-            .recv(&mut self.buf)
+        let read_timeout = self.read_timeout;
+        let n = tokio::time::timeout(read_timeout, self.socket.recv(&mut self.buf))
             .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: format!("rtp/udp recv: no data within {read_timeout:?}"),
+            })?
             .map_err(|e| MultimuxError::Connect {
                 reason: format!("udp recv: {e}"),
             })?;
@@ -325,6 +358,36 @@ mod tests {
         assert!(
             batch.is_empty(),
             "an unrouted payload type must yield no samples"
+        );
+    }
+
+    /// A source that never sends any RTP packet (dead multicast feed, wedged
+    /// camera) must not hang `next_samples()` forever (issue #663 P5.2,
+    /// audit-ingest #3): with a short configured [`IngestTimeouts::read`],
+    /// the call must return an `Err` within that bound, not block
+    /// indefinitely.
+    #[tokio::test]
+    async fn next_samples_times_out_when_source_is_silent() {
+        const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+        let source = RtpUdpSource::new("cam-udp", "127.0.0.1:0", sdp_body(), None).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: std::time::Duration::from_secs(5),
+                read: READ_TIMEOUT,
+            },
+        );
+        let mut session = source.connect().await.expect("connect");
+
+        // Nothing is ever sent to this socket: the read must time out (as an
+        // `Err`, not a hang) within a small bounded multiple of
+        // `READ_TIMEOUT` — never left pending forever.
+        let outcome = tokio::time::timeout(READ_TIMEOUT * 5, session.next_samples())
+            .await
+            .expect(
+                "next_samples must return within a bounded multiple of the read timeout, not hang",
+            );
+        assert!(
+            outcome.is_err(),
+            "expected a recoverable read-timeout error for a silent source"
         );
     }
 }

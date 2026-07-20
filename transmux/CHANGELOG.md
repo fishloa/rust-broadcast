@@ -57,6 +57,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the *parser's* default differs, deliberately, since it reflects the wire
     rather than a convenience default.
 
+### Security
+
+- **Bounded RTP/TS reassembly buffers** (issue #663 P5.2, audit-ingest
+  #4 — memory-exhaustion hardening): two streaming-reassembly buffers
+  previously grew without bound against malformed or hostile input.
+  `rtp_stream::RtpStreamDepacketizer`'s per-track in-progress access-unit
+  buffer (a dropped/corrupted final FU-A fragment, or a marker bit that
+  never arrives, previously accumulated RTP packets for the life of the
+  session) is now capped at `MAX_AU_BUFFER_BYTES` (4 MiB); on overflow the
+  partial AU is dropped and `push` returns the new recoverable
+  `Error::BufferCapExceeded`, with internal state already reset so the next
+  packet starts a fresh AU. `ts_demux::StreamingTsDemux`'s per-PID PES
+  buffer (a `payload_unit_start_indicator` that never recurs — the
+  unbounded-video `PES_packet_length = 0` case on a wedged/lossy stream —
+  previously accumulated forever) is now capped at `MAX_PES_BUFFER_BYTES`
+  (4 MiB); on overflow the partial PES is dropped and a
+  `DemuxEvent::Discontinuity` is raised for the PID. Neither cap changes
+  behaviour for any well-formed stream (a real access unit/PES is orders of
+  magnitude smaller); PSI/private-section buffering needed no equivalent
+  change — `mpeg_ts::ts::SectionReassembler` is already inherently bounded
+  by `section_length`'s 12-bit field.
+
 ## [0.17.0] - 2026-07-15
 
 ### Added

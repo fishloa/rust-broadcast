@@ -29,15 +29,37 @@
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples); cross-track A/V alignment
 //!   using RTCP Sender Report NTP/RTP correlation is out of v1 scope.
+//!   `// TODO(P5.3): RTCP SR wallclock A/V sync` — see the identical note at
+//!   the two ingest-side drop points this feeds:
+//!   `multimux::source::rtsp::route_channel` (interleaved RTCP channel) and
+//!   `multimux::source::rtp_udp::RtpUdpSource::connect` (RTCP companion UDP
+//!   port); wiring either would mean threading a per-track NTP/RTP offset
+//!   into this module's timing model (issue #663 P5).
 //! - When an RFC 3640 `AAC-hbr` packet aggregates more than one access unit,
 //!   all AUs in that packet share the RTP timestamp, so non-final AUs get
 //!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
 //!   own packetizer emits.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
 use alloc::vec::Vec;
+
+/// Hard cap, in bytes, on one track's in-progress access-unit buffer
+/// (`TrackState::cur_pkts`, the raw RTP packets accumulated since the last
+/// completed AU) — the same buffer that ultimately feeds
+/// [`crate::rtp::reassemble_video`]'s FU-A `fu_buf`, so bounding it here
+/// transitively bounds that too. A real access unit (even a 4K IDR frame)
+/// is at most a few hundred KB; this is comfortably above that, but far
+/// below what a malformed/hostile stream — a dropped final FU-A fragment
+/// (`E=1` never seen) or a marker bit that's never set — would otherwise
+/// accumulate for the life of the (indefinitely long, per the P0 reconnect
+/// loop) session: an unbounded-memory DoS (audit-ingest #4). On overflow the
+/// in-progress AU is dropped and [`RtpStreamDepacketizer::push`] returns a
+/// recoverable [`Error::BufferCapExceeded`]; internal state is already reset
+/// so the next packet starts a fresh AU (resync on the next timestamp change
+/// or marker bit).
+const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 /// One track's decode config for [`RtpStreamDepacketizer`].
 #[non_exhaustive]
@@ -74,6 +96,10 @@ struct TrackState {
     cur_ts: Option<u32>,
     /// Packets accumulated for the current (not-yet-complete) RTP timestamp.
     cur_pkts: Vec<Vec<u8>>,
+    /// Total bytes across `cur_pkts` — tracked incrementally so
+    /// [`MAX_AU_BUFFER_BYTES`] can be enforced without re-summing the vec on
+    /// every packet.
+    cur_bytes: usize,
     /// Unwrapped 64-bit form of the most recently completed AU's timestamp.
     last_unwrapped: Option<u64>,
     /// AU awaiting its duration (filled in once the next AU's timestamp is
@@ -140,6 +166,7 @@ impl RtpStreamDepacketizer {
                         clock_rate: t.clock_rate,
                         cur_ts: None,
                         cur_pkts: Vec::new(),
+                        cur_bytes: 0,
                         last_unwrapped: None,
                         pending: None,
                         last_duration: 0,
@@ -187,7 +214,23 @@ impl RtpStreamDepacketizer {
             }
         }
         st.cur_ts = Some(ts);
+        st.cur_bytes += rtp_packet.len();
         st.cur_pkts.push(rtp_packet.to_vec());
+
+        // Runaway AU — a dropped final FU-A fragment or a marker bit that
+        // never arrives would otherwise grow `cur_pkts` forever (see
+        // `MAX_AU_BUFFER_BYTES`). Drop the partial unit and resync: the next
+        // packet starts a fresh AU exactly as if this were the first packet
+        // ever seen for this track.
+        if st.cur_bytes > MAX_AU_BUFFER_BYTES {
+            st.cur_pkts.clear();
+            st.cur_bytes = 0;
+            st.cur_ts = None;
+            return Err(Error::BufferCapExceeded {
+                what: "RTP access-unit reassembly",
+                cap: MAX_AU_BUFFER_BYTES,
+            });
+        }
 
         // The video marker bit ends an AU immediately (RFC 6184 §5.1).
         if matches!(st.kind, RtpMediaKind::H264) && hdr.marker {
@@ -220,6 +263,7 @@ impl RtpStreamDepacketizer {
     /// delta to this AU's timestamp.
     fn drain_complete(st: &mut TrackState, out: &mut Vec<Sample>) -> Result<()> {
         let pkts = core::mem::take(&mut st.cur_pkts);
+        st.cur_bytes = 0;
         let aus = match st.kind {
             RtpMediaKind::H264 => reassemble_video(&pkts)?,
             RtpMediaKind::Aac => reassemble_audio(&pkts)?,
@@ -306,6 +350,81 @@ mod tests {
         let s2 = d.flush(1).unwrap();
         assert_eq!(s2.len(), 1);
         assert_eq!(s2[0].duration, 3000);
+    }
+
+    /// Builds one FU-A (RFC 6184 §5.8) fragment payload: `fu_indicator` +
+    /// `fu_header` (start bit only on the first fragment, end bit **never**
+    /// set) + `extra_len` bytes of filler — the "dropped final fragment"
+    /// scenario audit-ingest #4 flags.
+    fn fu_a_fragment(start: bool, extra_len: usize) -> Vec<u8> {
+        const NAL_TYPE_FU_A: u8 = 28;
+        const FU_START: u8 = 0x80;
+        const ORIG_TYPE_IDR: u8 = 5;
+        let fu_header = if start {
+            FU_START | ORIG_TYPE_IDR
+        } else {
+            ORIG_TYPE_IDR
+        };
+        let mut payload = alloc::vec![NAL_TYPE_FU_A, fu_header];
+        payload.extend(core::iter::repeat_n(0xABu8, extra_len));
+        payload
+    }
+
+    /// A never-terminating FU-A run (end bit never set, marker bit never
+    /// set, same RTP timestamp throughout — exactly a dropped/corrupted
+    /// final fragment or a hostile encoder) must not grow `cur_pkts`
+    /// without bound: [`MAX_AU_BUFFER_BYTES`] must trip, dropping the
+    /// partial AU, and the depacketizer must keep working normally
+    /// afterward (resync proof) rather than being wedged or OOMing.
+    #[test]
+    fn runaway_fu_a_without_end_bit_is_bounded_not_unbounded() {
+        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+            1,
+            RtpMediaKind::H264,
+            dummy_avc(),
+            90_000,
+        )]);
+
+        // Each fragment carries ~2 KiB of filler; MAX_AU_BUFFER_BYTES (4 MiB)
+        // must trip well before we'd reach an unreasonable iteration count —
+        // bounding proves the cap, not exhausting real memory.
+        const FRAGMENT_FILLER: usize = 2048;
+        let mut hit_cap = false;
+        for i in 0..4096u16 {
+            match d.push(
+                1,
+                &vpkt(i, 1000, false, &fu_a_fragment(i == 0, FRAGMENT_FILLER)),
+            ) {
+                Ok(samples) => assert!(
+                    samples.is_empty(),
+                    "a never-completing AU must not emit a sample"
+                ),
+                Err(e) => {
+                    assert!(
+                        matches!(e, crate::error::Error::BufferCapExceeded { .. }),
+                        "unexpected error variant: {e:?}"
+                    );
+                    hit_cap = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            hit_cap,
+            "expected MAX_AU_BUFFER_BYTES to trip well within {} fragments \
+             (never grow unbounded)",
+            4096
+        );
+
+        // Resync proof: normal AUs at fresh timestamps process exactly as if
+        // nothing had gone wrong — the overflow reset internal state cleanly.
+        let idr = [0x65u8, 0xAA];
+        let non = [0x41u8, 0xBB];
+        assert!(d.push(1, &vpkt(1, 4000, true, &idr)).unwrap().is_empty());
+        let s = d.push(1, &vpkt(2, 7000, true, &non)).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].duration, 3000);
+        assert!(s[0].is_sync);
     }
 
     #[test]
