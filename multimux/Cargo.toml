@@ -78,3 +78,9 @@ name = "serve_rtsp"
 
 [dev-dependencies]
 base64           = "0.22"
+# Independent RFC 7616 Digest response verification in the mock auth server
+# (`testutil`, issue #663 "Finish client-side multi-scheme auth") — the
+# `http-auth` crate (this workspace's Digest *client*) has no server-side
+# counterpart to reuse, and this is already a transitive dependency of
+# `http-auth` at the same version, so this adds no new version to the lock.
+md-5             = "0.10"

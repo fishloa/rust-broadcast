@@ -2,11 +2,13 @@
 //! streaming HTTP GET (chunked/progressive, `reqwest`) feeding transmux's
 //! incremental [`transmux::StreamingTsDemux`] — mirrors
 //! [`crate::source::ts_udp`] almost exactly, just over an HTTP byte stream
-//! instead of UDP datagrams. Auth (Basic/Digest/Bearer, from the URL's
-//! userinfo) is answered once via
+//! instead of UDP datagrams. Auth (Basic/Digest/Bearer) is answered once via
 //! `crate::source::http_auth::authenticated_get`, which delegates to
 //! `broadcast-auth` for the Digest challenge/response — `reqwest` itself has
-//! no Digest support.
+//! no Digest support. Credentials come from [`TsHttpSource::with_auth`]
+//! (config-supplied, e.g. a Bearer token — the only way to supply one, since
+//! it has no URL-userinfo form) if set, else the connect URL's own userinfo —
+//! see `crate::source::http_auth::resolve_credentials`.
 //!
 //! Unlike UDP (connectionless, never signals end-of-stream),
 //! [`TsHttpSession::next_samples`] returns `Ok(None)` once the HTTP body
@@ -17,6 +19,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use broadcast_auth::Credentials;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use reqwest::Client;
@@ -25,7 +28,9 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
 use crate::source::Source;
-use crate::source::http_auth::{authenticated_get, credentials_from_url, strip_userinfo};
+use crate::source::http_auth::{
+    authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
+};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -37,15 +42,20 @@ pub struct TsHttpSource {
     name: String,
     url: String,
     timeouts: IngestTimeouts,
+    /// Config-supplied credentials, taking precedence over any URL userinfo
+    /// — see `crate::source::http_auth::resolve_credentials`.
+    auth: Option<Credentials>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// origin's `user:pass@` userinfo, so it must never render verbatim.
+/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
+/// (if present) carries a raw password/token, also never rendered verbatim.
 impl std::fmt::Debug for TsHttpSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TsHttpSource")
             .field("name", &self.name)
             .field("url", &crate::redact::redact_url(&self.url))
+            .field("auth", &self.auth.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -57,6 +67,7 @@ impl TsHttpSource {
             name: name.into(),
             url: url.into(),
             timeouts: IngestTimeouts::default(),
+            auth: None,
         }
     }
 
@@ -65,6 +76,15 @@ impl TsHttpSource {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Attaches config-supplied credentials, overriding any URL userinfo at
+    /// [`Self::connect`] time — see
+    /// `crate::source::http_auth::resolve_credentials`.
+    #[must_use]
+    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
+        self.auth = auth;
         self
     }
 
@@ -82,7 +102,7 @@ impl TsHttpSource {
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        let credentials = credentials_from_url(&parsed)?;
+        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&parsed)?);
         let clean_url = strip_userinfo(&parsed)?;
 
         let client = Client::builder()
@@ -274,8 +294,14 @@ mod tests {
 
     /// Starts a tiny axum server streaming `body` in fixed-size chunks (a
     /// real chunked-transfer HTTP response, not a single buffered body) at
-    /// `/stream.ts`, returning its base URL.
-    async fn start_chunked_ts_server(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+    /// `/stream.ts`, returning its base URL. `auth`, if given, gates every
+    /// request behind that scheme (see `crate::testutil::require_auth`) —
+    /// used by the auth-scheme biting tests below; `None` (the plain
+    /// `start_chunked_ts_server` case) mirrors the original no-auth server.
+    async fn start_chunked_ts_server_with_auth(
+        body: Vec<u8>,
+        auth: Option<crate::testutil::MockAuthScheme>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         async fn handler(body: axum::extract::State<Vec<u8>>) -> AxumResponse {
             // Stream in small chunks so the client genuinely reads the body
             // incrementally (biting on `bytes_stream()`, not just a single
@@ -286,9 +312,12 @@ mod tests {
             let body = Body::from_stream(stream);
             ([(axum::http::header::CONTENT_TYPE, "video/mp2t")], body).into_response()
         }
-        let app = Router::new()
+        let mut app = Router::new()
             .route("/stream.ts", get(handler))
             .with_state(body);
+        if let Some(scheme) = auth {
+            app = crate::testutil::require_auth(app, scheme);
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind ephemeral loopback port");
@@ -297,6 +326,12 @@ mod tests {
             axum::serve(listener, app).await.expect("axum server");
         });
         (format!("http://{addr}/stream.ts"), server)
+    }
+
+    /// Starts a plain (no-auth) chunked TS server — see
+    /// [`start_chunked_ts_server_with_auth`].
+    async fn start_chunked_ts_server(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
+        start_chunked_ts_server_with_auth(body, None).await
     }
 
     /// Loopback biting test: a real axum server streams a real muxed TS
@@ -417,5 +452,179 @@ mod tests {
             result.is_err(),
             "a server that goes silent mid-body must fail next_samples(), not hang forever"
         );
+    }
+
+    // --- issue #663 "Finish client-side multi-scheme auth": Basic/Digest/
+    // Bearer/wrong-creds against a real mock auth server ---
+
+    const AUTH_USER: &str = "cam-user";
+    const AUTH_PASS: &str = "cam-pass";
+    const DIGEST_REALM: &str = "mock realm";
+    const DIGEST_NONCE: &str = "ts-http-test-nonce";
+    const BEARER_TOKEN: &str = "ts-http-bearer-token";
+
+    /// Drives a `TsHttpSource` to connect and pull every sample the server
+    /// serves, returning the sample count — the common "auth worked, real
+    /// media came out" assertion shared by the Basic/Digest/Bearer tests
+    /// below.
+    async fn connect_and_drain(source: TsHttpSource) -> Result<usize> {
+        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: "connect timed out".into(),
+            })??;
+        let mut total = 0usize;
+        while let Ok(Some(batch)) =
+            tokio::time::timeout(Duration::from_millis(500), session.next_samples())
+                .await
+                .unwrap_or(Ok(None))
+        {
+            total += batch.len();
+        }
+        Ok(total)
+    }
+
+    /// Basic (RFC 7617), credentials from URL userinfo: the server issues a
+    /// Basic challenge, `TsHttpSource` answers it via
+    /// `source::http_auth::authenticated_get`'s retry path, and real samples
+    /// come out.
+    #[tokio::test]
+    async fn basic_auth_from_url_userinfo_authenticates_and_pulls_samples() {
+        let ts_bytes = build_ts_bytes();
+        let (url, server) = start_chunked_ts_server_with_auth(
+            ts_bytes,
+            Some(crate::testutil::MockAuthScheme::Basic {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+            }),
+        )
+        .await;
+        let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
+
+        let source = TsHttpSource::new("cam-basic", credentialed);
+        let total = connect_and_drain(source)
+            .await
+            .expect("Basic auth from URL userinfo must authenticate");
+        assert!(total > 0, "expected real samples after Basic auth");
+
+        server.abort();
+    }
+
+    /// Digest (RFC 7616), credentials from URL userinfo: the server issues a
+    /// real Digest challenge (nonce/realm/qop=auth) and independently
+    /// recomputes the expected response (see `crate::testutil::verify_digest`)
+    /// — a client that can't answer it gets nothing back, so this proves
+    /// `TsHttpSource` actually computed a correct Digest response via
+    /// `broadcast-auth`, not just echoed something Digest-shaped.
+    #[tokio::test]
+    async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
+        let ts_bytes = build_ts_bytes();
+        let (url, server) = start_chunked_ts_server_with_auth(
+            ts_bytes,
+            Some(crate::testutil::MockAuthScheme::Digest {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+                realm: DIGEST_REALM.into(),
+                nonce: DIGEST_NONCE.into(),
+            }),
+        )
+        .await;
+        let credentialed = url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
+
+        let source = TsHttpSource::new("cam-digest", credentialed);
+        let total = connect_and_drain(source)
+            .await
+            .expect("Digest auth from URL userinfo must authenticate");
+        assert!(total > 0, "expected real samples after Digest auth");
+
+        server.abort();
+    }
+
+    /// Bearer (RFC 6750), config-supplied (the only way to supply one — it
+    /// has no URL-userinfo form): `TsHttpSource::with_auth` overrides the
+    /// (bare, no-userinfo) connect URL.
+    #[tokio::test]
+    async fn bearer_auth_config_supplied_authenticates_and_pulls_samples() {
+        let ts_bytes = build_ts_bytes();
+        let (url, server) = start_chunked_ts_server_with_auth(
+            ts_bytes,
+            Some(crate::testutil::MockAuthScheme::Bearer {
+                token: BEARER_TOKEN.into(),
+            }),
+        )
+        .await;
+
+        let source =
+            TsHttpSource::new("cam-bearer", url).with_auth(Some(Credentials::bearer(BEARER_TOKEN)));
+        let total = connect_and_drain(source)
+            .await
+            .expect("config-supplied Bearer token must authenticate");
+        assert!(total > 0, "expected real samples after Bearer auth");
+
+        server.abort();
+    }
+
+    /// Config-supplied auth takes precedence over URL userinfo: the URL
+    /// carries a *wrong* password, but `TsHttpSource::with_auth` supplies the
+    /// correct one — connect must succeed on the config auth, proving
+    /// `resolve_credentials` really overrides rather than merely falling
+    /// back.
+    #[tokio::test]
+    async fn config_auth_overrides_wrong_url_userinfo() {
+        let ts_bytes = build_ts_bytes();
+        let (url, server) = start_chunked_ts_server_with_auth(
+            ts_bytes,
+            Some(crate::testutil::MockAuthScheme::Digest {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+                realm: DIGEST_REALM.into(),
+                nonce: DIGEST_NONCE.into(),
+            }),
+        )
+        .await;
+        let wrong_url_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
+
+        let source = TsHttpSource::new("cam-override", wrong_url_creds)
+            .with_auth(Some(Credentials::new(AUTH_USER, AUTH_PASS)));
+        let total = connect_and_drain(source)
+            .await
+            .expect("config auth must override the URL's wrong userinfo password");
+        assert!(
+            total > 0,
+            "expected real samples via config-overridden auth"
+        );
+
+        server.abort();
+    }
+
+    /// Wrong credentials must fail `connect()` (stay `401`), not hang or
+    /// silently proceed — the negative counterpart to the three tests above,
+    /// proving they actually bite (a client answering with the wrong
+    /// password gets rejected exactly like a client with none).
+    #[tokio::test]
+    async fn wrong_credentials_stay_401_and_connect_errors() {
+        let ts_bytes = build_ts_bytes();
+        let (url, server) = start_chunked_ts_server_with_auth(
+            ts_bytes,
+            Some(crate::testutil::MockAuthScheme::Digest {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+                realm: DIGEST_REALM.into(),
+                nonce: DIGEST_NONCE.into(),
+            }),
+        )
+        .await;
+        let wrong_creds = url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
+
+        let source = TsHttpSource::new("cam-wrong", wrong_creds);
+        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect("connect must not hang against a persistent 401");
+        assert!(
+            result.is_err(),
+            "wrong credentials must fail connect(), not silently proceed"
+        );
+
+        server.abort();
     }
 }

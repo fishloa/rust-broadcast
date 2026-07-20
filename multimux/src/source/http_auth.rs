@@ -57,6 +57,20 @@ fn percent_decode(s: &str) -> Result<String> {
         })
 }
 
+/// Resolves the credentials a connection actually authenticates with:
+/// config-supplied `config_auth` (e.g. [`crate::config::AuthSpec`], already
+/// converted) takes precedence over `url_credentials` (whatever
+/// [`credentials_from_url`] extracted from the ingest URL's own userinfo) —
+/// config auth is the *only* way to supply a Bearer token (RFC 6750 has no
+/// URL-userinfo form), so when both are given, config wins rather than the
+/// URL silently shadowing it.
+pub(crate) fn resolve_credentials(
+    config_auth: Option<Credentials>,
+    url_credentials: Option<Credentials>,
+) -> Option<Credentials> {
+    config_auth.or(url_credentials)
+}
+
 /// Returns a copy of `url` with its userinfo (username/password) removed, so
 /// it is safe to use in the actual request line and in any error/log
 /// message. Mirrors [`crate::source::rtsp`]'s `strip_userinfo`.
@@ -177,5 +191,26 @@ mod tests {
         let url = Url::parse("http://user:secret@host/stream.ts").unwrap();
         let clean = strip_userinfo(&url).unwrap();
         assert_eq!(clean.as_str(), "http://host/stream.ts");
+    }
+
+    #[test]
+    fn resolve_credentials_prefers_config_auth_over_url_userinfo() {
+        let config_auth = Some(Credentials::bearer("tok"));
+        let url_creds = Some(Credentials::new("user", "pass"));
+        assert_eq!(
+            resolve_credentials(config_auth.clone(), url_creds),
+            config_auth
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_falls_back_to_url_userinfo_without_config_auth() {
+        let url_creds = Some(Credentials::new("user", "pass"));
+        assert_eq!(resolve_credentials(None, url_creds.clone()), url_creds);
+    }
+
+    #[test]
+    fn resolve_credentials_is_none_with_neither_source() {
+        assert!(resolve_credentials(None, None).is_none());
     }
 }

@@ -452,8 +452,9 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
         let handle = match &route.input {
-            crate::config::InputSpec::Rtsp { url } => {
-                let connector = crate::source::rtsp::RtspSource::new(name.clone(), url.clone());
+            crate::config::InputSpec::Rtsp { url, auth } => {
+                let connector = crate::source::rtsp::RtspSource::new(name.clone(), url.clone())
+                    .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
                 tokio::spawn(supervise(
                     connector,
                     store,
@@ -504,9 +505,10 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
                     shutdown_rx,
                 ))
             }
-            crate::config::InputSpec::TsHttp { url } => {
+            crate::config::InputSpec::TsHttp { url, auth } => {
                 let connector =
-                    crate::source::ts_http::TsHttpSource::new(name.clone(), url.clone());
+                    crate::source::ts_http::TsHttpSource::new(name.clone(), url.clone())
+                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
                 tokio::spawn(supervise(
                     connector,
                     store,
@@ -517,9 +519,10 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
                     shutdown_rx,
                 ))
             }
-            crate::config::InputSpec::HlsPull { url } => {
+            crate::config::InputSpec::HlsPull { url, auth } => {
                 let connector =
-                    crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone());
+                    crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone())
+                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
                 tokio::spawn(supervise(
                     connector,
                     store,

@@ -14,5 +14,7 @@ pub mod prometheus;
 mod redact;
 pub mod source;
 pub mod store;
+#[cfg(test)]
+pub(crate) mod testutil;
 
 pub use error::{MultimuxError, Result};

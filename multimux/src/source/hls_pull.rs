@@ -18,15 +18,18 @@
 //!
 //! # Auth
 //!
-//! Credentials (Basic/Digest/Bearer, from the pull URL's userinfo — see
-//! [`crate::source::http_auth`]) are passed to `TokioClient` as a
+//! Credentials (Basic/Digest/Bearer) are passed to `TokioClient` as a
 //! `broadcast_auth::Credentials` via `TokioClientConfig::auth` — the same
 //! shared model `rtsp-runtime` and [`crate::source::ts_http`] use (issue
-//! #663 P3b). `ll_hls_runtime`'s `TokioClient` performs the actual HTTP
-//! fetching (including the Digest challenge/response, delegated to
-//! `broadcast-auth` on its own side), so this source never builds its own
-//! `reqwest::Client` — unlike `ts_http`, which does its own streaming GETs
-//! and so uses `http_auth::authenticated_get` directly.
+//! #663 P3b). [`HlsPullSource::with_auth`] (config-supplied, e.g. a Bearer
+//! token — the only way to supply one, since it has no URL-userinfo form)
+//! takes precedence over the pull URL's own userinfo, if set — see
+//! `crate::source::http_auth::resolve_credentials`. `ll_hls_runtime`'s
+//! `TokioClient` performs the actual HTTP fetching (including the Digest
+//! challenge/response, delegated to `broadcast-auth` on its own side, and
+//! cached across requests — see its own module docs), so this source never
+//! builds its own `reqwest::Client` — unlike `ts_http`, which does its own
+//! streaming GETs and so uses `http_auth::authenticated_get` directly.
 //!
 //! # Known limitation
 //!
@@ -40,6 +43,7 @@
 
 use std::time::Duration;
 
+use broadcast_auth::Credentials;
 use broadcast_common::Unpackage;
 use ll_hls_runtime::client::Output as HlsOutput;
 use ll_hls_runtime::client::tokio_client::{TokioClient, TokioClientConfig};
@@ -49,7 +53,7 @@ use url::Url;
 use crate::error::{MultimuxError, Result};
 use crate::source::IngestTimeouts;
 use crate::source::Source;
-use crate::source::http_auth::{credentials_from_url, strip_userinfo};
+use crate::source::http_auth::{credentials_from_url, resolve_credentials, strip_userinfo};
 use transmux::pipeline::{Sample, TrackSpec};
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
@@ -60,15 +64,20 @@ pub struct HlsPullSource {
     name: String,
     url: String,
     timeouts: IngestTimeouts,
+    /// Config-supplied credentials, taking precedence over any URL userinfo
+    /// — see `crate::source::http_auth::resolve_credentials`.
+    auth: Option<Credentials>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// origin's `user:pass@` userinfo, so it must never render verbatim.
+/// origin's `user:pass@` userinfo, so it must never render verbatim; `auth`
+/// (if present) carries a raw password/token, also never rendered verbatim.
 impl std::fmt::Debug for HlsPullSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HlsPullSource")
             .field("name", &self.name)
             .field("url", &crate::redact::redact_url(&self.url))
+            .field("auth", &self.auth.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -81,6 +90,7 @@ impl HlsPullSource {
             name: name.into(),
             url: url.into(),
             timeouts: IngestTimeouts::default(),
+            auth: None,
         }
     }
 
@@ -89,6 +99,15 @@ impl HlsPullSource {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Attaches config-supplied credentials, overriding any URL userinfo at
+    /// [`Self::connect`] time — see
+    /// `crate::source::http_auth::resolve_credentials`.
+    #[must_use]
+    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
+        self.auth = auth;
         self
     }
 
@@ -103,7 +122,7 @@ impl HlsPullSource {
                 crate::redact::redact_url(&self.url)
             ),
         })?;
-        let credentials = credentials_from_url(&parsed)?;
+        let credentials = resolve_credentials(self.auth.clone(), credentials_from_url(&parsed)?);
         let clean_url = strip_userinfo(&parsed)?;
 
         let config = TokioClientConfig {
@@ -315,11 +334,17 @@ mod tests {
     /// Starts a real `multimux` LL-HLS origin (the same production
     /// `MediaStore` + `LlHlsOutput` + `origin::router` this crate serves in
     /// production — no test double) on an ephemeral loopback port, serving
-    /// one already-fully-populated stream named `live`. Since this is
-    /// multimux testing itself (not a separate crate depending back on
-    /// multimux), there is no dev-dependency cycle to worry about — see the
-    /// P3c report for why this sidesteps the concern the task brief raised.
-    async fn start_populated_ll_origin() -> (String, tokio::task::JoinHandle<()>) {
+    /// one already-fully-populated stream named `live`. `auth`, if given,
+    /// gates every request behind that scheme (see
+    /// `crate::testutil::require_auth`) — used by the auth-scheme biting
+    /// tests below; `None` (the plain `start_populated_ll_origin` case)
+    /// mirrors the original no-auth origin. Since this is multimux testing
+    /// itself (not a separate crate depending back on multimux), there is no
+    /// dev-dependency cycle to worry about — see the P3c report for why this
+    /// sidesteps the concern the task brief raised.
+    async fn start_populated_ll_origin_with_auth(
+        auth: Option<crate::testutil::MockAuthScheme>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let store = Arc::new(MediaStore::new(
             TARGET_DURATION_SECS,
             PART_TARGET_MS,
@@ -332,7 +357,10 @@ mod tests {
             "live".to_string(),
             (store, vec![Arc::new(LlHlsOutput) as Arc<dyn MmOutput>]),
         );
-        let app = router(Arc::new(AppState::new(streams)));
+        let mut app = router(Arc::new(AppState::new(streams)));
+        if let Some(scheme) = auth {
+            app = crate::testutil::require_auth(app, scheme);
+        }
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind ephemeral loopback port");
@@ -341,6 +369,12 @@ mod tests {
             axum::serve(listener, app).await.expect("axum server");
         });
         (format!("http://{addr}/live/media.m3u8"), server)
+    }
+
+    /// Starts a plain (no-auth) populated LL-HLS origin — see
+    /// [`start_populated_ll_origin_with_auth`].
+    async fn start_populated_ll_origin() -> (String, tokio::task::JoinHandle<()>) {
+        start_populated_ll_origin_with_auth(None).await
     }
 
     /// Biting loopback test: a real multimux LL-HLS origin, pulled by
@@ -412,5 +446,146 @@ mod tests {
             .await
             .expect("connect() must return within its own CONNECT_TIMEOUT, not hang");
         assert!(result.is_err(), "an unreachable origin must fail connect()");
+    }
+
+    // --- issue #663 "Finish client-side multi-scheme auth": Basic/Digest/
+    // Bearer/wrong-creds against a real mock-auth-gated origin ---
+
+    const AUTH_USER: &str = "cam-user";
+    const AUTH_PASS: &str = "cam-pass";
+    const DIGEST_REALM: &str = "mock realm";
+    const DIGEST_NONCE: &str = "hls-pull-test-nonce";
+    const BEARER_TOKEN: &str = "hls-pull-bearer-token";
+
+    /// Drives an `HlsPullSource` to connect and pull every sample the origin
+    /// serves, returning the sample count — the common "auth worked, real
+    /// media came out" assertion shared by the Basic/Digest/Bearer tests
+    /// below.
+    async fn connect_and_drain(source: HlsPullSource) -> Result<usize> {
+        let mut session = tokio::time::timeout(Duration::from_secs(10), source.connect())
+            .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: "connect timed out".into(),
+            })??;
+        let mut total = 0usize;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while total < FRAME_COUNT as usize && tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_secs(5), session.next_samples())
+                .await
+                .map_err(|_| MultimuxError::Connect {
+                    reason: "next_samples timed out".into(),
+                })?? {
+                Some(batch) => total += batch.len(),
+                None => break,
+            }
+        }
+        Ok(total)
+    }
+
+    /// Basic (RFC 7617), credentials from URL userinfo: `TokioClient`
+    /// pre-applies Basic (RFC 7617, no challenge round-trip needed) via
+    /// `apply_auth_preemptive`, and real samples come out.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn basic_auth_from_url_userinfo_authenticates_and_pulls_samples() {
+        let (playlist_url, server) =
+            start_populated_ll_origin_with_auth(Some(crate::testutil::MockAuthScheme::Basic {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+            }))
+            .await;
+        let credentialed =
+            playlist_url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
+
+        let source = HlsPullSource::new("pulled-basic", credentialed);
+        let total = connect_and_drain(source)
+            .await
+            .expect("Basic auth from URL userinfo must authenticate");
+        assert_eq!(total, FRAME_COUNT as usize, "expected every sample");
+
+        server.abort();
+    }
+
+    /// Digest (RFC 7616), credentials from URL userinfo: the origin issues a
+    /// real Digest challenge (nonce/realm/qop=auth) and independently
+    /// recomputes the expected response (see `crate::testutil::verify_digest`)
+    /// — proves `TokioClient` actually computed a correct Digest response via
+    /// `broadcast-auth` (and cached it — see the module's own "Auth" docs),
+    /// not just echoed something Digest-shaped.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
+        let (playlist_url, server) =
+            start_populated_ll_origin_with_auth(Some(crate::testutil::MockAuthScheme::Digest {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+                realm: DIGEST_REALM.into(),
+                nonce: DIGEST_NONCE.into(),
+            }))
+            .await;
+        let credentialed =
+            playlist_url.replacen("http://", &format!("http://{AUTH_USER}:{AUTH_PASS}@"), 1);
+
+        let source = HlsPullSource::new("pulled-digest", credentialed);
+        let total = connect_and_drain(source)
+            .await
+            .expect("Digest auth from URL userinfo must authenticate");
+        assert_eq!(total, FRAME_COUNT as usize, "expected every sample");
+
+        server.abort();
+    }
+
+    /// Bearer (RFC 6750), config-supplied (the only way to supply one — it
+    /// has no URL-userinfo form): `HlsPullSource::with_auth` overrides the
+    /// (bare, no-userinfo) connect URL.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bearer_auth_config_supplied_authenticates_and_pulls_samples() {
+        let (playlist_url, server) =
+            start_populated_ll_origin_with_auth(Some(crate::testutil::MockAuthScheme::Bearer {
+                token: BEARER_TOKEN.into(),
+            }))
+            .await;
+
+        let source = HlsPullSource::new("pulled-bearer", playlist_url)
+            .with_auth(Some(Credentials::bearer(BEARER_TOKEN)));
+        let total = connect_and_drain(source)
+            .await
+            .expect("config-supplied Bearer token must authenticate");
+        assert_eq!(total, FRAME_COUNT as usize, "expected every sample");
+
+        server.abort();
+    }
+
+    /// Wrong credentials must fail `connect()` (bounded by
+    /// `IngestTimeouts::connect`, since `TokioClient`'s own playlist-fetch
+    /// retry never gives up on its own — see the module's "Auth"/"Error
+    /// recovery" docs), not hang forever — the negative counterpart to the
+    /// three tests above, proving they actually bite (a client answering
+    /// with the wrong password never gets past the origin's persistent 401).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn wrong_credentials_stay_401_and_connect_errors() {
+        let (playlist_url, server) =
+            start_populated_ll_origin_with_auth(Some(crate::testutil::MockAuthScheme::Digest {
+                username: AUTH_USER.into(),
+                password: AUTH_PASS.into(),
+                realm: DIGEST_REALM.into(),
+                nonce: DIGEST_NONCE.into(),
+            }))
+            .await;
+        let wrong_creds =
+            playlist_url.replacen("http://", &format!("http://{AUTH_USER}:wrongpass@"), 1);
+
+        let source =
+            HlsPullSource::new("pulled-wrong", wrong_creds).with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(2),
+                read: IngestTimeouts::default().read,
+            });
+        let result = tokio::time::timeout(Duration::from_secs(10), source.connect())
+            .await
+            .expect("connect() must return within its own CONNECT_TIMEOUT, not hang");
+        assert!(
+            result.is_err(),
+            "wrong credentials must fail connect(), not silently proceed"
+        );
+
+        server.abort();
     }
 }

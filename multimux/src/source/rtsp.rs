@@ -23,6 +23,7 @@ use tokio::net::TcpStream;
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
+use crate::source::http_auth::resolve_credentials;
 use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
@@ -57,15 +58,20 @@ pub struct RtspSource {
     name: String,
     url: String,
     timeouts: IngestTimeouts,
+    /// Config-supplied credentials, taking precedence over any URL userinfo
+    /// — see `crate::source::http_auth::resolve_credentials`.
+    auth: Option<Credentials>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
-/// camera's `user:pass@` userinfo, so it must never render verbatim.
+/// camera's `user:pass@` userinfo, so it must never render verbatim; `auth`
+/// (if present) carries a raw password/token, also never rendered verbatim.
 impl std::fmt::Debug for RtspSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RtspSource")
             .field("name", &self.name)
             .field("url", &crate::redact::redact_url(&self.url))
+            .field("auth", &self.auth.as_ref().map(|_| "***"))
             .finish()
     }
 }
@@ -78,6 +84,7 @@ impl RtspSource {
             name: name.into(),
             url: url.into(),
             timeouts: IngestTimeouts::default(),
+            auth: None,
         }
     }
 
@@ -89,6 +96,15 @@ impl RtspSource {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Attaches config-supplied credentials, overriding any URL userinfo at
+    /// [`Self::connect`] time — see
+    /// `crate::source::http_auth::resolve_credentials`.
+    #[must_use]
+    pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
+        self.auth = auth;
         self
     }
 
@@ -116,7 +132,7 @@ impl RtspSource {
         // lines. Every subsequent use of the URL — connect address, SNI name,
         // scheme check, and any error message that embeds it — uses
         // `request_url` (userinfo already stripped), never `base_url`.
-        let credentials = extract_credentials(&base_url)?;
+        let credentials = resolve_credentials(self.auth.clone(), extract_credentials(&base_url)?);
         let request_url = strip_userinfo(&base_url)?;
         let request_uri = request_url.to_string();
 

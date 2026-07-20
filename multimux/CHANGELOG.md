@@ -3,6 +3,34 @@
 ## [Unreleased]
 
 ### Added
+- **Config-supplied + Bearer credentials, finishing client-side
+  multi-scheme auth** (issue #663 — completes the P3c "Shared auth layer"
+  story): `InputSpec::Rtsp`/`TsHttp`/`HlsPull` each gained an optional
+  `auth` field (`config::AuthSpec` — either `{ username, password }` or
+  `{ bearer_token }`), config-parseable via `--config <FILE>`. A Bearer
+  token has no URL-userinfo form, so this is the *only* way to supply one;
+  when both a config `auth` and URL userinfo are present, config wins
+  (`source::http_auth::resolve_credentials`, now used by `RtspSource`,
+  `TsHttpSource`, and `HlsPullSource` alike, each via a new
+  `with_auth(Option<Credentials>)` builder mirroring `with_timeouts`).
+  `AuthSpec`'s `Debug` redacts both `password` and `bearer_token`;
+  `Config::validate` rejects an empty `username`/`bearer_token` (an empty
+  `password` is accepted — some devices genuinely use one). Every
+  pre-existing config still parses unchanged (`#[serde(default)]`).
+  - **Digest/Basic/Bearer now proven end-to-end**, not just unit-tested in
+    isolation: a new test-only mock auth server (`testutil`, gated
+    `#[cfg(test)]`) gates a real axum router behind any of the three
+    schemes — Digest verification is a real, independent RFC 7616 §3.4.1
+    computation (not a literal-string match), so a client with the wrong
+    password genuinely gets rejected. `source::ts_http` and
+    `source::hls_pull` each gained Basic/Digest/Bearer/wrong-credentials
+    tests driving the real `TsHttpSource`/`HlsPullSource` against it, plus a
+    `config_auth_overrides_wrong_url_userinfo` precedence test.
+  - No change needed to answer Digest's re-challenge-on-every-request
+    concern: `ll_hls_runtime::client::tokio_client::TokioClient` already
+    caches its Digest `Authenticator` across requests (from P3c), and
+    `TsHttpSource`'s streaming GET only ever makes one request per
+    `connect()`, so there was nothing further to cache there.
 - **DASH output alongside LL-HLS, from the same shared CMAF segments**
   (issue #663 P4 — `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`,
   "DASH output"): one ingested stream can now serve LL-HLS *and* MPEG-DASH

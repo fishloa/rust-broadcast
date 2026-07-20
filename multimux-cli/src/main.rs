@@ -127,7 +127,10 @@ fn build_config(cli: Cli) -> Result<Config> {
         window_segments: cli.window,
         routes: vec![Route {
             name,
-            input: InputSpec::Rtsp { url: rtsp_url },
+            input: InputSpec::Rtsp {
+                url: rtsp_url,
+                auth: None,
+            },
             outputs,
         }],
         ..Config::default()
@@ -185,7 +188,7 @@ mod tests {
         assert_eq!(cfg.routes.len(), 1);
         assert_eq!(cfg.routes[0].name, "cam1");
         match &cfg.routes[0].input {
-            InputSpec::Rtsp { url } => assert_eq!(url, "rtsp://cam.local/stream"),
+            InputSpec::Rtsp { url, .. } => assert_eq!(url, "rtsp://cam.local/stream"),
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
     }

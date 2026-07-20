@@ -6,6 +6,7 @@
 
 use crate::error::{MultimuxError, Result};
 use crate::output::OutputKind;
+use broadcast_auth::Credentials;
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
@@ -38,6 +39,14 @@ fn default_outputs() -> Vec<OutputKind> {
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
 /// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
 /// the same way [`InputSpec::Rtsp`]'s URL is.
+///
+/// [`InputSpec::Rtsp`]/[`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] each also
+/// take an optional config-supplied `auth` ([`AuthSpec`]) — the only way to
+/// supply a Bearer token (RFC 6750 has no URL-userinfo form) and, when
+/// present, taking precedence over any URL userinfo (see
+/// `crate::source::http_auth::resolve_credentials`). [`InputSpec::Rtp`]/
+/// [`InputSpec::TsUdp`] are raw UDP transports with no HTTP/RTSP request line
+/// to attach credentials to, so they carry no `auth` field.
 #[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputSpec {
@@ -46,6 +55,10 @@ pub enum InputSpec {
         /// RTSP source URL to pull. May carry `user:pass@` userinfo — see
         /// [`InputSpec`]'s `Debug` impl, which redacts it.
         url: String,
+        /// Config-supplied credentials, overriding any URL userinfo. See
+        /// [`AuthSpec`].
+        #[serde(default)]
+        auth: Option<AuthSpec>,
     },
     /// Receive raw RTP over UDP (uni/multicast), depayloaded per an
     /// out-of-band SDP.
@@ -76,6 +89,10 @@ pub enum InputSpec {
         /// `http://` or `https://` URL to GET. May carry `user:pass@`
         /// userinfo — see [`InputSpec`]'s `Debug` impl, which redacts it.
         url: String,
+        /// Config-supplied credentials, overriding any URL userinfo. See
+        /// [`AuthSpec`].
+        #[serde(default)]
+        auth: Option<AuthSpec>,
     },
     /// Pull a remote (LL-)HLS Media Playlist.
     HlsPull {
@@ -83,7 +100,74 @@ pub enum InputSpec {
         /// `user:pass@` userinfo — see [`InputSpec`]'s `Debug` impl, which
         /// redacts it.
         url: String,
+        /// Config-supplied credentials, overriding any URL userinfo. See
+        /// [`AuthSpec`].
+        #[serde(default)]
+        auth: Option<AuthSpec>,
     },
+}
+
+/// Config-supplied credentials for an [`InputSpec::Rtsp`]/
+/// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] route (client-side
+/// multi-scheme auth, issue #663): either a username/password — answered as
+/// Basic or Digest, whichever the server's own `WWW-Authenticate` challenge
+/// asks for (RFC 7617/RFC 7616) — or a bearer token (RFC 6750). A bearer
+/// token has no URL-userinfo form, so config is its only source; a
+/// username/password pair may instead come from the route's own URL
+/// userinfo, but an explicit `auth` here always wins over that (see
+/// `crate::source::http_auth::resolve_credentials`).
+///
+/// JSON shape is untagged — either
+/// `{ "username": "...", "password": "..." }` or
+/// `{ "bearer_token": "..." }`.
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+pub enum AuthSpec {
+    /// Username/password, answered as Basic or Digest per the server's
+    /// challenge.
+    Password {
+        /// Account username.
+        username: String,
+        /// Account password.
+        password: String,
+    },
+    /// A bearer token (RFC 6750), sent verbatim as `Authorization: Bearer
+    /// <token>` with no challenge round-trip.
+    Bearer {
+        /// The opaque bearer token.
+        bearer_token: String,
+    },
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): both variants carry a
+/// secret (`password`/`bearer_token`) that must never render verbatim.
+impl std::fmt::Debug for AuthSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthSpec::Password { username, .. } => f
+                .debug_struct("Password")
+                .field("username", username)
+                .field("password", &"***")
+                .finish(),
+            AuthSpec::Bearer { .. } => f
+                .debug_struct("Bearer")
+                .field("bearer_token", &"***")
+                .finish(),
+        }
+    }
+}
+
+impl AuthSpec {
+    /// Converts to the scheme-agnostic [`Credentials`] the RTSP source /
+    /// HTTP sources actually authenticate with.
+    pub(crate) fn to_credentials(&self) -> Credentials {
+        match self {
+            AuthSpec::Password { username, password } => {
+                Credentials::new(username.clone(), password.clone())
+            }
+            AuthSpec::Bearer { bearer_token } => Credentials::bearer(bearer_token.clone()),
+        }
+    }
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
@@ -93,9 +177,10 @@ pub enum InputSpec {
 impl std::fmt::Debug for InputSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            InputSpec::Rtsp { url } => f
+            InputSpec::Rtsp { url, auth } => f
                 .debug_struct("Rtsp")
                 .field("url", &crate::redact::redact_url(url))
+                .field("auth", auth)
                 .finish(),
             InputSpec::Rtp {
                 addr,
@@ -115,13 +200,15 @@ impl std::fmt::Debug for InputSpec {
                 .field("addr", addr)
                 .field("multicast_group", multicast_group)
                 .finish(),
-            InputSpec::TsHttp { url } => f
+            InputSpec::TsHttp { url, auth } => f
                 .debug_struct("TsHttp")
                 .field("url", &crate::redact::redact_url(url))
+                .field("auth", auth)
                 .finish(),
-            InputSpec::HlsPull { url } => f
+            InputSpec::HlsPull { url, auth } => f
                 .debug_struct("HlsPull")
                 .field("url", &crate::redact::redact_url(url))
+                .field("auth", auth)
                 .finish(),
         }
     }
@@ -138,7 +225,10 @@ impl InputSpec {
     /// [`Rtp`]: InputSpec::Rtp
     fn validate(&self) -> Result<()> {
         match self {
-            InputSpec::Rtsp { url } => validate_rtsp_url(url),
+            InputSpec::Rtsp { url, auth } => {
+                validate_rtsp_url(url)?;
+                validate_auth(auth)
+            }
             InputSpec::Rtp {
                 addr,
                 sdp,
@@ -161,8 +251,14 @@ impl InputSpec {
                 }
                 Ok(())
             }
-            InputSpec::TsHttp { url } => validate_http_url(url),
-            InputSpec::HlsPull { url } => validate_http_url(url),
+            InputSpec::TsHttp { url, auth } => {
+                validate_http_url(url)?;
+                validate_auth(auth)
+            }
+            InputSpec::HlsPull { url, auth } => {
+                validate_http_url(url)?;
+                validate_auth(auth)
+            }
         }
     }
 }
@@ -195,6 +291,29 @@ fn validate_http_url(url: &str) -> Result<()> {
             field: "routes.input.url",
             reason: format!("scheme must be http or https, got {other:?}"),
         }),
+    }
+}
+
+/// A config-supplied [`AuthSpec`], if present, must not carry an empty
+/// `username`/`bearer_token` (an empty `password` is left unvalidated — some
+/// devices genuinely use a blank password). `None` (no config auth — the
+/// route falls back to URL userinfo, if any) always passes.
+fn validate_auth(auth: &Option<AuthSpec>) -> Result<()> {
+    match auth {
+        None => Ok(()),
+        Some(AuthSpec::Password { username, .. }) if username.is_empty() => {
+            Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.auth.username",
+                reason: "must not be empty".into(),
+            })
+        }
+        Some(AuthSpec::Bearer { bearer_token }) if bearer_token.is_empty() => {
+            Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.auth.bearer_token",
+                reason: "must not be empty".into(),
+            })
+        }
+        Some(_) => Ok(()),
     }
 }
 
@@ -475,7 +594,7 @@ mod tests {
         assert_eq!(cfg.routes.len(), 2);
         assert_eq!(cfg.routes[1].name, "cam2");
         match &cfg.routes[1].input {
-            InputSpec::Rtsp { url } => assert_eq!(url, "rtsp://host/stream2"),
+            InputSpec::Rtsp { url, .. } => assert_eq!(url, "rtsp://host/stream2"),
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
         cfg.validate().unwrap();
@@ -521,6 +640,7 @@ mod tests {
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
+                        auth: None,
                     },
                     outputs: default_outputs(),
                 }],
@@ -538,6 +658,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -554,6 +675,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -772,7 +894,7 @@ mod tests {
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.routes.len(), 1);
         match &cfg.routes[0].input {
-            InputSpec::TsHttp { url } => assert_eq!(url, "http://host/stream.ts"),
+            InputSpec::TsHttp { url, .. } => assert_eq!(url, "http://host/stream.ts"),
             other => panic!("expected InputSpec::TsHttp, got {other:?}"),
         }
         cfg.validate().unwrap();
@@ -791,10 +913,219 @@ mod tests {
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.routes.len(), 1);
         match &cfg.routes[0].input {
-            InputSpec::HlsPull { url } => assert_eq!(url, "https://origin/live/media.m3u8"),
+            InputSpec::HlsPull { url, .. } => assert_eq!(url, "https://origin/live/media.m3u8"),
             other => panic!("expected InputSpec::HlsPull, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    // --- issue #663 "Finish client-side multi-scheme auth": config-supplied
+    // `auth` (`AuthSpec`) on `Rtsp`/`TsHttp`/`HlsPull` ---
+
+    #[test]
+    fn parses_json_config_with_password_auth() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-ts-http",
+                    "input": {
+                        "type": "ts_http",
+                        "url": "http://host/stream.ts",
+                        "auth": { "username": "admin", "password": "hunter2" }
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::TsHttp { auth, .. } => match auth {
+                Some(AuthSpec::Password { username, password }) => {
+                    assert_eq!(username, "admin");
+                    assert_eq!(password, "hunter2");
+                }
+                other => panic!("expected Some(AuthSpec::Password), got {other:?}"),
+            },
+            other => panic!("expected InputSpec::TsHttp, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_json_config_with_bearer_auth() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-hls-pull",
+                    "input": {
+                        "type": "hls_pull",
+                        "url": "https://origin/live/media.m3u8",
+                        "auth": { "bearer_token": "tok123" }
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::HlsPull { auth, .. } => match auth {
+                Some(AuthSpec::Bearer { bearer_token }) => assert_eq!(bearer_token, "tok123"),
+                other => panic!("expected Some(AuthSpec::Bearer), got {other:?}"),
+            },
+            other => panic!("expected InputSpec::HlsPull, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// `Rtsp` also takes config-supplied `auth` — the same field, same
+    /// precedence-over-URL-userinfo rule, just for the RTSP transport.
+    #[test]
+    fn parses_json_config_with_rtsp_password_auth() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam1",
+                    "input": {
+                        "type": "rtsp",
+                        "url": "rtsp://host/stream",
+                        "auth": { "username": "admin", "password": "hunter2" }
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::Rtsp { auth, .. } => {
+                assert!(matches!(auth, Some(AuthSpec::Password { .. })));
+            }
+            other => panic!("expected InputSpec::Rtsp, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// A route with no `auth` key at all still parses (backward
+    /// compatibility with every pre-existing config) and defaults to `None`.
+    #[test]
+    fn auth_defaults_to_none_when_omitted() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-ts-http",
+                    "input": { "type": "ts_http", "url": "http://host/stream.ts" }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::TsHttp { auth, .. } => assert!(auth.is_none()),
+            other => panic!("expected InputSpec::TsHttp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_empty_auth_username() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::TsHttp {
+                    url: "http://host/stream.ts".into(),
+                    auth: Some(AuthSpec::Password {
+                        username: String::new(),
+                        password: "p".into(),
+                    }),
+                },
+                outputs: default_outputs(),
+            }],
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty_bearer_token() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::HlsPull {
+                    url: "https://host/media.m3u8".into(),
+                    auth: Some(AuthSpec::Bearer {
+                        bearer_token: String::new(),
+                    }),
+                },
+                outputs: default_outputs(),
+            }],
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    /// A `password` may legitimately be empty (some devices use a blank
+    /// password) — only `username`/`bearer_token` are rejected when empty.
+    #[test]
+    fn validate_accepts_empty_password() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::TsHttp {
+                    url: "http://host/stream.ts".into(),
+                    auth: Some(AuthSpec::Password {
+                        username: "admin".into(),
+                        password: String::new(),
+                    }),
+                },
+                outputs: default_outputs(),
+            }],
+            ..Config::default()
+        };
+        cfg.validate().unwrap();
+    }
+
+    /// Biting test: config-supplied `auth` must never appear in `Debug`
+    /// output — neither the password nor the bearer token.
+    #[test]
+    fn input_spec_debug_redacts_config_supplied_auth() {
+        let password_auth = InputSpec::TsHttp {
+            url: "http://host/stream.ts".into(),
+            auth: Some(AuthSpec::Password {
+                username: "admin".into(),
+                password: "hunter2secret".into(),
+            }),
+        };
+        let debug = format!("{password_auth:?}");
+        assert!(debug.contains("admin"), "username may render: {debug}");
+        assert!(
+            !debug.contains("hunter2secret"),
+            "debug leaked password: {debug}"
+        );
+
+        let bearer_auth = InputSpec::HlsPull {
+            url: "https://host/media.m3u8".into(),
+            auth: Some(AuthSpec::Bearer {
+                bearer_token: "supersecrettoken".into(),
+            }),
+        };
+        let debug = format!("{bearer_auth:?}");
+        assert!(
+            !debug.contains("supersecrettoken"),
+            "debug leaked bearer token: {debug}"
+        );
+    }
+
+    /// `AuthSpec::to_credentials` converts to the scheme-agnostic
+    /// `broadcast_auth::Credentials` the sources actually authenticate with.
+    #[test]
+    fn auth_spec_to_credentials_converts_both_variants() {
+        let password = AuthSpec::Password {
+            username: "admin".into(),
+            password: "hunter2".into(),
+        };
+        assert_eq!(
+            password.to_credentials(),
+            Credentials::new("admin", "hunter2")
+        );
+
+        let bearer = AuthSpec::Bearer {
+            bearer_token: "tok".into(),
+        };
+        assert_eq!(bearer.to_credentials(), Credentials::bearer("tok"));
     }
 
     #[test]
@@ -804,6 +1135,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "rtsp://host/stream.ts".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -819,6 +1151,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::HlsPull {
                     url: "ftp://host/media.m3u8".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -834,6 +1167,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "not a url".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -850,6 +1184,7 @@ mod tests {
             name: "cam-ts-http".into(),
             input: InputSpec::TsHttp {
                 url: "http://user:secretpass@host/stream.ts".into(),
+                auth: None,
             },
             outputs: default_outputs(),
         };
@@ -865,6 +1200,7 @@ mod tests {
             name: "cam-hls-pull".into(),
             input: InputSpec::HlsPull {
                 url: "https://user:secretpass@origin/media.m3u8".into(),
+                auth: None,
             },
             outputs: default_outputs(),
         };
@@ -884,6 +1220,7 @@ mod tests {
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "http://host/stream".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],
@@ -986,6 +1323,7 @@ mod tests {
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
+                        auth: None,
                     },
                     outputs: default_outputs(),
                 },
@@ -993,6 +1331,7 @@ mod tests {
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://b".into(),
+                        auth: None,
                     },
                     outputs: default_outputs(),
                 },
@@ -1050,6 +1389,7 @@ mod tests {
             name: "cam1".into(),
             input: InputSpec::Rtsp {
                 url: "rtsp://user:secretpass@host/s".into(),
+                auth: None,
             },
             outputs: default_outputs(),
         };
@@ -1072,6 +1412,7 @@ mod tests {
                 name: "cam1".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://user:secretpass@host/s".into(),
+                    auth: None,
                 },
                 outputs: default_outputs(),
             }],

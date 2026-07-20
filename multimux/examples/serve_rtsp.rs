@@ -61,7 +61,10 @@ async fn main() {
     let config = Config {
         routes: vec![Route {
             name: STREAM_NAME.to_string(),
-            input: InputSpec::Rtsp { url: rtsp_url },
+            input: InputSpec::Rtsp {
+                url: rtsp_url,
+                auth: None,
+            },
             outputs,
         }],
         ..Config::default()

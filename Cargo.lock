@@ -1697,6 +1697,7 @@ dependencies = [
  "broadcast-common",
  "futures-util",
  "ll-hls-runtime",
+ "md-5",
  "metrics",
  "metrics-exporter-prometheus",
  "percent-encoding",
