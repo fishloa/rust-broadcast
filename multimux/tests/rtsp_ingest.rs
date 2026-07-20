@@ -160,7 +160,7 @@ async fn serve_one_session(mut sock: TcpStream) {
     write_all(&mut sock, play_resp.as_bytes()).await;
 
     // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR): 3000-tick
-    // spacing at the SDP's 90 kHz clock rate. `RtpStreamDepacketizer` (see
+    // spacing at the SDP's 90 kHz clock rate. `RtpStreamDepacketiser` (see
     // transmux/src/rtp_stream.rs) only knows a sample's duration once the
     // *next* AU's timestamp has arrived, so 3 AUs yield exactly 2 completed
     // samples (AU2 stays pending until a `flush`, which this test never

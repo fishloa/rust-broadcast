@@ -2,7 +2,7 @@
 
 Derived from the real MP2 audio elementary stream already captured in
 `mpeg2_mp2.ts` (a real broadcast MPEG-2 video + MP2 audio TS): its own PES
-packetization happens to be frame-aligned, so it never exercises
+packetisation happens to be frame-aligned, so it never exercises
 `split_mpeg_audio_frames`'s resync path. Real DVB-S broadcast multiplexers
 routinely split PES payloads without regard to audio frame boundaries (see
 issue #638), so this fixture reproduces that condition deterministically from

@@ -74,7 +74,7 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 ///
 /// ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits `stream_type` into two
 /// carriage families: most types (subtitles, teletext, SMPTE 2038 ANC,
-/// metadata, and any unrecognised value) are PES-packetized (§2.4.3.6); a
+/// metadata, and any unrecognised value) are PES-packetised (§2.4.3.6); a
 /// fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14` DSM-CC
 /// synchronized download, `0x86` SCTE-35/ANSI-scoped) are carried as raw
 /// PSI-style sections instead (§2.4.4), with no PES header at all.
@@ -84,7 +84,7 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DataCarriage {
-    /// The elementary stream is PES-packetized (ISO/IEC 13818-1 §2.4.3.6).
+    /// The elementary stream is PES-packetised (ISO/IEC 13818-1 §2.4.3.6).
     Pes,
     /// The elementary stream carries PSI/private sections directly on its
     /// PID (ISO/IEC 13818-1 §2.4.4), with no PES header at all.

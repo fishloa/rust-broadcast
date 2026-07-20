@@ -2,7 +2,7 @@
 
 This crate has been renamed to [`mpeg-pes`](https://crates.io/crates/mpeg-pes).
 
-PES (Packetized Elementary Stream) depacketization + PTS/DTS is an ISO/IEC 13818-1
+PES (Packetised Elementary Stream) depacketisation + PTS/DTS is an ISO/IEC 13818-1
 standard, not DVB-specific, so the crate was renamed accordingly.
 
 **Please update your dependency:**

@@ -18,7 +18,7 @@ changes, no new API surface.
   New fixture `fixtures/ts/legacy/mpeg2_mp2_pes_misaligned.ts`: the same 39
   real MP2 frames already captured in `mpeg2_mp2.ts`, re-chunked into
   PES-payload-sized pieces with no regard for frame length — reproducing the
-  misalignment `mpeg2_mp2.ts`'s own frame-aligned packetization never
+  misalignment `mpeg2_mp2.ts`'s own frame-aligned packetisation never
   exercised. Both the MP2 and the same-class ADTS/AAC regression test were
   verified to fail against the pre-fix code (TDD).
 

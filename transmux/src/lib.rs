@@ -44,8 +44,8 @@
 //!   `cbcs` (`cenc`/CTR is DASH-only — see [`hls`]'s module docs); HLS
 //!   Sample-AES + full-segment AES-128 encrypt/decrypt (`sample-aes`,
 //!   [`sample_aes`]).
-//! - **RTP/RTCP:** de/packetize ([`RtpPacketizer`] / [`RtpDepacketizer`]),
-//!   streaming depayload ([`RtpStreamDepacketizer`]) + SDP fmtp→config helpers
+//! - **RTP/RTCP:** de/packetise ([`RtpPacketiser`] / [`RtpDepacketiser`]),
+//!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
@@ -281,14 +281,14 @@ pub use rtmp::{
 };
 pub use rtp::{
     DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, KLV_ENCODING_NAME,
-    NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
-    RtpPacketizer, RtpStream, VIDEO_CLOCK_RATE, depacketize_klv, packetize_klv,
+    NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput,
+    RtpPacketiser, RtpStream, VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_sdp::{
     aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp, avc_config_from_sprop,
     fmtp_param, rtpmap_clock_rate,
 };
-pub use rtp_stream::{RtpStreamDepacketizer, RtpStreamTrack};
+pub use rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
     ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,

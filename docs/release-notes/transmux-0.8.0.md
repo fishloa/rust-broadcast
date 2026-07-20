@@ -21,7 +21,7 @@ Requires **broadcast-common ≥ 8.2.0** (the `mux` traits).
 - **Transforms:** `Repackage` (resegment / trim / track-select).
 - **Crypto:** CENC (`cenc` AES-CTR) decrypt (`CencDecryptor`, behind the `cenc`
   feature).
-- **RTP:** `RtpPacketizer`/`RtpDepacketizer` + SDP (H.264 FU-A/STAP-A, AAC hbr).
+- **RTP:** `RtpPacketiser`/`RtpDepacketiser` + SDP (H.264 FU-A/STAP-A, AAC hbr).
 - **Full codec config coverage:** added H.266/VVC, VP8, Vorbis, MPEG-2 video
   (H.262), MPEG-1/2 audio (MP1/2/3), and MPEG-H input — joining AVC/HEVC/AV1/VP9
   and AAC/AC-3/E-AC-3/AC-4/DTS/Opus/FLAC. 17 codecs, demux + mux.

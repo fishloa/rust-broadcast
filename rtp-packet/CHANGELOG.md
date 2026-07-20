@@ -82,7 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   directly from the RFC), the implementation/audit oracle for this crate.
 - Real-fixture test (`tests/fixture_simple.rs`) over a committed 324-byte RTP
   packet (`tests/fixtures/rtp_simple.bin`) captured by running this
-  workspace's own `transmux::RtpPacketizer` over the real broadcast capture
+  workspace's own `transmux::RtpPacketiser` over the real broadcast capture
   `fixtures/ts/h264_aac.ts` — real, spec-compliant wire bytes, not hand-typed.
   Padding/CSRC/header-extension cases (not exercised by any real stream in
   this workspace today) use spec-Table-derived vectors instead

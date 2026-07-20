@@ -1,4 +1,4 @@
-//! Advanced: depacketize a real MPEG-TS capture, reassemble PES on one PID,
+//! Advanced: depacketise a real MPEG-TS capture, reassemble PES on one PID,
 //! and report the PTS timeline.
 //!
 //! Run with: `cargo run -p mpeg-pes --example extract_pts`

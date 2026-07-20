@@ -183,7 +183,7 @@
     multicast join via the new `source::udp::bind_udp` helper shared with
     `TsUdpSource`), parses the configured out-of-band SDP with the *same*
     `source::sdp::parse_sdp_tracks` RTSP already uses (no parallel SDP
-    implementation), and depayloads with `transmux::RtpStreamDepacketizer`
+    implementation), and depayloads with `transmux::RtpStreamDepacketiser`
     exactly as `source::rtsp::RtspSession` does. Since raw RTP/UDP has no
     RTSP interleaved-channel framing, incoming packets are routed to their
     track by RTP payload type (RFC 3550 §5.1) matched against each SDP
@@ -201,7 +201,7 @@
     its segmenter.
   - No new codec/container parsing in multimux: both sources are transport
     (socket bind + multicast join) plus wiring over transmux's existing
-    `RtpStreamDepacketizer`/`StreamingTsDemux`.
+    `RtpStreamDepacketiser`/`StreamingTsDemux`.
   - `Config::validate` now validates every route's `InputSpec` fields (RTSP
     scheme, UDP address parseability, multicast-group IP validity, RTP SDP
     non-empty/parseable) in addition to the existing duplicate-name/timing
@@ -460,7 +460,7 @@ origin — a thin client + server wrap around `rtsp-runtime` (RTSP pull) and
   (interleaved TCP, one media per SETUP) → PLAY over
   `rtsp_runtime::io::AsyncRtspClient`; SDP → per-track `CodecConfig` via
   `transmux`'s SDP-fmtp helpers; interleaved RTP routed per channel into
-  `transmux::RtpStreamDepacketizer`, yielding timed `Sample`s.
+  `transmux::RtpStreamDepacketiser`, yielding timed `Sample`s.
 - **Per-route pipeline** (`pipeline::run_pipeline`): drives a `SampleSource`
   (real `RtspSession` or, for tests/examples, `MockSource`) through a
   `transmux::ll_hls::LlHlsSegmenter`, publishing every init segment, ready

@@ -1,4 +1,4 @@
-//! PES (Packetized Elementary Stream) depacketization + PTS/DTS — ISO/IEC 13818-1
+//! PES (Packetised Elementary Stream) depacketisation + PTS/DTS — ISO/IEC 13818-1
 //! (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7.
 //!
 //! `mpeg-pes` is the sublayer between an MPEG-TS packet layer (e.g. `dvb-si`'s

@@ -70,7 +70,7 @@
 //! `stream_type` into two carriage families, and the two are reassembled
 //! completely differently (PES-reassembling a section stream, or vice versa,
 //! silently yields nothing): most `stream_type`s (including every
-//! unrecognised one) are PES-packetized and each `Sample` is one verbatim PES
+//! unrecognised one) are PES-packetised and each `Sample` is one verbatim PES
 //! payload; a fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14`
 //! DSM-CC synchronized download, `0x86` SCTE-35/ANSI-scoped) carry PSI/private
 //! *sections* directly on the PID (§2.4.4) — each reassembled via
@@ -419,7 +419,7 @@ impl Codec {
 /// (ISO/IEC 13818-1 §2.4.4.8 / Table 2-34) — see [`DataCarriage`]. A fixed set
 /// of `stream_type`s carry PSI/private sections directly; every other
 /// `stream_type` (the historical 0x06/0x15 carriage, plus any unrecognised
-/// value) is PES-packetized.
+/// value) is PES-packetised.
 fn data_carriage(stream_type: u8) -> DataCarriage {
     match stream_type {
         STREAM_TYPE_PRIVATE_SECTIONS

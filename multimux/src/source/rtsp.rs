@@ -4,7 +4,7 @@
 //! Drives [`rtsp_runtime::io::AsyncRtspClient`] (RFC 2326 Appendix A client
 //! state machine, `rtsp://` (plain TCP) + `rtsps://` (RTSP-over-TLS, gated on
 //! this crate's `tls` feature, default-on) + interleaved `$`-framed media per
-//! §10.12) and feeds each received RTP packet into a [`RtpStreamDepacketizer`]
+//! §10.12) and feeds each received RTP packet into a [`RtpStreamDepacketiser`]
 //! (RFC 6184 / RFC 3640) built from the DESCRIBE SDP
 //! ([`crate::source::sdp::parse_sdp_tracks`]).
 //!
@@ -26,7 +26,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::resolve_credentials;
 use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
 use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
+use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 
 /// Interleaved channel offset from a media's RTP channel to its paired RTCP
 /// channel (RFC 2326 §10.12: `interleaved=lo-hi` with `hi = lo + 1`).
@@ -223,7 +223,7 @@ impl RtspSource {
             ),
         })??;
 
-        let depacketizer = RtpStreamDepacketizer::new(
+        let depacketiser = RtpStreamDepacketiser::new(
             tracks
                 .iter()
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
@@ -233,7 +233,7 @@ impl RtspSource {
         Ok(RtspSession {
             tracks,
             client,
-            depacketizer,
+            depacketiser,
             read_timeout: self.timeouts.read,
         })
     }
@@ -252,7 +252,7 @@ pub struct RtspSession {
     /// reflect whatever SETUP ultimately negotiated).
     pub tracks: Vec<TrackInit>,
     client: RtspClient,
-    depacketizer: RtpStreamDepacketizer,
+    depacketiser: RtpStreamDepacketiser,
     /// Bound on each [`Self::next_samples`] read — see [`IngestTimeouts::read`].
     read_timeout: Duration,
 }
@@ -261,7 +261,7 @@ impl RtspSession {
     /// The `TrackSpec`s (timescale = RTP clock rate) for init-segment
     /// construction.
     pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.depacketizer.track_specs()
+        self.depacketiser.track_specs()
     }
 
     /// Pulls one interleaved frame and depayloads it. Returns the samples
@@ -294,7 +294,7 @@ impl RtspSession {
             return Ok(Some(Vec::new()));
         };
         let samples =
-            self.depacketizer
+            self.depacketiser
                 .push(track_id, &data)
                 .map_err(|e| MultimuxError::Depay {
                     reason: e.to_string(),

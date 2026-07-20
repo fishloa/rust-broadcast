@@ -4,8 +4,8 @@
 //! ## Fixture provenance
 //!
 //! These are genuine wire bytes, not hand-typed: the 324-byte packet was
-//! captured by running this workspace's own `transmux::RtpPacketizer`
-//! (RFC 3550-compliant AAC-hbr / RFC 3640 packetizer) over the real broadcast
+//! captured by running this workspace's own `transmux::RtpPacketiser`
+//! (RFC 3550-compliant AAC-hbr / RFC 3640 packetiser) over the real broadcast
 //! capture `fixtures/ts/h264_aac.ts` (already committed for transmux's own
 //! RTP tests, `transmux/tests/rtp.rs`, issue #469), then saving one emitted
 //! audio packet's exact wire bytes. The RTP fixed-header fields (marker,
@@ -37,7 +37,7 @@ fn parses_real_simple_case_header() {
     let bytes = fixture_bytes();
     let pkt = RtpPacket::parse(&bytes).expect("parse real fixture");
 
-    assert!(pkt.marker, "AAC-hbr packetizer sets marker per AU");
+    assert!(pkt.marker, "AAC-hbr packetiser sets marker per AU");
     assert_eq!(pkt.payload_type, 97, "default audio payload type");
     assert_eq!(pkt.sequence_number, 5);
     assert_eq!(pkt.timestamp, 0x0000_1400);

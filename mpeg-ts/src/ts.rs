@@ -17,7 +17,7 @@ const MAX_SECTION_SIZE: usize = 4098;
 const SECTION_HEADER_LEN: usize = 3;
 /// Mask for the 4 most-significant `section_length` bits in a section's second
 /// byte (ISO/IEC 13818-1 §2.4.4.1 — `section_length` is 12 bits). Shared with
-/// the packetizer in `mux.rs`.
+/// the packetiser in `mux.rs`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
 /// 2-bit `transport_scrambling_control` field — ITU-T H.222.0 (08/2023) Table 2-4

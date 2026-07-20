@@ -1,7 +1,7 @@
 # Story 56b — `SiMux` scheduler (dvb-si `ts` feature)
 
 Delegated brief for the SI multiplex scheduler, the second half of GitHub issue
-**#56**. **Depends on story 56a** (`SectionPacketizer` in `dvb-si/src/mux.rs`)
+**#56**. **Depends on story 56a** (`SectionPacketiser` in `dvb-si/src/mux.rs`)
 being merged to `main` first — build on top of it. Self-contained otherwise.
 Touch only the files listed. Do **not** commit.
 
@@ -28,7 +28,7 @@ Touch only the files listed. Do **not** commit.
 
 ## What to build
 
-Extend `dvb-si/src/mux.rs` (same module as `SectionPacketizer`). Caller drives
+Extend `dvb-si/src/mux.rs` (same module as `SectionPacketiser`). Caller drives
 time — **no clock dependency** (mirror the rest of the crate's caller-supplied-time
 design). Time is a `core::time::Duration` measured from an arbitrary epoch the
 caller picks (monotonic since start).
@@ -60,7 +60,7 @@ Owns its section bytes (replaceable — SI changes over time), one entry per
 "stream" the caller wants emitted on a PID at an interval:
 
 ```rust
-pub struct SiMux { /* entries: pid, owned section bytes Vec<u8>, interval, last_emit Option<Duration>, packetizer */ }
+pub struct SiMux { /* entries: pid, owned section bytes Vec<u8>, interval, last_emit Option<Duration>, packetiser */ }
 
 impl SiMux {
     pub fn new() -> Self;
@@ -75,7 +75,7 @@ impl SiMux {
     // …nit/tdt/tot similarly, each citing tr_101_211/tr_101_290/ts_101_154.
 
     /// Emit every entry due at `now` (i.e. `now - last_emit >= interval`, and
-    /// first call always due), packetizing via SectionPacketizer, appended to
+    /// first call always due), packetising via SectionPacketiser, appended to
     /// `out` (cleared first). Updates each emitted entry's `last_emit = now`.
     /// Deterministic given the fed `now` sequence. Returns packet count.
     pub fn poll_into(&mut self, now: Duration, out: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize;
@@ -86,7 +86,7 @@ impl SiMux {
 - The 25 ms floor: expose `MIN_SECTION_INTERVAL` and **reject** (or document +
   clamp — pick reject via a debug_assert/doc, not silent) an `upsert` interval
   below it. Decide and document; do not silently accept sub-25 ms.
-- Each entry keeps its own `SectionPacketizer` so continuity counters are correct
+- Each entry keeps its own `SectionPacketiser` so continuity counters are correct
   and continuous per PID across poll cycles.
 
 ### Tests (in-module)
@@ -126,5 +126,5 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p dvb-si --all-features --no-deps --locked
 ## Boundaries
 
 - Touch only `dvb-si/src/mux.rs` (extend). No changes to `ts.rs`/`demux.rs`/tables.
-- Do **not** redefine the packetizer — build on story 56a's `SectionPacketizer`.
+- Do **not** redefine the packetiser — build on story 56a's `SectionPacketiser`.
 - Do **not** commit.

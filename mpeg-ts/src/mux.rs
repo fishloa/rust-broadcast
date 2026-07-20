@@ -1,4 +1,4 @@
-//! Section → TS packetizer (the byte-exact inverse of
+//! Section → TS packetiser (the byte-exact inverse of
 //! [`SectionReassembler::feed`](crate::ts::SectionReassembler::feed)).
 //!
 //! Per the PSI carriage rules of ITU-T H.222.0 §2.4.4 (= ISO/IEC 13818-1:2007 §2.4.4)
@@ -19,7 +19,7 @@ const PAYLOAD_CAP: usize = 184;
 /// Stuffing byte for unused TS payload bytes (ISO/IEC 13818-1 §2.4.4).
 const STUFFING_BYTE: u8 = 0xFF;
 
-/// Packetizes PSI/SI sections into 188-byte TS packets.
+/// Packetises PSI/SI sections into 188-byte TS packets.
 ///
 /// This is the byte-exact inverse of
 /// [`SectionReassembler::feed`](crate::ts::SectionReassembler::feed): packets
@@ -27,13 +27,13 @@ const STUFFING_BYTE: u8 = 0xFF;
 /// sections in order.
 ///
 /// ISO/IEC 13818-1:2007 §2.4.4 (`docs/iso_13818_1_systems.md`).
-pub struct SectionPacketizer {
+pub struct SectionPacketiser {
     pid: u16,
     continuity_counter: u8,
 }
 
-impl SectionPacketizer {
-    /// Start a packetizer for `pid` with continuity_counter = 0.
+impl SectionPacketiser {
+    /// Start a packetiser for `pid` with continuity_counter = 0.
     pub fn new(pid: u16) -> Self {
         Self {
             pid,
@@ -49,7 +49,7 @@ impl SectionPacketizer {
         }
     }
 
-    /// The PID this packetizer emits packets for.
+    /// The PID this packetiser emits packets for.
     pub fn pid(&self) -> u16 {
         self.pid
     }
@@ -59,11 +59,11 @@ impl SectionPacketizer {
         self.continuity_counter
     }
 
-    /// Packetize a batch of complete sections into 188-byte TS packets,
+    /// Packetise a batch of complete sections into 188-byte TS packets,
     /// appended to `out` (cleared first).
     ///
     /// Returns the number of packets appended.
-    pub fn packetize_into(
+    pub fn packetise_into(
         &mut self,
         sections: &[&[u8]],
         out: &mut Vec<[u8; TS_PACKET_SIZE]>,
@@ -155,10 +155,10 @@ impl SectionPacketizer {
         out.len() - count_before
     }
 
-    /// Allocating convenience wrapper over [`packetize_into`](Self::packetize_into).
-    pub fn packetize(&mut self, sections: &[&[u8]]) -> Vec<[u8; TS_PACKET_SIZE]> {
+    /// Allocating convenience wrapper over [`packetise_into`](Self::packetise_into).
+    pub fn packetise(&mut self, sections: &[&[u8]]) -> Vec<[u8; TS_PACKET_SIZE]> {
         let mut out = Vec::new();
-        self.packetize_into(sections, &mut out);
+        self.packetise_into(sections, &mut out);
         out
     }
 }
@@ -224,7 +224,7 @@ struct Entry {
     sections: Vec<u8>,
     interval: Duration,
     last_emit: Option<Duration>,
-    packetizer: SectionPacketizer,
+    packetiser: SectionPacketiser,
 }
 
 impl SiMux {
@@ -260,7 +260,7 @@ impl SiMux {
                 sections,
                 interval,
                 last_emit: None,
-                packetizer: SectionPacketizer::new(pid),
+                packetiser: SectionPacketiser::new(pid),
             });
         }
     }
@@ -312,7 +312,7 @@ impl SiMux {
     }
 
     /// Emit every entry due at `now` (i.e. `now - last_emit >= interval`, and
-    /// first call always due), packetizing via [`SectionPacketizer`], appended
+    /// first call always due), packetising via [`SectionPacketiser`], appended
     /// to `out` (cleared first).
     ///
     /// Updates each emitted entry's `last_emit = now`. Deterministic given the
@@ -330,7 +330,7 @@ impl SiMux {
             if due {
                 let refs = split_sections(&entry.sections);
                 if !refs.is_empty() {
-                    entry.packetizer.packetize_into(&refs, &mut tmp);
+                    entry.packetiser.packetise_into(&refs, &mut tmp);
                     out.append(&mut tmp);
                 }
                 entry.last_emit = Some(now);
@@ -407,12 +407,12 @@ mod tests {
         out
     }
 
-    /// Round-trip `sections` through packetize → reassembler, asserting
+    /// Round-trip `sections` through packetise → reassembler, asserting
     /// byte-identical output in order and no leftovers.
     fn assert_round_trip(sections: &[Vec<u8>]) {
-        let mut packetizer = SectionPacketizer::new(0x0100);
+        let mut packetiser = SectionPacketiser::new(0x0100);
         let refs: Vec<&[u8]> = sections.iter().map(|s| s.as_slice()).collect();
-        let packets = packetizer.packetize(&refs);
+        let packets = packetiser.packetise(&refs);
 
         let mut reasm = SectionReassembler::default();
         for pkt_raw in &packets {
@@ -937,9 +937,9 @@ mod tests {
         // Use a section large enough to span several packets.
         let body = vec![0xAA; 500];
         let section = build_section(0x42, &body);
-        let mut p = SectionPacketizer::new(0x0100);
+        let mut p = SectionPacketiser::new(0x0100);
 
-        let packets = p.packetize(&[&section]);
+        let packets = p.packetise(&[&section]);
         assert!(packets.len() >= 3, "need multiple packets to test CC");
 
         let mut last_cc: Option<u8> = None;
@@ -955,13 +955,13 @@ mod tests {
 
     #[test]
     fn continuity_counter_wraps_and_continues_across_calls() {
-        let mut p = SectionPacketizer::with_continuity(0x0100, 14);
+        let mut p = SectionPacketiser::with_continuity(0x0100, 14);
         // Section large enough to span at least 3 packets.
         let body = vec![0xBB; 500];
         let s = build_section(0x42, &body);
 
         // First call: CC 14, 15, 0, …
-        let pkts1 = p.packetize(&[&s]);
+        let pkts1 = p.packetise(&[&s]);
         assert!(pkts1.len() >= 3, "section must span ≥3 packets");
         let ccs1: Vec<u8> = pkts1
             .iter()
@@ -972,7 +972,7 @@ mod tests {
         assert_eq!(ccs1[2], 0);
 
         // Second call: CC continues from where first left off.
-        let pkts2 = p.packetize(&[&s]);
+        let pkts2 = p.packetise(&[&s]);
         let cc_first_pkt2 = TsPacket::parse(&pkts2[0])
             .unwrap()
             .header
@@ -985,8 +985,8 @@ mod tests {
     #[test]
     fn pusi_set_when_section_starts() {
         let s = build_section(0x42, &[0xAA; 10]);
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s]);
         assert!(!packets.is_empty());
         let pkt = TsPacket::parse(&packets[0]).unwrap();
         assert!(pkt.header.pusi, "first packet must have PUSI=1");
@@ -996,8 +996,8 @@ mod tests {
     fn pusi_not_set_on_mid_section_continuation() {
         let body = vec![0xAA; 500];
         let s = build_section(0x42, &body);
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s]);
         assert!(packets.len() >= 2);
         let pkt1 = TsPacket::parse(&packets[0]).unwrap();
         let pkt2 = TsPacket::parse(&packets[1]).unwrap();
@@ -1019,8 +1019,8 @@ mod tests {
         let s2 = build_section(0x54, &[0xB1; 47]); // 50-byte section
         assert_eq!(s2.len(), 50);
 
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s1, &s2]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s1, &s2]);
 
         // Find the packet where PUSI=1 and pointer>0.
         let pkt_with_pointer = packets
@@ -1042,8 +1042,8 @@ mod tests {
     #[test]
     fn final_packet_unused_tail_is_stuffing() {
         let s = build_section(0x42, &[0xAA; 5]); // 8 bytes total
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s]);
 
         let pkt = TsPacket::parse(&packets[0]).unwrap();
         let payload = pkt.payload.unwrap();
@@ -1064,8 +1064,8 @@ mod tests {
         let s1 = build_section(0x42, &[0xAA; 10]);
         let s2 = build_section(0x46, &[0xBB; 5]);
 
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s1, &s2]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s1, &s2]);
 
         let mut reasm = SectionReassembler::default();
         for pkt_raw in &packets {
@@ -1085,18 +1085,18 @@ mod tests {
 
     #[test]
     fn empty_batch_produces_no_packets() {
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets: Vec<[u8; TS_PACKET_SIZE]> = p.packetize(&[]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets: Vec<[u8; TS_PACKET_SIZE]> = p.packetise(&[]);
         assert!(packets.is_empty());
     }
 
     #[test]
-    fn packetize_into_clears_out_first() {
+    fn packetise_into_clears_out_first() {
         let s = build_section(0x42, &[0xAA; 5]);
-        let mut p = SectionPacketizer::new(0x0100);
+        let mut p = SectionPacketiser::new(0x0100);
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 99]; // pre-existing junk
-        let n = p.packetize_into(&[&s], &mut out);
+        let n = p.packetise_into(&[&s], &mut out);
         assert_eq!(n, out.len(), "out must contain only the new packets");
         // Verify the output is correct (round-trip).
         let mut reasm = SectionReassembler::default();
@@ -1110,21 +1110,21 @@ mod tests {
 
     #[test]
     fn pid_is_correct() {
-        let p = SectionPacketizer::new(0x1234);
+        let p = SectionPacketiser::new(0x1234);
         assert_eq!(p.pid(), 0x1234);
     }
 
     #[test]
     fn with_continuity_masks_to_4_bits() {
-        let p = SectionPacketizer::with_continuity(0x0100, 0xFE);
+        let p = SectionPacketiser::with_continuity(0x0100, 0xFE);
         assert_eq!(p.continuity_counter(), 0x0E);
     }
 
     #[test]
     fn has_payload_always_true_no_adaptation() {
         let s = build_section(0x42, &[0xAA; 50]);
-        let mut p = SectionPacketizer::new(0x0100);
-        let packets = p.packetize(&[&s]);
+        let mut p = SectionPacketiser::new(0x0100);
+        let packets = p.packetise(&[&s]);
         for pkt_raw in &packets {
             let pkt = TsPacket::parse(pkt_raw).unwrap();
             assert!(pkt.header.has_payload, "every packet must carry payload");

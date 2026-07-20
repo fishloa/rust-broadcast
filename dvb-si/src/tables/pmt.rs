@@ -79,9 +79,9 @@ pub enum StreamType {
     Mpeg4Video,
     /// 0x11 — ISO/IEC 14496-3 Audio with LATM transport syntax (AAC LATM).
     AacLatm,
-    /// 0x12 — ISO/IEC 14496-1 SL-packetized / FlexMux stream in PES.
+    /// 0x12 — ISO/IEC 14496-1 SL-packetised / FlexMux stream in PES.
     SlFlexMuxPes,
-    /// 0x13 — ISO/IEC 14496-1 SL-packetized / FlexMux stream in sections.
+    /// 0x13 — ISO/IEC 14496-1 SL-packetised / FlexMux stream in sections.
     SlFlexMuxSections,
     /// 0x14 — ISO/IEC 13818-6 Synchronized Download Protocol.
     SyncDownload,

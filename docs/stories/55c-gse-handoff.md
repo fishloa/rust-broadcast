@@ -20,7 +20,7 @@ and where to hand the data field to the third-party `dvb-gse` crate.
    match hdr.matype.ts_gs {
        TsGs::Ts => { /* TS user packets: dvb_bbframe::packet::up_iter(data_field, &hdr) */ }
        TsGs::Gse => { /* GSE packets: hand `data_field` to the `dvb-gse` crate */ }
-       other => { /* GFPS / GCS — generic continuous/packetized */ }
+       other => { /* GFPS / GCS — generic continuous/packetised */ }
    }
    ```
    Keep it accurate to the actual enum variants of `TsGs` (read header.rs).

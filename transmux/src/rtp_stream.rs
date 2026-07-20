@@ -1,7 +1,7 @@
 //! Streaming RTP depayloader — RFC 6184 (H.264) / RFC 3640 (AAC).
 //!
-//! Stateful counterpart to [`crate::rtp::RtpDepacketizer`]: fed RTP packets
-//! incrementally via [`RtpStreamDepacketizer::push`], it emits fully-timed
+//! Stateful counterpart to [`crate::rtp::RtpDepacketiser`]: fed RTP packets
+//! incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
 //! [`Sample`]s (real per-AU `duration` from RTP-timestamp deltas, `is_sync`
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
@@ -38,7 +38,7 @@
 //! - When an RFC 3640 `AAC-hbr` packet aggregates more than one access unit,
 //!   all AUs in that packet share the RTP timestamp, so non-final AUs get
 //!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
-//!   own packetizer emits.
+//!   own packetiser emits.
 
 use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -55,13 +55,13 @@ use alloc::vec::Vec;
 /// (`E=1` never seen) or a marker bit that's never set — would otherwise
 /// accumulate for the life of the (indefinitely long, per the P0 reconnect
 /// loop) session: an unbounded-memory DoS (audit-ingest #4). On overflow the
-/// in-progress AU is dropped and [`RtpStreamDepacketizer::push`] returns a
+/// in-progress AU is dropped and [`RtpStreamDepacketiser::push`] returns a
 /// recoverable [`Error::BufferCapExceeded`]; internal state is already reset
 /// so the next packet starts a fresh AU (resync on the next timestamp change
 /// or marker bit).
 const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
-/// One track's decode config for [`RtpStreamDepacketizer`].
+/// One track's decode config for [`RtpStreamDepacketiser`].
 #[non_exhaustive]
 pub struct RtpStreamTrack {
     /// Track ID (matches the IR `track_id` this depayloader emits).
@@ -86,7 +86,7 @@ impl RtpStreamTrack {
     }
 }
 
-/// Per-track mutable depacketization state.
+/// Per-track mutable depacketisation state.
 struct TrackState {
     kind: RtpMediaKind,
     config: CodecConfig,
@@ -118,7 +118,7 @@ struct PendingAu {
 }
 
 /// Stateful, timing- and config-aware RTP depayloader (see module docs).
-pub struct RtpStreamDepacketizer {
+pub struct RtpStreamDepacketiser {
     tracks: Vec<(u32, TrackState)>,
 }
 
@@ -152,7 +152,7 @@ fn unwrap_ts(prev: Option<u64>, ts: u32) -> u64 {
     }
 }
 
-impl RtpStreamDepacketizer {
+impl RtpStreamDepacketiser {
     /// Build a depayloader for the given tracks (kind, config, clock rate).
     pub fn new(tracks: Vec<RtpStreamTrack>) -> Self {
         let tracks = tracks
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn video_stream_recovers_durations_and_sync() {
-        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+        let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             1,
             RtpMediaKind::H264,
             dummy_avc(),
@@ -374,11 +374,11 @@ mod tests {
     /// set, same RTP timestamp throughout — exactly a dropped/corrupted
     /// final fragment or a hostile encoder) must not grow `cur_pkts`
     /// without bound: [`MAX_AU_BUFFER_BYTES`] must trip, dropping the
-    /// partial AU, and the depacketizer must keep working normally
+    /// partial AU, and the depacketiser must keep working normally
     /// afterward (resync proof) rather than being wedged or OOMing.
     #[test]
     fn runaway_fu_a_without_end_bit_is_bounded_not_unbounded() {
-        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+        let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             1,
             RtpMediaKind::H264,
             dummy_avc(),
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn track_specs_use_clock_rate_as_timescale() {
-        let d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack::new(
+        let d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
             7,
             RtpMediaKind::H264,
             dummy_avc(),

@@ -8,7 +8,7 @@
 //! [`crate::source::sdp::parse_sdp_tracks`] helper
 //! [`crate::source::rtsp::RtspSource`] uses for its DESCRIBE body — there is
 //! no parallel SDP implementation between the two ingest paths — and RTP
-//! depayload is [`transmux::RtpStreamDepacketizer`] (RFC 6184 H.264 / RFC
+//! depayload is [`transmux::RtpStreamDepacketiser`] (RFC 6184 H.264 / RFC
 //! 3640 AAC), exactly as the RTSP source uses it.
 //!
 //! # Track routing
@@ -33,7 +33,7 @@ use crate::source::sdp::{load_sdp, parse_sdp_tracks};
 use crate::source::udp::bind_udp;
 use crate::source::{IngestTimeouts, Source, TrackInit};
 use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
+use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 
 /// Max UDP datagram this source reads in one `recv` — comfortably above the
 /// largest legal UDP payload (65 507 bytes over IPv4), so a single `recv`
@@ -123,7 +123,7 @@ impl RtpUdpSource {
 
         let socket = bind_udp(&self.addr, self.multicast_group.as_deref()).await?;
 
-        let depacketizer = RtpStreamDepacketizer::new(
+        let depacketiser = RtpStreamDepacketiser::new(
             tracks
                 .iter()
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
@@ -137,7 +137,7 @@ impl RtpUdpSource {
         Ok(RtpUdpSession {
             tracks,
             socket,
-            depacketizer,
+            depacketiser,
             pt_to_track,
             buf: vec![0u8; MAX_UDP_DATAGRAM],
             read_timeout: self.timeouts.read,
@@ -157,7 +157,7 @@ pub struct RtpUdpSession {
     /// Per-track init derived from the configured SDP.
     pub tracks: Vec<TrackInit>,
     socket: UdpSocket,
-    depacketizer: RtpStreamDepacketizer,
+    depacketiser: RtpStreamDepacketiser,
     /// RTP payload-type -> track id, built from the SDP's declared payload
     /// types — see the module doc's "Track routing" section.
     pt_to_track: HashMap<u8, u32>,
@@ -170,7 +170,7 @@ impl RtpUdpSession {
     /// The `TrackSpec`s (timescale = RTP clock rate) for init-segment
     /// construction.
     pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.depacketizer.track_specs()
+        self.depacketiser.track_specs()
     }
 
     /// Receives one UDP datagram (one RTP packet) and depayloads it. Returns
@@ -206,7 +206,7 @@ impl RtpUdpSession {
             return Ok(Some(Vec::new()));
         };
         let samples =
-            self.depacketizer
+            self.depacketiser
                 .push(track_id, packet)
                 .map_err(|e| MultimuxError::Depay {
                     reason: e.to_string(),
@@ -222,7 +222,7 @@ impl RtpUdpSession {
 /// Pure transport-layer routing (deciding which track a datagram belongs
 /// to) — the packet's actual depayload (marker bit, sequence number,
 /// timestamp, payload bytes, AU reassembly) is entirely
-/// `transmux::RtpStreamDepacketizer`'s job; multimux reads only the one
+/// `transmux::RtpStreamDepacketiser`'s job; multimux reads only the one
 /// field it needs to route bytes to the right track.
 fn payload_type_of(packet: &[u8]) -> Option<u8> {
     if packet.len() < RTP_MIN_HEADER_LEN {
@@ -301,7 +301,7 @@ mod tests {
 
         // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR): mirrors
         // `rtsp_ingest.rs`'s timing — 2 completed samples are yielded once
-        // AU2 arrives (the depacketizer needs the *next* AU's timestamp to
+        // AU2 arrives (the depacketiser needs the *next* AU's timestamp to
         // finalise a duration).
         let idr = [0x65u8, 0xAA, 0xBB];
         let non1 = [0x41u8, 0xAA, 0xBB];

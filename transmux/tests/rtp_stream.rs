@@ -1,8 +1,8 @@
 //! Real-fixture gate for the streaming RTP depayloader (#700).
 //!
-//! Demuxes the real `h264_aac.ts` fixture, packetizes it to RTP (the same
-//! `TsDemux` + `RtpPacketizer::package` calls `tests/rtp.rs` uses), then feeds
-//! the video stream's packets through [`RtpStreamDepacketizer`] fed with the
+//! Demuxes the real `h264_aac.ts` fixture, packetises it to RTP (the same
+//! `TsDemux` + `RtpPacketiser::package` calls `tests/rtp.rs` uses), then feeds
+//! the video stream's packets through [`RtpStreamDepacketiser`] fed with the
 //! codec config recovered from the *generated SDP* (exercising the P2
 //! `avc_config_from_sprop`/`aac_config_from_asc_hex` round-trip), and checks the
 //! recovered timing/config/sync against the demuxed oracle, then builds a
@@ -14,7 +14,7 @@ use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
-    FragmentTrackData, Media, RtpOutput, RtpPacketizer, RtpStream, RtpStreamDepacketizer,
+    FragmentTrackData, Media, RtpOutput, RtpPacketiser, RtpStream, RtpStreamDepacketiser,
     RtpStreamTrack, Severity, TsDemux, build_init_segment, build_media_segment,
     validate_init_segment, validate_media_segment,
 };
@@ -31,13 +31,13 @@ fn demux_fixture() -> Media {
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
 
-fn packetize(media: &Media) -> RtpOutput {
-    let mut p = RtpPacketizer {
+fn packetise(media: &Media) -> RtpOutput {
+    let mut p = RtpPacketiser {
         mtu: MTU,
         ssrc: SSRC,
-        ..RtpPacketizer::default()
+        ..RtpPacketiser::default()
     };
-    p.package(media).expect("packetize IR → RTP")
+    p.package(media).expect("packetise IR → RTP")
 }
 
 fn video_stream(out: &RtpOutput) -> &RtpStream {
@@ -71,7 +71,7 @@ fn errors(issues: &[transmux::ConformanceIssue]) -> Vec<&str> {
 #[test]
 fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
 
     // Original per-track truth from the demuxed Media.
     let orig_video = media
@@ -104,9 +104,9 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         panic!("expected video track to carry CodecConfig::Avc");
     }
 
-    // Feed the packetized RTP for the video stream through the streaming depayloader.
+    // Feed the packetised RTP for the video stream through the streaming depayloader.
     let video_stream = video_stream(&out);
-    let mut d = RtpStreamDepacketizer::new(vec![RtpStreamTrack::new(
+    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
         1,
         RtpMediaKind::H264,
         CodecConfig::Avc {

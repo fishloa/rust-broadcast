@@ -5,12 +5,12 @@ depayloader** and **SDP-fmtp → codec-config** helpers (issue #700) — the
 upstream library work that lets a live RTSP origin (issue #663, `multimux`) turn
 an incoming RTP feed into correctly-timed CMAF, with no media/transport-spec
 logic in the app itself. RTP is now a first-class streaming ingest spoke
-alongside the existing batch `RtpDepacketizer`.
+alongside the existing batch `RtpDepacketiser`.
 
 ## Added (#700)
 
-- **`RtpStreamDepacketizer`** — stateful counterpart to the batch
-  `RtpDepacketizer`. Fed RTP packets incrementally via `push(track_id, &[u8])`,
+- **`RtpStreamDepacketiser`** — stateful counterpart to the batch
+  `RtpDepacketiser`. Fed RTP packets incrementally via `push(track_id, &[u8])`,
   it emits fully-timed `Sample`s and `flush(track_id)` drains the tail:
   - real per-AU `duration` from RTP-timestamp deltas (32-bit wire timestamp
     unwrapped to a monotonic `u64`; IR timescale = RTP clock rate),
@@ -28,12 +28,12 @@ alongside the existing batch `RtpDepacketizer`.
 
 Internally, the existing FU-A/STAP-A/AAC reassembly is refactored to a
 timing-preserving core (`reassemble_video`/`reassemble_audio` → `ReassembledAu`)
-shared by both the batch and streaming paths; the batch `RtpDepacketizer` output
+shared by both the batch and streaming paths; the batch `RtpDepacketiser` output
 is byte-identical.
 
 ## Correctness
 
-Proven on a **real broadcast fixture** (`h264_aac.ts`): demux → RTP packetize →
+Proven on a **real broadcast fixture** (`h264_aac.ts`): demux → RTP packetise →
 SDP-derived config → streaming depayload → the recovered samples match the
 original in codec config (SPS/PPS byte-for-byte), keyframe count, and total
 duration (within one frame), and build init + media segments + a part that pass

@@ -357,7 +357,7 @@ impl multimux::pipeline::SampleSource for VdoSource {
     /// boot) and the previous one's, converted to the track's 90 kHz
     /// timescale via [`convert::duration_ticks`] — VDO delivers one complete
     /// access unit per buffer with its own timestamp, so (unlike an RTP
-    /// depacketizer, which only learns a sample's duration from the *next*
+    /// depacketiser, which only learns a sample's duration from the *next*
     /// packet's timestamp) there is no extra frame of latency here: the
     /// first sample's duration is `0` (no previous timestamp to diff
     /// against), and every sample after that carries the correct duration

@@ -1,17 +1,17 @@
-//! Real-capture round-trip for the section→TS packetizer (`dvb_si::mux`).
+//! Real-capture round-trip for the section→TS packetiser (`dvb_si::mux`).
 //!
 //! Fixture: `tests/fixtures/m6-single.ts` (French TNT). Drives the full output
 //! half against the real input half: demux the capture to its current SI
-//! sections, re-packetize each PID's sections with `SectionPacketizer`, then
+//! sections, re-packetise each PID's sections with `SectionPacketiser`, then
 //! feed the regenerated TS packets back through a fresh `SiDemux` and assert
 //! the **same set** of (PID, section-bytes) emerges with no malformed/dropped
-//! sections. This verifies the packetizer interoperates with the real demux
+//! sections. This verifies the packetiser interoperates with the real demux
 //! (PID filtering, PAT-following, CRC validation, version gating) — not just
 //! the lower-level `SectionReassembler`.
 #![cfg(feature = "ts")]
 
 use dvb_si::demux::SiDemux;
-use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 fn read_fixture(name: &str) -> Vec<u8> {
@@ -36,7 +36,7 @@ fn collect_sections(data: &[u8]) -> Vec<(u16, Vec<u8>)> {
 }
 
 #[test]
-fn packetizer_round_trips_real_capture_through_si_demux() {
+fn packetiser_round_trips_real_capture_through_si_demux() {
     let data = read_fixture("m6-single.ts");
     let original = collect_sections(&data);
     assert!(
@@ -45,7 +45,7 @@ fn packetizer_round_trips_real_capture_through_si_demux() {
         original.len()
     );
 
-    // Re-packetize each PID's sections. PAT (0x0000) must go first so the
+    // Re-packetise each PID's sections. PAT (0x0000) must go first so the
     // second demux follows it and accepts the PMT PID's packets.
     let mut pids: Vec<u16> = Vec::new();
     for (pid, _) in &original {
@@ -62,8 +62,8 @@ fn packetizer_round_trips_real_capture_through_si_demux() {
             .filter(|(p, _)| *p == pid)
             .map(|(_, b)| b.as_slice())
             .collect();
-        let mut packetizer = SectionPacketizer::new(pid);
-        regenerated.extend(packetizer.packetize(&sections));
+        let mut packetiser = SectionPacketiser::new(pid);
+        regenerated.extend(packetiser.packetise(&sections));
     }
 
     // Feed the regenerated stream through a fresh demux.

@@ -7,7 +7,7 @@
 //! `st12-1` has no real captured LTC bitstream to draw a fixture from: this
 //! workspace has no LTC producer/consumer today (unlike, say, `rtp-packet`'s
 //! `tests/fixtures/rtp_simple.bin`, captured from this workspace's own
-//! `transmux::RtpPacketizer`), and LTC is normally carried as a
+//! `transmux::RtpPacketiser`), and LTC is normally carried as a
 //! biphase-mark-encoded analog audio signal — out of this crate's scope (see
 //! `docs/st12-1.md`'s "Scope" section) — so there is no in-repo bitstream to
 //! extract a logical codeword from either. Per the project's documented

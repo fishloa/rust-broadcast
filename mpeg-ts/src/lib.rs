@@ -1,7 +1,7 @@
 //! MPEG-2 Transport Stream framing — ITU-T H.222.0 / ISO/IEC 13818-1.
 //!
 //! Parses and serializes the MPEG-TS packet layer: 188-byte TS packets,
-//! adaptation fields, PCR, PSI section reassembly and packetization, byte-stream
+//! adaptation fields, PCR, PSI section reassembly and packetisation, byte-stream
 //! resynchronisation, and a scheduler-mux for SI tables.
 //!
 //! # Primary types
@@ -11,7 +11,7 @@
 //! | [`ts`] | [`ts::TsPacket`] | Zero-copy borrowed view of a 188-byte TS packet (ITU-T H.222.0 §2.4.3.2) |
 //! | [`owned`] | [`owned::OwnedTsPacket`] | Owned 188-byte TS packet — for queuing, cloning, and in-place mutation |
 //! | [`ts`] | [`ts::SectionReassembler`] | Per-PID PSI section assembly from TS payloads (§2.4.4) |
-//! | [`mux`] | [`mux::SectionPacketizer`] | Packetize PSI sections back into TS packets with correct CC and padding |
+//! | [`mux`] | [`mux::SectionPacketiser`] | Packetise PSI sections back into TS packets with correct CC and padding |
 //! | [`mux`] | [`mux::SiMux`] | Rate-scheduled SI table mux: upsert per-PID section sets, poll for TS packets |
 //! | [`resync`] | [`resync::TsResync`] | Byte-stream resynchroniser — recovers 188/204-byte packet alignment from raw bytes |
 //! | [`pid`] | [`pid::Pid`] | Typed 13-bit PID newtype with well-known constants |

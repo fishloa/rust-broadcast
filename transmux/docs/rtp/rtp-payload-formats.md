@@ -2,7 +2,7 @@
 
 Sources: **RFC 3550** (RTP), **RFC 6184** (H.264/AVC payload), **RFC 3640**
 (MPEG-4/AAC payload, mode `AAC-hbr`), **RFC 4566** (SDP). Scope for this spoke:
-H.264 video + AAC-LC audio de/packetization (the IR's `Avc`/`Aac` tracks), with
+H.264 video + AAC-LC audio de/packetisation (the IR's `Avc`/`Aac` tracks), with
 SDP generation.
 
 ## RTP fixed header (RFC 3550 §5.1) — 12 bytes
@@ -31,7 +31,7 @@ SDP generation.
 
 ## H.264 payload (RFC 6184)
 
-NAL unit octet: `F(1) | NRI(2) | Type(5)`. Packetization modes; use
+NAL unit octet: `F(1) | NRI(2) | Type(5)`. Packetisation modes; use
 **packetization-mode=1** (non-interleaved).
 
 - **Single NAL unit packet** (NAL Type 1–23): the whole NAL is the RTP payload
@@ -83,7 +83,7 @@ When depayloading RTP incrementally (as opposed to a bulk demux of a pre-recorde
 file), a caller consuming real-time packets needs accurate per-sample `duration`
 to build correctly-timed track samples. RTP carries only a **presentation
 timestamp** (32-bit wire field, RFC 3550 §5.1), which wraps every ~13.6 hours at
-90 kHz. The streaming depayloader (`RtpStreamDepacketizer`):
+90 kHz. The streaming depayloader (`RtpStreamDepacketiser`):
 
 - **Unwraps** the 32-bit RTP timestamp to a monotonic 64-bit value (via the
   standard increment-and-wrap detection idiom: the signed 32-bit delta of the
@@ -166,11 +166,11 @@ a=fmtp:97 streamtype=5; mode=AAC-hbr; config=<hex(ASC)>;
 
 ## Mapping to transmux (Package ⇄ Unpackage)
 
-- **`RtpPacketizer` : Package** — IR `Media` → RTP packets (per track: single-NAL
+- **`RtpPacketiser` : Package** — IR `Media` → RTP packets (per track: single-NAL
   / STAP-A / FU-A for video; AU-hbr for audio) + an SDP string.
-- **`RtpDepacketizer` : Unpackage** — RTP packets → IR (reassemble FU-A, split
+- **`RtpDepacketiser` : Unpackage** — RTP packets → IR (reassemble FU-A, split
   STAP-A, strip AU-headers). Round-trips to the original coded samples.
-- **`RtpStreamDepacketizer` : streaming Unpackage** — Real-time RTP packet feed
+- **`RtpStreamDepacketiser` : streaming Unpackage** — Real-time RTP packet feed
   (`push`) → timed `Sample`s with real per-AU `duration` (from RTP-timestamp
   deltas) and `is_sync` (from IDR detection), carrying the actual `CodecConfig`
   (e.g. from `rtp_sdp` helpers). See [RFC 6184](https://tools.ietf.org/html/rfc6184),

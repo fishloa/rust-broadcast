@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- Renamed `RtpPacketiser`, `RtpDepacketiser`, `RtpStreamDepacketiser`, and the
+  free functions `packetise_klv`/`depacketise_klv` to British spelling (issue
+  #663; all were previously spelled with a "z"). Pure rename —
+  behaviour-preserving, no functional change. RFC 6184's SDP `fmtp`
+  `mode`-selection attribute key is an external wire-protocol string and was
+  deliberately left spelled exactly as the RFC defines it.
+
 ### Added
 
 - `hls::MediaPlaylist::parse` + `hls::MasterPlaylist::parse` (issue #717
@@ -62,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bounded RTP/TS reassembly buffers** (issue #663 P5.2, audit-ingest
   #4 — memory-exhaustion hardening): two streaming-reassembly buffers
   previously grew without bound against malformed or hostile input.
-  `rtp_stream::RtpStreamDepacketizer`'s per-track in-progress access-unit
+  `rtp_stream::RtpStreamDepacketiser`'s per-track in-progress access-unit
   buffer (a dropped/corrupted final FU-A fragment, or a marker bit that
   never arrives, previously accumulated RTP packets for the life of the
   session) is now capped at `MAX_AU_BUFFER_BYTES` (4 MiB); on overflow the
@@ -83,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Streaming, timing- and config-aware RTP depayloader `RtpStreamDepacketizer`
+- Streaming, timing- and config-aware RTP depayloader `RtpStreamDepacketiser`
   (RFC 6184 H.264 / RFC 3640 AAC): incremental `push`/`flush`, real per-sample
   duration from RTP-timestamp deltas, `is_sync` from IDR detection. v1 assumes
   low-delay H.264 (no B-frame reorder; `composition_offset = 0`), one AAC access
@@ -668,7 +676,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     preserved `stream_type` verbatim; a PES-carried Data track is wrapped in
     a `private_stream_1` (`0xBD`) PES packet, payload pass-through; a
     section-carried Data track's samples are re-emitted directly via
-    `mpeg_ts::mux::SectionPacketizer`, never PES-wrapped. `build_pmt_section`
+    `mpeg_ts::mux::SectionPacketiser`, never PES-wrapped. `build_pmt_section`
     now writes each ES's preserved `ES_info` descriptor bytes into the PMT
     (previously always empty) so a receiver can identify a carried stream
     (e.g. its DVB subtitling/teletext descriptor); `program_info` stays
@@ -863,7 +871,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (tag 2, u64 BE µs since the POSIX epoch), `serialize_with_checksum()` +
     `verify_checksum()` (tag 1 = CRC-16/CCITT, poly `0x1021`, init `0xFFFF`, over
     the whole packet incl. the UL key), and `crc16_ccitt`.
-  - **KLV-over-RTP** (`rtp::packetize_klv` / `rtp::depacketize_klv`, RFC 6597,
+  - **KLV-over-RTP** (`rtp::packetise_klv` / `rtp::depacketise_klv`, RFC 6597,
     `smpte336m`): a KLV unit placed directly after the fixed header (no payload
     header), fragmented across sequential packets sharing one timestamp with the
     marker bit on the final fragment; new `DEFAULT_KLV_PT` / `KLV_ENCODING_NAME`.
@@ -1105,8 +1113,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Hevc` variant muxes to an `hvc1`+`hvcC` sample entry. Every codec round-trips
   byte-identically (config box + coded samples) via fragmented-mp4 fixtures.
   Unknown sample entries skip the track rather than erroring.
-- **RTP spoke** (#469): `RtpPacketizer` (`Package`) and `RtpDepacketizer`
-  (`Unpackage`) — de/packetize the `Media` IR ⇄ RTP. H.264 single-NAL / STAP-A
+- **RTP spoke** (#469): `RtpPacketiser` (`Package`) and `RtpDepacketiser`
+  (`Unpackage`) — de/packetise the `Media` IR ⇄ RTP. H.264 single-NAL / STAP-A
   (SPS+PPS) / **FU-A** fragmentation at MTU (RFC 6184), AAC `AAC-hbr` AU-headers
   (RFC 3640), RTP fixed header with marker/seq/90 kHz timestamps (RFC 3550), and
   SDP generation (`rtpmap`/`fmtp` with `sprop-parameter-sets` + AAC `config`,

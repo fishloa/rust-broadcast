@@ -8,7 +8,7 @@ use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream};
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::tdt::TdtSection;
-use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
 
 use crate::{Config, ConformanceMonitor, Indicator};
@@ -193,10 +193,10 @@ fn build_pmt_section(program_number: u16, pcr_pid: u16, es_pids: &[u16]) -> Vec<
     buf
 }
 
-/// Packetize a section into 188-byte TS packets.
-fn packetize_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    let mut pktizer = SectionPacketizer::new(pid);
-    pktizer.packetize(&[section])
+/// Packetise a section into 188-byte TS packets.
+fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
+    let mut pktizer = SectionPacketiser::new(pid);
+    pktizer.packetise(&[section])
 }
 
 /// Feed packets to the monitor and collect all events.
@@ -282,11 +282,11 @@ fn setup_monitor_with_es(monitor: &mut ConformanceMonitor, es_pid: u16) -> u16 {
     acquire_sync(monitor);
 
     let pat_section = build_pat_section(&[(1, pmt_pid)]);
-    let pat_packets = packetize_section(PID_PAT, &pat_section);
+    let pat_packets = packetise_section(PID_PAT, &pat_section);
     feed_all(monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[es_pid]);
-    let pmt_packets = packetize_section(pmt_pid, &pmt_section);
+    let pmt_packets = packetise_section(pmt_pid, &pmt_section);
     feed_all(monitor, &pmt_packets, ms(10), ms(1));
 
     pmt_pid
@@ -461,7 +461,7 @@ fn pat_error_wrong_table_id() {
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x01; // wrong table_id
 
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(has_indicator(&events, Indicator::PatError2));
 }
@@ -495,7 +495,7 @@ fn pat_compliant_no_error() {
     let mut monitor = ConformanceMonitor::new();
 
     let section = build_pat_section(&[(1, 0x100)]);
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
 
     acquire_sync(&mut monitor);
 
@@ -514,7 +514,7 @@ fn pmt_error_timeout() {
     let mut monitor = ConformanceMonitor::new();
 
     let section = build_pat_section(&[(1, 0x100)]);
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
 
     acquire_sync(&mut monitor);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
@@ -529,7 +529,7 @@ fn pmt_error_scrambling() {
     let mut monitor = ConformanceMonitor::new();
 
     let section = build_pat_section(&[(1, 0x100)]);
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
     acquire_sync(&mut monitor);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
@@ -544,13 +544,13 @@ fn pmt_compliant_no_error() {
     let mut monitor = ConformanceMonitor::new();
 
     let pat_section = build_pat_section(&[(1, 0x100)]);
-    let pat_packets = packetize_section(PID_PAT, &pat_section);
+    let pat_packets = packetise_section(PID_PAT, &pat_section);
 
     acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[]);
-    let pmt_packets = packetize_section(0x100, &pmt_section);
+    let pmt_packets = packetise_section(0x100, &pmt_section);
     let events = feed_all(&mut monitor, &pmt_packets, ms(10), ms(1));
     assert!(!has_indicator(&events, Indicator::PmtError2));
 }
@@ -566,13 +566,13 @@ fn pid_error_timeout() {
     let mut monitor = ConformanceMonitor::with_config(config);
 
     let pat_section = build_pat_section(&[(1, 0x100)]);
-    let pat_packets = packetize_section(PID_PAT, &pat_section);
+    let pat_packets = packetise_section(PID_PAT, &pat_section);
 
     acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[0x200]);
-    let pmt_packets = packetize_section(0x100, &pmt_section);
+    let pmt_packets = packetise_section(0x100, &pmt_section);
     feed_all(&mut monitor, &pmt_packets, ms(10), ms(1));
 
     let pkt = make_ts_packet(0x300, 0, false, false, &[], &[]);
@@ -589,13 +589,13 @@ fn pid_compliant_no_error() {
     let mut monitor = ConformanceMonitor::with_config(config);
 
     let pat_section = build_pat_section(&[(1, 0x100)]);
-    let pat_packets = packetize_section(PID_PAT, &pat_section);
+    let pat_packets = packetise_section(PID_PAT, &pat_section);
 
     acquire_sync(&mut monitor);
     feed_all(&mut monitor, &pat_packets, ms(5), ms(1));
 
     let pmt_section = build_pmt_section(1, 0x1FFF, &[0x200]);
-    let pmt_packets = packetize_section(0x100, &pmt_section);
+    let pmt_packets = packetise_section(0x100, &pmt_section);
     feed_all(&mut monitor, &pmt_packets, ms(10), ms(1));
 
     let pkt = make_ts_packet(0x200, 0, false, false, &[], &[]);
@@ -703,7 +703,7 @@ fn crc_error_trips_on_corrupted_pat() {
         section[10] ^= 0xFF;
     }
 
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(has_indicator(&events, Indicator::CrcError));
 }
@@ -715,7 +715,7 @@ fn crc_error_absent_on_valid_pat() {
     acquire_sync(&mut monitor);
 
     let section = build_pat_section(&[(1, 0x100)]);
-    let packets = packetize_section(PID_PAT, &section);
+    let packets = packetise_section(PID_PAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(!has_indicator(&events, Indicator::CrcError));
 }
@@ -892,7 +892,7 @@ fn cat_error_wrong_table_id_on_pid_cat() {
     let mut section = build_pat_section(&[(1, 0x100)]);
     section[0] = 0x02; // table_id = PMT (not CAT)
 
-    let packets = packetize_section(PID_CAT, &section);
+    let packets = packetise_section(PID_CAT, &section);
     let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(has_indicator(&events, Indicator::CatError));
 }
@@ -933,7 +933,7 @@ fn cat_error_absent_when_cat_seen_then_scrambled() {
 
     // Feed a CRC-VALID CAT section on PID 0x0001 — this must mark the CAT as
     // seen (and must NOT itself raise a CRC error).
-    let packets = packetize_section(PID_CAT, &build_valid_cat_section());
+    let packets = packetise_section(PID_CAT, &build_valid_cat_section());
     let cat_events = feed_all(&mut monitor, &packets, ms(5), ms(1));
     assert!(
         !has_indicator(&cat_events, Indicator::CrcError),
@@ -1031,7 +1031,7 @@ fn si_repetition_sdt_trips_on_timeout() {
 
     // Feed an SDT_actual section.
     let section = build_sdt_actual_section();
-    let packets = packetize_section(PID_SDT_BAT, &section);
+    let packets = packetise_section(PID_SDT_BAT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed a packet on another PID past the 2 s SDT interval.
@@ -1055,11 +1055,11 @@ fn si_repetition_sdt_compliant_within_interval() {
 
     // Feed an SDT_actual section.
     let section = build_sdt_actual_section();
-    let packets = packetize_section(PID_SDT_BAT, &section);
+    let packets = packetise_section(PID_SDT_BAT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed another SDT_actual within 2 s.
-    let packets2 = packetize_section(PID_SDT_BAT, &section);
+    let packets2 = packetise_section(PID_SDT_BAT, &section);
     let events = feed_all(&mut monitor, &packets2, ms(1000), ms(1));
     assert!(!has_indicator(&events, Indicator::SiRepetitionError));
 }
@@ -1074,7 +1074,7 @@ fn si_repetition_tdt_trips_on_timeout() {
 
     // Feed a TDT section.
     let section = build_tdt_section();
-    let packets = packetize_section(PID_TDT_TOT, &section);
+    let packets = packetise_section(PID_TDT_TOT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed a packet past the 30 s TDT interval.
@@ -1098,11 +1098,11 @@ fn si_repetition_tdt_compliant_within_interval() {
 
     // Feed a TDT section.
     let section = build_tdt_section();
-    let packets = packetize_section(PID_TDT_TOT, &section);
+    let packets = packetise_section(PID_TDT_TOT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed another TDT within 30 s.
-    let packets2 = packetize_section(PID_TDT_TOT, &section);
+    let packets2 = packetise_section(PID_TDT_TOT, &section);
     let events = feed_all(&mut monitor, &packets2, secs(20), ms(1));
     assert!(!has_indicator(&events, Indicator::SiRepetitionError));
 }
@@ -1117,7 +1117,7 @@ fn si_repetition_nit_trips_on_timeout() {
 
     // Feed a NIT_actual section.
     let section = build_nit_actual_section();
-    let packets = packetize_section(PID_NIT, &section);
+    let packets = packetise_section(PID_NIT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed a packet past the 10 s NIT interval.
@@ -1141,11 +1141,11 @@ fn si_repetition_nit_compliant_within_interval() {
 
     // Feed a NIT_actual section.
     let section = build_nit_actual_section();
-    let packets = packetize_section(PID_NIT, &section);
+    let packets = packetise_section(PID_NIT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed another NIT within 10 s.
-    let packets2 = packetize_section(PID_NIT, &section);
+    let packets2 = packetise_section(PID_NIT, &section);
     let events = feed_all(&mut monitor, &packets2, secs(5), ms(1));
     assert!(!has_indicator(&events, Indicator::SiRepetitionError));
 }
@@ -1160,7 +1160,7 @@ fn si_repetition_eit_pf_trips_on_timeout() {
 
     // Feed an EIT P/F actual section.
     let section = build_eit_pf_actual_section();
-    let packets = packetize_section(PID_EIT, &section);
+    let packets = packetise_section(PID_EIT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed a packet past the 2 s EIT interval.
@@ -1184,11 +1184,11 @@ fn si_repetition_eit_pf_compliant_within_interval() {
 
     // Feed an EIT P/F actual section.
     let section = build_eit_pf_actual_section();
-    let packets = packetize_section(PID_EIT, &section);
+    let packets = packetise_section(PID_EIT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed another EIT within 2 s.
-    let packets2 = packetize_section(PID_EIT, &section);
+    let packets2 = packetise_section(PID_EIT, &section);
     let events = feed_all(&mut monitor, &packets2, secs(1), ms(1));
     assert!(!has_indicator(&events, Indicator::SiRepetitionError));
 }
@@ -1223,7 +1223,7 @@ fn si_repetition_emits_once_not_per_packet() {
 
     // Feed an SDT_actual section.
     let section = build_sdt_actual_section();
-    let packets = packetize_section(PID_SDT_BAT, &section);
+    let packets = packetise_section(PID_SDT_BAT, &section);
     feed_all(&mut monitor, &packets, ms(5), ms(1));
 
     // Feed packets past the 2 s interval — only the FIRST should emit.

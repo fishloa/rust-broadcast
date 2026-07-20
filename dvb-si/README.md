@@ -42,7 +42,7 @@ validated against live broadcast captures.
   alignment from an arbitrary byte stream — junk prefixes, mid-stream loss.
 - `TsPacket::adaptation_field()` decodes the adaptation field: discontinuity /
   random-access flags, PCR & OPCR (`Pcr::as_27mhz()`), and splice countdown.
-- `mux::SectionPacketizer` / `mux::SiMux` are the byte-exact inverse: pack
+- `mux::SectionPacketiser` / `mux::SiMux` are the byte-exact inverse: pack
   serialized section bytes back into 188-byte TS packets (ISO/IEC 13818-1 §2.4.4).
 - `TableId` variants use Rust CamelCase names (`TableId::Pat`,
   `TableId::NetworkInformationActual`, `TableId::MpeFec`), while section parser
@@ -102,7 +102,7 @@ SectionEvent.bytes() ──► collect::SectionSetCollector ──► CompleteSe
                                                          ▼
                                                    complete logical tables
 
-serialized sections ──► mux::SectionPacketizer ──► 188-byte TS packets
+serialized sections ──► mux::SectionPacketiser ──► 188-byte TS packets
 ```
 
 ## Section coverage
@@ -443,7 +443,7 @@ dvb-si = { version = "7", default-features = false }  # tight build: no_std + al
 |---|---|---|
 | `std` | yes | Link std; `no_std + alloc` when off. Non-Latin text charsets and wall-clock time require `std`. |
 | `chrono` | yes | MJD+BCD wire fields → `DateTime<Utc>` decoded accessors. Off → raw MJD/BCD bytes returned. |
-| `ts` | yes | MPEG-TS packet types, `SectionReassembler`, `SiDemux`, `TsResync`, `SectionPacketizer`, `SiMux`. Off → bring your own section bytes. |
+| `ts` | yes | MPEG-TS packet types, `SectionReassembler`, `SiDemux`, `TsResync`, `SectionPacketiser`, `SiMux`. Off → bring your own section bytes. |
 | `serde` | yes | `Serialize` on all parsed types (Serialize-only — re-parse from wire bytes to reconstruct). |
 | `yoke` | no | `Yokeable` impls + `Owned<T>` wrapper to retain parsed views past the input buffer's borrow. |
 | `flate2` | no | zlib decompression for compressed BIOP modules in object carousels. Off → compressed bytes exposed raw. Requires `std`. |

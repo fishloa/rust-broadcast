@@ -5,7 +5,7 @@ ffmpeg-encoded E-AC-3 stream declared via native `stream_type 0x87`). DVB
 broadcasts routinely signal E-AC-3 via the alternate convention instead:
 `stream_type 0x06` (PES private data) + an `enhanced_AC3_descriptor` (tag
 `0x7A`, ETSI EN 300 468 Annex D) in the ES_info descriptor loop. `eac3.ts`'s
-own native-stream_type packetization never exercises that path, so this
+own native-stream_type packetisation never exercises that path, so this
 fixture reproduces it deterministically from real captured audio bytes.
 
 ## How it was generated

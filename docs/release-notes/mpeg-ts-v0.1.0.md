@@ -8,7 +8,7 @@ Initial release of `mpeg-ts` — MPEG-2 Transport Stream framing extracted from
 - **`ts`** — `TsPacket`, `TsHeader`, `AdaptationField`, `SectionReassembler`:
   parse ITU-T H.222.0 §2.4.3 TS packets and reassemble PSI sections from their
   payloads.
-- **`mux`** — `SectionPacketizer`, `SiMux`: packetize PSI sections back into
+- **`mux`** — `SectionPacketiser`, `SiMux`: packetise PSI sections back into
   TS packets with correct CC and padding.
 - **`resync`** — `TsResync`: lost-sync recovery via sliding-window 0x47 search.
 - **`pid`** — `Pid`: typed 13-bit PID newtype with well-known constants.

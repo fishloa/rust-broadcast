@@ -3,7 +3,7 @@
 
 [[entry]]
 value = 0x00
-variant = "GenericPacketized"
+variant = "GenericPacketised"
 spec = "Generic Packetized"
 
 [[entry]]

@@ -160,7 +160,7 @@ pub(crate) fn for_each_access_unit(
 /// Test-only helpers shared by every codec-check test module: build a minimal
 /// but real (typed, CRC-correct) PAT + PMT TS declaring a set of elementary
 /// streams, via `dvb-si`'s own section builders + `mpeg-ts`'s
-/// `SectionPacketizer` — never hand-rolled bytes.
+/// `SectionPacketiser` — never hand-rolled bytes.
 #[cfg(test)]
 pub(crate) mod tests {
     use alloc::vec::Vec;
@@ -169,7 +169,7 @@ pub(crate) mod tests {
     use dvb_si::descriptors::any::DescriptorLoop;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
-    use mpeg_ts::mux::SectionPacketizer;
+    use mpeg_ts::mux::SectionPacketiser;
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
     /// PMT PID used by every test fixture built here.
@@ -225,10 +225,10 @@ pub(crate) mod tests {
         let pmt_bytes = serialize_section(&pmt);
 
         let mut ts = Vec::new();
-        for pkt in SectionPacketizer::new(dvb_si::tables::pat::PID).packetize(&[&pat_bytes]) {
+        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
             ts.extend_from_slice(&pkt);
         }
-        for pkt in SectionPacketizer::new(TEST_PMT_PID).packetize(&[&pmt_bytes]) {
+        for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
             ts.extend_from_slice(&pkt);
         }
         assert_eq!(ts.len() % TS_PACKET_SIZE, 0);

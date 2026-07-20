@@ -2,7 +2,7 @@
 
 ## Rename from `dvb-pes`
 
-`mpeg-pes` 0.1.1 is the renamed successor to `dvb-pes` 0.1.1. PES (Packetized
+`mpeg-pes` 0.1.1 is the renamed successor to `dvb-pes` 0.1.1. PES (Packetised
 Elementary Stream, ISO/IEC 13818-1 §2.4.3) is a generic MPEG-2 Systems construct,
 not DVB-specific — the new name reflects that. The code is identical; only the
 crate name changed.
@@ -19,6 +19,6 @@ compatibility and will not receive new features. The workspace consumers
 
 ## What's in v0.1.1
 
-All functionality from `dvb-pes` 0.1.1: PES depacketization + PTS/DTS extraction
+All functionality from `dvb-pes` 0.1.1: PES depacketisation + PTS/DTS extraction
 (ISO/IEC 13818-1 §2.4.3.6/§2.4.3.7), `#![no_std]` + `alloc`, depends only on
 `dvb-common`.

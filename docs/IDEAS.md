@@ -60,13 +60,13 @@ backlog; promote any to an epic when ready.
    (they rarely emit IDR); **#599 SEI captions** picks up camera-embedded captions.
    Build pieces present: NAL/AU parsing (`transmux::nal`), IR, `LlHlsSegmenter`.
    Gaps to close: (a) Annex-B start-code framing → AU boundary input adapter
-   (byte-stream, not RTP — `transmux::RtpDepacketizer` is for the *off-box*
+   (byte-stream, not RTP — `transmux::RtpDepacketiser` is for the *off-box*
    restream variant only), (b) a minimal `no_std`-friendly HTTP/1.1 server
    (picoserve-class — chunked partials + blocking playlist reload; NOT axum),
    (c) H.265 path for HEVC SoCs (parse/segment; H.264 is done),
    (d) aarch64/armv7 musl cross-compile + a small vendor-encoder shim.
    Off-box restream variant (Pi beside a legacy RTSP-only camera) reuses
-   `rtsp-runtime` + `RtpDepacketizer` instead of the encoder adapter.
+   `rtsp-runtime` + `RtpDepacketiser` instead of the encoder adapter.
    Competes with go2rtc/MediaMTX but pure-Rust, firmware-sized, proper LL-HLS.
 
 ## New crates: SMPTE professional media-plant coverage

@@ -31,7 +31,7 @@ ergonomics real muxers need.
 - TS packet: `TsHeader`, borrowed `TsPacket<'a>`, `AdaptationField` (discontinuity,
   random_access, PCR/OPCR, splice), `Pcr` (27 MHz).
 - Generic PSI **section** framing: `Section<'a>`, `SectionReassembler` (TS→section),
-  `SectionPacketizer` + `SiMux` (section→TS; the byte-exact inverse).
+  `SectionPacketiser` + `SiMux` (section→TS; the byte-exact inverse).
 - `TsResync` sync-byte recovery + `PacketStride`/`ResyncStats`.
 - **Owned/pipeline packet API** absorbed from zenith: `TsPacketBuf` (owned
   `[u8; 188]` + pre-parsed fields + `payload()`/`payload_mut()` + builders like
@@ -54,7 +54,7 @@ ergonomics real muxers need.
 | `ts.rs` | 1058 | → mpeg-ts (generic) |
 | `section.rs` | 533 | → mpeg-ts (generic PSI section) |
 | `resync.rs` | 481 | → mpeg-ts (generic) |
-| `mux.rs` | 1134 | → mpeg-ts (SectionPacketizer + SiMux) |
+| `mux.rs` | 1134 | → mpeg-ts (SectionPacketiser + SiMux) |
 | `demux.rs` | 793 | **stays** in dvb-si (SiDemux, SI-aware) — re-pointed onto `mpeg_ts::` primitives |
 
 dvb-si's *internal* coupling to the moved code is tiny (only `collect/` + `tot.rs`
@@ -107,7 +107,7 @@ reference/seed.
 lib.rs       crate doc (ISO/IEC 13818-1), no_std, alloc, re-exports
 packet.rs    TsHeader, TsPacket<'a>, AdaptationField, Pcr, TsPacketBuf (owned)
 section.rs   Section<'a>, SectionReassembler (TS→section)
-mux.rs       SectionPacketizer, SiMux (section→TS)
+mux.rs       SectionPacketiser, SiMux (section→TS)
 resync.rs    TsResync, PacketStride, ResyncStats
 error.rs     Error/Result (mpeg-ts's own; dvb-si maps as needed)
 ```
@@ -164,14 +164,14 @@ After discussion, the design is revised:
 scope B (move PAT/PMT but not their MPEG-range descriptors, which are equally
 ISO 13818-1 §2.6) is logically inconsistent. The two *consistent* boundaries are:
 **A — transport vs semantics** (mpeg-ts = the wire: packet/AF/PCR + section
-reassembly + packetization + resync + mux; dvb-si = everything *inside* a section:
+reassembly + packetisation + resync + mux; dvb-si = everything *inside* a section:
 ALL tables PAT/PMT/CAT/TSDT + NIT/SDT/EIT AND all descriptors), or **C — full
 MPEG/DVB spec split** (mpeg-ts = all 13818-1 incl. tables + 48 MPEG descriptors).
 C is a multi-crown-jewel, ~15–20k-line, high-risk epic (and `TableDef` is welded to
 `dvb_si::Error`, so `AnyTableSection`/SiDemux can't take cross-crate table types
 without reworking `TableDef`→dvb-common across 30 impls). **Chosen: A.**
 
-- mpeg-ts = framing + section reassembly/packetization (already moved, Tasks 1–4).
+- mpeg-ts = framing + section reassembly/packetisation (already moved, Tasks 1–4).
 - dvb-si = ALL PSI content (every table + every descriptor) — consistently, because
   that is the *semantics* layer. PAT/PMT staying is no longer arbitrary.
 - **Clean break** (per the earlier revision): drop the `dvb_si::{ts,section,resync,mux,pid}`

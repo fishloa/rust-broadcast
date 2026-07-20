@@ -83,7 +83,7 @@ Explicitly out of scope for v1 (deferred):
 - Trick-play.
 
 Additional documented limits inherited from the underlying streaming
-depayloader (`transmux`'s `RtpStreamDepacketizer`, issue #700): low-delay
+depayloader (`transmux`'s `RtpStreamDepacketiser`, issue #700): low-delay
 H.264 only (no B-frame reordering), one AAC access unit per RTP packet, and
 packets must arrive in order — all true of a direct RTSP pull over TCP.
 

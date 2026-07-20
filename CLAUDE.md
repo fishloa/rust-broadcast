@@ -8,14 +8,14 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 
 - **broadcast-common** — shared `Parse<'a>` / `Serialize` traits, the `mux` container-mux traits (`Unpackage`/`Package`/`Encrypt`/`Decrypt`), and CRC-32/MPEG-2. Everything else depends on it. (`dvb-common` is a deprecated re-export shim, **frozen at 8.1.0**, out of the lockstep.)
 - **dvb-si** — the big one: ETSI EN 300 468 Service Information + MPEG-2 PSI. All 29 allocated table_ids, descriptors, DSM-CC data carousel, Annex A text decoding. TS packet / section reassembly lives in `mpeg-ts` (used internally via the `ts` feature).
-- **mpeg-ts** — generic MPEG-2 TS framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetization, resync. `no_std`. Independently versioned.
+- **mpeg-ts** — generic MPEG-2 TS framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetisation, resync. `no_std`. Independently versioned.
 - **dvb-t2mi** — TS 102 773 T2-MI packet/payload parsing.
 - **dvb-bbframe** — DVB-S2/S2X/T2 BBFrame headers, user packet extraction.
 - **scte35-splice** — ANSI/SCTE 35 splice information (DPI cueing); independently versioned (left the DVB lockstep at v1.0.0). (`dvb-scte35` is a deprecated re-export shim at 7.9.1.)
 - **dvb-conformance** — ETSI TR 101 290 stream conformance monitor.
 - **dvb-tools** — CLI analyzer (`dump`/`services`/`epg`/`pids`/`t2mi`).
 - **dvb-stream** — async/tokio stream adapters; independently versioned.
-- **mpeg-pes** — PES depacketization + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned. (`dvb-pes` is a deprecated re-export shim at 0.1.2.)
+- **mpeg-pes** — PES depacketisation + PTS/DTS (ISO/IEC 13818-1 §2.4.3); `no_std`, depends only on dvb-common; independently versioned. (`dvb-pes` is a deprecated re-export shim at 0.1.2.)
 - **dvb-subtitle** — ETSI EN 300 743 DVB (bitmap) subtitling segments (page/region/CLUT/object/DDS/disparity + 2/4/8-bit pixel-data sub-blocks), fed the subtitle PES data field; `no_std`, depends only on dvb-common; independently versioned.
 - **mpeg-ps** — MPEG-1/2 Program Stream framing (ISO/IEC 13818-1 §2.5): pack header (42-bit SCR), system header, program stream map; PES via mpeg-pes; `no_std`; independently versioned.
 - **scte104** — ANSI/SCTE 104 2023 automation→compression DPI signalling: single/multiple operation messages + the full operation set; `no_std`, depends only on dvb-common; independently versioned.

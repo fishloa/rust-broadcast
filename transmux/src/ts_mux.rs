@@ -15,7 +15,7 @@
 //! build a PES packet (PTS always; DTS when it differs) whose payload is the
 //! access unit (video: length-prefixed NAL → Annex B, prepending in-band
 //! SPS/PPS/AUD only when the sample lacks them; audio: the raw frame re-wrapped
-//! in ADTS) → packetize the PES into 188-byte TS packets, carrying the PCR on
+//! in ADTS) → packetise the PES into 188-byte TS packets, carrying the PCR on
 //! the video (first) PID via the adaptation field. Packets are interleaved by
 //! DTS across streams.
 //!
@@ -36,7 +36,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
-use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -388,7 +388,7 @@ struct TaggedPacket {
 /// A single program (PAT PID `0x0000` → PMT PID `0x1000`) enumerates every
 /// carriable track as an elementary stream (PID `0x0100+`); the PCR rides the
 /// first video PID (or, absent video, the first track). Each sample becomes one
-/// PES packet, packetized into 188-byte TS packets, and all packets are
+/// PES packet, packetised into 188-byte TS packets, and all packets are
 /// interleaved in ascending decode-time order.
 ///
 /// Construct with [`TsMux::new`] or [`TsMux::default`].
@@ -574,7 +574,7 @@ pub(crate) fn mux_tracks_at(
     let (plans, planned_idx) = plan_elementary_streams(tracks)?;
 
     // PCR PID: the first video ES, else the first non-section-carried ES (a
-    // section-carried Data stream is packetized without an adaptation field
+    // section-carried Data stream is packetised without an adaptation field
     // at all — issue #576 — so it can never itself carry the PCR), else
     // (only if every ES is section-carried) the first ES regardless.
     let pcr_pid = plans
@@ -584,14 +584,14 @@ pub(crate) fn mux_tracks_at(
         .map(|p| p.pid)
         .unwrap_or(plans[0].pid);
 
-    // ── 2. Build the PSI (PAT + PMT) and packetize it first (PUSI order) ──
+    // ── 2. Build the PSI (PAT + PMT) and packetise it first (PUSI order) ──
     let mut out: Vec<u8> = Vec::new();
     let pat = build_pat_section(PMT_PID);
-    for pkt in packetize_section(PAT_PID, &pat) {
+    for pkt in packetise_section(PAT_PID, &pat) {
         out.extend_from_slice(&pkt);
     }
     let pmt = build_pmt_section(pcr_pid, &plans);
-    for pkt in packetize_section(PMT_PID, &pmt) {
+    for pkt in packetise_section(PMT_PID, &pmt) {
         out.extend_from_slice(&pkt);
     }
 
@@ -605,10 +605,10 @@ pub(crate) fn mux_tracks_at(
         let mut dts_ticks_local: u64 = base_dts_ticks[track_idx];
         let mut cc: u8 = 0;
         // Section-carried Data samples are already whole PSI/private
-        // sections (issue #576) — packetized directly, never PES-wrapped.
-        // The packetizer's own continuity_counter (independent of `cc`
+        // sections (issue #576) — packetised directly, never PES-wrapped.
+        // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
-        let mut section_packetizer = SectionPacketizer::new(plan.pid);
+        let mut section_packetiser = SectionPacketiser::new(plan.pid);
         for sample in samples[track_idx] {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
@@ -624,7 +624,7 @@ pub(crate) fn mux_tracks_at(
             let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale);
 
             if plan.kind.is_section_carried() {
-                for pkt in section_packetizer.packetize(&[sample.data.as_slice()]) {
+                for pkt in section_packetiser.packetise(&[sample.data.as_slice()]) {
                     tagged.push(TaggedPacket {
                         sort_key,
                         packet: pkt,
@@ -635,7 +635,7 @@ pub(crate) fn mux_tracks_at(
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
-                packetize_pes(
+                packetise_pes(
                     plan,
                     &es_payload,
                     pts90,
@@ -714,8 +714,8 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 /// audio, and a PES-carried opaque [`CodecConfig::Data`] sample (issue #576)
 /// → the raw frame/payload verbatim (already self-framed byte streams — no
 /// NAL length-prefixing to undo). Never called for a section-carried
-/// `EsKind::Data` — those samples are whole PSI sections, packetized directly
-/// by the caller instead ([`SectionPacketizer`]).
+/// `EsKind::Data` — those samples are whole PSI sections, packetised directly
+/// by the caller instead ([`SectionPacketiser`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
         EsKind::Avc => build_annexb_au(&sample.data, sample.is_sync, &plan.avc_sps_pps),
@@ -917,11 +917,11 @@ fn finish_section(table_id: u8, body: Vec<u8>) -> Vec<u8> {
     section
 }
 
-/// Packetize one complete PSI section into 188-byte TS packets on `pid`.
+/// Packetise one complete PSI section into 188-byte TS packets on `pid`.
 /// A single PUSI packet with a `pointer_field = 0` prefix, 0xFF-stuffed
 /// (all this crate's sections fit one packet); multi-packet continuation is
 /// handled by the generic loop for safety. ISO/IEC 13818-1 §2.4.4.
-fn packetize_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
+fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
     let mut packets = Vec::new();
     let mut cc: u8 = 0;
     let mut pos = 0usize;
@@ -956,7 +956,7 @@ fn packetize_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
     packets
 }
 
-/// Packetize one PES payload (already framed as its `stream_id` payload) into
+/// Packetise one PES payload (already framed as its `stream_id` payload) into
 /// 188-byte TS packets on `plan.pid`, appended to `tagged` (each tagged with
 /// `sort_key`, the interleave-order key — see [`rescale_for_ordering`], NOT
 /// the on-wire `dts90`). The first packet sets PUSI and — when `carry_pcr` —
@@ -964,7 +964,7 @@ fn packetize_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
 /// adaptation field so the PES ends exactly on a packet boundary.
 /// ISO/IEC 13818-1 §2.4.3.
 #[allow(clippy::too_many_arguments)]
-fn packetize_pes(
+fn packetise_pes(
     plan: &EsPlan,
     es_payload: &[u8],
     pts90: u64,
@@ -1299,7 +1299,7 @@ mod tests {
     #[test]
     fn section_packets_are_whole_and_pusi() {
         let pat = build_pat_section(PMT_PID);
-        let pkts = packetize_section(PAT_PID, &pat);
+        let pkts = packetise_section(PAT_PID, &pat);
         assert_eq!(pkts.len(), 1);
         // sync byte + PUSI bit.
         assert_eq!(pkts[0][0], 0x47);
