@@ -91,6 +91,7 @@ struct Inner {
 /// come back), so in practice it cycles `Connecting` -> `Live` <->
 /// `Reconnecting`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum HealthState {
     /// Never yet connected; the supervisor's first connect attempt is in
     /// flight.

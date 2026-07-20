@@ -175,6 +175,7 @@ pub struct BlockingQuery {
 /// segment/part isn't available *yet* (the caller should wait for the next
 /// change notification and re-resolve).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum PlaylistOutcome {
     /// The rendered media playlist body.
     Ready(String),
@@ -192,6 +193,7 @@ pub enum PlaylistOutcome {
 /// [`PlaylistOutcome::Ready`] is playlist-only), while a produced init/
 /// segment/part byte range never changes once produced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CachePolicy {
     /// Safe to cache indefinitely — a given URI's bytes never change once
     /// produced (each segment/part is generated exactly once under a unique
@@ -201,11 +203,26 @@ pub enum CachePolicy {
     NoCache,
 }
 
+impl CachePolicy {
+    /// The spec/field-enum label (workspace #204 convention): a stable,
+    /// lowercase token per policy, suitable for logs/metrics/`Cache-Control`
+    /// diagnostics.
+    pub fn name(&self) -> &'static str {
+        match self {
+            CachePolicy::Immutable => "immutable",
+            CachePolicy::NoCache => "no-cache",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(CachePolicy);
+
 /// The result of [`MediaStore::resolve_resource`]: the resource's bytes are
 /// ready, the request should wait (a preload-hinted part not yet produced),
 /// or the resource does not (and, for a part whose segment already closed
 /// without it, will never) exist.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResourceOutcome {
     /// The resource's bytes, plus the cache policy an adapter should apply.
     Ready {
@@ -374,6 +391,17 @@ mod tests {
         store.add_part(part(2, 0));
         store.add_part(part(2, 1));
         store
+    }
+
+    #[test]
+    fn cache_policy_name_and_display_agree() {
+        for (policy, label) in [
+            (CachePolicy::Immutable, "immutable"),
+            (CachePolicy::NoCache, "no-cache"),
+        ] {
+            assert_eq!(policy.name(), label);
+            assert_eq!(policy.to_string(), label);
+        }
     }
 
     #[test]

@@ -190,6 +190,10 @@ async fn media_playlist_blocking(
         PlaylistOutcome::Ready(body) => return Ok(body),
         PlaylistOutcome::BadRequest => return Err(()),
         PlaylistOutcome::WouldBlock => {}
+        // `PlaylistOutcome` is `#[non_exhaustive]` — treat any future variant
+        // this adapter doesn't yet know how to render as a bad request
+        // rather than blocking forever or fabricating a playlist body.
+        _ => return Err(()),
     }
     let _guard = BlockingRequestGuard::new();
     let wait = async {
@@ -203,6 +207,11 @@ async fn media_playlist_blocking(
                 // assumed.
                 PlaylistOutcome::BadRequest => return None,
                 PlaylistOutcome::WouldBlock => {}
+                // `PlaylistOutcome` is `#[non_exhaustive]` — an unrecognized
+                // future variant is treated the same as `BadRequest` (give up
+                // on this wait rather than looping/blocking on a condition
+                // this adapter cannot evaluate).
+                _ => return None,
             }
             listener.await;
         }

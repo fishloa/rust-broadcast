@@ -15,6 +15,7 @@ use alloc::string::String;
 /// same resource with the same URI more than once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub enum ResourceId {
     /// The Media Initialisation Section (`EXT-X-MAP`, RFC 8216bis §4.4.4.5).
     Init,

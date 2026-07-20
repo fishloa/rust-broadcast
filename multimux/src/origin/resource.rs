@@ -131,6 +131,10 @@ async fn dynamic_file(State(store): State<Arc<MediaStore>>, Path(file): Path<Str
         ResourceOutcome::NotFound | ResourceOutcome::WouldBlock => {
             StatusCode::NOT_FOUND.into_response()
         }
+        // `ResourceOutcome` is `#[non_exhaustive]` — treat any future
+        // variant this handler doesn't yet know how to serve as a 404
+        // rather than panicking or fabricating a body.
+        _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
 

@@ -358,6 +358,12 @@ async fn output_auth_gate(
             }
             resp
         }
+        // `AuthResult` is `#[non_exhaustive]` (broadcast-auth may add finer-
+        // grained outcomes later, e.g. a rate-limited variant) — default-deny
+        // any variant this middleware doesn't yet know how to treat as
+        // authenticated, rather than silently letting an unrecognized
+        // outcome through.
+        _ => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
 

@@ -69,6 +69,7 @@ use crate::request::RequestContext;
 
 /// The outcome of [`Verifier::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AuthResult {
     /// The `Authorization` header (or absence of one) satisfies the
     /// verifier's configured credential.
