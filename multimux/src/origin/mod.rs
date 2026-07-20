@@ -291,6 +291,16 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// authenticated request at all. [`resource::cors_preflight`]/each `Output`'s
 /// own `OPTIONS` handler still runs, so the preflight's CORS response is
 /// unaffected.
+///
+/// Builds a [`broadcast_auth::RequestContext`] carrying every request header
+/// (not just `Authorization`) plus the transport peer address (from
+/// [`ConnectInfo`], present when [`serve`] wires the router through
+/// `into_make_service_with_connect_info` — `None` in a test harness that
+/// `oneshot`s the router directly), so a `Forwarded`-scheme verifier
+/// (`crate::config::OutputAuthSpec::Forwarded`) can read `X-Forwarded-User`/
+/// `X-Forwarded-For` the same way Basic/Digest/Bearer read `Authorization` —
+/// all through the one [`Verifier::verify`] call, keeping every scheme's
+/// logic inside `broadcast-auth` rather than duplicated here.
 async fn output_auth_gate(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -302,10 +312,6 @@ async fn output_auth_gate(
     if req.method() == Method::OPTIONS {
         return next.run(req).await;
     }
-    let authorization = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
     let method = req.method().as_str().to_string();
     // Use the pre-`nest`-rewrite URI (`OriginalUri`, e.g. `/cam1/master.m3u8`)
     // for the Digest `uri` check, not `req.uri()` (which — inside a nested
@@ -323,7 +329,26 @@ async fn output_auth_gate(
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| uri.path().to_string());
-    match verifier.verify(authorization, &method, &uri) {
+    let headers: Vec<(&str, &str)> = req
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| value.to_str().ok().map(|v| (name.as_str(), v)))
+        .collect();
+    let peer_addr = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0);
+    let mut ctx = broadcast_auth::RequestContext::new(&method, &uri).with_headers(&headers);
+    if let Some(peer_addr) = peer_addr {
+        ctx = ctx.with_peer_addr(peer_addr);
+    }
+    // Observability only (see `Verifier::forwarded_for`'s docs): surfaces
+    // the proxy-forwarded client IP for a `Forwarded`-scheme verifier, no
+    // trust decision is made here or in `broadcast-auth` from this value.
+    if let Some(forwarded_for) = verifier.forwarded_for(&ctx) {
+        tracing::debug!(%forwarded_for, "output-auth: forwarded-for header");
+    }
+    match verifier.verify(&ctx) {
         AuthResult::Ok => next.run(req).await,
         AuthResult::Unauthorized => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
@@ -652,10 +677,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 
     let mut app_state = AppState::new(streams).with_limits(HttpLimits::from(&config));
     if let Some(output_auth) = &config.output_auth {
-        app_state = app_state.with_output_auth(Arc::new(Verifier::new(
-            output_auth.to_credentials(),
-            OUTPUT_AUTH_REALM,
-        )));
+        app_state =
+            app_state.with_output_auth(Arc::new(output_auth.build_verifier(OUTPUT_AUTH_REALM)));
     }
     let state = Arc::new(app_state);
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
@@ -667,9 +690,17 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         // notify.
         let _ = shutdown_tx.send(true);
     };
-    let serve_result = axum::serve(listener, router(state))
-        .with_graceful_shutdown(shutdown_future)
-        .await;
+    // `into_make_service_with_connect_info` inserts a
+    // `ConnectInfo<SocketAddr>` extension into every accepted request, which
+    // `output_auth_gate` reads for `RequestContext::peer_addr` (issue #663
+    // extensibility wave part 1) — without it, `peer_addr` would always be
+    // `None`, same as it is in tests that `oneshot` the router directly.
+    let serve_result = axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_future)
+    .await;
 
     // axum has stopped accepting connections and drained in-flight requests
     // by the time `.await` above returns (whether that's because shutdown
@@ -1460,6 +1491,18 @@ mod tests {
             .unwrap()
     }
 
+    fn get_with_header(
+        uri: &str,
+        name: &str,
+        value: &str,
+    ) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .uri(uri)
+            .header(name, value)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
     fn basic_header(username: &str, password: &str) -> String {
         use base64::Engine as _;
         format!(
@@ -1695,6 +1738,116 @@ mod tests {
     async fn output_auth_none_stream_route_stays_open() {
         let app = router(Arc::new(AppState::new(make_state_streams())));
         let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    // --- issue #663 extensibility wave part 1: Forwarded output-auth ---
+
+    /// Biting test: with `Forwarded` `output_auth` configured, a request
+    /// carrying `X-Forwarded-User` (non-empty) must `200` — the whole
+    /// mechanism is trusting a fronting reverse proxy to have set it.
+    #[tokio::test]
+    async fn output_auth_forwarded_with_user_header_200() {
+        let app = app_with_output_auth(Verifier::forwarded(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+        ));
+        let resp = app
+            .oneshot(get_with_header(
+                "/cam1/master.m3u8",
+                "X-Forwarded-User",
+                "alice",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Biting test: with `Forwarded` `output_auth` configured, a request with
+    /// no `X-Forwarded-User` header must `401` — a client hitting the origin
+    /// directly (bypassing the trusted proxy) must not get in.
+    #[tokio::test]
+    async fn output_auth_forwarded_without_user_header_401() {
+        let app = app_with_output_auth(Verifier::forwarded(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+        ));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// An empty `X-Forwarded-User` header must not count as authenticated
+    /// (a misbehaving proxy forwarding a blank header must not silently
+    /// grant access).
+    #[tokio::test]
+    async fn output_auth_forwarded_empty_user_header_401() {
+        let app = app_with_output_auth(Verifier::forwarded(
+            "X-Forwarded-User",
+            Some("X-Forwarded-For".to_string()),
+        ));
+        let resp = app
+            .oneshot(get_with_header("/cam1/master.m3u8", "X-Forwarded-User", ""))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Biting test: `output_auth_gate` reads `X-Forwarded-For` via
+    /// `Verifier::forwarded_for` — confirmed here by checking the verifier
+    /// resolves it from a `RequestContext` built the same way the gate
+    /// builds one (headers collected from the request), rather than only
+    /// asserting on the HTTP status (which a `Forwarded` scheme would return
+    /// `200` for either way, since `X-Forwarded-For` is never part of the
+    /// trust decision).
+    #[tokio::test]
+    async fn output_auth_forwarded_reads_x_forwarded_for() {
+        let verifier = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let headers: &[(&str, &str)] = &[
+            ("X-Forwarded-User", "alice"),
+            ("X-Forwarded-For", "203.0.113.7"),
+        ];
+        let ctx = RequestContext::new("GET", "/cam1/master.m3u8").with_headers(headers);
+        assert_eq!(verifier.forwarded_for(&ctx), Some("203.0.113.7"));
+
+        // And the end-to-end request carrying both headers still `200`s —
+        // `X-Forwarded-For` is read for observability, never gates access.
+        let app = app_with_output_auth(verifier);
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/cam1/master.m3u8")
+                    .header("X-Forwarded-User", "alice")
+                    .header("X-Forwarded-For", "203.0.113.7")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Basic/Digest/Bearer output-auth are unaffected by the `Forwarded`
+    /// addition and by `RequestContext` gaining `headers`/`peer_addr` —
+    /// re-run here as an explicit "still pass" marker for the extensibility
+    /// wave (the bulk of the Basic/Digest/Bearer coverage is the pre-existing
+    /// `output_auth_basic_*`/`output_auth_digest_*`/`output_auth_bearer_*`
+    /// tests above, all still green).
+    #[tokio::test]
+    async fn output_auth_basic_digest_bearer_unaffected_by_forwarded_addition() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app
+            .oneshot(get_with_auth(
+                "/cam1/master.m3u8",
+                &basic_header("admin", "hunter2"),
+            ))
+            .await
+            .unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 

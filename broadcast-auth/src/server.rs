@@ -35,6 +35,19 @@
 //!   also match the actual request URI (RFC 7616 §3.4.1: the server "SHOULD
 //!   check" this), not merely be internally consistent with its own
 //!   `response`.
+//! - **Forwarded** ([`Self::forwarded`], issue #663 extensibility wave part
+//!   1): not an RFC 7235 challenge scheme at all — trusts that a fronting
+//!   reverse proxy has already authenticated the caller and forwards the
+//!   authenticated username in a configured header (conventionally
+//!   `X-Forwarded-User`). Authenticated iff that header is present and
+//!   non-empty. **Safe ONLY behind a trusted reverse proxy that strips any
+//!   client-supplied copies of that header (and of the forwarded-for header,
+//!   if configured) before forwarding** — this crate performs no such
+//!   stripping and trusts [`crate::RequestContext::headers`] completely; a
+//!   direct or spoofed client could otherwise set the header itself and
+//!   bypass authentication entirely. [`Self::challenge`] returns just the
+//!   bare scheme name for diagnostics (there is no challenge/response
+//!   round-trip a direct client could answer).
 //!
 //! # Nonce handling (replay caveat)
 //!
@@ -52,6 +65,7 @@ use base64::Engine;
 use md5::{Digest as _, Md5};
 
 use crate::credentials::Credentials;
+use crate::request::RequestContext;
 
 /// The outcome of [`Verifier::verify`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,6 +95,13 @@ enum VerifierScheme {
     },
     Bearer {
         token: String,
+    },
+    /// Reverse-proxy forwarded-auth (see the module docs) — no
+    /// `Credentials`/realm/nonce at all, since there is no client-answered
+    /// challenge for this scheme.
+    Forwarded {
+        user_header: String,
+        forwarded_for_header: Option<String>,
     },
 }
 
@@ -118,8 +139,30 @@ impl Verifier {
         Verifier { scheme }
     }
 
+    /// Builds a verifier for the reverse-proxy forwarded-auth scheme (see the
+    /// module docs' trust assumption — read it before using this).
+    ///
+    /// `user_header` (conventionally `X-Forwarded-User`) is the header whose
+    /// presence (non-empty) [`Self::verify`] treats as "the proxy already
+    /// authenticated this caller". `forwarded_for_header` (conventionally
+    /// `Some("X-Forwarded-For".to_string())`), if configured, is read back by
+    /// [`Self::forwarded_for`] for observability only — this crate makes no
+    /// trust decision based on it.
+    pub fn forwarded(user_header: impl Into<String>, forwarded_for_header: Option<String>) -> Self {
+        Verifier {
+            scheme: VerifierScheme::Forwarded {
+                user_header: user_header.into(),
+                forwarded_for_header,
+            },
+        }
+    }
+
     /// The `WWW-Authenticate` header value to send on a `401` in response to
     /// a missing/failed [`Self::verify`] call.
+    ///
+    /// `Forwarded` (built via [`Self::forwarded`]) has no real RFC 7235
+    /// challenge (a direct client cannot answer it — see the module docs);
+    /// this just names the scheme for diagnostics.
     pub fn challenge(&self) -> String {
         match &self.scheme {
             VerifierScheme::Basic { realm, .. } => format!("Basic realm=\"{realm}\""),
@@ -127,36 +170,61 @@ impl Verifier {
                 format!("Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5")
             }
             VerifierScheme::Bearer { .. } => "Bearer".to_string(),
+            VerifierScheme::Forwarded { .. } => "Forwarded".to_string(),
         }
     }
 
-    /// Verifies an incoming request's `Authorization` header (`None` if the
-    /// request carried none) against this verifier's configured credential.
+    /// Verifies an incoming request against this verifier's configured
+    /// scheme.
     ///
-    /// `method`/`uri` are the request's method and request-URI (RTSP request
-    /// URI, or HTTP path+query — whichever the caller's protocol uses) —
-    /// needed for the Digest `HA2`/`uri`-match check (RFC 7616 §3.4.1);
-    /// unused for Basic/Bearer.
-    pub fn verify(&self, authorization: Option<&str>, method: &str, uri: &str) -> AuthResult {
-        let Some(header) = authorization else {
-            return AuthResult::Unauthorized;
-        };
+    /// Basic/Digest/Bearer read `ctx`'s `Authorization` header
+    /// ([`RequestContext::header`], case-insensitive) — missing entirely is
+    /// `Unauthorized`, same as before this took a full [`RequestContext`].
+    /// `ctx.method`/`ctx.uri` are needed for the Digest `HA2`/`uri`-match
+    /// check (RFC 7616 §3.4.1); unused for Basic/Bearer. Forwarded reads
+    /// `ctx`'s configured user header instead — see the module docs.
+    pub fn verify(&self, ctx: &RequestContext<'_>) -> AuthResult {
         let ok = match &self.scheme {
             VerifierScheme::Basic {
                 username, password, ..
-            } => verify_basic(header, username, password),
-            VerifierScheme::Bearer { token } => verify_bearer(header, token),
+            } => ctx
+                .header("authorization")
+                .is_some_and(|header| verify_basic(header, username, password)),
+            VerifierScheme::Bearer { token } => ctx
+                .header("authorization")
+                .is_some_and(|header| verify_bearer(header, token)),
             VerifierScheme::Digest {
                 username,
                 password,
                 realm,
                 nonce,
-            } => verify_digest(header, username, password, realm, nonce, method, uri),
+            } => ctx.header("authorization").is_some_and(|header| {
+                verify_digest(
+                    header, username, password, realm, nonce, ctx.method, ctx.uri,
+                )
+            }),
+            VerifierScheme::Forwarded { user_header, .. } => verify_forwarded(ctx, user_header),
         };
         if ok {
             AuthResult::Ok
         } else {
             AuthResult::Unauthorized
+        }
+    }
+
+    /// For a [`Self::forwarded`] verifier with a configured
+    /// `forwarded_for_header`, returns that header's value from `ctx` — for
+    /// tracing/observability only; this crate makes no trust decision with
+    /// it (the module docs' trust assumption is what actually matters).
+    /// `None` for any other verifier, or when no such header is
+    /// configured/present in `ctx`.
+    pub fn forwarded_for<'a>(&self, ctx: &RequestContext<'a>) -> Option<&'a str> {
+        match &self.scheme {
+            VerifierScheme::Forwarded {
+                forwarded_for_header: Some(header_name),
+                ..
+            } => ctx.header(header_name),
+            _ => None,
         }
     }
 }
@@ -169,6 +237,7 @@ impl core::fmt::Debug for Verifier {
             VerifierScheme::Basic { .. } => "Basic",
             VerifierScheme::Digest { .. } => "Digest",
             VerifierScheme::Bearer { .. } => "Bearer",
+            VerifierScheme::Forwarded { .. } => "Forwarded",
         };
         f.debug_struct("Verifier")
             .field("scheme", &scheme)
@@ -247,6 +316,15 @@ fn verify_digest(
     constant_time_eq(expected_response.as_bytes(), client_response.as_bytes())
 }
 
+/// Reverse-proxy forwarded-auth (see the module docs): authenticated iff
+/// `user_header` is present in `ctx` and non-empty (after trimming) — the
+/// proxy having already verified the caller's identity. No credential/secret
+/// is compared here, so no constant-time comparison is needed.
+fn verify_forwarded(ctx: &RequestContext<'_>, user_header: &str) -> bool {
+    ctx.header(user_header)
+        .is_some_and(|v| !v.trim().is_empty())
+}
+
 /// Lowercase-hex MD5 digest of `input`.
 fn md5_hex(input: String) -> String {
     let mut hasher = Md5::new();
@@ -282,6 +360,25 @@ mod tests {
     use crate::{Credentials, RequestContext, respond};
 
     const REALM: &str = "cameras";
+
+    /// Test helper: builds a [`RequestContext`] carrying `authorization` (if
+    /// any) as the `Authorization` header, then verifies it — stands in for
+    /// the pre-#663-extensibility-wave-1 `Verifier::verify(Option<&str>,
+    /// &str, &str)` signature so the tests below read the same as before.
+    fn verify_auth(
+        v: &Verifier,
+        authorization: Option<&str>,
+        method: &str,
+        uri: &str,
+    ) -> AuthResult {
+        let auth_header = authorization.map(|h| [("authorization", h)]);
+        let headers: &[(&str, &str)] = match &auth_header {
+            Some(arr) => arr,
+            None => &[],
+        };
+        let ctx = RequestContext::new(method, uri).with_headers(headers);
+        v.verify(&ctx)
+    }
 
     // --- challenge() shape ---
 
@@ -360,7 +457,10 @@ mod tests {
             Credentials::new("admin", "12345"),
         )
         .unwrap();
-        assert_eq!(v.verify(Some(&header), "GET", "/stream"), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream"),
+            AuthResult::Ok
+        );
     }
 
     #[test]
@@ -375,7 +475,7 @@ mod tests {
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
         assert_eq!(
-            v.verify(Some(&header), "DESCRIBE", "rtsp://cam/live"),
+            verify_auth(&v, Some(&header), "DESCRIBE", "rtsp://cam/live"),
             AuthResult::Ok
         );
     }
@@ -389,7 +489,10 @@ mod tests {
             Credentials::bearer("mytoken123"),
         )
         .unwrap();
-        assert_eq!(v.verify(Some(&header), "GET", "/stream"), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream"),
+            AuthResult::Ok
+        );
     }
 
     // --- wrong credentials -> Unauthorized (must BITE) ---
@@ -410,7 +513,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            v.verify(Some(&header), "GET", "/stream"),
+            verify_auth(&v, Some(&header), "GET", "/stream"),
             AuthResult::Unauthorized
         );
     }
@@ -427,7 +530,7 @@ mod tests {
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "WRONG")).unwrap();
         assert_eq!(
-            v.verify(Some(&header), "DESCRIBE", "rtsp://cam/live"),
+            verify_auth(&v, Some(&header), "DESCRIBE", "rtsp://cam/live"),
             AuthResult::Unauthorized
         );
     }
@@ -447,7 +550,7 @@ mod tests {
         let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live");
         let header = respond(&v.challenge(), &ctx, Credentials::new("admin", "12345")).unwrap();
         assert_eq!(
-            v.verify(Some(&header), "DESCRIBE", "rtsp://cam/OTHER"),
+            verify_auth(&v, Some(&header), "DESCRIBE", "rtsp://cam/OTHER"),
             AuthResult::Unauthorized
         );
     }
@@ -462,7 +565,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            v.verify(Some(&header), "GET", "/stream"),
+            verify_auth(&v, Some(&header), "GET", "/stream"),
             AuthResult::Unauthorized
         );
     }
@@ -470,7 +573,10 @@ mod tests {
     #[test]
     fn missing_authorization_header_is_unauthorized() {
         let v = Verifier::new(Credentials::bearer("tok"), REALM);
-        assert_eq!(v.verify(None, "GET", "/stream"), AuthResult::Unauthorized);
+        assert_eq!(
+            verify_auth(&v, None, "GET", "/stream"),
+            AuthResult::Unauthorized
+        );
     }
 
     #[test]
@@ -485,9 +591,103 @@ mod tests {
             REALM,
         );
         assert_eq!(
-            v.verify(Some("Bearer sometoken"), "GET", "/stream"),
+            verify_auth(&v, Some("Bearer sometoken"), "GET", "/stream"),
             AuthResult::Unauthorized
         );
+    }
+
+    // --- Forwarded (reverse-proxy forwarded-auth, issue #663 extensibility
+    // wave part 1) ---
+
+    #[test]
+    fn forwarded_challenge_is_bare_scheme_name() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        assert_eq!(v.challenge(), "Forwarded");
+    }
+
+    /// Biting test: a request carrying the configured user header (non-empty)
+    /// must verify `Ok` — this is the whole trust mechanism, no secret is
+    /// ever compared.
+    #[test]
+    fn forwarded_with_user_header_present_is_ok() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let headers: &[(&str, &str)] = &[("X-Forwarded-User", "alice")];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.verify(&ctx), AuthResult::Ok);
+    }
+
+    /// Biting test: a request with no user header at all must `Unauthorized`
+    /// — the whole point of the scheme is that only a trusted proxy having
+    /// authenticated the caller sets it.
+    #[test]
+    fn forwarded_without_user_header_is_unauthorized() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let ctx = RequestContext::new("GET", "/stream");
+        assert_eq!(v.verify(&ctx), AuthResult::Unauthorized);
+    }
+
+    /// An empty (but present) user header must not count as authenticated —
+    /// otherwise a proxy bug forwarding an empty header would silently grant
+    /// access.
+    #[test]
+    fn forwarded_with_empty_user_header_is_unauthorized() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let headers: &[(&str, &str)] = &[("X-Forwarded-User", "")];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.verify(&ctx), AuthResult::Unauthorized);
+    }
+
+    /// The user-header lookup is case-insensitive, matching real HTTP header
+    /// semantics (RFC 7230 §3.2) rather than a literal-string match.
+    #[test]
+    fn forwarded_user_header_lookup_is_case_insensitive() {
+        let v = Verifier::forwarded("X-Forwarded-User", None);
+        let headers: &[(&str, &str)] = &[("x-forwarded-user", "alice")];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.verify(&ctx), AuthResult::Ok);
+    }
+
+    /// Biting test: `forwarded_for` reads the configured header's value back
+    /// out of the request context — the mechanism the origin middleware uses
+    /// to surface the proxy-forwarded client IP to tracing.
+    #[test]
+    fn forwarded_for_reads_configured_header() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let headers: &[(&str, &str)] = &[
+            ("X-Forwarded-User", "alice"),
+            ("X-Forwarded-For", "203.0.113.7"),
+        ];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.forwarded_for(&ctx), Some("203.0.113.7"));
+    }
+
+    /// With no `forwarded_for_header` configured, `forwarded_for` is always
+    /// `None`, even if an `X-Forwarded-For` header happens to be present.
+    #[test]
+    fn forwarded_for_is_none_when_not_configured() {
+        let v = Verifier::forwarded("X-Forwarded-User", None);
+        let headers: &[(&str, &str)] = &[("X-Forwarded-For", "203.0.113.7")];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.forwarded_for(&ctx), None);
+    }
+
+    /// `forwarded_for` is always `None` for a non-`Forwarded` verifier, even
+    /// if the request happens to carry an `X-Forwarded-For` header.
+    #[test]
+    fn forwarded_for_is_none_for_non_forwarded_verifier() {
+        let v = Verifier::new(Credentials::bearer("tok"), REALM);
+        let headers: &[(&str, &str)] = &[("X-Forwarded-For", "203.0.113.7")];
+        let ctx = RequestContext::new("GET", "/stream").with_headers(headers);
+        assert_eq!(v.forwarded_for(&ctx), None);
+    }
+
+    /// Debug must never need to redact anything for `Forwarded` (no secret is
+    /// involved), but must still not panic and must name the scheme.
+    #[test]
+    fn forwarded_debug_names_scheme() {
+        let v = Verifier::forwarded("X-Forwarded-User", Some("X-Forwarded-For".to_string()));
+        let debug = format!("{v:?}");
+        assert!(debug.contains("Forwarded"), "debug: {debug}");
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::store::MediaStore;
 /// Which delivery protocol an [`Output`] implements — used for config
 /// (`crate::config::Route::outputs`) and diagnostics; never for dispatch
 /// (the manifest routes an `Output` mounts are the actual behaviour).
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize, serde::Serialize)]
 pub enum OutputKind {
     /// Low-Latency HLS (`master.m3u8` + `media.m3u8`).

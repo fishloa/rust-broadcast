@@ -6,6 +6,43 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`Verifier::forwarded` — reverse-proxy forwarded-auth scheme** (issue #663
+  extensibility wave part 1): trusts that a fronting reverse proxy has
+  already authenticated the caller and forwards the authenticated username
+  in a configured header (conventionally `X-Forwarded-User`) — authenticated
+  iff that header is present and non-empty. Unlike Basic/Digest/Bearer this
+  scheme has no `Credentials`/challenge-response round-trip at all;
+  [`Verifier::challenge`] just names the scheme (`"Forwarded"`) for
+  diagnostics. `Verifier::forwarded_for` reads back a second configured
+  header (conventionally `X-Forwarded-For`) for tracing/observability only —
+  no trust decision is made from it. **Safe ONLY behind a trusted reverse
+  proxy that strips any client-supplied copies of both headers before
+  forwarding** — see the `server` module docs' trust-assumption note.
+
+### Changed (breaking)
+- **`RequestContext` gained `headers`/`peer_addr`.** `headers: &[(&str,
+  &str)]` (every request header, looked up case-insensitively via the new
+  `RequestContext::header`) and `peer_addr: Option<SocketAddr>` (the
+  transport peer), attached via the new `with_headers`/`with_peer_addr`
+  builders. `RequestContext::new` defaults both to empty/`None`, so every
+  existing 2-arg call site (client-side `respond`/`Authenticator` use) is
+  unaffected. This is what lets a server-side `Verifier` scheme see beyond
+  `Authorization` — the mechanism `Verifier::forwarded` needs.
+- **`Verifier::verify` now takes `&RequestContext` instead of
+  `(Option<&str>, &str, &str)`.** Basic/Digest/Bearer verification is
+  unchanged in outcome — they now read the `Authorization` header out of
+  `ctx.headers` instead of taking it as a direct argument. Every in-tree
+  caller (this crate's own tests, `multimux`'s output-auth gate) is updated;
+  external callers must build a `RequestContext` (`RequestContext::new(method,
+  uri).with_headers(headers)`) instead of passing the header directly.
+- **`Credentials`/`AuthSpec`/`OutputAuthSpec`-adjacent enums are
+  `#[non_exhaustive]` where not already** (see `multimux`'s changelog for
+  its own enums) — a future scheme addition is now non-breaking. Internal
+  matches across this crate and its consumers were already/are now
+  exhaustive with no wildcard needed (all matched from within the crate that
+  defines them); this only affects external crates matching on these types.
+
 ### Security
 - **`Credentials`'s `Debug` no longer leaks the raw password/token.** Pre-
   release audit finding: `#[derive(Debug)]` printed `Basic`/`Digest`'s

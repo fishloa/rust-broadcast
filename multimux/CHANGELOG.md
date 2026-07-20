@@ -3,6 +3,39 @@
 ## [Unreleased]
 
 ### Added
+- **`OutputAuthSpec::Forwarded` — reverse-proxy forwarded-auth output-auth
+  scheme** (issue #663 extensibility wave part 1, built on
+  `broadcast_auth::Verifier::forwarded`): configures the shared output-auth
+  gate to trust a fronting reverse proxy that has already authenticated the
+  caller, rather than checking a Basic/Digest/Bearer credential itself.
+  JSON: `{ "scheme": "forwarded", "user_header": "X-Forwarded-User",
+  "forwarded_for_header": "X-Forwarded-For" }` — both fields optional,
+  defaulting to `X-Forwarded-User`/`Some("X-Forwarded-For")`; set
+  `forwarded_for_header: null` to disable reading it. A request is allowed
+  iff `user_header` is present and non-empty; `forwarded_for_header`, if
+  set, is read for tracing/observability only — no trust decision is made
+  from it. **Safe ONLY behind a trusted reverse proxy that strips any
+  client-supplied copies of both headers before forwarding** — see
+  `OutputAuthSpec::Forwarded`'s doc comment. `output_auth_gate` now builds a
+  `broadcast_auth::RequestContext` carrying every request header (not just
+  `Authorization`) plus the transport peer address (via
+  `into_make_service_with_connect_info`, wired in `serve`), so any
+  `Verifier` scheme — this one included — can see beyond `Authorization`.
+- **`InputSpec`/`AuthSpec`/`OutputAuthSpec`/`output::OutputKind` are now
+  `#[non_exhaustive]`** (issue #663 extensibility wave part 1): a future
+  ingest transport, client-auth scheme, output-auth scheme, or delivery
+  protocol can be added later without it being a breaking change for
+  external matches on these types.
+
+### Changed (breaking)
+- **`OutputAuthSpec::to_credentials` replaced by
+  `OutputAuthSpec::build_verifier(realm)`** (`pub(crate)`, so only affects
+  this crate's own `serve`): returns the configured
+  `broadcast_auth::Verifier` directly rather than a `Credentials` value —
+  needed because `Forwarded` has no `Credentials` mapping at all (no
+  username/password/token, no challenge/response round-trip).
+
+### Added
 - **Shared output auth** (issue #663 "shared output auth",
   `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`): one
   Basic/Digest/Bearer credential can now gate **every** media output route

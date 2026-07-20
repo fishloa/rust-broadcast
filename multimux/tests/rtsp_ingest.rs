@@ -28,7 +28,7 @@
 
 use std::time::Duration;
 
-use broadcast_auth::{AuthResult, Verifier};
+use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use multimux::source::rtsp::RtspSource;
 use rtsp_runtime::{Credentials, InterleavedFrame, TransportSpec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -485,7 +485,9 @@ async fn serve_one_session_requiring_digest_auth(mut sock: TcpStream, verifier: 
         "retry must carry a Digest Authorization: {auth}"
     );
     let uri = request_uri(&req);
-    let verified = verifier.verify(Some(auth), "DESCRIBE", uri);
+    let auth_header: &[(&str, &str)] = &[("Authorization", auth)];
+    let ctx = RequestContext::new("DESCRIBE", uri).with_headers(auth_header);
+    let verified = verifier.verify(&ctx);
 
     if verified != AuthResult::Ok {
         // Wrong credentials: re-challenge (matching a real Digest origin's

@@ -47,6 +47,7 @@ fn default_outputs() -> Vec<OutputKind> {
 /// `crate::source::http_auth::resolve_credentials`). [`InputSpec::Rtp`]/
 /// [`InputSpec::TsUdp`] are raw UDP transports with no HTTP/RTSP request line
 /// to attach credentials to, so they carry no `auth` field.
+#[non_exhaustive]
 #[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputSpec {
@@ -120,6 +121,7 @@ pub enum InputSpec {
 /// JSON shape is untagged — either
 /// `{ "username": "...", "password": "..." }` or
 /// `{ "bearer_token": "..." }`.
+#[non_exhaustive]
 #[derive(Clone, Deserialize)]
 #[serde(untagged)]
 pub enum AuthSpec {
@@ -186,7 +188,10 @@ impl AuthSpec {
 ///
 /// JSON shape is tagged on `scheme`: `{ "scheme": "basic", "username": "...",
 /// "password": "..." }`, `{ "scheme": "digest", "username": "...", "password":
-/// "..." }`, or `{ "scheme": "bearer", "token": "..." }`.
+/// "..." }`, `{ "scheme": "bearer", "token": "..." }`, or
+/// `{ "scheme": "forwarded", "user_header": "...", "forwarded_for_header":
+/// "..." }` (see [`OutputAuthSpec::Forwarded`]).
+#[non_exhaustive]
 #[derive(Clone, Deserialize)]
 #[serde(tag = "scheme", rename_all = "snake_case")]
 pub enum OutputAuthSpec {
@@ -210,10 +215,51 @@ pub enum OutputAuthSpec {
         /// The opaque bearer token.
         token: String,
     },
+    /// Reverse-proxy forwarded-auth (issue #663 extensibility wave part 1,
+    /// `broadcast_auth::Verifier::forwarded`): trusts that a fronting
+    /// reverse proxy has already authenticated the caller and forwards the
+    /// authenticated username in `user_header`. Authenticated iff that
+    /// header is present and non-empty; unlike Basic/Digest/Bearer there is
+    /// no credential configured here at all and no `WWW-Authenticate`
+    /// challenge/response round-trip a direct client could answer.
+    ///
+    /// # Trust assumption
+    ///
+    /// **Safe ONLY behind a trusted reverse proxy that strips any
+    /// client-supplied copies of `user_header` (and `forwarded_for_header`,
+    /// if set) before forwarding.** multimux performs no such stripping and
+    /// trusts every inbound header completely — if the origin is reachable
+    /// directly (not exclusively through the proxy), any client can set
+    /// these headers itself and bypass authentication entirely.
+    Forwarded {
+        /// Header naming the proxy-authenticated username. Defaults to
+        /// `"X-Forwarded-User"` when omitted.
+        #[serde(default = "default_forwarded_user_header")]
+        user_header: String,
+        /// Header the proxy uses to forward the original client's address,
+        /// read back for observability (tracing) only — never used for any
+        /// trust decision. Defaults to `Some("X-Forwarded-For")`; set to
+        /// `null` to disable reading it at all.
+        #[serde(default = "default_forwarded_for_header")]
+        forwarded_for_header: Option<String>,
+    },
 }
 
-/// Manual `Debug` (rather than `#[derive(Debug)]`): every variant carries a
-/// secret (`password`/`token`) that must never render verbatim.
+/// [`OutputAuthSpec::Forwarded`]'s default `user_header` when the config
+/// omits the field.
+fn default_forwarded_user_header() -> String {
+    "X-Forwarded-User".to_string()
+}
+
+/// [`OutputAuthSpec::Forwarded`]'s default `forwarded_for_header` when the
+/// config omits the field (`null` explicitly disables it instead).
+fn default_forwarded_for_header() -> Option<String> {
+    Some("X-Forwarded-For".to_string())
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): the Basic/Digest/Bearer
+/// variants each carry a secret (`password`/`token`) that must never render
+/// verbatim; `Forwarded`'s header names aren't secret and render as-is.
 impl std::fmt::Debug for OutputAuthSpec {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -230,33 +276,60 @@ impl std::fmt::Debug for OutputAuthSpec {
             OutputAuthSpec::Bearer { .. } => {
                 f.debug_struct("Bearer").field("token", &"***").finish()
             }
+            OutputAuthSpec::Forwarded {
+                user_header,
+                forwarded_for_header,
+            } => f
+                .debug_struct("Forwarded")
+                .field("user_header", user_header)
+                .field("forwarded_for_header", forwarded_for_header)
+                .finish(),
         }
     }
 }
 
 impl OutputAuthSpec {
-    /// Converts to the scheme-agnostic [`Credentials`] a
-    /// [`broadcast_auth::Verifier`] is built from — unlike
-    /// [`AuthSpec::to_credentials`], the scheme is preserved exactly (this is
-    /// the server side, so it must issue the challenge for the scheme it was
+    /// Builds the [`broadcast_auth::Verifier`] this spec configures —
+    /// Basic/Digest/Bearer via a [`Credentials`] + `realm` (the scheme is
+    /// preserved exactly: unlike [`AuthSpec::to_credentials`], this is the
+    /// server side, so it must issue the challenge for the scheme it was
     /// actually configured with, not whichever the client's challenge
-    /// implies).
-    pub(crate) fn to_credentials(&self) -> Credentials {
+    /// implies); `Forwarded` via [`broadcast_auth::Verifier::forwarded`]
+    /// (no credential/challenge round-trip at all — see that variant's
+    /// trust-assumption docs).
+    pub(crate) fn build_verifier(&self, realm: &str) -> broadcast_auth::Verifier {
         match self {
-            OutputAuthSpec::Basic { username, password } => Credentials::Basic {
-                username: username.clone(),
-                password: password.clone(),
-            },
-            OutputAuthSpec::Digest { username, password } => Credentials::Digest {
-                username: username.clone(),
-                password: password.clone(),
-            },
-            OutputAuthSpec::Bearer { token } => Credentials::bearer(token.clone()),
+            OutputAuthSpec::Basic { username, password } => broadcast_auth::Verifier::new(
+                Credentials::Basic {
+                    username: username.clone(),
+                    password: password.clone(),
+                },
+                realm,
+            ),
+            OutputAuthSpec::Digest { username, password } => broadcast_auth::Verifier::new(
+                Credentials::Digest {
+                    username: username.clone(),
+                    password: password.clone(),
+                },
+                realm,
+            ),
+            OutputAuthSpec::Bearer { token } => {
+                broadcast_auth::Verifier::new(Credentials::bearer(token.clone()), realm)
+            }
+            OutputAuthSpec::Forwarded {
+                user_header,
+                forwarded_for_header,
+            } => broadcast_auth::Verifier::forwarded(
+                user_header.clone(),
+                forwarded_for_header.clone(),
+            ),
         }
     }
 
-    /// Rejects an empty `username`/`token` (an empty `password` is left
-    /// unvalidated, mirroring [`validate_auth`]).
+    /// Rejects an empty `username`/`token`/`user_header` (an empty `password`
+    /// is left unvalidated, mirroring [`validate_auth`]); an explicitly-set
+    /// but empty `forwarded_for_header` is also rejected (use `null` to
+    /// disable it instead of an empty string).
     fn validate(&self) -> Result<()> {
         match self {
             OutputAuthSpec::Basic { username, .. } | OutputAuthSpec::Digest { username, .. }
@@ -273,6 +346,19 @@ impl OutputAuthSpec {
                     reason: "must not be empty".into(),
                 })
             }
+            OutputAuthSpec::Forwarded { user_header, .. } if user_header.is_empty() => {
+                Err(MultimuxError::ConfigInvalid {
+                    field: "output_auth.user_header",
+                    reason: "must not be empty".into(),
+                })
+            }
+            OutputAuthSpec::Forwarded {
+                forwarded_for_header: Some(header),
+                ..
+            } if header.is_empty() => Err(MultimuxError::ConfigInvalid {
+                field: "output_auth.forwarded_for_header",
+                reason: "must not be empty (use null to disable)".into(),
+            }),
             _ => Ok(()),
         }
     }
@@ -1797,6 +1883,105 @@ mod tests {
         cfg.validate().unwrap();
     }
 
+    /// Issue #663 extensibility wave part 1: the `forwarded` scheme parses
+    /// with explicit header names.
+    #[test]
+    fn output_auth_parses_forwarded() {
+        let json = r#"{
+            "output_auth": {
+                "scheme": "forwarded",
+                "user_header": "X-Auth-User",
+                "forwarded_for_header": "X-Real-IP"
+            },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Forwarded {
+                user_header,
+                forwarded_for_header,
+            }) => {
+                assert_eq!(user_header, "X-Auth-User");
+                assert_eq!(forwarded_for_header.as_deref(), Some("X-Real-IP"));
+            }
+            other => panic!("expected Some(OutputAuthSpec::Forwarded), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// Omitting `user_header`/`forwarded_for_header` defaults to
+    /// `X-Forwarded-User`/`Some("X-Forwarded-For")`.
+    #[test]
+    fn output_auth_forwarded_defaults_headers_when_omitted() {
+        let json = r#"{
+            "output_auth": { "scheme": "forwarded" },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Forwarded {
+                user_header,
+                forwarded_for_header,
+            }) => {
+                assert_eq!(user_header, "X-Forwarded-User");
+                assert_eq!(forwarded_for_header.as_deref(), Some("X-Forwarded-For"));
+            }
+            other => panic!("expected Some(OutputAuthSpec::Forwarded), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    /// `forwarded_for_header: null` explicitly disables reading it at all.
+    #[test]
+    fn output_auth_forwarded_for_header_can_be_disabled() {
+        let json = r#"{
+            "output_auth": {
+                "scheme": "forwarded",
+                "forwarded_for_header": null
+            },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Forwarded {
+                forwarded_for_header,
+                ..
+            }) => assert_eq!(*forwarded_for_header, None),
+            other => panic!("expected Some(OutputAuthSpec::Forwarded), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_forwarded_empty_user_header() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::Forwarded {
+                user_header: String::new(),
+                forwarded_for_header: None,
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_forwarded_empty_forwarded_for_header() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::Forwarded {
+                user_header: "X-Forwarded-User".into(),
+                forwarded_for_header: Some(String::new()),
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
     #[test]
     fn output_auth_rejects_unknown_scheme() {
         let json = r#"{
@@ -1849,32 +2034,47 @@ mod tests {
     }
 
     #[test]
-    fn output_auth_spec_to_credentials_preserves_scheme_exactly() {
+    fn output_auth_spec_build_verifier_preserves_scheme_exactly() {
         // Unlike `AuthSpec::to_credentials` (which always builds a `Digest`
         // value regardless of what the caller intends, since the *client*
         // answers whichever scheme the server's challenge asks for),
         // `OutputAuthSpec` is the *server* side: it must issue the challenge
-        // for the scheme actually configured, so `Basic` must convert to
-        // `Credentials::Basic`, not `Credentials::Digest`.
+        // for the scheme actually configured, so `Basic` must produce a
+        // `Verifier` whose challenge is `Basic`, not `Digest` — checked via
+        // `Verifier::challenge`'s scheme-distinguishing prefix (the same
+        // thing `crate::origin`'s output-auth gate sends on a `401`).
         let basic = OutputAuthSpec::Basic {
             username: "admin".into(),
             password: "p".into(),
         };
-        assert!(matches!(basic.to_credentials(), Credentials::Basic { .. }));
+        assert!(
+            basic
+                .build_verifier("realm")
+                .challenge()
+                .starts_with("Basic ")
+        );
 
         let digest = OutputAuthSpec::Digest {
             username: "admin".into(),
             password: "p".into(),
         };
-        assert!(matches!(
-            digest.to_credentials(),
-            Credentials::Digest { .. }
-        ));
+        assert!(
+            digest
+                .build_verifier("realm")
+                .challenge()
+                .starts_with("Digest ")
+        );
 
         let bearer = OutputAuthSpec::Bearer {
             token: "tok".into(),
         };
-        assert_eq!(bearer.to_credentials(), Credentials::bearer("tok"));
+        assert_eq!(bearer.build_verifier("realm").challenge(), "Bearer");
+
+        let forwarded = OutputAuthSpec::Forwarded {
+            user_header: "X-Forwarded-User".into(),
+            forwarded_for_header: Some("X-Forwarded-For".into()),
+        };
+        assert_eq!(forwarded.build_verifier("realm").challenge(), "Forwarded");
     }
 
     /// Biting test: `OutputAuthSpec`'s `Debug` must never render the
@@ -1894,5 +2094,19 @@ mod tests {
         };
         let debug = format!("{bearer:?}");
         assert!(!debug.contains("supersecrettoken"), "debug: {debug}");
+    }
+
+    /// `Forwarded` carries no secret, so its header names render plainly —
+    /// still worth a biting test that `Debug` doesn't panic and does name
+    /// both fields.
+    #[test]
+    fn output_auth_spec_forwarded_debug_shows_header_names() {
+        let forwarded = OutputAuthSpec::Forwarded {
+            user_header: "X-Forwarded-User".into(),
+            forwarded_for_header: Some("X-Forwarded-For".into()),
+        };
+        let debug = format!("{forwarded:?}");
+        assert!(debug.contains("X-Forwarded-User"), "debug: {debug}");
+        assert!(debug.contains("X-Forwarded-For"), "debug: {debug}");
     }
 }
