@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.17.0"
+version      = "0.18.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,11 +11,11 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.2", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.2", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.3", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.2", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.2", default-features = false }

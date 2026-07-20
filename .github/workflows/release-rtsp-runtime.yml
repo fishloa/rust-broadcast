@@ -5,9 +5,12 @@ name: Release rtsp-runtime
 # published artifacts — never `cargo publish` from a workstation. Requires the
 # CARGO_REGISTRY_TOKEN secret.
 #
-# DEPENDENCY ORDER: rtsp-runtime has NO workspace-crate dependencies (only the
-# external rtsp-types / sdp-types / http-auth / tokio / rustls crates), so it can
-# be published on its own with no ordering constraint.
+# DEPENDENCY ORDER: rtsp-runtime depends on broadcast-auth (plus the external
+# rtsp-types / sdp-types / http-auth / tokio / rustls crates). Publish
+# broadcast-auth FIRST, or crates.io will reject the publish because a
+# required dependency is not yet live. Downstream, ll-hls-runtime and
+# multimux depend on rtsp-runtime (>= the referenced 0.3), so this must land
+# before those.
 
 on:
   push:

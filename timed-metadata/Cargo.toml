@@ -17,7 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 scte35-splice = { path = "../scte35-splice", version = "1", default-features = false }
 mp4-emsg      = { path = "../mp4-emsg",      version = "0.2", default-features = false }
-broadcast-common    = { path = "../broadcast-common",    version = "8", default-features = false }
+broadcast-common    = { path = "../broadcast-common",    version = "9", default-features = false }
 cc-data       = { path = "../cc-data",       version = "0.3", default-features = false, optional = true }
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.2", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }

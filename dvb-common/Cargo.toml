@@ -21,4 +21,4 @@ std     = ["broadcast-common/std"]
 chrono  = ["broadcast-common/chrono"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }

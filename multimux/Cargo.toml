@@ -1,6 +1,6 @@
 [package]
 name         = "multimux"
-version      = "0.2.2"
+version      = "0.3.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
@@ -13,8 +13,8 @@ categories   = ["multimedia", "network-programming"]
 all-features = true
 
 [dependencies]
-transmux          = { path = "../transmux",     version = "0.17" }
-rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.2", features = ["tokio"] }
+transmux          = { path = "../transmux",     version = "0.18" }
+rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.3", features = ["tokio"] }
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over
@@ -26,7 +26,7 @@ ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["
 # Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
-broadcast-common  = { path = "../broadcast-common", version = "8" }
+broadcast-common  = { path = "../broadcast-common", version = "9" }
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
 # and `ll_hls_runtime::client::tokio_client` use.

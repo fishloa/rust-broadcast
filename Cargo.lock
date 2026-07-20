@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -605,7 +605,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "8.4.0"
+version = "9.0.0"
 dependencies = [
  "clap",
  "dvb-si",
@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1682,7 +1682,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "axum",
  "base64",
@@ -1722,7 +1722,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "multimux",
@@ -2273,7 +2273,7 @@ dependencies = [
 
 [[package]]
 name = "rtsp-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-auth",
  "log",
@@ -2951,7 +2951,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.17.0"
+version = "0.18.0"
 dependencies = [
  "aes",
  "broadcast-common",
@@ -2980,7 +2980,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ts-fix"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "broadcast-common",
  "clap",

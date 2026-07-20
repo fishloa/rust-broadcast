@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
-transmux          = { path = "../transmux", version = "0.17", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+transmux          = { path = "../transmux", version = "0.18", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::store::MediaStore` needs
@@ -47,7 +47,7 @@ broadcast-auth    = { path = "../broadcast-auth", version = "0.1", optional = tr
 # feature is off.
 tokio      = { version = "1", features = ["full"] }
 axum       = "0.7"
-multimux   = { path = "../multimux", version = "0.2" }
+multimux   = { path = "../multimux" }
 # `tests/golden_gate.rs` (issue #717's closing acceptance item, #569's golden
 # gate) parses `ffprobe -of json` output to assert against real oracle
 # fields — already in the workspace's resolved dependency graph via
