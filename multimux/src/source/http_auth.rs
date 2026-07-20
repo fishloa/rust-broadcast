@@ -15,7 +15,7 @@
 //! through the same code.
 //!
 //! Credentials come from the ingest URL's userinfo (RFC 3986 §3.2.1) —
-//! `credentials_from_url`/`strip_userinfo` generalize
+//! `credentials_from_url`/`strip_userinfo` generalise
 //! [`crate::source::rtsp`]'s own (RTSP-specific) userinfo handling to any
 //! URL.
 

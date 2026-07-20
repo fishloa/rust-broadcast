@@ -517,7 +517,7 @@ async fn track_http(State(state): State<Arc<AppState>>, req: Request, next: Next
 /// or [`crate::source::hls_pull::HlsPullSource`] — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
 /// connectors have different `Source` associated types, so this dispatch
-/// stays monomorphized rather than boxed) — runs it through
+/// stays monomorphised rather than boxed) — runs it through
 /// [`crate::pipeline::run_pipeline`], and on either a connect failure, a
 /// pipeline error, or source end-of-stream, reconnects with capped backoff
 /// instead of dying — a bad/flaky source degrades that route's

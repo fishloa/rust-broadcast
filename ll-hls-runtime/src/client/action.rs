@@ -4,7 +4,7 @@
 use alloc::format;
 use alloc::string::String;
 
-/// Identifies one fetchable resource: the initialization segment, a Low-Latency
+/// Identifies one fetchable resource: the initialisation segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
 /// segment. Used to correlate an [`Action::FetchResource`] with the matching
 /// [`crate::client::LlHlsClient::on_resource`] call.
@@ -16,7 +16,7 @@ use alloc::string::String;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResourceId {
-    /// The Media Initialization Section (`EXT-X-MAP`, RFC 8216bis §4.4.4.5).
+    /// The Media Initialisation Section (`EXT-X-MAP`, RFC 8216bis §4.4.4.5).
     Init,
     /// One partial segment (RFC 8216bis §4.4.4.9): `msn`'s Media Sequence
     /// Number, `part` its 0-based Part Index.

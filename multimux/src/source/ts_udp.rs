@@ -260,7 +260,7 @@ mod tests {
         let send_task = tokio::spawn(async move {
             // Give connect() a moment to bind + start reading before the
             // first datagram is sent (UDP has no connect-then-accept
-            // handshake to synchronize on).
+            // handshake to synchronise on).
             tokio::time::sleep(Duration::from_millis(20)).await;
             for chunk in ts_bytes.chunks(7 * 188) {
                 sender.send_to(chunk, addr).await.expect("send TS datagram");

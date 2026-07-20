@@ -302,7 +302,7 @@ mod tests {
         // AU0 @1000 (IDR), AU1 @4000 (non-IDR), AU2 @7000 (non-IDR): mirrors
         // `rtsp_ingest.rs`'s timing — 2 completed samples are yielded once
         // AU2 arrives (the depacketizer needs the *next* AU's timestamp to
-        // finalize a duration).
+        // finalise a duration).
         let idr = [0x65u8, 0xAA, 0xBB];
         let non1 = [0x41u8, 0xAA, 0xBB];
         let non2 = [0x41u8, 0xCC, 0xDD];
