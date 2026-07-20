@@ -55,10 +55,50 @@ const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 const MEDIA_PLAYLIST_CONTENT_TYPE: &str = "application/vnd.apple.mpegurl";
 
+/// Default media-playlist filename (issue #663 "configurable `playlist_name`")
+/// — every pre-existing `LlHlsOutput::default()`/`OutputKind::build()` call
+/// site keeps serving `/media.m3u8` unchanged.
+pub const DEFAULT_PLAYLIST_NAME: &str = "media.m3u8";
+
 /// The LL-HLS [`Output`]: master/media playlists over a shared [`MediaStore`].
 /// Init/segment/part byte ranges are the origin's shared resource route, not
 /// this one — see the module docs.
-pub struct LlHlsOutput;
+///
+/// [`Self::new`] serves the media playlist under a caller-chosen filename
+/// (`crate::config::Config::playlist_name`) — `master.m3u8` always points at
+/// whichever name this instance was built with. [`Default`] (and therefore
+/// [`OutputKind::build`]) uses [`DEFAULT_PLAYLIST_NAME`].
+pub struct LlHlsOutput {
+    playlist_name: String,
+}
+
+impl Default for LlHlsOutput {
+    fn default() -> Self {
+        LlHlsOutput::new(DEFAULT_PLAYLIST_NAME)
+    }
+}
+
+impl LlHlsOutput {
+    /// Serves the media playlist at `/{playlist_name}` instead of the
+    /// default `/media.m3u8` (`master.m3u8`'s `#EXT-X-STREAM-INF` reference
+    /// follows suit — see `master_playlist`).
+    pub fn new(playlist_name: impl Into<String>) -> Self {
+        LlHlsOutput {
+            playlist_name: playlist_name.into(),
+        }
+    }
+}
+
+/// The axum state for [`LlHlsOutput`]'s manifest routes: the shared
+/// [`MediaStore`] plus this instance's configured media-playlist filename
+/// (needed by [`master_playlist`] to render the correct `#EXT-X-STREAM-INF`
+/// reference, and by [`LlHlsOutput::manifest_routes`] to mount
+/// [`media_playlist`] under the right path).
+#[derive(Clone)]
+pub(crate) struct LlHlsState {
+    store: Arc<MediaStore>,
+    playlist_name: String,
+}
 
 impl Output for LlHlsOutput {
     fn kind(&self) -> OutputKind {
@@ -67,28 +107,43 @@ impl Output for LlHlsOutput {
 
     /// Routes (relative — mounted by the origin under `/{stream}/`):
     /// - `GET /master.m3u8` — minimal single-variant master playlist.
-    /// - `GET /media.m3u8` — LL-HLS media playlist, blocking-reload aware.
+    /// - `GET /{playlist_name}` — LL-HLS media playlist, blocking-reload
+    ///   aware (`/media.m3u8` unless [`LlHlsOutput::new`] configured a
+    ///   different name).
     fn manifest_routes(&self, store: Arc<MediaStore>) -> Router {
+        let state = LlHlsState {
+            store,
+            playlist_name: self.playlist_name.clone(),
+        };
         Router::new()
             .route("/master.m3u8", get(master_playlist).options(cors_preflight))
-            .route("/media.m3u8", get(media_playlist).options(cors_preflight))
-            .with_state(store)
+            .route(
+                &format!("/{}", self.playlist_name),
+                get(media_playlist).options(cors_preflight),
+            )
+            .with_state(state)
     }
 }
 
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
-/// `media.m3u8`.
-pub async fn master_playlist(State(_store): State<Arc<MediaStore>>) -> Response {
+/// this route's configured media-playlist filename.
+///
+/// `pub(crate)` (narrowed from `pub`, issue #663 "configurable
+/// `playlist_name`"): its `State` type is now the crate-private
+/// [`LlHlsState`] (store + playlist name) rather than the previously bare
+/// `Arc<MediaStore>`, and nothing outside this crate called the handler
+/// directly (only through the router `LlHlsOutput::manifest_routes` builds).
+pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response {
     (
         [(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)],
-        master_playlist_m3u8(),
+        master_playlist_m3u8(&state.playlist_name),
     )
         .into_response()
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as
 /// deserialized from the HTTP query string — the wire-format counterpart of
-/// [`ll_hls_runtime::server::BlockingQuery`], which [`media_playlist`] maps
+/// [`ll_hls_runtime::server::BlockingQuery`], which `media_playlist` maps
 /// this into before handing off to the sans-IO engine.
 #[derive(Debug, Default, Deserialize)]
 pub struct BlockingReloadQuery {
@@ -170,11 +225,11 @@ async fn media_playlist_blocking(
 /// and returning `200` regardless (which gives a misbehaving client no
 /// signal to back off). See [`ll_hls_runtime::server::MediaStore::resolve_playlist`]
 /// for the decision logic itself.
-pub async fn media_playlist(
-    State(store): State<Arc<MediaStore>>,
+pub(crate) async fn media_playlist(
+    State(state): State<LlHlsState>,
     Query(q): Query<BlockingReloadQuery>,
 ) -> Response {
-    match media_playlist_blocking(&store, DEFAULT_TRACK_ID, q.into()).await {
+    match media_playlist_blocking(&state.store, DEFAULT_TRACK_ID, q.into()).await {
         Ok(body) => ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response(),
         Err(()) => StatusCode::BAD_REQUEST.into_response(),
     }
@@ -223,10 +278,19 @@ mod tests {
         String::from_utf8(bytes.to_vec()).unwrap()
     }
 
+    /// Wraps `store` into an [`LlHlsState`] using the default playlist name —
+    /// the shape the handlers under test actually receive as `State`.
+    fn state(store: Arc<MediaStore>) -> LlHlsState {
+        LlHlsState {
+            store,
+            playlist_name: DEFAULT_PLAYLIST_NAME.to_string(),
+        }
+    }
+
     #[tokio::test]
     async fn master_playlist_ok() {
         let store = make_store();
-        let resp = master_playlist(State(store)).await;
+        let resp = master_playlist(State(state(store))).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_string(resp).await;
         assert!(body.contains("#EXTM3U"));
@@ -234,10 +298,27 @@ mod tests {
         assert!(body.contains("media.m3u8"));
     }
 
+    /// Biting test (issue #663 "configurable `playlist_name`"): a
+    /// non-default playlist name must appear in the master playlist's
+    /// `#EXT-X-STREAM-INF` reference, and the default name must not.
+    #[tokio::test]
+    async fn master_playlist_points_at_configured_playlist_name() {
+        let store = make_store();
+        let resp = master_playlist(State(LlHlsState {
+            store,
+            playlist_name: "index.m3u8".to_string(),
+        }))
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_string(resp).await;
+        assert!(body.contains("index.m3u8"), "body: {body}");
+        assert!(!body.contains("media.m3u8"), "body: {body}");
+    }
+
     #[tokio::test]
     async fn media_playlist_no_query_renders_now() {
         let store = make_store();
-        let resp = media_playlist(State(store), Query(BlockingReloadQuery::default())).await;
+        let resp = media_playlist(State(state(store)), Query(BlockingReloadQuery::default())).await;
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_string(resp).await;
         assert!(body.contains("#EXT-X-PART"), "body: {body}");
@@ -249,7 +330,7 @@ mod tests {
         // already satisfied and must not wait.
         let store = make_store();
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: Some(1),
                 hls_part: Some(0),
@@ -264,7 +345,7 @@ mod tests {
         // in_progress_seg_seq == msn and part_count(2) > part(1): satisfied.
         let store = make_store();
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(1),
@@ -289,7 +370,7 @@ mod tests {
 
         let started = std::time::Instant::now();
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: None,
@@ -319,7 +400,7 @@ mod tests {
         let store = make_store();
         let started = std::time::Instant::now();
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: Some(1002),
                 hls_part: None,
@@ -346,7 +427,7 @@ mod tests {
             store_for_task.add_part(part(2, 2));
         });
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: Some(2),
                 hls_part: Some(2),
@@ -362,7 +443,7 @@ mod tests {
         // meaningless (a part is only addressable relative to a segment).
         let store = make_store();
         let resp = media_playlist(
-            State(store),
+            State(state(store)),
             Query(BlockingReloadQuery {
                 hls_msn: None,
                 hls_part: Some(0),
@@ -380,7 +461,7 @@ mod tests {
     #[tokio::test]
     async fn options_preflight_returns_no_content() {
         let store = make_store();
-        let router = LlHlsOutput.manifest_routes(store);
+        let router = LlHlsOutput::default().manifest_routes(store);
         let req = axum::http::Request::builder()
             .method("OPTIONS")
             .uri("/media.m3u8")

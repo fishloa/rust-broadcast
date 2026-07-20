@@ -28,8 +28,9 @@
 
 use std::time::Duration;
 
+use broadcast_auth::{AuthResult, Verifier};
 use multimux::source::rtsp::RtspSource;
-use rtsp_runtime::{InterleavedFrame, TransportSpec};
+use rtsp_runtime::{Credentials, InterleavedFrame, TransportSpec};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use transmux::pipeline::CodecConfig;
@@ -409,6 +410,199 @@ async fn run_no_credentials_fails() {
     let source = RtspSource::new("cam", format!("rtsp://{addr}/test"));
     let err = match source.connect().await {
         Ok(_) => panic!("connect must fail: no credentials to answer the server's 401 challenge"),
+        Err(e) => e,
+    };
+    let msg = err.to_string();
+    assert!(
+        msg.contains("401") || msg.to_ascii_lowercase().contains("unauthorized"),
+        "error should report the 401/Unauthorized DESCRIBE status, got: {msg}"
+    );
+
+    server.await.expect("server task");
+}
+
+// ---------------------------------------------------------------------------
+// Config-supplied (`RtspSource::with_auth`) Digest auth — the gap flagged in
+// the client-auth story: `with_auth` was wired but had no test driving the
+// CONFIG-supplied credentials path (as opposed to URL userinfo, which
+// `rtsp_ingest_basic_auth_from_url_userinfo_succeeds` above already covers)
+// against a real server. Mirrors
+// `rtsp-runtime/tests/io_loopback.rs::digest_auth_over_loopback`, but for
+// multimux's own `RtspSource` and end-to-end through `connect()`
+// (DESCRIBE->SETUP->PLAY), not just a single DESCRIBE round trip. The mock
+// server's Digest verification is the real, production
+// `broadcast_auth::Verifier` (issue #663 "shared output auth" promoted this
+// out of a hand-rolled test double in `multimux::testutil`), so a wrong
+// password genuinely fails here rather than passing a literal-string check.
+// ---------------------------------------------------------------------------
+
+/// Extracts the request-URI (the second, space-delimited token of the
+/// request line) from a request's raw text, as captured by [`read_request`]
+/// — needed to verify the client's Digest `uri=` field against the actual
+/// request-URI it sent (RFC 7616 §3.4.1).
+fn request_uri(request_text: &str) -> &str {
+    request_text
+        .lines()
+        .next()
+        .expect("non-empty request")
+        .split_whitespace()
+        .nth(1)
+        .expect("request line carries a request-URI")
+}
+
+/// Runs a hand-rolled RTSP server requiring Digest auth (RFC 2326 §14 / RFC
+/// 7616) on DESCRIBE, verified by the real `verifier` — see this section's
+/// module-level doc comment for why a real `Verifier` rather than a literal
+/// comparison. `on_authenticated` decides what happens once a correctly
+/// authenticated DESCRIBE arrives (finish the SDP/SETUP/PLAY handshake for
+/// the success test; nothing further for the wrong-credentials test, which
+/// never reaches an authenticated DESCRIBE at all).
+async fn serve_one_session_requiring_digest_auth(mut sock: TcpStream, verifier: &Verifier) {
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(
+        req.starts_with("DESCRIBE"),
+        "expected first (unauthenticated) DESCRIBE, got: {req}"
+    );
+    assert!(
+        header_value(&req, "Authorization").is_none(),
+        "the first DESCRIBE must not carry an Authorization header: {req}"
+    );
+    let challenge_resp = format!(
+        "RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: {}\r\n\r\n",
+        verifier.challenge()
+    );
+    write_all(&mut sock, challenge_resp.as_bytes()).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(
+        req.starts_with("DESCRIBE"),
+        "expected the retried DESCRIBE, got: {req}"
+    );
+    let auth = header_value(&req, "Authorization")
+        .expect("the retried DESCRIBE must carry an Authorization header");
+    assert!(
+        auth.starts_with("Digest "),
+        "retry must carry a Digest Authorization: {auth}"
+    );
+    let uri = request_uri(&req);
+    let verified = verifier.verify(Some(auth), "DESCRIBE", uri);
+
+    if verified != AuthResult::Ok {
+        // Wrong credentials: re-challenge (matching a real Digest origin's
+        // behaviour on a failed retry) and stop — the client under test
+        // does not retry a second time, so this is the whole exchange.
+        let reject_resp = format!(
+            "RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: {}\r\n\r\n",
+            verifier.challenge()
+        );
+        write_all(&mut sock, reject_resp.as_bytes()).await;
+        return;
+    }
+
+    let sdp = sdp_body();
+    let describe_resp = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n",
+        sdp.len()
+    );
+    write_all(&mut sock, describe_resp.as_bytes()).await;
+    write_all(&mut sock, &sdp).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(req.starts_with("SETUP"), "expected SETUP, got: {req}");
+    let transport =
+        TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1).to_header_value();
+    let setup_resp = format!(
+        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000003\r\nTransport: {transport}\r\n\r\n"
+    );
+    write_all(&mut sock, setup_resp.as_bytes()).await;
+
+    let (req, cseq) = read_request(&mut sock).await;
+    assert!(req.starts_with("PLAY"), "expected PLAY, got: {req}");
+    let play_resp = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000003\r\n\r\n");
+    write_all(&mut sock, play_resp.as_bytes()).await;
+}
+
+/// The config-supplied (`AuthSpec`/`with_auth`) Digest path, driven against a
+/// real server: a URL carrying **no** userinfo, plus `RtspSource::with_auth`
+/// set from config-shaped credentials, must authenticate and succeed —
+/// proving the config path independently of the URL-userinfo path already
+/// covered above. Reverting the `with_auth` -> `ClientSession::with_credentials`
+/// wiring in `source::rtsp::RtspSource::connect` makes this fail (the client
+/// would never answer the 401, and `connect()` would surface it as an
+/// error).
+#[tokio::test]
+async fn rtsp_ingest_config_digest_auth_succeeds() {
+    tokio::time::timeout(TEST_TIMEOUT, run_config_digest_auth_success())
+        .await
+        .expect("rtsp config digest-auth e2e timed out — auth wiring did not complete");
+}
+
+async fn run_config_digest_auth_success() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+
+    let verifier = Verifier::new(
+        Credentials::Digest {
+            username: "camuser".into(),
+            password: "camsecret".into(),
+        },
+        "IP Camera",
+    );
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.expect("accept");
+        serve_one_session_requiring_digest_auth(sock, &verifier).await;
+    });
+
+    // No userinfo in the URL at all — credentials come ONLY from `with_auth`.
+    let source = RtspSource::new("cam", format!("rtsp://{addr}/test"))
+        .with_auth(Some(Credentials::new("camuser", "camsecret")));
+    let session = source.connect().await.expect(
+        "connect must succeed: config-supplied Digest credentials should answer the \
+         server's 401 challenge",
+    );
+    assert_eq!(
+        session.track_specs().len(),
+        1,
+        "the SDP was parsed after the authenticated DESCRIBE succeeded"
+    );
+
+    server.await.expect("server task");
+}
+
+/// The same config-supplied Digest path, but with the wrong password: the
+/// real `Verifier` must genuinely reject it, and `connect()` must fail
+/// (never falling back to proceeding unauthenticated).
+#[tokio::test]
+async fn rtsp_ingest_config_digest_auth_wrong_password_fails() {
+    tokio::time::timeout(TEST_TIMEOUT, run_config_digest_auth_wrong_password())
+        .await
+        .expect("rtsp config digest-auth (wrong password) e2e timed out");
+}
+
+async fn run_config_digest_auth_wrong_password() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback");
+    let addr = listener.local_addr().expect("local addr");
+
+    let verifier = Verifier::new(
+        Credentials::Digest {
+            username: "camuser".into(),
+            password: "camsecret".into(),
+        },
+        "IP Camera",
+    );
+    let server = tokio::spawn(async move {
+        let (sock, _) = listener.accept().await.expect("accept");
+        serve_one_session_requiring_digest_auth(sock, &verifier).await;
+    });
+
+    let source = RtspSource::new("cam", format!("rtsp://{addr}/test"))
+        .with_auth(Some(Credentials::new("camuser", "WRONGPASSWORD")));
+    let err = match source.connect().await {
+        Ok(_) => panic!("connect must fail: wrong password must not authenticate"),
         Err(e) => e,
     };
     let msg = err.to_string();

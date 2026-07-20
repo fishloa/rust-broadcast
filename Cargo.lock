@@ -237,7 +237,10 @@ dependencies = [
 name = "broadcast-auth"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "http-auth",
+ "md-5",
+ "rand 0.8.6",
  "thiserror",
 ]
 

@@ -99,7 +99,7 @@ async fn main() {
         (
             store,
             vec![
-                Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
                 Arc::new(DashOutput) as Arc<dyn Output>,
             ],
         ),

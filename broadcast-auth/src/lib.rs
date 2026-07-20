@@ -1,10 +1,24 @@
-//! Shared multi-scheme authentication for RTSP and HTTP clients.
+//! Shared multi-scheme authentication for RTSP and HTTP clients *and*
+//! servers.
 //!
 //! Auth is not transport-specific: RTSP, TS-over-HTTP, HLS-pull, and any other
 //! credentialed origin all face the same handful of schemes. This crate holds
-//! **one** [`Credentials`] model and **one** challenge->response helper, so
-//! `rtsp-runtime` and `multimux`'s HTTP input adapters answer `WWW-Authenticate`
-//! challenges through the same code instead of re-implementing it per client.
+//! **one** [`Credentials`] model, **one** client-side challenge->response
+//! helper ([`respond`]/[`Authenticator`]), and **one** server-side
+//! challenge+verify type ([`Verifier`]), so `rtsp-runtime`, `multimux`'s HTTP
+//! input adapters, and `multimux`'s own shared output-auth middleware all
+//! answer/issue `WWW-Authenticate` challenges through the same code instead
+//! of re-implementing it per client or per origin.
+//!
+//! # Client vs. server
+//!
+//! - **Client** ([`respond`]/[`Authenticator`]): given a `WWW-Authenticate`
+//!   challenge received from a server, compute the `Authorization` value to
+//!   answer it.
+//! - **Server** ([`Verifier`]): given a configured credential, produce the
+//!   `WWW-Authenticate` challenge to send on a `401`
+//!   ([`Verifier::challenge`]), and check an incoming `Authorization` header
+//!   against it ([`Verifier::verify`]).
 //!
 //! # Schemes
 //!
@@ -66,11 +80,13 @@ mod authenticator;
 mod credentials;
 mod error;
 mod request;
+mod server;
 
 pub use authenticator::{Authenticator, respond};
 pub use credentials::Credentials;
 pub use error::{Error, Result};
 pub use request::RequestContext;
+pub use server::{AuthResult, Verifier};
 
 #[cfg(test)]
 mod tests {

@@ -170,6 +170,114 @@ impl AuthSpec {
     }
 }
 
+/// Server-side output auth (issue #663 "shared output auth"): configures one
+/// [`broadcast_auth::Verifier`] gating **every** media output route
+/// (`/{stream}/…` — manifests and init/segment/part bytes alike, across
+/// every configured route) — independent of, and unrelated to, any given
+/// route's own ingest [`AuthSpec`]/URL-userinfo credentials. `None` (the
+/// default) leaves every output route open, unchanged from pre-#663
+/// behaviour. Ops endpoints (`/healthz`/`/readyz`/`/metrics`) are never
+/// gated by this — see `crate::origin::router`'s docs.
+///
+/// Unlike [`AuthSpec`] (which lets the *server*'s own challenge pick Basic vs
+/// Digest), this is the *server* issuing the challenge, so the scheme itself
+/// must be explicit — the `scheme` tag selects which
+/// [`broadcast_auth::Credentials`] variant `to_credentials` builds.
+///
+/// JSON shape is tagged on `scheme`: `{ "scheme": "basic", "username": "...",
+/// "password": "..." }`, `{ "scheme": "digest", "username": "...", "password":
+/// "..." }`, or `{ "scheme": "bearer", "token": "..." }`.
+#[derive(Clone, Deserialize)]
+#[serde(tag = "scheme", rename_all = "snake_case")]
+pub enum OutputAuthSpec {
+    /// HTTP Basic (RFC 7617) — credentials compared in constant time.
+    Basic {
+        /// Account username.
+        username: String,
+        /// Account password.
+        password: String,
+    },
+    /// HTTP Digest (RFC 7616) — a fresh server nonce is generated once per
+    /// process (see `broadcast_auth::Verifier`'s nonce-handling caveat).
+    Digest {
+        /// Account username.
+        username: String,
+        /// Account password.
+        password: String,
+    },
+    /// Bearer (RFC 6750) — token compared in constant time.
+    Bearer {
+        /// The opaque bearer token.
+        token: String,
+    },
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): every variant carries a
+/// secret (`password`/`token`) that must never render verbatim.
+impl std::fmt::Debug for OutputAuthSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputAuthSpec::Basic { username, .. } => f
+                .debug_struct("Basic")
+                .field("username", username)
+                .field("password", &"***")
+                .finish(),
+            OutputAuthSpec::Digest { username, .. } => f
+                .debug_struct("Digest")
+                .field("username", username)
+                .field("password", &"***")
+                .finish(),
+            OutputAuthSpec::Bearer { .. } => {
+                f.debug_struct("Bearer").field("token", &"***").finish()
+            }
+        }
+    }
+}
+
+impl OutputAuthSpec {
+    /// Converts to the scheme-agnostic [`Credentials`] a
+    /// [`broadcast_auth::Verifier`] is built from — unlike
+    /// [`AuthSpec::to_credentials`], the scheme is preserved exactly (this is
+    /// the server side, so it must issue the challenge for the scheme it was
+    /// actually configured with, not whichever the client's challenge
+    /// implies).
+    pub(crate) fn to_credentials(&self) -> Credentials {
+        match self {
+            OutputAuthSpec::Basic { username, password } => Credentials::Basic {
+                username: username.clone(),
+                password: password.clone(),
+            },
+            OutputAuthSpec::Digest { username, password } => Credentials::Digest {
+                username: username.clone(),
+                password: password.clone(),
+            },
+            OutputAuthSpec::Bearer { token } => Credentials::bearer(token.clone()),
+        }
+    }
+
+    /// Rejects an empty `username`/`token` (an empty `password` is left
+    /// unvalidated, mirroring [`validate_auth`]).
+    fn validate(&self) -> Result<()> {
+        match self {
+            OutputAuthSpec::Basic { username, .. } | OutputAuthSpec::Digest { username, .. }
+                if username.is_empty() =>
+            {
+                Err(MultimuxError::ConfigInvalid {
+                    field: "output_auth.username",
+                    reason: "must not be empty".into(),
+                })
+            }
+            OutputAuthSpec::Bearer { token } if token.is_empty() => {
+                Err(MultimuxError::ConfigInvalid {
+                    field: "output_auth.token",
+                    reason: "must not be empty".into(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
 /// `url` may carry a live camera's `user:pass@` userinfo, so it must never
 /// render verbatim; the UDP variants carry no secret but get a tidy summary
@@ -317,6 +425,42 @@ fn validate_auth(auth: &Option<AuthSpec>) -> Result<()> {
     }
 }
 
+/// [`Config::playlist_name`] must be non-empty, end in `.m3u8`, and contain
+/// no path separator (it names a single path segment under `/{stream}/`, not
+/// a sub-path) — issue #663 "configurable `playlist_name`".
+fn validate_playlist_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "playlist_name",
+            reason: "must not be empty".into(),
+        });
+    }
+    if !name.ends_with(".m3u8") {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "playlist_name",
+            reason: format!("must end in .m3u8, got {name:?}"),
+        });
+    }
+    if name.contains('/') {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "playlist_name",
+            reason: format!("must not contain a slash, got {name:?}"),
+        });
+    }
+    // `LlHlsOutput::manifest_routes` mounts `master.m3u8` and `playlist_name`
+    // as two separate axum routes on the same per-stream router; the same
+    // name for both would panic axum at router-build time (a route
+    // conflict) rather than fail with a clean config error, so reject it
+    // here instead.
+    if name == "master.m3u8" {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "playlist_name",
+            reason: "must not be \"master.m3u8\" (that name is the master playlist route)".into(),
+        });
+    }
+    Ok(())
+}
+
 /// A UDP bind address must parse as `host:port`.
 fn validate_udp_addr(addr: &str) -> Result<()> {
     addr.parse::<SocketAddr>()
@@ -448,6 +592,30 @@ pub struct Config {
     /// Ingest per-read timeout, in seconds, applied to every route's source
     /// — see [`crate::source::IngestTimeouts::read`].
     pub ingest_read_timeout_secs: f64,
+    /// The LL-HLS media-playlist filename served at `/{stream}/{playlist_name}`
+    /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
+    /// `#EXT-X-STREAM-INF` reference follows suit
+    /// (`crate::output::llhls::LlHlsOutput::new`). Defaults to
+    /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`] (`"media.m3u8"`),
+    /// preserving every existing config's behaviour unchanged. `master.m3u8`
+    /// itself is not configurable, and DASH's `manifest.mpd` is unaffected.
+    /// Validated non-empty, `.m3u8`-suffixed, and slash-free by
+    /// [`Config::validate`].
+    #[serde(default = "default_playlist_name")]
+    pub playlist_name: String,
+    /// Server-side output auth (issue #663 "shared output auth") gating
+    /// every media output route (`/{stream}/…`) across every configured
+    /// route — see [`OutputAuthSpec`]. `None` (the default) leaves every
+    /// output route open, unchanged from pre-#663 behaviour.
+    #[serde(default)]
+    pub output_auth: Option<OutputAuthSpec>,
+}
+
+/// Default [`Config::playlist_name`] when a config omits the field:
+/// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`], preserving every
+/// pre-#663 config's `/media.m3u8` behaviour unchanged.
+fn default_playlist_name() -> String {
+    crate::output::llhls::DEFAULT_PLAYLIST_NAME.to_string()
 }
 
 impl Default for Config {
@@ -463,6 +631,8 @@ impl Default for Config {
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
             ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
             ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
+            playlist_name: default_playlist_name(),
+            output_auth: None,
         }
     }
 }
@@ -551,6 +721,10 @@ impl Config {
                 field: "ingest_read_timeout_secs",
                 reason: "must be positive".into(),
             });
+        }
+        validate_playlist_name(&self.playlist_name)?;
+        if let Some(output_auth) = &self.output_auth {
+            output_auth.validate()?;
         }
         let mut seen = std::collections::HashSet::new();
         for r in &self.routes {
@@ -1449,5 +1623,255 @@ mod tests {
             debug.contains(&long_sdp.len().to_string()),
             "debug: {debug}"
         );
+    }
+
+    // --- issue #663 "configurable `playlist_name`" ---
+
+    fn cfg_with_one_route() -> Config {
+        Config {
+            routes: vec![Route {
+                name: "cam1".into(),
+                input: InputSpec::Rtsp {
+                    url: "rtsp://host/stream".into(),
+                    auth: None,
+                },
+                outputs: default_outputs(),
+            }],
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn playlist_name_defaults_to_media_m3u8_when_omitted() {
+        let json = r#"{
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.playlist_name, "media.m3u8");
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn playlist_name_parses_from_json() {
+        let json = r#"{
+            "playlist_name": "index.m3u8",
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.playlist_name, "index.m3u8");
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_empty_playlist_name() {
+        let cfg = Config {
+            playlist_name: String::new(),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_playlist_name_without_m3u8_suffix() {
+        let cfg = Config {
+            playlist_name: "media.mpd".into(),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_playlist_name_with_slash() {
+        let cfg = Config {
+            playlist_name: "sub/media.m3u8".into(),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_playlist_name_master_m3u8_collision() {
+        let cfg = Config {
+            playlist_name: "master.m3u8".into(),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_a_valid_non_default_playlist_name() {
+        let cfg = Config {
+            playlist_name: "index.m3u8".into(),
+            ..cfg_with_one_route()
+        };
+        cfg.validate().unwrap();
+    }
+
+    // --- issue #663 "shared output auth" ---
+
+    #[test]
+    fn output_auth_defaults_to_none_when_omitted() {
+        let json = r#"{
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(cfg.output_auth.is_none());
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_parses_basic() {
+        let json = r#"{
+            "output_auth": { "scheme": "basic", "username": "admin", "password": "hunter2" },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Basic { username, password }) => {
+                assert_eq!(username, "admin");
+                assert_eq!(password, "hunter2");
+            }
+            other => panic!("expected Some(OutputAuthSpec::Basic), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_parses_digest() {
+        let json = r#"{
+            "output_auth": { "scheme": "digest", "username": "admin", "password": "hunter2" },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            &cfg.output_auth,
+            Some(OutputAuthSpec::Digest { .. })
+        ));
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_parses_bearer() {
+        let json = r#"{
+            "output_auth": { "scheme": "bearer", "token": "tok123" },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.output_auth {
+            Some(OutputAuthSpec::Bearer { token }) => assert_eq!(token, "tok123"),
+            other => panic!("expected Some(OutputAuthSpec::Bearer), got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_rejects_unknown_scheme() {
+        let json = r#"{
+            "output_auth": { "scheme": "hmac", "username": "admin", "password": "p" },
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let result: std::result::Result<Config, _> = serde_json::from_str(json);
+        assert!(
+            result.is_err(),
+            "unknown output_auth scheme must be rejected"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_empty_username() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::Basic {
+                username: String::new(),
+                password: "p".into(),
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_output_auth_empty_bearer_token() {
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::Bearer {
+                token: String::new(),
+            }),
+            ..cfg_with_one_route()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_accepts_output_auth_empty_password() {
+        // Mirrors AuthSpec's own "empty password is allowed" rule.
+        let cfg = Config {
+            output_auth: Some(OutputAuthSpec::Basic {
+                username: "admin".into(),
+                password: String::new(),
+            }),
+            ..cfg_with_one_route()
+        };
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn output_auth_spec_to_credentials_preserves_scheme_exactly() {
+        // Unlike `AuthSpec::to_credentials` (which always builds a `Digest`
+        // value regardless of what the caller intends, since the *client*
+        // answers whichever scheme the server's challenge asks for),
+        // `OutputAuthSpec` is the *server* side: it must issue the challenge
+        // for the scheme actually configured, so `Basic` must convert to
+        // `Credentials::Basic`, not `Credentials::Digest`.
+        let basic = OutputAuthSpec::Basic {
+            username: "admin".into(),
+            password: "p".into(),
+        };
+        assert!(matches!(basic.to_credentials(), Credentials::Basic { .. }));
+
+        let digest = OutputAuthSpec::Digest {
+            username: "admin".into(),
+            password: "p".into(),
+        };
+        assert!(matches!(
+            digest.to_credentials(),
+            Credentials::Digest { .. }
+        ));
+
+        let bearer = OutputAuthSpec::Bearer {
+            token: "tok".into(),
+        };
+        assert_eq!(bearer.to_credentials(), Credentials::bearer("tok"));
+    }
+
+    /// Biting test: `OutputAuthSpec`'s `Debug` must never render the
+    /// password/token verbatim.
+    #[test]
+    fn output_auth_spec_debug_redacts_secret() {
+        let basic = OutputAuthSpec::Basic {
+            username: "admin".into(),
+            password: "supersecretpass".into(),
+        };
+        let debug = format!("{basic:?}");
+        assert!(debug.contains("admin"), "username may render: {debug}");
+        assert!(!debug.contains("supersecretpass"), "debug: {debug}");
+
+        let bearer = OutputAuthSpec::Bearer {
+            token: "supersecrettoken".into(),
+        };
+        let debug = format!("{bearer:?}");
+        assert!(!debug.contains("supersecrettoken"), "debug: {debug}");
     }
 }

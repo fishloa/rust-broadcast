@@ -23,6 +23,22 @@
 //! Every request the origin serves (root endpoints included) passes through
 //! `track_http`, an axum middleware layer recording HTTP request/latency/
 //! byte metrics.
+//!
+//! # Shared output auth (issue #663 "shared output auth")
+//!
+//! When [`crate::config::Config::output_auth`] is configured, one
+//! [`broadcast_auth::Verifier`] gates **every** media output route
+//! (`/{stream}/…` — manifests and the shared resource route alike, across
+//! every configured stream) via `output_auth_gate`, mounted on the
+//! per-stream nests *before* they are merged with the root ops endpoints —
+//! so `/metrics`/`/healthz`/`/readyz` are never behind it (load balancer
+//! probes and metrics scraping must stay open regardless of output auth).
+//! This is intentionally independent of any route's own ingest auth
+//! (`crate::config::AuthSpec`/URL userinfo): one output credential guards
+//! every stream this origin serves (e.g. 40 cameras under
+//! `/camN/index.m3u8`), regardless of how differently each camera
+//! authenticates its own upstream feed. `output_auth: None` (the default)
+//! leaves every output route open, unchanged from pre-#663 behaviour.
 
 pub(crate) mod resource;
 pub mod supervisor;
@@ -34,10 +50,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use broadcast_auth::{AuthResult, Verifier};
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::watch;
 use tower::limit::ConcurrencyLimitLayer;
@@ -47,6 +64,11 @@ use tower_http::timeout::TimeoutLayer;
 use crate::output::Output;
 use crate::store::{HealthState, MediaStore};
 use supervisor::{Backoff, supervise};
+
+/// Realm advertised by the shared output-auth `Verifier`'s Basic/Digest
+/// challenge (`crate::config::OutputAuthSpec`) — fixed rather than
+/// per-config, since it names the origin itself, not any individual camera.
+const OUTPUT_AUTH_REALM: &str = "multimux";
 
 /// HTTP-layer resource limits applied process-wide by [`router`] (issue #663
 /// P5, audit-concurrency #3: "slow-loris kills all routes" — with no cap
@@ -146,6 +168,10 @@ pub struct AppState {
     /// HTTP-layer resource limits [`router`] applies (issue #663 P5). Defaults
     /// via [`HttpLimits::default`]; see [`Self::with_limits`].
     limits: HttpLimits,
+    /// Shared output-auth verifier (issue #663 "shared output auth") gating
+    /// every media output route — `None` (the default) leaves every route
+    /// open. See [`Self::with_output_auth`] and this module's docs.
+    output_auth: Option<Arc<Verifier>>,
 }
 
 impl AppState {
@@ -153,12 +179,14 @@ impl AppState {
     /// already installed in this process, e.g. by another `AppState` built
     /// earlier in the same test binary — reusing) the process-wide
     /// Prometheus recorder via [`crate::prometheus::install`]. Applies
-    /// [`HttpLimits::default`] — use [`Self::with_limits`] to override.
+    /// [`HttpLimits::default`] and no output auth — use [`Self::with_limits`]/
+    /// [`Self::with_output_auth`] to override either.
     pub fn new(streams: HashMap<String, StreamRoute>) -> Self {
         AppState {
             streams,
             metrics_handle: crate::prometheus::install(),
             limits: HttpLimits::default(),
+            output_auth: None,
         }
     }
 
@@ -169,6 +197,17 @@ impl AppState {
     #[must_use]
     pub fn with_limits(mut self, limits: HttpLimits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Gates every media output route behind `verifier` (issue #663 "shared
+    /// output auth") — [`serve`] uses this when
+    /// [`crate::config::Config::output_auth`] is configured; callers that
+    /// only want the default open behaviour (most tests/examples) keep using
+    /// [`Self::new`] unchanged.
+    #[must_use]
+    pub fn with_output_auth(mut self, verifier: Arc<Verifier>) -> Self {
+        self.output_auth = Some(verifier);
         self
     }
 }
@@ -208,6 +247,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         for output in outputs {
             stream_router = stream_router.merge(output.manifest_routes(store.clone()));
         }
+        // Shared output auth (issue #663 "shared output auth") gates every
+        // route in this stream's router — layered *inside*
+        // `add_response_headers` (added next) so a `401` this gate produces
+        // still gets the same CORS/`Cache-Control` headers as any other
+        // response (a cross-origin browser client needs the CORS headers on
+        // the `401` itself to see the status/`WWW-Authenticate` at all, not
+        // just on a successful `200`). Never applied to the root ops
+        // endpoints (`/metrics`/`/healthz`/`/readyz`, merged in below,
+        // outside this per-stream loop) — see this module's docs.
+        stream_router = stream_router.layer(middleware::from_fn_with_state(
+            state.clone(),
+            output_auth_gate,
+        ));
         stream_router = stream_router.layer(middleware::from_fn(add_response_headers));
         router = router.nest(&format!("/{name}"), stream_router);
     }
@@ -224,6 +276,63 @@ pub fn router(state: Arc<AppState>) -> Router {
         .layer(ConcurrencyLimitLayer::new(limits.max_concurrent_requests))
         .layer(RequestBodyLimitLayer::new(limits.max_request_body_bytes))
         .layer(middleware::from_fn_with_state(state, track_http))
+}
+
+/// Middleware gating every route in the router it wraps (see [`router`], the
+/// only caller — applied to the per-stream nests, never the root ops
+/// endpoints) behind `state.output_auth` (issue #663 "shared output auth"):
+/// a no-op pass-through when it is `None`.
+///
+/// `OPTIONS` (CORS preflight) requests always bypass the check: a browser's
+/// preflight for a cross-origin request carrying a custom `Authorization`
+/// header is itself sent *without* one (RFC 9110/Fetch — preflight never
+/// includes the credentials of the request it precedes), so gating it would
+/// make the preflight fail and the browser would never send the real,
+/// authenticated request at all. [`resource::cors_preflight`]/each `Output`'s
+/// own `OPTIONS` handler still runs, so the preflight's CORS response is
+/// unaffected.
+async fn output_auth_gate(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    let Some(verifier) = &state.output_auth else {
+        return next.run(req).await;
+    };
+    if req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
+    let authorization = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+    let method = req.method().as_str().to_string();
+    // Use the pre-`nest`-rewrite URI (`OriginalUri`, e.g. `/cam1/master.m3u8`)
+    // for the Digest `uri` check, not `req.uri()` (which — inside a nested
+    // stream router — has had the `/cam1` prefix already stripped down to
+    // `/master.m3u8` by the time this middleware runs): a real client's
+    // Digest `Authorization` header is computed against the full request
+    // target it actually sent, so verifying against anything else would
+    // reject every legitimate Digest request.
+    let uri = req
+        .extensions()
+        .get::<axum::extract::OriginalUri>()
+        .map(|o| o.0.clone())
+        .unwrap_or_else(|| req.uri().clone());
+    let uri = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| uri.path().to_string());
+    match verifier.verify(authorization, &method, &uri) {
+        AuthResult::Ok => next.run(req).await,
+        AuthResult::Unauthorized => {
+            let mut resp = StatusCode::UNAUTHORIZED.into_response();
+            if let Ok(value) = HeaderValue::from_str(&verifier.challenge()) {
+                resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
+            }
+            resp
+        }
+    }
 }
 
 /// Router-wide middleware (mounted via `.layer` on each stream's *merged*
@@ -446,7 +555,11 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
             part_target_ms,
             config.window_segments,
         ));
-        let outputs: Vec<Arc<dyn Output>> = route.outputs.iter().map(|k| k.build()).collect();
+        let outputs: Vec<Arc<dyn Output>> = route
+            .outputs
+            .iter()
+            .map(|k| k.build_with_playlist_name(&config.playlist_name))
+            .collect();
         streams.insert(route.name.clone(), (store.clone(), outputs));
 
         let name = route.name.clone();
@@ -537,7 +650,14 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         supervisor_handles.push((name, handle));
     }
 
-    let state = Arc::new(AppState::new(streams).with_limits(HttpLimits::from(&config)));
+    let mut app_state = AppState::new(streams).with_limits(HttpLimits::from(&config));
+    if let Some(output_auth) = &config.output_auth {
+        app_state = app_state.with_output_auth(Arc::new(Verifier::new(
+            output_auth.to_credentials(),
+            OUTPUT_AUTH_REALM,
+        )));
+    }
+    let state = Arc::new(app_state);
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
     let shutdown_future = async move {
         shutdown_signal().await;
@@ -613,7 +733,10 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         Arc::new(AppState::new(streams))
     }
@@ -751,7 +874,10 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         let app = router(Arc::new(AppState::new(streams)));
         let resp = app.oneshot(get("/readyz")).await.unwrap();
@@ -787,7 +913,10 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "metrics-probe".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         let state = Arc::new(AppState::new(streams));
         let app = router(state.clone());
@@ -912,7 +1041,7 @@ mod tests {
             (
                 store,
                 vec![
-                    Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                 ],
             ),
@@ -1040,7 +1169,7 @@ mod tests {
             (
                 store,
                 vec![
-                    Arc::new(LlHlsOutput) as Arc<dyn Output>,
+                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
                 ],
             ),
@@ -1162,7 +1291,10 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         let app = router(Arc::new(AppState::new(streams).with_limits(HttpLimits {
             request_timeout: std::time::Duration::from_millis(50),
@@ -1196,8 +1328,281 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
         );
         streams
+    }
+
+    // --- issue #663 "shared output auth" ---
+
+    use broadcast_auth::{Credentials, RequestContext, respond};
+
+    fn get_with_auth(uri: &str, authorization: &str) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, authorization)
+            .body(axum::body::Body::empty())
+            .unwrap()
+    }
+
+    fn basic_header(username: &str, password: &str) -> String {
+        use base64::Engine as _;
+        format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"))
+        )
+    }
+
+    /// A `cam1` app gated by `verifier` — every other stream/root behaviour
+    /// unchanged from [`make_state_streams`].
+    fn app_with_output_auth(verifier: Verifier) -> Router {
+        router(Arc::new(
+            AppState::new(make_state_streams()).with_output_auth(Arc::new(verifier)),
+        ))
+    }
+
+    /// Biting test: with Basic `output_auth` configured, a request with no
+    /// `Authorization` header must `401` and carry a `WWW-Authenticate:
+    /// Basic realm=...` challenge.
+    #[tokio::test]
+    async fn output_auth_basic_missing_creds_401_with_challenge() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let challenge = resp
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .expect("401 must carry WWW-Authenticate")
+            .to_str()
+            .unwrap();
+        assert!(challenge.starts_with("Basic realm="), "{challenge}");
+    }
+
+    /// Correct Basic credentials must `200`.
+    #[tokio::test]
+    async fn output_auth_basic_correct_creds_200() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app
+            .oneshot(get_with_auth(
+                "/cam1/master.m3u8",
+                &basic_header("admin", "hunter2"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Wrong Basic credentials must `401`.
+    #[tokio::test]
+    async fn output_auth_basic_wrong_creds_401() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app
+            .oneshot(get_with_auth(
+                "/cam1/master.m3u8",
+                &basic_header("admin", "WRONG"),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Biting test: with Digest `output_auth` configured, a request with no
+    /// `Authorization` header must `401` and carry a `WWW-Authenticate:
+    /// Digest realm=..., nonce=..., qop="auth", algorithm=MD5` challenge.
+    #[tokio::test]
+    async fn output_auth_digest_missing_creds_401_with_challenge() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        let challenge = resp
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .expect("401 must carry WWW-Authenticate")
+            .to_str()
+            .unwrap();
+        assert!(challenge.starts_with("Digest "), "{challenge}");
+        assert!(challenge.contains("nonce="), "{challenge}");
+        assert!(challenge.contains("qop=\"auth\""), "{challenge}");
+    }
+
+    /// Correct Digest credentials, computed by a real `broadcast_auth`
+    /// client answering the server's own challenge (round trip through the
+    /// real production `Verifier`, not a hand-rolled header), must `200`.
+    #[tokio::test]
+    async fn output_auth_digest_correct_creds_200() {
+        let verifier = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        );
+        let challenge = verifier.challenge();
+        let app = router(Arc::new(
+            AppState::new(make_state_streams()).with_output_auth(Arc::new(verifier)),
+        ));
+        let authorization = respond(
+            &challenge,
+            &RequestContext::new("GET", "/cam1/master.m3u8"),
+            Credentials::new("admin", "hunter2"),
+        )
+        .unwrap();
+        let resp = app
+            .oneshot(get_with_auth("/cam1/master.m3u8", &authorization))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Wrong Digest credentials must `401`.
+    #[tokio::test]
+    async fn output_auth_digest_wrong_creds_401() {
+        let verifier = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "hunter2".into(),
+            },
+            OUTPUT_AUTH_REALM,
+        );
+        let challenge = verifier.challenge();
+        let app = router(Arc::new(
+            AppState::new(make_state_streams()).with_output_auth(Arc::new(verifier)),
+        ));
+        let authorization = respond(
+            &challenge,
+            &RequestContext::new("GET", "/cam1/master.m3u8"),
+            Credentials::new("admin", "WRONG"),
+        )
+        .unwrap();
+        let resp = app
+            .oneshot(get_with_auth("/cam1/master.m3u8", &authorization))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Biting test: with Bearer `output_auth` configured, a request with no
+    /// `Authorization` header must `401`.
+    #[tokio::test]
+    async fn output_auth_bearer_missing_creds_401() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Correct Bearer token must `200`.
+    #[tokio::test]
+    async fn output_auth_bearer_correct_token_200() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app
+            .oneshot(get_with_auth("/cam1/master.m3u8", "Bearer secrettoken"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Wrong Bearer token must `401`.
+    #[tokio::test]
+    async fn output_auth_bearer_wrong_token_401() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app
+            .oneshot(get_with_auth("/cam1/master.m3u8", "Bearer WRONG"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    /// Biting test: `/healthz` (an ops endpoint) must stay `200` with **no**
+    /// credentials even when `output_auth` is configured — load-balancer
+    /// probes/scraping must never be gated. Reverting the "apply
+    /// `output_auth_gate` only to the per-stream nests, not the merged root"
+    /// wiring makes this fail (this same test would then also need
+    /// credentials).
+    #[tokio::test]
+    async fn output_auth_configured_healthz_still_open() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/healthz")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// Biting test: `/metrics` must also stay open with `output_auth`
+    /// configured.
+    #[tokio::test]
+    async fn output_auth_configured_metrics_still_open() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/metrics")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// `output_auth: None` (the default, via [`make_state_streams`]/`AppState::new`
+    /// with no `with_output_auth` call) leaves the stream route open, exactly
+    /// as every pre-#663 test in this module already assumes.
+    #[tokio::test]
+    async fn output_auth_none_stream_route_stays_open() {
+        let app = router(Arc::new(AppState::new(make_state_streams())));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// The `401` response from `output_auth_gate` must still carry the same
+    /// CORS header as a normal response — needed for a cross-origin browser
+    /// client to see the `401`/`WWW-Authenticate` at all rather than an
+    /// opaque failed-CORS network error.
+    #[tokio::test]
+    async fn output_auth_401_response_still_carries_cors_header() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "*"
+        );
     }
 }

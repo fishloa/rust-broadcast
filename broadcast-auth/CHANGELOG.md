@@ -17,3 +17,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `tests/label_coverage.rs` #204 drift-guard (`Error`/`Credentials`
   SKIP-listed — see the test's doc comment for why `Credentials` has no
   `Display`).
+- **`server::Verifier` — the server-side challenge+verify half** (issue #663
+  "shared output auth", `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`):
+  built from a configured `Credentials` + realm, `Verifier::challenge()`
+  renders the `WWW-Authenticate` value for a `401` (Basic/Digest realm+nonce,
+  Bearer the bare `"Bearer"` token) and `Verifier::verify(authorization,
+  method, uri) -> AuthResult` checks an incoming `Authorization` header.
+  Promoted from `multimux::testutil`'s test-only mock auth server (which
+  already did a real, independent RFC 7616 §3.4.1 Digest computation rather
+  than a literal-string match) into this shared crate, so it is now the
+  *production* verifier multimux's output-auth middleware uses, not a
+  test-only fixture duplicated elsewhere. Basic/Bearer compare in constant
+  time; Digest recomputes `HA1`/`HA2`/`response` (`qop=auth`/`algorithm=MD5`)
+  and also checks the client's claimed `uri` against the actual request URI.
+  A `Digest`-scheme `Verifier` generates one random server nonce at
+  construction and holds it for its lifetime — see the module doc's
+  replay caveat. New `base64`/`md-5`/`rand` dependencies (all already
+  transitive via `http-auth` at the same versions — no new lock entries).

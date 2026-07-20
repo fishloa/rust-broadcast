@@ -7,6 +7,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- **`server::master_playlist_m3u8` now takes a `media_playlist_name: &str`
+  argument** (issue #663 "shared output auth + configurable playlist_name"):
+  the master playlist's `#EXT-X-STREAM-INF` reference is the caller's
+  configured media-playlist filename instead of the hardcoded `"media.m3u8"`
+  literal, so a server (e.g. multimux's `Config::playlist_name`) can serve
+  its media playlist under any `*.m3u8` name. Breaking: pass the intended
+  filename explicitly (`master_playlist_m3u8("media.m3u8")` reproduces the
+  old behaviour).
 - **`client::tokio_client::TokioClient` now authenticates via `broadcast-auth`**
   (issue #663 P3c): `TokioClientConfig::auth` takes a
   `broadcast_auth::Credentials` (Basic/Digest/Bearer) instead of the ad hoc

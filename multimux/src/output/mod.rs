@@ -41,10 +41,20 @@ impl OutputKind {
         }
     }
 
-    /// Build the [`Output`] this kind names.
+    /// Build the [`Output`] this kind names, using
+    /// [`llhls::DEFAULT_PLAYLIST_NAME`] for LL-HLS's media playlist filename.
+    /// Use [`Self::build_with_playlist_name`] to serve it under a
+    /// configured name instead (`crate::config::Config::playlist_name`).
     pub fn build(&self) -> Arc<dyn Output> {
+        self.build_with_playlist_name(llhls::DEFAULT_PLAYLIST_NAME)
+    }
+
+    /// Build the [`Output`] this kind names, serving LL-HLS's media playlist
+    /// at `playlist_name` (ignored for [`OutputKind::Dash`], which has no
+    /// equivalent configurable filename — `manifest.mpd` is fixed).
+    pub fn build_with_playlist_name(&self, playlist_name: &str) -> Arc<dyn Output> {
         match self {
-            OutputKind::LlHls => Arc::new(llhls::LlHlsOutput),
+            OutputKind::LlHls => Arc::new(llhls::LlHlsOutput::new(playlist_name)),
             OutputKind::Dash => Arc::new(dash::DashOutput),
         }
     }

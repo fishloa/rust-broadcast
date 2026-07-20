@@ -146,11 +146,15 @@ pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
     })
 }
 
-/// A minimal single-variant master playlist pointing at `media.m3u8` — the
-/// same regardless of `MediaStore` state (no multi-rendition support yet),
-/// so this takes no store argument.
-pub fn master_playlist_m3u8() -> String {
-    format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={PLACEHOLDER_BANDWIDTH_BPS}\nmedia.m3u8\n")
+/// A minimal single-variant master playlist pointing at `media_playlist_name`
+/// (the caller's configured media-playlist filename — e.g. multimux's
+/// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
+/// regardless of `MediaStore` state (no multi-rendition support yet), so this
+/// takes no store argument.
+pub fn master_playlist_m3u8(media_playlist_name: &str) -> String {
+    format!(
+        "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={PLACEHOLDER_BANDWIDTH_BPS}\n{media_playlist_name}\n"
+    )
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2) — the
@@ -374,10 +378,17 @@ mod tests {
 
     #[test]
     fn master_playlist_has_stream_inf() {
-        let m = master_playlist_m3u8();
+        let m = master_playlist_m3u8("media.m3u8");
         assert!(m.contains("#EXTM3U"));
         assert!(m.contains("#EXT-X-STREAM-INF"));
         assert!(m.contains("media.m3u8"));
+    }
+
+    #[test]
+    fn master_playlist_points_at_configured_playlist_name() {
+        let m = master_playlist_m3u8("index.m3u8");
+        assert!(m.contains("index.m3u8"));
+        assert!(!m.contains("media.m3u8"));
     }
 
     #[test]

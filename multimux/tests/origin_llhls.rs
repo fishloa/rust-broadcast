@@ -119,7 +119,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
+            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));
@@ -208,7 +208,7 @@ async fn blocking_reload_resolves_when_part_arrives() {
         "cam".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput) as Arc<dyn Output>],
+            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

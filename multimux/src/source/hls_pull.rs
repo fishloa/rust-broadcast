@@ -355,7 +355,10 @@ mod tests {
         let mut streams = HashMap::new();
         streams.insert(
             "live".to_string(),
-            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn MmOutput>]),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn MmOutput>],
+            ),
         );
         let mut app = router(Arc::new(AppState::new(streams)));
         if let Some(scheme) = auth {

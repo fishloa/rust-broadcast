@@ -19,5 +19,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
 thiserror = "2"
+# Server-side (`server::Verifier`) challenge/verify: decoding a client's
+# Basic `Authorization` header (`base64`), recomputing a Digest response
+# (`md-5`) to verify against, and generating a fresh server nonce (`rand`).
+# All three are already transitive dependencies of `http-auth` at these same
+# versions, so this adds no new version to the workspace lock.
+base64    = "0.22"
+md-5      = "0.10"
+rand      = "0.8"
 
 [dev-dependencies]

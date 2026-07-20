@@ -13,12 +13,14 @@
 //!   field enum with a fixed label set. It has no wire "value" to render as a
 //!   short label — `Display`-ing it risks reads-like-it-shows-a-secret
 //!   confusion, so it deliberately has no `Display` impl at all.
+//! - `AuthResult` — a binary pass/fail verification outcome (`Ok`/
+//!   `Unauthorized`), not a spec-defined wire field with its own label set.
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Error", "Credentials"];
+const SKIP: &[&str] = &["Error", "Credentials", "AuthResult"];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

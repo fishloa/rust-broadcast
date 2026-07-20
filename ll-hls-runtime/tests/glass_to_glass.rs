@@ -174,7 +174,7 @@ async fn start_ll_origin() -> (Arc<MediaStore>, String, tokio::task::JoinHandle<
         "live".to_string(),
         (
             store.clone(),
-            vec![Arc::new(LlHlsOutput) as Arc<dyn MmOutput>],
+            vec![Arc::new(LlHlsOutput::default()) as Arc<dyn MmOutput>],
         ),
     );
     let app = router(Arc::new(AppState::new(streams)));

@@ -3,6 +3,49 @@
 ## [Unreleased]
 
 ### Added
+- **Shared output auth** (issue #663 "shared output auth",
+  `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`): one
+  Basic/Digest/Bearer credential can now gate **every** media output route
+  (`/{stream}/…` — manifests and init/segment/part bytes alike, across every
+  configured route, e.g. 40 cameras under `/camN/index.m3u8`) via a new
+  `Config::output_auth` (`config::OutputAuthSpec`, JSON tagged on `scheme`:
+  `{ "scheme": "basic"|"digest"|"bearer", ... }`). Independent of, and
+  unrelated to, each route's own ingest auth (`config::AuthSpec`/URL
+  userinfo) — one output credential guards the whole origin regardless of how
+  differently each camera authenticates upstream. Built on the new
+  `broadcast_auth::Verifier` (the server-side challenge+verify half,
+  promoted out of `testutil`'s test-only mock — see that crate's changelog).
+  Missing/wrong credentials get `401` + `WWW-Authenticate` (Basic/Digest
+  challenge, or the bare `Bearer` token for Bearer); `output_auth: None` (the
+  default) leaves every route open, unchanged from pre-#663 behaviour.
+  **Ops endpoints (`/healthz`/`/readyz`/`/metrics`) are never gated** — load
+  balancer probes and metrics scraping stay open regardless of
+  `output_auth`. CORS/`Cache-Control` headers still apply to a `401`
+  response from this gate (needed for a cross-origin browser client to see
+  the status/challenge at all, not just a successful response).
+- **Configurable `playlist_name`** (issue #663 "configurable
+  `playlist_name`"): a new `Config::playlist_name` (default `"media.m3u8"`)
+  names the LL-HLS media playlist filename served at
+  `/{stream}/{playlist_name}`; `master.m3u8`'s `#EXT-X-STREAM-INF` reference
+  follows suit (`output::llhls::LlHlsOutput::new`). Validated non-empty,
+  `.m3u8`-suffixed, slash-free, and not `"master.m3u8"` (which would collide
+  with the fixed master-playlist route). `master.m3u8`'s own name is not
+  configurable; DASH's `manifest.mpd` is unaffected. Breaking (internal):
+  `LlHlsOutput` is no longer a unit struct — use `LlHlsOutput::default()` (or
+  `OutputKind::build()`) for the pre-existing `/media.m3u8` behaviour, or
+  `LlHlsOutput::new(name)`/`OutputKind::build_with_playlist_name(name)` for a
+  configured name; `output::llhls::{master_playlist, media_playlist}` are
+  narrowed from `pub` to `pub(crate)` (their `State` type changed shape, and
+  nothing outside this crate called them directly). Depends on
+  `ll_hls_runtime::server::master_playlist_m3u8` now taking the media
+  playlist's filename as an argument (see that crate's changelog).
+- **RTSP config-auth (`with_auth`) Digest coverage against a real server**
+  (the gap flagged in the client-auth story): a new loopback test drives
+  `source::rtsp::RtspSource` with config-supplied (not URL-userinfo) Digest
+  credentials against a mock server verified by the real
+  `broadcast_auth::Verifier`, proving the `with_auth` -> `ClientSession`
+  wiring end-to-end (success and wrong-password cases), mirroring
+  `rtsp-runtime/tests/io_loopback.rs::digest_auth_over_loopback`.
 - **Config-supplied + Bearer credentials, finishing client-side
   multi-scheme auth** (issue #663 — completes the P3c "Shared auth layer"
   story): `InputSpec::Rtsp`/`TsHttp`/`HlsPull` each gained an optional
