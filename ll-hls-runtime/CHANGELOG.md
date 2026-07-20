@@ -6,6 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`MediaStore::window_segments`/`last_closed_segment_seq` no longer use a
+  bare `.lock().unwrap()`.** Pre-release audit finding: these two lock sites
+  (the bare-`_HLS_msn` reload path and the DASH `SegmentTemplate` window
+  accessor) panicked on a poisoned `Mutex`, unlike the store's other 11 lock
+  sites, which already tolerate poisoning via
+  `.unwrap_or_else(std::sync::PoisonError::into_inner)`. Both now follow the
+  same poison-tolerant pattern, so one panicking holder of the lock can no
+  longer cascade into panics on ordinary requests.
+
 ### Changed
 - **`server::master_playlist_m3u8` now takes a `media_playlist_name: &str`
   argument** (issue #663 "shared output auth + configurable playlist_name"):

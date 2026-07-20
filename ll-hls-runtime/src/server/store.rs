@@ -436,7 +436,7 @@ impl MediaStore {
     pub fn window_segments(&self) -> Vec<SegmentWindowEntry> {
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .segments
             .iter()
             .map(|s| SegmentWindowEntry {
@@ -467,7 +467,7 @@ impl MediaStore {
     pub(crate) fn last_closed_segment_seq(&self) -> u32 {
         self.inner
             .lock()
-            .unwrap()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .segments
             .back()
             .map(|s| s.segment_seq)

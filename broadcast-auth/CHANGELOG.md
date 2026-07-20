@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- **`Credentials`'s `Debug` no longer leaks the raw password/token.** Pre-
+  release audit finding: `#[derive(Debug)]` printed `Basic`/`Digest`'s
+  `password` and `Bearer`'s `token` verbatim under `{:?}` — reachable through
+  any embedding struct that also derives `Debug` (e.g.
+  `ll-hls-runtime::client::tokio_client::TokioClientConfig`,
+  `rtsp-runtime::client::ClientSession`). Replaced with a manual `Debug` (the
+  same pattern already used for `Authenticator`/`Verifier` one file over)
+  that shows the username (not secret) for `Basic`/`Digest` and redacts
+  `password`/`token` as `"***"`.
+
 ### Added
 - Initial release: a shared, scheme-agnostic `Credentials` model (`Basic` /
   `Digest` / `Bearer`, `#[non_exhaustive]`) and a challenge->response helper

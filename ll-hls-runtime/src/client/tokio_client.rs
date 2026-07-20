@@ -186,7 +186,7 @@ impl TokioClient {
     ///
     /// # Errors
     /// Only if the underlying `reqwest::Client` fails to build (e.g. TLS
-    /// backend initialization failure) — not a network error, since no
+    /// backend initialisation failure) — not a network error, since no
     /// request has been made yet.
     pub fn new(playlist_url: impl Into<String>) -> Result<Self, TokioError> {
         Self::with_config(playlist_url, TokioClientConfig::default())
@@ -498,4 +498,26 @@ fn build_request(
         req = req.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
     }
     req
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Security-blocker regression (pre-release audit): `TokioClientConfig`
+    // derives `Debug` and embeds `Option<Credentials>` directly (`auth`) — it
+    // must inherit `Credentials`'s redacting `Debug`, never the raw secret.
+    #[test]
+    fn tokio_client_config_debug_does_not_leak_embedded_credentials_secret() {
+        let config = TokioClientConfig {
+            auth: Some(Credentials::new("admin", "a-very-secret-password")),
+            ..TokioClientConfig::default()
+        };
+        let debug = format!("{config:?}");
+        assert!(
+            !debug.contains("a-very-secret-password"),
+            "leaked via TokioClientConfig Debug: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
+    }
 }

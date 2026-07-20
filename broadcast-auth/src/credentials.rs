@@ -10,7 +10,7 @@
 /// common password case; construct `Basic`/`Digest` directly only when the
 /// caller must pin one scheme.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Credentials {
     /// Username/password for HTTP Basic auth (RFC 7617) — or RTSP's reuse of
     /// it (RFC 2326 §14/§16).
@@ -68,5 +68,78 @@ impl Credentials {
             | Credentials::Digest { username, password } => Some((username, password)),
             Credentials::Bearer { .. } => None,
         }
+    }
+}
+
+/// Manual `Debug` (rather than `#[derive(Debug)]`): every scheme carries a
+/// secret (`password`/`token`) that must never render verbatim. Usernames are
+/// not secret and are shown as-is to keep the output useful for diagnostics.
+impl core::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Credentials::Basic { username, .. } => f
+                .debug_struct("Credentials::Basic")
+                .field("username", username)
+                .field("password", &"***")
+                .finish(),
+            Credentials::Digest { username, .. } => f
+                .debug_struct("Credentials::Digest")
+                .field("username", username)
+                .field("password", &"***")
+                .finish(),
+            Credentials::Bearer { .. } => f
+                .debug_struct("Credentials::Bearer")
+                .field("token", &"***")
+                .finish(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Security-blocker regression (pre-release audit): `Credentials` must
+    // never render a secret via `{:?}`. Must FAIL if `Debug` reverts to a
+    // plain `#[derive(Debug)]`.
+    #[test]
+    fn basic_debug_redacts_password_but_keeps_username() {
+        let creds = Credentials::Basic {
+            username: "admin".to_string(),
+            password: "s3cr3t-password".to_string(),
+        };
+        let debug = format!("{creds:?}");
+        assert!(!debug.contains("s3cr3t-password"), "leaked: {debug}");
+        assert!(
+            debug.contains("admin"),
+            "username should be visible: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
+    }
+
+    #[test]
+    fn digest_debug_redacts_password_but_keeps_username() {
+        let creds = Credentials::Digest {
+            username: "camera-user".to_string(),
+            password: "hunter2-super-secret".to_string(),
+        };
+        let debug = format!("{creds:?}");
+        assert!(!debug.contains("hunter2-super-secret"), "leaked: {debug}");
+        assert!(
+            debug.contains("camera-user"),
+            "username should be visible: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
+    }
+
+    #[test]
+    fn bearer_debug_redacts_token() {
+        let creds = Credentials::bearer("super-secret-bearer-token-xyz");
+        let debug = format!("{creds:?}");
+        assert!(
+            !debug.contains("super-secret-bearer-token-xyz"),
+            "leaked: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
     }
 }

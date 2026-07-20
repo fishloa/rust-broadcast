@@ -512,4 +512,19 @@ mod tests {
         assert!(String::from_utf8_lossy(&a).contains("CSeq: 1"));
         assert!(String::from_utf8_lossy(&b).contains("CSeq: 2"));
     }
+
+    // Security-blocker regression (pre-release audit): `ClientSession`
+    // derives `Debug` and embeds `Option<Credentials>` directly — it must
+    // inherit `Credentials`'s redacting `Debug`, never the raw secret.
+    #[test]
+    fn client_session_debug_does_not_leak_embedded_credentials_secret() {
+        let c = ClientSession::new()
+            .with_credentials(Credentials::new("admin", "extremely-secret-password"));
+        let debug = format!("{c:?}");
+        assert!(
+            !debug.contains("extremely-secret-password"),
+            "leaked via ClientSession Debug: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
+    }
 }
