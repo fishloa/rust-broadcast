@@ -308,6 +308,27 @@ pub struct Config {
     pub window_segments: usize,
     /// Input→output routes.
     pub routes: Vec<Route>,
+    /// Per-request HTTP timeout, in seconds (issue #663 P5, audit-concurrency
+    /// #3) — see [`crate::origin::HttpLimits::request_timeout`]. Must exceed
+    /// 5.0 (the LL-HLS blocking-reload cap,
+    /// `output::llhls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`) or a
+    /// legitimate long-poll blocking request would be cut off by this layer
+    /// before it ever gets the chance to resolve or fall back on its own —
+    /// enforced by [`Config::validate`].
+    pub request_timeout_secs: f64,
+    /// Maximum number of requests serviced concurrently, across every route
+    /// — see [`crate::origin::HttpLimits::max_concurrent_requests`].
+    pub max_concurrent_requests: usize,
+    /// Maximum accepted request body size, in bytes — see
+    /// [`crate::origin::HttpLimits::max_request_body_bytes`].
+    pub max_request_body_bytes: usize,
+    /// Ingest connect-handshake timeout, in seconds, applied to every route's
+    /// source (issue #663 P5, audit-ingest #3) — see
+    /// [`crate::source::IngestTimeouts::connect`].
+    pub ingest_connect_timeout_secs: f64,
+    /// Ingest per-read timeout, in seconds, applied to every route's source
+    /// — see [`crate::source::IngestTimeouts::read`].
+    pub ingest_read_timeout_secs: f64,
 }
 
 impl Default for Config {
@@ -318,9 +339,22 @@ impl Default for Config {
             part_target_ms: 500,
             window_segments: 8,
             routes: Vec::new(),
+            request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64(),
+            max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
+            max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
+            ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
+            ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
         }
     }
 }
+
+/// Lower bound [`Config::validate`] enforces on `request_timeout_secs`: the
+/// LL-HLS engine's own blocking-reload cap (5 s —
+/// `output::llhls`/`origin::resource`'s `BLOCKING_RELOAD_TIMEOUT`). The
+/// global HTTP timeout must stay strictly above it, or the global layer
+/// would cut off a legitimate long-poll blocking request before the LL-HLS
+/// engine's own cap ever gets a chance to resolve it or fall back.
+const MIN_REQUEST_TIMEOUT_SECS: f64 = 5.0;
 
 impl Config {
     /// Load a JSON config file.
@@ -362,6 +396,40 @@ impl Config {
         if self.window_segments == 0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "window_segments",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.request_timeout_secs <= MIN_REQUEST_TIMEOUT_SECS {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "request_timeout_secs",
+                reason: format!(
+                    "must exceed {MIN_REQUEST_TIMEOUT_SECS} (the LL-HLS blocking-reload cap), \
+                     got {}",
+                    self.request_timeout_secs
+                ),
+            });
+        }
+        if self.max_concurrent_requests == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "max_concurrent_requests",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.max_request_body_bytes == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "max_request_body_bytes",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.ingest_connect_timeout_secs <= 0.0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "ingest_connect_timeout_secs",
+                reason: "must be positive".into(),
+            });
+        }
+        if self.ingest_read_timeout_secs <= 0.0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "ingest_read_timeout_secs",
                 reason: "must be positive".into(),
             });
         }
@@ -410,6 +478,106 @@ mod tests {
             InputSpec::Rtsp { url } => assert_eq!(url, "rtsp://host/stream2"),
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
+        cfg.validate().unwrap();
+    }
+
+    // --- issue #663 P5: HTTP-layer resource limits (audit-concurrency #3) ---
+
+    /// A config omitting the new limit fields gets the same defaults
+    /// [`crate::origin::HttpLimits::default`] applies — every pre-P5 config
+    /// keeps working unchanged.
+    #[test]
+    fn http_limits_default_when_omitted() {
+        let json = r#"{
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            cfg.request_timeout_secs,
+            crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64()
+        );
+        assert_eq!(
+            cfg.max_concurrent_requests,
+            crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS
+        );
+        assert_eq!(
+            cfg.max_request_body_bytes,
+            crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES
+        );
+        cfg.validate().unwrap();
+    }
+
+    /// A `request_timeout_secs` at or below the LL-HLS blocking-reload cap
+    /// (5 s) must be rejected — it would cut off a legitimate long-poll
+    /// blocking request before that engine ever gets a chance to resolve or
+    /// fall back.
+    #[test]
+    fn validate_rejects_request_timeout_at_or_below_blocking_cap() {
+        for bad in [1.0, 5.0] {
+            let cfg = Config {
+                routes: vec![Route {
+                    name: "x".into(),
+                    input: InputSpec::Rtsp {
+                        url: "rtsp://a".into(),
+                    },
+                    outputs: default_outputs(),
+                }],
+                request_timeout_secs: bad,
+                ..Config::default()
+            };
+            assert!(cfg.validate().is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_concurrent_requests() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::Rtsp {
+                    url: "rtsp://a".into(),
+                },
+                outputs: default_outputs(),
+            }],
+            max_concurrent_requests: 0,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_request_body_bytes() {
+        let cfg = Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::Rtsp {
+                    url: "rtsp://a".into(),
+                },
+                outputs: default_outputs(),
+            }],
+            max_request_body_bytes: 0,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    /// The limit fields parse from JSON when given explicitly.
+    #[test]
+    fn parses_json_config_with_http_limits() {
+        let json = r#"{
+            "request_timeout_secs": 15.0,
+            "max_concurrent_requests": 100,
+            "max_request_body_bytes": 2048,
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.request_timeout_secs, 15.0);
+        assert_eq!(cfg.max_concurrent_requests, 100);
+        assert_eq!(cfg.max_request_body_bytes, 2048);
         cfg.validate().unwrap();
     }
 

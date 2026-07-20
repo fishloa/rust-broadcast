@@ -13,6 +13,8 @@
 //! interleaved) → PLAY handshake and returns a live [`RtspSession`] that
 //! [`RtspSession::next_samples`] pulls one interleaved frame at a time.
 
+use std::time::Duration;
+
 use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::io::AsyncRtspClient;
@@ -21,7 +23,7 @@ use tokio::net::TcpStream;
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
-use crate::source::{Source, TrackInit, sdp::parse_sdp_tracks};
+use crate::source::{IngestTimeouts, Source, TrackInit, sdp::parse_sdp_tracks};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
 
@@ -54,6 +56,7 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
 pub struct RtspSource {
     name: String,
     url: String,
+    timeouts: IngestTimeouts,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
@@ -74,12 +77,32 @@ impl RtspSource {
         RtspSource {
             name: name.into(),
             url: url.into(),
+            timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see
+    /// `crate::origin::HttpLimits`/`AppState::with_limits` for the analogous
+    /// pattern this mirrors. [`crate::origin::serve`] applies `Config`'s
+    /// configured values; callers that only want the defaults (most tests)
+    /// keep using [`Self::new`] unchanged.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Connects, DESCRIBEs, SETUPs every media (interleaved TCP, channels
     /// `(2i, 2i+1)` per the SDP's media order), and PLAYs — returning a live
     /// session ready for [`RtspSession::next_samples`].
+    ///
+    /// The whole handshake (TCP/TLS connect through PLAY) is bounded by
+    /// [`IngestTimeouts::connect`] (issue #663 P5, audit-ingest #3): a
+    /// stalled/half-open server that accepts the connection but never
+    /// replies would otherwise hang this method forever, starving
+    /// [`crate::origin::supervisor::supervise`]'s backoff of a chance to
+    /// retry — a timed-out handshake instead surfaces as a
+    /// [`MultimuxError::Connect`], exactly like any other connect failure.
     pub async fn connect(&self) -> Result<RtspSession> {
         let base_url = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
             reason: format!(
@@ -99,67 +122,81 @@ impl RtspSource {
 
         let is_tls = scheme_is_tls(&request_url)?;
         let addr = connect_addr(&request_url)?;
-        let mut client = if is_tls {
-            let server_name = sni_server_name(&request_url)?;
-            connect_tls_client(&addr, &server_name, credentials).await?
-        } else {
-            connect_plain_client(&addr, credentials).await?
-        };
+        let connect_timeout = self.timeouts.connect;
 
-        let describe = client
-            .describe(&request_uri)
-            .await
-            .map_err(protocol_err("DESCRIBE"))?;
-        let sdp = expect_ok_response(describe, "DESCRIBE")?;
-        let mut tracks = parse_sdp_tracks(&sdp)?;
-
-        for track in &mut tracks {
-            let uri = resolve_control(&request_url, track.control.as_deref())?;
-            let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
-                track.channel,
-                track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
-            ));
-            let setup = client
-                .setup(&uri, &transport)
-                .await
-                .map_err(protocol_err("SETUP"))?;
-            expect_ok_response(setup, "SETUP")?;
-
-            // The server must negotiate TCP-interleaved transport. Extract the
-            // negotiated spec and verify it has both TCP lower-transport and
-            // interleaved channels; reject any non-interleaved response (e.g.
-            // a server that ignores TCP and negotiates UDP).
-            let spec = client
-                .session()
-                .negotiated_transport()
-                .and_then(Transport::first)
-                .ok_or_else(|| MultimuxError::Protocol {
-                    phase: "SETUP",
-                    reason: format!(
-                        "track {}: server did not provide negotiated transport",
-                        track.track_id
-                    ),
-                })?;
-
-            // Ensure the negotiated transport is TCP-interleaved.
-            if let Some(channel) = interleaved_channel(spec) {
-                track.channel = channel;
+        let (tracks, client) = tokio::time::timeout(connect_timeout, async {
+            let mut client = if is_tls {
+                let server_name = sni_server_name(&request_url)?;
+                connect_tls_client(&addr, &server_name, credentials).await?
             } else {
-                return Err(MultimuxError::Protocol {
-                    phase: "SETUP",
-                    reason: format!(
-                        "track {}: server did not negotiate interleaved TCP transport",
-                        track.track_id
-                    ),
-                });
-            }
-        }
+                connect_plain_client(&addr, credentials).await?
+            };
 
-        let play = client
-            .play(&request_uri)
-            .await
-            .map_err(protocol_err("PLAY"))?;
-        expect_ok_response(play, "PLAY")?;
+            let describe = client
+                .describe(&request_uri)
+                .await
+                .map_err(protocol_err("DESCRIBE"))?;
+            let sdp = expect_ok_response(describe, "DESCRIBE")?;
+            let mut tracks = parse_sdp_tracks(&sdp)?;
+
+            for track in &mut tracks {
+                let uri = resolve_control(&request_url, track.control.as_deref())?;
+                let transport = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(
+                    track.channel,
+                    track.channel.saturating_add(RTCP_CHANNEL_OFFSET),
+                ));
+                let setup = client
+                    .setup(&uri, &transport)
+                    .await
+                    .map_err(protocol_err("SETUP"))?;
+                expect_ok_response(setup, "SETUP")?;
+
+                // The server must negotiate TCP-interleaved transport. Extract
+                // the negotiated spec and verify it has both TCP
+                // lower-transport and interleaved channels; reject any
+                // non-interleaved response (e.g. a server that ignores TCP
+                // and negotiates UDP).
+                let spec = client
+                    .session()
+                    .negotiated_transport()
+                    .and_then(Transport::first)
+                    .ok_or_else(|| MultimuxError::Protocol {
+                        phase: "SETUP",
+                        reason: format!(
+                            "track {}: server did not provide negotiated transport",
+                            track.track_id
+                        ),
+                    })?;
+
+                // Ensure the negotiated transport is TCP-interleaved.
+                if let Some(channel) = interleaved_channel(spec) {
+                    track.channel = channel;
+                } else {
+                    return Err(MultimuxError::Protocol {
+                        phase: "SETUP",
+                        reason: format!(
+                            "track {}: server did not negotiate interleaved TCP transport",
+                            track.track_id
+                        ),
+                    });
+                }
+            }
+
+            let play = client
+                .play(&request_uri)
+                .await
+                .map_err(protocol_err("PLAY"))?;
+            expect_ok_response(play, "PLAY")?;
+
+            Ok::<_, MultimuxError>((tracks, client))
+        })
+        .await
+        .map_err(|_| MultimuxError::Connect {
+            reason: format!(
+                "rtsp connect: no response within {connect_timeout:?} ({})",
+                crate::redact::redact_url(&self.url)
+            ),
+        })??;
 
         let depacketizer = RtpStreamDepacketizer::new(
             tracks
@@ -172,6 +209,7 @@ impl RtspSource {
             tracks,
             client,
             depacketizer,
+            read_timeout: self.timeouts.read,
         })
     }
 }
@@ -190,6 +228,8 @@ pub struct RtspSession {
     pub tracks: Vec<TrackInit>,
     client: RtspClient,
     depacketizer: RtpStreamDepacketizer,
+    /// Bound on each [`Self::next_samples`] read — see [`IngestTimeouts::read`].
+    read_timeout: Duration,
 }
 
 impl RtspSession {
@@ -203,11 +243,21 @@ impl RtspSession {
     /// emitted (zero or more, paired with their track id), an empty `Vec` for
     /// non-media events or an unrouted (RTCP/unknown) channel, or `Ok(None)`
     /// when the peer has closed the connection.
+    ///
+    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5, audit-ingest #3):
+    /// a server that stops sending interleaved frames mid-session (wedged
+    /// firmware, silently dropped link) would otherwise leave this `.await`
+    /// pending forever — a read that times out surfaces as a
+    /// [`MultimuxError::Protocol`], which [`crate::pipeline::run_pipeline`]
+    /// propagates and [`crate::origin::supervisor::supervise`] reconnects on,
+    /// same as any other read error.
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let event = self
-            .client
-            .recv_interleaved()
+        let event = tokio::time::timeout(self.read_timeout, self.client.recv_interleaved())
             .await
+            .map_err(|_| MultimuxError::Protocol {
+                phase: "recv",
+                reason: format!("no data within {:?}", self.read_timeout),
+            })?
             .map_err(protocol_err("recv"))?;
         let Some(event) = event else {
             return Ok(None);
@@ -725,6 +775,48 @@ mod tests {
         };
         assert!(!msg.contains("user"), "error leaked username: {msg}");
         assert!(!msg.contains("secretpass"), "error leaked password: {msg}");
+    }
+
+    /// Biting test (issue #663 P5, audit-ingest #3): a server that accepts
+    /// the TCP connection but never replies (a wedged/half-open RTSP
+    /// server — the exact failure mode a "no timeout anywhere" `RtspSource`
+    /// used to hang on forever) must fail `connect()` within the configured
+    /// [`IngestTimeouts::connect`], not hang. A short timeout keeps the test
+    /// itself fast; the outer `tokio::time::timeout` is a generous test-only
+    /// backstop that must never actually fire.
+    #[tokio::test]
+    async fn connect_times_out_against_a_stalled_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        // Accept the connection and then do nothing at all — never read,
+        // never write, never close. Held for the test's duration so the
+        // socket doesn't get RST before `connect()` gets a chance to hang on
+        // it.
+        let _accepted = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            std::future::pending::<()>().await;
+            drop(stream);
+        });
+
+        let source = RtspSource::new("stalled", format!("rtsp://{addr}/stream")).with_timeouts(
+            IngestTimeouts {
+                connect: Duration::from_millis(100),
+                read: Duration::from_secs(30),
+            },
+        );
+
+        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect(
+                "connect() must return on its own via IngestTimeouts::connect, \
+                 not hang until this test's own backstop timeout",
+            );
+        assert!(
+            result.is_err(),
+            "a server that never responds must fail connect(), not hang forever"
+        );
     }
 
     #[test]

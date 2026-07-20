@@ -40,10 +40,86 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::watch;
+use tower::limit::ConcurrencyLimitLayer;
+use tower_http::limit::RequestBodyLimitLayer;
+use tower_http::timeout::TimeoutLayer;
 
 use crate::output::Output;
 use crate::store::{HealthState, MediaStore};
 use supervisor::{Backoff, supervise};
+
+/// HTTP-layer resource limits applied process-wide by [`router`] (issue #663
+/// P5, audit-concurrency #3: "slow-loris kills all routes" — with no cap
+/// anywhere, one client opening many connections and never completing a
+/// request, or drip-feeding one slowly, exhausts the tokio task pool/file
+/// descriptors for *every* route, not just a misbehaving source). Three
+/// independent bounds, applied together:
+///
+/// - [`Self::request_timeout`] — [`tower_http::timeout::TimeoutLayer`]:
+///   unlike `tower::timeout`, this returns a `408 Request Timeout` response
+///   rather than erroring the connection, so it composes directly with
+///   axum's `Infallible`-error `Router` with no `HandleErrorLayer`. Must stay
+///   above the LL-HLS blocking-reload cap (5 s —
+///   `output::llhls`/`origin::resource`'s own `BLOCKING_RELOAD_TIMEOUT`) so
+///   a legitimate long-poll `_HLS_msn`/`_HLS_part` blocking request is never
+///   killed by this layer instead of resolving normally or falling back at
+///   its own 5 s cap — [`crate::config::Config::validate`] enforces this.
+/// - [`Self::max_concurrent_requests`] —
+///   [`tower::limit::ConcurrencyLimitLayer`]: bounds how many requests (across
+///   every route) are serviced at once; beyond the limit, a new request
+///   simply waits for a slot rather than spawning unbounded concurrent work.
+/// - [`Self::max_request_body_bytes`] —
+///   [`tower_http::limit::RequestBodyLimitLayer`]: the origin only ever
+///   serves `GET`s, so any non-trivial request body is already anomalous; an
+///   oversized body (by `Content-Length`, checked before the body is read)
+///   gets an immediate `413 Payload Too Large`.
+///
+/// Config-surfaced via [`crate::config::Config`] (sane defaults below);
+/// [`AppState::new`] applies [`HttpLimits::default`] so existing call sites
+/// (tests, examples) are unaffected, and [`AppState::with_limits`] overrides
+/// it with `Config`'s configured values (wired by [`serve`]).
+#[derive(Debug, Clone, Copy)]
+pub struct HttpLimits {
+    /// Per-request timeout — see the struct docs.
+    pub request_timeout: Duration,
+    /// Maximum requests serviced concurrently, across every route.
+    pub max_concurrent_requests: usize,
+    /// Maximum accepted request body size, in bytes.
+    pub max_request_body_bytes: usize,
+}
+
+/// Default per-request timeout: comfortably above the 5 s LL-HLS
+/// blocking-reload cap (double it) so an ordinary long-poll request is never
+/// affected, while still bounding a genuinely stuck connection.
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Default concurrent-request bound, across every configured route.
+pub const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 4096;
+
+/// Default request-body cap: 16 KiB — comfortably above anything a
+/// legitimate `GET` needs (query string only, no body) and far below what a
+/// slow-loris-style oversized POST would need to pressure memory.
+pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 16 * 1024;
+
+impl Default for HttpLimits {
+    fn default() -> Self {
+        HttpLimits {
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
+            max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
+        }
+    }
+}
+
+impl From<&crate::config::Config> for HttpLimits {
+    fn from(cfg: &crate::config::Config) -> Self {
+        HttpLimits {
+            request_timeout: Duration::from_secs_f64(cfg.request_timeout_secs),
+            max_concurrent_requests: cfg.max_concurrent_requests,
+            max_request_body_bytes: cfg.max_request_body_bytes,
+        }
+    }
+}
 
 /// How long `serve` waits for a route's supervisor task to notice shutdown
 /// and return on its own, after axum has finished draining in-flight HTTP
@@ -67,18 +143,33 @@ pub struct AppState {
     /// Renders the current Prometheus text-exposition snapshot of every
     /// metric recorded anywhere in the process (see [`crate::prometheus`]).
     pub metrics_handle: PrometheusHandle,
+    /// HTTP-layer resource limits [`router`] applies (issue #663 P5). Defaults
+    /// via [`HttpLimits::default`]; see [`Self::with_limits`].
+    limits: HttpLimits,
 }
 
 impl AppState {
     /// Build a new `AppState` serving `streams`, installing (or — if one is
     /// already installed in this process, e.g. by another `AppState` built
     /// earlier in the same test binary — reusing) the process-wide
-    /// Prometheus recorder via [`crate::prometheus::install`].
+    /// Prometheus recorder via [`crate::prometheus::install`]. Applies
+    /// [`HttpLimits::default`] — use [`Self::with_limits`] to override.
     pub fn new(streams: HashMap<String, StreamRoute>) -> Self {
         AppState {
             streams,
             metrics_handle: crate::prometheus::install(),
+            limits: HttpLimits::default(),
         }
+    }
+
+    /// Overrides the default [`HttpLimits`] — [`serve`] uses this to apply
+    /// `Config`'s configured request-timeout/concurrency/body-size limits;
+    /// callers that only want the defaults (most tests/examples) keep using
+    /// [`Self::new`] unchanged.
+    #[must_use]
+    pub fn with_limits(mut self, limits: HttpLimits) -> Self {
+        self.limits = limits;
+        self
     }
 }
 
@@ -99,12 +190,18 @@ impl AppState {
 ///   (never under `/{stream}/`) — see `metrics_handler`, `healthz`,
 ///   `readyz` (all crate-private handlers, below).
 ///
-/// Every request — matched or not, root or per-stream — passes through
-/// `track_http`, a global middleware layer recording HTTP request/
-/// duration/byte metrics (applied via `.layer`, which wraps the whole router
-/// including its 404 fallback, unlike `.route_layer` which only wraps
-/// matched routes).
+/// Every request — matched or not, root or per-stream — passes through, in
+/// order (outermost to innermost): `track_http` (HTTP request/duration/byte
+/// metrics; applied via `.layer`, which wraps the whole router including its
+/// 404 fallback, unlike `.route_layer` which only wraps matched routes),
+/// [`HttpLimits::max_request_body_bytes`] (rejects an oversized body by
+/// `Content-Length` before it is read or a concurrency slot is spent),
+/// [`HttpLimits::max_concurrent_requests`], then
+/// [`HttpLimits::request_timeout`] (so the timeout clock only runs once a
+/// request actually has a concurrency slot) — see [`HttpLimits`] (issue #663
+/// P5, audit-concurrency #3).
 pub fn router(state: Arc<AppState>) -> Router {
+    let limits = state.limits;
     let mut router = Router::new();
     for (name, (store, outputs)) in &state.streams {
         let mut stream_router = resource::router(store.clone());
@@ -123,6 +220,9 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     router
         .merge(root)
+        .layer(TimeoutLayer::new(limits.request_timeout))
+        .layer(ConcurrencyLimitLayer::new(limits.max_concurrent_requests))
+        .layer(RequestBodyLimitLayer::new(limits.max_request_body_bytes))
         .layer(middleware::from_fn_with_state(state, track_http))
 }
 
@@ -434,7 +534,7 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
         supervisor_handles.push((name, handle));
     }
 
-    let state = Arc::new(AppState::new(streams));
+    let state = Arc::new(AppState::new(streams).with_limits(HttpLimits::from(&config)));
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
     let shutdown_future = async move {
         shutdown_signal().await;
@@ -966,5 +1066,135 @@ mod tests {
                 "{uri}"
             );
         }
+    }
+
+    // --- issue #663 P5: HTTP-layer resource limits (audit-concurrency #3) ---
+
+    fn post_with_body(uri: &str, body: Vec<u8>) -> axum::http::Request<axum::body::Body> {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(axum::http::header::CONTENT_LENGTH, body.len().to_string())
+            .body(axum::body::Body::from(body))
+            .unwrap()
+    }
+
+    /// Biting test 1: a request whose `Content-Length` exceeds
+    /// [`HttpLimits::max_request_body_bytes`] must be rejected `413 Payload
+    /// Too Large` — proving [`RequestBodyLimitLayer`] is actually wired into
+    /// [`router`], not just configured and ignored. `tower_http`'s layer
+    /// checks `Content-Length` synchronously (RFC 9110 §8.6), so this never
+    /// even reaches a handler.
+    #[tokio::test]
+    async fn oversized_request_body_is_rejected_413() {
+        const TINY_LIMIT: usize = 8;
+        let app = router(Arc::new(AppState::new(make_state_streams()).with_limits(
+            HttpLimits {
+                max_request_body_bytes: TINY_LIMIT,
+                ..HttpLimits::default()
+            },
+        )));
+
+        let resp = app
+            .oneshot(post_with_body(
+                "/cam1/master.m3u8",
+                vec![0u8; TINY_LIMIT + 1],
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// A normal, well-formed request must still succeed once the limit
+    /// layers are wired in — proving they don't break the ordinary path
+    /// (a body well within the cap, one request, well within the timeout).
+    #[tokio::test]
+    async fn normal_request_still_succeeds_with_limits_applied() {
+        let app = router(Arc::new(AppState::new(make_state_streams())));
+        let resp = app.oneshot(get("/cam1/master.m3u8")).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    /// A request body within the cap must still succeed (not just "under the
+    /// cap is untested") — the counterpart to
+    /// `oversized_request_body_is_rejected_413`.
+    #[tokio::test]
+    async fn request_body_within_limit_still_succeeds() {
+        const TINY_LIMIT: usize = 64;
+        let app = router(Arc::new(AppState::new(make_state_streams()).with_limits(
+            HttpLimits {
+                max_request_body_bytes: TINY_LIMIT,
+                ..HttpLimits::default()
+            },
+        )));
+        let resp = app
+            .oneshot(post_with_body("/cam1/master.m3u8", vec![0u8; TINY_LIMIT]))
+            .await
+            .unwrap();
+        // POST isn't a route axum has registered for master.m3u8 (only GET/
+        // OPTIONS), so this 404s — the point is it must NOT 413, proving the
+        // body-size check passed and control reached routing.
+        assert_ne!(resp.status(), axum::http::StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// Biting test 2: [`TimeoutLayer`] must actually cut off a slow request —
+    /// a legitimate, in-abuse-bound blocking `_HLS_msn` reload that never
+    /// resolves (nothing ever closes the awaited segment) would otherwise sit
+    /// out the LL-HLS engine's own 5 s `BLOCKING_RELOAD_TIMEOUT` before
+    /// falling back to a `200`. A configured `request_timeout` far shorter
+    /// than that must return `408 Request Timeout` well before 5 s elapses,
+    /// proving the global timeout layer is wired into [`router`] and set
+    /// *above* (not blind to) the LL-HLS blocking cap by default, but does
+    /// still bind when configured tighter.
+    #[tokio::test]
+    async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 4]);
+        store.add_segment(transmux::ll_hls::SegmentInfo {
+            bytes: vec![0x20; 8],
+            duration: 4.0,
+            segment_seq: 1,
+            part_count: 1,
+        });
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+        );
+        let app = router(Arc::new(AppState::new(streams).with_limits(HttpLimits {
+            request_timeout: std::time::Duration::from_millis(50),
+            ..HttpLimits::default()
+        })));
+
+        let started = std::time::Instant::now();
+        // msn=2 is within ABUSE_MSN_FUTURE_BOUND of the current max (1), so
+        // this is a genuine WouldBlock — not the fast-400 abuse-rejection
+        // path — that nothing in this test ever satisfies.
+        let resp = app
+            .oneshot(get("/cam1/media.m3u8?_HLS_msn=2&_HLS_part=0"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::REQUEST_TIMEOUT);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "must be cut off by the 50ms configured timeout, not the 5s \
+             internal LL-HLS blocking-reload cap: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Helper: a single populated `cam1` stream (mirrors [`make_state`]'s
+    /// store, but returning the raw map so tests can attach their own
+    /// [`HttpLimits`] via [`AppState::with_limits`], which [`make_state`]
+    /// itself doesn't expose).
+    fn make_state_streams() -> HashMap<String, StreamRoute> {
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 4]);
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (store, vec![Arc::new(LlHlsOutput) as Arc<dyn Output>]),
+        );
+        streams
     }
 }

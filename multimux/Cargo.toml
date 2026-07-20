@@ -34,6 +34,13 @@ broadcast-auth    = { path = "../broadcast-auth", version = "0.1" }
 sdp-types         = "0.1"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.7"
+# HTTP-layer resource limits (issue #663 P5, audit-concurrency #3): request
+# timeout + request-body size cap (`tower-http`) and a concurrency bound
+# (`tower::limit`) — see `origin::HttpLimits`/`origin::router`. `util` is
+# needed for `tower::ServiceExt::oneshot` in this crate's own axum-router
+# tests.
+tower-http        = { version = "0.5", default-features = false, features = ["timeout", "limit"] }
+tower             = { version = "0.5", default-features = false, features = ["limit", "util"] }
 serde             = { version = "1", features = ["derive"] }
 serde_json        = "1"
 thiserror         = "2"
@@ -70,5 +77,4 @@ required-features = ["testsupport"]
 name = "serve_rtsp"
 
 [dev-dependencies]
-tower            = { version = "0.5", default-features = false, features = ["util"] }
 base64           = "0.22"

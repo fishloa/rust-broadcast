@@ -23,18 +23,11 @@ use reqwest::Client;
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
+use crate::source::IngestTimeouts;
 use crate::source::Source;
 use crate::source::http_auth::{authenticated_get, credentials_from_url, strip_userinfo};
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingTsDemux};
-
-/// Bound on how long [`TsHttpSource::connect`] waits for the PMT to resolve
-/// (every currently-declared track known) before giving up — mirrors
-/// `source::ts_udp`'s own `CONNECT_TIMEOUT`, and for the same reason: a
-/// source that never sends usable PSI (or a slow/unreachable origin) would
-/// otherwise hang `connect` forever, starving
-/// [`crate::origin::supervisor::supervise`]'s backoff of a chance to retry.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// An MPEG-2 TS-over-HTTP stream to pull: an `http(s)://` URL, which may
 /// carry `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -43,6 +36,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct TsHttpSource {
     name: String,
     url: String,
+    timeouts: IngestTimeouts,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
@@ -62,14 +56,23 @@ impl TsHttpSource {
         TsHttpSource {
             name: name.into(),
             url: url.into(),
+            timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see `RtspSource::with_timeouts`
+    /// for the pattern this mirrors.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Opens a streaming GET to the configured URL (answering a `401`
     /// challenge if the URL carried credentials — see
     /// `crate::source::http_auth::authenticated_get`), then reads response
     /// chunks into a [`StreamingTsDemux`] until every currently PMT-declared
-    /// track has resolved (or `CONNECT_TIMEOUT` elapses) — the
+    /// track has resolved (or [`IngestTimeouts::connect`] elapses) — the
     /// TS-over-HTTP analogue of [`crate::source::ts_udp::TsUdpSource::connect`]'s
     /// PMT wait.
     pub async fn connect(&self) -> Result<TsHttpSession> {
@@ -133,13 +136,14 @@ impl TsHttpSource {
             }
         };
 
-        match tokio::time::timeout(CONNECT_TIMEOUT, wait_for_tracks).await {
+        let connect_timeout = self.timeouts.connect;
+        match tokio::time::timeout(connect_timeout, wait_for_tracks).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(e),
             Err(_) => {
                 return Err(MultimuxError::Connect {
                     reason: format!(
-                        "ts/http: no PMT-declared track resolved within {CONNECT_TIMEOUT:?}"
+                        "ts/http: no PMT-declared track resolved within {connect_timeout:?}"
                     ),
                 });
             }
@@ -151,6 +155,7 @@ impl TsHttpSource {
             demux,
             specs,
             known_track_ids,
+            read_timeout: self.timeouts.read,
         })
     }
 }
@@ -173,6 +178,9 @@ pub struct TsHttpSession {
     /// mirroring [`crate::source::ts_udp::TsUdpSession::next_samples`]'s
     /// "unrouted track -> ignored" handling.
     known_track_ids: BTreeSet<u32>,
+    /// Bound on each [`Self::next_samples`] read — see
+    /// [`IngestTimeouts::read`].
+    read_timeout: Duration,
 }
 
 impl TsHttpSession {
@@ -191,8 +199,20 @@ impl TsHttpSession {
     /// transport-level end-of-stream signal), an HTTP response body *does*
     /// end, and that end is exactly the "reconnect" signal
     /// [`crate::origin::supervisor::supervise`] is built to act on.
+    ///
+    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5, audit-ingest #3):
+    /// a server that stops sending chunks without closing the connection
+    /// (wedged origin) would otherwise leave this `.await` pending forever —
+    /// a timed-out read surfaces as a [`MultimuxError::Connect`], reconnected
+    /// by the supervisor exactly like any other read error.
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let Some(chunk) = self.stream.next().await else {
+        let read_timeout = self.read_timeout;
+        let Some(chunk) = tokio::time::timeout(read_timeout, self.stream.next())
+            .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: format!("ts/http stream read: no data within {read_timeout:?}"),
+            })?
+        else {
             return Ok(None);
         };
         let chunk = chunk.map_err(|e| MultimuxError::Connect {
@@ -334,5 +354,68 @@ mod tests {
         assert!(result.is_err(), "a 404 must fail connect()");
 
         server.abort();
+    }
+
+    /// Biting test (issue #663 P5, audit-ingest #3): a server that resolves
+    /// the track set and then goes silent — never sends another chunk, never
+    /// closes the connection — must fail `next_samples()` within the
+    /// configured [`IngestTimeouts::read`], not hang forever (the exact
+    /// wedged/half-open failure mode a "no read timeout" `TsHttpSession`
+    /// used to hang on). A raw TCP listener (not the axum chunked helper
+    /// above, which always closes at end-of-body) plays the "accepts then
+    /// stalls mid-body" server: valid headers + the PMT-resolving TS bytes,
+    /// promised via a `Content-Length` far larger than what's ever actually
+    /// written, so the client's body stream genuinely waits for more.
+    #[tokio::test]
+    async fn read_times_out_against_a_server_that_stalls_mid_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let ts_bytes = build_ts_bytes();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+
+        let _server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await; // drain the request, unparsed
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nContent-Length: {}\r\n\r\n",
+                ts_bytes.len() * 10 // promise far more than will ever be sent
+            );
+            stream
+                .write_all(header.as_bytes())
+                .await
+                .expect("write header");
+            stream
+                .write_all(&ts_bytes)
+                .await
+                .expect("write body prefix");
+            // Go silent forever: never write again, never close — the
+            // stalled/wedged-server failure mode.
+            std::future::pending::<()>().await;
+        });
+
+        let source = TsHttpSource::new("stalled", format!("http://{addr}/stream.ts"))
+            .with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_millis(100),
+            });
+        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect resolves tracks from the already-sent prefix");
+
+        let result = tokio::time::timeout(Duration::from_secs(5), session.next_samples())
+            .await
+            .expect(
+                "next_samples() must return on its own via IngestTimeouts::read, \
+                 not hang until this test's own backstop timeout",
+            );
+        assert!(
+            result.is_err(),
+            "a server that goes silent mid-body must fail next_samples(), not hang forever"
+        );
     }
 }

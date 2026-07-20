@@ -7,18 +7,18 @@
 //!
 //! Since UDP is connectionless there is no DESCRIBE-equivalent step to learn
 //! the track set before segmentation starts. [`TsUdpSource::connect`]
-//! instead reads datagrams (bounded by a fixed `CONNECT_TIMEOUT`) until the PMT
+//! instead reads datagrams (bounded by a fixed `DEFAULT_CONNECT_TIMEOUT`) until the PMT
 //! resolves ([`transmux::DemuxEvent::TracksResolved`]) — the TS-over-UDP
 //! analogue of RTSP's "DESCRIBE before PLAY" ordering — so
 //! [`TsUdpSession::track_specs`] is always populated before the pipeline
 //! builds its segmenter.
 
 use std::collections::BTreeSet;
-use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
 use crate::error::{MultimuxError, Result};
+use crate::source::IngestTimeouts;
 use crate::source::Source;
 use crate::source::udp::bind_udp;
 use transmux::pipeline::{Sample, TrackSpec};
@@ -29,11 +29,6 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 /// datagram (65 507 bytes over IPv4).
 const MAX_UDP_DATAGRAM: usize = 65_536;
 
-/// Bound on how long [`TsUdpSource::connect`] waits for the PMT to resolve
-/// (every currently-declared track known) before giving up — a source that
-/// never sends usable PSI would otherwise hang `connect` forever.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// An MPEG-2 TS-over-UDP stream to pull: bind address (+ optional multicast
 /// group) — no control plane, no out-of-band SDP (the PMT carries the track
 /// set in-band, unlike raw RTP/UDP).
@@ -42,6 +37,7 @@ pub struct TsUdpSource {
     name: String,
     addr: String,
     multicast_group: Option<String>,
+    timeouts: IngestTimeouts,
 }
 
 impl std::fmt::Debug for TsUdpSource {
@@ -65,13 +61,22 @@ impl TsUdpSource {
             name: name.into(),
             addr: addr.into(),
             multicast_group,
+            timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see `RtspSource::with_timeouts`
+    /// for the pattern this mirrors.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Binds the UDP socket (joining `multicast_group` if configured), then
     /// reads datagrams into a [`StreamingTsDemux`] until every currently
-    /// PMT-declared track has resolved (or `CONNECT_TIMEOUT` elapses) —
-    /// the streaming-demux analogue of RTSP's DESCRIBE step, so
+    /// PMT-declared track has resolved (or [`IngestTimeouts::connect`]
+    /// elapses) — the streaming-demux analogue of RTSP's DESCRIBE step, so
     /// [`TsUdpSession::track_specs`] is populated before segmentation starts.
     pub async fn connect(&self) -> Result<TsUdpSession> {
         let socket = bind_udp(&self.addr, self.multicast_group.as_deref()).await?;
@@ -102,13 +107,14 @@ impl TsUdpSource {
             }
         };
 
-        match tokio::time::timeout(CONNECT_TIMEOUT, wait_for_tracks).await {
+        let connect_timeout = self.timeouts.connect;
+        match tokio::time::timeout(connect_timeout, wait_for_tracks).await {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(e),
             Err(_) => {
                 return Err(MultimuxError::Connect {
                     reason: format!(
-                        "ts/udp: no PMT-declared track resolved within {CONNECT_TIMEOUT:?}"
+                        "ts/udp: no PMT-declared track resolved within {connect_timeout:?}"
                     ),
                 });
             }
@@ -182,6 +188,7 @@ impl TsUdpSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use transmux::TsMux;
     use transmux::media::Track;
     use transmux::pipeline::CodecConfig;

@@ -130,6 +130,7 @@ fn build_config(cli: Cli) -> Result<Config> {
             input: InputSpec::Rtsp { url: rtsp_url },
             outputs,
         }],
+        ..Config::default()
     };
     config.validate()?;
     Ok(config)

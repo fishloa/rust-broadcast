@@ -47,16 +47,10 @@ use transmux::Fmp4Demux;
 use url::Url;
 
 use crate::error::{MultimuxError, Result};
+use crate::source::IngestTimeouts;
 use crate::source::Source;
 use crate::source::http_auth::{credentials_from_url, strip_userinfo};
 use transmux::pipeline::{Sample, TrackSpec};
-
-/// Bound on how long [`HlsPullSource::connect`] waits for the client's first
-/// `Output::Init` before giving up — mirrors `source::ts_udp`'s and
-/// `source::ts_http`'s own `CONNECT_TIMEOUT`: a stalled/unreachable origin
-/// must not hang `connect` forever, so
-/// [`crate::origin::supervisor::supervise`]'s backoff can act.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
 /// `user:pass@` userinfo (see [`Debug`]'s redaction and
@@ -65,6 +59,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct HlsPullSource {
     name: String,
     url: String,
+    timeouts: IngestTimeouts,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `url` may carry a live
@@ -85,13 +80,22 @@ impl HlsPullSource {
         HlsPullSource {
             name: name.into(),
             url: url.into(),
+            timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see `RtspSource::with_timeouts`
+    /// for the pattern this mirrors.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Builds a [`TokioClient`] against the configured (userinfo-stripped)
     /// URL, with any extracted credentials attached, and drives it until its
     /// first `Output::Init` arrives — recovering the `TrackSpec`s from it via
-    /// [`Fmp4Demux`] — bounded by `CONNECT_TIMEOUT`.
+    /// [`Fmp4Demux`] — bounded by [`IngestTimeouts::connect`].
     pub async fn connect(&self) -> Result<HlsPullSession> {
         let parsed = Url::parse(&self.url).map_err(|e| MultimuxError::Connect {
             reason: format!(
@@ -112,16 +116,21 @@ impl HlsPullSource {
             }
         })?;
 
-        let specs = match tokio::time::timeout(CONNECT_TIMEOUT, wait_for_init(&mut client)).await {
+        let connect_timeout = self.timeouts.connect;
+        let specs = match tokio::time::timeout(connect_timeout, wait_for_init(&mut client)).await {
             Ok(result) => result?,
             Err(_) => {
                 return Err(MultimuxError::Connect {
-                    reason: format!("hls-pull: no init segment within {CONNECT_TIMEOUT:?}"),
+                    reason: format!("hls-pull: no init segment within {connect_timeout:?}"),
                 });
             }
         };
 
-        Ok(HlsPullSession { client, specs })
+        Ok(HlsPullSession {
+            client,
+            specs,
+            read_timeout: self.timeouts.read,
+        })
     }
 }
 
@@ -168,6 +177,9 @@ impl Source for HlsPullSource {
 pub struct HlsPullSession {
     client: TokioClient,
     specs: Vec<TrackSpec>,
+    /// Bound on each [`Self::next_samples`] read — see
+    /// [`IngestTimeouts::read`].
+    read_timeout: Duration,
 }
 
 impl HlsPullSession {
@@ -187,8 +199,21 @@ impl HlsPullSession {
     /// origin sent `#EXT-X-ENDLIST` with nothing left outstanding) —
     /// [`crate::origin::supervisor::supervise`] then reconnects, per the
     /// project's uniform "source EOF -> reconnect with backoff" contract.
+    ///
+    /// Bounded by [`IngestTimeouts::read`] (issue #663 P5, audit-ingest #3):
+    /// a pulled origin that stops advancing (wedged/stalled — playlist
+    /// requests never complete, or complete but never reveal new media)
+    /// would otherwise leave this `.await` pending forever; a timed-out read
+    /// surfaces as a [`MultimuxError::Connect`], reconnected by the
+    /// supervisor exactly like any other read error.
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        match self.client.next_output().await {
+        let read_timeout = self.read_timeout;
+        let output = tokio::time::timeout(read_timeout, self.client.next_output())
+            .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: format!("hls-pull: no output within {read_timeout:?}"),
+            })?;
+        match output {
             Ok(Some(HlsOutput::Samples { track_id, samples })) => {
                 Ok(Some(samples.into_iter().map(|s| (track_id, s)).collect()))
             }
