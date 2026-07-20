@@ -189,7 +189,10 @@ impl MediaStore {
 
     /// Store the fMP4 init segment.
     pub fn set_init(&self, bytes: Vec<u8>) {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).init = Some(bytes);
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .init = Some(bytes);
         self.bump();
     }
 
@@ -200,7 +203,10 @@ impl MediaStore {
     /// use even if the current segment never closes (see
     /// `compute_max_live_parts`).
     pub fn add_part(&self, part: PartInfo) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.live_parts.push(part);
         while g.live_parts.len() > self.max_live_parts {
             g.live_parts.remove(0);
@@ -213,7 +219,11 @@ impl MediaStore {
     /// `live_parts` cap).
     #[cfg(test)]
     pub(crate) fn live_part_count(&self) -> usize {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).live_parts.len()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .live_parts
+            .len()
     }
 
     /// Close a full segment into the window (evicting the oldest). Its
@@ -222,7 +232,10 @@ impl MediaStore {
     /// segment's final part resolves) but no longer rendered as open parts.
     /// `recent_parts` is capped like `live_parts`, oldest-first.
     pub fn add_segment(&self, seg: SegmentInfo) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let seq = seg.segment_seq;
         g.max_segment_duration = g.max_segment_duration.max(seg.duration);
         let (closed, still_live): (Vec<PartInfo>, Vec<PartInfo>) =
@@ -249,12 +262,19 @@ impl MediaStore {
     /// `multimux`'s pipeline/supervisor tests) commonly need to assert media
     /// has actually landed without going through `resolve_resource`.
     pub fn init_bytes(&self) -> Option<Vec<u8>> {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).init.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .init
+            .clone()
     }
 
     /// A full segment's bytes by sequence number.
     pub(crate) fn segment_bytes(&self, seq: u32) -> Option<Vec<u8>> {
-        let g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         g.segments
             .iter()
             .find(|s| s.segment_seq == seq)
@@ -268,7 +288,10 @@ impl MediaStore {
     /// older than the `recent_parts` bound are no longer individually
     /// addressable (only the whole segment is).
     pub(crate) fn part_bytes(&self, seq: u32, part_index: u32) -> Option<Vec<u8>> {
-        let g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let matches = |p: &&PartInfo| p.segment_seq == seq && p.part_index == part_index;
         g.live_parts
             .iter()
@@ -284,7 +307,10 @@ impl MediaStore {
     /// blocking-reload resolver treats "part `P` ready" as `count > P` (0
     /// means no parts of the in-progress segment are available yet).
     pub(crate) fn latest_progress(&self) -> (u32, u32) {
-        let g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let last_closed_seg = g.segments.back().map(|s| s.segment_seq).unwrap_or(0);
         let in_progress_seg = g
             .live_parts
@@ -326,7 +352,10 @@ impl MediaStore {
     /// [`Self::listen`] (e.g. an LL-HLS blocking playlist reload) wakes on a
     /// health transition too, not just new media.
     pub fn set_health(&self, state: HealthState) {
-        let mut g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if g.health != state {
             g.health = state;
             drop(g);
@@ -337,7 +366,10 @@ impl MediaStore {
     /// The current ingest health (default [`HealthState::Connecting`] until
     /// the supervisor sets it).
     pub fn health(&self) -> HealthState {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).health
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .health
     }
 
     /// The full-segment target duration, in seconds, this store was built
@@ -373,13 +405,20 @@ impl MediaStore {
     /// `Inner::track_specs` for why this exists (DASH's `codecs` string
     /// needs real codec identity; LL-HLS never reads this).
     pub fn set_track_specs(&self, specs: Vec<TrackSpec>) {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).track_specs = specs;
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .track_specs = specs;
     }
 
     /// The track specs set by [`Self::set_track_specs`], empty if never
     /// called (e.g. in a test that only exercises playlist rendering).
     pub fn track_specs(&self) -> Vec<TrackSpec> {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).track_specs.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .track_specs
+            .clone()
     }
 
     /// Snapshot of the closed segments currently retained in the rolling
@@ -405,7 +444,10 @@ impl MediaStore {
     /// this with [`Self::target_duration_secs`] to compute a
     /// spec-conformant `#EXT-X-TARGETDURATION` (RFC 8216bis §4.4.3.1).
     pub(crate) fn max_segment_duration(&self) -> f64 {
-        self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner).max_segment_duration
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .max_segment_duration
     }
 
     /// The sequence number of the most-recently-closed segment, `0` if none
@@ -433,7 +475,10 @@ impl MediaStore {
         &self,
         f: impl FnOnce(&VecDeque<SegmentInfo>, &[PartInfo]) -> R,
     ) -> R {
-        let g = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let g = self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&g.segments, &g.live_parts)
     }
 }
