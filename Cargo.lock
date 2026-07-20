@@ -1485,6 +1485,7 @@ dependencies = [
  "multimux",
  "reqwest",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "transmux",

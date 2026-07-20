@@ -40,13 +40,19 @@ broadcast-auth    = { path = "../broadcast-auth", version = "0.1", optional = tr
 
 [dev-dependencies]
 # Only exercised by the `tokio`-feature-gated integration tests
-# (`tests/glass_to_glass.rs`); dev-dependencies aren't feature-gatable in
-# Cargo, so these are always resolved/built for `cargo test`, but that test
-# file's body is entirely `#![cfg(feature = "tokio")]`-gated so it compiles
-# to nothing when the feature is off.
-tokio    = { version = "1", features = ["full"] }
-axum     = "0.7"
-multimux = { path = "../multimux", version = "0.2" }
+# (`tests/glass_to_glass.rs`, `tests/golden_gate.rs`); dev-dependencies aren't
+# feature-gatable in Cargo, so these are always resolved/built for `cargo
+# test`, but those test files' bodies are entirely
+# `#![cfg(feature = "tokio")]`-gated so they compile to nothing when the
+# feature is off.
+tokio      = { version = "1", features = ["full"] }
+axum       = "0.7"
+multimux   = { path = "../multimux", version = "0.2" }
+# `tests/golden_gate.rs` (issue #717's closing acceptance item, #569's golden
+# gate) parses `ffprobe -of json` output to assert against real oracle
+# fields — already in the workspace's resolved dependency graph via
+# `transmux`'s own `serde_json` (non-dev) dependency.
+serde_json = "1"
 
 [features]
 default = ["std"]

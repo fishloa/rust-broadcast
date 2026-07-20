@@ -198,6 +198,13 @@ jobs:
   # varies across runner images; promote to required once stable. Uses the
   # pinned toolchain from rust-toolchain.toml — no dtolnay step needed, this
   # only needs `cargo test`, not a different channel.
+  #
+  # Issue #717's closing acceptance item extends this to the CLIENT side:
+  # `ll-hls-runtime/tests/golden_gate.rs` stands up a real LL-HLS origin over
+  # loopback, drives the real `TokioClient` (the epic's reference client)
+  # against it, and hands the client's OWN reconstruction (not the origin's
+  # output) to the same `ffprobe` oracle — closing the origin-only gap the
+  # transmux job above leaves open.
   golden-gate:
     name: golden gate (ffprobe, non-blocking)
     runs-on: ubuntu-latest
@@ -209,3 +216,5 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Golden gate (transmux, all features)
         run: cargo test -p transmux --test golden_gate --all-features --locked
+      - name: Golden gate (ll-hls-runtime reference client, all features)
+        run: cargo test -p ll-hls-runtime --test golden_gate --all-features --locked

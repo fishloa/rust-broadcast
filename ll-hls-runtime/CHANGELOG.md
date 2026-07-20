@@ -142,3 +142,25 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     non-LL playlist (no `PART` tags, served from a minimal hand-built axum
     origin) still plays via the full-segment fallback with zero blocking
     reloads.
+  - `tests/golden_gate.rs` (gated on the `tokio` feature, `ffprobe`-gated,
+    non-blocking CI lane — closes issue #717's last acceptance box,
+    "Integrated into #569's golden-gate harness as the reference client"):
+    `TokioClient` is now the **reference client** in the #569 player-validated
+    golden gate. `transmux/tests/golden_gate.rs` (#569) validates only the
+    origin half — transmux's own muxer output handed to an independent
+    decoder (`ffprobe`). This closes the other half: demuxes the workspace's
+    real `fixtures/ts/h264_aac.ts` capture (Main profile, 320x240, 25fps, 75
+    real video frames) via `TsDemux`, live-paces those real samples through
+    the same `LlHlsSegmenter`/`MediaStore`/`LlHlsOutput` origin stack
+    `glass_to_glass.rs` uses, drives a real `TokioClient` against it over
+    loopback HTTP, then muxes the **client's own** reconstructed init +
+    samples (not the origin's) into a real fMP4 and hands that to `ffprobe`:
+    asserts it decodes as H.264 at the source's resolution, and that
+    `ffprobe -count_frames`'s own decoded frame count exactly matches the
+    frames fed in — catching a drop/duplicate/reorder that corrupts the
+    bitstream even when the container alone still looks well-formed. Also
+    covers the non-LL/full-segment fallback path decoding correctly, and a
+    self-test (`dropped_sample_changes_the_decoded_frame_count`) proving the
+    frame-count oracle isn't vacuous. `.github/workflows/ci.yml`'s existing
+    non-blocking `golden-gate` job now also runs this suite alongside
+    transmux's.
