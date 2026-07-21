@@ -5,6 +5,22 @@ All notable changes to `dvb-ci-runtime` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+### Added
+- **CAM + card hot-plug `Notification`s** (#726): `Notification::CamPresent` /
+  `CamRemoved` — real DVB-CA slot-status edges (`CA_CI_MODULE_PRESENT`), emitted
+  once per edge; the driver re-drives the reset/init handshake on insert and
+  tears down session state on removal. `Notification::CardInserted` /
+  `CardRemoved` / `CardChanged` — best-effort app-layer inference from `ca_info`
+  CAID-set changes, `ca_pmt_reply` `descrambling_ok` transitions, and MMI
+  "no card"/entitlement keyword text (EN 50221 CI slots have no card-detect
+  line). `SlotInfo` gained a `module_present` field alongside the existing
+  `module_ready`.
+### Fixed
+- `LinuxCaDevice::slot_info` read `CA_CI_MODULE_READY` from the wrong bit
+  (`1`, the uapi `CA_CI_MODULE_PRESENT` value) instead of `2` — `module_ready`
+  was actually reporting module presence, not readiness.
+
 ## [0.12.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

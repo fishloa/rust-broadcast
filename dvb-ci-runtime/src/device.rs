@@ -12,12 +12,25 @@
 use std::io;
 
 /// CA-device slot status (subset of the Linux `ca_slot_info` the runtime needs).
+///
+/// The DVB-CA slot reports two independent bits (uapi `linux/dvb/ca.h`
+/// `ca_slot_info.flags`): `CA_CI_MODULE_PRESENT` (a module is physically
+/// inserted) and `CA_CI_MODULE_READY` (that module has completed its own
+/// init and is usable). A module can be present-but-not-ready briefly after
+/// insertion; the runtime's hot-plug edge detection
+/// ([`Notification::CamPresent`](crate::event::Notification::CamPresent)/
+/// [`CamRemoved`](crate::event::Notification::CamRemoved)) keys off
+/// `module_present`, since that is the field that toggles on physical
+/// insert/removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SlotInfo {
     /// Slot number.
     pub num: u8,
-    /// `true` once a module is present and ready (CA_CI_MODULE_READY).
+    /// `true` once a module is present and ready (`CA_CI_MODULE_READY`).
     pub module_ready: bool,
+    /// `true` while a module is physically inserted (`CA_CI_MODULE_PRESENT`),
+    /// regardless of whether it has finished initialising.
+    pub module_present: bool,
 }
 
 /// The link-layer device the EN 50221 runtime drives.
@@ -82,6 +95,7 @@ impl MockCaDevice {
             slot: SlotInfo {
                 num: 0,
                 module_ready: true,
+                module_present: true,
             },
         }
     }
@@ -166,6 +180,11 @@ pub struct RecordingCaDevice<D> {
     inner: D,
     /// The captured link events, in order.
     pub log: Vec<LinkEvent>,
+    /// Last logged slot status, so repeated identical `slot_info()` polls
+    /// (the driver now samples every [`pump`](crate::Driver::pump) for
+    /// hot-plug edge detection — #726) don't swamp the trace; only a change
+    /// is recorded, same rationale as `poll()` below.
+    last_slot: Option<SlotInfo>,
 }
 
 impl<D: CaDevice> RecordingCaDevice<D> {
@@ -174,6 +193,7 @@ impl<D: CaDevice> RecordingCaDevice<D> {
         Self {
             inner,
             log: Vec::new(),
+            last_slot: None,
         }
     }
 
@@ -210,7 +230,10 @@ impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
 
     fn slot_info(&mut self) -> io::Result<SlotInfo> {
         let si = self.inner.slot_info()?;
-        self.log.push(LinkEvent::SlotInfo(si));
+        if self.last_slot != Some(si) {
+            self.log.push(LinkEvent::SlotInfo(si));
+            self.last_slot = Some(si);
+        }
         Ok(si)
     }
 

@@ -60,8 +60,14 @@ const CA_GET_SLOT_INFO: u64 = ioc(
     130,
     core::mem::size_of::<CaSlotInfo>() as u32,
 );
-/// `CA_CI_MODULE_READY` — the slot has a module that is ready.
-const CA_CI_MODULE_READY: u32 = 1;
+/// `CA_CI_MODULE_PRESENT` — a module (or card) is physically inserted in the
+/// slot (uapi `linux/dvb/ca.h` `ca_slot_info.flags`, bit 0).
+const CA_CI_MODULE_PRESENT: u32 = 1;
+/// `CA_CI_MODULE_READY` — the inserted module has completed its own init and
+/// is usable (uapi `linux/dvb/ca.h` `ca_slot_info.flags`, bit 1). Distinct
+/// from `CA_CI_MODULE_PRESENT`: a module can be present but not yet ready
+/// briefly after insertion.
+const CA_CI_MODULE_READY: u32 = 2;
 
 #[repr(C)]
 struct CaSlotInfo {
@@ -168,15 +174,17 @@ impl CaDevice for LinuxCaDevice {
         };
         if r < 0 {
             // Some drivers (DD/cxd2099) return EINVAL for CA_GET_SLOT_INFO;
-            // presence shows via the TPDU handshake, so assume ready.
+            // presence shows via the TPDU handshake, so assume present+ready.
             return Ok(SlotInfo {
                 num: self.slot,
                 module_ready: true,
+                module_present: true,
             });
         }
         Ok(SlotInfo {
             num: si.num as u8,
             module_ready: si.flags & CA_CI_MODULE_READY != 0,
+            module_present: si.flags & CA_CI_MODULE_PRESENT != 0,
         })
     }
 

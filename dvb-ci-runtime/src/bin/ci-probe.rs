@@ -115,9 +115,10 @@ mod imp {
                 found = true;
                 match LinuxCaDevice::open(adapter, ca) {
                     Ok(mut dev) => match dev.slot_info() {
-                        Ok(si) => {
-                            println!("{path}  slot {}  module_ready={}", si.num, si.module_ready)
-                        }
+                        Ok(si) => println!(
+                            "{path}  slot {}  module_present={}  module_ready={}",
+                            si.num, si.module_present, si.module_ready
+                        ),
                         Err(e) => println!("{path}  (slot_info failed: {e})"),
                     },
                     Err(e) => println!("{path}  (open failed: {e})"),
@@ -291,6 +292,11 @@ mod imp {
                 println!("session {session_nb} closed")
             }
             Notification::Error { detail } => eprintln!("stack error: {detail}"),
+            Notification::CamPresent => println!("hot-plug: CAM inserted (slot present+ready)"),
+            Notification::CamRemoved => println!("hot-plug: CAM removed"),
+            Notification::CardInserted => println!("hot-plug: card inserted (inferred)"),
+            Notification::CardRemoved => println!("hot-plug: card removed (inferred)"),
+            Notification::CardChanged => println!("hot-plug: card changed (inferred)"),
             other => println!("{other:?}"),
         }
     }

@@ -137,6 +137,46 @@ pub enum Notification {
         /// Human-readable detail.
         detail: String,
     },
+    /// The module transitioned absent → present *and* ready (DVB-CA slot
+    /// status: `CA_CI_MODULE_PRESENT` and `CA_CI_MODULE_READY` both set —
+    /// Linux uapi `linux/dvb/ca.h` `ca_slot_info.flags`). A real hardware
+    /// signal from [`SlotInfo`](crate::device::SlotInfo), surfaced once on the
+    /// edge (not on every poll); the driver re-drives the handshake (a fresh
+    /// [`Init`](crate::event::HostRequest::Init)) so the newly-inserted module
+    /// gets a clean resource-manager session.
+    CamPresent,
+    /// The module transitioned present → absent (DVB-CA slot status:
+    /// `CA_CI_MODULE_PRESENT` clear). A real hardware signal; the driver tears
+    /// down all session/handshake state so a later re-insert re-handshakes
+    /// cleanly rather than reusing stale session numbers.
+    CamRemoved,
+    /// A smart card was inferred to have been inserted into the module.
+    ///
+    /// **Best-effort app-layer inference** — EN 50221 slots are module-level
+    /// only; there is no card-detect line (verified against DD ddbridge /
+    /// cxd2099 driver behaviour). Raised from one of: an `ca_info` CAID-set
+    /// transition from empty to non-empty, or a `ca_pmt_reply`
+    /// `descrambling_ok` transition from `false` to `true`. Some CAMs instead
+    /// give a strong signal by resetting the module on card change, which
+    /// surfaces as [`CamPresent`](Notification::CamPresent) rather than this
+    /// variant.
+    CardInserted,
+    /// A smart card was inferred to have been removed from the module.
+    ///
+    /// **Best-effort app-layer inference** (see [`CardInserted`](Notification::CardInserted)
+    /// for why no hardware signal exists). Raised from one of: an `ca_info`
+    /// CAID-set transition from non-empty to empty, a `ca_pmt_reply`
+    /// `descrambling_ok` transition from `true` to `false`, or MMI menu/list/
+    /// enquiry text matching a "no card" style keyword.
+    CardRemoved,
+    /// The inserted smart card was inferred to have changed (swapped without
+    /// an intervening removal the runtime observed).
+    ///
+    /// **Best-effort app-layer inference** (see [`CardInserted`](Notification::CardInserted)
+    /// for why no hardware signal exists). Raised when a later `ca_info`
+    /// reports a different non-empty CAID set than the last one seen for this
+    /// module.
+    CardChanged,
 }
 
 /// A decoded high-level MMI `menu()` / `list()` ready for display (§8.6.5,

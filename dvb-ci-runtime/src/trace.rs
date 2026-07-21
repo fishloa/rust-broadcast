@@ -146,7 +146,10 @@ pub fn decode_log(log: &[LinkEvent]) -> String {
             LinkEvent::Tx(f) => format!("W {}", decode_frame(f)),
             LinkEvent::Rx(f) => format!("R {}", decode_frame(f)),
             LinkEvent::Reset => "  reset()".to_string(),
-            LinkEvent::SlotInfo(si) => format!("  slot_info() -> ready={}", si.module_ready),
+            LinkEvent::SlotInfo(si) => format!(
+                "  slot_info() -> present={} ready={}",
+                si.module_present, si.module_ready
+            ),
         };
         out.push_str(&line);
         out.push('\n');
