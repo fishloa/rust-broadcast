@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-21
+
 ### Changed
 - **True chunked-transfer LL-DASH** (issue #721): `LlDashOutput`'s
   `manifest-ll.mpd` now renders a real chunked-CMAF MPD via
