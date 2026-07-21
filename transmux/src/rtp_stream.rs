@@ -27,14 +27,22 @@
 //!   composition offset) when B-frames are present is future work.
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
-//!   from `track_specs` + emitted samples); cross-track A/V alignment
-//!   using RTCP Sender Report NTP/RTP correlation is out of v1 scope.
-//!   `// TODO(P5.3): RTCP SR wallclock A/V sync` — see the identical note at
-//!   the two ingest-side drop points this feeds:
-//!   `multimux::source::rtsp::route_channel` (interleaved RTCP channel) and
-//!   `multimux::source::rtp_udp::RtpUdpSource::connect` (RTCP companion UDP
-//!   port); wiring either would mean threading a per-track NTP/RTP offset
-//!   into this module's timing model (issue #663 P5).
+//!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
+//!   has been fed for at least two tracks (issue #722): RTP timestamps alone
+//!   carry no cross-stream relationship (RFC 3550 §5.1 — each SSRC's clock
+//!   has an arbitrary random offset), so recovering true A/V sync needs the
+//!   NTP-wallclock ↔ RTP-timestamp correlation each Sender Report carries
+//!   (RFC 3550 §6.4.1). Feed reports via [`RtpStreamDepacketiser::push_sender_report`]
+//!   / [`RtpStreamDepacketiser::push_rtcp`] as they arrive on a track's RTCP
+//!   channel, then read [`RtpStreamDepacketiser::sync_start_decode_times`]
+//!   once at least two tracks have an anchor: it maps every anchored
+//!   track's first sample onto one common wallclock and returns each
+//!   track's `start_decode_time` (in that track's own `clock_rate` ticks)
+//!   relative to the earliest of them — preserving the real inter-track
+//!   offset instead of discarding it. This is strictly additive: with no
+//!   Sender Reports fed (or fewer than two anchored tracks), the method
+//!   returns an empty `Vec` and callers keep the v1
+//!   independent-rebase-to-0 behaviour unchanged.
 //! - When an RFC 3640 `AAC-hbr` packet aggregates more than one access unit,
 //!   all AUs in that packet share the RTP timestamp, so non-final AUs get
 //!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
@@ -42,8 +50,15 @@
 
 use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
 use alloc::vec::Vec;
+use broadcast_common::Parse;
+
+/// Number of fractional-second units in the 32.32 fixed-point NTP timestamp
+/// format an RTCP Sender Report's `ntp_msw`/`ntp_lsw` carry (RFC 3550 §6.4.1,
+/// citing RFC 5905 §6 for the NTP timestamp format itself): `2^32`.
+const NTP_FRACTION_SCALE: f64 = 4_294_967_296.0;
 
 /// Hard cap, in bytes, on one track's in-progress access-unit buffer
 /// (`TrackState::cur_pkts`, the raw RTP packets accumulated since the last
@@ -102,11 +117,45 @@ struct TrackState {
     cur_bytes: usize,
     /// Unwrapped 64-bit form of the most recently completed AU's timestamp.
     last_unwrapped: Option<u64>,
+    /// Unwrapped 64-bit form of this track's very first completed AU's
+    /// timestamp — the anchor [`RtpStreamDepacketiser::sync_start_decode_times`]
+    /// measures this track's RTCP SR offset against.
+    first_unwrapped: Option<u64>,
     /// AU awaiting its duration (filled in once the next AU's timestamp is
     /// known).
     pending: Option<PendingAu>,
     /// Last computed duration, reused for the final AU emitted by `flush`.
     last_duration: u32,
+    /// This track's most recent RTCP Sender Report anchor, if any has been
+    /// fed via [`RtpStreamDepacketiser::push_sender_report`].
+    sr_anchor: Option<SrAnchor>,
+}
+
+/// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
+/// wallclock instant at which the sender's RTP clock read `raw_rtp_ts`.
+///
+/// `raw_rtp_ts` is kept in wire (32-bit) form rather than eagerly unwrapped:
+/// an SR can be fed before, interleaved with, or after the access units it
+/// anchors, so it is unwrapped lazily in [`wall_seconds`] against whichever
+/// AU's own unwrapped timestamp needs a wallclock value — always valid
+/// because a real SR's RTP timestamp is at most a few RTCP-interval seconds
+/// from the AUs it anchors, far under half the 32-bit wrap range.
+struct SrAnchor {
+    /// NTP wallclock time, in seconds (32.32 fixed-point `ntp_msw`/`ntp_lsw`
+    /// converted to `f64`).
+    ntp_seconds: f64,
+    /// The wire-form (32-bit) RTP timestamp corresponding to `ntp_seconds`.
+    raw_rtp_ts: u32,
+}
+
+/// Resolve one access unit's NTP wallclock instant from a track's SR anchor:
+/// `wall(au) = anchor.ntp_seconds + (unwrapped_au_ts − unwrapped_anchor_ts) /
+/// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
+/// SR's own instant to any AU on the same RTP clock).
+fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> f64 {
+    let anchor_unwrapped = unwrap_ts(Some(au_unwrapped_ts), anchor.raw_rtp_ts);
+    let delta_ticks = au_unwrapped_ts as i128 - i128::from(anchor_unwrapped);
+    anchor.ntp_seconds + (delta_ticks as f64) / f64::from(clock_rate)
 }
 
 /// An access unit whose duration is not yet known (waiting on the next AU's
@@ -168,8 +217,10 @@ impl RtpStreamDepacketiser {
                         cur_pkts: Vec::new(),
                         cur_bytes: 0,
                         last_unwrapped: None,
+                        first_unwrapped: None,
                         pending: None,
                         last_duration: 0,
+                        sr_anchor: None,
                     },
                 )
             })
@@ -191,6 +242,81 @@ impl RtpStreamDepacketiser {
             .iter_mut()
             .find(|(id, _)| *id == track_id)
             .map(|(_, st)| st)
+    }
+
+    /// Feed one RTCP Sender Report (RFC 3550 §6.4.1) for `track_id`, anchoring
+    /// this track's wallclock for [`Self::sync_start_decode_times`]. Replaces
+    /// any previous anchor for the track (the most recent SR wins); unknown
+    /// `track_id`s are silently ignored, matching [`Self::push`].
+    pub fn push_sender_report(&mut self, track_id: u32, sr: SenderReport) {
+        if let Some(st) = self.state(track_id) {
+            let ntp_seconds = f64::from(sr.ntp_msw) + f64::from(sr.ntp_lsw) / NTP_FRACTION_SCALE;
+            st.sr_anchor = Some(SrAnchor {
+                ntp_seconds,
+                raw_rtp_ts: sr.rtp_timestamp,
+            });
+        }
+    }
+
+    /// Parse `bytes` as a single RTCP Sender Report (RFC 3550 §6.4.1) and feed
+    /// it to [`Self::push_sender_report`]. Anything that isn't a parseable SR
+    /// (a Receiver Report, a different compound-packet member, malformed
+    /// bytes) is silently ignored — this is a convenience wrapper for
+    /// callers holding raw RTCP bytes off the wire, not a general RTCP
+    /// dispatcher.
+    pub fn push_rtcp(&mut self, track_id: u32, bytes: &[u8]) {
+        if let Ok(sr) = SenderReport::parse(bytes) {
+            self.push_sender_report(track_id, sr);
+        }
+    }
+
+    /// Compute the `start_decode_time` (in each track's own `clock_rate`
+    /// ticks) that rebases every SR-anchored track onto one common wallclock,
+    /// preserving their real inter-track offset (issue #722; RFC 3550
+    /// §6.4.1). The earliest anchored track's first sample becomes the
+    /// origin (`start_decode_time = 0`); every other anchored track's
+    /// `start_decode_time` is its first sample's wallclock distance from
+    /// that origin, converted to its own clock rate.
+    ///
+    /// Returns an empty `Vec` — the v1 opt-out — unless at least two tracks
+    /// have both received a Sender Report ([`Self::push_sender_report`]) and
+    /// emitted a first sample. A track absent from the returned `Vec` (no
+    /// anchor, or fewer than two anchored tracks overall) keeps the existing
+    /// independent-rebase-to-0 behaviour: the caller should only apply the
+    /// returned `start_decode_time` to tracks it names.
+    pub fn sync_start_decode_times(&self) -> Vec<(u32, u64)> {
+        let anchored: Vec<(u32, f64, u32)> = self
+            .tracks
+            .iter()
+            .filter_map(|(id, st)| {
+                let anchor = st.sr_anchor.as_ref()?;
+                let first_ts = st.first_unwrapped?;
+                Some((
+                    *id,
+                    wall_seconds(anchor, st.clock_rate, first_ts),
+                    st.clock_rate,
+                ))
+            })
+            .collect();
+        if anchored.len() < 2 {
+            return Vec::new();
+        }
+        let origin = anchored
+            .iter()
+            .map(|(_, wall, _)| *wall)
+            .fold(f64::INFINITY, f64::min);
+        anchored
+            .into_iter()
+            .map(|(id, wall, clock_rate)| {
+                let raw_ticks = ((wall - origin) * f64::from(clock_rate)).max(0.0);
+                // `f64::round` is a `std`-only inherent method (it needs
+                // libm), unavailable in this crate's `no_std` core build —
+                // round-half-up via a truncating cast instead, which is
+                // exact for `round()`'s behaviour given `raw_ticks >= 0.0`.
+                let ticks = (raw_ticks + 0.5) as u64;
+                (id, ticks)
+            })
+            .collect()
     }
 
     /// Feed one RTP packet for `track_id`. Returns any [`Sample`]s that
@@ -271,6 +397,9 @@ impl RtpStreamDepacketiser {
         for au in aus {
             let unwrapped = unwrap_ts(st.last_unwrapped, au.timestamp);
             st.last_unwrapped = Some(unwrapped);
+            if st.first_unwrapped.is_none() {
+                st.first_unwrapped = Some(unwrapped);
+            }
             if let Some(prev) = st.pending.take() {
                 let delta = unwrapped.saturating_sub(prev.unwrapped_ts);
                 let duration = u32::try_from(delta).unwrap_or(u32::MAX);
