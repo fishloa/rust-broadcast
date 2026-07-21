@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-stream"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
