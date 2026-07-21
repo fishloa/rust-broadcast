@@ -333,10 +333,14 @@ fn is_idr(codec: Codec, frame_type: VdoFrameType) -> bool {
     }
 }
 
-/// Map a `vdo::Error` into a `multimux::MultimuxError::Source` — multimux is
-/// an external crate and can't itself define `From<vdo::Error>`.
+/// Map a `vdo::Error` into a `multimux::MultimuxError::Connect` — multimux is
+/// an external crate and can't itself define `From<vdo::Error>`. `Connect` is
+/// the variant multimux's own ingest sources (ts_udp/hls_pull/http_auth) use
+/// for a source read failure; the VDO capture is this app's ingest source.
 fn source_err(err: vdo::Error) -> multimux::MultimuxError {
-    multimux::MultimuxError::Source(format!("vdo: {err}"))
+    multimux::MultimuxError::Connect {
+        reason: format!("vdo: {err}"),
+    }
 }
 
 impl multimux::pipeline::SampleSource for VdoSource {
