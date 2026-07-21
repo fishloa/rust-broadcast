@@ -10,15 +10,38 @@
 //! Each [`crate::output::Output`] contributes only its manifest route(s)
 //! (`master.m3u8`/`media.m3u8` for LL-HLS, `manifest.mpd` for DASH); this
 //! module is the one thing every output shares.
+//!
+//! # Chunked-transfer whole-segment serving (issue #721)
+//!
+//! [`crate::output::ll_dash`]'s true low-latency DASH design addresses whole
+//! segments (`seg-{track}-{seq}.m4s`, the same filenames
+//! [`crate::output::dash`]'s regular MPD uses) but needs a segment's bytes to
+//! start flowing *before* it closes. [`dynamic_file`] implements this: a
+//! `seg-*.m4s` request that doesn't (yet) resolve to a closed segment falls
+//! through to [`stream_in_progress_segment`], which re-fetches that
+//! segment's `part-{track}-{seq}.{idx}.m4s` entries in order — the exact
+//! bytes [`ResourceOutcome`]'s existing blocking-wait machinery already
+//! produces for LL-HLS's own preload-hint requests — and streams them as one
+//! HTTP chunked-transfer-encoded response body, ending once a part index
+//! resolves [`ResourceOutcome::NotFound`] (which only happens once the
+//! segment has actually closed without that part, i.e. exactly the segment's
+//! end). A genuinely future segment (nothing produced yet) blocks the same
+//! bounded [`BLOCKING_RELOAD_TIMEOUT`] on its first part before giving up
+//! (404), mirroring the plain closed-segment/part lookups below. LL-HLS
+//! itself never triggers this path: its playlist never advertises an
+//! in-progress segment's whole-segment URI (RFC 8216bis §4.4.4.9), so a
+//! well-behaved client never requests one.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
+use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use futures_util::stream;
 use ll_hls_runtime::server::ResourceOutcome;
 
 use crate::store::MediaStore;
@@ -33,6 +56,17 @@ use crate::store::MediaStore;
 pub(crate) const BLOCKING_RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
+
+/// Abuse bound for [`stream_in_progress_segment`]'s whole-segment number,
+/// mirroring `ll_hls_runtime::server::engine`'s own `ABUSE_MSN_FUTURE_BOUND`
+/// (RFC 8216bis §6.2.5.2's abuse-prevention SHOULD, applied here to the
+/// DASH-facing whole-segment lookup): a legitimate LL-DASH client only ever
+/// requests the segment right after the one it already has, so a segment
+/// number more than a few ahead of the current live edge is either a broken
+/// client or abuse — reject it immediately (404) rather than tying up a
+/// blocking-wait task and a connection slot for the full
+/// [`BLOCKING_RELOAD_TIMEOUT`].
+const SEGMENT_ABUSE_FUTURE_BOUND: u32 = 4;
 
 /// RAII guard bumping/dropping [`crate::prometheus::ACTIVE_BLOCKING_REQUESTS`]
 /// for the lifetime of a blocking wait ([`resource_blocking`], and
@@ -128,14 +162,123 @@ async fn dynamic_file(State(store): State<Arc<MediaStore>>, Path(file): Path<Str
         ResourceOutcome::Ready { bytes, .. } => {
             ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
         }
-        ResourceOutcome::NotFound | ResourceOutcome::WouldBlock => {
+        ResourceOutcome::NotFound => {
+            // Not a closed segment (yet) -- if this is a whole-segment
+            // filename, try the chunked-transfer in-progress/future-segment
+            // path (issue #721) before giving up. Every other filename shape
+            // (init/part) has nothing more to try.
+            if let Some((track, seq)) = parse_segment_filename(&file) {
+                if let Some(resp) = stream_in_progress_segment(store, track, seq).await {
+                    return resp;
+                }
+            }
             StatusCode::NOT_FOUND.into_response()
         }
+        ResourceOutcome::WouldBlock => StatusCode::NOT_FOUND.into_response(),
         // `ResourceOutcome` is `#[non_exhaustive]` — treat any future
         // variant this handler doesn't yet know how to serve as a 404
         // rather than panicking or fabricating a body.
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// Parse a whole-segment dynamic filename (`seg-{track}-{seq}.m4s`) into
+/// `(track, seq)`. Mirrors `ll_hls_runtime::server`'s own (private)
+/// `seg-`/`part-` filename parsing, but keeps `track` as a borrowed `&str`
+/// (rather than discarding it once validated) so [`stream_in_progress_segment`]
+/// can reuse it verbatim to build this segment's `part-{track}-{seq}.{idx}.m4s`
+/// filenames -- `{track}` is otherwise unused (the store holds a single
+/// track's data regardless of the number a client's `$RepresentationID$`
+/// substitution produces, exactly like `resolve_resource` itself).
+fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
+    let rest = file.strip_prefix("seg-")?.strip_suffix(".m4s")?;
+    let (track, seq) = rest.split_once('-')?;
+    track.parse::<u32>().ok()?;
+    Some((track, seq.parse().ok()?))
+}
+
+/// Serve a not-yet-closed whole-segment filename (`seg-{track}-{seq}.m4s`)
+/// over **HTTP chunked transfer-encoding**, streaming `seq`'s
+/// `part-{track}-{seq}.{idx}.m4s` bytes in order as they are produced
+/// (issue #721 -- see this module's docs and `crate::output::ll_dash`).
+///
+/// `None` (caller 404s) if the segment's very first part never arrives
+/// within [`BLOCKING_RELOAD_TIMEOUT`] — a genuinely future segment whose
+/// ingest hasn't reached it yet (or a stalled/dead route), mirroring the
+/// plain closed-segment lookup's own bound. Once the first part is ready,
+/// `Some` commits to a `200 OK` streamed response that keeps pulling
+/// subsequent parts (each wait bounded the same way) until a part index
+/// resolves [`ResourceOutcome::NotFound`] — which only happens once the
+/// segment has actually closed (or been evicted) without that part, i.e.
+/// exactly the segment's end — at which point the stream ends normally
+/// (the response completes; axum/hyper terminate the chunked-transfer
+/// encoding on drop).
+async fn stream_in_progress_segment(
+    store: Arc<MediaStore>,
+    track: &str,
+    seq: u32,
+) -> Option<Response> {
+    // Abuse/malformed-request bound (see `SEGMENT_ABUSE_FUTURE_BOUND`) --
+    // checked before ever registering a blocking wait.
+    let (in_progress_seg_seq, _) = store.latest_progress();
+    if seq > in_progress_seg_seq.saturating_add(SEGMENT_ABUSE_FUTURE_BOUND) {
+        return None;
+    }
+
+    let track = track.to_string();
+    let first = resource_blocking(&store, &format!("part-{track}-{seq}.0.m4s")).await;
+    let first_bytes = match first {
+        ResourceOutcome::Ready { bytes, .. } => bytes,
+        _ => return None,
+    };
+
+    let cursor = PartCursor {
+        store,
+        track,
+        seq,
+        next_index: 1,
+        pending_first: Some(first_bytes),
+    };
+    let body_stream = stream::unfold(cursor, |mut cursor| async move {
+        if let Some(bytes) = cursor.pending_first.take() {
+            return Some((Ok::<_, std::io::Error>(bytes), cursor));
+        }
+        let name = format!(
+            "part-{}-{}.{}.m4s",
+            cursor.track, cursor.seq, cursor.next_index
+        );
+        match resource_blocking(&cursor.store, &name).await {
+            ResourceOutcome::Ready { bytes, .. } => {
+                cursor.next_index += 1;
+                Some((Ok(bytes), cursor))
+            }
+            // WouldBlock cannot escape `resource_blocking` (it only returns
+            // a terminal outcome), and any other/future variant has no
+            // bytes to add -- end the stream rather than loop or panic.
+            _ => None,
+        }
+    });
+
+    let mut response = Response::new(Body::from_stream(body_stream));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(MP4_CONTENT_TYPE),
+    );
+    Some(response)
+}
+
+/// Streaming state for [`stream_in_progress_segment`]'s `futures_util::stream::unfold`.
+struct PartCursor {
+    store: Arc<MediaStore>,
+    track: String,
+    seq: u32,
+    /// The 0-based index of the next part to fetch once `pending_first` is
+    /// drained.
+    next_index: u32,
+    /// Part 0's bytes, already fetched by the caller to decide whether to
+    /// commit to a streamed response at all -- yielded first so it isn't
+    /// fetched twice.
+    pending_first: Option<Vec<u8>>,
 }
 
 #[cfg(test)]
@@ -281,5 +424,108 @@ mod tests {
         let store = make_store();
         let resp = dynamic_file(State(store), Path("not-a-thing.txt".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // --- issue #721: chunked-transfer whole-segment serving ---
+
+    #[tokio::test]
+    async fn dynamic_file_in_progress_segment_streams_concatenated_parts_and_completes_on_close() {
+        // Only part 0 exists when the request is made -- part 1 doesn't
+        // land, and the segment doesn't close, until *after* the handler
+        // must already have committed to a streamed response (it can only
+        // ever see part 0 at call time). This proves genuine incremental
+        // streaming, not "wait for everything, then answer once": if the
+        // handler eagerly required the whole segment up front, this request
+        // would have nothing to serve yet and would 404/block differently.
+        let store = Arc::new(MediaStore::new(4.0, 500, 4));
+        store.set_init(vec![0xAA; 8]);
+        store.add_part(part(2, 0));
+
+        let store_for_task = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store_for_task.add_part(part(2, 1));
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store_for_task.add_segment(seg(2));
+        });
+
+        let resp = dynamic_file(State(store), Path("seg-1-2.m4s".to_string())).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "an in-progress whole-segment request must stream, not 404"
+        );
+        assert_eq!(
+            body_bytes(resp).await,
+            [vec![0x10; 4], vec![0x11; 4]].concat(),
+            "streamed body must be part 0 + part 1 concatenated in order, \
+             including the part that only landed after the response started"
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_future_segment_within_bound_blocks_then_streams_once_started() {
+        // Segment 3 hasn't started at all (latest_progress() == (2, 2), so 3
+        // is the very next segment -- within SEGMENT_ABUSE_FUTURE_BOUND).
+        // The request must block (not immediately 404) until the segment's
+        // first part lands, then stream from it.
+        let store = make_store();
+        let store_for_start = store.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store_for_start.add_part(PartInfo {
+                bytes: vec![0x77; 4],
+                duration: 0.5,
+                independent: true,
+                segment_seq: 3,
+                part_index: 0,
+            });
+        });
+
+        let started = std::time::Instant::now();
+        let resp = dynamic_file(State(store.clone()), Path("seg-1-3.m4s".to_string())).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "a near-future segment must be waited for, not rejected"
+        );
+        assert!(
+            started.elapsed() < BLOCKING_RELOAD_TIMEOUT,
+            "must resolve once the part lands, not idle out the full timeout"
+        );
+        // Only one part exists so far; the response completes once segment 3
+        // eventually closes. Close it now so the body finishes.
+        store.add_segment(seg(3));
+        assert_eq!(body_bytes(resp).await, vec![0x77; 4]);
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_far_future_segment_beyond_abuse_bound_404_promptly() {
+        // latest_progress() == (2, 2); segment 99 is far beyond
+        // SEGMENT_ABUSE_FUTURE_BOUND ahead of the live edge -- must reject
+        // immediately (no blocking wait at all), unlike a legitimate
+        // near-future segment.
+        let store = make_store();
+        let started = std::time::Instant::now();
+        let resp = dynamic_file(State(store), Path("seg-1-99.m4s".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "an abusive far-future segment number must 404 promptly, not block: {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn dynamic_file_closed_segment_still_served_whole_not_streamed() {
+        // Regression: a segment that is ALREADY closed must still take the
+        // plain, non-streaming fast path (`resolve_resource`'s whole bytes,
+        // never falling through to `stream_in_progress_segment`) -- proven
+        // by the exact byte match ([0x21; 8] is `seg`'s literal whole-segment
+        // fixture bytes, not a concatenation of any parts).
+        let store = make_store();
+        let resp = dynamic_file(State(store), Path("seg-1-1.m4s".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(body_bytes(resp).await, vec![0x21; 8]);
     }
 }
