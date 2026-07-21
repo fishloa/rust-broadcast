@@ -40,6 +40,13 @@ Implemented from the EN 50221 specification.
   for live-CAM debugging.
 - **MMI answering**: `Driver::mmi_menu_answer` / `mmi_enquiry_answer` /
   `mmi_cancel` send `menu_answ` / `answ` back to the module.
+- **Hot-plug** (#726): `Notification::HotPlug(HotPlug)` groups the five
+  transitions — `CamPresent`/`CamRemoved` are real DVB-CA slot-status edges
+  (the driver re-drives the handshake on insert, tears down on remove);
+  `CardInserted`/`CardRemoved`/`CardChanged` are best-effort EN 50221
+  app-layer inference (CI slots have no card-detect line). React with a
+  closure via `Driver::pump_hotplug(dt, |hp| …)` (or `pump_with` for every
+  notification), or classify a drained note with `Notification::hotplug()`.
 
 ## `ci-probe` — discover and engage an installed CAM
 
@@ -147,7 +154,7 @@ differential test harness against an external reference.
 
 ```rust
 use std::time::Duration;
-use dvb_ci_runtime::{Driver, MockCaDevice, Notification};
+use dvb_ci_runtime::{Driver, HotPlug, MockCaDevice, Notification};
 use dvb_ci_runtime::dvb_ci::tpdu::tags;
 
 // Script a module that accepts the transport connection.
@@ -155,12 +162,21 @@ let dev = MockCaDevice::new([vec![tags::C_T_C_REPLY, 0x01, 0x01]]);
 let mut driver = Driver::new(dev);
 
 driver.init()?;                       // reset + open the transport connection
+
+// Poll-drain style: pump, then match drained notifications.
 for _ in 0..4 {
     driver.pump(Duration::from_millis(100))?;   // read frames / advance poll cadence
 }
 for note in driver.take_notifications() {
     if let Notification::CamReady = note { /* now safe to send a ca_pmt */ }
 }
+
+// Or closure style — react to CAM/card hot-plug edges directly:
+driver.pump_hotplug(Duration::from_millis(100), |hp| match hp {
+    HotPlug::CamPresent => { /* CAM (re)inserted — (re)send any pending ca_pmt */ }
+    HotPlug::CamRemoved => { /* CAM removed — stop descrambling */ }
+    _ => {}                 // Card{Inserted,Removed,Changed} — best-effort inference
+})?;
 # Ok::<(), std::io::Error>(())
 ```
 
