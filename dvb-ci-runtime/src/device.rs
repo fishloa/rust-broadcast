@@ -18,8 +18,9 @@ use std::io;
 /// inserted) and `CA_CI_MODULE_READY` (that module has completed its own
 /// init and is usable). A module can be present-but-not-ready briefly after
 /// insertion; the runtime's hot-plug edge detection
-/// ([`Notification::CamPresent`](crate::event::Notification::CamPresent)/
-/// [`CamRemoved`](crate::event::Notification::CamRemoved)) keys off
+/// ([`Notification::HotPlug`](crate::event::Notification::HotPlug) carrying
+/// [`HotPlug::CamPresent`](crate::event::HotPlug::CamPresent)/
+/// [`CamRemoved`](crate::event::HotPlug::CamRemoved)) keys off
 /// `module_present`, since that is the field that toggles on physical
 /// insert/removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

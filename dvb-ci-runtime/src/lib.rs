@@ -60,7 +60,7 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use dvb_ci_runtime::{Driver, MockCaDevice, Notification};
+//! use dvb_ci_runtime::{Driver, HotPlug, MockCaDevice, Notification};
 //! use dvb_ci_runtime::dvb_ci::tpdu::tags;
 //!
 //! # fn main() -> std::io::Result<()> {
@@ -76,13 +76,23 @@
 //!     driver.pump(Duration::from_millis(100))?;
 //! }
 //!
-//! // Host-facing events (CamReady, ApplicationInfo, CaInfo, Mmi, …) surface here.
+//! // Host-facing events (CamReady, ApplicationInfo, CaInfo, Mmi, HotPlug, …)
+//! // surface here — either poll-drained:
 //! for note in driver.take_notifications() {
 //!     match note {
 //!         Notification::CamReady => { /* now safe to send a ca_pmt */ }
 //!         other => { let _ = other; }
 //!     }
 //! }
+//!
+//! // …or, since this crate is sync/sans-IO (no channels), delivered by a
+//! // closure callback per pump — `pump_with` for every notification, or
+//! // `pump_hotplug` to react only to CAM/card hot-plug transitions:
+//! driver.pump_hotplug(Duration::from_millis(100), |hp| match hp {
+//!     HotPlug::CamPresent => { /* CAM (re)inserted — re-send any pending ca_pmt */ }
+//!     HotPlug::CamRemoved => { /* CAM removed — stop descrambling */ }
+//!     _ => {}
+//! })?;
 //! # Ok(())
 //! # }
 //! ```
@@ -109,7 +119,7 @@ pub mod linux;
 pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
 pub use device::{CaDevice, DeviceOp, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo};
 pub use driver::Driver;
-pub use event::{Action, Event, HostRequest, Notification};
+pub use event::{Action, Event, HostRequest, HotPlug, Notification};
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub use linux::{LinuxCaDevice, LinuxCiDataDevice};
 pub use stack::CiStack;

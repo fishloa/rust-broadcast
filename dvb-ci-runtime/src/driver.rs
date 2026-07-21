@@ -8,7 +8,7 @@ use std::io;
 use std::time::Duration;
 
 use crate::device::{CaDevice, SlotInfo};
-use crate::event::{Action, Event, HostRequest, MmiEvent, Notification};
+use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
 use crate::stack::CiStack;
 
 /// Substrings (case-insensitive) in MMI menu/list/enquiry text that
@@ -41,9 +41,9 @@ pub struct Driver<D: CaDevice> {
     /// Last observed slot status (Part A hot-plug edge detection, #726).
     /// `None` means no [`SlotInfo`] has been observed yet — the first
     /// observation only establishes the baseline; it never itself fires
-    /// [`Notification::CamPresent`]/[`CamRemoved`](Notification::CamRemoved),
-    /// so `Driver::init` on an already-inserted module doesn't spuriously
-    /// re-drive its own handshake.
+    /// [`Notification::HotPlug`] carrying [`HotPlug::CamPresent`]/
+    /// [`CamRemoved`](HotPlug::CamRemoved), so `Driver::init` on an
+    /// already-inserted module doesn't spuriously re-drive its own handshake.
     last_slot: Option<SlotInfo>,
     /// Last `ca_info` CAID set seen for the current module (Part B card
     /// inference, best-effort). `None` = not seen yet (baseline only).
@@ -179,8 +179,8 @@ impl<D: CaDevice> Driver<D> {
     ///
     /// Also samples [`SlotInfo`] once per call (the DVB-CA slot has no
     /// interrupt/event of its own; `CA_GET_SLOT_INFO` is a poll) so a hot-plug
-    /// edge is caught between reads — see [`Notification::CamPresent`]/
-    /// [`CamRemoved`](Notification::CamRemoved) (#726).
+    /// edge is caught between reads — see [`Notification::HotPlug`] carrying
+    /// [`HotPlug::CamPresent`]/[`CamRemoved`](HotPlug::CamRemoved) (#726).
     pub fn pump(&mut self, timeout: Duration) -> io::Result<bool> {
         self.run(vec![Action::QuerySlot])?;
         if self.device.poll(timeout)? {
@@ -195,6 +195,41 @@ impl<D: CaDevice> Driver<D> {
         let actions = self.stack.handle(Event::Tick { elapsed: timeout });
         self.run(actions)?;
         Ok(false)
+    }
+
+    /// Pump once ([`pump`](Self::pump)), then invoke `handler` for each
+    /// [`Notification`] produced this cycle (drain-and-dispatch via
+    /// [`take_notifications`](Self::take_notifications)). Returns the same
+    /// bool as `pump`. The closure is per-call — nothing is stored, so there
+    /// are no lifetime constraints beyond the call itself. This crate is
+    /// sync/sans-IO (no channels/async runtime), so a closure callback is the
+    /// idiomatic push-style alternative to poll-draining `take_notifications`
+    /// yourself.
+    pub fn pump_with<F: FnMut(&Notification)>(
+        &mut self,
+        timeout: Duration,
+        mut handler: F,
+    ) -> io::Result<bool> {
+        let progressed = self.pump(timeout)?;
+        for n in self.take_notifications() {
+            handler(&n);
+        }
+        Ok(progressed)
+    }
+
+    /// Convenience over [`pump_with`](Self::pump_with): invoke `handler` only
+    /// for [`HotPlug`] transitions, ignoring every other [`Notification`]
+    /// produced this cycle.
+    pub fn pump_hotplug<F: FnMut(HotPlug)>(
+        &mut self,
+        timeout: Duration,
+        mut handler: F,
+    ) -> io::Result<bool> {
+        self.pump_with(timeout, |n| {
+            if let Some(h) = n.hotplug() {
+                handler(h);
+            }
+        })
     }
 
     /// Execute the stack's actions against the device.
@@ -228,7 +263,8 @@ impl<D: CaDevice> Driver<D> {
         let prev = self.last_slot.replace(info);
         match prev {
             Some(prev) if !prev.module_present && info.module_present => {
-                self.notifications.push(Notification::CamPresent);
+                self.notifications
+                    .push(Notification::HotPlug(HotPlug::CamPresent));
                 self.reset_module_state();
                 // Re-drive the same reset/init path `Driver::init` uses, so
                 // the newly-inserted module gets a clean resource-manager
@@ -237,7 +273,8 @@ impl<D: CaDevice> Driver<D> {
                 self.run(actions)?;
             }
             Some(prev) if prev.module_present && !info.module_present => {
-                self.notifications.push(Notification::CamRemoved);
+                self.notifications
+                    .push(Notification::HotPlug(HotPlug::CamRemoved));
                 self.reset_module_state();
             }
             _ => {}
@@ -271,11 +308,11 @@ impl<D: CaDevice> Driver<D> {
                 let mut out = Vec::new();
                 if let Some(prev) = &self.last_caids {
                     if prev.is_empty() && !new_set.is_empty() {
-                        out.push(Notification::CardInserted);
+                        out.push(Notification::HotPlug(HotPlug::CardInserted));
                     } else if !prev.is_empty() && new_set.is_empty() {
-                        out.push(Notification::CardRemoved);
+                        out.push(Notification::HotPlug(HotPlug::CardRemoved));
                     } else if !prev.is_empty() && !new_set.is_empty() && *prev != new_set {
-                        out.push(Notification::CardChanged);
+                        out.push(Notification::HotPlug(HotPlug::CardChanged));
                     }
                 }
                 self.last_caids = Some(new_set);
@@ -287,9 +324,9 @@ impl<D: CaDevice> Driver<D> {
                 let mut out = Vec::new();
                 if let Some(prev) = self.last_descrambling_ok {
                     if !prev && *descrambling_ok {
-                        out.push(Notification::CardInserted);
+                        out.push(Notification::HotPlug(HotPlug::CardInserted));
                     } else if prev && !*descrambling_ok {
-                        out.push(Notification::CardRemoved);
+                        out.push(Notification::HotPlug(HotPlug::CardRemoved));
                     }
                 }
                 self.last_descrambling_ok = Some(*descrambling_ok);
@@ -299,9 +336,9 @@ impl<D: CaDevice> Driver<D> {
                 Some(text) => {
                     let lower = text.to_lowercase();
                     if MMI_CARD_ABSENT_KEYWORDS.iter().any(|k| lower.contains(k)) {
-                        vec![Notification::CardRemoved]
+                        vec![Notification::HotPlug(HotPlug::CardRemoved)]
                     } else if MMI_CARD_PRESENT_KEYWORDS.iter().any(|k| lower.contains(k)) {
-                        vec![Notification::CardInserted]
+                        vec![Notification::HotPlug(HotPlug::CardInserted)]
                     } else {
                         Vec::new()
                     }
@@ -335,7 +372,7 @@ impl<D: CaDevice> Driver<D> {
 mod tests {
     use super::*;
     use crate::device::{DeviceOp, MockCaDevice};
-    use crate::event::{HostControlEvent, Notification};
+    use crate::event::{HostControlEvent, HotPlug, Notification};
     use broadcast_common::Serialize;
     use dvb_ci::tpdu::tags;
 
@@ -608,7 +645,7 @@ mod tests {
         // (absent) — it must not itself claim a hot-plug edge.
         let notes = d.take_notifications();
         assert!(
-            !notes.contains(&Notification::CamPresent),
+            !notes.contains(&Notification::HotPlug(HotPlug::CamPresent)),
             "baseline observation must not fire CamPresent, got {notes:?}"
         );
         let resets_before = d
@@ -629,7 +666,7 @@ mod tests {
         let notes = d.take_notifications();
         let cam_present_count = notes
             .iter()
-            .filter(|n| **n == Notification::CamPresent)
+            .filter(|n| **n == Notification::HotPlug(HotPlug::CamPresent))
             .count();
         assert_eq!(
             cam_present_count, 1,
@@ -664,7 +701,7 @@ mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CamRemoved),
+            notes.contains(&Notification::HotPlug(HotPlug::CamRemoved)),
             "expected CamRemoved, got {notes:?}"
         );
 
@@ -692,7 +729,7 @@ mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CamPresent),
+            notes.contains(&Notification::HotPlug(HotPlug::CamPresent)),
             "expected CamPresent on re-insert, got {notes:?}"
         );
         let resets_after = d
@@ -715,9 +752,10 @@ mod tests {
         }
         let notes = d.take_notifications();
         assert!(
-            !notes
-                .iter()
-                .any(|n| matches!(n, Notification::CamPresent | Notification::CamRemoved)),
+            !notes.iter().any(|n| matches!(
+                n,
+                Notification::HotPlug(HotPlug::CamPresent | HotPlug::CamRemoved)
+            )),
             "unchanged slot status must not emit hot-plug notifications, got {notes:?}"
         );
     }
@@ -743,7 +781,9 @@ mod tests {
         assert!(
             !notes.iter().any(|n| matches!(
                 n,
-                Notification::CardInserted | Notification::CardChanged | Notification::CardRemoved
+                Notification::HotPlug(
+                    HotPlug::CardInserted | HotPlug::CardChanged | HotPlug::CardRemoved
+                )
             )),
             "first ca_info must only establish the baseline, got {notes:?}"
         );
@@ -760,7 +800,7 @@ mod tests {
         );
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CardInserted),
+            notes.contains(&Notification::HotPlug(HotPlug::CardInserted)),
             "expected CardInserted, got {notes:?}"
         );
 
@@ -776,7 +816,7 @@ mod tests {
         );
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CardChanged),
+            notes.contains(&Notification::HotPlug(HotPlug::CardChanged)),
             "expected CardChanged, got {notes:?}"
         );
     }
@@ -802,9 +842,10 @@ mod tests {
         feed(&mut d, r_apdu(CA_SESSION, &ser(&reply(None))));
         let notes = d.take_notifications();
         assert!(
-            !notes
-                .iter()
-                .any(|n| matches!(n, Notification::CardInserted | Notification::CardRemoved)),
+            !notes.iter().any(|n| matches!(
+                n,
+                Notification::HotPlug(HotPlug::CardInserted | HotPlug::CardRemoved)
+            )),
             "first ca_pmt_reply must only establish the baseline, got {notes:?}"
         );
 
@@ -815,7 +856,7 @@ mod tests {
         );
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CardInserted),
+            notes.contains(&Notification::HotPlug(HotPlug::CardInserted)),
             "expected CardInserted, got {notes:?}"
         );
 
@@ -823,7 +864,7 @@ mod tests {
         feed(&mut d, r_apdu(CA_SESSION, &ser(&reply(None))));
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CardRemoved),
+            notes.contains(&Notification::HotPlug(HotPlug::CardRemoved)),
             "expected CardRemoved, got {notes:?}"
         );
     }
@@ -849,8 +890,38 @@ mod tests {
 
         let notes = d.take_notifications();
         assert!(
-            notes.contains(&Notification::CardRemoved),
+            notes.contains(&Notification::HotPlug(HotPlug::CardRemoved)),
             "expected CardRemoved inferred from MMI 'no card' text, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn pump_hotplug_delivers_cam_present_via_closure_exactly_once() {
+        let mut dev = MockCaDevice::new([]);
+        dev.slot = SlotInfo {
+            num: 0,
+            module_ready: false,
+            module_present: false,
+        };
+        let mut d = Driver::new(dev);
+        d.init().unwrap();
+        d.take_notifications(); // drop the baseline observation
+
+        // Module physically inserted and ready.
+        d.device_mut().slot = SlotInfo {
+            num: 0,
+            module_ready: true,
+            module_present: true,
+        };
+
+        let mut seen = Vec::new();
+        d.pump_hotplug(Duration::from_millis(10), |hp| seen.push(hp))
+            .unwrap();
+
+        assert_eq!(
+            seen,
+            vec![HotPlug::CamPresent],
+            "expected the closure to receive HotPlug::CamPresent exactly once, got {seen:?}"
         );
     }
 }

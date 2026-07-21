@@ -9,15 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.13.0] - 2026-07-21
 ### Added
-- **CAM + card hot-plug `Notification`s** (#726): `Notification::CamPresent` /
-  `CamRemoved` — real DVB-CA slot-status edges (`CA_CI_MODULE_PRESENT`), emitted
-  once per edge; the driver re-drives the reset/init handshake on insert and
-  tears down session state on removal. `Notification::CardInserted` /
-  `CardRemoved` / `CardChanged` — best-effort app-layer inference from `ca_info`
-  CAID-set changes, `ca_pmt_reply` `descrambling_ok` transitions, and MMI
-  "no card"/entitlement keyword text (EN 50221 CI slots have no card-detect
-  line). `SlotInfo` gained a `module_present` field alongside the existing
-  `module_ready`.
+- **CAM + card hot-plug `Notification`s** (#726): `Notification::HotPlug(HotPlug)`
+  carries the transition — `HotPlug::CamPresent` / `CamRemoved` are real DVB-CA
+  slot-status edges (`CA_CI_MODULE_PRESENT`), emitted once per edge; the driver
+  re-drives the reset/init handshake on insert and tears down session state on
+  removal. `HotPlug::CardInserted` / `CardRemoved` / `CardChanged` are
+  best-effort app-layer inference from `ca_info` CAID-set changes,
+  `ca_pmt_reply` `descrambling_ok` transitions, and MMI "no card"/entitlement
+  keyword text (EN 50221 CI slots have no card-detect line). `HotPlug` gets the
+  #204 `name()`/`Display` label pair; `Notification::hotplug()` is a cheap
+  `Option<HotPlug>` classifier for poll-mode consumers. `SlotInfo` gained a
+  `module_present` field alongside the existing `module_ready`.
+- **`Driver::pump_with`/`pump_hotplug`** — closure-callback pump variants
+  (this crate is sync/sans-IO, so a per-call closure is the push-style
+  alternative to poll-draining `Driver::take_notifications` yourself):
+  `pump_with(timeout, |note: &Notification| ...)` invokes `handler` for every
+  notification the pump cycle produced; `pump_hotplug(timeout, |hp: HotPlug|
+  ...)` filters to just `HotPlug` transitions. Both wrap the existing
+  `pump`/`take_notifications` (still public, unchanged) — purely additive.
 ### Fixed
 - `LinuxCaDevice::slot_info` read `CA_CI_MODULE_READY` from the wrong bit
   (`1`, the uapi `CA_CI_MODULE_PRESENT` value) instead of `2` — `module_ready`

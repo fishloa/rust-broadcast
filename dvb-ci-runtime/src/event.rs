@@ -137,6 +137,29 @@ pub enum Notification {
         /// Human-readable detail.
         detail: String,
     },
+    /// A CAM/card hot-plug transition (#726). See [`HotPlug`].
+    HotPlug(HotPlug),
+}
+
+impl Notification {
+    /// This notification's [`HotPlug`] transition, if it is one — a cheap
+    /// classifier for poll-mode consumers that only care about hot-plug
+    /// edges.
+    #[must_use]
+    pub fn hotplug(&self) -> Option<HotPlug> {
+        if let Notification::HotPlug(h) = self {
+            Some(*h)
+        } else {
+            None
+        }
+    }
+}
+
+/// A CAM/card hot-plug transition. `Cam*` are real DVB-CA slot-status edges;
+/// `Card*` are best-effort EN 50221 app-layer inference (no card-detect line).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum HotPlug {
     /// The module transitioned absent → present *and* ready (DVB-CA slot
     /// status: `CA_CI_MODULE_PRESENT` and `CA_CI_MODULE_READY` both set —
     /// Linux uapi `linux/dvb/ca.h` `ca_slot_info.flags`). A real hardware
@@ -158,12 +181,12 @@ pub enum Notification {
     /// transition from empty to non-empty, or a `ca_pmt_reply`
     /// `descrambling_ok` transition from `false` to `true`. Some CAMs instead
     /// give a strong signal by resetting the module on card change, which
-    /// surfaces as [`CamPresent`](Notification::CamPresent) rather than this
+    /// surfaces as [`CamPresent`](HotPlug::CamPresent) rather than this
     /// variant.
     CardInserted,
     /// A smart card was inferred to have been removed from the module.
     ///
-    /// **Best-effort app-layer inference** (see [`CardInserted`](Notification::CardInserted)
+    /// **Best-effort app-layer inference** (see [`CardInserted`](HotPlug::CardInserted)
     /// for why no hardware signal exists). Raised from one of: an `ca_info`
     /// CAID-set transition from non-empty to empty, a `ca_pmt_reply`
     /// `descrambling_ok` transition from `true` to `false`, or MMI menu/list/
@@ -172,12 +195,29 @@ pub enum Notification {
     /// The inserted smart card was inferred to have changed (swapped without
     /// an intervening removal the runtime observed).
     ///
-    /// **Best-effort app-layer inference** (see [`CardInserted`](Notification::CardInserted)
+    /// **Best-effort app-layer inference** (see [`CardInserted`](HotPlug::CardInserted)
     /// for why no hardware signal exists). Raised when a later `ca_info`
     /// reports a different non-empty CAID set than the last one seen for this
     /// module.
     CardChanged,
 }
+
+impl HotPlug {
+    /// Stable lowercase spec-ish token for this transition (#204 label
+    /// convention).
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::CamPresent => "cam-present",
+            Self::CamRemoved => "cam-removed",
+            Self::CardInserted => "card-inserted",
+            Self::CardRemoved => "card-removed",
+            Self::CardChanged => "card-changed",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(HotPlug);
 
 /// A decoded high-level MMI `menu()` / `list()` ready for display (§8.6.5,
 /// Tables 49/51). The three header lines and the choice list are kept separate
