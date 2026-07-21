@@ -1258,13 +1258,15 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::NOT_FOUND);
     }
 
-    /// Issue #663 P4.2: a route configured with all three outputs
+    /// Issue #663 P4.2 / #721: a route configured with all three outputs
     /// (`ll_hls`+`dash`+`ll_dash`) serves the LL-DASH `manifest-ll.mpd`
     /// alongside the regular `dash`/`ll_hls` manifests unchanged (the
     /// regression this story must not break), and the LL-DASH manifest's
-    /// `SegmentTemplate` — once resolved exactly like a real DASH client
-    /// would substitute its tokens — names a real `part-*.m4s` file the
-    /// shared resource route actually serves.
+    /// `SegmentTemplate` — a whole-segment `$Number$` template, exactly like
+    /// `manifest.mpd`'s — resolves against the shared resource route via the
+    /// **chunked-transfer** path while the segment is still in progress: the
+    /// response body streams the segment's parts as they land and completes
+    /// once the segment closes.
     #[tokio::test]
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
         let store = Arc::new(MediaStore::new(4.0, 500, 4));
@@ -1283,8 +1285,7 @@ mod tests {
             segment_seq: 1,
             part_count: 2,
         });
-        // Live parts of the in-progress segment (seq 2) -- the LL-DASH
-        // manifest's low-latency addressable units.
+        // Live parts of the in-progress segment (seq 2) -- not yet closed.
         store.add_part(transmux::ll_hls::PartInfo {
             bytes: vec![0x50; 4],
             duration: 0.5,
@@ -1304,7 +1305,7 @@ mod tests {
         streams.insert(
             "cam1".to_string(),
             (
-                store,
+                store.clone(),
                 vec![
                     Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
                     Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
@@ -1330,7 +1331,7 @@ mod tests {
         let hls_body = body_string(resp).await;
         assert!(hls_body.contains("#EXTM3U"));
 
-        // --- The new LL-DASH manifest. ---
+        // --- The new LL-DASH manifest: true chunked-transfer design. ---
         let resp = app
             .clone()
             .oneshot(get("/cam1/manifest-ll.mpd"))
@@ -1347,27 +1348,60 @@ mod tests {
         assert_well_formed_xml(&ll_body);
         assert!(ll_body.contains("<MPD"), "{ll_body}");
         assert!(ll_body.contains(r#"type="dynamic""#), "{ll_body}");
+        // True chunked design: availabilityTimeOffset is a real, non-zero
+        // segment-minus-chunk figure (4.0 - 0.5 = 3.5), not the old
+        // parts-signalling design's honest "0" -- see `output::ll_dash`'s
+        // module docs.
         assert!(
-            ll_body.contains("availabilityTimeOffset=\"0\""),
+            ll_body.contains("availabilityTimeOffset=\"3.5\""),
+            "{ll_body}"
+        );
+        assert!(
+            ll_body.contains("availabilityTimeComplete=\"false\""),
             "{ll_body}"
         );
         assert!(ll_body.contains("<ServiceDescription"), "{ll_body}");
         assert!(ll_body.contains("<Latency target="), "{ll_body}");
         assert!(
-            ll_body.contains("part-$RepresentationID$-2.$Number$.m4s"),
-            "must address the in-progress segment (seq 2)'s parts: {ll_body}"
+            ll_body.contains("seg-$RepresentationID$-$Number$.m4s"),
+            "LL-DASH addresses whole segments, exactly like manifest.mpd \
+             (parts are an internal chunked-transfer delivery detail, never \
+             addressed by the MPD itself): {ll_body}"
+        );
+        assert!(
+            !ll_body.contains("part-"),
+            "no part-addressed URI in the MPD: {ll_body}"
         );
 
-        // Substitute the tokens like a real DASH client would
-        // ($RepresentationID$ -> 1, $Number$ -> startNumber=0) and confirm
-        // the shared resource route actually serves it.
-        let resolved_uri = "part-1-2.0.m4s";
-        let resp = app
-            .oneshot(get(&format!("/cam1/{resolved_uri}")))
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        assert_eq!(body_bytes(resp).await, vec![0x50; 4]);
+        // --- Fetch the in-progress segment (seq 2): must resolve via the
+        // chunked-transfer path (no Content-Length -- the body streams),
+        // completing once the segment closes with the concatenated part
+        // bytes. Close the segment concurrently so the request completes
+        // promptly instead of waiting out the blocking-reload timeout on a
+        // part index that will never come.
+        let store_for_close = store.clone();
+        let closer = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            store_for_close.add_segment(transmux::ll_hls::SegmentInfo {
+                bytes: vec![0x99; 8], // distinct from the concatenated parts
+                duration: 1.0,
+                segment_seq: 2,
+                part_count: 2,
+            });
+        });
+        let resp = app.oneshot(get("/cam1/seg-1-2.m4s")).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            axum::http::StatusCode::OK,
+            "in-progress whole-segment request must stream, not 404"
+        );
+        let bytes = body_bytes(resp).await;
+        assert_eq!(
+            bytes,
+            [vec![0x50; 4], vec![0x51; 4]].concat(),
+            "streamed body must be the segment's parts concatenated in order"
+        );
+        closer.await.unwrap();
     }
 
     /// The shared response-header middleware treats `.mpd` the same as

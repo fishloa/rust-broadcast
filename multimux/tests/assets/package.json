@@ -1,0 +1,10 @@
+{
+  "name": "lldash-dashjs-harness",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Headless dash.js low-latency playback harness for multimux issue #721 (multimux/tests/lldash_dashjs.rs). Not published; test-only.",
+  "type": "module",
+  "dependencies": {
+    "playwright": "1.61.0"
+  }
+}

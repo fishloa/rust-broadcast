@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Changed
+- **True chunked-transfer LL-DASH** (issue #721): `LlDashOutput`'s
+  `manifest-ll.mpd` now renders a real chunked-CMAF MPD via
+  `transmux::LlDashPackager` — a whole-segment `SegmentTemplate` (the same
+  `seg-{track}-{seq}.m4s` addressing `manifest.mpd` uses) with a genuinely
+  non-zero `availabilityTimeOffset`/`availabilityTimeComplete="false"` —
+  replacing the previous discrete-parts-signalling fallback (which
+  re-addressed `part-*.m4s` files directly and could only claim an honest
+  `availabilityTimeOffset="0"`). The shared origin resource route now serves
+  a not-yet-closed segment over **HTTP chunked transfer-encoding**,
+  streaming the store's live parts as they land and completing once the
+  segment closes; a closed segment is served exactly as before (whole
+  bytes, `Content-Length`). Because whole closed segments stay in the
+  store's window, `manifest-ll.mpd` now also advertises a real
+  `timeShiftBufferDepth`. Validated against a real headless dash.js
+  low-latency player (`multimux/tests/lldash_dashjs.rs`, vendored
+  `dash.all.min.js` 5.2.0 under `multimux/tests/assets/`): real playback
+  advances past 1.8s with measured live latency below the 1s segment
+  target, proving genuine chunked (not whole-segment) availability.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

@@ -50,7 +50,7 @@ many-outputs, no per-output re-mux:
 | --- | --- | --- |
 | `"llhls"` | Low-Latency HLS (RFC 8216bis) | `master.m3u8` + `media.m3u8` (or the configured `playlist_name`) |
 | `"dash"` | MPEG-DASH, `$Number$`-addressed | `manifest.mpd` |
-| `"ll_dash"` | Low-latency DASH signalling (discrete parts, not true chunked-transfer CMAF) | `manifest-ll.mpd` |
+| `"ll_dash"` | Low-latency DASH, true chunked-transfer CMAF (whole-segment `$Number$`, served over HTTP chunked transfer while in progress) | `manifest-ll.mpd` |
 
 A route can enable more than one (e.g. `["llhls", "dash"]`), and different
 routes may enable different sets.
@@ -66,8 +66,8 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 | `GET /{stream}/manifest.mpd` | DASH manifest (if `dash` is enabled). |
 | `GET /{stream}/manifest-ll.mpd` | Low-latency DASH manifest (if `ll_dash` is enabled). |
 | `GET /{stream}/init-{track}.mp4` | fMP4 init segment (`moov`) — shared across every enabled output. |
-| `GET /{stream}/seg-{track}-{seq}.m4s` | A closed full media segment. |
-| `GET /{stream}/part-{track}-{seq}.{part}.m4s` | An LL-HLS/LL-DASH part of the in-progress segment. |
+| `GET /{stream}/seg-{track}-{seq}.m4s` | A full media segment: served whole (`Content-Length`) once closed, or streamed over **HTTP chunked transfer-encoding** while still in progress (issue #721 — `ll_dash`'s low-latency delivery). |
+| `GET /{stream}/part-{track}-{seq}.{part}.m4s` | An LL-HLS partial segment of the in-progress segment (also how `ll_dash`'s chunked-transfer path internally sources the bytes it streams — never addressed directly by the LL-DASH MPD itself). |
 | `GET /healthz` | Liveness — always `200`. Never gated by `output_auth`. |
 | `GET /readyz` | Readiness — `200` once at least one route is live, `503` otherwise. Never gated by `output_auth`. |
 | `GET /metrics` | Prometheus metrics. Never gated by `output_auth`. |
@@ -219,8 +219,6 @@ mutually exclusive — pass one or the other.
 - Per-viewer sessions, server-side ad insertion, manifest rewrites.
 - DVR / VOD / disk spill (the window is RAM-only and rolls forward).
 - Trick-play.
-- True chunked-transfer CMAF LL-DASH (`ll_dash` re-addresses existing
-  LL-HLS-shaped parts instead — see `output::ll_dash`'s module docs).
 
 Additional documented limits inherited from the underlying streaming
 depayloader (`transmux`'s `RtpStreamDepacketiser`, issue #700): low-delay

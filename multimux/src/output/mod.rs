@@ -41,10 +41,10 @@ pub enum OutputKind {
     /// MPEG-DASH (`manifest.mpd`).
     #[serde(rename = "dash")]
     Dash,
-    /// Low-latency DASH (`manifest-ll.mpd`) — issue #663 P4.2. See
-    /// [`ll_dash`]'s module docs for what "low-latency" means here (a
-    /// signalled MPD addressing existing LL-HLS-shaped parts, not true
-    /// chunked-transfer CMAF).
+    /// Low-latency DASH (`manifest-ll.mpd`) — issue #663 P4.2 / #721. True
+    /// chunked-transfer LL-DASH: see [`ll_dash`]'s module docs for how a
+    /// whole-segment `SegmentTemplate` is served over HTTP chunked
+    /// transfer-encoding while the segment is still being produced.
     #[serde(rename = "ll_dash")]
     LlDash,
     /// External output scheme resolved at runtime via

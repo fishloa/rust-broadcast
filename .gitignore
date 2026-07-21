@@ -29,3 +29,8 @@ tools/dvb-si-audit/out/
 # all scratch cargo target dirs (target/, target-gate/, target-ci/, target-rel/, …)
 /target*/
 target-*/
+
+# multimux LL-DASH dash.js headless-validation harness (issue #721,
+# multimux/tests/lldash_dashjs.rs / multimux/tests/assets/) -- installed JS
+# deps only; the pinned dash.all.min.js fixture itself IS committed.
+/multimux/tests/assets/node_modules/
