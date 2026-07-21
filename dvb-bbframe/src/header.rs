@@ -26,7 +26,7 @@ pub const DFL_MAX_BITS: u16 = 64800;
 #[repr(u8)]
 #[non_exhaustive]
 pub enum TsGs {
-    /// Generic Packetised Stream.
+    /// Generic Packetized Stream.
     Gfps = 0b00,
     /// Transport Stream (MPEG-2 TS, 188-byte packets).
     Ts = 0b11,

@@ -47,7 +47,7 @@
 //!         /* GSE packets: hand `data_field` to the `dvb-gse` crate */
 //!     }
 //!     other => {
-//!         /* GFPS / GCS — generic continuous or packetised */
+//!         /* GFPS / GCS — generic continuous or packetized */
 //!     }
 //! }
 //! ```

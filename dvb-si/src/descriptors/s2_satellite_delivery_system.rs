@@ -54,8 +54,8 @@ const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum TsGsMode {
-    /// Generic Packetised.
-    GenericPacketised,
+    /// Generic Packetized.
+    GenericPacketized,
     /// Generic Stream Encapsulation (GSE).
     Gse,
     /// DVB transport stream.
@@ -69,7 +69,7 @@ impl TsGsMode {
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
         match v {
-            0 => TsGsMode::GenericPacketised,
+            0 => TsGsMode::GenericPacketized,
             1 => TsGsMode::Gse,
             2 => TsGsMode::DvbTransportStream,
             other => TsGsMode::Reserved(other),
@@ -80,7 +80,7 @@ impl TsGsMode {
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
     pub const fn to_u8(self) -> u8 {
         match self {
-            TsGsMode::GenericPacketised => 0,
+            TsGsMode::GenericPacketized => 0,
             TsGsMode::Gse => 1,
             TsGsMode::DvbTransportStream => 2,
             TsGsMode::Reserved(v) => v,
@@ -91,7 +91,7 @@ impl TsGsMode {
     /// Human-readable spec name per the governing Table.
     pub fn name(self) -> &'static str {
         match self {
-            TsGsMode::GenericPacketised => "Generic Packetised",
+            TsGsMode::GenericPacketized => "Generic Packetized",
             TsGsMode::Gse => "Generic Stream Encapsulation (GSE)",
             TsGsMode::DvbTransportStream => "DVB transport stream",
             TsGsMode::Reserved(_) => "reserved",
@@ -303,7 +303,7 @@ mod tests {
         assert!(!d.scrambling_sequence_selector);
         assert!(!d.multiple_input_stream_flag);
         assert!(!d.not_timeslice_flag);
-        assert_eq!(d.ts_gs_mode, TsGsMode::GenericPacketised);
+        assert_eq!(d.ts_gs_mode, TsGsMode::GenericPacketized);
         assert_eq!(d.timeslice_number, Some(0x07));
         assert_eq!(d.scrambling_sequence_index, None);
         assert_eq!(d.input_stream_identifier, None);

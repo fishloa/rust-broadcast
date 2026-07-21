@@ -1,17 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-### Changed (BREAKING)
-- Renamed `TsGsMode::GenericPacketised` (S2 satellite delivery system
-  descriptor, tag 0x79) and `TsGsS2XMode::GenericPacketised` (S2X satellite
-  delivery system extension descriptor) to British spelling (issue #663;
-  both were previously spelled with a "z"); `name()`/`Display` label text
-  updated to match. The spec-transcription docs under `docs/enums/` keep the
-  ETSI table's own (American) wording verbatim, per this crate's
-  spec-fidelity convention. Pure rename — behaviour-preserving, no
-  functional change.
-
 ## [8.4.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.
@@ -353,11 +341,11 @@ pre-release audit.
   spec "HD digital television service".
 
 ### Added
-- **`mux::SectionPacketiser`** (#56, feature `ts`) — packs serialized PSI/SI
+- **`mux::SectionPacketizer`** (#56, feature `ts`) — packs serialized PSI/SI
   sections into 188-byte TS packets: PUSI + `pointer_field` placement, section
   concatenation, per-PID continuity counters, 0xFF tail stuffing. The byte-exact
   inverse of `SectionReassembler` (ISO/IEC 13818-1 §2.4.4). Buffer-reuse
-  `packetise_into` + allocating `packetise`.
+  `packetize_into` + allocating `packetize`.
 - **`mux::SiMux`** (#56, feature `ts`) — section-repetition scheduler on a
   caller-supplied clock (no clock dependency). Per-PID entries of
   `(sections, interval)`; `poll(now)` emits packets for every entry whose

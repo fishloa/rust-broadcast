@@ -2,7 +2,7 @@
 _§2.4.4–2.4.4.2, PDF pp. 54-55_
 
 Carriage rules for PSI sections in TS packets (§2.4.4 intro — these ground a
-section→TS packetiser):
+section→TS packetizer):
 
 - Sections may be variable in length; the beginning of a section is indicated
   by a **pointer_field** in the TS packet payload. Adaptation fields may

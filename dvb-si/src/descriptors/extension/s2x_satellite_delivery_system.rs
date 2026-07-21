@@ -76,8 +76,8 @@ broadcast_common::impl_spec_display!(S2XMode, Reserved);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum TsGsS2XMode {
-    /// Generic packetised.
-    GenericPacketised,
+    /// Generic packetized.
+    GenericPacketized,
     /// GSE.
     Gse,
     /// GSE high efficiency mode.
@@ -93,7 +93,7 @@ impl TsGsS2XMode {
     /// Construct from a raw `u8`; every value maps to a variant (total, lossless).
     pub fn from_u8(v: u8) -> Self {
         match v {
-            0 => TsGsS2XMode::GenericPacketised,
+            0 => TsGsS2XMode::GenericPacketized,
             1 => TsGsS2XMode::Gse,
             2 => TsGsS2XMode::GseHighEfficiency,
             3 => TsGsS2XMode::DvbTransportStream,
@@ -105,7 +105,7 @@ impl TsGsS2XMode {
     /// Inverse of `from_u8`; `Self::Reserved` emits its stored value.
     pub const fn to_u8(self) -> u8 {
         match self {
-            TsGsS2XMode::GenericPacketised => 0,
+            TsGsS2XMode::GenericPacketized => 0,
             TsGsS2XMode::Gse => 1,
             TsGsS2XMode::GseHighEfficiency => 2,
             TsGsS2XMode::DvbTransportStream => 3,
@@ -117,7 +117,7 @@ impl TsGsS2XMode {
     /// Human-readable spec name per the governing Table.
     pub fn name(self) -> &'static str {
         match self {
-            TsGsS2XMode::GenericPacketised => "generic packetised",
+            TsGsS2XMode::GenericPacketized => "generic packetized",
             TsGsS2XMode::Gse => "GSE",
             TsGsS2XMode::GseHighEfficiency => "GSE high efficiency mode",
             TsGsS2XMode::DvbTransportStream => "DVB transport stream",

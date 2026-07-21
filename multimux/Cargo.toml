@@ -26,7 +26,7 @@ ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["
 # Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
-broadcast-common  = { path = "../broadcast-common", version = "9" }
+broadcast-common  = { path = "../broadcast-common", version = "8" }
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
 # and `ll_hls_runtime::client::tokio_client` use.

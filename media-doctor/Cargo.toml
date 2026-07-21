@@ -16,11 +16,11 @@ path = "src/bin/media-doctor.rs"
 required-features = ["cli"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.3", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "9", default-features = false, features = ["ts"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "9", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "8", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "8", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "1", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false }
 transmux         = { path = "../transmux", version = "0.18", default-features = false }
