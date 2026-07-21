@@ -1,9 +1,12 @@
-//! CLI for the `multimux` live RTSP -> LL-HLS just-in-time repackaging HTTP
-//! origin.
+//! CLI for the `multimux` multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull),
+//! multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin.
 //!
-//! Either point it at a JSON config file describing one or more routes, or
-//! use the single-route quick start (`--rtsp` + `--name`) for a single
-//! source. See `multimux`'s README for the served endpoint table and v1 scope.
+//! Either point it at a JSON config file describing one or more routes (any
+//! input, any output(s), optional shared output auth), or use the
+//! single-route RTSP-quick-start (`--rtsp` + `--name`, with `--outputs`/
+//! `--dash` selecting delivery protocol(s)) for a single source. See
+//! `multimux`'s README for the served endpoint table, config schema, and
+//! scope.
 //!
 //! # Example
 //!

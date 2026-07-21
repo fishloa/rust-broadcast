@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-21
+
 ### Changed (BREAKING)
 - Renamed `RtpPacketiser`, `RtpDepacketiser`, `RtpStreamDepacketiser`, and the
   free functions `packetise_klv`/`depacketise_klv` to British spelling (issue
@@ -49,6 +51,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unmodeled on both the render and parse side — a documented gap, not a
   silent drop (nothing to preserve it into on `MasterPlaylist`, which has
   no `extra_tags` field).
+  - `hls::OpenSegment` (the in-progress LL-HLS segment builder) gained a
+    `map: Option<MapTag>` field and an `OpenSegment::with_map` builder, so a
+    muxer assembling an open segment can carry forward the Media
+    Initialization Section in effect for it, mirroring `MediaSegment::map` on
+    the parse side. `OpenSegment::new` still defaults to no map.
   - **Fix** (found while building the `ll-hls-client` tokio adapter, issue
     #717 slice 5): `LowLatencyConfig` gained `can_block_reload: bool` — the
     `CAN-BLOCK-RELOAD` attribute's actual `YES`/`NO` value was previously

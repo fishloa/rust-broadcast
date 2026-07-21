@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
 ### Changed (BREAKING)
 - Renamed `mux::SectionPacketiser` and its `packetise`/`packetise_into`
   methods to British spelling (issue #663; both were previously spelled with

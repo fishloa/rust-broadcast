@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-21
+
 ### Fixed
 - **`MediaStore::window_segments`/`last_closed_segment_seq` no longer use a
   bare `.lock().unwrap()`.** Pre-release audit finding: these two lock sites

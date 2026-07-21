@@ -28,6 +28,11 @@
 //!   (the RTSP request URI, not an HTTP URL).
 //! - **Bearer** (RFC 6750) — no challenge round-trip is required; the
 //!   `Authorization` value is always `Bearer <token>`.
+//! - **Forwarded** (server-side only, `Verifier::forwarded`) — trusts a
+//!   fronting reverse proxy that has already authenticated the caller and
+//!   forwards the authenticated username in a configured header. No
+//!   `Credentials`/challenge-response round-trip. See the [`Verifier`]
+//!   module docs for the trust assumption.
 //!
 //! # Usage
 //!

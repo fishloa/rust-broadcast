@@ -5,6 +5,14 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-07-21
+### Changed
+- Widen the `transmux` dependency to `0.18` (was `0.17`) and the internal
+  `mpeg-ts` dependency to `0.3` (was `0.2`; issue #663) — dependency-floor
+  bumps only, no functional change to `media-doctor`. Internal test helpers
+  updated to `mpeg_ts::mux::SectionPacketiser`/`packetise` (the `mpeg-ts` 0.3
+  British-spelling rename).
+
 ## [0.4.1] - 2026-07-14
 ### Changed
 - Widen the `transmux` dependency to `0.16` (was `0.15`): transmux 0.16.0 adds

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
 ### Added
 - **External scheme plugin registry** (issue #663): a third-party crate can
   now add a new input, output, or output-auth scheme to the multimux origin
@@ -333,6 +335,32 @@
     over `ll-hls-runtime`'s existing client engine + `Fmp4Demux`.
 
 ### Security
+- **HTTP resource limits on the origin listener** (issue #663 P5, audit-
+  concurrency #3): a new `origin::HttpLimits` (`request_timeout`,
+  `max_concurrent_requests`, `max_request_body_bytes`) is applied to every
+  route via `tower_http::timeout::TimeoutLayer` (default 10 s — comfortably
+  above the 5 s LL-HLS blocking-reload cap, so an ordinary long-poll request
+  is unaffected), `tower::limit::ConcurrencyLimitLayer` (default 4096), and
+  `tower_http::limit::RequestBodyLimitLayer` (default 16 KiB — no legitimate
+  request here carries a body). Configurable via the new
+  `Config::request_timeout_secs`/`max_concurrent_requests`/
+  `max_request_body_bytes`; `Config::validate` rejects a
+  `request_timeout_secs` at or below the 5 s blocking-reload cap (it would
+  cut off a legitimate blocking reload before the LL-HLS engine's own
+  timeout ever gets to resolve or fall back). Defaults preserve every
+  existing config/deployment's behaviour.
+- **Configurable ingest connect/read timeouts** (issue #663 P5, audit-ingest
+  #3): a new `source::IngestTimeouts { connect, read }` (default 10 s
+  connect / 30 s read) is now threaded through every ingest source
+  (`RtspSource`/`TsUdpSource`/`RtpUdpSource`/`TsHttpSource`/`HlsPullSource`,
+  each via a `with_timeouts` builder), bounding both the initial
+  connect/handshake step and every subsequent read so a source that never
+  responds — or stops responding — surfaces a recoverable error for
+  `origin::supervisor::supervise` to reconnect on, rather than hanging a
+  route's ingest task forever. Configurable via the new
+  `Config::ingest_connect_timeout_secs`/`ingest_read_timeout_secs` (applied
+  uniformly to every route); `Config::validate` rejects a non-positive
+  value. Defaults preserve every existing config's behaviour.
 - **UDP ingest read-timeout** (issue #663 P5.2, audit-ingest #3):
   `source::rtp_udp::RtpUdpSource`/`source::ts_udp::TsUdpSource`'s
   `next_samples()` previously called `UdpSocket::recv` with no timeout — a

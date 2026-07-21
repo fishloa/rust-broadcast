@@ -2,7 +2,7 @@
 name         = "ll-hls-runtime"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client (and, soon, server/origin) engines in one crate, mirroring rtsp-runtime's client+server split. Today: a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output under `client`, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode. Zero IO deps in the core (issue #717 slices 2-4); an optional tokio+reqwest async IO adapter (slice 5) is feature-gated and additive. Renamed from `ll-hls-client` (never published)."
+description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate, mirroring rtsp-runtime's client+server split. `client`: a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode, plus an optional tokio+reqwest async IO adapter. `server` (feature `std`): the sans-IO LL-HLS origin engine (rolling window/store, blocking-reload + part-availability decision logic, playlist rendering) an async adapter (e.g. multimux) drives. Zero IO deps in the client core. Renamed from `ll-hls-client` (never published)."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["hls", "llhls", "sans-io", "streaming", "client"]

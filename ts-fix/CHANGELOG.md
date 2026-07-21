@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-21
+### Changed
+- Widen the internal `mpeg-ts` dependency to `0.3` (was `0.2`; issue #663).
+  `ops::psi_regen::PsiRegenOp`'s internal PAT rebuild now calls the renamed
+  `mpeg_ts::mux::SectionPacketiser`/`packetise` (was `SectionPacketizer`/
+  `packetize`) — an internal identifier rename following `mpeg-ts` 0.3's
+  British-spelling rename, no public API or behaviour change to `ts-fix`.
+
 ## [0.3.0] - 2026-07-04
 ### Added
 - PCR-discontinuity detection + repair (#562):

@@ -5,8 +5,11 @@ engine — a driveable client **and** server, the piece the Rust ecosystem leave
 out.
 
 Message parse/serialize is delegated to the mature [`rtsp-types`] and
-[`sdp-types`] codecs, and authentication math to [`http-auth`]. What lives here
-is the part nothing else provides:
+[`sdp-types`] codecs, and authentication (Basic/Digest/Bearer) to the shared
+[`broadcast-auth`](../broadcast-auth) crate (which itself wraps [`http-auth`]
+for Basic/Digest) — extracted so RTSP and HTTP clients (e.g. `multimux`'s
+HTTP input adapters) share one auth implementation instead of duplicating
+it. What lives here is the part nothing else provides:
 
 - **Session state machines** — [`ClientSession`] and [`ServerSession`], per
   RFC 2326 Appendix A (`Init → Ready → Playing/Recording`), with
@@ -19,9 +22,10 @@ is the part nothing else provides:
 - **Interleaved RTP/RTCP framing** — `InterleavedFrame` and a streaming
   demultiplexer for the `$`-channel muxing of §10.12 (complete frames + partial
   tail).
-- **Auth** — Basic + Digest (RFC 7617 / 7616) wired into request signing,
-  including transparent `401` retry and `stale=true` nonce refresh, for the
-  authenticated RTSP that IP cameras require.
+- **Auth** — Basic + Digest (RFC 7617 / 7616), plus Bearer (RFC 6750),
+  wired into request signing via `broadcast-auth`, including transparent
+  `401` retry and `stale=true` nonce refresh, for the authenticated RTSP
+  that IP cameras require.
 
 All **sans-IO**: feed inbound bytes, get outbound bytes and typed events back —
 no sockets in the core. Drive `ClientSession` with the request builders and
@@ -43,9 +47,9 @@ no sockets in the core. Drive `ClientSession` with the request builders and
 
 ```toml
 [dependencies]
-rtsp-runtime = "0.1"                                  # sans-IO core
-rtsp-runtime = { version = "0.1", features = ["tokio"] }  # + real sockets
-rtsp-runtime = { version = "0.1", features = ["tls"] }    # + rtsps:// (TLS)
+rtsp-runtime = "0.3"                                  # sans-IO core
+rtsp-runtime = { version = "0.3", features = ["tokio"] }  # + real sockets
+rtsp-runtime = { version = "0.3", features = ["tls"] }    # + rtsps:// (TLS)
 ```
 
 ## Status

@@ -1,9 +1,15 @@
-//! multimux — a live RTSP -> LL-HLS just-in-time repackaging HTTP origin.
+//! multimux — a multi-input, multi-output just-in-time repackaging HTTP
+//! origin.
 //!
-//! A thin client+server wrap over `rtsp-runtime` (RTSP pull) and `transmux`
-//! (RTP depayload + LL-HLS CMAF segmentation): pull one or more live RTSP
-//! sources and serve each as LL-HLS from an in-process tokio + axum origin.
-//! Muxing only — samples are never transcoded.
+//! Pull/receive live media from any of several ingest transports —
+//! [`config::InputSpec`]: RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
+//! or HLS-pull — and serve each ingested stream as any combination of
+//! [`output::OutputKind`]: Low-Latency HLS, DASH, or LL-DASH, from one
+//! in-process tokio + axum HTTP origin. One ingest, many outputs, no
+//! per-output re-mux. Built on `rtsp-runtime` (RTSP), `ll-hls-runtime`
+//! (LL-HLS client/server engine + HLS-pull), `broadcast-auth` (client and
+//! server auth), and `transmux` (RTP/TS depayload + CMAF segmentation +
+//! DASH packaging). Muxing only — samples are never transcoded.
 //!
 //! Third-party crates can add a new input/output/output-auth scheme without
 //! editing this crate at all — see [`registry`] (issue #663 external scheme

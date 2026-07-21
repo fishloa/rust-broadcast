@@ -1,15 +1,21 @@
 # ll-hls-runtime
 
 A sans-IO Low-Latency HLS (**RFC 8216bis**, HTTP Live Streaming 2nd Edition)
-client — and, soon, server/origin — engine in one crate, mirroring
-`rtsp-runtime`'s client+server split (renamed from `ll-hls-client`, never
-published — Stage 1 of the ll-hls-runtime unification; the LL-HLS origin
-engine currently in `multimux` moves into a `server` module in a later
-stage). Today the crate holds only the **client**, under
-`ll_hls_runtime::client` — issue
-[#717](https://github.com/fishloa/rust-broadcast/issues/717), slices 2-4
-(reload scheduler, fetch pipeline, output adapter) plus slice 5's `tokio`
-feature (the async IO adapter).
+**client + server** engine in one crate, mirroring `rtsp-runtime`'s
+client+server split (renamed from `ll-hls-client`, never published — Stage 1
+of the ll-hls-runtime unification). The crate holds two halves:
+
+- **`client`** (issue [#717](https://github.com/fishloa/rust-broadcast/issues/717),
+  slices 2-4: reload scheduler, fetch pipeline, output adapter, plus slice
+  5's `tokio` feature for the async IO adapter) — a driveable LL-HLS
+  playback client engine.
+- **`server`** (feature `std`; issue #663/#717 Stage 2) — the sans-IO LL-HLS
+  **origin engine**, moved out of `multimux`: the rolling in-RAM window
+  (`server::MediaStore`), the blocking-reload + part-availability decision
+  logic (`resolve_playlist`/`resolve_resource`, never blocking, never
+  touching a clock), and the playlist renderers. `multimux` is now a thin
+  tokio+axum adapter driving this engine; any other HTTP framework can
+  adapt it the same way.
 
 `client::LlHlsClient` is a driveable, caller-driven state machine in the same
 sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
@@ -66,14 +72,46 @@ HTTP fetch loop would).
 Enabling the (non-default) `tokio` cargo feature adds `client::tokio_client::TokioClient`:
 a thin async shell (tokio + reqwest/rustls) driving `LlHlsClient` over real
 HTTP — blocking-reload/preload-hint query params, `Range` byte-ranges,
-per-request timeouts, and retry/backoff on transient failures (HTTP
-Basic/Bearer auth via `TokioClientConfig::auth`, with a shared multi-scheme
-auth crate as a planned follow-up). `tests/glass_to_glass.rs` (gated on this
+per-request timeouts, and retry/backoff on transient failures. Authenticates
+via the shared [`broadcast-auth`](../broadcast-auth) crate
+(`TokioClientConfig::auth` takes a `broadcast_auth::Credentials` —
+Basic/Digest/Bearer, with Digest computed end-to-end on a `401`), the same
+model `rtsp-runtime` and `multimux`'s HTTP input adapters use.
+`tests/glass_to_glass.rs` (gated on this
 feature) drives it against a **real** `multimux`-served LL-HLS origin over
 loopback HTTP, fed by a real-time-paced synthetic producer, and measures
 sub-second glass-to-glass latency — the epic's headline acceptance bar — plus
 asserts blocking-reload and preload-hint prefetch are actually exercised, and
 that a genuinely non-LL origin still plays via the full-segment fallback.
+
+## The `server` module (feature `std`)
+
+The sans-IO LL-HLS **origin engine**, moved out of `multimux` (issue
+#663/#717 Stage 2) so any HTTP framework can adapt it:
+
+- **`server::MediaStore`** — the protocol-neutral rolling in-RAM window
+  (init/segments/live parts/health/max-segment-duration). Wakeup is
+  runtime-agnostic: `progress_version()` (a monotonic counter) +
+  `listen()` (an `event_listener::EventListener` any executor — or none, via
+  its blocking `.wait()` — can drive), not a `tokio`-specific channel.
+- **`server::MediaStore::resolve_playlist`/`resolve_resource`** — the
+  Blocking Playlist Reload (RFC 8216bis §6.2.5.2) and part-availability
+  decision logic as synchronous poll methods returning `PlaylistOutcome`/
+  `ResourceOutcome` — never blocking, never touching a clock. An async
+  adapter (e.g. `multimux`) turns a `WouldBlock` outcome into an actual
+  bounded wait via `MediaStore::listen()` plus its own `tokio::time::timeout`
+  (or equivalent).
+- **`server::media_playlist_m3u8`/`master_playlist_m3u8`** — the LL-HLS
+  playlist renderers; `master_playlist_m3u8` takes the media playlist's
+  served filename as an explicit argument, so an adapter can serve it under
+  any configured name.
+- **`server::CachePolicy`** (`Immutable`/`NoCache`) — the cache-control
+  policy a resolved `ResourceOutcome::Ready` carries, for an adapter to
+  apply as HTTP `Cache-Control`.
+
+`multimux` is the reference adapter: a thin tokio+axum layer that calls
+`resolve_playlist`/`resolve_resource` and drives the one thing the sans-IO
+engine can't — the actual bounded `.await` on `WouldBlock`.
 
 ## What's *not* here — explicit follow-ups
 
