@@ -1,6 +1,6 @@
 //! Per-route pipeline: pull samples from a [`SampleSource`], feed a
 //! [`transmux::ll_hls::LlHlsSegmenter`], and publish the init/parts/segments it
-//! produces into a [`crate::store::StreamStore`].
+//! produces into a [`crate::store::MediaStore`].
 //!
 //! One `run_pipeline` future is spawned per configured route; it runs until the
 //! source reports end-of-stream (`Ok(None)`) or a hard error.
@@ -11,7 +11,7 @@ use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::{Sample, TrackSpec};
 
 use crate::Result;
-use crate::store::StreamStore;
+use crate::store::MediaStore;
 
 /// CMAF movie timescale used for every route's fragmented `moov`/`moof`
 /// (matches [`transmux::pipeline::build_init_segment`]'s convention of a
@@ -47,9 +47,53 @@ impl SampleSource for crate::source::rtsp::RtspSession {
     }
 }
 
+impl SampleSource for crate::source::rtp_udp::RtpUdpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::rtp_udp::RtpUdpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::rtp_udp::RtpUdpSession::next_samples(self).await
+    }
+}
+
+impl SampleSource for crate::source::ts_udp::TsUdpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::ts_udp::TsUdpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::ts_udp::TsUdpSession::next_samples(self).await
+    }
+}
+
+impl SampleSource for crate::source::ts_http::TsHttpSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::ts_http::TsHttpSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::ts_http::TsHttpSession::next_samples(self).await
+    }
+}
+
+impl SampleSource for crate::source::hls_pull::HlsPullSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::hls_pull::HlsPullSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::hls_pull::HlsPullSession::next_samples(self).await
+    }
+}
+
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
 /// ready part, and ready segment into `store`, until the source reports
 /// end-of-stream.
+///
+/// `route` is used only to label the `multimux_parts_produced_total`/
+/// `multimux_segments_produced_total` counters (`crate::prometheus`) bumped
+/// as parts/segments land in `store` — it carries no other behaviour.
 ///
 /// # Errors
 /// Propagates a source read error or a segmenter build failure.
@@ -61,12 +105,18 @@ impl SampleSource for crate::source::rtsp::RtspSession {
 /// `run_pipeline` could hide Send-ness from `tokio::spawn` and would then require
 /// an explicit `+ Send` bound on the inner type.
 pub async fn run_pipeline<S: SampleSource>(
-    store: Arc<StreamStore>,
+    store: Arc<MediaStore>,
     target_duration_secs: f64,
     part_target_ms: u32,
     mut source: S,
+    route: &str,
 ) -> Result<()> {
     let specs = source.track_specs();
+    // Recorded so a DASH `Output` (issue #663 P4, `crate::output::dash`) can
+    // build a real RFC 6381 `codecs` string for its `Representation` — the
+    // one thing this store needs beyond the bytes+timing LL-HLS's playlist
+    // rendering already covers.
+    store.set_track_specs(specs.clone());
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
         MOVIE_TIMESCALE,
@@ -81,18 +131,26 @@ pub async fn run_pipeline<S: SampleSource>(
         }
         for part in seg.take_ready_parts() {
             store.add_part(part);
+            metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
+                .increment(1);
         }
         for segment in seg.take_ready_segments() {
             store.add_segment(segment);
+            metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
+                .increment(1);
         }
     }
 
     seg.flush()?;
     for part in seg.take_ready_parts() {
         store.add_part(part);
+        metrics::counter!(crate::prometheus::PARTS_PRODUCED_TOTAL, "route" => route.to_string())
+            .increment(1);
     }
     for segment in seg.take_ready_segments() {
         store.add_segment(segment);
+        metrics::counter!(crate::prometheus::SEGMENTS_PRODUCED_TOTAL, "route" => route.to_string())
+            .increment(1);
     }
     Ok(())
 }
@@ -140,7 +198,7 @@ impl SampleSource for MockSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::StreamStore;
+    use crate::store::MediaStore;
     use transmux::avc_config_from_sprop;
     use transmux::pipeline::CodecConfig;
 
@@ -167,7 +225,7 @@ mod tests {
 
     #[tokio::test]
     async fn drives_source_through_segmenter_into_store() {
-        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let store = Arc::new(MediaStore::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
 
         // 90 samples @ 3000 ticks/30fps = 3 s of video, comfortably over the
@@ -182,12 +240,12 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 
         assert!(store.init_bytes().is_some(), "init segment stored");
-        let playlist = store.media_playlist_m3u8(1);
+        let playlist = crate::output::llhls::media_playlist_m3u8(&store, 1);
         assert!(
             playlist.contains("seg-") || playlist.contains("#EXT-X-PART"),
             "playlist has landed media: {playlist}"
@@ -196,10 +254,10 @@ mod tests {
 
     #[tokio::test]
     async fn empty_batches_are_a_no_op() {
-        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let store = Arc::new(MediaStore::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
         let source = MockSource::new(specs, vec![Vec::new(), Vec::new()]);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline tolerates empty batches");
         assert!(store.init_bytes().is_some());
@@ -209,7 +267,7 @@ mod tests {
     async fn eos_flush_emits_buffered_tail_segment() {
         // Regression test for the EOS flush path: ensure that samples buffered
         // after the last auto-closed segment are actually emitted via seg.flush().
-        let store = Arc::new(StreamStore::new(1.0, 500, 8));
+        let store = Arc::new(MediaStore::new(1.0, 500, 8));
         let specs = vec![video_track_spec()];
 
         // 60 frames @ 30fps = 2s total:
@@ -229,12 +287,12 @@ mod tests {
         }
 
         let source = MockSource::new(specs, batches);
-        run_pipeline(store.clone(), 1.0, 500, source)
+        run_pipeline(store.clone(), 1.0, 500, source, "test-route")
             .await
             .expect("pipeline runs to completion");
 
         assert!(store.init_bytes().is_some(), "init segment stored");
-        let playlist = store.media_playlist_m3u8(1);
+        let playlist = crate::output::llhls::media_playlist_m3u8(&store, 1);
 
         // Assertion bites the flush path: playlist MUST contain seg-1-2.
         // This proves the buffered tail after frame 45 was flushed and emitted as

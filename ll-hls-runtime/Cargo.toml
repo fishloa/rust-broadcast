@@ -1,0 +1,72 @@
+[package]
+name         = "ll-hls-runtime"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate, mirroring rtsp-runtime's client+server split. `client`: a caller-driven blocking-reload scheduler, part-prefetch fetch pipeline, and ordered init+access-unit output, reusing transmux::hls for playlist parse and transmux::Fmp4Demux for CMAF->Sample decode, plus an optional tokio+reqwest async IO adapter. `server` (feature `std`): the sans-IO LL-HLS origin engine (rolling window/store, blocking-reload + part-availability decision logic, playlist rendering) an async adapter (e.g. multimux) drives. Zero IO deps in the client core. Renamed from `ll-hls-client` (never published)."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["hls", "llhls", "sans-io", "streaming", "client"]
+categories   = ["multimedia", "network-programming", "parser-implementations"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+transmux          = { path = "../transmux", version = "0.18", default-features = false }
+thiserror         = { version = "2", default-features = false }
+serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# Only pulled in by the `std` feature: `server::store::MediaStore` needs
+# `std::sync::Mutex` (so `server` is std-only — see its module doc), and uses
+# `event_listener::Event`/`EventListener` — a runtime-agnostic wakeup
+# primitive, NOT `tokio::sync::watch` — so any async runtime (or a plain
+# blocking caller) can wait on it; `multimux`'s tokio+axum adapter is the only
+# place that actually assumes a runtime (via `tokio::time::timeout`).
+event-listener    = { version = "5", optional = true, default-features = false, features = ["std"] }
+# Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
+# core (`client/engine.rs`) never depends on either.
+tokio             = { version = "1", optional = true, default-features = false, features = ["time"] }
+reqwest           = { version = "0.12", optional = true, default-features = false, features = ["rustls-tls"] }
+# Only pulled in by the `tokio` feature: `TokioClient`'s Digest challenge/
+# response (reqwest itself only has Basic/Bearer helpers) delegates to the
+# same shared model `rtsp-runtime` and `multimux`'s HTTP input adapters use
+# (issue #663 P3b/P3c) — see `client::tokio_client`'s module doc.
+broadcast-auth    = { path = "../broadcast-auth", version = "0.1", optional = true }
+
+[dev-dependencies]
+# Only exercised by the `tokio`-feature-gated integration tests
+# (`tests/glass_to_glass.rs`, `tests/golden_gate.rs`); dev-dependencies aren't
+# feature-gatable in Cargo, so these are always resolved/built for `cargo
+# test`, but those test files' bodies are entirely
+# `#![cfg(feature = "tokio")]`-gated so they compile to nothing when the
+# feature is off.
+tokio      = { version = "1", features = ["full"] }
+axum       = "0.7"
+multimux   = { path = "../multimux" }
+# `tests/golden_gate.rs` (issue #717's closing acceptance item, #569's golden
+# gate) parses `ffprobe -of json` output to assert against real oracle
+# fields — already in the workspace's resolved dependency graph via
+# `transmux`'s own `serde_json` (non-dev) dependency.
+serde_json = "1"
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc` — the sans-IO scheduler/fetch/output state machine itself
+# never touches a socket or a clock, so it does not need `std` at all; this
+# feature exists only to match the workspace's `no_std`-capable-core convention
+# (verified by the `--no-default-features` gate) and to let `transmux/std`
+# follow along when a caller does want `std`.
+std = ["broadcast-common/std", "thiserror/std", "transmux/std", "dep:event-listener"]
+# Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
+serde = ["dep:serde"]
+# `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO
+# `LlHlsClient` core over real HTTP (tokio + reqwest/rustls). NOT default —
+# the core (`client/engine.rs`) stays IO-free regardless of this feature;
+# enabling it only adds the `client::tokio_client` module alongside it.
+tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth"]

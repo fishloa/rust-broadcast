@@ -1,0 +1,31 @@
+[package]
+name         = "broadcast-auth"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["auth", "http-auth", "digest", "basic-auth", "bearer"]
+categories   = ["network-programming", "authentication"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version = "1.86"
+exclude      = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+http-auth = { version = "0.1", default-features = false, features = ["basic-scheme", "digest-scheme"] }
+thiserror = "2"
+# Server-side (`server::Verifier`) challenge/verify: decoding a client's
+# Basic `Authorization` header (`base64`), recomputing a Digest response
+# (`md-5`) to verify against, and generating a fresh server nonce (`rand`).
+# All three are already transitive dependencies of `http-auth` at these same
+# versions, so this adds no new version to the workspace lock.
+base64    = "0.22"
+md-5      = "0.10"
+rand      = "0.8"
+
+[dev-dependencies]

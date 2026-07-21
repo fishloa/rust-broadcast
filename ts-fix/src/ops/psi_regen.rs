@@ -17,7 +17,7 @@
 //! - Each completed section is parsed with [`dvb_si::tables::pmt::PmtSection`];
 //!   on success the pair `(pmt.program_number → arriving PID)` is recorded.
 //! - The regenerated PAT is built from THAT mapping (via the dvb-si
-//!   [`PatSection`] builder + [`mpeg_ts::mux::SectionPacketizer`]), so even a
+//!   [`PatSection`] builder + [`mpeg_ts::mux::SectionPacketiser`]), so even a
 //!   destroyed PAT can be rebuilt as long as the PMTs are present.
 //!
 //! The original PAT is still observed as a *hint* for the `transport_stream_id`
@@ -55,7 +55,7 @@ use alloc::vec::Vec;
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection};
-use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_payload};
 
 use crate::ops::{Op, StreamModel};
@@ -211,11 +211,11 @@ impl PsiRegenOp {
         Some(buf)
     }
 
-    /// Emit a regenerated PAT (packetized onto PID 0x0000), if a mapping exists.
+    /// Emit a regenerated PAT (packetised onto PID 0x0000), if a mapping exists.
     fn emit_regen_pat(&mut self, out: &mut dyn FnMut(&[u8])) {
         if let Some(section) = self.rebuild_pat() {
-            let mut packetizer = SectionPacketizer::new(PAT_PID);
-            for pkt in packetizer.packetize(&[&section]) {
+            let mut packetiser = SectionPacketiser::new(PAT_PID);
+            for pkt in packetiser.packetise(&[&section]) {
                 out(&pkt);
             }
             self.emitted_pat = true;

@@ -4,9 +4,11 @@ name: Release multimux-cli
 # multimux-cli is versioned/released INDEPENDENTLY. CI is the only source of
 # published artifacts — never `cargo publish` from a workstation.
 #
-# DEPENDENCY ORDER: multimux-cli depends on the `multimux` library. Publish
-# `multimux` (>= the referenced 0.2) FIRST, or crates.io will reject the
-# publish. multimux-cli is a std (tokio) CLI crate — no no_std gate.
+# DEPENDENCY ORDER: multimux-cli depends on the `multimux` library, which in
+# turn depends on broadcast-auth -> transmux -> rtsp-runtime -> ll-hls-runtime.
+# Publish `multimux` (>= the referenced 0.3) FIRST — after that whole chain is
+# live — or crates.io will reject the publish. multimux-cli is a std (tokio)
+# CLI crate — no no_std gate.
 
 on:
   push:

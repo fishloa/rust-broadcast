@@ -26,7 +26,7 @@ use std::collections::HashMap;
 
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
-use crate::auth::{Authenticator, Credentials};
+use crate::auth::{Authenticator, Credentials, RequestContext};
 use crate::error::{Error, Result};
 use crate::interleaved::{self, MAGIC};
 use crate::state::{SessionState, client_next_state};
@@ -260,7 +260,8 @@ impl ClientSession {
             builder = builder.header(name.clone(), value.clone());
         }
         if let Some(auth) = &mut self.authenticator {
-            let value = auth.authorization(<&str>::from(&method), uri)?;
+            let ctx = RequestContext::new(<&str>::from(&method), uri);
+            let value = auth.authorization(&ctx)?;
             builder = builder.header(headers::AUTHORIZATION, value);
         }
         let request = if body.is_empty() {
@@ -510,5 +511,20 @@ mod tests {
         let b = c.describe("rtsp://h/s").unwrap();
         assert!(String::from_utf8_lossy(&a).contains("CSeq: 1"));
         assert!(String::from_utf8_lossy(&b).contains("CSeq: 2"));
+    }
+
+    // Security-blocker regression (pre-release audit): `ClientSession`
+    // derives `Debug` and embeds `Option<Credentials>` directly — it must
+    // inherit `Credentials`'s redacting `Debug`, never the raw secret.
+    #[test]
+    fn client_session_debug_does_not_leak_embedded_credentials_secret() {
+        let c = ClientSession::new()
+            .with_credentials(Credentials::new("admin", "extremely-secret-password"));
+        let debug = format!("{c:?}");
+        assert!(
+            !debug.contains("extremely-secret-password"),
+            "leaked via ClientSession Debug: {debug}"
+        );
+        assert!(debug.contains("***"), "expected redaction marker: {debug}");
     }
 }

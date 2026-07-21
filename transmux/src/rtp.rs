@@ -1,8 +1,8 @@
-//! RTP de/packetization + SDP — RFC 3550 / RFC 6184 / RFC 3640 / RFC 4566.
+//! RTP de/packetisation + SDP — RFC 3550 / RFC 6184 / RFC 3640 / RFC 4566.
 //!
-//! The RTP spoke of the any-to-any container hub: it packetizes the [`Media`]
-//! IR into RTP packets ([`RtpPacketizer`] : [`Package`]) and depacketizes RTP
-//! packets back to the IR ([`RtpDepacketizer`] : [`Unpackage`]), for H.264/AVC
+//! The RTP spoke of the any-to-any container hub: it packetises the [`Media`]
+//! IR into RTP packets ([`RtpPacketiser`] : [`Package`]) and depacketises RTP
+//! packets back to the IR ([`RtpDepacketiser`] : [`Unpackage`]), for H.264/AVC
 //! video and AAC (`AAC-hbr`) audio, plus SDP (`m=`/`a=rtpmap`/`a=fmtp`)
 //! generation.
 //!
@@ -16,7 +16,7 @@
 //!   (type 24) aggregation for the SPS+PPS parameter sets, and FU-A (type 28)
 //!   fragmentation of any NAL larger than the MTU. Video IR samples are 4-byte
 //!   length-prefixed NALs ([`crate::annexb`]); the length prefixes are stripped
-//!   on packetize and re-added on depacketize.
+//!   on packetise and re-added on depacketise.
 //! - **AAC** (RFC 3640, `AAC-hbr`): an AU-headers-length (16-bit, in bits)
 //!   prefix + one 2-byte AU-header (`sizeLength=13; indexLength=3`) + the raw
 //!   access unit.
@@ -25,7 +25,7 @@
 //! - **KLV** (RFC 6597, `smpte336m`): a SMPTE ST 336 KLV unit ([`crate::klv`])
 //!   carried directly after the fixed header — no payload header — fragmented
 //!   across sequential packets sharing one timestamp, marker on the last
-//!   ([`packetize_klv`] / [`depacketize_klv`]).
+//!   ([`packetise_klv`] / [`depacketise_klv`]).
 //!
 //! See `transmux/docs/rtp/rtp-payload-formats.md` for the full transcription.
 //!
@@ -75,7 +75,7 @@ pub const DEFAULT_KLV_PT: u8 = 98;
 /// RFC 6597 SDP encoding name for SMPTE ST 336 KLV.
 pub const KLV_ENCODING_NAME: &str = "smpte336m";
 
-// --- H.264 NAL / packetization (RFC 6184 §5.2, §5.6, §5.7, §5.8) -----------
+// --- H.264 NAL / packetisation (RFC 6184 §5.2, §5.6, §5.7, §5.8) -----------
 
 /// NAL unit `Type` field mask (low 5 bits of the NAL octet).
 const NAL_TYPE_MASK: u8 = 0x1F;
@@ -142,7 +142,7 @@ broadcast_common::impl_spec_display!(RtpMediaKind);
 // Output types
 // ---------------------------------------------------------------------------
 
-/// One packetized RTP stream: its payload type + kind and the emitted packets.
+/// One packetised RTP stream: its payload type + kind and the emitted packets.
 #[derive(Debug, Clone)]
 pub struct RtpStream {
     /// Dynamic payload type (matches the SDP `rtpmap`).
@@ -153,26 +153,26 @@ pub struct RtpStream {
     pub packets: Vec<Vec<u8>>,
 }
 
-/// The output of [`RtpPacketizer`]: per-track RTP streams plus an SDP string.
+/// The output of [`RtpPacketiser`]: per-track RTP streams plus an SDP string.
 #[derive(Debug, Clone)]
 pub struct RtpOutput {
-    /// One [`RtpStream`] per packetized track, in track order.
+    /// One [`RtpStream`] per packetised track, in track order.
     pub streams: Vec<RtpStream>,
     /// The session-level SDP describing every stream (RFC 4566).
     pub sdp: String,
 }
 
 // ---------------------------------------------------------------------------
-// RtpPacketizer — Package
+// RtpPacketiser — Package
 // ---------------------------------------------------------------------------
 
-/// Packetize a [`Media`] IR into RTP packets + SDP.
+/// Packetise a [`Media`] IR into RTP packets + SDP.
 ///
 /// Per track: AVC → single-NAL / STAP-A (SPS+PPS) / FU-A packets on a 90 kHz
 /// clock; AAC → `AAC-hbr` packets on the audio sample-rate clock. All packets of
 /// one access unit share a timestamp and the marker bit is set on the last.
 #[derive(Debug, Clone)]
-pub struct RtpPacketizer {
+pub struct RtpPacketiser {
     /// MTU (payload budget): NALs larger than this are fragmented as FU-A.
     pub mtu: usize,
     /// Payload type assigned to the (first) video track.
@@ -185,7 +185,7 @@ pub struct RtpPacketizer {
     pub stap_a_parameter_sets: bool,
 }
 
-impl Default for RtpPacketizer {
+impl Default for RtpPacketiser {
     fn default() -> Self {
         Self {
             mtu: DEFAULT_MTU,
@@ -197,8 +197,8 @@ impl Default for RtpPacketizer {
     }
 }
 
-impl RtpPacketizer {
-    /// Create a packetizer with default MTU / payload types / SSRC.
+impl RtpPacketiser {
+    /// Create a packetiser with default MTU / payload types / SSRC.
     pub fn new() -> Self {
         Self::default()
     }
@@ -242,7 +242,7 @@ fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Vec<
     buf
 }
 
-impl Package for RtpPacketizer {
+impl Package for RtpPacketiser {
     type Media = Media;
     type Output = RtpOutput;
     type Error = Error;
@@ -250,7 +250,7 @@ impl Package for RtpPacketizer {
     fn package(&mut self, media: &Media) -> Result<RtpOutput> {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput(
-                "cannot packetize a Media with no tracks",
+                "cannot packetise a Media with no tracks",
             ));
         }
         let mut streams = Vec::new();
@@ -267,7 +267,7 @@ impl Package for RtpPacketizer {
                         used_video_pt = true;
                         self.video_pt
                     };
-                    let packets = self.packetize_video(track, pt)?;
+                    let packets = self.packetise_video(track, pt)?;
                     streams.push(RtpStream {
                         pt,
                         kind: RtpMediaKind::H264,
@@ -292,7 +292,7 @@ impl Package for RtpPacketizer {
                     } else {
                         *sample_rate
                     };
-                    let packets = self.packetize_audio(track, pt, clock)?;
+                    let packets = self.packetise_audio(track, pt, clock)?;
                     streams.push(RtpStream {
                         pt,
                         kind: RtpMediaKind::Aac,
@@ -303,14 +303,14 @@ impl Package for RtpPacketizer {
                 }
                 _ => {
                     return Err(Error::InvalidInput(
-                        "RTP packetizer supports only AVC video and AAC audio tracks",
+                        "RTP packetiser supports only AVC video and AAC audio tracks",
                     ));
                 }
             }
         }
         if streams.is_empty() {
             return Err(Error::InvalidInput(
-                "no AVC/AAC tracks to packetize into RTP",
+                "no AVC/AAC tracks to packetise into RTP",
             ));
         }
         let sdp = build_sdp(&sdp_media);
@@ -318,9 +318,9 @@ impl Package for RtpPacketizer {
     }
 }
 
-impl RtpPacketizer {
-    /// Packetize one AVC track into RTP packets.
-    fn packetize_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<Vec<u8>>> {
+impl RtpPacketiser {
+    /// Packetise one AVC track into RTP packets.
+    fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<Vec<u8>>> {
         let timescale = if track.spec.timescale != 0 {
             track.spec.timescale
         } else {
@@ -382,8 +382,8 @@ impl RtpPacketizer {
         Ok(packets)
     }
 
-    /// Packetize one AAC track (`AAC-hbr`, one AU per packet).
-    fn packetize_audio(
+    /// Packetise one AAC track (`AAC-hbr`, one AU per packet).
+    fn packetise_audio(
         &self,
         track: &crate::media::Track,
         pt: u8,
@@ -603,10 +603,10 @@ fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> Result<String> {
 }
 
 // ---------------------------------------------------------------------------
-// Depacketizer input
+// Depacketiser input
 // ---------------------------------------------------------------------------
 
-/// One RTP stream fed to [`RtpDepacketizer`]: its kind + packets.
+/// One RTP stream fed to [`RtpDepacketiser`]: its kind + packets.
 #[derive(Debug, Clone)]
 pub struct RtpInputStream {
     /// The payload format carried on this stream.
@@ -615,35 +615,35 @@ pub struct RtpInputStream {
     pub packets: Vec<Vec<u8>>,
 }
 
-/// The input to [`RtpDepacketizer`]: one or more RTP streams.
+/// The input to [`RtpDepacketiser`]: one or more RTP streams.
 #[derive(Debug, Clone)]
 pub struct RtpInput {
-    /// The streams to depacketize back into IR tracks.
+    /// The streams to depacketise back into IR tracks.
     pub streams: Vec<RtpInputStream>,
 }
 
 // ---------------------------------------------------------------------------
-// RtpDepacketizer — Unpackage
+// RtpDepacketiser — Unpackage
 // ---------------------------------------------------------------------------
 
-/// Depacketize RTP packets back into the [`Media`] IR.
+/// Depacketise RTP packets back into the [`Media`] IR.
 ///
 /// Reassembles FU-A (`S`..`E`) fragments, splits STAP-A aggregates, strips AAC
 /// AU-headers, and rebuilds IR samples (video NALs re-prefixed with the 4-byte
 /// length that the IR convention uses — see [`crate::annexb`]).
 #[derive(Debug, Default, Clone)]
-pub struct RtpDepacketizer {
+pub struct RtpDepacketiser {
     _marker: PhantomData<()>,
 }
 
-impl RtpDepacketizer {
-    /// Create a new depacketizer.
+impl RtpDepacketiser {
+    /// Create a new depacketiser.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl Unpackage for RtpDepacketizer {
+impl Unpackage for RtpDepacketiser {
     type Input = RtpInput;
     type Media = Media;
     type Error = Error;
@@ -652,8 +652,8 @@ impl Unpackage for RtpDepacketizer {
         let mut tracks = Vec::new();
         for (idx, stream) in input.streams.iter().enumerate() {
             let samples = match stream.kind {
-                RtpMediaKind::H264 => depacketize_video(&stream.packets)?,
-                RtpMediaKind::Aac => depacketize_audio(&stream.packets)?,
+                RtpMediaKind::H264 => depacketise_video(&stream.packets)?,
+                RtpMediaKind::Aac => depacketise_audio(&stream.packets)?,
             };
             tracks.push(RtpTrack {
                 id: idx as u32 + 1,
@@ -673,7 +673,7 @@ struct RtpTrack {
 }
 
 /// Reassembled RTP samples, exposed on [`Media`] via a light wrapper. Since the
-/// hub IR carries codec config, the depacketizer returns the raw reassembled
+/// hub IR carries codec config, the depacketiser returns the raw reassembled
 /// access units on each track's samples for round-trip verification; callers
 /// pair them with the SDP-derived config as needed.
 fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
@@ -704,7 +704,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
     Media::new(ir_tracks, 0)
 }
 
-/// Minimal placeholder [`TrackSpec`] for a depacketized track (the RTP wire
+/// Minimal placeholder [`TrackSpec`] for a depacketised track (the RTP wire
 /// carries no codec config — the SDP does). Samples are the payload of interest.
 fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
     use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -903,10 +903,10 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
     Ok(aus)
 }
 
-/// Depacketize an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
+/// Depacketise an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
 /// access units. NALs are grouped into access units by the RTP timestamp; the
 /// marker bit confirms an AU boundary.
-fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+fn depacketise_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     Ok(reassemble_video(packets)?
         .into_iter()
         .map(|au| au.data)
@@ -924,8 +924,8 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-/// Depacketize an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs.
-fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+/// Depacketise an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs.
+fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     Ok(reassemble_audio(packets)?
         .into_iter()
         .map(|au| au.data)
@@ -934,7 +934,7 @@ fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.
 /// Delegates the wire decode to [`rtp_packet::RtpPacket`]; transmux only ever
-/// depacketizes the simple `P=0 X=0 CC=0` case it itself emits, so only
+/// depacketises the simple `P=0 X=0 CC=0` case it itself emits, so only
 /// `marker`/`timestamp`/`payload` are read at call sites below (the rest are
 /// carried through for the unit test at the bottom of this file) — see #646.
 #[derive(Debug, Clone, Copy)]
@@ -1005,7 +1005,7 @@ fn map_rtp_error(e: rtp_packet::Error) -> Error {
 // KLV-over-RTP (RFC 6597) — SMPTE ST 336 KLV units
 // ---------------------------------------------------------------------------
 
-/// Packetize one KLV unit ([`crate::klv`]) into RTP packets (RFC 6597).
+/// Packetise one KLV unit ([`crate::klv`]) into RTP packets (RFC 6597).
 ///
 /// The KLV unit bytes are placed directly after the 12-byte fixed header (no
 /// payload header). A unit larger than the MTU payload budget is fragmented in
@@ -1014,7 +1014,7 @@ fn map_rtp_error(e: rtp_packet::Error) -> Error {
 /// unit. `seq_start` is the sequence number of the first packet.
 ///
 /// Returns at least one packet; `klv_unit` must be non-empty.
-pub fn packetize_klv(
+pub fn packetise_klv(
     klv_unit: &[u8],
     pt: u8,
     seq_start: u16,
@@ -1023,7 +1023,7 @@ pub fn packetize_klv(
     mtu: usize,
 ) -> Result<Vec<Vec<u8>>> {
     if klv_unit.is_empty() {
-        return Err(Error::InvalidInput("cannot packetize an empty KLV unit"));
+        return Err(Error::InvalidInput("cannot packetise an empty KLV unit"));
     }
     // Payload budget per packet: MTU minus the fixed RTP header.
     let per_packet = mtu
@@ -1052,7 +1052,7 @@ pub fn packetize_klv(
 /// Fragments are concatenated in arrival order; a KLV unit is complete at the
 /// packet whose marker bit is set (or, defensively, at a timestamp change).
 /// Returns one `Vec<u8>` per reassembled KLV unit.
-pub fn depacketize_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     let mut units: Vec<Vec<u8>> = Vec::new();
     let mut cur: Vec<u8> = Vec::new();
     let mut cur_ts: Option<u32> = None;

@@ -18,18 +18,21 @@ fn media_playlist_rfc_valid() {
                 duration: 9.009,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             },
             MediaSegment {
                 uri: "seg1.m4s".into(),
                 duration: 9.009,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             },
             MediaSegment {
                 uri: "seg2.m4s".into(),
                 duration: 3.003,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             },
         ],
         endlist: true,
@@ -40,6 +43,7 @@ fn media_playlist_rfc_valid() {
         low_latency: None,
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
 
     let m3u8 = pl.to_m3u8();
@@ -77,12 +81,14 @@ fn media_playlist_invalid_target_duration_reported() {
             duration: 15.0,
             discontinuous: false,
             parts: vec![],
+            ..Default::default()
         }],
         endlist: true,
         extra_tags: vec![],
         low_latency: None,
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
 
     let m3u8 = pl.to_m3u8();
@@ -177,12 +183,14 @@ fn cbcs_emits_ext_x_key_sample_aes() {
             duration: 6.0,
             discontinuous: false,
             parts: vec![],
+            ..Default::default()
         }],
         endlist: true,
         extra_tags: vec![tag],
         low_latency: None,
         iframes_only: false,
         open_segment: None,
+        ..Default::default()
     };
     let m3u8 = pl.to_m3u8();
     let key_pos = m3u8.find("#EXT-X-KEY:").expect("EXT-X-KEY line present");

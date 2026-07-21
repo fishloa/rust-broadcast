@@ -1,9 +1,12 @@
-//! CLI for the `multimux` live RTSP -> LL-HLS just-in-time repackaging HTTP
-//! origin.
+//! CLI for the `multimux` multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull),
+//! multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin.
 //!
-//! Either point it at a JSON config file describing one or more routes, or
-//! use the single-route quick start (`--rtsp` + `--name`) for a single
-//! source. See `multimux`'s README for the served endpoint table and v1 scope.
+//! Either point it at a JSON config file describing one or more routes (any
+//! input, any output(s), optional shared output auth), or use the
+//! single-route RTSP-quick-start (`--rtsp` + `--name`, with `--outputs`/
+//! `--dash` selecting delivery protocol(s)) for a single source. See
+//! `multimux`'s README for the served endpoint table, config schema, and
+//! scope.
 //!
 //! # Example
 //!
@@ -15,7 +18,8 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use multimux::config::{Config, Route};
+use multimux::config::{Config, InputSpec, Route};
+use multimux::output::OutputKind;
 use multimux::{MultimuxError, Result};
 
 #[derive(Parser)]
@@ -57,6 +61,46 @@ struct Cli {
     /// Rolling window depth: full segments retained in RAM.
     #[arg(long, value_name = "N", default_value_t = Config::default().window_segments)]
     window: usize,
+
+    /// Single-route quick start: which delivery protocol(s) to serve the
+    /// ingested stream as, comma-separated (`llhls`, `dash`) — issue #663 P4:
+    /// one ingest, many outputs. Ignored when `--config` is used (a config
+    /// file sets `outputs` per route; see `multimux::config::Route::outputs`).
+    #[arg(
+        long,
+        value_name = "LIST",
+        value_delimiter = ',',
+        default_value = "llhls",
+        conflicts_with = "dash"
+    )]
+    outputs: Vec<String>,
+
+    /// Single-route quick start shorthand for `--outputs llhls,dash` (serve
+    /// LL-HLS *and* DASH from the same ingest).
+    #[arg(long)]
+    dash: bool,
+}
+
+/// Parse `--outputs`'s comma-separated tokens into [`OutputKind`]s (or
+/// resolve the `--dash` shorthand to `[llhls, dash]`) — the CLI's own
+/// mapping of the wire tokens `multimux::config`'s serde `OutputKind` already
+/// accepts in a JSON config's `outputs` array, kept in sync with those exact
+/// token spellings (`"llhls"`/`"dash"`) rather than re-deriving them.
+fn parse_outputs(cli: &Cli) -> Result<Vec<OutputKind>> {
+    if cli.dash {
+        return Ok(vec![OutputKind::LlHls, OutputKind::Dash]);
+    }
+    cli.outputs
+        .iter()
+        .map(|s| match s.trim() {
+            "llhls" => Ok(OutputKind::LlHls),
+            "dash" => Ok(OutputKind::Dash),
+            other => Err(MultimuxError::ConfigInvalid {
+                field: "outputs",
+                reason: format!("unknown output kind {other:?} (expected llhls or dash)"),
+            }),
+        })
+        .collect()
 }
 
 /// Build a [`Config`] from the parsed CLI: `--config <FILE>` if given,
@@ -66,10 +110,12 @@ fn build_config(cli: Cli) -> Result<Config> {
     if let Some(path) = cli.config {
         return Config::from_json_file(&path);
     }
-    let rtsp_url = cli.rtsp.ok_or_else(|| {
-        MultimuxError::Config(
-            "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
-        )
+    // Computed before any field of `cli` is moved out below (a shared
+    // reference to the whole struct is only valid pre-move).
+    let outputs = parse_outputs(&cli)?;
+    let rtsp_url = cli.rtsp.ok_or_else(|| MultimuxError::ConfigInvalid {
+        field: "rtsp",
+        reason: "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
     })?;
     // clap's `requires = "name"` on `--rtsp` guarantees `cli.name` is present
     // whenever `cli.rtsp` is.
@@ -82,14 +128,39 @@ fn build_config(cli: Cli) -> Result<Config> {
         target_duration_secs: cli.target_duration,
         part_target_ms: cli.part_ms,
         window_segments: cli.window,
-        routes: vec![Route { name, rtsp_url }],
+        routes: vec![Route {
+            name,
+            input: InputSpec::Rtsp {
+                url: rtsp_url,
+                auth: None,
+            },
+            outputs,
+        }],
+        ..Config::default()
     };
     config.validate()?;
     Ok(config)
 }
 
+/// Initializes the process-wide `tracing` subscriber: human-readable output
+/// on stderr, filtered by `RUST_LOG` (`EnvFilter` syntax, e.g.
+/// `RUST_LOG=multimux=debug`), defaulting to `info` when unset. Only the
+/// binary does this — the `multimux` library only ever emits `tracing`
+/// events, never installs a subscriber itself, so it composes into whatever
+/// host process embeds it.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 #[tokio::main]
 async fn main() {
+    init_tracing();
     if let Err(e) = run().await {
         eprintln!("error: {e}");
         std::process::exit(1);
@@ -119,7 +190,95 @@ mod tests {
         let cfg = build_config(cli).unwrap();
         assert_eq!(cfg.routes.len(), 1);
         assert_eq!(cfg.routes[0].name, "cam1");
-        assert_eq!(cfg.routes[0].rtsp_url, "rtsp://cam.local/stream");
+        match &cfg.routes[0].input {
+            InputSpec::Rtsp { url, .. } => assert_eq!(url, "rtsp://cam.local/stream"),
+            other => panic!("expected InputSpec::Rtsp, got {other:?}"),
+        }
+    }
+
+    /// Quick start with no `--outputs`/`--dash` defaults to LL-HLS only —
+    /// matches `Route::outputs`'s own default, so an existing invocation's
+    /// behaviour is unchanged (issue #663 P4).
+    #[test]
+    fn quick_start_defaults_to_llhls_only() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        // `OutputKind` no longer derives `PartialEq` (its `Custom` variant
+        // carries a `serde_json::Value`), so compare by `name()`.
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls"]
+        );
+    }
+
+    /// `--dash` is the shorthand for "both outputs from the same ingest".
+    #[test]
+    fn dash_flag_selects_llhls_and_dash() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--dash",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "dash"]
+        );
+    }
+
+    /// `--outputs llhls,dash` is the explicit spelling of the same thing.
+    #[test]
+    fn outputs_flag_parses_comma_separated_list() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--outputs",
+            "llhls,dash",
+        ]);
+        let cfg = build_config(cli).unwrap();
+        assert_eq!(
+            cfg.routes[0]
+                .outputs
+                .iter()
+                .map(OutputKind::name)
+                .collect::<Vec<_>>(),
+            vec!["llhls", "dash"]
+        );
+    }
+
+    /// An unknown `--outputs` token is a config error, not a silent no-op.
+    #[test]
+    fn outputs_flag_rejects_unknown_token() {
+        let cli = Cli::parse_from([
+            "multimux",
+            "--rtsp",
+            "rtsp://cam.local/stream",
+            "--name",
+            "cam1",
+            "--outputs",
+            "lldash",
+        ]);
+        assert!(build_config(cli).is_err());
     }
 
     #[test]

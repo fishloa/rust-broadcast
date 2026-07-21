@@ -4,6 +4,18 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.3.0] - 2026-07-21
+
+### Changed
+- **Internal:** `auth` now delegates to the new shared [`broadcast-auth`](../broadcast-auth)
+  crate instead of wrapping `http-auth` directly. `rtsp_runtime::Credentials`/
+  `Authenticator` are re-exported unchanged (same `Credentials::new(user, pass)`
+  API, same transparent-401-retry behaviour) — this is a refactor with no
+  behaviour change, extracted so RTSP and (future) HTTP clients share one auth
+  implementation instead of duplicating it. Adds `Credentials::bearer(token)`
+  (RFC 6750), previously unsupported (#663 multimux-hub P3b).
 
 ### Added
 - Pre-release hardening (release audit): `tests/label_coverage.rs` #204 drift-guard

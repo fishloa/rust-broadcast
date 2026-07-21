@@ -1,0 +1,62 @@
+name: Release ll-hls-runtime
+
+# Publishes the ll-hls-runtime crate to crates.io on an `ll-hls-runtime-v*` tag.
+# ll-hls-runtime is versioned and released INDEPENDENTLY. CI is the only source
+# of published artifacts — never `cargo publish` from a workstation. Requires
+# the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: ll-hls-runtime depends on transmux (>= the referenced 0.18)
+# and, optionally (behind the `tokio` feature), broadcast-auth (>= 0.1).
+# Publish broadcast-auth and transmux FIRST, or crates.io will reject the
+# publish because a required dependency is not yet live. Its multimux dev-dep
+# is path-only (no version) and does not gate publishing. Downstream, multimux
+# depends on ll-hls-runtime — this must land before that.
+
+on:
+  push:
+    tags: ["ll-hls-runtime-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish ll-hls-runtime to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — ll-hls-runtime tests
+        run: cargo test -p ll-hls-runtime --all-features --locked
+
+      - name: Gate — ll-hls-runtime clippy
+        run: cargo clippy -p ll-hls-runtime --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — ll-hls-runtime no_std (+alloc) lib build
+        run: cargo build -p ll-hls-runtime --no-default-features --locked
+
+      - name: Gate — tag matches ll-hls-runtime version
+        run: |
+          TAG="${GITHUB_REF_NAME#ll-hls-runtime-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['ll-hls-runtime'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::ll-hls-runtime is $V but tag is $TAG"; exit 1
+          fi
+
+      - name: Publish ll-hls-runtime
+        run: |
+          if out=$(cargo publish -p ll-hls-runtime --locked 2>&1); then
+            echo "$out"; echo "::notice::published ll-hls-runtime"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::ll-hls-runtime already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish ll-hls-runtime"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

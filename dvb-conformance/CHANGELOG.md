@@ -1,5 +1,12 @@
 # Changelog
 
+## [8.5.0] - 2026-07-21
+### Changed
+- Internal: consume renamed `mpeg-ts` 0.3 `mux::SectionPacketiser` (was
+  `SectionPacketizer`) in the crate's own test helpers; widen the internal
+  `mpeg-ts` dependency to `0.3` (issue #663). No public API change to
+  `dvb-conformance`.
+
 ## [8.4.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

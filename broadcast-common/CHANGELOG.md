@@ -1,5 +1,10 @@
 # Changelog
 
+## [8.5.0] - 2026-07-21
+### Changed
+- Lockstep minor release riding the `mpeg-ts` 0.3.0 compatibility cycle
+  (issue #663). No functional or API change to `broadcast-common`.
+
 ## [8.4.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

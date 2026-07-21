@@ -110,8 +110,13 @@ already attempted, the credentials are wrong and the user must be prompted.
 
 ## Implementation with the `http-auth` crate
 
-The `http-auth` crate provides a `PasswordClient` that handles both Basic and
-Digest scheme negotiation. Typical usage for `rtsp-runtime`:
+`rtsp-runtime`'s [`Credentials`]/[`Authenticator`] are re-exported from the
+shared [`broadcast-auth`](../../broadcast-auth) crate (extracted so RTSP and
+HTTP clients — e.g. `multimux`'s HTTP input adapters — share one auth
+implementation instead of duplicating it; `broadcast-auth` also adds Bearer,
+RFC 6750). Internally it still delegates Basic/Digest to the `http-auth`
+crate's `PasswordClient`, which handles both scheme negotiations. Typical
+usage for `rtsp-runtime`:
 
 ```rust
 use http_auth::PasswordClient;

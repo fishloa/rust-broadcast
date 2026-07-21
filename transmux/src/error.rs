@@ -1,5 +1,6 @@
 //! Error type returned by every parser and builder in this crate.
 
+use alloc::string::String;
 use thiserror::Error;
 
 /// Crate-wide result alias.
@@ -101,4 +102,38 @@ pub enum Error {
     /// serialized (e.g. the box would exceed the 4-byte `size` field range).
     #[error("emsg serialize: {0}")]
     EmsgSerialize(#[from] mp4_emsg::Error),
+
+    /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —
+    /// [`crate::hls::MediaPlaylist::parse`] / [`crate::hls::MasterPlaylist::parse`]
+    /// (issue #717 slice 1, the `to_m3u8()` renderers' symmetric inverse).
+    /// Unrecognized tags are ignored (forward-compat); this variant is only
+    /// returned for a *known* tag whose required attribute is missing or
+    /// whose value fails to parse.
+    #[error("hls parse (line {line_no}): {reason}\n  {line}")]
+    HlsParse {
+        /// 1-based line number within the input playlist text.
+        line_no: usize,
+        /// The offending line, verbatim.
+        line: String,
+        /// Human-readable explanation.
+        reason: String,
+    },
+
+    /// A streaming reassembly buffer (e.g.
+    /// [`rtp_stream`](crate::rtp_stream)'s per-track access-unit buffer)
+    /// grew past its configured cap while waiting for a completion signal
+    /// that never arrived (a dropped final FU-A fragment, a marker bit that
+    /// never comes, or any other malformed/hostile input) — issue #663 P5.2,
+    /// audit-ingest #4. The partial data was dropped rather than grown
+    /// without bound; the buffer's owner has already reset its internal
+    /// state, so the caller may simply continue feeding new input (it will
+    /// resync at the next natural boundary) or treat this as a recoverable
+    /// per-connection error, at its discretion.
+    #[error("{what} buffer exceeded its {cap}-byte cap and was dropped")]
+    BufferCapExceeded {
+        /// Human-readable name of the buffer that overflowed.
+        what: &'static str,
+        /// The configured cap, in bytes.
+        cap: usize,
+    },
 }

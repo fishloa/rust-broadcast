@@ -1,0 +1,60 @@
+name: Release broadcast-auth
+
+# Publishes the broadcast-auth crate to crates.io on a `broadcast-auth-v*` tag.
+# broadcast-auth is versioned and released INDEPENDENTLY. CI is the only source
+# of published artifacts — never `cargo publish` from a workstation. Requires
+# the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: broadcast-auth has NO workspace-crate dependencies (only
+# the external http-auth / thiserror / base64 / md-5 / rand crates), so it can
+# be published on its own with no ordering constraint. It IS a dependency of
+# rtsp-runtime, ll-hls-runtime, and multimux — publish broadcast-auth FIRST,
+# before any of those.
+#
+# broadcast-auth is a std application crate — no no_std gate.
+
+on:
+  push:
+    tags: ["broadcast-auth-v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: publish broadcast-auth to crates.io
+    runs-on: ubuntu-latest
+    # crates.io publish is gated: pauses for manual approval by a
+    # required reviewer before any cargo publish can run. See the
+    # 'crates-io' environment (repo Settings -> Environments).
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Gate — broadcast-auth tests
+        run: cargo test -p broadcast-auth --all-features --locked
+
+      - name: Gate — broadcast-auth clippy
+        run: cargo clippy -p broadcast-auth --all-features --all-targets --locked -- -D warnings
+
+      - name: Gate — tag matches broadcast-auth version
+        run: |
+          TAG="${GITHUB_REF_NAME#broadcast-auth-v}"
+          V=$(cargo metadata --no-deps --format-version 1 --locked \
+              | python3 -c "import json,sys; print({p['name']: p['version'] for p in json.load(sys.stdin)['packages']}['broadcast-auth'])")
+          if [ "$V" != "$TAG" ]; then
+            echo "::error::broadcast-auth is $V but tag is $TAG"; exit 1
+          fi
+
+      - name: Publish broadcast-auth
+        run: |
+          if out=$(cargo publish -p broadcast-auth --locked 2>&1); then
+            echo "$out"; echo "::notice::published broadcast-auth"
+          elif echo "$out" | grep -qiE "already (been )?uploaded|already exists"; then
+            echo "$out"; echo "::notice::broadcast-auth already on crates.io at this version — skipping"
+          else
+            echo "$out"; echo "::error::failed to publish broadcast-auth"; exit 1
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

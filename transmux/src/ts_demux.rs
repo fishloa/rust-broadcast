@@ -70,7 +70,7 @@
 //! `stream_type` into two carriage families, and the two are reassembled
 //! completely differently (PES-reassembling a section stream, or vice versa,
 //! silently yields nothing): most `stream_type`s (including every
-//! unrecognised one) are PES-packetized and each `Sample` is one verbatim PES
+//! unrecognised one) are PES-packetised and each `Sample` is one verbatim PES
 //! payload; a fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14`
 //! DSM-CC synchronized download, `0x86` SCTE-35/ANSI-scoped) carry PSI/private
 //! *sections* directly on the PID (§2.4.4) — each reassembled via
@@ -165,6 +165,22 @@ const NULL_PACKET_PID: u16 = 0x1FFF;
 /// lead-in (a PID's PMT entry resolves within the first PES cycle), so a
 /// legitimately-claimed PID's buffered payloads are never evicted in practice.
 const MAX_UNATTRIBUTED_BYTES: usize = 4 * 1024 * 1024;
+/// Hard cap on one PID's in-progress PES buffer (issue #663 P5.2,
+/// audit-ingest's "bounded reassembly" recommendation applied to TS). A PES
+/// runs from one `payload_unit_start_indicator` to the next
+/// ([`mpeg_pes::PesAssembler`]'s doc); the unbounded-video case
+/// (`PES_packet_length = 0`) means there is no length field to bound it
+/// in-band, so a PUSI that never recurs — a wedged/lossy capture, or a
+/// hostile stream — would otherwise grow that PID's buffer for the life of
+/// the stream. Comfortably above any real elementary-stream PES payload (a
+/// 4K IDR frame is typically well under a megabyte), but far below what a
+/// malformed input could accumulate unbounded. On overflow the in-progress
+/// PES is dropped (never emitted) and a [`DemuxEvent::Discontinuity`] is
+/// raised for the PID — reassembly resyncs at the next PUSI. Note:
+/// PSI/private-section buffering (`Carrier::Section`) needs no equivalent
+/// cap — [`mpeg_ts::ts::SectionReassembler`] is already inherently bounded by
+/// `section_length`'s 12-bit field (`MAX_SECTION_SIZE`, 4098 bytes).
+const MAX_PES_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
@@ -403,7 +419,7 @@ impl Codec {
 /// (ISO/IEC 13818-1 §2.4.4.8 / Table 2-34) — see [`DataCarriage`]. A fixed set
 /// of `stream_type`s carry PSI/private sections directly; every other
 /// `stream_type` (the historical 0x06/0x15 carriage, plus any unrecognised
-/// value) is PES-packetized.
+/// value) is PES-packetised.
 fn data_carriage(stream_type: u8) -> DataCarriage {
     match stream_type {
         STREAM_TYPE_PRIVATE_SECTIONS
@@ -905,6 +921,10 @@ struct StreamState {
     codec: Codec,
     descriptors: Vec<u8>,
     carrier: Carrier,
+    /// Bytes accumulated in `carrier`'s `Carrier::Pes` assembler since the
+    /// last `payload_unit_start` — enforces [`MAX_PES_BUFFER_BYTES`]. Always
+    /// `0` and unused for `Carrier::Section` streams.
+    pes_bytes: usize,
     /// Previous access unit's resolved `(pts, dts)` — the fallback used when
     /// a PES carries neither (mirrors the old `push_access_unit` fallback).
     fallback: (u64, u64),
@@ -1659,6 +1679,46 @@ fn advance_track(
     stream.track = Some(new_track);
 }
 
+/// Feeds one TS payload to a PID's `Carrier::Pes` assembler with
+/// [`MAX_PES_BUFFER_BYTES`] enforced (issue #663 P5.2). Mirrors
+/// [`mpeg_pes::PesAssembler::feed`]'s own bookkeeping (reset the running
+/// total on `payload_unit_start`, else add) so the cap can be checked
+/// without a private accessor into the assembler's buffer. On overflow the
+/// in-progress PES is dropped (`assembler.flush()`'s return discarded) and a
+/// [`DemuxEvent::Discontinuity`] is raised for `pid` — any PES that had
+/// *already* completed at this same call (a `payload_unit_start` whose
+/// previous buffer was ready) is still returned normally; only the
+/// newly-started, now-oversized buffer is affected.
+fn feed_pes_bounded(
+    stream: &mut StreamState,
+    pid: u16,
+    pusi: bool,
+    payload: &[u8],
+    events: &mut VecDeque<DemuxEvent>,
+) -> Option<Vec<u8>> {
+    let Carrier::Pes(assembler) = &mut stream.carrier else {
+        return None;
+    };
+    if pusi {
+        stream.pes_bytes = payload.len();
+    } else if stream.pes_bytes > 0 {
+        // Only accumulate once a real `payload_unit_start` has been seen for
+        // this PID — mirrors `PesAssembler::feed`'s own "ignore a
+        // continuation before the first start" rule (relevant for the
+        // `unattributed`-replay path, whose buffered payloads can begin
+        // mid-PES), so this counter never diverges from what the assembler
+        // is actually buffering.
+        stream.pes_bytes = stream.pes_bytes.saturating_add(payload.len());
+    }
+    let completed = assembler.feed(pusi, payload);
+    if stream.pes_bytes > MAX_PES_BUFFER_BYTES {
+        let _ = assembler.flush();
+        stream.pes_bytes = 0;
+        events.push_back(DemuxEvent::Discontinuity { pid });
+    }
+    completed
+}
+
 /// Resolve a completed PES packet's `(pts, dts)` (mirrors the old
 /// `push_access_unit` fallback rule) and drive it through [`advance_track`]
 /// (parked/probing) or [`push_live_au`] (already live).
@@ -1948,6 +2008,7 @@ impl StreamingTsDemux {
                         codec,
                         descriptors,
                         carrier: initial_carrier(codec),
+                        pes_bytes: 0,
                         fallback: (0, 0),
                         has_any: false,
                         wrap: WrapState::default(),
@@ -1963,19 +2024,24 @@ impl StreamingTsDemux {
                         for (buf_pusi, buf_payload) in buffered {
                             self.unattributed_bytes =
                                 self.unattributed_bytes.saturating_sub(buf_payload.len());
-                            let mut completed_pes: Option<Vec<u8>> = None;
                             let mut sections: Vec<Vec<u8>> = Vec::new();
-                            match &mut stream.carrier {
-                                Carrier::Pes(assembler) => {
-                                    completed_pes = assembler.feed(buf_pusi, &buf_payload);
+                            let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
+                                feed_pes_bounded(
+                                    &mut stream,
+                                    es_pid,
+                                    buf_pusi,
+                                    &buf_payload,
+                                    &mut self.events,
+                                )
+                            } else if let Carrier::Section(reasm) = &mut stream.carrier {
+                                reasm.feed(&buf_payload, buf_pusi);
+                                while let Some(s) = reasm.pop_section() {
+                                    sections.push(s.to_vec());
                                 }
-                                Carrier::Section(reasm) => {
-                                    reasm.feed(&buf_payload, buf_pusi);
-                                    while let Some(s) = reasm.pop_section() {
-                                        sections.push(s.to_vec());
-                                    }
-                                }
-                            }
+                                None
+                            } else {
+                                None
+                            };
                             if let Some(completed) = completed_pes {
                                 on_completed_pes(&mut stream, &completed, &mut self.events);
                             }
@@ -1992,19 +2058,18 @@ impl StreamingTsDemux {
         }
 
         if let Some(stream) = self.streams.get_mut(&pid) {
-            let mut completed_pes: Option<Vec<u8>> = None;
             let mut sections: Vec<Vec<u8>> = Vec::new();
-            match &mut stream.carrier {
-                Carrier::Pes(assembler) => {
-                    completed_pes = assembler.feed(pusi, payload);
+            let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
+                feed_pes_bounded(stream, pid, pusi, payload, &mut self.events)
+            } else if let Carrier::Section(reasm) = &mut stream.carrier {
+                reasm.feed(payload, pusi);
+                while let Some(s) = reasm.pop_section() {
+                    sections.push(s.to_vec());
                 }
-                Carrier::Section(reasm) => {
-                    reasm.feed(payload, pusi);
-                    while let Some(s) = reasm.pop_section() {
-                        sections.push(s.to_vec());
-                    }
-                }
-            }
+                None
+            } else {
+                None
+            };
             if let Some(completed) = completed_pes {
                 on_completed_pes(stream, &completed, &mut self.events);
             }
@@ -2368,6 +2433,110 @@ mod tests {
         assert_eq!(
             actual, demux.unattributed_bytes,
             "unattributed_bytes drifted from the real retained size"
+        );
+    }
+
+    /// A PID whose PES never completes (`payload_unit_start` never recurs —
+    /// a wedged encoder, a lossy capture, or a hostile stream) must not grow
+    /// its `Carrier::Pes` buffer without bound: [`MAX_PES_BUFFER_BYTES`] must
+    /// trip, dropping the partial PES and raising a
+    /// [`DemuxEvent::Discontinuity`], and the PID must keep working normally
+    /// afterward (resync proof) rather than being wedged or OOMing.
+    #[test]
+    fn runaway_pes_without_payload_unit_start_is_bounded_not_unbounded() {
+        use crate::TsMux;
+        use crate::media::{Media, Track};
+        use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        // A tiny real single-video-track TS (PAT + PMT + a few PES access
+        // units), muxed by this crate's own `TsMux` — registers one H.264 ES
+        // (`Carrier::Pes`) at the single-track convention PID (`ES_PID_BASE`
+        // in `ts_mux.rs`, `0x0100`).
+        const ES_PID: u16 = 0x0100;
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let spec = TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        let frame_dur = VIDEO_TIMESCALE / 30;
+        let samples: Vec<Sample> = (0..3u32)
+            .map(|i| {
+                let nal = [0x65u8, 0xAA, i as u8];
+                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                data.extend_from_slice(&nal);
+                Sample::new(data, frame_dur, i == 0, 0)
+            })
+            .collect();
+        let track = Track::new(spec, samples);
+        let media = Media::new(vec![track], VIDEO_TIMESCALE);
+        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts_bytes);
+        // Drain the legitimate startup events (TrackAdded/Sample/…) — not
+        // under test here, just clearing the queue for a clean assertion
+        // below.
+        while demux.poll_event().is_some() {}
+        assert!(
+            demux.streams.contains_key(&ES_PID),
+            "expected the muxed video ES at PID {ES_PID:#06X} — TsMux's ES_PID_BASE convention"
+        );
+
+        // Now flood that PID with continuation-only packets (pusi = 0): the
+        // PES never completes, exactly the audit-ingest scenario.
+        // Each continuation packet contributes `PACKET_PAYLOAD_LEN` (184)
+        // bytes; comfortably more than `MAX_PES_BUFFER_BYTES / 184` packets
+        // are fed so the cap must trip well before the loop ends.
+        let mut cc: u8 = 0;
+        let mut hit_cap = false;
+        for _ in 0..30_000u32 {
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            pkt[0] = 0x47;
+            pkt[1] = ((ES_PID >> 8) as u8) & PID_HI_MASK; // pusi = 0
+            pkt[2] = (ES_PID & 0xFF) as u8;
+            pkt[3] = 0x10 | (cc & 0x0F);
+            cc = cc.wrapping_add(1);
+            demux.feed(&pkt);
+            if matches!(
+                demux.poll_event(),
+                Some(DemuxEvent::Discontinuity { pid }) if pid == ES_PID
+            ) {
+                hit_cap = true;
+                break;
+            }
+        }
+        assert!(
+            hit_cap,
+            "expected MAX_PES_BUFFER_BYTES to trip well within 30000 continuation \
+             packets (never grow unbounded)"
+        );
+        assert_eq!(
+            demux.streams.get(&ES_PID).unwrap().pes_bytes,
+            0,
+            "pes_bytes must reset to 0 once the cap trips"
+        );
+
+        // Resync proof: a fresh payload_unit_start after the overflow is
+        // accepted normally (the assembler was reset, not wedged).
+        const PUSI_BIT: u8 = 0x40; // payload_unit_start_indicator (ISO/IEC 13818-1 §2.4.3.2)
+        let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+        pkt[0] = 0x47;
+        pkt[1] = PUSI_BIT | (((ES_PID >> 8) as u8) & PID_HI_MASK);
+        pkt[2] = (ES_PID & 0xFF) as u8;
+        pkt[3] = 0x10 | (cc & 0x0F);
+        pkt[4] = 0; // pointer/no-op first byte for a PES (not a pointer_field — PES has none)
+        demux.feed(&pkt);
+        assert_eq!(
+            demux.streams.get(&ES_PID).unwrap().pes_bytes,
+            PACKET_PAYLOAD_LEN,
+            "a fresh payload_unit_start must be accepted and start a new count"
         );
     }
 

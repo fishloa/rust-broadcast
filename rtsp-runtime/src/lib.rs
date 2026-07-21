@@ -2,11 +2,12 @@
 //!
 //! This crate fills the gap the ecosystem leaves: a **driveable** RTSP session
 //! engine, a client *and* a server. Message parse/serialize is delegated to the
-//! mature [`rtsp_types`] and [`sdp_types`] codecs; authentication math to
-//! [`http_auth`]. What lives here is the part nothing else provides — the client
-//! and server **session state machines** (RFC 2326 Appendix A), `CSeq`
-//! correlation, `Transport` negotiation (§12.39), interleaved RTP/RTCP framing
-//! (§10.12), and Basic/Digest auth wiring (§14).
+//! mature [`rtsp_types`] and [`sdp_types`] codecs; authentication (Basic/Digest/
+//! Bearer) to the shared [`broadcast_auth`] crate (which itself wraps
+//! `http-auth` for Basic/Digest). What lives here is the part nothing else
+//! provides — the client and server **session state machines** (RFC 2326
+//! Appendix A), `CSeq` correlation, `Transport` negotiation (§12.39),
+//! interleaved RTP/RTCP framing (§10.12), and RTSP's auth wiring (§14).
 //!
 //! # The sans-IO contract
 //!
@@ -42,8 +43,8 @@
 //!   `docs/transport-header.md`).
 //! - [`interleaved`] — [`InterleavedFrame`] and the streaming demultiplexer
 //!   (§10.12; `docs/interleaved-framing.md`).
-//! - [`auth`] — [`Credentials`] and the [`Authenticator`] over `http-auth`
-//!   (§14; `docs/auth.md`).
+//! - [`auth`] — [`Credentials`] and the [`Authenticator`], re-exported from the
+//!   shared [`broadcast_auth`] crate (§14; `docs/auth.md`).
 //! - [`client`] — [`ClientSession`] and [`ClientEvent`].
 //! - [`server`] — [`ServerSession`] and [`ServerEvent`].
 //! - `io` (feature `tokio`) — the async socket adapter `AsyncRtspClient` /

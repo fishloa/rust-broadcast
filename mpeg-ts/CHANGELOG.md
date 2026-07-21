@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.3.0] - 2026-07-21
+
+### Changed (BREAKING)
+- Renamed `mux::SectionPacketiser` and its `packetise`/`packetise_into`
+  methods to British spelling (issue #663; both were previously spelled with
+  a "z"). Pure rename — behaviour-preserving, no functional change.
+
 ## [0.2.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

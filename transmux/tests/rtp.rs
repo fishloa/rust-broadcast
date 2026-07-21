@@ -1,4 +1,4 @@
-//! RTP spoke gate — packetize/depacketize the demuxed `fixtures/ts/h264_aac.ts`
+//! RTP spoke gate — packetise/depacketise the demuxed `fixtures/ts/h264_aac.ts`
 //! IR (75 video + 131 audio samples) and verify RFC 3550/6184/3640/4566 fidelity
 //! against the real demuxed NALs / config (issue #469).
 //!
@@ -8,7 +8,7 @@ use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{base64_decode, hex_decode};
 use transmux::{
-    Media, NAL_TYPE_IDR, RtpDepacketizer, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketizer,
+    Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketiser,
     VIDEO_CLOCK_RATE,
 };
 
@@ -25,13 +25,13 @@ fn demux_fixture() -> Media {
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
 
-fn packetize(media: &Media) -> transmux::RtpOutput {
-    let mut p = RtpPacketizer {
+fn packetise(media: &Media) -> transmux::RtpOutput {
+    let mut p = RtpPacketiser {
         mtu: MTU,
         ssrc: SSRC,
-        ..RtpPacketizer::default()
+        ..RtpPacketiser::default()
     };
-    p.package(media).expect("packetize IR → RTP")
+    p.package(media).expect("packetise IR → RTP")
 }
 
 fn parse_hdr(pkt: &[u8]) -> (u8, u8, bool, u16, u32, u32) {
@@ -82,7 +82,7 @@ fn audio_stream(out: &transmux::RtpOutput) -> &transmux::RtpStream {
 #[test]
 fn valid_rtp_headers_and_marker_semantics() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
 
     for stream in &out.streams {
         assert!(!stream.packets.is_empty(), "stream has packets");
@@ -163,7 +163,7 @@ fn valid_rtp_headers_and_marker_semantics() {
 #[test]
 fn fu_a_fragmentation_happens() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
     let vs = video_stream(&out);
 
     // Find FU-A packets (payload byte 0 low-5-bits == 28).
@@ -223,10 +223,10 @@ fn fu_a_fragmentation_happens() {
 #[test]
 fn video_round_trip_byte_identical() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
     let vs = video_stream(&out);
 
-    let mut depack = RtpDepacketizer::new();
+    let mut depack = RtpDepacketiser::new();
     let ir = depack
         .unpackage(RtpInput {
             streams: vec![RtpInputStream {
@@ -234,7 +234,7 @@ fn video_round_trip_byte_identical() {
                 packets: vs.packets.clone(),
             }],
         })
-        .expect("depacketize video");
+        .expect("depacketise video");
 
     // The reassembled access units' NAL payloads must be byte-identical to the
     // original demuxed video sample NALs, sample-for-sample.
@@ -251,7 +251,7 @@ fn video_round_trip_byte_identical() {
         })
         .collect();
 
-    // The first depacketized AU carries the STAP-A parameter sets (SPS+PPS)
+    // The first depacketised AU carries the STAP-A parameter sets (SPS+PPS)
     // prepended to frame 0's NALs; compare the tail (per-frame VCL NALs) against
     // the originals, and verify the parameter sets survived in the first AU.
     assert_eq!(
@@ -285,10 +285,10 @@ fn video_round_trip_byte_identical() {
 #[test]
 fn audio_round_trip_byte_identical() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
     let as_ = audio_stream(&out);
 
-    let mut depack = RtpDepacketizer::new();
+    let mut depack = RtpDepacketiser::new();
     let ir = depack
         .unpackage(RtpInput {
             streams: vec![RtpInputStream {
@@ -296,7 +296,7 @@ fn audio_round_trip_byte_identical() {
                 packets: as_.packets.clone(),
             }],
         })
-        .expect("depacketize audio");
+        .expect("depacketise audio");
 
     let audio_track = media
         .tracks
@@ -319,7 +319,7 @@ fn audio_round_trip_byte_identical() {
     let mut broken = as_.packets[0].clone();
     // AU-header sits at payload offset [2..4]; corrupt the AU-size (top 13 bits).
     broken[RTP_HEADER_LEN + 2] ^= 0x08; // flips a bit in the AU-size field
-    let mut d2 = RtpDepacketizer::new();
+    let mut d2 = RtpDepacketiser::new();
     let bad = d2.unpackage(RtpInput {
         streams: vec![RtpInputStream {
             kind: RtpMediaKind::Aac,
@@ -340,7 +340,7 @@ fn audio_round_trip_byte_identical() {
 #[test]
 fn sdp_matches_demuxed_config() {
     let media = demux_fixture();
-    let out = packetize(&media);
+    let out = packetise(&media);
     let sdp = &out.sdp;
 
     assert!(sdp.contains("m=video"), "SDP has m=video");

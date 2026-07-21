@@ -1,0 +1,10 @@
+{
+  "bind": "0.0.0.0:8080",
+  "routes": [
+    {
+      "name": "studio1",
+      "input": { "type": "rtsp", "url": "rtsp://studio1-cam.example.net:554/stream1" },
+      "outputs": ["llhls", "dash", "ll_dash"]
+    }
+  ]
+}

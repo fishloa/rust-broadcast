@@ -1,11 +1,11 @@
 [package]
 name         = "mpeg-ts"
-version      = "0.2.0"
+version      = "0.3.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.86"
-description  = "MPEG-2 Transport Stream framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetization, resync. no_std."
+description  = "MPEG-2 Transport Stream framing (ITU-T H.222.0 / ISO/IEC 13818-1): TS packet, adaptation field, PCR, PSI section reassembly + packetisation, resync. no_std."
 keywords     = ["mpeg-ts", "transport-stream", "mpeg2", "psi", "no-std"]
 categories   = ["parser-implementations", "multimedia::video", "no-std"]
 exclude      = ["docs/**", "tests/fixtures/**"]

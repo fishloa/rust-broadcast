@@ -8,7 +8,7 @@ use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection, PmtStream, StreamType};
-use mpeg_ts::mux::SectionPacketizer;
+use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{TsHeader, extract_ts_payload};
 use std::fs;
 use ts_fix::{PidFilter, TsFix};
@@ -92,8 +92,8 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         ],
     };
     let pat_section_bytes = serialize_pat(&pat);
-    let mut pat_pktz = SectionPacketizer::new(PAT_PID);
-    let pat_pkts = pat_pktz.packetize(&[&pat_section_bytes]);
+    let mut pat_pktz = SectionPacketiser::new(PAT_PID);
+    let pat_pkts = pat_pktz.packetise(&[&pat_section_bytes]);
 
     // ── PMT1 ─────────────────────────────────────────────────────────────────
     let pmt1 = PmtSection::new(
@@ -119,8 +119,8 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         ],
     );
     let pmt1_section_bytes = serialize_pmt(&pmt1);
-    let mut pmt1_pktz = SectionPacketizer::new(PMT1_PID);
-    let pmt1_pkts = pmt1_pktz.packetize(&[&pmt1_section_bytes]);
+    let mut pmt1_pktz = SectionPacketiser::new(PMT1_PID);
+    let pmt1_pkts = pmt1_pktz.packetise(&[&pmt1_section_bytes]);
 
     // ── PMT2 ─────────────────────────────────────────────────────────────────
     let pmt2 = PmtSection::new(
@@ -146,8 +146,8 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         ],
     );
     let pmt2_section_bytes = serialize_pmt(&pmt2);
-    let mut pmt2_pktz = SectionPacketizer::new(PMT2_PID);
-    let pmt2_pkts = pmt2_pktz.packetize(&[&pmt2_section_bytes]);
+    let mut pmt2_pktz = SectionPacketiser::new(PMT2_PID);
+    let pmt2_pkts = pmt2_pktz.packetise(&[&pmt2_section_bytes]);
 
     // ── Assemble interleaved stream ──────────────────────────────────────────
     let mut stream: Vec<u8> = Vec::new();

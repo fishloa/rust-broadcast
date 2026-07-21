@@ -291,6 +291,19 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
         server_name: &str,
         config: rustls::ClientConfig,
     ) -> Result<Self> {
+        Self::connect_tls_with(addr, server_name, config, ClientSession::new()).await
+    }
+
+    /// Connects an `rtsps://` (TLS) client to `addr` using a pre-configured
+    /// session (e.g. one carrying [`Credentials`](crate::Credentials) via
+    /// [`ClientSession::with_credentials`]), otherwise identical to
+    /// [`connect_tls`](Self::connect_tls).
+    pub async fn connect_tls_with<A: tokio::net::ToSocketAddrs>(
+        addr: A,
+        server_name: &str,
+        config: rustls::ClientConfig,
+        session: ClientSession,
+    ) -> Result<Self> {
         use std::sync::Arc;
         use tokio_rustls::TlsConnector;
 
@@ -304,7 +317,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
             .connect(dns, tcp)
             .await
             .map_err(|e| io_err("TLS handshake", e))?;
-        Ok(Self::with_stream(stream, ClientSession::new()))
+        Ok(Self::with_stream(stream, session))
     }
 }
 
@@ -318,9 +331,19 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
 pub fn default_tls_client_config() -> rustls::ClientConfig {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth()
+    // Select the aws-lc-rs provider explicitly rather than via
+    // `ClientConfig::builder()`'s process-global default: another crate in the
+    // same build (e.g. a `reqwest` that pulls `aws-lc-rs`) can put a *second*
+    // `CryptoProvider` in the tree, leaving no unambiguous default and making
+    // the plain builder panic. Choosing the provider here keeps `rtsp-runtime`
+    // working regardless of what else is linked.
+    rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("aws-lc-rs provider supports the safe default protocol versions")
+    .with_root_certificates(roots)
+    .with_no_client_auth()
 }
 
 // ===========================================================================

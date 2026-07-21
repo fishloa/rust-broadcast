@@ -1,5 +1,11 @@
 # Changelog
 
+## [8.5.0] - 2026-07-21
+### Changed
+- Widen the internal `mpeg-ts` dependency to `0.3` (issue #663; private
+  dependency, used only behind the `ts` feature — no public API change to
+  `dvb-si`).
+
 ## [8.4.0] - 2026-07-03
 ### Changed
 - Rust **edition 2024**; MSRV raised to **1.86**; format-argument modernisation. No functional or API change.

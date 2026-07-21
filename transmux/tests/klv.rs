@@ -10,7 +10,7 @@ use transmux::klv::{
     TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, ber_length, crc16_ccitt,
     encode_ber_length,
 };
-use transmux::rtp::{depacketize_klv, packetize_klv};
+use transmux::rtp::{depacketise_klv, packetise_klv};
 
 const RTP_HEADER_LEN: usize = 12;
 const RTP_MARKER_MASK: u8 = 0x80;
@@ -207,7 +207,7 @@ fn klv_rtp_fragmentation_round_trip() {
     // MTU that forces >= 2 fragments (header 12 + payload budget 50 = 62).
     let mtu = RTP_HEADER_LEN + 50;
     let ts_rtp = 90_000u32;
-    let packets = packetize_klv(&unit, 98, 0, ts_rtp, 0xCAFEBABE, mtu).unwrap();
+    let packets = packetise_klv(&unit, 98, 0, ts_rtp, 0xCAFEBABE, mtu).unwrap();
     assert!(
         packets.len() >= 2,
         "expected fragmentation, got {}",
@@ -222,8 +222,8 @@ fn klv_rtp_fragmentation_round_trip() {
         assert_eq!(marker, i == packets.len() - 1, "marker on fragment {i}");
     }
 
-    // Depacketize → exact original KLV bytes.
-    let units = depacketize_klv(&packets).unwrap();
+    // Depacketise → exact original KLV bytes.
+    let units = depacketise_klv(&packets).unwrap();
     assert_eq!(units.len(), 1);
     assert_eq!(units[0], unit);
     // And it still parses + verifies.
@@ -237,17 +237,17 @@ fn klv_rtp_small_unit_single_packet() {
         0u64.to_be_bytes().to_vec(),
     )]);
     let unit = ls.serialize_with_checksum();
-    let packets = packetize_klv(&unit, 98, 7, 42, 0x1234, 1400).unwrap();
+    let packets = packetise_klv(&unit, 98, 7, 42, 0x1234, 1400).unwrap();
     assert_eq!(packets.len(), 1);
     // Single packet: marker MUST be set.
     assert!(packets[0][1] & RTP_MARKER_MASK != 0);
     // Payload is exactly the KLV unit (no payload header — RFC 6597 §6.1).
     assert_eq!(&packets[0][RTP_HEADER_LEN..], unit.as_slice());
     // Round-trip.
-    assert_eq!(depacketize_klv(&packets).unwrap(), vec![unit]);
+    assert_eq!(depacketise_klv(&packets).unwrap(), vec![unit]);
 }
 
 #[test]
 fn klv_rtp_empty_unit_rejected() {
-    assert!(packetize_klv(&[], 98, 0, 0, 0, 1400).is_err());
+    assert!(packetise_klv(&[], 98, 0, 0, 0, 1400).is_err());
 }

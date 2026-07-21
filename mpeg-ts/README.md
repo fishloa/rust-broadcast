@@ -8,7 +8,7 @@
 
 Parses and serializes the ITU-T H.222.0 / ISO/IEC 13818-1 TS packet layer:
 188-byte TS packets, adaptation fields, PCR, PSI section reassembly, section
-packetization, and sync recovery. `no_std` + `alloc` — runs on embedded targets
+packetisation, and sync recovery. `no_std` + `alloc` — runs on embedded targets
 with a heap.
 
 Extracted from `dvb-si` at the 8.0.0 breaking boundary and published
@@ -164,7 +164,7 @@ directly should replace:
 |---|---|
 | `ts::TsPacket` | `ts::TsPacket` |
 | `ts::SectionReassembler` | `ts::SectionReassembler` |
-| `mux::SiMux` / `SectionPacketizer` | `mux::SiMux` / `SectionPacketizer` |
+| `mux::SiMux` / `SectionPacketiser` | `mux::SiMux` / `SectionPacketiser` |
 | `resync::TsResync` | `resync::TsResync` |
 | `pid::Pid` | `pid::Pid` |
 

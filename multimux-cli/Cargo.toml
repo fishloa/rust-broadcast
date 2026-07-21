@@ -1,18 +1,19 @@
 [package]
 name         = "multimux-cli"
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2024"
 rust-version = "1.86"
 license      = "MIT OR Apache-2.0"
-description  = "CLI for multimux — a live RTSP -> LL-HLS just-in-time repackaging HTTP origin."
+description  = "CLI for multimux — a config-driven, multi-input/multi-output (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull -> LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin."
 repository   = "https://github.com/fishloa/rust-broadcast"
 keywords     = ["rtsp", "hls", "ll-hls", "cmaf", "origin"]
 categories   = ["multimedia", "command-line-utilities"]
 
 [dependencies]
-multimux = { path = "../multimux", version = "0.2" }
-tokio    = { version = "1", features = ["rt-multi-thread", "macros"] }
-clap     = { version = "4", features = ["derive"] }
+multimux           = { path = "../multimux", version = "0.3" }
+tokio              = { version = "1", features = ["rt-multi-thread", "macros"] }
+clap               = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [[bin]]
 name = "multimux"

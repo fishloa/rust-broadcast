@@ -7,6 +7,93 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-21
+
+### Changed (BREAKING)
+- Renamed `RtpPacketiser`, `RtpDepacketiser`, `RtpStreamDepacketiser`, and the
+  free functions `packetise_klv`/`depacketise_klv` to British spelling (issue
+  #663; all were previously spelled with a "z"). Pure rename —
+  behaviour-preserving, no functional change. RFC 6184's SDP `fmtp`
+  `mode`-selection attribute key is an external wire-protocol string and was
+  deliberately left spelled exactly as the RFC defines it.
+
+### Added
+
+- `hls::MediaPlaylist::parse` + `hls::MasterPlaylist::parse` (issue #717
+  slice 1): the symmetric inverse of the existing `to_m3u8()` renderers,
+  parsing an m3u8 string back into the same structs — so an LL-HLS client
+  can reuse the origin's wire model rather than growing a second one.
+  Recognizes `#EXTM3U`/`#EXT-X-VERSION`/`#EXT-X-TARGETDURATION`/
+  `#EXT-X-MEDIA-SEQUENCE`/`#EXT-X-DISCONTINUITY-SEQUENCE`/`#EXTINF`/
+  `#EXT-X-ENDLIST`/`#EXT-X-DISCONTINUITY`/`#EXT-X-BYTERANGE`/`#EXT-X-MAP`
+  plus the LL-HLS client-relevant tags `#EXT-X-PART-INF`,
+  `#EXT-X-SERVER-CONTROL` (`CAN-BLOCK-RELOAD`/`PART-HOLD-BACK`/
+  `CAN-SKIP-UNTIL`), `#EXT-X-PART` (`DURATION`/`URI`/`INDEPENDENT`/`GAP`/
+  `BYTERANGE`), `#EXT-X-PRELOAD-HINT` (`TYPE`/`URI`/byte-range),
+  `#EXT-X-RENDITION-REPORT`, `#EXT-X-SKIP` (delta updates), and
+  `#EXT-X-STREAM-INF`/`#EXT-X-I-FRAME-STREAM-INF` on the Multivariant side.
+  Unrecognized tags are preserved verbatim into `extra_tags` (never an
+  error); a malformed known tag (missing required attribute, unparsable
+  value) returns the new `Error::HlsParse { line_no, line, reason }`.
+  New public types: `ByteRange`, `MapTag`, `PreloadHintType`,
+  `RenditionReport`, `SkipInfo`. `MediaSegment` gained `byte_range: Option<ByteRange>`
+  and `map: Option<MapTag>`; `PartSpec` gained `byte_range`/`gap`;
+  `LowLatencyConfig` gained `can_skip_until`/`preload_hint_type`/
+  `preload_hint_byte_range_start`/`preload_hint_byte_range_length`;
+  `MediaPlaylist` gained `rendition_reports`/`skip` — all breaking for any
+  external struct-literal construction (all five structs now derive
+  `Default`, so existing call sites can add `..Default::default()`).
+  `to_m3u8()` gained matching render support for every new field
+  (`#EXT-X-MAP` dedup/carry-forward, `#EXT-X-BYTERANGE`,
+  `#EXT-X-SKIP`, `#EXT-X-RENDITION-REPORT`, `CAN-SKIP-UNTIL`, part
+  `BYTERANGE`/`GAP`, preload-hint `TYPE`/byte-range) so the round trip is
+  lossless. `#EXT-X-MEDIA` (Multivariant alternate renditions) remains
+  unmodeled on both the render and parse side — a documented gap, not a
+  silent drop (nothing to preserve it into on `MasterPlaylist`, which has
+  no `extra_tags` field).
+  - `hls::OpenSegment` (the in-progress LL-HLS segment builder) gained a
+    `map: Option<MapTag>` field and an `OpenSegment::with_map` builder, so a
+    muxer assembling an open segment can carry forward the Media
+    Initialization Section in effect for it, mirroring `MediaSegment::map` on
+    the parse side. `OpenSegment::new` still defaults to no map.
+  - **Fix** (found while building the `ll-hls-client` tokio adapter, issue
+    #717 slice 5): `LowLatencyConfig` gained `can_block_reload: bool` — the
+    `CAN-BLOCK-RELOAD` attribute's actual `YES`/`NO` value was previously
+    discarded by `parse` (only the tag's *presence* set `low_latency =
+    Some(...)`), so a client had no way to distinguish a genuine
+    `CAN-BLOCK-RELOAD=NO` origin from one that supports blocking reload —
+    both parsed identically. `parse` now reads the real value, defaulting to
+    `false` (RFC 8216bis: absent means not supported) when the attribute (or
+    the whole `#EXT-X-SERVER-CONTROL` tag) is missing; `to_m3u8()` renders
+    the actual value instead of always emitting `YES`.
+    `LowLatencyConfig::default()` still defaults to `true` (matching every
+    existing in-repo caller that builds one from scratch via
+    `..Default::default()`, all of which do support blocking reload) — only
+    the *parser's* default differs, deliberately, since it reflects the wire
+    rather than a convenience default.
+
+### Security
+
+- **Bounded RTP/TS reassembly buffers** (issue #663 P5.2, audit-ingest
+  #4 — memory-exhaustion hardening): two streaming-reassembly buffers
+  previously grew without bound against malformed or hostile input.
+  `rtp_stream::RtpStreamDepacketiser`'s per-track in-progress access-unit
+  buffer (a dropped/corrupted final FU-A fragment, or a marker bit that
+  never arrives, previously accumulated RTP packets for the life of the
+  session) is now capped at `MAX_AU_BUFFER_BYTES` (4 MiB); on overflow the
+  partial AU is dropped and `push` returns the new recoverable
+  `Error::BufferCapExceeded`, with internal state already reset so the next
+  packet starts a fresh AU. `ts_demux::StreamingTsDemux`'s per-PID PES
+  buffer (a `payload_unit_start_indicator` that never recurs — the
+  unbounded-video `PES_packet_length = 0` case on a wedged/lossy stream —
+  previously accumulated forever) is now capped at `MAX_PES_BUFFER_BYTES`
+  (4 MiB); on overflow the partial PES is dropped and a
+  `DemuxEvent::Discontinuity` is raised for the PID. Neither cap changes
+  behaviour for any well-formed stream (a real access unit/PES is orders of
+  magnitude smaller); PSI/private-section buffering needed no equivalent
+  change — `mpeg_ts::ts::SectionReassembler` is already inherently bounded
+  by `section_length`'s 12-bit field.
+
 ## [0.17.0] - 2026-07-15
 
 ### Added

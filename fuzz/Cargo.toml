@@ -37,6 +37,8 @@ st12-1       = { path = "../st12-1" }
 st337        = { path = "../st337" }
 rdd29        = { path = "../rdd29" }
 st377-1      = { path = "../st377-1" }
+transmux      = { path = "../transmux" }
+broadcast-auth = { path = "../broadcast-auth" }
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -174,5 +176,17 @@ doc  = false
 [[bin]]
 name = "st377_1"
 path = "fuzz_targets/st377_1.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "hls_playlist"
+path = "fuzz_targets/hls_playlist.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "auth_challenge"
+path = "fuzz_targets/auth_challenge.rs"
 test = false
 doc  = false

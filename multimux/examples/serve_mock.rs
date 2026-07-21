@@ -1,13 +1,16 @@
-//! Serve a synthetic LL-HLS stream with no RTSP source and no network
+//! Serve a synthetic LL-HLS + DASH stream with no RTSP source and no network
 //! dependency, for trying the origin without a real camera.
 //!
 //! Builds enough synthetic H.264-shaped samples to close a few full
 //! segments, drives them through the real [`transmux::ll_hls::LlHlsSegmenter`]
 //! (via [`multimux::pipeline::run_pipeline`]) into a
-//! [`multimux::store::StreamStore`], then serves that store's single "cam"
-//! route under the real axum [`multimux::origin::router`] on an ephemeral
-//! localhost port. Once the mock source reaches end-of-stream the store's
-//! contents are fixed — the HTTP origin keeps serving that fixed window.
+//! [`multimux::store::MediaStore`], then serves that store's single "cam"
+//! route under the real axum [`multimux::origin::router`] — both
+//! [`multimux::output::llhls::LlHlsOutput`] and
+//! [`multimux::output::dash::DashOutput`] (issue #663 P4: one ingest, LL-HLS
+//! *and* DASH from the same CMAF segments) — on an ephemeral localhost port.
+//! Once the mock source reaches end-of-stream the store's contents are fixed
+//! — the HTTP origin keeps serving that fixed window.
 //!
 //! # Usage
 //!
@@ -15,14 +18,18 @@
 //! cargo run --example serve_mock
 //! # then, in another terminal:
 //! curl http://127.0.0.1:<port>/cam/master.m3u8
+//! curl http://127.0.0.1:<port>/cam/manifest.mpd
 //! ```
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use multimux::origin::{AppState, router};
+use multimux::output::Output;
+use multimux::output::dash::DashOutput;
+use multimux::output::llhls::LlHlsOutput;
 use multimux::pipeline::{MockSource, run_pipeline};
-use multimux::store::StreamStore;
+use multimux::store::MediaStore;
 use transmux::avc_config_from_sprop;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
@@ -70,25 +77,41 @@ async fn main() {
         batches.push(vec![(1u32, sample)]);
     }
 
-    let store = Arc::new(StreamStore::new(
+    let store = Arc::new(MediaStore::new(
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
         WINDOW_SEGMENTS,
     ));
     let source = MockSource::new(specs, batches);
-    run_pipeline(store.clone(), TARGET_DURATION_SECS, PART_TARGET_MS, source)
-        .await
-        .expect("mock pipeline runs to completion");
+    run_pipeline(
+        store.clone(),
+        TARGET_DURATION_SECS,
+        PART_TARGET_MS,
+        source,
+        STREAM_NAME,
+    )
+    .await
+    .expect("mock pipeline runs to completion");
 
     let mut streams = HashMap::new();
-    streams.insert(STREAM_NAME.to_string(), store);
-    let app = router(Arc::new(AppState { streams }));
+    streams.insert(
+        STREAM_NAME.to_string(),
+        (
+            store,
+            vec![
+                Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                Arc::new(DashOutput) as Arc<dyn Output>,
+            ],
+        ),
+    );
+    let app = router(Arc::new(AppState::new(streams)));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral localhost port");
     let addr = listener.local_addr().expect("listener has a local address");
     println!("multimux serve_mock: http://{addr}/{STREAM_NAME}/master.m3u8");
+    println!("multimux serve_mock: http://{addr}/{STREAM_NAME}/manifest.mpd");
 
     axum::serve(listener, app).await.expect("axum server");
 }

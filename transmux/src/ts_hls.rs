@@ -207,6 +207,7 @@ impl Package for TsHlsPackager {
                 duration,
                 discontinuous: false,
                 parts: vec![],
+                ..Default::default()
             });
         }
 
@@ -221,6 +222,7 @@ impl Package for TsHlsPackager {
             low_latency: None,
             iframes_only: false,
             open_segment: None,
+            ..Default::default()
         }
         .to_m3u8();
 
@@ -722,6 +724,7 @@ impl StreamingTsHlsSegmenter {
                 duration: e.duration,
                 discontinuous: e.discontinuous,
                 parts: vec![],
+                ..Default::default()
             })
             .collect();
 
@@ -738,6 +741,7 @@ impl StreamingTsHlsSegmenter {
             low_latency: None,
             iframes_only: false,
             open_segment: None,
+            ..Default::default()
         }
         .to_m3u8()
     }
