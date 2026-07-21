@@ -1,6 +1,6 @@
-# multimux 0.4.0 — 2026-07-21
+# multimux 0.3.1 — 2026-07-21
 
-Minor. True chunked-transfer LL-DASH, replacing the discrete-parts-signalling fallback shipped in 0.3.0. Additive — existing `ll_hls`/`dash`/`ll_dash` outputs and config are unchanged.
+Patch. True chunked-transfer LL-DASH, replacing the discrete-parts-signalling fallback shipped in 0.3.0. Additive — existing `ll_hls`/`dash`/`ll_dash` outputs and config are unchanged.
 
 ## Changed — true chunked-transfer LL-DASH (#721)
 
