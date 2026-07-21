@@ -3,7 +3,7 @@
 //!
 //! - Loads [`acap_multimux::admin::Config`] from the ACAP
 //!   `axparameter`-backed [`acap_multimux::admin::AxParameterStore`].
-//! - Builds a [`multimux::store::StreamStore`] sized from the config's LL-HLS
+//! - Builds a [`multimux::store::MediaStore`] sized from the config's LL-HLS
 //!   tuning (target segment duration / part target / window).
 //! - Starts [`acap_multimux::vdo_source::VdoSource`] and drives it through
 //!   [`multimux::pipeline::run_pipeline`] on a **dedicated OS thread with its
@@ -33,7 +33,8 @@ use acap_multimux::convert::Codec;
 use acap_multimux::vdo_source::VdoSource;
 use log::{error, info};
 use multimux::origin::AppState;
-use multimux::store::StreamStore;
+use multimux::output::{Output, OutputKind};
+use multimux::store::MediaStore;
 
 /// The single served stream's name in LL-HLS URLs
 /// (`…/hls/<STREAM_NAME>/media.m3u8`) — this app captures exactly one VDO
@@ -61,7 +62,7 @@ async fn main() {
     let cfg = store.load();
     info!("acap-multimux: loaded config: {cfg:?}");
 
-    let stream_store = Arc::new(StreamStore::new(
+    let stream_store = Arc::new(MediaStore::new(
         cfg.target_duration_secs,
         cfg.part_target_ms,
         cfg.window_segments,
@@ -71,9 +72,14 @@ async fn main() {
 
     spawn_capture_pipeline(&cfg, stream_store.clone(), status.clone());
 
+    // `Config` carries no configurable playlist filename, so this app serves
+    // LL-HLS's default media playlist name (`llhls::DEFAULT_PLAYLIST_NAME`,
+    // `media.m3u8`) — matching the relative-URI playlists documented below
+    // (`/local/acapmultimux/hls/<stream>/media.m3u8`).
+    let outputs: Vec<Arc<dyn Output>> = vec![OutputKind::LlHls.build()];
     let mut streams = HashMap::new();
-    streams.insert(STREAM_NAME.to_string(), stream_store);
-    let app_state = Arc::new(AppState { streams });
+    streams.insert(STREAM_NAME.to_string(), (stream_store, outputs));
+    let app_state = Arc::new(AppState::new(streams));
 
     // AXIS OS's Apache reverse proxy forwards the FULL request path to the
     // target verbatim — it does NOT strip the `/local/<appName>/<apiPath>`
@@ -110,7 +116,7 @@ async fn main() {
 /// init failure or a `run_pipeline` error; either way the thread ends without
 /// taking the HTTP origin down (only that camera channel's segments stop
 /// advancing).
-fn spawn_capture_pipeline(cfg: &admin::Config, store: Arc<StreamStore>, status: StatusHandle) {
+fn spawn_capture_pipeline(cfg: &admin::Config, store: Arc<MediaStore>, status: StatusHandle) {
     let codec = if cfg.codec == "h265" {
         Codec::H265
     } else {
@@ -137,6 +143,7 @@ fn spawn_capture_pipeline(cfg: &admin::Config, store: Arc<StreamStore>, status: 
                         target_duration_secs,
                         part_target_ms,
                         src,
+                        STREAM_NAME,
                     )
                     .await
                     {
