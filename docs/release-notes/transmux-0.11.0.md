@@ -50,7 +50,7 @@ Independently versioned.
   private_sections, `0x0A`–`0x0D`/`0x14` DSM-CC, `0x86` SCTE-35) are reassembled
   via `SectionReassembler` (one section = one `Sample`), everything else via PES.
 - **IR → TS**: `EsKind::Data` re-emits the preserved `stream_type` (PES via
-  `private_stream_1` `0xBD`, sections via `SectionPacketiser`), and the PMT now
+  `private_stream_1` `0xBD`, sections via `SectionPacketizer`), and the PMT now
   writes each ES's preserved `ES_info` descriptors so carried streams stay
   identifiable. **Classic TS-HLS (`TsHlsPackager`) carries all of it for free** —
   every `.ts` segment's PMT lists every stream + descriptors.

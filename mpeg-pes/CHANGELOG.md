@@ -79,12 +79,12 @@
 
 ### Added
 - `examples/`: `parse_pes_packet` (parse one PES packet from bytes) and
-  `extract_pts` (depacketise a capture, reassemble PES, report the PTS timeline).
+  `extract_pts` (depacketize a capture, reassemble PES, report the PTS timeline).
 
 ## 0.1.0 — 2026-06-18
 
 ### Added
-- Initial release. PES (Packetised Elementary Stream) depacketisation per
+- Initial release. PES (Packetized Elementary Stream) depacketization per
   ISO/IEC 13818-1 (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7:
   - `PesPacket` / `PesHeader` — PES packet header parse + symmetric serialize,
     incl. unbounded video (`PES_packet_length = 0`) and the special `stream_id`s

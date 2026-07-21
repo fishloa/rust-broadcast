@@ -218,7 +218,7 @@ fn ec3_init_segment_sample_entry() {
 // captured in `eac3.ts` (there declared via native `stream_type 0x87`) under
 // `stream_type 0x06` (PES private data) + a real enhanced_AC3_descriptor
 // (tag 0x7A) -- the standard DVB signalling for E-AC-3 that `eac3.ts`'s own
-// native-stream_type packetisation never exercises.
+// native-stream_type packetization never exercises.
 #[test]
 fn dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3() {
     let ts = std::fs::read("../fixtures/ts/dolby/eac3_dvb_0x06.ts")

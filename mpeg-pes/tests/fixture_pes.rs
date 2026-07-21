@@ -1,6 +1,6 @@
 //! Validate `mpeg-pes` against a real broadcast capture (the committed
 //! `m6-single.ts` DVB fixture). Extracts the PES PID's PES packets with a
-//! minimal inline TS depacketiser (no dvb-si dependency) and asserts the PTS
+//! minimal inline TS depacketizer (no dvb-si dependency) and asserts the PTS
 //! values are present, 33-bit-bounded, and monotonically non-decreasing.
 
 use std::fs;

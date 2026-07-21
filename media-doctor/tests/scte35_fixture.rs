@@ -1,5 +1,5 @@
 //! Fixture tests for `Scte35Check` — splice consistency diagnostics on
-//! spec-valid SCTE-35 cues (CRC-correct `splice_insert` sections packetised into
+//! spec-valid SCTE-35 cues (CRC-correct `splice_insert` sections packetized into
 //! real TS framing).
 //!
 //! The fixtures are:
@@ -91,7 +91,7 @@ fn scte35_unbalanced_fixture() {
 
 /// `scte35-real.ts` carries the **canonical industry** `splice_insert` vector
 /// (`4800008f`, event_id 0x4800008f, out_of_network=true) — a real SCTE-35
-/// message from the spec/threefive corpus, packetised on PID 0x01F0. As a lone
+/// message from the spec/threefive corpus, packetized on PID 0x01F0. As a lone
 /// "out" with no matching "in", `Scte35Check` must parse it and flag it
 /// unbalanced — proving a real industry cue round-trips through our stack.
 #[test]

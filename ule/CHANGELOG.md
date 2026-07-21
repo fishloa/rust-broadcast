@@ -70,7 +70,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Mandatory header. H-Type registry constants for Test-SNDU (`0x00`),
   Bridged-Frame (`0x01`), TS-Concat (`0x02`), PDU-Concat (`0x03`), TimeStamp
   (`0x01`/H-LEN 3), and Extension-Padding (`0x00`/H-LEN 1–5).
-- `UleReceiver` — a de-fragmenting/reassembling depacketiser (RFC 4326 §6, §7):
+- `UleReceiver` — a de-fragmenting/reassembling depacketizer (RFC 4326 §6, §7):
   feed it each TS packet payload + PUSI flag; it handles the 1-byte Payload
   Pointer, SNDU fragmentation across packets, packing of multiple SNDUs per
   packet, and the End-Indicator (`0xFFFF`) / `0xFF` padding, yielding complete

@@ -31,7 +31,7 @@ SDP generation.
 
 ## H.264 payload (RFC 6184)
 
-NAL unit octet: `F(1) | NRI(2) | Type(5)`. Packetisation modes; use
+NAL unit octet: `F(1) | NRI(2) | Type(5)`. Packetization modes; use
 **packetization-mode=1** (non-interleaved).
 
 - **Single NAL unit packet** (NAL Type 1–23): the whole NAL is the RTP payload

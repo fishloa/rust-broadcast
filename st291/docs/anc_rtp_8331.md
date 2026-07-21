@@ -101,7 +101,7 @@ number by combining this 16-bit field with the RTP fixed header's 16-bit
 `sequence number`, using a **stateful sliding-window algorithm** (tracking the
 most-recently-seen extended value per SSRC to resolve which 16-bit "epoch" a
 new low 16 bits belongs to, across wraparound and packet loss/reordering).
-That reconstruction is a **session/depacketiser-layer** concern — it requires
+That reconstruction is a **session/depacketizer-layer** concern — it requires
 per-stream state this crate's stateless, per-packet wire parser does not (and
 should not) hold. [`AncRtpPayload::extended_sequence_number`](../src/rtp.rs)
 exposes the raw 16-bit field only; reconstructing the full 32-bit counter is

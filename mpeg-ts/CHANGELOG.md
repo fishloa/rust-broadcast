@@ -113,7 +113,7 @@
 - Initial release: extracted from `dvb-si` at the 8.0.0 breaking boundary.
 - `TsPacket` + `AdaptationField` + `PcrValue` — ITU-T H.222.0 §2.4.3.2 TS packet parse/serialize.
 - `SectionReassembler` — per-PID PSI section assembly from TS payloads, with continuity-counter tracking and duplicate-version suppression.
-- `SectionPacketiser` / `SiMux` — packetise PSI sections back into TS packets.
+- `SectionPacketizer` / `SiMux` — packetize PSI sections back into TS packets.
 - `TsResync` — lost-sync recovery via sliding-window 0x47 search.
 - `OwnedTsPacket` — owned aligned 188-byte buffer type (zero-copy hand-off across async boundaries), with `scrambling_control()`/`adaptation_field_control()` typed accessors and a `discontinuity` field.
 - `ScramblingControl` — typed 2-bit `transport_scrambling_control` enum (`NotScrambled`/`Reserved`/`EvenKey`/`OddKey`); cited to ETSI TS 100 289 §5.1 + H.222.0 Table 2-4. `name()` + `Display` (#204).

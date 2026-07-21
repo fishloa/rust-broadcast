@@ -4,7 +4,7 @@
 
 **Goal:** A native (Linux/macOS) executable — a thin client+server wrap over `rtsp-runtime` + `transmux` — that pulls live RTSP source(s) and serves each as **LL-HLS** from an in-process tokio+axum origin. (Issue #663.)
 
-**Architecture:** One tokio task per configured route pulls RTSP (interleaved RTP over TCP via `rtsp-runtime::AsyncRtspClient`), depayloads to timed `Sample`s (`transmux::RtpStreamDepacketiser`), pushes them into a `transmux::LlHlsSegmenter`, and stores the resulting init/segments/parts in a per-stream in-RAM rolling window (`StreamStore`) that signals new data via a `tokio::sync::watch`. An axum origin reads the stores per request and renders LL-HLS playlists, blocking on the `watch` for `_HLS_msn`/`_HLS_part` reload requests. Muxing only — no transcode.
+**Architecture:** One tokio task per configured route pulls RTSP (interleaved RTP over TCP via `rtsp-runtime::AsyncRtspClient`), depayloads to timed `Sample`s (`transmux::RtpStreamDepacketizer`), pushes them into a `transmux::LlHlsSegmenter`, and stores the resulting init/segments/parts in a per-stream in-RAM rolling window (`StreamStore`) that signals new data via a `tokio::sync::watch`. An axum origin reads the stores per request and renders LL-HLS playlists, blocking on the `watch` for `_HLS_msn`/`_HLS_part` reload requests. Muxing only — no transcode.
 
 **Tech Stack:** Rust, std, tokio (multi-thread), axum 0.7, `transmux` 0.17 (path), `rtsp-runtime` 0.2 (path, `tokio` feature), `sdp-types` 0.1, serde/serde_json, clap 4 (behind `cli`).
 
@@ -775,12 +775,12 @@ git commit -m "feat(multimux): SDP -> track init parsing (#663)"
 - Test: in-module `#[cfg(test)]` (the packet-routing logic, no socket) + one `#[ignore]` live test.
 
 **Interfaces:**
-- Consumes: `rtsp-runtime::io::AsyncRtspClient`, `rtsp-runtime::client::ClientEvent`, `rtsp-runtime::transport::{Transport, TransportSpec}`, `transmux::{RtpStreamDepacketiser, RtpStreamTrack}`, `crate::source::{TrackInit, sdp::parse_sdp_tracks}`, `transmux::pipeline::Sample`.
+- Consumes: `rtsp-runtime::io::AsyncRtspClient`, `rtsp-runtime::client::ClientEvent`, `rtsp-runtime::transport::{Transport, TransportSpec}`, `transmux::{RtpStreamDepacketizer, RtpStreamTrack}`, `crate::source::{TrackInit, sdp::parse_sdp_tracks}`, `transmux::pipeline::Sample`.
 - Produces:
   - `pub struct RtspSource { name: String, url: String }` + `RtspSource::new(name, url)`
-  - `pub struct RtspSession { pub tracks: Vec<TrackInit>, /* client + depacketiser + channel map */ }`
+  - `pub struct RtspSession { pub tracks: Vec<TrackInit>, /* client + depacketizer + channel map */ }`
   - `impl RtspSource`: `async fn connect(&self) -> Result<RtspSession>` (connect → describe → parse SDP → setup each media interleaved → play)
-  - `impl RtspSession`: `async fn next_samples(&mut self) -> Result<Option<Vec<(u32 /*track_id*/, Sample)>>>` (recv one interleaved frame; route RTP-channel→track; `depacketiser.push`; return emitted samples; `None` at stream end), and `fn track_specs(&self) -> Vec<transmux::pipeline::TrackSpec>`.
+  - `impl RtspSession`: `async fn next_samples(&mut self) -> Result<Option<Vec<(u32 /*track_id*/, Sample)>>>` (recv one interleaved frame; route RTP-channel→track; `depacketizer.push`; return emitted samples; `None` at stream end), and `fn track_specs(&self) -> Vec<transmux::pipeline::TrackSpec>`.
   - Extract the channel-routing decision into a pure `fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32>` so it is unit-testable without a socket.
 
 > **Step 0 (read before coding):** open `rtsp-runtime/src/io.rs` + `transport.rs` + `client.rs` for exact signatures: `AsyncRtspClient::connect`, `describe`→`ClientEvent::Response{body}`, how to build a `Transport` from `TransportSpec::rtp_avp_tcp_interleaved(lo, hi)` (find the `Transport` wrapper/constructor — likely `Transport::from`/`Transport(vec![spec])`/a `single` ctor; use the real one), `setup(uri, &Transport)`, `negotiated_transport()`, `recv_interleaved() -> Result<Option<ClientEvent>>`, and `play`. Build per-media SETUP URLs from the base URL + each track's `control`. Assign each media interleaved channel `(2i, 2i+1)`. Map an incoming even `MediaData.channel` → the `TrackInit` with that `channel`; ignore odd (RTCP) channels in v1.
@@ -832,7 +832,7 @@ pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
 }
 ```
 
-Then the async driver using the real `rtsp-runtime` API confirmed in Step 0. `connect` performs DESCRIBE → `parse_sdp_tracks(body)` → for each track SETUP with `TransportSpec::rtp_avp_tcp_interleaved(t.channel, t.channel + 1)` at the per-media control URL → PLAY; build the `RtpStreamDepacketiser` from `tracks.iter().map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))`. `next_samples` calls `recv_interleaved()`, matches `Some(ClientEvent::MediaData{channel, data})`, and if `route_channel(channel, &tracks)` is `Some(track_id)`, returns `depacketiser.push(track_id, &data)?` zipped with `track_id`; other events → empty vec; `Ok(None)` at end of stream.
+Then the async driver using the real `rtsp-runtime` API confirmed in Step 0. `connect` performs DESCRIBE → `parse_sdp_tracks(body)` → for each track SETUP with `TransportSpec::rtp_avp_tcp_interleaved(t.channel, t.channel + 1)` at the per-media control URL → PLAY; build the `RtpStreamDepacketizer` from `tracks.iter().map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))`. `next_samples` calls `recv_interleaved()`, matches `Some(ClientEvent::MediaData{channel, data})`, and if `route_channel(channel, &tracks)` is `Some(track_id)`, returns `depacketizer.push(track_id, &data)?` zipped with `track_id`; other events → empty vec; `Ok(None)` at end of stream.
 
 - [ ] **Step 4: Run to verify pass** — `cargo test -p multimux --lib source::rtsp` → PASS (routing test). Add an `#[ignore]` async test `live_rtsp_smoke` that connects to an env-var URL (`MULTIMUX_TEST_RTSP`) and pulls a few samples, skipped by default.
 
@@ -902,7 +902,7 @@ git commit -m "feat(multimux): RtspSource — DESCRIBE/SETUP/PLAY + interleaved 
 **Files:**
 - Create: `multimux/tests/origin_llhls.rs`
 
-> The deterministic biting gate. Drive a `MockSource` (reuse Task 6's, exposed via a `testsupport` feature or `pub(crate)` test helper) built from a **real fixture**: demux `transmux`'s committed `h264_aac.ts`, packetise to RTP, and replay those packets through the pipeline — OR, simpler and still real, take the demuxed `Sample`s directly and feed them (the RTP round-trip is already gate-tested in transmux #700). Then spin the axum app (bind an ephemeral `127.0.0.1:0` port via `tokio::net::TcpListener`), run the pipeline task to close ≥2 segments with parts, and issue real HTTP requests with a minimal client (`tokio` TCP + hand-written GET, or add `hyper` as a dev-dep) to:
+> The deterministic biting gate. Drive a `MockSource` (reuse Task 6's, exposed via a `testsupport` feature or `pub(crate)` test helper) built from a **real fixture**: demux `transmux`'s committed `h264_aac.ts`, packetize to RTP, and replay those packets through the pipeline — OR, simpler and still real, take the demuxed `Sample`s directly and feed them (the RTP round-trip is already gate-tested in transmux #700). Then spin the axum app (bind an ephemeral `127.0.0.1:0` port via `tokio::net::TcpListener`), run the pipeline task to close ≥2 segments with parts, and issue real HTTP requests with a minimal client (`tokio` TCP + hand-written GET, or add `hyper` as a dev-dep) to:
 
 - [ ] **Step 1: Write the test** asserting:
   - `GET /{stream}/media.m3u8` → 200, body has `#EXT-X-PART`, `#EXT-X-PART-INF`, `#EXT-X-SERVER-CONTROL`.
@@ -955,7 +955,7 @@ Expected: all green. This is where axum-family MSRV pins are proven; fix the loc
 - Client+server wrap, glue-only → Tasks 4–7 consume transmux/rtsp-runtime, no spec logic. ✓
 - RTSP pull via `AsyncRtspClient` → Task 5. ✓
 - SDP→CodecConfig via transmux P2 helpers → Task 4. ✓
-- Streaming depayload via P1 `RtpStreamDepacketiser` → Task 5. ✓
+- Streaming depayload via P1 `RtpStreamDepacketizer` → Task 5. ✓
 - LL-HLS only, parts + blocking reload → Tasks 3, 7. ✓
 - RAM rolling window + `watch` → Task 3. ✓
 - Routes model, CLI + optional JSON → Tasks 2, 9. ✓
@@ -967,4 +967,4 @@ Expected: all green. This is where axum-family MSRV pins are proven; fix the loc
 
 **Open verification points flagged (Step-0 reads):** exact `transmux::hls` struct fields incl. how `EXT-X-MAP` is carried (Task 3); `sdp_types` accessor return types (Task 4); `rtsp-runtime` `Transport` constructor + `recv_interleaved`/`negotiated_transport` signatures (Task 5); async-fn-in-trait shape for `SampleSource` (Task 6); axum 0.7 extractor construction in unit tests (Task 7); real-HTTP client choice for the gate (Task 8). Each task's Step 0 pins these to files; tests assert observable behavior so any correct wiring passes.
 
-**Risk carried from #700 (documented, not re-solved here):** `RtpStreamDepacketiser` assumes in-arrival-order packets, low-delay H.264 (`composition_offset=0`), one AAC AU/packet — multimux feeds packets in `recv_interleaved` arrival order, satisfying the contract.
+**Risk carried from #700 (documented, not re-solved here):** `RtpStreamDepacketizer` assumes in-arrival-order packets, low-delay H.264 (`composition_offset=0`), one AAC AU/packet — multimux feeds packets in `recv_interleaved` arrival order, satisfying the contract.

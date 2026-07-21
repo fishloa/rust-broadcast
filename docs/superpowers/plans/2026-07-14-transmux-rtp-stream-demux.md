@@ -4,7 +4,7 @@
 
 **Goal:** Add a streaming, timing- and config-aware RTP depayloader to `transmux` (RFC 6184 H.264 / RFC 3640 AAC), plus SDP-fmtp→`CodecConfig` helpers, so #663 multimux can wrap it. (Issue #700.)
 
-**Architecture:** The wire reassembly (FU-A/STAP-A/AAC AU-header) already exists and is tested in `transmux/src/rtp.rs`. We (1) refactor that reassembly to also return per-AU RTP timestamp + sync flag, (2) add fmtp→`CodecConfig` builders reusing the crate's existing `base64_decode`/`hex_decode`, and (3) add a stateful `RtpStreamDepacketiser` that consumes RTP packets incrementally and emits fully-timed, real-config `Sample`s. All additive — the existing batch `RtpDepacketiser` stays.
+**Architecture:** The wire reassembly (FU-A/STAP-A/AAC AU-header) already exists and is tested in `transmux/src/rtp.rs`. We (1) refactor that reassembly to also return per-AU RTP timestamp + sync flag, (2) add fmtp→`CodecConfig` builders reusing the crate's existing `base64_decode`/`hex_decode`, and (3) add a stateful `RtpStreamDepacketizer` that consumes RTP packets incrementally and emits fully-timed, real-config `Sample`s. All additive — the existing batch `RtpDepacketizer` stays.
 
 **Tech Stack:** Rust, `no_std`+`alloc` (transmux default), `rtp-packet` crate for the RTP fixed header, `broadcast_common` Parse/Serialize traits, `thiserror`-style `crate::error::Error`.
 
@@ -12,7 +12,7 @@
 
 - MSRV **1.86**, edition 2024; build/test with `--locked`. After any dep touch, restore the MSRV-pinned `Cargo.lock` (no new deps are expected in this plan — do NOT add `base64`, a hand-rolled decoder already exists).
 - transmux is `#![cfg_attr(not(feature = "std"), no_std)]` + `alloc`; **everything here must build `--no-default-features`** (use `alloc::{vec::Vec, string::String}`, not `std`).
-- **Additive only** → transmux minor bump. Do not change or remove existing public API (`RtpDepacketiser`, `RtpInput`, etc.); the existing `transmux/tests/rtp.rs` suite must stay green unmodified.
+- **Additive only** → transmux minor bump. Do not change or remove existing public API (`RtpDepacketizer`, `RtpInput`, etc.); the existing `transmux/tests/rtp.rs` suite must stay green unmodified.
 - **No magic numbers** outside `#[cfg(test)]`: every constant named (reuse the existing `rtp.rs` consts; add named consts for new ones like NAL type 5 = IDR).
 - **Spec citation** in every new module's `//!` doc (RFC 6184 §5.x / RFC 3640 §3.x), and a transcription committed to `transmux/docs/`.
 - **Round-trip / symmetry discipline** and **biting tests** (real fixture, asserts that fail if the feature regresses — never happy-path-only).
@@ -23,11 +23,11 @@
 
 ## File Structure
 
-- **Modify** `transmux/src/rtp.rs` — extract timing-returning reassembly (`reassemble_video`, `reassemble_audio`) from the existing `depacketise_video`/`depacketise_audio`; the old fns delegate (discard timing) for back-compat. Add `NAL_TYPE_IDR` const + `au_is_sync` helper.
+- **Modify** `transmux/src/rtp.rs` — extract timing-returning reassembly (`reassemble_video`, `reassemble_audio`) from the existing `depacketize_video`/`depacketize_audio`; the old fns delegate (discard timing) for back-compat. Add `NAL_TYPE_IDR` const + `au_is_sync` helper.
 - **Create** `transmux/src/rtp_sdp.rs` — P2: `avc_config_from_sprop`, `aac_config_from_fmtp` (fmtp string → codec config). Reuses `rtp::{base64_decode, hex_decode}`.
-- **Create** `transmux/src/rtp_stream.rs` — P1: `RtpStreamDepacketiser` + `RtpStreamTrack`, stateful per-track timing recovery.
+- **Create** `transmux/src/rtp_stream.rs` — P1: `RtpStreamDepacketizer` + `RtpStreamTrack`, stateful per-track timing recovery.
 - **Modify** `transmux/src/lib.rs` — `mod rtp_sdp; mod rtp_stream;` + re-exports.
-- **Create** `transmux/docs/rtp-depacketisation.md` — RFC 6184/3640 syntax transcription (freely redistributable RFC text).
+- **Create** `transmux/docs/rtp-depacketization.md` — RFC 6184/3640 syntax transcription (freely redistributable RFC text).
 - **Create** `transmux/tests/rtp_stream.rs` — TS-round-trip timing/config gate + SDP round-trip gate.
 - **Modify** `transmux/CHANGELOG.md` — `[Unreleased]` additive entry.
 
@@ -38,7 +38,7 @@
 Extract the AU reassembly so it returns per-AU RTP timestamp + sync flag, shared by the existing batch path and the new streaming path.
 
 **Files:**
-- Modify: `transmux/src/rtp.rs` (functions `depacketise_video` ~739-838, `depacketise_audio` ~852-899)
+- Modify: `transmux/src/rtp.rs` (functions `depacketize_video` ~739-838, `depacketize_audio` ~852-899)
 - Test: `transmux/src/rtp.rs` (in-module `#[cfg(test)]`) + existing `transmux/tests/rtp.rs` must still pass.
 
 **Interfaces:**
@@ -95,7 +95,7 @@ In `transmux/src/rtp.rs`, add near the other consts:
 pub(crate) const NAL_TYPE_IDR: u8 = 5;
 ```
 
-Add the shared struct + functions (place above `depacketise_video`):
+Add the shared struct + functions (place above `depacketize_video`):
 
 ```rust
 /// A reassembled access unit with its RTP presentation timestamp and a
@@ -270,11 +270,11 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
 Then make the existing batch fns delegate (replace their bodies), preserving their `Vec<Vec<u8>>` return so the old path is byte-for-byte unchanged:
 
 ```rust
-fn depacketise_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+fn depacketize_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     Ok(reassemble_video(packets)?.into_iter().map(|au| au.data).collect())
 }
 
-fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+fn depacketize_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     Ok(reassemble_audio(packets)?.into_iter().map(|au| au.data).collect())
 }
 ```
@@ -599,7 +599,7 @@ git commit -m "feat(transmux): SDP AAC config= -> CodecConfig::Aac (#700)"
 - Consumes: `rtp::{reassemble_video, reassemble_audio, ReassembledAu, RtpMediaKind, parse_rtp_header}`, `pipeline::{Sample, TrackSpec, CodecConfig}`, `crate::error::{Error, Result}`.
 - Produces:
   - `pub struct RtpStreamTrack { pub track_id: u32, pub kind: RtpMediaKind, pub config: CodecConfig, pub clock_rate: u32 }`
-  - `pub struct RtpStreamDepacketiser { .. }`
+  - `pub struct RtpStreamDepacketizer { .. }`
   - `pub fn new(tracks: Vec<RtpStreamTrack>) -> Self`
   - `pub fn track_specs(&self) -> Vec<TrackSpec>` (track_id, timescale = clock_rate, config)
   - `pub fn push(&mut self, track_id: u32, rtp_packet: &[u8]) -> Result<Vec<Sample>>`
@@ -620,8 +620,8 @@ Create `transmux/src/rtp_stream.rs`:
 ```rust
 //! Streaming RTP depayloader — RFC 6184 (H.264) / RFC 3640 (AAC).
 //!
-//! Stateful counterpart to [`crate::rtp::RtpDepacketiser`]: fed RTP packets
-//! incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
+//! Stateful counterpart to [`crate::rtp::RtpDepacketizer`]: fed RTP packets
+//! incrementally via [`RtpStreamDepacketizer::push`], it emits fully-timed
 //! [`Sample`]s (real per-AU `duration` from RTP-timestamp deltas, `is_sync`
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]). v1 assumes low-delay H.264
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn video_stream_recovers_durations_and_sync() {
-        let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack {
+        let mut d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack {
             track_id: 1,
             kind: RtpMediaKind::H264,
             config: dummy_avc(),
@@ -700,7 +700,7 @@ mod tests {
 
     #[test]
     fn track_specs_use_clock_rate_as_timescale() {
-        let d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack {
+        let d = RtpStreamDepacketizer::new(alloc::vec![RtpStreamTrack {
             track_id: 7,
             kind: RtpMediaKind::H264,
             config: dummy_avc(),
@@ -714,19 +714,19 @@ mod tests {
 }
 ```
 
-Add to `transmux/src/lib.rs`: `pub mod rtp_stream;` and (near existing re-exports) `pub use rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};`
+Add to `transmux/src/lib.rs`: `pub mod rtp_stream;` and (near existing re-exports) `pub use rtp_stream::{RtpStreamDepacketizer, RtpStreamTrack};`
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p transmux --lib rtp_stream`
 Expected: FAIL — types/functions not found.
 
-- [ ] **Step 3: Implement the streaming depacketiser**
+- [ ] **Step 3: Implement the streaming depacketizer**
 
 Add to `transmux/src/rtp_stream.rs` (after the `use` lines, before `#[cfg(test)]`):
 
 ```rust
-/// One track's decode config for [`RtpStreamDepacketiser`].
+/// One track's decode config for [`RtpStreamDepacketizer`].
 pub struct RtpStreamTrack {
     pub track_id: u32,
     pub kind: RtpMediaKind,
@@ -759,7 +759,7 @@ struct PendingAu {
 }
 
 /// Stateful, timing- and config-aware RTP depayloader (see module docs).
-pub struct RtpStreamDepacketiser {
+pub struct RtpStreamDepacketizer {
     tracks: Vec<(u32, TrackState)>,
 }
 
@@ -787,7 +787,7 @@ fn unwrap_ts(prev: Option<u64>, ts: u32) -> u64 {
     }
 }
 
-impl RtpStreamDepacketiser {
+impl RtpStreamDepacketizer {
     pub fn new(tracks: Vec<RtpStreamTrack>) -> Self {
         let tracks = tracks
             .into_iter()
@@ -915,20 +915,20 @@ git commit -m "feat(transmux): streaming timing+config-aware RTP depayloader (#7
 
 ### Task 5: Real-fixture gate — TS round-trip + SDP round-trip
 
-Proves the whole feature on a real broadcast fixture: demux `h264_aac.ts` (real timing + config) → packetise to RTP → stream-depacketise → the recovered samples must match in config, sync points, and total duration, and build a valid fMP4; and the generated SDP must parse back (via P2) to the same config.
+Proves the whole feature on a real broadcast fixture: demux `h264_aac.ts` (real timing + config) → packetize to RTP → stream-depacketize → the recovered samples must match in config, sync points, and total duration, and build a valid fMP4; and the generated SDP must parse back (via P2) to the same config.
 
 **Files:**
 - Create: `transmux/tests/rtp_stream.rs`
 - Uses fixture: `transmux/tests/fixtures/ts/h264_aac.ts` (already committed)
 
 **Interfaces:**
-- Consumes: the crate's existing TS demux entry point and `RtpPacketiser::package` (as used by `transmux/tests/rtp.rs` — reuse the exact same calls that file uses to obtain a `Media` and an `RtpOutput`), plus `RtpStreamDepacketiser`, `avc_config_from_sprop`, `aac_config_from_fmtp`.
+- Consumes: the crate's existing TS demux entry point and `RtpPacketizer::package` (as used by `transmux/tests/rtp.rs` — reuse the exact same calls that file uses to obtain a `Media` and an `RtpOutput`), plus `RtpStreamDepacketizer`, `avc_config_from_sprop`, `aac_config_from_fmtp`.
 
-> **Step 0 (read before coding):** Open `transmux/tests/rtp.rs` and copy verbatim the helper(s) it uses to (a) demux `h264_aac.ts` into a `Media` and (b) call `packetise(&media) -> RtpOutput { streams, sdp }`. Reuse those exact calls so this test can't drift from the established fixture path. Note the `RtpStream`/`RtpOutput` field names it uses to get each stream's ordered packet list + payload type.
+> **Step 0 (read before coding):** Open `transmux/tests/rtp.rs` and copy verbatim the helper(s) it uses to (a) demux `h264_aac.ts` into a `Media` and (b) call `packetize(&media) -> RtpOutput { streams, sdp }`. Reuse those exact calls so this test can't drift from the established fixture path. Note the `RtpStream`/`RtpOutput` field names it uses to get each stream's ordered packet list + payload type.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `transmux/tests/rtp_stream.rs`. Fill the demux/packetise calls from Step 0 where marked:
+Create `transmux/tests/rtp_stream.rs`. Fill the demux/packetize calls from Step 0 where marked:
 
 ```rust
 //! Real-fixture gate for the streaming RTP depayloader (#700).
@@ -937,7 +937,7 @@ Create `transmux/tests/rtp_stream.rs`. Fill the demux/packetise calls from Step 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_fmtp, avc_config_from_sprop};
-use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
+use transmux::{RtpStreamDepacketizer, RtpStreamTrack};
 
 // Pull one fmtp attribute value ("sprop-parameter-sets=" / "config=") out of an
 // SDP string. Test-only crude extraction (no sdp-types dependency in transmux).
@@ -954,9 +954,9 @@ fn fmtp_value<'a>(sdp: &'a str, key: &str) -> Option<&'a str> {
 
 #[test]
 fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
-    // --- Step 0: obtain `media` (demux h264_aac.ts) and `out` (packetise) ---
+    // --- Step 0: obtain `media` (demux h264_aac.ts) and `out` (packetize) ---
     // let media = /* demux transmux/tests/fixtures/ts/h264_aac.ts, per rtp.rs */;
-    // let out = /* packetise(&media), per rtp.rs → RtpOutput { streams, sdp } */;
+    // let out = /* packetize(&media), per rtp.rs → RtpOutput { streams, sdp } */;
 
     // Original per-track truth from the demuxed Media.
     let orig_video = media.tracks.iter().find(|t| matches!(
@@ -975,11 +975,11 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         assert_eq!(avc.config.pps[0].0, config.pps[0].0, "PPS bytes round-trip");
     }
 
-    // Feed the packetised RTP for the video stream through the streaming depayloader.
+    // Feed the packetized RTP for the video stream through the streaming depayloader.
     // `out.streams` entries carry an ordered `Vec<Vec<u8>>` of RTP packets and a
     // kind/payload-type; use the field names confirmed in Step 0.
     let video_stream = /* the H264 RtpStream from out.streams */;
-    let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack {
+    let mut d = RtpStreamDepacketizer::new(vec![RtpStreamTrack {
         track_id: 1,
         kind: RtpMediaKind::H264,
         config: CodecConfig::Avc {
@@ -1032,9 +1032,9 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 }
 ```
 
-> **`avc.config.clone_box_or_rebuild()` is a placeholder for a real call** — do not write that method. Simplest: call `avc_config_from_sprop(sprop)` a second time to get a fresh `AVCConfigurationBox` for the depacketiser (cheap), or `.clone()` if `AVCConfigurationBox: Clone`. Use whichever compiles; the intent is "give the depacketiser the P2-derived config."
+> **`avc.config.clone_box_or_rebuild()` is a placeholder for a real call** — do not write that method. Simplest: call `avc_config_from_sprop(sprop)` a second time to get a fresh `AVCConfigurationBox` for the depacketizer (cheap), or `.clone()` if `AVCConfigurationBox: Clone`. Use whichever compiles; the intent is "give the depacketizer the P2-derived config."
 >
-> Fill the three Step-0 placeholders (demux, packetise, per-stream packet iteration) and the fMP4 build+validate tail with the exact calls the existing `transmux/tests/rtp.rs` and CMAF/segment tests use. The assertions above are the binding gate; the plumbing must match the real API.
+> Fill the three Step-0 placeholders (demux, packetize, per-stream packet iteration) and the fMP4 build+validate tail with the exact calls the existing `transmux/tests/rtp.rs` and CMAF/segment tests use. The assertions above are the binding gate; the plumbing must match the real API.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1043,7 +1043,7 @@ Expected: FAIL initially (unfilled placeholders / compile), then once plumbed, m
 
 - [ ] **Step 3: Fill the plumbing until it passes**
 
-Wire the Step-0 demux/packetise/validate calls. No new production code should be needed — if the test reveals a real bug in Tasks 1–4, fix it there (and note it), don't paper over it in the test.
+Wire the Step-0 demux/packetize/validate calls. No new production code should be needed — if the test reveals a real bug in Tasks 1–4, fix it there (and note it), don't paper over it in the test.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1062,16 +1062,16 @@ git commit -m "test(transmux): real-fixture RTP-stream timing+config+SDP round-t
 ### Task 6: Docs, spec transcription, no_std + full gate, CHANGELOG
 
 **Files:**
-- Create: `transmux/docs/rtp-depacketisation.md`
+- Create: `transmux/docs/rtp-depacketization.md`
 - Modify: `transmux/src/rtp_stream.rs`, `transmux/src/rtp_sdp.rs` (ensure `//!` cite the transcription), `transmux/CHANGELOG.md`
 
 - [ ] **Step 1: Write the RFC transcription**
 
-Create `transmux/docs/rtp-depacketisation.md` transcribing the payload-format syntax used: RFC 6184 §5.2 (NAL/STAP-A/FU-A packet structures + the FU header S/E/R bits + nal_unit_type table incl. 5=IDR,7=SPS,8=PPS,24=STAP-A,28=FU-A), §8.1 (`sprop-parameter-sets`), and RFC 3640 §3.2–3.3 (AU-headers-length + AU-header size/index fields, AAC-hbr) + §4.1 (`config` fmtp). RFC text is freely redistributable — quote the relevant field tables. End with a short "transmux mapping" note (which struct/field each maps to).
+Create `transmux/docs/rtp-depacketization.md` transcribing the payload-format syntax used: RFC 6184 §5.2 (NAL/STAP-A/FU-A packet structures + the FU header S/E/R bits + nal_unit_type table incl. 5=IDR,7=SPS,8=PPS,24=STAP-A,28=FU-A), §8.1 (`sprop-parameter-sets`), and RFC 3640 §3.2–3.3 (AU-headers-length + AU-header size/index fields, AAC-hbr) + §4.1 (`config` fmtp). RFC text is freely redistributable — quote the relevant field tables. End with a short "transmux mapping" note (which struct/field each maps to).
 
 - [ ] **Step 2: Verify module docs cite it**
 
-Ensure `rtp_stream.rs` and `rtp_sdp.rs` `//!` blocks name the RFC + section and reference `transmux/docs/rtp-depacketisation.md`. (Bit-range notation in doc comments must be backticked, e.g. `` `[7:4]` ``.)
+Ensure `rtp_stream.rs` and `rtp_sdp.rs` `//!` blocks name the RFC + section and reference `transmux/docs/rtp-depacketization.md`. (Bit-range notation in doc comments must be backticked, e.g. `` `[7:4]` ``.)
 
 - [ ] **Step 3: Update CHANGELOG**
 
@@ -1079,7 +1079,7 @@ Add under `[Unreleased]` in `transmux/CHANGELOG.md`:
 
 ```markdown
 ### Added
-- Streaming, timing- and config-aware RTP depayloader `RtpStreamDepacketiser`
+- Streaming, timing- and config-aware RTP depayloader `RtpStreamDepacketizer`
   (RFC 6184 H.264 / RFC 3640 AAC): incremental `push`/`flush`, real per-sample
   duration from RTP-timestamp deltas, `is_sync` from IDR detection. v1 assumes
   low-delay H.264 (no B-frame reorder; `composition_offset = 0`).
@@ -1103,8 +1103,8 @@ Expected: all green. The `--no-default-features` build is the critical one (no_s
 - [ ] **Step 5: Commit**
 
 ```bash
-git add transmux/docs/rtp-depacketisation.md transmux/src/rtp_stream.rs transmux/src/rtp_sdp.rs transmux/CHANGELOG.md
-git commit -m "docs(transmux): RTP depacketisation RFC transcription + CHANGELOG (#700)"
+git add transmux/docs/rtp-depacketization.md transmux/src/rtp_stream.rs transmux/src/rtp_sdp.rs transmux/CHANGELOG.md
+git commit -m "docs(transmux): RTP depacketization RFC transcription + CHANGELOG (#700)"
 ```
 
 ---
@@ -1119,8 +1119,8 @@ git commit -m "docs(transmux): RTP depacketisation RFC transcription + CHANGELOG
 - P2 SDP AAC config= → esds/CodecConfig → Task 3. ✓
 - R1 (B-frame DTS) + R2 (RTP-ts→timescale) → addressed/scoped in Task 4 timing model + docs. ✓
 - Hard gate: RFC transcription in `transmux/docs/` + cited (Task 6); real-fixture parse→timing→round-trip→validate (Task 5); no_std build (Task 6); biting tests (Tasks 1–5). ✓
-- Additive → minor bump; old batch `RtpDepacketiser` untouched (Task 1 delegation keeps it). ✓
+- Additive → minor bump; old batch `RtpDepacketizer` untouched (Task 1 delegation keeps it). ✓
 
-**Type consistency:** `ReassembledAu{timestamp,is_sync,data}`, `RtpStreamTrack{track_id,kind,config,clock_rate}`, `RtpStreamDepacketiser::{new,track_specs,push,flush}`, `avc_config_from_sprop(&str)->Result<AVCConfigurationBox>`, `aac_config_from_fmtp(&str)->Result<CodecConfig>` — used consistently across tasks and the fixture test. `Sample::new(data,duration,is_sync,composition_offset)`, `TrackSpec::new(track_id,timescale,config)` match the confirmed signatures.
+**Type consistency:** `ReassembledAu{timestamp,is_sync,data}`, `RtpStreamTrack{track_id,kind,config,clock_rate}`, `RtpStreamDepacketizer::{new,track_specs,push,flush}`, `avc_config_from_sprop(&str)->Result<AVCConfigurationBox>`, `aac_config_from_fmtp(&str)->Result<CodecConfig>` — used consistently across tasks and the fixture test. `Sample::new(data,duration,is_sync,composition_offset)`, `TrackSpec::new(track_id,timescale,config)` match the confirmed signatures.
 
-**Open verification points flagged for the implementer (Step 0 reads):** exact `mp4esds` constructors (Task 3), `SamplingFrequencyIndex`/`ChannelConfiguration` accessors (Task 3), the existing demux+packetise helpers in `transmux/tests/rtp.rs` (Task 5), `CodecConfig: Clone` + `parse_rtp_header` visibility (Task 4). These are stable local facts pinned to file paths; the tests assert observable results so any correct construction passes.
+**Open verification points flagged for the implementer (Step 0 reads):** exact `mp4esds` constructors (Task 3), `SamplingFrequencyIndex`/`ChannelConfiguration` accessors (Task 3), the existing demux+packetize helpers in `transmux/tests/rtp.rs` (Task 5), `CodecConfig: Clone` + `parse_rtp_header` visibility (Task 4). These are stable local facts pinned to file paths; the tests assert observable results so any correct construction passes.

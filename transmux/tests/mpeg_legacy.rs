@@ -372,7 +372,7 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 // ── Test: MP2 PES payloads that don't start on a frame sync must resync ────
 // (issue #638). A real DVB-S broadcast multiplexer routinely splits PES
 // payloads without regard to audio frame boundaries -- `mpeg2_mp2.ts`'s own
-// PES packetisation happens to be frame-aligned, so it never exercises this.
+// PES packetization happens to be frame-aligned, so it never exercises this.
 // `mpeg2_mp2_pes_misaligned.ts` takes the same 39 real captured MP2 frames
 // and re-chunks them into fixed 2000-byte PES payloads with no regard for
 // the ~1253/1254-byte frame length, reproducing the misalignment.

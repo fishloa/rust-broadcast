@@ -2,7 +2,7 @@
 
 Container-level only. Sources: ISO/IEC 23008-3 §20 (paid, canonical) for the record
 syntax; **ATSC A/342-3** (vendored `specs/atsc_a342-3_2025_mpegh_system.pdf`, free) for
-the mhaC profile/level constraints + MHAS packetisation (`mpegh-atsc-a342-3.md`).
+the mhaC profile/level constraints + MHAS packetization (`mpegh-atsc-a342-3.md`).
 
 ## Sample entries
 - `mha1` / `mha2` — MHASampleEntry: each sample is one `mpegh3daFrame`; config carried

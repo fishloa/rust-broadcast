@@ -5,7 +5,7 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.81-blue.svg)](https://blog.rust-lang.org/)
 [![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#license)
 
-**PES (Packetised Elementary Stream) depacketisation + PTS/DTS** — the sublayer
+**PES (Packetized Elementary Stream) depacketization + PTS/DTS** — the sublayer
 between an MPEG-TS packet layer and an elementary-stream consumer. Per ISO/IEC
 13818-1 (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7.
 
@@ -53,7 +53,7 @@ elementary-stream codec bitstream parsing (the consumer's job); network transpor
 Run with `cargo run -p mpeg-pes --example <name>`:
 
 - **`parse_pes_packet`** — parse one PES packet from raw bytes (stream_id + PTS + payload).
-- **`extract_pts`** — depacketise a real capture, reassemble PES on a PID, and report the PTS timeline.
+- **`extract_pts`** — depacketize a real capture, reassemble PES on a PID, and report the PTS timeline.
 - **`build_pes_header`** — construct a PES packet header from typed fields (PTS+DTS, ESCR, DSM trick mode), serialize, re-parse, and verify round-trip.
 
 ### Building & editing PES headers

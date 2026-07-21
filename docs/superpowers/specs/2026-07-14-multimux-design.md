@@ -48,7 +48,7 @@ Two `transmux` gaps must be closed first, each its own issue/story/PR, then a
 `transmux` minor release; multimux then depends on that new version.
 
 - **P1 — real streaming RTP demux input (`transmux`).** The current
-  `rtp::RtpDepacketiser` is a batch test-helper: config-lossy (placeholder
+  `rtp::RtpDepacketizer` is a batch test-helper: config-lossy (placeholder
   empty SPS/PPS), timing-lossy (`duration:0`, `is_sync:true`,
   `start_decode_time:0`). transmux is the demux hub ("demux any input into the
   neutral IR"); RTP is just another transport input alongside TS/fMP4/PS/WebM/
@@ -97,7 +97,7 @@ RTSP source ──AsyncRtspClient──► ClientEvent::MediaData{channel,data}
     │                        per-channel RTP packet accumulator
     │                        (group into access units by marker bit)
     │                                     ▼
-    │                        RtpDepacketiser → Media/Sample
+    │                        RtpDepacketizer → Media/Sample
     │                                     ▼
     │                        LlHlsSegmenter.push(track_id, Sample)
     │                                     ▼
@@ -154,7 +154,7 @@ RTSP source ──AsyncRtspClient──► ClientEvent::MediaData{channel,data}
 1. `AsyncRtspClient` yields `MediaData{channel,data}` (one RTP packet).
 2. Accumulator appends to the channel's current-AU buffer; on RTP **marker bit**
    (video) / AU boundary (AAC) the AU is complete.
-3. Completed AU(s) → `RtpDepacketiser.unpackage(RtpInput{streams})` → `Media`
+3. Completed AU(s) → `RtpDepacketizer.unpackage(RtpInput{streams})` → `Media`
    with `Sample`s (length-prefixed NALs, `is_sync`, `composition_offset`,
    `SourceTiming{dts,pts}` from RTP timestamp).
 4. `LlHlsSegmenter.push(track_id, sample)`.

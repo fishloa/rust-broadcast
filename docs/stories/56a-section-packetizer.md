@@ -1,7 +1,7 @@
-# Story 56a — `SectionPacketiser` (dvb-si `ts` feature)
+# Story 56a — `SectionPacketizer` (dvb-si `ts` feature)
 
-Delegated brief for the section→TS packetiser, the first half of GitHub issue
-**#56** ("section-to-TS packetiser + SiMux scheduler — the missing output half").
+Delegated brief for the section→TS packetizer, the first half of GitHub issue
+**#56** ("section-to-TS packetizer + SiMux scheduler — the missing output half").
 Self-contained: everything you need is here or in the linked in-repo spec
 transcriptions. Touch only the files listed. Do **not** commit.
 
@@ -11,11 +11,11 @@ All wire rules come from in-repo transcriptions of vendored ETSI/ISO PDFs. Do
 **not** invent values or citations — every constant must trace to one of these:
 
 - **`dvb-si/docs/iso_13818_1_systems.md`** → "PSI section carriage and
-  pointer_field (§2.4.4–2.4.4.2)". The packetiser's core rules: PUSI semantics,
+  pointer_field (§2.4.4–2.4.4.2)". The packetizer's core rules: PUSI semantics,
   `pointer_field` meaning, section concatenation, and 0xFF stuffing.
 - **`dvb-si/docs/en_300_468.md`** → "§5.1.4 — Repetition rates and random access"
   (informational here; the 25 ms floor belongs to the scheduler in story 56b,
-  not this packetiser).
+  not this packetizer).
 
 ## What to build
 
@@ -25,13 +25,13 @@ must cite ISO/IEC 13818-1 §2.4.4 and name `docs/iso_13818_1_systems.md` (follow
 the citation style in `ts.rs:223`).
 
 ```rust
-pub struct SectionPacketiser {
+pub struct SectionPacketizer {
     pid: u16,
     continuity_counter: u8,
 }
 
-impl SectionPacketiser {
-    /// Start a packetiser for `pid` with continuity_counter = 0.
+impl SectionPacketizer {
+    /// Start a packetizer for `pid` with continuity_counter = 0.
     pub fn new(pid: u16) -> Self;
     /// Start at a specific continuity_counter (0..=15) — for resuming a stream.
     pub fn with_continuity(pid: u16, cc: u8) -> Self;
@@ -39,21 +39,21 @@ impl SectionPacketiser {
     pub fn pid(&self) -> u16;
     pub fn continuity_counter(&self) -> u8;
 
-    /// Packetise a batch of complete sections into 188-byte TS packets,
+    /// Packetize a batch of complete sections into 188-byte TS packets,
     /// appended to `out` (cleared first). Buffer-reuse primary API (mirror the
     /// `feed_*_into` pattern in dvb-bbframe). Returns the number of packets
     /// appended.
-    pub fn packetise_into(&mut self, sections: &[&[u8]], out: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize;
+    pub fn packetize_into(&mut self, sections: &[&[u8]], out: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize;
 
-    /// Allocating convenience wrapper over `packetise_into`.
-    pub fn packetise(&mut self, sections: &[&[u8]]) -> Vec<[u8; TS_PACKET_SIZE]>;
+    /// Allocating convenience wrapper over `packetize_into`.
+    pub fn packetize(&mut self, sections: &[&[u8]]) -> Vec<[u8; TS_PACKET_SIZE]>;
 }
 ```
 
 Reuse `TS_PACKET_SIZE`, `TS_SYNC_BYTE`, and `TsHeader` (with its
 `serialize_into`) from `crate::ts` — do not duplicate header-bit constants.
 
-### The packetise algorithm (implement exactly — it is the inverse of `SectionReassembler::feed`)
+### The packetize algorithm (implement exactly — it is the inverse of `SectionReassembler::feed`)
 
 Concatenate the batch's sections into one byte stream `data`; record `starts` =
 the byte offset where each section begins (`0, len0, len0+len1, …`). Emit packets
@@ -91,7 +91,7 @@ The hard project invariant is byte-identical round-trip. Write:
 
 1. **Round-trip property/iteration test:** for a spread of section-size mixes —
    include 1-byte body, sizes that land a section boundary exactly at 184/183/188,
-   several short sections in one batch, and a >4096-spanning mix — `packetise`
+   several short sections in one batch, and a >4096-spanning mix — `packetize`
    then feed each packet's payload+PUSI to `crate::ts::SectionReassembler` (use
    `TsPacket::parse` to recover `payload`/`pusi`), draining with a
    `while let Some(s) = r.pop_section()` loop, and assert the popped sections are
@@ -99,13 +99,13 @@ The hard project invariant is byte-identical round-trip. Write:
    fixed table of representative sizes computed in the test is fine and keeps
    MSRV/`--no-default-features`-of-dev-deps clean.)
 2. **Continuity counter:** asserts CC increments per packet and wraps 15→0 across
-   a multi-packet batch, and that a second `packetise` call continues the CC.
+   a multi-packet batch, and that a second `packetize` call continues the CC.
 3. **PUSI placement:** asserts PUSI is set exactly on packets where a section
    begins, and `pointer_field` equals the tail length before it.
 4. **Stuffing:** asserts the final packet's unused tail is `0xFF` and that the
    reassembler discards it (no extra section, `is_empty()` afterwards).
 5. **Fixture round-trip:** parse the sections out of `dvb-si/tests/fixtures/m6-single.ts`
-   via the existing demux/reassembler, re-`packetise` them on their PID, feed the
+   via the existing demux/reassembler, re-`packetize` them on their PID, feed the
    result through `SiDemux`, and assert zero malformed/dropped sections and the
    same `AnyTableSection` set. (If wiring `SiDemux` here is heavy, a
    `SectionReassembler` round-trip on the extracted sections is an acceptable
@@ -120,7 +120,7 @@ The hard project invariant is byte-identical round-trip. Write:
 - `0xFF` stuffing byte → a named const (e.g. `STUFFING_BYTE`).
 - Symmetric with the reassembler; this is the `Serialize`-direction counterpart.
 - `#[cfg(feature = "serde", …)]` is not needed (no new public data structs beyond
-  the packetiser, which holds only `u16`/`u8`).
+  the packetizer, which holds only `u16`/`u8`).
 - Must build `--no-default-features` (the module is `ts`-gated, so it simply
   compiles out) and on MSRV 1.75.
 

@@ -544,7 +544,7 @@ origin — a thin client + server wrap around `rtsp-runtime` (RTSP pull) and
   (interleaved TCP, one media per SETUP) → PLAY over
   `rtsp_runtime::io::AsyncRtspClient`; SDP → per-track `CodecConfig` via
   `transmux`'s SDP-fmtp helpers; interleaved RTP routed per channel into
-  `transmux::RtpStreamDepacketiser`, yielding timed `Sample`s.
+  `transmux::RtpStreamDepacketizer`, yielding timed `Sample`s.
 - **Per-route pipeline** (`pipeline::run_pipeline`): drives a `SampleSource`
   (real `RtspSession` or, for tests/examples, `MockSource`) through a
   `transmux::ll_hls::LlHlsSegmenter`, publishing every init segment, ready

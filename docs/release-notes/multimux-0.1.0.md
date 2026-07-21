@@ -18,7 +18,7 @@ Muxing only — samples stay opaque, never transcoded.
   (interleaved TCP, per-media channel pair) → PLAY over
   `rtsp_runtime::io::AsyncRtspClient`; per-track `CodecConfig` from the
   DESCRIBE SDP via `transmux`'s SDP-fmtp → codec-config helpers; interleaved
-  RTP routed per channel into `transmux::RtpStreamDepacketiser`, yielding
+  RTP routed per channel into `transmux::RtpStreamDepacketizer`, yielding
   timed `Sample`s ready for segmentation.
 - **`pipeline`** — `run_pipeline` drives a `SampleSource` (the real
   `RtspSession`, or `MockSource` for tests/examples) through a
