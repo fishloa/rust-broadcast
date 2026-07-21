@@ -13,7 +13,7 @@
 /// The `uri` is scheme-specific: an HTTP absolute/relative URL for HTTP
 /// clients, or the RTSP request URI (e.g. `rtsp://host/stream`) for RTSP —
 /// never translate one into the other (RFC 2326 §14).
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct RequestContext<'a> {
     /// The request method (`"GET"`, `"DESCRIBE"`, …).
     pub method: &'a str,
@@ -86,6 +86,38 @@ impl<'a> RequestContext<'a> {
     }
 }
 
+/// Manual `Debug` (rather than `#[derive(Debug)]`): [`Self::headers`] carries
+/// whatever the caller attached, which — server-side — includes the real
+/// `Authorization`/`Proxy-Authorization` header the request was authenticated
+/// with. Basic's value is a reversible base64 `user:pass` (RFC 7617 §2); a
+/// bare `tracing::debug!(?ctx, ...)` call must not dump it to logs. Every
+/// other header (name and value) is rendered normally — only the value of an
+/// auth header is redacted, and only that header's name is enough to tell
+/// which one.
+impl core::fmt::Debug for RequestContext<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        struct Headers<'a>(&'a [(&'a str, &'a str)]);
+        impl core::fmt::Debug for Headers<'_> {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.debug_list()
+                    .entries(self.0.iter().map(|(name, value)| {
+                        let redact = name.eq_ignore_ascii_case("authorization")
+                            || name.eq_ignore_ascii_case("proxy-authorization");
+                        (*name, if redact { "<redacted>" } else { value })
+                    }))
+                    .finish()
+            }
+        }
+        f.debug_struct("RequestContext")
+            .field("method", &self.method)
+            .field("uri", &self.uri)
+            .field("body", &self.body)
+            .field("headers", &Headers(self.headers))
+            .field("peer_addr", &self.peer_addr)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +143,62 @@ mod tests {
         let addr: std::net::SocketAddr = "127.0.0.1:8080".parse().unwrap();
         let ctx = RequestContext::new("GET", "/x").with_peer_addr(addr);
         assert_eq!(ctx.peer_addr, Some(addr));
+    }
+
+    // Security-blocker regression (pre-release audit): `RequestContext` must
+    // never render an `Authorization`/`Proxy-Authorization` header's value
+    // via `{:?}` — a bare `tracing::debug!(?ctx, ...)` must not leak
+    // credentials to logs. Must FAIL if `Debug` reverts to a plain
+    // `#[derive(Debug)]`.
+    #[test]
+    fn debug_redacts_authorization_header_value_but_keeps_other_fields() {
+        // "admin:hunter2-super-secret" base64-encoded.
+        let auth_value = "Basic YWRtaW46aHVudGVyMi1zdXBlci1zZWNyZXQ=";
+        let headers: &[(&str, &str)] =
+            &[("Authorization", auth_value), ("X-Forwarded-User", "alice")];
+        let ctx = RequestContext::new("DESCRIBE", "rtsp://cam/live").with_headers(headers);
+        let debug = format!("{ctx:?}");
+
+        assert!(
+            !debug.contains("YWRtaW46aHVudGVyMi1zdXBlci1zZWNyZXQ"),
+            "leaked base64 secret: {debug}"
+        );
+        assert!(
+            !debug.contains("hunter2"),
+            "leaked password substring: {debug}"
+        );
+        assert!(
+            debug.contains("<redacted>"),
+            "expected redaction marker: {debug}"
+        );
+
+        // Non-secret fields/headers must still be visible for diagnostics.
+        assert!(debug.contains("DESCRIBE"), "method missing: {debug}");
+        assert!(debug.contains("rtsp://cam/live"), "uri missing: {debug}");
+        assert!(
+            debug.contains("Authorization"),
+            "header name should still be shown: {debug}"
+        );
+        assert!(
+            debug.contains("X-Forwarded-User") && debug.contains("alice"),
+            "non-secret header should render normally: {debug}"
+        );
+    }
+
+    // Same regression, case-insensitively, for the proxy variant (RFC 7235
+    // §4.4) and for `Proxy-Authorization` sent in a non-canonical case.
+    #[test]
+    fn debug_redacts_proxy_authorization_header_case_insensitively() {
+        let headers: &[(&str, &str)] = &[("proxy-AUTHORIZATION", "Basic c2VjcmV0LXBhc3N3b3Jk")];
+        let ctx = RequestContext::new("GET", "/x").with_headers(headers);
+        let debug = format!("{ctx:?}");
+        assert!(
+            !debug.contains("c2VjcmV0LXBhc3N3b3Jk"),
+            "leaked base64 secret: {debug}"
+        );
+        assert!(
+            debug.contains("<redacted>"),
+            "expected redaction marker: {debug}"
+        );
     }
 }

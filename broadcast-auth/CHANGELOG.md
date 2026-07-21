@@ -55,6 +55,22 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   same pattern already used for `Authenticator`/`Verifier` one file over)
   that shows the username (not secret) for `Basic`/`Digest` and redacts
   `password`/`token` as `"***"`.
+- **`RequestContext`'s `Debug` no longer leaks the `Authorization`/
+  `Proxy-Authorization` header value.** Pre-release audit finding: the
+  derived `Debug` printed every header verbatim, including a Basic
+  credential's reversible base64 `user:pass` — reachable through a bare
+  `tracing::debug!(?ctx, ...)` call. Replaced with a manual `Debug` (the same
+  redaction pattern as `Credentials`) that renders the value of any header
+  case-insensitively named `authorization`/`proxy-authorization` as
+  `"<redacted>"`; every other field/header renders normally.
+- **`Verifier::verify`'s Digest field parse is now capped at 64 fields.**
+  Pre-release audit finding: `verify_digest` split the `Authorization`
+  header's fields into a `HashMap` with no bound, so a pathologically large
+  header forced an unbounded per-request allocation. A real Digest response
+  carries under 15 fields; a header with more than `MAX_DIGEST_FIELDS` (64)
+  comma-separated fields is now rejected (`AuthResult::Unauthorized`) before
+  the map is built. Not a substitute for a transport-level header-size cap,
+  which callers should also enforce.
 
 ### Added
 - Initial release: a shared, scheme-agnostic `Credentials` model (`Basic` /

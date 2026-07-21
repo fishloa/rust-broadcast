@@ -274,9 +274,20 @@ impl LlHlsClient {
     /// arrives — the caller's fetches may complete in any order.
     ///
     /// # Errors
+    /// [`Error::UnrequestedResource`] if `id` was never requested (the
+    /// `requested` bookkeeping — or, for `Init`, `init_uri` — has no record
+    /// of it): a caller/driver bug, or a stale/duplicate delivery after the
+    /// client already moved past this id.
     /// [`Error::Demux`] if `transmux::Fmp4Demux` rejects the concatenation of
     /// the cached init + `bytes`.
     pub fn on_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let was_requested = match id {
+            ResourceId::Init => self.init_uri.is_some(),
+            ResourceId::Part { .. } | ResourceId::Segment { .. } => self.requested.contains(&id),
+        };
+        if !was_requested {
+            return Err(Error::UnrequestedResource { id });
+        }
         self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
         match id {
             ResourceId::Init => {
@@ -538,5 +549,68 @@ impl LlHlsClient {
             self.pending_outputs.push_back(Output::EndOfStream);
             self.end_emitted = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Regression: `on_resource` documents (see `Error::UnrequestedResource`)
+    // that it rejects a `ResourceId` the client never requested, but
+    // previously never actually checked — any bytes for any id (a
+    // caller/driver bug, or a stale/duplicate delivery) were silently
+    // accepted. Must FAIL if that check is ever removed.
+    #[test]
+    fn on_resource_rejects_a_never_requested_id() {
+        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let id = ResourceId::Segment { msn: 0 };
+
+        let err = client
+            .on_resource(id, b"some bytes")
+            .expect_err("an id the client never requested must be rejected");
+        assert!(
+            matches!(err, Error::UnrequestedResource { id: got } if got == id),
+            "wrong error variant: {err:?}"
+        );
+
+        // Init is checked too (tracked via `init_uri` rather than
+        // `requested`, since it's never inserted into that set).
+        let err = client
+            .on_resource(ResourceId::Init, b"init bytes")
+            .expect_err("an unrequested Init must be rejected");
+        assert!(
+            matches!(
+                err,
+                Error::UnrequestedResource {
+                    id: ResourceId::Init
+                }
+            ),
+            "wrong error variant: {err:?}"
+        );
+    }
+
+    // The flip side of the regression above: a `ResourceId` the client
+    // actually asked for (via its own internal `request_resource`
+    // bookkeeping, mirroring what a real `poll()`-driven fetch populates)
+    // must still be accepted, not spuriously rejected.
+    #[test]
+    fn on_resource_accepts_a_previously_requested_id() {
+        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let id = ResourceId::Segment { msn: 0 };
+        client.request_resource(id, "http://example.com/seg0.m4s".to_string(), None);
+
+        // No init segment cached yet, so this is buffered rather than
+        // demuxed — the point here is only that it is *not* rejected as
+        // unrequested.
+        let result = client.on_resource(id, b"some bytes");
+        assert!(
+            result.is_ok(),
+            "a requested id must be accepted: {result:?}"
+        );
+        assert!(
+            client.pending_demux.iter().any(|(bid, _)| *bid == id),
+            "expected the resource to be buffered pending the init segment"
+        );
     }
 }

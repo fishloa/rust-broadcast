@@ -17,6 +17,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.unwrap_or_else(std::sync::PoisonError::into_inner)`. Both now follow the
   same poison-tolerant pattern, so one panicking holder of the lock can no
   longer cascade into panics on ordinary requests.
+- **`client::LlHlsClient::on_resource` now actually enforces
+  `Error::UnrequestedResource`.** Pre-release audit finding: the variant's
+  docs already claimed a `ResourceId` the client never requested was
+  rejected, but `on_resource` never checked — any bytes for any id (a
+  caller/driver bug, or a stale/duplicate delivery) were silently accepted.
+  Now checked against the client's internal `requested` bookkeeping (`Init`
+  against whether an init fetch is outstanding/cached), returning
+  `Error::UnrequestedResource` instead.
 
 ### Changed
 - **`server::master_playlist_m3u8` now takes a `media_playlist_name: &str`

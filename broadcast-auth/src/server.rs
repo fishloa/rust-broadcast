@@ -184,6 +184,11 @@ impl Verifier {
     /// `ctx.method`/`ctx.uri` are needed for the Digest `HA2`/`uri`-match
     /// check (RFC 7616 §3.4.1); unused for Basic/Bearer. Forwarded reads
     /// `ctx`'s configured user header instead — see the module docs.
+    ///
+    /// A pathologically large `Digest` `Authorization` header is rejected
+    /// outright rather than parsed (see `MAX_DIGEST_FIELDS`) — this bounds
+    /// the per-request allocation cost, but is not a substitute for a
+    /// transport-level cap on header size, which callers should also enforce.
     pub fn verify(&self, ctx: &RequestContext<'_>) -> AuthResult {
         let ok = match &self.scheme {
             VerifierScheme::Basic {
@@ -267,6 +272,15 @@ fn verify_bearer(header: &str, token: &str) -> bool {
     constant_time_eq(sent.trim().as_bytes(), token.as_bytes())
 }
 
+/// A real Digest `Authorization` response (RFC 7616 §3.4.1) carries under 15
+/// `key=value` fields (`username`, `realm`, `nonce`, `uri`, `response`,
+/// `algorithm`, `cnonce`, `opaque`, `qop`, `nc`, plus a couple of optional
+/// extensions). Capping well above that bounds [`verify_digest`]'s
+/// `HashMap` allocation against a request carrying a pathologically large
+/// `Authorization` header (a huge field count forcing a huge per-request
+/// map) without rejecting any legitimate client.
+const MAX_DIGEST_FIELDS: usize = 64;
+
 /// RFC 7616 §3.4.1: parse the `Digest` `Authorization` header's
 /// `key=value`/`key="value"` fields, independently recompute the expected
 /// `response`, and compare in constant time — `qop=auth`/`algorithm=MD5`
@@ -275,6 +289,10 @@ fn verify_bearer(header: &str, token: &str) -> bool {
 /// Also checks the client's claimed `uri` field against the actual request
 /// `uri` (RFC 7616 §3.4.1's SHOULD) rather than only using whatever the
 /// client claims to compute `HA2`.
+///
+/// Rejects outright (without building the field map) a header carrying more
+/// than [`MAX_DIGEST_FIELDS`] comma-separated fields — see that constant's
+/// docs.
 fn verify_digest(
     header: &str,
     username: &str,
@@ -287,6 +305,9 @@ fn verify_digest(
     let Some(rest) = header.strip_prefix("Digest ") else {
         return false;
     };
+    if rest.split(',').count() > MAX_DIGEST_FIELDS {
+        return false;
+    }
     let mut fields = std::collections::HashMap::new();
     for part in rest.split(',') {
         let part = part.trim();
@@ -697,6 +718,34 @@ mod tests {
         assert!(!constant_time_eq(b"same", b"diff"));
         assert!(!constant_time_eq(b"short", b"longer-string"));
         assert!(constant_time_eq(b"", b""));
+    }
+
+    // Regression: an oversized Digest `Authorization` header (way more
+    // `key=value` fields than any real client sends) must be rejected
+    // outright rather than parsed into an unbounded `HashMap` — and must
+    // never panic. Must FAIL if the `MAX_DIGEST_FIELDS` cap in
+    // `verify_digest` is ever removed.
+    #[test]
+    fn oversized_digest_header_is_rejected_not_parsed() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let mut huge = String::from("Digest ");
+        for i in 0..(MAX_DIGEST_FIELDS + 1) {
+            if i > 0 {
+                huge.push(',');
+            }
+            huge.push_str(&format!("k{i}=\"v{i}\""));
+        }
+        assert_eq!(
+            verify_auth(&v, Some(&huge), "DESCRIBE", "rtsp://cam/live"),
+            AuthResult::Unauthorized,
+            "oversized Digest header must not be accepted"
+        );
     }
 
     #[test]
