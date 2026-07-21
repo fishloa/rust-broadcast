@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `RtpStreamDepacketiser::push_sender_report`/`push_rtcp` + `sync_start_decode_times`
+  (issue #722): RTCP Sender Report (RFC 3550 §6.4.1) NTP-wallclock ↔
+  RTP-timestamp correlation for cross-track A/V sync, replacing the module's
+  `TODO(P5.3)`. Feeding an SR for at least two tracks lets
+  `sync_start_decode_times` compute each anchored track's `start_decode_time`
+  on one common wallclock, preserving the real inter-track offset that
+  independent per-track rebase-to-0 discards. Strictly additive/opt-in: with
+  no Sender Reports fed, `sync_start_decode_times` returns an empty `Vec` and
+  existing callers keep the unchanged v1 behaviour.
+
 ## [0.18.0] - 2026-07-21
 
 ### Changed (BREAKING)
