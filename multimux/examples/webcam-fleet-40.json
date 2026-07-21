@@ -1,0 +1,463 @@
+{
+  "bind": "0.0.0.0:8443",
+  "playlist_name": "index.m3u8",
+  "output_auth": {
+    "scheme": "basic",
+    "username": "ops",
+    "password": "fleet-demo-password"
+  },
+  "routes": [
+    {
+      "name": "cam1",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5001",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam2",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6002",
+        "multicast_group": "239.5.5.3"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam3",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam3.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam4",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam4.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam5",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam5.example.net:554/stream1",
+        "auth": {
+          "bearer_token": "tok-cam5-demo"
+        }
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam6",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5006",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n",
+        "multicast_group": "239.1.1.7"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam7",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6007",
+        "multicast_group": "239.5.5.8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam8",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam8.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam9",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam9.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam10",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam10.example.net:554/stream1",
+        "auth": {
+          "username": "admin",
+          "password": "cam10-demo-pw"
+        }
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "cam11",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5011",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam12",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6012",
+        "multicast_group": "239.5.5.13"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam13",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam13.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam14",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam14.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam15",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam15.example.net:554/stream1",
+        "auth": {
+          "bearer_token": "tok-cam15-demo"
+        }
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam16",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5016",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n",
+        "multicast_group": "239.1.1.17"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam17",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6017",
+        "multicast_group": "239.5.5.18"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam18",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam18.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam19",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam19.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam20",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam20.example.net:554/stream1",
+        "auth": {
+          "username": "admin",
+          "password": "cam20-demo-pw"
+        }
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "cam21",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5021",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam22",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6022",
+        "multicast_group": "239.5.5.23"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam23",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam23.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam24",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam24.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam25",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam25.example.net:554/stream1",
+        "auth": {
+          "bearer_token": "tok-cam25-demo"
+        }
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam26",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5026",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n",
+        "multicast_group": "239.1.1.27"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam27",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6027",
+        "multicast_group": "239.5.5.28"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam28",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam28.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam29",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam29.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam30",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam30.example.net:554/stream1",
+        "auth": {
+          "username": "admin",
+          "password": "cam30-demo-pw"
+        }
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    },
+    {
+      "name": "cam31",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5031",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam32",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6032",
+        "multicast_group": "239.5.5.33"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam33",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam33.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam34",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam34.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam35",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam35.example.net:554/stream1",
+        "auth": {
+          "bearer_token": "tok-cam35-demo"
+        }
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam36",
+      "input": {
+        "type": "rtp",
+        "addr": "0.0.0.0:5036",
+        "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==\r\n",
+        "multicast_group": "239.1.1.37"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam37",
+      "input": {
+        "type": "ts_udp",
+        "addr": "0.0.0.0:6037",
+        "multicast_group": "239.5.5.38"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam38",
+      "input": {
+        "type": "ts_http",
+        "url": "http://cam38.example.net:8080/stream.ts"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam39",
+      "input": {
+        "type": "hls_pull",
+        "url": "https://cam39.example.net/live/media.m3u8"
+      },
+      "outputs": [
+        "llhls"
+      ]
+    },
+    {
+      "name": "cam40",
+      "input": {
+        "type": "rtsp",
+        "url": "rtsp://cam40.example.net:554/stream1",
+        "auth": {
+          "username": "admin",
+          "password": "cam40-demo-pw"
+        }
+      },
+      "outputs": [
+        "llhls",
+        "dash"
+      ]
+    }
+  ]
+}

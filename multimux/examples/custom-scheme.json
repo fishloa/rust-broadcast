@@ -1,0 +1,13 @@
+{
+  "bind": "127.0.0.1:8080",
+  "routes": [
+    {
+      "name": "cam1",
+      "input": {
+        "type": "custom",
+        "type_tag": "silence",
+        "params": {}
+      }
+    }
+  ]
+}

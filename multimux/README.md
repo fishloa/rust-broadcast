@@ -246,6 +246,30 @@ cargo run --example serve_rtsp -- rtsp://cam.local/stream
 cargo run --example custom_scheme
 ```
 
+### Example configs
+
+JSON files under [`examples/`](examples/) — each a realistic, valid
+`multimux::config::Config` for `multimux-cli --config <file>` (deserialize +
+`validate()` are guarded by `tests/example_configs.rs`, so they can't drift
+from the config schema):
+
+- [`webcam-fleet-40.json`](examples/webcam-fleet-40.json) — 40 routes
+  (`cam1`..`cam40`) spanning all five ingest protocols (RTSP with per-camera
+  Password/Bearer `auth`, RTP, TS/UDP multicast, TS/HTTP, HLS-pull), all
+  served under one shared `output_auth` (Basic) — heterogeneous ingest, one
+  uniform LL-HLS(+DASH) output surface.
+- [`reverse-proxy.json`](examples/reverse-proxy.json) — `output_auth` using
+  the `forwarded` scheme: TLS terminates at a fronting reverse proxy, and the
+  origin trusts its `X-Forwarded-User` header instead of challenging clients
+  itself (see [`OutputAuthSpec::Forwarded`](src/config.rs)'s trust-assumption
+  docs before using this in production).
+- [`multi-output.json`](examples/multi-output.json) — one RTSP ingest
+  packaged to all three outputs (`llhls`, `dash`, `ll_dash`) from the same
+  CMAF segments (issue #663 P4's "ingest-once, many-outputs").
+- [`custom-scheme.json`](examples/custom-scheme.json) — an `InputSpec::Custom`
+  route naming the `"silence"` scheme
+  [`examples/custom_scheme.rs`](examples/custom_scheme.rs) registers.
+
 ## Spec
 
 RFC 8216bis (HTTP Live Streaming, 2nd edition) — Low-Latency HLS:

@@ -14,6 +14,11 @@
 //! tag parses/validates — without needing a tokio runtime at all (the
 //! registered factory is never actually invoked here).
 //!
+//! `examples/custom-scheme.json` is the on-disk counterpart of the inline
+//! JSON built below: the same single-route config (a `"silence"`-tagged
+//! `InputSpec::Custom`) as a standalone file, for a `multimux-cli --config`
+//! invocation naming this exact scheme.
+//!
 //! # Usage
 //!
 //! ```bash

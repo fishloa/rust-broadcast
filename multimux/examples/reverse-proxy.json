@@ -1,0 +1,22 @@
+{
+  "bind": "127.0.0.1:8080",
+  "output_auth": {
+    "scheme": "forwarded",
+    "user_header": "X-Forwarded-User",
+    "forwarded_for_header": "X-Forwarded-For"
+  },
+  "routes": [
+    {
+      "name": "lobby",
+      "input": { "type": "rtsp", "url": "rtsp://lobby-cam.internal:554/stream1" }
+    },
+    {
+      "name": "carpark",
+      "input": { "type": "rtsp", "url": "rtsp://carpark-cam.internal:554/stream1" }
+    },
+    {
+      "name": "loading-dock",
+      "input": { "type": "ts_http", "url": "http://dock-encoder.internal:8080/stream.ts" }
+    }
+  ]
+}
