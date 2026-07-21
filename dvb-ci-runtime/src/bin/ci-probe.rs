@@ -32,7 +32,7 @@ mod imp {
 
     use clap::{Args, Parser, Subcommand};
     use dvb_ci_runtime::device::RecordingCaDevice;
-    use dvb_ci_runtime::event::{MmiEvent, MmiMenu};
+    use dvb_ci_runtime::event::{HotPlug, MmiEvent, MmiMenu};
     use dvb_ci_runtime::linux::LinuxCaDevice;
     use dvb_ci_runtime::{CaDevice, Driver, Notification, trace};
 
@@ -115,9 +115,10 @@ mod imp {
                 found = true;
                 match LinuxCaDevice::open(adapter, ca) {
                     Ok(mut dev) => match dev.slot_info() {
-                        Ok(si) => {
-                            println!("{path}  slot {}  module_ready={}", si.num, si.module_ready)
-                        }
+                        Ok(si) => println!(
+                            "{path}  slot {}  module_present={}  module_ready={}",
+                            si.num, si.module_present, si.module_ready
+                        ),
                         Err(e) => println!("{path}  (slot_info failed: {e})"),
                     },
                     Err(e) => println!("{path}  (open failed: {e})"),
@@ -146,17 +147,24 @@ mod imp {
     }
 
     /// Run the handshake and print application-info + the CAM's CAIDs.
+    ///
+    /// Demonstrates the closure-callback delivery style (`Driver::pump_with`):
+    /// this crate is sync/sans-IO, so there is no channel to receive on —
+    /// `pump_with` invokes the handler in-line for each notification the pump
+    /// cycle produced, instead of the caller poll-draining
+    /// `Driver::take_notifications` itself.
     fn info(adapter: u32, ca: u32, trace: bool) -> io::Result<()> {
         let mut driver = open(adapter, ca)?;
         driver.init()?;
         let deadline = Instant::now() + READY_TIMEOUT;
         let mut got_ca_info = false;
         while Instant::now() < deadline && !got_ca_info {
-            driver.pump(PUMP)?;
-            for note in driver.take_notifications() {
-                got_ca_info |= matches!(note, Notification::CaInfo { .. });
-                print_note(&note);
-            }
+            let mut got = false;
+            driver.pump_with(PUMP, |note| {
+                got |= matches!(note, Notification::CaInfo { .. });
+                print_note(note);
+            })?;
+            got_ca_info = got;
         }
         if !got_ca_info {
             eprintln!("timed out before ca_info (CAM may not have completed the handshake)");
@@ -291,6 +299,14 @@ mod imp {
                 println!("session {session_nb} closed")
             }
             Notification::Error { detail } => eprintln!("stack error: {detail}"),
+            Notification::HotPlug(hp) => match hp {
+                HotPlug::CamPresent => println!("hot-plug: CAM inserted (slot present+ready)"),
+                HotPlug::CamRemoved => println!("hot-plug: CAM removed"),
+                HotPlug::CardInserted => println!("hot-plug: card inserted (inferred)"),
+                HotPlug::CardRemoved => println!("hot-plug: card removed (inferred)"),
+                HotPlug::CardChanged => println!("hot-plug: card changed (inferred)"),
+                other => println!("hot-plug: {other}"),
+            },
             other => println!("{other:?}"),
         }
     }
