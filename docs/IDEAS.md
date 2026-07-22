@@ -76,13 +76,13 @@ Engineering Guidelines, RDDs — 800+ documents, permanently, at
 `pub.smpte.org/doc/`). Confirmed independently across trade press + SMPTE's own
 site. This unblocks a whole professional-broadcast-plant surface that was
 previously paywalled, on top of the one SMPTE crate already shipped
-(`smpte2038`, ANC data in MPEG-2 TS). Same filter as everything else in this
+(`st291`, ANC data in MPEG-2 TS). Same filter as everything else in this
 repo: parse the wrapper/protocol, never the bitstream. (Check each PDF's own
 licence/redistribution terms before vendoring into `specs/` — the catalog page
 itself doesn't state one.)
 
 9. **[SHIPPED — st291 0.2.0, #648] ST 2110-40 — ancillary data over RTP.** The direct RTP sibling of the
-   shipped `smpte2038` (ANC-in-TS): same ST 291-1 ANC packets, different
+   shipped `st291` (ANC-in-TS): same ST 291-1 ANC packets, different
    transport. Built on free IETF **RFC 8331** ("RTP Payload for SMPTE ST 291-1
    Ancillary Data"), which alone is likely sufficient — there's even an
    existing open-source reference impl (`astronautlabs/rfc8331`) to

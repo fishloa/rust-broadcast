@@ -1,6 +1,6 @@
 # Release documentation standard
 
-The authoritative standard for what documentation every `rust-dvb` release must
+The authoritative standard for what documentation every `rust-broadcast` release must
 produce, and where. Docs are a product surface; the spec-citation discipline is
 this family's differentiator and must surface on docs.rs and crates.io.
 
@@ -69,7 +69,7 @@ CLAUDE.md → "Releases are tag-driven"). One-time setup was completed in v7.4.0
   CI-compilable; surface on docs.rs. Every library crate ships two (a basic
   quickstart + an advanced/real-capture walkthrough) as of #253; the CI
   `cargo build --workspace --examples --all-features` step keeps them building.
-- **GitHub Pages** — hosts the WASM demo (fishloa.github.io/rust-dvb); optional,
+- **GitHub Pages** — hosts the WASM demo (fishloa.github.io/rust-broadcast); optional,
   not per-release.
 - **Blog / r/rust / This Week in Rust** — only for major releases, skipped for
   routine minors.

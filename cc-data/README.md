@@ -10,7 +10,7 @@ Closed-caption **`cc_data()` carriage** (CEA-608/708) per **ETSI TS 101 154 §B.
 Parses `cc_data()` into typed caption triplets (`cc_valid`, `cc_type`, `cc_data_1/2`)
 and splits **CEA-608** (line-21, `cc_type` 0/1) from **CEA-708** (DTVCC, `cc_type` 2/3).
 Symmetric `Parse`/`Serialize` with byte-exact round-trip. `no_std` + `alloc`, depends
-only on `dvb-common`.
+only on `broadcast-common`.
 
 ## Caption decode (`decode` feature, default-on)
 

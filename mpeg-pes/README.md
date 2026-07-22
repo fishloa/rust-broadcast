@@ -2,14 +2,14 @@
 
 [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes)
 [![docs.rs](https://img.shields.io/docsrs/mpeg-pes)](https://docs.rs/mpeg-pes)
-[![MSRV](https://img.shields.io/badge/MSRV-1.81-blue.svg)](https://blog.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.86-blue.svg)](https://blog.rust-lang.org/)
 [![license](https://img.shields.io/crates/l/mpeg-pes.svg)](#license)
 
 **PES (Packetized Elementary Stream) depacketization + PTS/DTS** — the sublayer
 between an MPEG-TS packet layer and an elementary-stream consumer. Per ISO/IEC
 13818-1 (Rec. ITU-T H.222.0) §2.4.3.6 / §2.4.3.7.
 
-`#![no_std]` (+ `alloc`), depends only on `dvb-common`, WASM-clean. Pairs with
+`#![no_std]` (+ `alloc`), depends only on `broadcast-common`, WASM-clean. Pairs with
 [`dvb-si`](https://crates.io/crates/dvb-si) for the TS/PSI layer:
 
 ```text

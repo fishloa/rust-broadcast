@@ -4,7 +4,7 @@
 [![docs.rs](https://img.shields.io/docsrs/dvb-tools)](https://docs.rs/dvb-tools)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-`dvb-tools` is a command-line stream analyzer over the `rust-dvb` library
+`dvb-tools` is a command-line stream analyzer over the `rust-broadcast` library
 crates. It absorbs the former `si_dump` / `t2mi_dump` examples (now `dump` and
 `t2mi`) plus a few utilities (`services`, `epg`, `pids`) under one binary.
 
@@ -69,7 +69,7 @@ $ cargo run -p dvb-tools --locked -- t2mi dvb-si/tests/fixtures/m6-single.ts --i
 
 ## MSRV
 
-**1.81** (workspace minimum). `dvb-tools` is versioned lockstep with the
+**1.86** (workspace minimum). `dvb-tools` is versioned lockstep with the
 library crates (`dvb-si`, `dvb-t2mi`, etc.) and ships as part of the 7.x
 release series.
 

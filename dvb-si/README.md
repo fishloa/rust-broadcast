@@ -11,7 +11,7 @@ Table 2 (29 section types; 28 dispatched by `AnyTableSection` + the type-keyed M
 ETSI specs (vendored in the repo and transcribed into reviewable markdown) and
 validated against live broadcast captures.
 
-**MSRV: 1.81.** `no_std + alloc` supported — disable the default `std` feature for embedded targets (non-Latin text charsets and wall-clock time require `std`).
+**MSRV: 1.86.** `no_std + alloc` supported — disable the default `std` feature for embedded targets (non-Latin text charsets and wall-clock time require `std`).
 
 ## API model
 
@@ -462,22 +462,22 @@ parsing FROM JSON is deliberately unsupported — re-parse from the wire bytes.
 
 Every layout is cited. The repo vendors the ETSI PDFs and transcribes their
 syntax tables into reviewable markdown
-([`docs/`](https://github.com/fishloa/rust-dvb/tree/main/dvb-si/docs)) —
+([`docs/`](https://github.com/fishloa/rust-broadcast/tree/main/dvb-si/docs)) —
 each spec below links both the ETSI deliverable and the in-repo
 transcription:
 
 | Spec | ETSI deliverable | Transcription |
 |---|---|---|
-| EN 300 468 V1.19.1 (2025-02) — DVB SI | [PDF](https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf) | [en_300_468.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_300_468.md) |
-| EN 301 192 v1.7.1 — data broadcasting | [PDF](https://www.etsi.org/deliver/etsi_en/301100_301199/301192/01.07.01_60/en_301192v010701p.pdf) | [en_301_192.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_301_192.md) |
-| TS 102 006 v1.7.1 — System Software Update | [PDF](https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf) | [ts_102_006_ssu.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_006_ssu.md) |
-| TS 102 323 v1.4.1 — TV-Anytime carriage | [PDF](https://www.etsi.org/deliver/etsi_ts/102300_102399/102323/01.04.01_60/ts_102323v010401p.pdf) | [ts_102_323_tva.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_323_tva.md) |
-| TS 102 809 v1.3.1 — application signalling | [PDF](https://www.etsi.org/deliver/etsi_ts/102800_102899/102809/01.03.01_60/ts_102809v010301p.pdf) | [ts_102_809_apps.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_809_apps.md) |
-| TS 102 772 v1.1.1 — MPE-IFEC | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102772/01.01.01_60/ts_102772v010101p.pdf) | [ts_102_772_mpe_ifec.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_772_mpe_ifec.md) |
-| EN 303 560 v1.1.1 — TTML subtitling | [PDF](https://www.etsi.org/deliver/etsi_en/303500_303599/303560/01.01.01_60/en_303560v010101p.pdf) | [en_303_560_ttml.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/en_303_560_ttml.md) |
-| TS 102 727 v1.1.1 — MHP (DVB-J, XAIT) | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102727/01.01.01_60/ts_102727v010101p.pdf) | [ts_102_727_mhp.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/ts_102_727_mhp.md) (descriptor-syntax subset) |
+| EN 300 468 V1.19.1 (2025-02) — DVB SI | [PDF](https://www.etsi.org/deliver/etsi_en/300400_300499/300468/01.19.01_60/en_300468v011901p.pdf) | [en_300_468.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_300_468.md) |
+| EN 301 192 v1.7.1 — data broadcasting | [PDF](https://www.etsi.org/deliver/etsi_en/301100_301199/301192/01.07.01_60/en_301192v010701p.pdf) | [en_301_192.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_301_192.md) |
+| TS 102 006 v1.7.1 — System Software Update | [PDF](https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.07.01_60/ts_102006v010701p.pdf) | [ts_102_006_ssu.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_006_ssu.md) |
+| TS 102 323 v1.4.1 — TV-Anytime carriage | [PDF](https://www.etsi.org/deliver/etsi_ts/102300_102399/102323/01.04.01_60/ts_102323v010401p.pdf) | [ts_102_323_tva.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_323_tva.md) |
+| TS 102 809 v1.3.1 — application signalling | [PDF](https://www.etsi.org/deliver/etsi_ts/102800_102899/102809/01.03.01_60/ts_102809v010301p.pdf) | [ts_102_809_apps.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_809_apps.md) |
+| TS 102 772 v1.1.1 — MPE-IFEC | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102772/01.01.01_60/ts_102772v010101p.pdf) | [ts_102_772_mpe_ifec.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_772_mpe_ifec.md) |
+| EN 303 560 v1.1.1 — TTML subtitling | [PDF](https://www.etsi.org/deliver/etsi_en/303500_303599/303560/01.01.01_60/en_303560v010101p.pdf) | [en_303_560_ttml.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/en_303_560_ttml.md) |
+| TS 102 727 v1.1.1 — MHP (DVB-J, XAIT) | [PDF](https://www.etsi.org/deliver/etsi_ts/102700_102799/102727/01.01.01_60/ts_102727v010101p.pdf) | [ts_102_727_mhp.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/ts_102_727_mhp.md) (descriptor-syntax subset) |
 | TR 101 202 v1.2.1 — data broadcasting guidelines | [PDF](https://www.etsi.org/deliver/etsi_tr/101200_101299/101202/01.02.01_60/tr_101202v010201p.pdf) | profile semantics for `carousel` (no syntax tables) |
-| ISO/IEC 13818-6 — DSM-CC | not freely redistributable | [iso_13818_6_carousel.md](https://github.com/fishloa/rust-dvb/blob/main/dvb-si/docs/iso_13818_6_carousel.md) (provenance-documented hand transcription) |
+| ISO/IEC 13818-6 — DSM-CC | not freely redistributable | [iso_13818_6_carousel.md](https://github.com/fishloa/rust-broadcast/blob/main/dvb-si/docs/iso_13818_6_carousel.md) (provenance-documented hand transcription) |
 
 The crate has been through five adversarial spec-audit rounds; fixture tests
 run against real transponder captures.
@@ -492,7 +492,7 @@ section parser renames, `AnyTableSection`, `table_section()`, CamelCase
 
 ## Family
 
-[`dvb-common`](https://crates.io/crates/dvb-common) — traits + CRC-32\
+[`broadcast-common`](https://crates.io/crates/broadcast-common) — traits + CRC-32\
 [`dvb-t2mi`](https://crates.io/crates/dvb-t2mi) — T2-MI, all 12 packet types\
 [`dvb-bbframe`](https://crates.io/crates/dvb-bbframe) — S2/S2X/T2 BBFRAME\
 [`dvb-conformance`](https://crates.io/crates/dvb-conformance) — TR 101 290 monitor\

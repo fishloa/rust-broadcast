@@ -15,7 +15,7 @@ classifiers = [
 dynamic = ["version"]
 
 [project.urls]
-Repository = "https://github.com/fishloa/rust-dvb"
+Repository = "https://github.com/fishloa/rust-broadcast"
 
 [tool.maturin]
 # abi3 wheel: one wheel works across CPython >=3.9.

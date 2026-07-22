@@ -54,7 +54,7 @@ ISO/IEC 23009-1 §5.10.3.3 cited as the formal (paid) normative source. This is
 **softer footing** than the fully-free crates in this workspace — flagged per
 project policy.
 
-`#![no_std]` + `alloc`; depends only on `dvb-common`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
 
@@ -92,7 +92,7 @@ cargo run -p mp4-emsg --example parse_emsg
 
 ## Minimum Supported Rust Version
 
-1.81
+1.86
 
 ## License
 

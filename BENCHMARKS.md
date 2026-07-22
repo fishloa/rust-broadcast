@@ -7,7 +7,7 @@ CI runs `cargo bench -- --test` (compile + smoke only, no timing).
 
 ---
 
-## dvb-common — CRC-32 MPEG-2
+## broadcast-common — CRC-32 MPEG-2
 
 | Payload   | Throughput     | Time       |
 |-----------|----------------|------------|

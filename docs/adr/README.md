@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 Short, append-only records of significant, hard-to-reverse design decisions in
-the `rust-dvb` workspace — the *why*, not the *how*. Format: lightweight
+the `rust-broadcast` workspace — the *why*, not the *how*. Format: lightweight
 [Nygard ADRs](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions).
 
 - One file per decision: `NNNN-kebab-title.md`, numbered sequentially.

@@ -1,6 +1,6 @@
 # dvb-stream
 
-[![CI](https://github.com/fishloa/rust-dvb/actions/workflows/ci.yml/badge.svg)](https://github.com/fishloa/rust-dvb/actions)
+[![CI](https://github.com/fishloa/rust-broadcast/actions/workflows/ci.yml/badge.svg)](https://github.com/fishloa/rust-broadcast/actions)
 [![crates.io](https://img.shields.io/crates/v/dvb-stream.svg)](https://crates.io/crates/dvb-stream)
 [![docs.rs](https://img.shields.io/docsrs/dvb-stream)](https://docs.rs/dvb-stream)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
@@ -54,7 +54,7 @@ async fn main() -> std::io::Result<()> {
 
 ## MSRV and versioning
 
-**MSRV: 1.81** (matches the workspace). `dvb-stream` is versioned and released
+**MSRV: 1.86** (matches the workspace). `dvb-stream` is versioned and released
 **independently** from the `dvb-si`/`dvb-t2mi` lockstep (`0.x` series), because
 tokio's own MSRV moves faster than the workspace pin.
 

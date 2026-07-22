@@ -1,7 +1,7 @@
-# cargo-fuzz harness for rust-dvb
+# cargo-fuzz harness for rust-broadcast
 
 This directory is a standalone cargo workspace (`fuzz/`), excluded from the
-parent `rust-dvb` workspace. It runs under nightly (libFuzzer requires it) and
+parent `rust-broadcast` workspace. It runs under nightly (libFuzzer requires it) and
 does **not** affect the parent `cargo build --workspace --locked` gate.
 
 ## Prerequisites
@@ -93,4 +93,4 @@ cargo +nightly fuzz tmin <target> fuzz/artifacts/<target>/<crash-file>
 - `cargo build --workspace --locked` from the repository root must remain
   unaffected (the `fuzz/` directory is excluded from the workspace).
 - `libfuzzer-sys` requires nightly Rust, but the parent workspace stays on
-  stable 1.81 MSRV. Use `cargo +nightly fuzz ...` for fuzzing only.
+  stable 1.86 MSRV. Use `cargo +nightly fuzz ...` for fuzzing only.

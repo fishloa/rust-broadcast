@@ -2,7 +2,7 @@
 
 [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci)
 [![docs.rs](https://img.shields.io/docsrs/dvb-ci)](https://docs.rs/dvb-ci)
-[![MSRV](https://img.shields.io/badge/MSRV-1.81-blue.svg)](https://blog.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.86-blue.svg)](https://blog.rust-lang.org/)
 [![license](https://img.shields.io/crates/l/dvb-ci.svg)](#license)
 
 **DVB Common Interface (EN 50221)** — the host ↔ CICAM wire protocol. Parses and

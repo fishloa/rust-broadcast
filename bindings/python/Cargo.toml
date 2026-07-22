@@ -7,7 +7,7 @@ license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 repository   = "https://github.com/fishloa/rust-broadcast"
 readme       = "README.md"
-# NOT a workspace member (PyO3 MSRV moves faster than the workspace 1.81); it
+# NOT a workspace member (PyO3 MSRV moves faster than the workspace 1.86); it
 # consumes the published dvb-si crate by version, not path.
 
 [lib]

@@ -6,7 +6,7 @@ without forking or patching them.
 
 The headline: **integrating a new crate requires zero breaking change to the
 existing crates** — only additive work. The registries, the open `*Def` traits,
-`Parse`/`Serialize`, the push-iterator pumps, and the `dvb-common` primitives
+`Parse`/`Serialize`, the push-iterator pumps, and the `broadcast-common` primitives
 are the integration surface, and they are deliberately designed for exactly this.
 
 ## The integration model (and its two honest nuances)
@@ -79,7 +79,7 @@ When the new crate is ready to become a workspace member:
 
 1. Add its path to `members` in the root `Cargo.toml` (each crate lives in its
    own top-level directory).
-2. Depend on `dvb-common` (and `dvb-si`/`dvb-t2mi` if it extends their dispatch)
+2. Depend on `broadcast-common` (and `dvb-si`/`dvb-t2mi` if it extends their dispatch)
    with a workspace-pinned version.
 3. Follow the same release discipline as the rest of the workspace — see the
    lockstep version + tag-driven publish rules in `CLAUDE.md`.
