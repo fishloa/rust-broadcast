@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "chrono",
  "criterion",
@@ -605,7 +605,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "8.5.0"
+version = "8.6.0"
 dependencies = [
  "clap",
  "dvb-si",

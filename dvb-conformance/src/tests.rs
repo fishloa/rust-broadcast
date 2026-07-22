@@ -6,6 +6,7 @@ use dvb_si::tables::eit::{EitKind, EitSection};
 use dvb_si::tables::nit::{NitKind, NitSection};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream};
+use dvb_si::tables::rst::RstSection;
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
 use dvb_si::tables::tdt::TdtSection;
 use mpeg_ts::mux::SectionPacketiser;
@@ -20,6 +21,7 @@ const PID_CAT: u16 = 0x0001;
 const PID_NIT: u16 = 0x0010;
 const PID_SDT_BAT: u16 = 0x0011;
 const PID_EIT: u16 = 0x0012;
+const PID_RST: u16 = 0x0013;
 const PID_TDT_TOT: u16 = 0x0014;
 const PID_NULL: u16 = 0x1FFF;
 
@@ -1021,6 +1023,14 @@ fn build_tdt_section() -> Vec<u8> {
     buf
 }
 
+/// Build an (empty) RST section's wire bytes — short-form, no CRC.
+fn build_rst_section() -> Vec<u8> {
+    let rst = RstSection { entries: vec![] };
+    let mut buf = vec![0u8; rst.serialized_len()];
+    rst.serialize_into(&mut buf).unwrap();
+    buf
+}
+
 // ── 3.2 SDT_actual repetition ────────────────────────────────────────────────
 
 #[test]
@@ -1240,4 +1250,326 @@ fn si_repetition_emits_once_not_per_packet() {
     );
     assert!(!has_indicator(&e2, Indicator::SiRepetitionError));
     assert!(!has_indicator(&e3, Indicator::SiRepetitionError));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.1 NIT_error ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn nit_error_trips_on_wrong_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // A PMT (table_id 0x02) is not an allowed table_id on PID 0x0010.
+    let mut section = build_nit_actual_section();
+    section[0] = 0x02;
+
+    let packets = packetise_section(PID_NIT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::NitError));
+}
+
+#[test]
+fn nit_error_trips_on_actual_absence_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_nit_actual_section();
+    let packets = packetise_section(PID_NIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    // Past the 10 s NIT_actual repetition interval, with no further NIT.
+    let pkt = make_ts_packet(0x0500, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(12));
+    assert!(has_indicator(events, Indicator::NitError));
+}
+
+#[test]
+fn nit_error_absent_on_compliant_stream() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_nit_actual_section();
+    let packets = packetise_section(PID_NIT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::NitError));
+
+    // A second NIT_actual well within the 10 s interval — no error either.
+    let packets2 = packetise_section(PID_NIT, &section);
+    let events2 = feed_all(&mut monitor, &packets2, secs(5), ms(1));
+    assert!(!has_indicator(&events2, Indicator::NitError));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.4 Unreferenced_PID ─────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn unreferenced_pid_trips_after_persistence_threshold() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let stray_pid: u16 = 0x0500;
+    let pkt1 = make_ts_packet(stray_pid, 0, false, false, &[], &[]);
+    monitor.feed(&pkt1, ms(5));
+
+    // No PAT/PMT ever references `stray_pid`. Past the 500 ms threshold, a
+    // further sighting must trip Unreferenced_PID.
+    let pkt2 = make_ts_packet(stray_pid, 1, false, false, &[], &[]);
+    let events = monitor.feed(&pkt2, ms(600));
+    let unref: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .collect();
+    assert_eq!(unref.len(), 1);
+}
+
+#[test]
+fn unreferenced_pid_absent_within_persistence_threshold() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let stray_pid: u16 = 0x0500;
+    let pkt1 = make_ts_packet(stray_pid, 0, false, false, &[], &[]);
+    monitor.feed(&pkt1, ms(5));
+
+    // Still within the 500 ms transition allowance — must not trip yet.
+    let pkt2 = make_ts_packet(stray_pid, 1, false, false, &[], &[]);
+    let events = monitor.feed(&pkt2, ms(200));
+    let unref: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .collect();
+    assert!(unref.is_empty());
+}
+
+#[test]
+fn unreferenced_pid_absent_when_referenced_by_pmt() {
+    let mut monitor = ConformanceMonitor::new();
+    let es_pid: u16 = 0x0500;
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    // The ES PID is now referenced by the PMT (before ever transmitting its
+    // own packets). Even long after the 500 ms threshold, it must not trip.
+    let pkt = make_ts_packet(es_pid, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(2));
+    assert!(!has_indicator(events, Indicator::UnreferencedPid));
+}
+
+#[test]
+fn unreferenced_pid_absent_for_well_known_si_pids() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // NOTE: `acquire_sync`'s own helper PID (0x0100) is itself a legitimate
+    // Unreferenced_PID candidate here (no PAT/PMT ever references it in this
+    // test) and correctly fires past the threshold — filter events down to
+    // the PID under test so that unrelated noise doesn't fail the assertion.
+    for &pid in &[PID_NIT, PID_SDT_BAT, PID_EIT, PID_RST, PID_TDT_TOT] {
+        let pkt1 = make_ts_packet(pid, 0, false, false, &[], &[]);
+        monitor.feed(&pkt1, ms(5));
+        let pkt2 = make_ts_packet(pid, 1, false, false, &[], &[]);
+        let events = monitor.feed(&pkt2, secs(2));
+        let flagged = events
+            .iter()
+            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(pid));
+        assert!(
+            !flagged,
+            "well-known SI PID 0x{pid:04X} must never be flagged Unreferenced_PID"
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.5 SDT_error ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn sdt_error_trips_on_wrong_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_sdt_actual_section();
+    section[0] = 0x02; // PMT table_id, not allowed on PID 0x0011.
+
+    let packets = packetise_section(PID_SDT_BAT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::SdtError));
+}
+
+#[test]
+fn sdt_error_trips_on_actual_absence_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_sdt_actual_section();
+    let packets = packetise_section(PID_SDT_BAT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    let pkt = make_ts_packet(0x0500, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(3));
+    assert!(has_indicator(events, Indicator::SdtError));
+}
+
+#[test]
+fn sdt_error_absent_on_compliant_stream() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_sdt_actual_section();
+    let packets = packetise_section(PID_SDT_BAT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::SdtError));
+
+    let packets2 = packetise_section(PID_SDT_BAT, &section);
+    let events2 = feed_all(&mut monitor, &packets2, ms(1000), ms(1));
+    assert!(!has_indicator(&events2, Indicator::SdtError));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.6 EIT_error ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn eit_error_trips_on_wrong_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_eit_pf_actual_section();
+    section[0] = 0x02; // PMT table_id, not allowed on PID 0x0012.
+
+    let packets = packetise_section(PID_EIT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::EitError));
+}
+
+#[test]
+fn eit_error_schedule_table_id_is_allowed() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // 0x55 is within the EIT-schedule-actual range (0x50..=0x5F) — allowed.
+    let mut section = build_eit_pf_actual_section();
+    section[0] = 0x55;
+
+    let packets = packetise_section(PID_EIT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::EitError));
+}
+
+#[test]
+fn eit_error_trips_on_pf_actual_absence_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_eit_pf_actual_section();
+    let packets = packetise_section(PID_EIT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    let pkt = make_ts_packet(0x0500, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(3));
+    assert!(has_indicator(events, Indicator::EitError));
+}
+
+#[test]
+fn eit_error_absent_on_compliant_stream() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_eit_pf_actual_section();
+    let packets = packetise_section(PID_EIT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::EitError));
+
+    let packets2 = packetise_section(PID_EIT, &section);
+    let events2 = feed_all(&mut monitor, &packets2, secs(1), ms(1));
+    assert!(!has_indicator(&events2, Indicator::EitError));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.7 RST_error ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn rst_error_trips_on_wrong_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_rst_section();
+    section[0] = 0x40; // NIT_actual table_id, not allowed on PID 0x0013.
+
+    let packets = packetise_section(PID_RST, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::RstError));
+}
+
+#[test]
+fn rst_error_absent_on_valid_rst() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_rst_section();
+    let packets = packetise_section(PID_RST, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::RstError));
+}
+
+#[test]
+fn rst_error_absent_on_stuffing_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_rst_section();
+    section[0] = 0x72; // Stuffing/ST — explicitly allowed.
+
+    let packets = packetise_section(PID_RST, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::RstError));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ── 3.8 TDT_error ────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn tdt_error_trips_on_wrong_table_id() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut section = build_tdt_section();
+    section[0] = 0x02; // PMT table_id, not allowed on PID 0x0014.
+
+    let packets = packetise_section(PID_TDT_TOT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(has_indicator(&events, Indicator::TdtError));
+}
+
+#[test]
+fn tdt_error_trips_on_absence_timeout() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_tdt_section();
+    let packets = packetise_section(PID_TDT_TOT, &section);
+    feed_all(&mut monitor, &packets, ms(5), ms(1));
+
+    let pkt = make_ts_packet(0x0500, 0, false, false, &[], &[]);
+    let events = monitor.feed(&pkt, secs(35));
+    assert!(has_indicator(events, Indicator::TdtError));
+}
+
+#[test]
+fn tdt_error_absent_on_compliant_stream() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_tdt_section();
+    let packets = packetise_section(PID_TDT_TOT, &section);
+    let events = feed_all(&mut monitor, &packets, ms(5), ms(1));
+    assert!(!has_indicator(&events, Indicator::TdtError));
+
+    let packets2 = packetise_section(PID_TDT_TOT, &section);
+    let events2 = feed_all(&mut monitor, &packets2, secs(20), ms(1));
+    assert!(!has_indicator(&events2, Indicator::TdtError));
 }

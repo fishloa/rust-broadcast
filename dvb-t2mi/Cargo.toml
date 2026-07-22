@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-t2mi"
-version = "8.5.0"
+version = "8.6.0"
 edition = "2024"
 description = "ETSI TS 102 773 DVB-T2 Modulator Interface parser + builder."
 license      = "MIT OR Apache-2.0"
