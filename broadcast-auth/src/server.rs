@@ -28,13 +28,21 @@
 //! - **Bearer** (RFC 6750 §2.1): the token is compared, in constant time,
 //!   against the configured token.
 //! - **Digest** (RFC 7616 §3.4.1): `HA1 = MD5(username:realm:password)`,
-//!   `HA2 = MD5(method:uri)`, `response = MD5(HA1:nonce:nc:cnonce:qop:HA2)`
-//!   — `qop=auth`/`algorithm=MD5` only (the one shape every client in this
-//!   workspace answers) — recomputed and compared, in constant time, against
-//!   the client's `response` field. The client's claimed `uri` field must
-//!   also match the actual request URI (RFC 7616 §3.4.1: the server "SHOULD
-//!   check" this), not merely be internally consistent with its own
-//!   `response`.
+//!   `HA2 = MD5(method:digest-uri-value)`, `response =
+//!   MD5(HA1:nonce:nc:cnonce:qop:HA2)` — `qop=auth`/`algorithm=MD5` only (the
+//!   one shape every client in this workspace answers) — recomputed and
+//!   compared, in constant time, against the client's `response` field.
+//!   `digest-uri-value` is the client's own claimed `uri` field (RFC 7616
+//!   §3.4.1: HA2 is always computed over what the client actually hashed),
+//!   not the server's request URI — the two need not be textually identical,
+//!   only to refer to the same request-target (see below). The client's
+//!   claimed `uri` field must also match the actual request URI (RFC 7616
+//!   §3.4.1: the server "SHOULD check" this), not merely be internally
+//!   consistent with its own `response` — but RFC 7230 §5.3 permits a
+//!   request-target in either origin-form (`/path`) or absolute-form
+//!   (`scheme://authority/path`), and a legitimate client may hash either;
+//!   [`digest_uri_matches`] accepts both representations of the same target
+//!   while still rejecting a genuinely different one.
 //! - **Forwarded** ([`Self::forwarded`], issue #663 extensibility wave part
 //!   1): not an RFC 7235 challenge scheme at all — trusts that a fronting
 //!   reverse proxy has already authenticated the caller and forwards the
@@ -181,9 +189,12 @@ impl Verifier {
     /// Basic/Digest/Bearer read `ctx`'s `Authorization` header
     /// ([`RequestContext::header`], case-insensitive) — missing entirely is
     /// `Unauthorized`, same as before this took a full [`RequestContext`].
-    /// `ctx.method`/`ctx.uri` are needed for the Digest `HA2`/`uri`-match
-    /// check (RFC 7616 §3.4.1); unused for Basic/Bearer. Forwarded reads
-    /// `ctx`'s configured user header instead — see the module docs.
+    /// `ctx.method` feeds Digest's `HA2` directly; `ctx.uri` is the request
+    /// URI the client's claimed `uri` field is matched against (RFC 7616
+    /// §3.4.1's SHOULD, accepting either origin-form or absolute-form —
+    /// unused for Basic/Bearer.
+    /// Forwarded reads `ctx`'s configured user header instead — see the
+    /// module docs.
     ///
     /// A pathologically large `Digest` `Authorization` header is rejected
     /// outright rather than parsed (see `MAX_DIGEST_FIELDS`) — this bounds
@@ -286,9 +297,14 @@ const MAX_DIGEST_FIELDS: usize = 64;
 /// `response`, and compare in constant time — `qop=auth`/`algorithm=MD5`
 /// only (the one shape every client in this workspace answers).
 ///
-/// Also checks the client's claimed `uri` field against the actual request
-/// `uri` (RFC 7616 §3.4.1's SHOULD) rather than only using whatever the
-/// client claims to compute `HA2`.
+/// `HA2` is computed over the client's own claimed `uri` field (the
+/// `digest-uri-value` RFC 7616 §3.4.1 defines HA2 over) — not `request_uri` —
+/// since that is what the client actually hashed into its `response`. The
+/// client's claimed `uri` is separately checked against `request_uri` (RFC
+/// 7616 §3.4.1's SHOULD) via [`digest_uri_matches`], which accepts either
+/// legal RFC 7230 request-target representation of the same target
+/// (origin-form or absolute-form) while still rejecting a genuinely
+/// different `uri`.
 ///
 /// Rejects outright (without building the field map) a header carrying more
 /// than [`MAX_DIGEST_FIELDS`] comma-separated fields — see that constant's
@@ -300,7 +316,7 @@ fn verify_digest(
     realm: &str,
     nonce: &str,
     method: &str,
-    uri: &str,
+    request_uri: &str,
 ) -> bool {
     let Some(rest) = header.strip_prefix("Digest ") else {
         return false;
@@ -321,7 +337,8 @@ fn verify_digest(
     if get("username") != username || get("realm") != realm || get("nonce") != nonce {
         return false;
     }
-    if get("uri") != uri {
+    let client_uri = get("uri");
+    if !digest_uri_matches(client_uri, request_uri) {
         return false;
     }
     let nc = get("nc");
@@ -333,9 +350,38 @@ fn verify_digest(
     }
 
     let ha1 = md5_hex(format!("{username}:{realm}:{password}"));
-    let ha2 = md5_hex(format!("{method}:{uri}"));
+    let ha2 = md5_hex(format!("{method}:{client_uri}"));
     let expected_response = md5_hex(format!("{ha1}:{nonce}:{nc}:{cnonce}:{qop}:{ha2}"));
     constant_time_eq(expected_response.as_bytes(), client_response.as_bytes())
+}
+
+/// RFC 7616 §3.4.1's SHOULD-check: does the client's claimed Digest `uri`
+/// field refer to the same request-target as `request_uri` (the actual
+/// request the server is verifying against)?
+///
+/// RFC 7230 §5.3 permits a request-target in either **origin-form**
+/// (`/path[?query]`) or **absolute-form** (`scheme://authority/path[?query]`)
+/// — a legitimate client may hash either, and `request_uri` here is always
+/// whatever form the caller's own request line/context uses (in this
+/// workspace, always origin-form for HTTP). This accepts:
+/// - `client_uri == request_uri` verbatim (the origin-form case), or
+/// - `client_uri` in absolute-form whose path(+query) — everything from the
+///   first `/` after the `"://"` authority — is byte-identical to
+///   `request_uri`.
+///
+/// Anything else is rejected. This is a real substitution guard, not a
+/// prefix/suffix check: a `client_uri` that merely contains or is suffixed by
+/// `request_uri` (or vice versa) does NOT match.
+fn digest_uri_matches(client_uri: &str, request_uri: &str) -> bool {
+    if client_uri == request_uri {
+        return true;
+    }
+    if let Some((_scheme, after_scheme)) = client_uri.split_once("://") {
+        if let Some(slash) = after_scheme.find('/') {
+            return &after_scheme[slash..] == request_uri;
+        }
+    }
+    false
 }
 
 /// Reverse-proxy forwarded-auth (see the module docs): authenticated iff
@@ -575,6 +621,114 @@ mod tests {
             verify_auth(&v, Some(&header), "DESCRIBE", "rtsp://cam/OTHER"),
             AuthResult::Unauthorized
         );
+    }
+
+    /// RFC 7230 §5.3.2: a client may legally answer a Digest challenge using
+    /// the absolute-form request-target instead of origin-form — e.g.
+    /// multimux's outbound HTTP client (`source::http_auth::authenticated_get`,
+    /// issue #724) sends the absolute URL as `uri`. The server here only ever
+    /// sees the request's path (origin-form) as its own request `uri`; RFC
+    /// 7616 §3.4.1 permits this because HA2 is computed over the CLIENT's
+    /// claimed `uri`, and the SHOULD uri-match ([`digest_uri_matches`])
+    /// accepts either representation of the same target. Built via the real
+    /// `respond()` round-trip (not a rigged expected string) so this exercises
+    /// the true client computation.
+    #[test]
+    fn digest_accepts_absolute_form_client_uri_matching_request_path() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let client_ctx = RequestContext::new("GET", "http://cam.local/stream/media.m3u8");
+        let header = respond(
+            &v.challenge(),
+            &client_ctx,
+            Credentials::new("admin", "12345"),
+        )
+        .unwrap();
+        assert!(
+            header.contains("uri=\"http://cam.local/stream/media.m3u8\""),
+            "expected the client to hash the absolute-form uri, got: {header}"
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/media.m3u8"),
+            AuthResult::Ok
+        );
+    }
+
+    /// Regression/mutation guard: an absolute-form `uri` whose PATH is
+    /// genuinely different from the request must still be rejected — the
+    /// SHOULD uri-match is a real substitution guard, not a rubber stamp for
+    /// any absolute-form uri. Note this also exercises the response-mismatch
+    /// path independently of the match check: because HA2 is computed over
+    /// the client's own claimed uri, the client here computes a
+    /// self-consistent (but wrong-target) response, so a neutered
+    /// `digest_uri_matches` (hardcoded `true`) would let this wrongly verify
+    /// — this test must fail if that guard is ever dropped.
+    #[test]
+    fn digest_rejects_absolute_form_uri_with_wrong_path() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let client_ctx = RequestContext::new("GET", "http://cam.local/other/path");
+        let header = respond(
+            &v.challenge(),
+            &client_ctx,
+            Credentials::new("admin", "12345"),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/media.m3u8"),
+            AuthResult::Unauthorized
+        );
+    }
+
+    /// Same substitution guard, origin-form vs. origin-form (no scheme at
+    /// all): a client claiming a different path outright must be rejected.
+    #[test]
+    fn digest_rejects_origin_form_uri_with_wrong_path() {
+        let v = Verifier::new(
+            Credentials::Digest {
+                username: "admin".into(),
+                password: "12345".into(),
+            },
+            REALM,
+        );
+        let client_ctx = RequestContext::new("GET", "/other/path");
+        let header = respond(
+            &v.challenge(),
+            &client_ctx,
+            Credentials::new("admin", "12345"),
+        )
+        .unwrap();
+        assert_eq!(
+            verify_auth(&v, Some(&header), "GET", "/stream/media.m3u8"),
+            AuthResult::Unauthorized
+        );
+    }
+
+    #[test]
+    fn digest_uri_matches_unit_cases() {
+        // Origin-form, identical.
+        assert!(digest_uri_matches("/a/b", "/a/b"));
+        // Absolute-form whose path matches.
+        assert!(digest_uri_matches("http://host/a/b", "/a/b"));
+        assert!(digest_uri_matches("https://host:8080/a/b?q=1", "/a/b?q=1"));
+        // Wrong path in either form.
+        assert!(!digest_uri_matches("/a/c", "/a/b"));
+        assert!(!digest_uri_matches("http://host/a/c", "/a/b"));
+        // Not a suffix/prefix rubber stamp.
+        assert!(!digest_uri_matches("http://host/x/a/b", "/a/b"));
+        assert!(!digest_uri_matches("/a/b/extra", "/a/b"));
+        // Absolute-form with no path at all never matches a non-empty path.
+        assert!(!digest_uri_matches("http://host", "/a/b"));
     }
 
     #[test]

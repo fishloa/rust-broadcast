@@ -460,7 +460,6 @@ mod tests {
     const AUTH_USER: &str = "cam-user";
     const AUTH_PASS: &str = "cam-pass";
     const DIGEST_REALM: &str = "mock realm";
-    const DIGEST_NONCE: &str = "ts-http-test-nonce";
     const BEARER_TOKEN: &str = "ts-http-bearer-token";
 
     /// Drives a `TsHttpSource` to connect and pull every sample the server
@@ -511,11 +510,12 @@ mod tests {
     }
 
     /// Digest (RFC 7616), credentials from URL userinfo: the server issues a
-    /// real Digest challenge (nonce/realm/qop=auth) and independently
-    /// recomputes the expected response (see `crate::testutil::verify_digest`)
-    /// — a client that can't answer it gets nothing back, so this proves
-    /// `TsHttpSource` actually computed a correct Digest response via
-    /// `broadcast-auth`, not just echoed something Digest-shaped.
+    /// real Digest challenge (nonce/realm/qop=auth) via a real
+    /// `broadcast_auth::Verifier` (`crate::testutil::require_auth`) that
+    /// independently recomputes the expected response — a client that can't
+    /// answer it gets nothing back, so this proves `TsHttpSource` actually
+    /// computed a correct Digest response via `broadcast-auth`, not just
+    /// echoed something Digest-shaped.
     #[tokio::test]
     async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
         let ts_bytes = build_ts_bytes();
@@ -525,7 +525,6 @@ mod tests {
                 username: AUTH_USER.into(),
                 password: AUTH_PASS.into(),
                 realm: DIGEST_REALM.into(),
-                nonce: DIGEST_NONCE.into(),
             }),
         )
         .await;
@@ -578,7 +577,6 @@ mod tests {
                 username: AUTH_USER.into(),
                 password: AUTH_PASS.into(),
                 realm: DIGEST_REALM.into(),
-                nonce: DIGEST_NONCE.into(),
             }),
         )
         .await;
@@ -610,7 +608,6 @@ mod tests {
                 username: AUTH_USER.into(),
                 password: AUTH_PASS.into(),
                 realm: DIGEST_REALM.into(),
-                nonce: DIGEST_NONCE.into(),
             }),
         )
         .await;

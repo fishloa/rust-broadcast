@@ -457,7 +457,6 @@ mod tests {
     const AUTH_USER: &str = "cam-user";
     const AUTH_PASS: &str = "cam-pass";
     const DIGEST_REALM: &str = "mock realm";
-    const DIGEST_NONCE: &str = "hls-pull-test-nonce";
     const BEARER_TOKEN: &str = "hls-pull-bearer-token";
 
     /// Drives an `HlsPullSource` to connect and pull every sample the origin
@@ -509,11 +508,12 @@ mod tests {
     }
 
     /// Digest (RFC 7616), credentials from URL userinfo: the origin issues a
-    /// real Digest challenge (nonce/realm/qop=auth) and independently
-    /// recomputes the expected response (see `crate::testutil::verify_digest`)
-    /// — proves `TokioClient` actually computed a correct Digest response via
-    /// `broadcast-auth` (and cached it — see the module's own "Auth" docs),
-    /// not just echoed something Digest-shaped.
+    /// real Digest challenge (nonce/realm/qop=auth) via a real
+    /// `broadcast_auth::Verifier` (`crate::testutil::require_auth`) that
+    /// independently recomputes the expected response — proves `TokioClient`
+    /// actually computed a correct Digest response via `broadcast-auth` (and
+    /// cached it — see the module's own "Auth" docs), not just echoed
+    /// something Digest-shaped.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
         let (playlist_url, server) =
@@ -521,7 +521,6 @@ mod tests {
                 username: AUTH_USER.into(),
                 password: AUTH_PASS.into(),
                 realm: DIGEST_REALM.into(),
-                nonce: DIGEST_NONCE.into(),
             }))
             .await;
         let credentialed =
@@ -570,7 +569,6 @@ mod tests {
                 username: AUTH_USER.into(),
                 password: AUTH_PASS.into(),
                 realm: DIGEST_REALM.into(),
-                nonce: DIGEST_NONCE.into(),
             }))
             .await;
         let wrong_creds =
