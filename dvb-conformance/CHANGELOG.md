@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+### Added
+- TR 101 290 v1.4.1 Table 5.0c Priority-3 indicators (#732): `NitError` (3.1),
+  `UnreferencedPid` (3.4), `SdtError` (3.5), `EitError` (3.6), `RstError`
+  (3.7), `TdtError` (3.8) — bad-`table_id` checks on PID 0x0010/0x0011/
+  0x0012/0x0013/0x0014, plus the presence/absence dimension for NIT_actual/
+  SDT_actual/EIT P/F actual/TDT sharing the existing 3.2 SI-repetition timer.
+  New `PID_RST` (0x0013) well-known PID; new `Config::unreferenced_pid_period`
+  (default 500 ms). `Indicator` gains 6 new `#[non_exhaustive]` variants —
+  additive, no breaking change. See `docs/tr_101_290.md` for the full spec
+  transcription and per-clause coverage mapping.
+
 ## [8.5.0] - 2026-07-21
 ### Changed
 - Internal: consume renamed `mpeg-ts` 0.3 `mux::SectionPacketiser` (was

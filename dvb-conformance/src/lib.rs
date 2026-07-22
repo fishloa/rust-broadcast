@@ -2,12 +2,19 @@
 //!
 //! Implements the **first-priority** (Table 5.0a, indicators 1.1–1.6),
 //! **second-priority** (Table 5.0b, indicators 2.1–2.3b, 2.5–2.6), and
-//! **SI-repetition** (Table 5.0c, indicator 3.2 — maximum interval) indicator
-//! sets. Indicator 2.4 (PCR_accuracy_error) is intentionally excluded — it
-//! requires hardware arrival timestamps not available under the caller-supplied-
-//! time model. Indicator 3.2's minimum-gap (25 ms) dimension is deferred —
-//! it needs per-`(table_id, section_number)` tracking to avoid false positives
-//! on dense multi-section tables.
+//! **third-priority** (Table 5.0c, indicators 3.1, 3.2, 3.4, 3.5, 3.6, 3.7,
+//! 3.8) indicator sets — see `docs/tr_101_290.md` for the full spec
+//! transcription and the crate-coverage mapping.
+//!
+//! Not computable under this crate's architecture (needs the ISO/IEC 13818-1
+//! **T-STD buffer model** or hardware arrival timing): 2.4 `PCR_accuracy_error`,
+//! 3.3 `Buffer_error`, 3.9 `Empty_buffer_error`, 3.10 `Data_delay_error`.
+//!
+//! Feasible but deferred: the 25 ms minimum-gap dimension shared by 3.1.a /
+//! 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8 (needs per-`(table_id, section_number)`
+//! tracking to avoid false positives on dense multi-section tables); the
+//! `_other` repetition sub-clauses 3.1.b / 3.5.b / 3.6.b (need TR 101 211
+//! interval rules); the EIT P/F pairing check 3.6.c.
 //!
 //! # Caller-supplied time
 //!
@@ -62,6 +69,8 @@ const PID_NIT: u16 = 0x0010;
 const PID_SDT_BAT: u16 = 0x0011;
 /// PID 0x0012 — Event Information Table (EN 300 468 §5.2.4).
 const PID_EIT: u16 = 0x0012;
+/// PID 0x0013 — Running Status Table (EN 300 468 §5.2.8).
+const PID_RST: u16 = 0x0013;
 /// PID 0x0014 — TDT/TOT (EN 300 468 §5.2.5 / §5.2.6).
 const PID_TDT_TOT: u16 = 0x0014;
 /// PID 0x1FFF — Null/padding packets (ISO/IEC 13818-1 §2.4.3.3).
@@ -71,7 +80,21 @@ const PID_NULL: u16 = 0x1FFF;
 const SYNC_BYTE: u8 = 0x47;
 
 /// Well-known SI/PSI PIDs on which CRC-checked long-form sections appear.
-const SI_PIDS: [u16; 6] = [PID_PAT, PID_CAT, PID_NIT, PID_SDT_BAT, PID_EIT, PID_TDT_TOT];
+const SI_PIDS: [u16; 7] = [
+    PID_PAT,
+    PID_CAT,
+    PID_NIT,
+    PID_SDT_BAT,
+    PID_EIT,
+    PID_RST,
+    PID_TDT_TOT,
+];
+
+/// Reserved-for-future-use PID range (ISO/IEC 13818-1 Table 2-3) — exempt
+/// from Unreferenced_PID (TR 101 290 v1.4.1 Table 5.0c indicator 3.4).
+const RESERVED_PID_MIN: u16 = 0x0002;
+/// Upper (inclusive) bound of the reserved PID range.
+const RESERVED_PID_MAX: u16 = 0x000F;
 
 // ── Default timing constants ────────────────────────────────────────────────
 
@@ -121,6 +144,11 @@ const DEFAULT_SI_EIT_PF_INTERVAL_SECS: u64 = 2;
 /// interval (30 s; EN 300 468 §5.2.5).
 const DEFAULT_SI_TDT_INTERVAL_SECS: u64 = 30;
 
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.4 / note 1 — Unreferenced_PID
+/// persistence threshold (0,5 s). Transitions shorter than this (e.g. a PID
+/// seen briefly before its PMT arrives) are not errors.
+const DEFAULT_UNREFERENCED_PID_PERIOD_MS: u64 = 500;
+
 // ── PCR / PES constants ─────────────────────────────────────────────────────
 
 /// PCR modulus on the 27 MHz clock: `2^33 × 300` (33-bit base × 300 ticks).
@@ -162,6 +190,30 @@ const EIT_PF_ACTUAL_TABLE_ID: u8 = dvb_si::table_id::TableId::EventInformationPf
 
 /// TDT `table_id` (EN 300 468 §5.2.5, table_id 0x70).
 const TDT_TABLE_ID: u8 = dvb_si::table_id::TableId::TimeAndDate as u8;
+
+/// NIT_other `table_id` (EN 300 468 §5.2.1, table_id 0x41).
+const NIT_OTHER_TABLE_ID: u8 = dvb_si::table_id::TableId::NetworkInformationOther as u8;
+
+/// SDT_other `table_id` (EN 300 468 §5.2.3, table_id 0x46).
+const SDT_OTHER_TABLE_ID: u8 = dvb_si::table_id::TableId::ServiceDescriptionOther as u8;
+
+/// BAT `table_id` (EN 300 468 §5.2.2, table_id 0x4A — allowed alongside SDT
+/// on PID 0x0011).
+const BAT_TABLE_ID: u8 = dvb_si::table_id::TableId::BouquetAssociation as u8;
+
+/// EIT P/F other `table_id` (EN 300 468 §5.2.4, table_id 0x4F).
+const EIT_PF_OTHER_TABLE_ID: u8 = dvb_si::table_id::TableId::EventInformationPfOther as u8;
+
+/// RST `table_id` (EN 300 468 §5.2.8, table_id 0x71).
+const RST_TABLE_ID: u8 = dvb_si::table_id::TableId::RunningStatus as u8;
+
+/// Stuffing table (`ST`) `table_id` — allowed filler on every SI PID covered
+/// by Table 5.0c (EN 300 468 §5.2.9, table_id 0x72).
+const STUFFING_TABLE_ID: u8 = dvb_si::table_id::TableId::Stuffing as u8;
+
+/// TOT `table_id` (EN 300 468 §5.2.6, table_id 0x73 — allowed alongside TDT
+/// on PID 0x0014).
+const TOT_TABLE_ID: u8 = dvb_si::table_id::TableId::TimeOffset as u8;
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -229,9 +281,31 @@ pub enum Indicator {
     CatError,
 
     // ── Priority 3 (Table 5.0c) ──────────────────────────────────────────
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.1 — NIT_error (bad table_id
+    /// on PID 0x0010 + NIT_actual absence; the 25 ms min-gap dimension of
+    /// 3.1.a is deferred).
+    NitError,
     /// TR 101 290 v1.4.1 Table 5.0c indicator 3.2 — SI_repetition_error
     /// (maximum interval dimension; minimum-gap deferred).
     SiRepetitionError,
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.4 — Unreferenced_PID: a PID
+    /// persists longer than the presence threshold without being referenced
+    /// by the PAT/CAT/a PMT or one of the well-known SI PIDs.
+    UnreferencedPid,
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.5 — SDT_error (bad table_id
+    /// on PID 0x0011 + SDT_actual absence; the 25 ms min-gap dimension of
+    /// 3.5.a is deferred).
+    SdtError,
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6 — EIT_error (bad table_id
+    /// on PID 0x0012 + EIT P/F actual absence; the 25 ms min-gap dimension of
+    /// 3.6.a and the P/F pairing check 3.6.c are deferred).
+    EitError,
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.7 — RST_error (bad table_id
+    /// on PID 0x0013; the 25 ms min-gap dimension is deferred).
+    RstError,
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.8 — TDT_error (bad table_id
+    /// on PID 0x0014 + TDT absence; the 25 ms min-gap dimension is deferred).
+    TdtError,
 }
 
 impl Indicator {
@@ -251,7 +325,13 @@ impl Indicator {
             | Self::PcrDiscontinuityError
             | Self::PtsError
             | Self::CatError => Priority::Second,
-            Self::SiRepetitionError => Priority::Third,
+            Self::NitError
+            | Self::SiRepetitionError
+            | Self::UnreferencedPid
+            | Self::SdtError
+            | Self::EitError
+            | Self::RstError
+            | Self::TdtError => Priority::Third,
         }
     }
 
@@ -271,7 +351,13 @@ impl Indicator {
             Self::PcrDiscontinuityError => "PCR_discontinuity_indicator_error",
             Self::PtsError => "PTS_error",
             Self::CatError => "CAT_error",
+            Self::NitError => "NIT_error",
             Self::SiRepetitionError => "SI_repetition_error",
+            Self::UnreferencedPid => "Unreferenced_PID",
+            Self::SdtError => "SDT_error",
+            Self::EitError => "EIT_error",
+            Self::RstError => "RST_error",
+            Self::TdtError => "TDT_error",
         }
     }
 
@@ -291,7 +377,13 @@ impl Indicator {
             Self::PcrDiscontinuityError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
             Self::PtsError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.5",
             Self::CatError => "TR 101 290 v1.4.1 Table 5.0b indicator 2.6",
+            Self::NitError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.1",
             Self::SiRepetitionError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.2",
+            Self::UnreferencedPid => "TR 101 290 v1.4.1 Table 5.0c indicator 3.4",
+            Self::SdtError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.5",
+            Self::EitError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.6",
+            Self::RstError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.7",
+            Self::TdtError => "TR 101 290 v1.4.1 Table 5.0c indicator 3.8",
         }
     }
 }
@@ -367,6 +459,9 @@ pub struct Config {
     /// Maximum repetition interval for TDT sections (Table 5.0c 3.2 /
     /// EN 300 468 §5.2.5). Default: 30 s.
     pub si_tdt_interval: Duration,
+    /// Persistence threshold before an unreferenced PID is flagged
+    /// (Table 5.0c 3.4 / note 1). Default: 500 ms.
+    pub unreferenced_pid_period: Duration,
 }
 
 impl Default for Config {
@@ -384,6 +479,7 @@ impl Default for Config {
             si_sdt_interval: Duration::from_secs(DEFAULT_SI_SDT_INTERVAL_SECS),
             si_eit_pf_interval: Duration::from_secs(DEFAULT_SI_EIT_PF_INTERVAL_SECS),
             si_tdt_interval: Duration::from_secs(DEFAULT_SI_TDT_INTERVAL_SECS),
+            unreferenced_pid_period: Duration::from_millis(DEFAULT_UNREFERENCED_PID_PERIOD_MS),
         }
     }
 }
@@ -442,6 +538,13 @@ struct SiRepetitionTimer {
     armed: bool,
 }
 
+/// Tracking state for a candidate Unreferenced_PID (indicator 3.4): the time
+/// this PID was first observed while NOT part of the referenced set.
+struct UnreferencedPidTracking {
+    first_seen: Duration,
+    reported: bool,
+}
+
 // ── ConformanceMonitor ───────────────────────────────────────────────────────
 
 /// ETSI TR 101 290 transport-stream conformance monitor.
@@ -487,6 +590,9 @@ pub struct ConformanceMonitor {
 
     // SI repetition-interval timers keyed by table_id (3.2)
     si_timers: BTreeMap<u8, SiRepetitionTimer>,
+
+    // Unreferenced_PID candidate tracking (3.4)
+    unreferenced_pid_timers: BTreeMap<u16, UnreferencedPidTracking>,
 }
 
 impl ConformanceMonitor {
@@ -531,6 +637,7 @@ impl ConformanceMonitor {
             cat_seen: false,
             scrambled_without_cat_reported: false,
             si_timers: BTreeMap::new(),
+            unreferenced_pid_timers: BTreeMap::new(),
         }
     }
 
@@ -697,6 +804,11 @@ impl ConformanceMonitor {
             for section_bytes in &sections {
                 self.check_crc_for_si(section_bytes, pid, t);
                 self.check_cat_table_id(section_bytes, pid, t);
+                self.check_nit_table_id(section_bytes, pid, t);
+                self.check_sdt_table_id(section_bytes, pid, t);
+                self.check_eit_table_id(section_bytes, pid, t);
+                self.check_rst_table_id(section_bytes, pid, t);
+                self.check_tdt_table_id(section_bytes, pid, t);
                 self.update_si_repetition(section_bytes, pid, t);
             }
         }
@@ -730,7 +842,12 @@ impl ConformanceMonitor {
             }
         }
 
-        // ── Presence-timeout evaluation (1.3.a, 1.5.a, 1.6) ────────────
+        // ── 3.4: Unreferenced_PID bookkeeping ───────────────────────────
+        if pid != PID_NULL {
+            self.track_unreferenced_pid(pid, t);
+        }
+
+        // ── Presence-timeout evaluation (1.3.a, 1.5.a, 1.6, 3.4) ────────
         self.check_presence_timeouts(t);
 
         &self.events
@@ -948,6 +1065,201 @@ impl ConformanceMonitor {
         }
     }
 
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.1 — NIT_error, bad-table_id
+    /// dimension. `docs/tr_101_290.md` clause 3.1: allowed table_ids on
+    /// PID 0x0010 are NIT_actual (0x40), NIT_other (0x41), stuffing/ST
+    /// (0x72). The absence dimension (NIT_actual missing for the
+    /// EN 300 468 §5.1.4 repetition interval) is raised from the shared 3.2
+    /// SI timer in `check_presence_timeouts`.
+    fn check_nit_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_NIT {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let allowed = section.table_id == NIT_ACTUAL_TABLE_ID
+            || section.table_id == NIT_OTHER_TABLE_ID
+            || section.table_id == STUFFING_TABLE_ID;
+        if !allowed {
+            self.emit(
+                Indicator::NitError,
+                Some(PID_NIT),
+                t,
+                format!(
+                    "section with table_id 0x{:02X} on PID 0x0010 (expected NIT_actual/NIT_other/ST)",
+                    section.table_id
+                ),
+            );
+        }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.5 — SDT_error, bad-table_id
+    /// dimension. `docs/tr_101_290.md` clause 3.5: allowed table_ids on
+    /// PID 0x0011 are SDT_actual (0x42), SDT_other (0x46), BAT (0x4A),
+    /// stuffing/ST (0x72). The absence dimension (SDT_actual missing) is
+    /// raised from the shared 3.2 SI timer in `check_presence_timeouts`.
+    fn check_sdt_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_SDT_BAT {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let allowed = section.table_id == SDT_ACTUAL_TABLE_ID
+            || section.table_id == SDT_OTHER_TABLE_ID
+            || section.table_id == BAT_TABLE_ID
+            || section.table_id == STUFFING_TABLE_ID;
+        if !allowed {
+            self.emit(
+                Indicator::SdtError,
+                Some(PID_SDT_BAT),
+                t,
+                format!(
+                    "section with table_id 0x{:02X} on PID 0x0011 (expected SDT_actual/SDT_other/BAT/ST)",
+                    section.table_id
+                ),
+            );
+        }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.6 — EIT_error, bad-table_id
+    /// dimension. `docs/tr_101_290.md` clause 3.6: allowed table_ids on
+    /// PID 0x0012 are EIT P/F actual (0x4E), EIT P/F other (0x4F), EIT
+    /// schedule actual (0x50..=0x5F), EIT schedule other (0x60..=0x6F),
+    /// stuffing/ST (0x72). The absence dimension (EIT P/F actual missing) is
+    /// raised from the shared 3.2 SI timer in `check_presence_timeouts`.
+    fn check_eit_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_EIT {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let table_id = section.table_id;
+        let allowed = table_id == EIT_PF_ACTUAL_TABLE_ID
+            || table_id == EIT_PF_OTHER_TABLE_ID
+            || (dvb_si::tables::eit::TABLE_ID_SCHEDULE_ACTUAL_FIRST
+                ..=dvb_si::tables::eit::TABLE_ID_SCHEDULE_ACTUAL_LAST)
+                .contains(&table_id)
+            || (dvb_si::tables::eit::TABLE_ID_SCHEDULE_OTHER_FIRST
+                ..=dvb_si::tables::eit::TABLE_ID_SCHEDULE_OTHER_LAST)
+                .contains(&table_id)
+            || table_id == STUFFING_TABLE_ID;
+        if !allowed {
+            self.emit(
+                Indicator::EitError,
+                Some(PID_EIT),
+                t,
+                format!(
+                    "section with table_id 0x{table_id:02X} on PID 0x0012 (expected EIT P/F or schedule range or ST)"
+                ),
+            );
+        }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.7 — RST_error, bad-table_id
+    /// dimension. `docs/tr_101_290.md` clause 3.7: allowed table_ids on
+    /// PID 0x0013 are RST (0x71), stuffing/ST (0x72). RST has no documented
+    /// absence threshold in Table 5.0c, so there is no presence dimension.
+    fn check_rst_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_RST {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let allowed = section.table_id == RST_TABLE_ID || section.table_id == STUFFING_TABLE_ID;
+        if !allowed {
+            self.emit(
+                Indicator::RstError,
+                Some(PID_RST),
+                t,
+                format!(
+                    "section with table_id 0x{:02X} on PID 0x0013 (expected RST/ST)",
+                    section.table_id
+                ),
+            );
+        }
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.8 — TDT_error, bad-table_id
+    /// dimension. `docs/tr_101_290.md` clause 3.8: allowed table_ids on
+    /// PID 0x0014 are TDT (0x70), stuffing/ST (0x72), TOT (0x73). The
+    /// absence dimension (TDT missing) is raised from the shared 3.2 SI
+    /// timer in `check_presence_timeouts`.
+    fn check_tdt_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+        if pid != PID_TDT_TOT {
+            return;
+        }
+        let section = match Section::parse(section_bytes) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let allowed = section.table_id == TDT_TABLE_ID
+            || section.table_id == TOT_TABLE_ID
+            || section.table_id == STUFFING_TABLE_ID;
+        if !allowed {
+            self.emit(
+                Indicator::TdtError,
+                Some(PID_TDT_TOT),
+                t,
+                format!(
+                    "section with table_id 0x{:02X} on PID 0x0014 (expected TDT/TOT/ST)",
+                    section.table_id
+                ),
+            );
+        }
+    }
+
+    /// Whether `pid` is (currently) part of the TR 101 290 v1.4.1 Table 5.0c
+    /// indicator 3.4 referenced set: PAT, CAT, well-known SI PIDs (NIT/
+    /// SDT-BAT/EIT/RST/TDT-TOT), the null PID, the reserved-for-future-use
+    /// range, PMT_PIDs referenced by the PAT, and ES/PCR PIDs referenced by
+    /// a PMT.
+    ///
+    /// Not tracked: CAT-referenced EMM PIDs (this monitor does not decode CA
+    /// descriptors) and PIDs "user defined as private data streams" (the
+    /// spec's own carve-out — not distinguishable from the wire alone). Both
+    /// are documented limitations; see the crate `//!` and README.
+    fn is_referenced_or_reserved_pid(&self, pid: u16) -> bool {
+        pid == PID_PAT
+            || pid == PID_CAT
+            || pid == PID_NIT
+            || pid == PID_SDT_BAT
+            || pid == PID_EIT
+            || pid == PID_RST
+            || pid == PID_TDT_TOT
+            || pid == PID_NULL
+            || (RESERVED_PID_MIN..=RESERVED_PID_MAX).contains(&pid)
+            || self.pmt_trackings.contains_key(&pid)
+            || self.es_trackings.contains_key(&pid)
+    }
+
+    /// TR 101 290 v1.4.1 Table 5.0c indicator 3.4 — Unreferenced_PID
+    /// bookkeeping. Records the first-seen time of a PID that is not
+    /// (currently) part of the referenced set. If the PID is already
+    /// referenced, drops any stale tracking entry. Absence-timeout
+    /// evaluation happens in `check_presence_timeouts`; a PID that later
+    /// becomes referenced (see `process_pat_section` / `process_pmt_section`)
+    /// has its entry removed there.
+    fn track_unreferenced_pid(&mut self, pid: u16, t: Duration) {
+        if self.is_referenced_or_reserved_pid(pid) {
+            self.unreferenced_pid_timers.remove(&pid);
+            return;
+        }
+        self.unreferenced_pid_timers
+            .entry(pid)
+            .or_insert_with(|| UnreferencedPidTracking {
+                first_seen: t,
+                reported: false,
+            });
+    }
+
     /// Process a completed section on PID_PAT.
     fn process_pat_section(&mut self, section_bytes: &[u8], t: Duration) {
         let section = match Section::parse(section_bytes) {
@@ -987,6 +1299,10 @@ impl ConformanceMonitor {
                     },
                     reassembler: SectionReassembler::default(),
                 });
+            // 3.4: a program_map_PID is now referenced — it is no longer an
+            // Unreferenced_PID candidate even if its own packets have not
+            // been observed yet.
+            self.unreferenced_pid_timers.remove(&pmt_pid);
         }
     }
 
@@ -1034,6 +1350,9 @@ impl ConformanceMonitor {
                     },
                 },
             );
+            // 3.4: an ES/PCR PID is now referenced by a PMT — no longer an
+            // Unreferenced_PID candidate.
+            self.unreferenced_pid_timers.remove(&es_pid);
         }
     }
 
@@ -1298,18 +1617,67 @@ impl ConformanceMonitor {
             if let Some(timer) = self.si_timers.get_mut(&table_id) {
                 timer.reported = true;
             }
-            let table_name = match table_id {
-                NIT_ACTUAL_TABLE_ID => "NIT_actual",
-                SDT_ACTUAL_TABLE_ID => "SDT_actual",
-                EIT_PF_ACTUAL_TABLE_ID => "EIT_P/F_actual",
-                TDT_TABLE_ID => "TDT",
-                _ => "unknown",
+            // The four `_actual` table_ids share this ONE lazily-armed
+            // timer: an absence past the interval is simultaneously
+            // SI_repetition_error (3.2, the general repetition-rate
+            // indicator, emitted unconditionally below) AND the presence
+            // dimension of the corresponding table-specific indicator
+            // (NIT_error 3.1 / SDT_error 3.5 / EIT_error 3.6 / TDT_error 3.8)
+            // — the same underlying absence, per the spec's historical
+            // combined indicator vs. the split `_actual` variants (see
+            // docs/tr_101_290.md notes 2-4).
+            let (table_name, group_indicator) = match table_id {
+                NIT_ACTUAL_TABLE_ID => ("NIT_actual", Some(Indicator::NitError)),
+                SDT_ACTUAL_TABLE_ID => ("SDT_actual", Some(Indicator::SdtError)),
+                EIT_PF_ACTUAL_TABLE_ID => ("EIT_P/F_actual", Some(Indicator::EitError)),
+                TDT_TABLE_ID => ("TDT", Some(Indicator::TdtError)),
+                _ => ("unknown", None),
             };
             self.emit(
                 Indicator::SiRepetitionError,
                 Some(pid),
                 t,
                 format!("{table_name} repetition interval {interval_ms} ms exceeds {limit_ms} ms"),
+            );
+            if let Some(indicator) = group_indicator {
+                self.emit(
+                    indicator,
+                    Some(pid),
+                    t,
+                    format!("no {table_name} section on PID 0x{pid:04X} within {limit_ms} ms"),
+                );
+            }
+        }
+
+        // 3.4: Unreferenced_PID — a PID persisting beyond the presence
+        // threshold without being referenced by the PAT/CAT/a PMT or one of
+        // the well-known SI PIDs.
+        let unref_timeouts: Vec<(u16, u64)> = self
+            .unreferenced_pid_timers
+            .iter()
+            .filter_map(|(&pid, timer)| {
+                if timer.reported {
+                    return None;
+                }
+                let elapsed = t.saturating_sub(timer.first_seen);
+                if elapsed > self.config.unreferenced_pid_period {
+                    Some((pid, self.config.unreferenced_pid_period.as_millis() as u64))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (pid, period_ms) in unref_timeouts {
+            if let Some(timer) = self.unreferenced_pid_timers.get_mut(&pid) {
+                timer.reported = true;
+            }
+            self.emit(
+                Indicator::UnreferencedPid,
+                Some(pid),
+                t,
+                format!(
+                    "PID 0x{pid:04X} present for > {period_ms} ms without being referenced by PAT/CAT/a PMT or a well-known SI PID"
+                ),
             );
         }
     }

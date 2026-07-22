@@ -30,7 +30,7 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 
 ## What's implemented
 
-### Indicators — 13 implemented, per the `Indicator` enum in `src/lib.rs`
+### Indicators — 19 implemented, per the `Indicator` enum in `src/lib.rs`
 
 | Priority | Clause | Indicator | Notes |
 |----------|--------|-----------|-------|
@@ -46,15 +46,35 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 | 2 | 2.3b | `PcrDiscontinuityError` | PCR delta > 100 ms (default) without `discontinuity_indicator` |
 | 2 | 2.5 | `PtsError` | PTS interval > 700 ms (default) on ES PIDs |
 | 2 | 2.6 | `CatError` | Wrong table_id on PID 0x0001; scrambled packet with no CAT seen |
+| 3 | 3.1 | `NitError` | Bad table_id on PID 0x0010 (not NIT_actual/NIT_other/ST); NIT_actual absent > 10 s (default) |
 | 3 | 3.2 | `SiRepetitionError` | Max-interval dimension: NIT_actual (10 s), SDT_actual (2 s), EIT P/F actual (2 s), TDT (30 s) |
+| 3 | 3.4 | `UnreferencedPid` | A PID persists > 500 ms (default) without being referenced by the PAT/CAT/a PMT or a well-known SI PID |
+| 3 | 3.5 | `SdtError` | Bad table_id on PID 0x0011 (not SDT_actual/SDT_other/BAT/ST); SDT_actual absent > 2 s (default) |
+| 3 | 3.6 | `EitError` | Bad table_id on PID 0x0012 (not EIT P/F or schedule range 0x50–0x6F or ST); EIT P/F actual absent > 2 s (default) |
+| 3 | 3.7 | `RstError` | Bad table_id on PID 0x0013 (not RST/ST) |
+| 3 | 3.8 | `TdtError` | Bad table_id on PID 0x0014 (not TDT/TOT/ST); TDT absent > 30 s (default) |
 
-Intentionally excluded:
+Excluded, split by reason:
+
+**Not computable under this crate's architecture** (needs the ISO/IEC 13818-1
+T-STD buffer model or hardware arrival timing — this monitor is sans-IO with
+a caller-supplied clock and no independent hardware clock):
 
 | Clause | Indicator | Reason |
 |--------|-----------|--------|
-| 2.4 | `PCR_accuracy_error` | Requires hardware arrival timestamps — not computable under the caller-supplied-time model |
-| 3.2 | SI_repetition_error (25 ms min gap) | Deferred — needs per-`(table_id, section_number)` tracking to avoid false positives on dense multi-section tables |
-| 3.1 / 3.3–3.10 | — | Out of scope |
+| 2.4 | `PCR_accuracy_error` | Requires PCR accuracy within ±500 ns of a hardware reference clock |
+| 3.3 | `Buffer_error` | Requires the T-STD transport/multiplexing/elementary-stream buffer model |
+| 3.9 | `Empty_buffer_error` | Requires the T-STD buffer model |
+| 3.10 | `Data_delay_error` | Requires T-STD buffer delay tracking |
+
+**Feasible, deferred** (reusable with the existing timer machinery, but not
+yet implemented):
+
+| Clause | Indicator | Reason |
+|--------|-----------|--------|
+| 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8 | (25 ms min-gap dimension) | Needs per-`(table_id, section_number)` tracking to avoid false positives on dense multi-section tables |
+| 3.1.b / 3.5.b / 3.6.b | `NIT_other_error` / `SDT_other_error` / `EIT_other_error` | Need TR 101 211 `_other` repetition interval rules |
+| 3.6.c | `EIT_PF_error` | EIT P/F section-0/1 pairing check not yet implemented |
 
 ### Caller-supplied time model
 
@@ -82,6 +102,35 @@ not computable.
 The monitor parses each completed PAT section and automatically starts tracking
 the `program_map_PID` entries it finds, enabling indicator 1.5.a (PMT absence)
 and ES PID extraction (indicator 1.6).
+
+### NIT/SDT/EIT/RST/TDT_error (3.1, 3.5, 3.6, 3.7, 3.8) — implementation notes
+
+- Each indicator validates the `table_id` of every completed section on its
+  well-known PID against the allowed set from `docs/tr_101_290.md` clause
+  3.x, firing immediately on a disallowed value.
+- The absence dimension of 3.1/3.5/3.6/3.8 (NIT_actual/SDT_actual/EIT P/F
+  actual/TDT missing beyond the repetition interval) is raised from the
+  *same* lazily-armed timer that drives `SiRepetitionError` (3.2) — the two
+  indicators are the same underlying absence event with two spec identities
+  (the old combined indicator vs. the newer split `_actual` variant); both
+  fire together.
+- `RstError` (3.7) has no documented absence threshold in Table 5.0c, so it
+  only has the bad-table_id dimension.
+
+### Unreferenced_PID (3.4) — implementation notes
+
+- Tracks the first-seen time of any PID that is not (yet) part of the
+  referenced set: PAT, CAT, the well-known SI PIDs (NIT/SDT-BAT/EIT/RST/
+  TDT-TOT), the null PID, the reserved-for-future-use range (0x0002–0x000F),
+  `program_map_PID`s from the PAT, and ES/PCR PIDs from a PMT. A PID that
+  persists past the 500 ms (default) threshold without becoming referenced
+  raises `UnreferencedPid`.
+- **Known limitations** (documented, not silently swallowed): CAT-referenced
+  EMM PIDs are not exempted — this monitor validates CAT `table_id` but does
+  not decode CA descriptors to extract `CA_PID`s. PIDs "user defined as
+  private data streams" (the spec's own carve-out) are likewise not
+  distinguishable from the wire alone. Either can produce a false positive
+  for a stream using that pattern; the crate does not currently model it.
 
 ## Feature flags
 
