@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [8.6.0] - 2026-07-22
 ### Added
 - TR 101 290 v1.4.1 Table 5.0c Priority-3 indicators (#732): `NitError` (3.1),
   `UnreferencedPid` (3.4), `SdtError` (3.5), `EitError` (3.6), `RstError`

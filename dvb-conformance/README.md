@@ -145,7 +145,7 @@ Rust **1.86**.
 
 ## References
 
-- ETSI TR 101 290 v1.4.1 (2023-05) — DVB Measurement Guidelines (§5.2.1 Table 5.0a, §5.2.2 Table 5.0b, §5.2.3 Table 5.0c)
+- ETSI TR 101 290 v1.4.1 (2020-06) — DVB Measurement Guidelines (§5.2.1 Table 5.0a, §5.2.2 Table 5.0b, §5.2.3 Table 5.0c)
 - ISO/IEC 13818-1 — MPEG-2 Systems
 
 ## Examples

@@ -1,6 +1,6 @@
 [package]
 name         = "dvb-tools"
-version      = "8.5.0"
+version      = "8.6.0"
 description  = "Command-line DVB stream analyzer (dump / services / epg / pids / t2mi) over the rust-broadcast crates."
 edition      = "2024"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]

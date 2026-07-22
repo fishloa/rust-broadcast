@@ -27,9 +27,9 @@
 //!
 //! # References
 //!
-//! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.1, Table 5.0a
-//! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.2, Table 5.0b
-//! - ETSI TR 101 290 v1.4.1 (2023-05), §5.2.3, Table 5.0c
+//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.1, Table 5.0a
+//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.2, Table 5.0b
+//! - ETSI TR 101 290 v1.4.1 (2020-06), §5.2.3, Table 5.0c
 //! - ISO/IEC 13818-1 (MPEG-2 Systems)
 
 #![cfg_attr(not(feature = "std"), no_std)]
