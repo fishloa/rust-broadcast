@@ -1,6 +1,6 @@
 [package]
 name         = "broadcast-auth"
-version      = "0.1.0"
+version      = "0.1.1"
 edition      = "2024"
 description  = "Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients."
 license      = "MIT OR Apache-2.0"
