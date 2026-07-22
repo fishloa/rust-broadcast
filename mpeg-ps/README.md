@@ -15,7 +15,7 @@ bounds + per-stream P-STD buffer bounds), and the program stream map (PSM).
 
 ```rust
 use mpeg_ps::PackHeader;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 let bytes = [
     0x00, 0x00, 0x01, 0xBA,

@@ -38,7 +38,7 @@ transport stream. A `splice_info_section` (table_id `0xFC`) carries one splice
 ```rust
 use scte35_splice::{SpliceInfoSection, commands::{AnyCommand, TimeSignal}};
 use scte35_splice::time::SpliceTime;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // Build a time_signal() section and emit it.
 let ts = TimeSignal { splice_time: SpliceTime::with_pts(0x0_0012_3456) };

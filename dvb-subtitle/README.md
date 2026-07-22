@@ -43,7 +43,7 @@ Two runnable examples ship with this crate
 ## Usage
 
 ```rust
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_subtitle::{PesDataField, AnySegment, DataIdentifier, EndOfPesMarker, SyncByte};
 
 let bytes = [

@@ -56,7 +56,7 @@
 //!
 //! [`is_scte35`]: EmsgBox::is_scte35
 //!
-//! `#![no_std]` + `alloc`; depends only on `dvb-common`.
+//! `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 //!
 //! # Examples
 //!

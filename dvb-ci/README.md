@@ -10,7 +10,7 @@ builds the EN 50221 protocol objects across all three layers, plus a **`CA_PMT`
 builder** that turns a [`dvb-si`](https://crates.io/crates/dvb-si) PMT into the
 object handed to a Conditional Access Module.
 
-Every wire type implements `dvb_common::Parse` / `dvb_common::Serialize`
+Every wire type implements `broadcast_common::Parse` / `broadcast_common::Serialize`
 symmetrically (parse → serialize is byte-identical; all length fields computed
 from content). `#![no_std]` (+ `alloc`). Spec citations live in each module doc;
 the render-verified transcription is in [`docs/en_50221/`](docs/en_50221).
@@ -24,7 +24,7 @@ dvb-si PmtSection ──► dvb_ci::builder::build_ca_pmt ──► ca_pmt objec
 ```rust
 use dvb_ci::objects::ca_info::CaInfo;
 use dvb_ci::AnyApdu;
-use dvb_common::Serialize;
+use broadcast_common::Serialize;
 
 // A ca_info() APDU advertising two CA_system_ids.
 let info = CaInfo { ca_system_ids: vec![0x0500, 0x0B00] };

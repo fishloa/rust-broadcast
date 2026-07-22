@@ -46,7 +46,7 @@
 //! EIS⇔SCS, (P)SIG⇔MUX, ACG⇔EIS, SIMCOMP⇔MUXCONFIG) share the same framing but
 //! are not modelled.
 //!
-//! `#![no_std]` + `alloc`; depends only on `dvb-common`.
+//! `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 //!
 //! # Examples
 //!

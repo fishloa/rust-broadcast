@@ -32,7 +32,7 @@
 //! [`FecPayloadId128`] provided as one concrete illustrative layout.
 //!
 //! All integer fields are big-endian. `#![no_std]` + `alloc`; depends only on
-//! `dvb-common`.
+//! `broadcast-common`.
 //!
 //! # Examples
 //!

@@ -4,7 +4,7 @@
 //! display-definition, page-composition, region-composition, CLUT-definition,
 //! object-data (incl. 2/4/8-bit pixel-data sub-blocks), disparity-signalling,
 //! alternative-CLUT and end-of-display-set segments. Feed it a reassembled PES
-//! payload (e.g. from `mpeg-pes`); it depends only on `dvb-common` and is
+//! payload (e.g. from `mpeg-pes`); it depends only on `broadcast-common` and is
 //! `#![no_std]` (+ `alloc`).
 //!
 //! ```

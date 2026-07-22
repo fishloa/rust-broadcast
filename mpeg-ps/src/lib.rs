@@ -7,7 +7,7 @@
 //!
 //! PES payloads are parsed via the `mpeg-pes` crate.
 //!
-//! Depends only on `dvb-common` + `mpeg-pes` and is `#![no_std]` (+ `alloc`).
+//! Depends only on `broadcast-common` + `mpeg-pes` and is `#![no_std]` (+ `alloc`).
 //!
 //! # Examples
 //!

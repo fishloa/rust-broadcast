@@ -425,7 +425,7 @@ cheaply-`Clone`, `Send + Sync` value via the [`yoke`] crate:
 ```rust
 use std::sync::Arc;
 use dvb_si::{owned::Owned, tables::pmt::PmtSection};
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 let bytes: Arc<[u8]> = Arc::from(section);             // own the section
 let pmt: Owned<PmtSection<'static>> = Owned::try_new(bytes, |b| PmtSection::parse(b))?;

@@ -8,7 +8,7 @@
 //! timestamps ([`Pts`]/[`Dts`], 33-bit @ 90 kHz), and the elementary-stream
 //! bytes.
 //!
-//! It depends only on `dvb-common` and is `#![no_std]` (+ `alloc`), WASM-clean.
+//! It depends only on `broadcast-common` and is `#![no_std]` (+ `alloc`), WASM-clean.
 //!
 //! ```
 //! use mpeg_pes::{PesPacket, StreamId};

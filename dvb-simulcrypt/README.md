@@ -51,7 +51,7 @@ use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter,
     ParameterType, SimulcryptMessage,
 };
-use dvb_common::traits::{Parse, Serialize};
+use broadcast_common::traits::{Parse, Serialize};
 
 let ecm_channel_id = [0x00, 0x2A];
 let super_cas_id = [0x00, 0x01, 0x00, 0x02];
