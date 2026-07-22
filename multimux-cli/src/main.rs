@@ -26,11 +26,14 @@ use multimux::{MultimuxError, Result};
 #[command(
     name = "multimux",
     version,
-    about = "Live RTSP -> LL-HLS just-in-time repackaging HTTP origin",
-    long_about = "Pulls one or more live RTSP sources and serves each as LL-HLS \
-                  (RFC 8216bis) from an in-process HTTP origin.\n\
+    about = "Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/HLS-pull) x multi-output (LL-HLS/DASH/LL-DASH) just-in-time repackaging HTTP origin",
+    long_about = "Runs one or more ingest routes, each pulling from RTSP, RTP, \
+                  TS-over-UDP, TS-over-HTTP, or HLS, and serving LL-HLS (RFC 8216bis), \
+                  DASH, or low-latency DASH from an in-process HTTP origin.\n\
                   Either point it at a JSON config file (--config) describing one or \
-                  more routes, or use the single-route quick start (--rtsp + --name)."
+                  more routes (any input, any output(s)), or use the single-route \
+                  RTSP quick start (--rtsp + --name, with --outputs/--dash selecting \
+                  delivery protocol(s))."
 )]
 struct Cli {
     /// JSON config file describing routes + segmentation/window/bind parameters.

@@ -5,7 +5,7 @@ DVB subtitling (bitmap) segment parser and serializer — **ETSI EN 300 743 V1.6
 Feed it the reassembled PES data field of a DVB subtitle stream (the payload
 from a PES packet with `stream_id` signalling private-data subtitling); it
 returns typed, decoded segments. It depends only on
-[`dvb‑common`](https://crates.io/crates/dvb-common) and works `#![no_std]`
+[`broadcast‑common`](https://crates.io/crates/broadcast-common) and works `#![no_std]`
 (+ `alloc`).
 
 ## Features
@@ -43,7 +43,7 @@ Two runnable examples ship with this crate
 ## Usage
 
 ```rust
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_subtitle::{PesDataField, AnySegment, DataIdentifier, EndOfPesMarker, SyncByte};
 
 let bytes = [

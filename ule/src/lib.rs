@@ -27,7 +27,7 @@
 //! reused from [`broadcast_common::crc32_mpeg2`]; this is verified byte-exact against
 //! RFC 4326 Appendix B's worked example in the crate's fixture test.
 //!
-//! `#![no_std]` + `alloc`; depends only on `dvb-common`.
+//! `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 //!
 //! # Examples
 //!

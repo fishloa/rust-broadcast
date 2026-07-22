@@ -16,7 +16,7 @@ scte35-splice = "1.0"
 ```
 
 Spec-cited **ANSI/SCTE 35 2023r1** splice information (Digital Program
-Insertion cueing) parser **and builder** in Rust, with the rust-dvb family's
+Insertion cueing) parser **and builder** in Rust, with the rust-broadcast family's
 symmetric `Parse`/`Serialize` round-trip discipline — every wire type
 round-trips byte-for-byte.
 
@@ -38,7 +38,7 @@ transport stream. A `splice_info_section` (table_id `0xFC`) carries one splice
 ```rust
 use scte35_splice::{SpliceInfoSection, commands::{AnyCommand, TimeSignal}};
 use scte35_splice::time::SpliceTime;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // Build a time_signal() section and emit it.
 let ts = TimeSignal { splice_time: SpliceTime::with_pts(0x0_0012_3456) };
@@ -132,7 +132,7 @@ route them into `SpliceInfoSection::parse`.
 
 ## MSRV
 
-Rust **1.81**.
+Rust **1.86**.
 
 ## Spec grounding
 

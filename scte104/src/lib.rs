@@ -10,7 +10,7 @@
 //! ANSI/SCTE 104 2023 — Automation System to Compression System Communications
 //! Applications Program Interface (API).
 //!
-//! Depends only on `dvb-common` and is `#![no_std]` (+ `alloc`).
+//! Depends only on `broadcast-common` and is `#![no_std]` (+ `alloc`).
 //!
 //! ## Coverage
 //!

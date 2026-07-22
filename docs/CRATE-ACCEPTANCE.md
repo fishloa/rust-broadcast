@@ -40,7 +40,7 @@ Plus **MSRV 1.86** (`rust-toolchain.toml`, single source) and, for `no_std` crat
 
 ## 5. `no_std`, labels, fuzz, examples, CLI
 - **`no_std` + `alloc`** where practical; `--no-default-features` + bare-metal build green.
-- **#204 label convention**: every public spec/field enum gets `name() -> &'static str` (hand-written) + `dvb_common`/`broadcast_common::impl_spec_display!`; a per-crate `tests/label_coverage.rs` drift-guard (or a documented SKIP list).
+- **#204 label convention**: every public spec/field enum gets `name() -> &'static str` (hand-written) + `broadcast_common::impl_spec_display!`; a per-crate `tests/label_coverage.rs` drift-guard (or a documented SKIP list).
 - **Fuzz target** added (the workspace fuzzes every parser crate; nightly fuzz-build gate).
 - **≥2 runnable examples** (`cargo run -p <crate> --example …`), fixtures via `std::fs` at runtime.
 - **CLI** (if any) follows [`CLI-STANDARD.md`](CLI-STANDARD.md): clap derive, named flags, no positional magic numbers, auto `--help`/`--version`.

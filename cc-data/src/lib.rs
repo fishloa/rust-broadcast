@@ -6,7 +6,7 @@
 //! CEA-608 vs CEA-708 split by `cc_type`.
 //!
 //! Feed it the `cc_data()` bytes (the caller extracts them from the picture
-//! user_data / SEI). Depends only on `dvb-common`, `#![no_std]` (+ `alloc`).
+//! user_data / SEI). Depends only on `broadcast-common`, `#![no_std]` (+ `alloc`).
 //!
 //! # Caption decode (`decode` feature)
 //!

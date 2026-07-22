@@ -6,12 +6,20 @@ decode into dicts. Run with `pytest` after `maturin develop`.
 """
 
 import os
+import pytest
 import dvb_si_py as dvb
 
-# Repo-relative path to a committed real capture.
+# Repo-relative path to a real capture. The fixture lives in the private
+# `private/` submodule (public/CI clones skip it), so these fixture-backed
+# tests skip cleanly when it is absent rather than erroring — matching the
+# workspace convention that submodule-dependent tests degrade to a skip.
 FIXTURE = os.path.join(
     os.path.dirname(__file__),
     "..", "..", "..", "dvb-si", "tests", "fixtures", "tnt-5w-12732v-isi6-10s.ts",
+)
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(FIXTURE),
+    reason="real-capture fixture not present (private submodule not fetched)",
 )
 PKT = 188
 

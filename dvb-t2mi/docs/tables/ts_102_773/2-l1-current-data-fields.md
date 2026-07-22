@@ -27,7 +27,7 @@ themselves are transcribed in `dvb-bbframe/docs/en_302_755_t2.md` (Figures
   its own CRC-32, validated by the pump). 168 bits = exactly 21 bytes, so
   `L1PRE` is byte-aligned and `L1CONF_LEN` starts at byte 21. A standalone (non
   T2-MI) L1-pre block would carry the CRC; the parser computes/validates that
-  CRC with `dvb_common::crc32_mpeg2` (EN 302 755 annex F).
+  CRC with `broadcast_common::crc32_mpeg2` (EN 302 755 annex F).
 - **`L1CONF` is the configurable L1-post fields (EN 302 755 Figure 27)**,
   bit-packed in wire order, then zero-padded up to a byte boundary
   (`bflbfzpb`). Its bit length is `L1CONF_LEN`. The PLP / RF / AUX loop counts

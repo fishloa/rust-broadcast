@@ -106,7 +106,7 @@ owned `CatCaEntry` values.
 ## 3. `Deserialize` dropped — serde is Serialize-only
 
 JSON is a **display/export format only**. Across `dvb-si`, `dvb-t2mi`,
-`dvb-bbframe`, and `dvb-common`, **every** `Deserialize` derive and impl is
+`dvb-bbframe`, and `broadcast-common`, **every** `Deserialize` derive and impl is
 removed. Parsing FROM JSON is deliberately unsupported — to reconstruct a value,
 re-`parse` the wire bytes. `Serialize` is unchanged: every table, descriptor, and
 payload still serializes exactly as before.
@@ -222,7 +222,7 @@ dvb-si = { version = "3.1", features = ["yoke"] }
 
 ```rust
 use std::sync::Arc;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 use dvb_si::owned::Owned;
 use dvb_si::tables::pmt::Pmt;
 

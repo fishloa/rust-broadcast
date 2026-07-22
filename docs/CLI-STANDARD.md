@@ -1,4 +1,4 @@
-# rust-dvb CLI standard
+# rust-broadcast CLI standard
 
 Every command-line tool in the workspace follows this so the tools feel like one
 suite. New CLIs and new subcommands MUST conform.
@@ -12,7 +12,7 @@ named flags, validation, and consistent error messages for free.
 - A binary crate depends on `clap` directly.
 - A binary gated behind a feature (e.g. `ci-probe` under `linux`) takes `clap`
   as an **optional** dep enabled by that feature, so the default build stays lean.
-- Pin a `clap` version that builds on the workspace MSRV (1.81); `--locked` is
+- Pin a `clap` version that builds on the workspace MSRV (1.86); `--locked` is
   authoritative.
 
 ## Shape

@@ -1,4 +1,4 @@
-//! `dvb-tools` — command-line DVB stream analyzer over the `rust-dvb` crates.
+//! `dvb-tools` — command-line DVB stream analyzer over the `rust-broadcast` crates.
 //!
 //! ```text
 //! dvb-tools dump     <FILE> [--json]
@@ -22,7 +22,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-/// Command-line DVB stream analyzer over the rust-dvb crates.
+/// Command-line DVB stream analyzer over the rust-broadcast crates.
 #[derive(Parser)]
 #[command(name = "dvb-tools", version, about, long_about = None)]
 struct Cli {

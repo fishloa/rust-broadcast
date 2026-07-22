@@ -39,7 +39,7 @@ The shared `LineHeader` is the Teletext/VPS/WSS/CC first byte
 > but Table 3 marks `0xC1` as *reserved → discard*. This crate follows Table 3
 > (authoritative), so `0xC1` decodes as `DataUnitId::Reserved`.
 
-`#![no_std]` + `alloc`; depends only on `dvb-common`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
 
@@ -77,7 +77,7 @@ cargo run -p dvb-vbi --example parse_data_field
 
 ## Minimum Supported Rust Version
 
-1.81
+1.86
 
 ## License
 

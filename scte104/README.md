@@ -18,7 +18,7 @@ use scte104::operations::{
     inject_section_data::InjectSectionData,
 };
 use scte104::time::Timestamp;
-use dvb_common::{Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 
 // Build a single_operation_message (basic response).
 let msg = SingleOperationMessage::new_response(

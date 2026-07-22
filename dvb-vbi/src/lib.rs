@@ -34,7 +34,7 @@
 //! `data_unit_length` is recomputed from the typed body on serialize, and a
 //! committed fixture is byte-exact round-tripped in the crate's tests.
 //!
-//! `#![no_std]` + `alloc`; depends only on `dvb-common`.
+//! `#![no_std]` + `alloc`; depends only on `broadcast-common`.
 //!
 //! # Examples
 //!

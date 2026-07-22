@@ -42,7 +42,7 @@ interprets them. The non-implemented interfaces (C(P)SIG⇔(P)SIG, EIS⇔SCS,
 (P)SIG⇔MUX, ACG⇔EIS, SIMCOMP⇔MUXCONFIG) share the same framing but are not
 modelled.
 
-`#![no_std]` + `alloc`; depends only on `dvb-common`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
 
@@ -51,7 +51,7 @@ use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter,
     ParameterType, SimulcryptMessage,
 };
-use dvb_common::traits::{Parse, Serialize};
+use broadcast_common::traits::{Parse, Serialize};
 
 let ecm_channel_id = [0x00, 0x2A];
 let super_cas_id = [0x00, 0x01, 0x00, 0x02];
@@ -91,7 +91,7 @@ cargo run -p dvb-simulcrypt --example parse_cw_provision
 
 ## Minimum Supported Rust Version
 
-1.81
+1.86
 
 ## License
 

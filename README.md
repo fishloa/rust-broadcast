@@ -223,7 +223,7 @@ discipline is spec fidelity, verified several ways over:
 
 ## Documentation
 
-- Per-crate front pages: [dvb-si](dvb-si/README.md) · [dvb-t2mi](dvb-t2mi/README.md) · [dvb-bbframe](dvb-bbframe/README.md) · [dvb-common](dvb-common/README.md) · [dvb-tools](dvb-tools/README.md) · [dvb-conformance](dvb-conformance/README.md)
+- Per-crate front pages: [dvb-si](dvb-si/README.md) · [dvb-t2mi](dvb-t2mi/README.md) · [dvb-bbframe](dvb-bbframe/README.md) · [broadcast-common](broadcast-common/README.md) · [dvb-tools](dvb-tools/README.md) · [dvb-conformance](dvb-conformance/README.md)
 - [Adding a parser crate](docs/extending.md) — how a new sibling crate (e.g. `scte35-splice`) plugs its own wire types into the existing dispatch via the runtime registries and open `*Def` traits, with zero breaking change.
 - [`dvb-si` 4.0 migration guide](dvb-si/MIGRATION-4.0.md) — 3.x → 4.0 breaking changes: section parser names (`NitSection`, `SitSection`, …), `AnyTableSection`, CamelCase `TableId`, and complete multi-section table collection.
 - [`dvb-si` 3.1 migration guide](dvb-si/MIGRATION-3.1.md) — 1.x / 2.x → 3.1 breaking changes (typed `DescriptorLoop`, Serialize-only serde, typed SIT, optional `yoke`) with before/after code.

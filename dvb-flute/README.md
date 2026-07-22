@@ -36,7 +36,7 @@ Implements:
 > exposes them as opaque byte slices (the caller supplies the length), with
 > `FecPayloadId128` provided as one concrete illustrative layout.
 
-`#![no_std]` + `alloc`; depends only on `dvb-common`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common`.
 
 ## Quick start
 
@@ -79,7 +79,7 @@ cargo run -p dvb-flute --example parse_flute
 
 ## Minimum Supported Rust Version
 
-1.81
+1.86
 
 ## License
 

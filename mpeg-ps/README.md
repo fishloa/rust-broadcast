@@ -9,13 +9,13 @@ Parses the `.mpg`/`.vob` framing that wraps PES packets: the pack header
 (42-bit SCR + `program_mux_rate`), the optional system header (rate/audio/video
 bounds + per-stream P-STD buffer bounds), and the program stream map (PSM).
 
-`#![no_std]` + `alloc`; depends only on `dvb-common` and `mpeg-pes`.
+`#![no_std]` + `alloc`; depends only on `broadcast-common` and `mpeg-pes`.
 
 ## Quick start
 
 ```rust
 use mpeg_ps::PackHeader;
-use dvb_common::Parse;
+use broadcast_common::Parse;
 
 let bytes = [
     0x00, 0x00, 0x01, 0xBA,
@@ -51,7 +51,7 @@ cargo run -p mpeg-ps --example walk_ps
 
 ## Minimum Supported Rust Version
 
-1.81
+1.86
 
 ## License
 
