@@ -10,6 +10,7 @@
 
 use std::time::Duration;
 
+use dvb_ci::objects::ca_pmt_reply::CaEnable;
 use dvb_ci::resource::ResourceId;
 
 /// An input to the protocol core.
@@ -113,7 +114,33 @@ pub enum Notification {
     CaPmtReply {
         /// `program_number` the reply pertains to.
         program_number: u16,
-        /// Raw `CA_enable`/descrambling-possibility bytes (per-program/ES).
+        /// Programme-level `CA_enable` (EN 50221 §8.4.3.5 Table 26). `None`
+        /// iff the programme `CA_enable_flag` bit was clear (no
+        /// programme-level status given) — plumbed straight through from the
+        /// `dvb_ci` `CaPmtReply` object's own `Option<CaEnable>`, never
+        /// collapsed to a sentinel.
+        ca_enable: Option<CaEnable>,
+        /// Whether descrambling is (or was) possible, derived from
+        /// `ca_enable`. Kept for back-compat with the pre-#763 boolean-only
+        /// surface.
+        descrambling_ok: bool,
+    },
+    /// A per-programme entitlement status transition (#763). Edge-triggered:
+    /// fires once per `program_number` only when the programme-level
+    /// `CA_enable` status (EN 50221 §8.4.3.5, Table 26) changes versus the
+    /// last observed `ca_pmt_reply` for that programme. The transition is
+    /// detected by the periodic re-query (`Driver::set_requery_interval`),
+    /// which re-sends the active `ca_pmt`s with `ca_pmt_cmd_id = query` so
+    /// the CAM re-evaluates and replies. Complements the coarse #726
+    /// `HotPlug` module/card layer with the fine-grained per-service layer.
+    /// (Programme-level status only; the ES-level `CA_enable` entries are
+    /// not evaluated for this event.)
+    Entitlement {
+        /// `program_number` the status pertains to.
+        program_number: u16,
+        /// Programme-level `CA_enable` status.
+        ca_enable: CaEnable,
+        /// Whether descrambling is possible per the current status.
         descrambling_ok: bool,
     },
     /// An MMI menu/enquiry the host should display.
@@ -300,4 +327,30 @@ pub enum HostControlEvent {
     /// `ask_release()` (Table 30): the CAM asks the host to release any
     /// replacements it holds (header-only request).
     AskRelease,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notification_entitlement_construction() {
+        let note = Notification::Entitlement {
+            program_number: 1234,
+            ca_enable: CaEnable::Possible,
+            descrambling_ok: true,
+        };
+        match note {
+            Notification::Entitlement {
+                program_number,
+                ca_enable,
+                descrambling_ok,
+            } => {
+                assert_eq!(program_number, 1234);
+                assert_eq!(ca_enable, CaEnable::Possible);
+                assert!(descrambling_ok);
+            }
+            _ => panic!("expected Entitlement variant"),
+        }
+    }
 }

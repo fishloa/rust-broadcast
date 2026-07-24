@@ -47,6 +47,19 @@ Implemented from the EN 50221 specification.
   app-layer inference (CI slots have no card-detect line). React with a
   closure via `Driver::pump_hotplug(dt, |hp| …)` (or `pump_with` for every
   notification), or classify a drained note with `Notification::hotplug()`.
+- **Managed CAS layer** (#763): a single-slot orchestration layer fed parsed
+  `dvb-si` structs (never raw bytes). `Driver::add_service(&PmtSection)` /
+  `remove_service(pn)` build + send the `ca_pmt` and track the slot's active
+  service set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs
+  ∩ the CAM's `ca_info` CAIDs); `emm_pids()`/`descramble_pids()`/`ca_pids()`/
+  `required_pids()` (EMM ∪ ES ∪ ECM ∪ PCR) give the PIDs to route into `ci0`.
+  `set_requery_interval(dt)` periodically re-queries (`cmd_id = query`) so a
+  card entitled *after* the initial `ca_pmt` refreshes — a per-programme
+  status change surfaces as an edge-triggered `Notification::Entitlement`.
+  `CaDescrambler<D, C>` is the turnkey wrapper that also owns the `ci0`
+  `CiDataDevice`: `feed_ts(scrambled)` filters to `required_pids()` and returns
+  the descrambled TS. One `CaDescrambler` = one CI slot = one TS path
+  (multi-tuner ⇒ one per slot).
 
 ## `ci-probe` — discover and engage an installed CAM
 

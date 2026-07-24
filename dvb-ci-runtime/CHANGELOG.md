@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-24
+### Added
+- **Single-slot managed CAS layer** (#763) — a CA orchestration layer over the
+  raw `ca_pmt`/`ca_pmt_reply` surface, fed **parsed `dvb-si` structs** (never
+  raw bytes). The raw `send_ca_pmt(&[u8])` + notification surface is unchanged;
+  the managed API sits alongside it (opt-in):
+  - `Driver::add_service(&PmtSection)` / `remove_service(program_number)` build
+    and send the `ca_pmt` via `dvb_ci::builder::build_ca_pmt` (EN 50221
+    §8.4.3.4 Table 25) and track the slot's active service set — list-management
+    (`Only`/`Add`, `Update`/`NotSelected`) auto-selected from the tracked set.
+    `add_service` rejects a PMT with no `CA_descriptor` (`CaError::NoCaDescriptor`).
+  - `Driver::set_cat(&CatSection)` — sets the CAT (ISO/IEC 13818-1 §2.4.4.5);
+    the EMM-PID feed is the CAT's EMM PIDs ∩ the CAM's advertised `ca_info`
+    CAIDs (only what this CAM can use). Not an error before `ca_info` arrives.
+  - `Driver::emm_pids()` / `descramble_pids()` / `ca_pids()` / `required_pids()`
+    — the PIDs to route into the `ci0` data plane: EMM PIDs, ES PIDs, ECM PIDs,
+    and their union (`required_pids` = ES ∪ ECM ∪ EMM).
+  - `Driver::set_requery_interval(Duration)` — periodic `ca_pmt` re-query with
+    `cmd_id = query` (EN 50221 §8.4.3.5 Table 26 — only `query`/`ok_mmi` solicit
+    a `ca_pmt_reply`) so a card entitled *after* the initial `ca_pmt` still
+    refreshes; `Duration::ZERO` disables it. Default 10 s (`REQUERY_DEFAULT`).
+  - `Notification::Entitlement { program_number, ca_enable, descrambling_ok }`
+    — **edge-triggered** per programme, fired only on a status transition
+    detected by the re-query. Complements #726 `HotPlug` (coarse module/card
+    layer) with the fine-grained per-service layer.
+  - `CaDescrambler<D: CaDevice, C: CiDataDevice>` — turnkey wrapper that also
+    owns the `ci0` data plane: `feed_ts(scrambled)` filters a TS chunk to
+    `required_pids()` and writes only those packets to `ci0`, returning the
+    descrambled TS; `add_service`/`set_cat`/`take_notifications`/`required_pids`
+    delegate to the wrapped `Driver`. One `CaDescrambler` = one CI slot = one
+    TS path (multi-tuner ⇒ one per slot; cross-mux merge is a remux, out of
+    scope here).
+  - `Notification::CaPmtReply` gains a typed `ca_enable: Option<CaEnable>` field
+    (`dvb_ci::objects::ca_pmt_reply::CaEnable`, EN 50221 §8.4.3.5 Table 26) —
+    distinguishes not-entitled/technical-failure/purchase-dialogue rather than
+    the boolean-only `descrambling_ok` (which stays, now derived from
+    `ca_enable`). `None` means the programme `CA_enable_flag` bit was clear (no
+    programme-level status given), plumbed straight through from the `dvb_ci`
+    `CaPmtReply` object's own `Option<CaEnable>` — never collapsed to a sentinel.
+  - New public types: `ManagedCa`, `ManagedService`, `CaError`, `REQUERY_DEFAULT`
+    (re-exported at the crate root); `CaDescrambler`. `Notification` is
+    `#[non_exhaustive]`, so the new variant + `CaPmtReply` field are additive.
+
+### Fixed
+- `required_pids()` (and therefore `CaDescrambler::feed_ts`) now includes each
+  active service's PMT `PCR_PID` (ISO/IEC 13818-1 §2.4.4.8) — previously only
+  ES ∪ ECM ∪ EMM were routed, so a service carrying its PCR on a **dedicated**
+  PID (not equal to any ES/component PID — a legitimate DVB configuration) had
+  those packets filtered out of `ci0`'s feed, leaving the descrambled TS with
+  no clock reference. `PCR_PID == 0x1FFF` ("no PCR" per ISO/IEC 13818-1) is
+  still excluded. `ManagedService` gains a `pcr_pid: u16` field (additive,
+  `#[non_exhaustive]`).
+
 ## [0.13.0] - 2026-07-21
 ### Added
 - **CAM + card hot-plug `Notification`s** (#726): `Notification::HotPlug(HotPlug)`
