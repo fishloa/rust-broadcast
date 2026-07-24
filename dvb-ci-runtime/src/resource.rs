@@ -240,16 +240,20 @@ impl Resource for ConditionalAccess {
             }
             Some(t) if t == tag::CA_PMT_REPLY => {
                 if let Ok(r) = CaPmtReply::parse(apdu) {
-                    let descrambling_ok = r.ca_enable.is_some_and(|e| {
-                        matches!(
-                            e,
-                            CaEnable::Possible
-                                | CaEnable::PossiblePurchaseDialogue
-                                | CaEnable::PossibleTechnicalDialogue
-                        )
-                    });
+                    // EN 50221 §8.4.3.4 Table 26: programme-level `CA_enable`.
+                    // `0x00` is itself an RFU code point, so falling back to it
+                    // when the `CA_enable_flag` bit was clear never collides
+                    // with a genuine flag-set status.
+                    let ca_enable = r.ca_enable.unwrap_or(CaEnable::Rfu(0));
+                    let descrambling_ok = matches!(
+                        ca_enable,
+                        CaEnable::Possible
+                            | CaEnable::PossiblePurchaseDialogue
+                            | CaEnable::PossibleTechnicalDialogue
+                    );
                     out.notify.push(Notification::CaPmtReply {
                         program_number: r.program_number,
+                        ca_enable,
                         descrambling_ok,
                     });
                 }
@@ -766,7 +770,30 @@ mod tests {
             h.on_apdu(&reply).notify,
             vec![Notification::CaPmtReply {
                 program_number: 0x0042,
+                ca_enable: CaEnable::Possible,
                 descrambling_ok: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn conditional_access_ca_pmt_reply_without_flag_surfaces_rfu_zero() {
+        let mut h = ConditionalAccess;
+        h.on_open();
+        // Programme `CA_enable_flag` clear -> no programme-level status given.
+        let reply = ser(&CaPmtReply {
+            program_number: 0x0007,
+            version_number: 0,
+            current_next_indicator: true,
+            ca_enable: None,
+            streams: vec![],
+        });
+        assert_eq!(
+            h.on_apdu(&reply).notify,
+            vec![Notification::CaPmtReply {
+                program_number: 0x0007,
+                ca_enable: CaEnable::Rfu(0),
+                descrambling_ok: false,
             }]
         );
     }

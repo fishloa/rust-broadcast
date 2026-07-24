@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `Notification::CaPmtReply` gains a typed `ca_enable: CaEnable` field
+  (`dvb_ci::objects::ca_pmt_reply::CaEnable`, EN 50221 §8.4.3.4 Table 26) —
+  distinguishes not-entitled/technical-failure/purchase-dialogue rather than
+  the boolean-only `descrambling_ok` (which stays, now derived from
+  `ca_enable`) (#763). When the module leaves the programme
+  `CA_enable_flag` bit clear, `ca_enable` surfaces as `CaEnable::Rfu(0)`.
 
 ## [0.13.0] - 2026-07-21
 ### Added

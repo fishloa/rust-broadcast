@@ -870,6 +870,39 @@ mod tests {
     }
 
     #[test]
+    fn ca_pmt_reply_surfaces_typed_ca_enable() {
+        use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // `CA_enable` = 0x03 (possible under conditions, technical dialogue) —
+        // EN 50221 §8.4.3.4 Table 26.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaPmtReply {
+                    program_number: 7,
+                    version_number: 1,
+                    current_next_indicator: true,
+                    ca_enable: Some(CaEnable::PossibleTechnicalDialogue),
+                    streams: vec![],
+                }),
+            ),
+        );
+        let notes = d.take_notifications();
+        assert!(
+            notes.contains(&Notification::CaPmtReply {
+                program_number: 7,
+                ca_enable: CaEnable::PossibleTechnicalDialogue,
+                descrambling_ok: true,
+            }),
+            "expected typed ca_enable on CaPmtReply, got {notes:?}"
+        );
+    }
+
+    #[test]
     fn mmi_no_card_text_infers_card_removed() {
         use dvb_ci::objects::mmi_high::Enq;
 
