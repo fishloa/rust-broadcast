@@ -52,8 +52,9 @@ pub enum CaError {
 /// time).
 ///
 /// `cmd` and `last_ca_enable` are recorded starting now but are only *read* by
-/// the Task 5 re-query/edge-event logic and Task 6's `remove_service`; this
-/// baseline (Task 3) writes them so that state is ready when those land.
+/// Task 6's `remove_service`; `last_ca_enable`/`last_descrambling_ok` are also
+/// read+written by `ManagedCa::record_reply` (#763 Task 5's edge-triggered
+/// `Notification::Entitlement`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagedService {
     /// Elementary-stream PIDs carried by this programme (every stream, not
@@ -68,8 +69,18 @@ pub struct ManagedService {
     pub cmd: CaPmtCmdId,
     /// The last observed programme-level `CA_enable` (EN 50221 §8.4.3.5 Table
     /// 26), for the Task 5 edge-triggered `Notification::Entitlement`. `None`
-    /// until a `ca_pmt_reply` has been seen for this programme.
+    /// until a `ca_pmt_reply` has been seen for this programme, or when the
+    /// last-seen reply's programme `CA_enable_flag` was clear.
     pub last_ca_enable: Option<CaEnable>,
+    /// The last observed `descrambling_ok` (derived from `last_ca_enable`),
+    /// paired with it for the Task 5 transition diff.
+    pub(crate) last_descrambling_ok: bool,
+    /// The exact `ca_pmt` bytes last sent for this service (built via
+    /// [`dvb_ci::builder::build_ca_pmt`], EN 50221 §8.4.3.4 Table 25) — kept
+    /// so the Task 5 re-query timer can re-send byte-identically via the same
+    /// [`Driver::send_ca_pmt`](crate::driver::Driver::send_ca_pmt) path
+    /// [`Driver::add_service`](crate::driver::Driver::add_service) used.
+    pub(crate) built_ca_pmt: Vec<u8>,
 }
 
 /// The [`Driver`](crate::Driver)'s owned CAS-layer state (#763 Layer 1) — one
@@ -80,10 +91,9 @@ pub struct ManagedCa {
     services: BTreeMap<u16, ManagedService>,
     /// Entitlement re-query cadence (Task 5); `Duration::ZERO` disables it.
     requery_interval: Duration,
-    /// Elapsed time accumulated since the last re-query. Landed now (per the
-    /// #763 plan's `ManagedCa` shape) but only read once Task 5 wires up the
-    /// tick-driven re-query.
-    #[allow(dead_code)]
+    /// Elapsed time accumulated since the last re-query (Task 5's
+    /// [`tick`](Self::tick), mirroring `resource.rs`'s `DateTime::tick`
+    /// accumulate-then-fire pattern).
     since: Duration,
     /// The last `set_cat`'s CAID → EMM PID map (ISO/IEC 13818-1 §2.4.4.5's
     /// `CA_descriptor`s, EN 300 468 §6.2.16). Kept even when it yields no
@@ -136,6 +146,15 @@ impl ManagedCa {
         self.requery_interval
     }
 
+    /// Set the entitlement re-query cadence
+    /// ([`Driver::set_requery_interval`](crate::driver::Driver::set_requery_interval)).
+    /// `Duration::ZERO` disables re-query. Resets the accumulated `since` so a
+    /// newly-set interval doesn't fire immediately off stale accumulation.
+    pub(crate) fn set_requery_interval(&mut self, interval: Duration) {
+        self.requery_interval = interval;
+        self.since = Duration::ZERO;
+    }
+
     /// Whether no service is currently tracked — used to pick
     /// `CaPmtListManagement::Only` (first-ever service) vs `Add` (joining an
     /// already-active set) for the next `add_service`, mirroring
@@ -185,15 +204,68 @@ impl ManagedCa {
         self.recompute_emm_pids();
     }
 
-    /// `emm_pids` = `cat_emm_pids` ∩ `cam_caids`, in CAID order (the map's
-    /// natural iteration order).
+    /// `emm_pids` = `cat_emm_pids` ∩ `cam_caids`, deduped and sorted by PID
+    /// (matching [`recompute_descramble_pids`](Self::recompute_descramble_pids)'s
+    /// convention) — two CAIDs the CAT maps to the *same* EMM PID must not
+    /// list that PID twice.
     fn recompute_emm_pids(&mut self) {
-        self.emm_pids = self
+        let pids: BTreeSet<u16> = self
             .cat_emm_pids
             .iter()
             .filter(|(caid, _)| self.cam_caids.contains(caid))
             .map(|(_, pid)| *pid)
             .collect();
+        self.emm_pids = pids.into_iter().collect();
+    }
+
+    /// Advance the entitlement re-query cadence by `elapsed` — mirrors
+    /// `resource.rs`'s `DateTime::tick` accumulate-then-fire pattern:
+    /// accumulate `since`, and once it reaches `requery_interval`, reset it
+    /// and report that a re-query is due. Returns `false` (never fires) when
+    /// re-query is disabled (`requery_interval == Duration::ZERO`) or there
+    /// are no active services to re-query.
+    pub(crate) fn tick(&mut self, elapsed: Duration) -> bool {
+        if self.requery_interval.is_zero() || self.services.is_empty() {
+            return false;
+        }
+        self.since += elapsed;
+        if self.since >= self.requery_interval {
+            self.since = Duration::ZERO;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Diff an incoming `ca_pmt_reply`'s programme-level status (EN 50221
+    /// §8.4.3.5 Table 26) against the last-observed status for
+    /// `program_number` and report the edge-triggered transition (#763 Task
+    /// 5): `Some((v, descrambling_ok))` fires only when `ca_enable` is
+    /// `Some(v)` *and* `(ca_enable, descrambling_ok)` differs from what was
+    /// last observed for this programme — including the first-ever reply
+    /// (no prior observation) establishing the baseline and reporting it.
+    /// `ca_enable == None` (programme status withdrawn) never fires: there is
+    /// no per-programme status to report (the coarse withdrawal signal is
+    /// #726 `HotPlug`'s job). The last-observed status is updated
+    /// unconditionally, whether or not this call fires.
+    ///
+    /// No-op (`None`) if `program_number` names no actively-managed service
+    /// (never `add_service`'d, or already removed) — there is nothing to
+    /// diff against.
+    pub(crate) fn record_reply(
+        &mut self,
+        program_number: u16,
+        ca_enable: Option<CaEnable>,
+        descrambling_ok: bool,
+    ) -> Option<(CaEnable, bool)> {
+        let service = self.services.get_mut(&program_number)?;
+        let prev = (service.last_ca_enable, service.last_descrambling_ok);
+        service.last_ca_enable = ca_enable;
+        service.last_descrambling_ok = descrambling_ok;
+        match ca_enable {
+            Some(v) if prev != (ca_enable, descrambling_ok) => Some((v, descrambling_ok)),
+            _ => None,
+        }
     }
 
     /// `descramble_pids` = the union (dedup, sorted) of every active
@@ -247,8 +319,13 @@ pub(crate) fn pmt_has_ca(pmt: &PmtSection<'_>) -> bool {
         || pmt.streams.iter().any(|s| has_ca_descriptor(&s.es_info))
 }
 
-/// The owned [`ManagedService`] state to record for `pmt`, sent with `cmd`.
-pub(crate) fn service_of(pmt: &PmtSection<'_>, cmd: CaPmtCmdId) -> ManagedService {
+/// The owned [`ManagedService`] state to record for `pmt`, sent with `cmd`;
+/// `built_ca_pmt` is the exact bytes sent (kept for Task 5's re-query resend).
+pub(crate) fn service_of(
+    pmt: &PmtSection<'_>,
+    cmd: CaPmtCmdId,
+    built_ca_pmt: Vec<u8>,
+) -> ManagedService {
     let mut ca_pids = ca_pids_in(&pmt.program_info);
     for s in &pmt.streams {
         ca_pids.extend(ca_pids_in(&s.es_info));
@@ -258,6 +335,8 @@ pub(crate) fn service_of(pmt: &PmtSection<'_>, cmd: CaPmtCmdId) -> ManagedServic
         ca_pids,
         cmd,
         last_ca_enable: None,
+        last_descrambling_ok: false,
+        built_ca_pmt,
     }
 }
 
@@ -281,6 +360,8 @@ mod tests {
             ca_pids: vec![0x0064],
             cmd: CaPmtCmdId::OkDescrambling,
             last_ca_enable: None,
+            last_descrambling_ok: false,
+            built_ca_pmt: vec![0xAA, 0xBB],
         };
         m.record(7, svc.clone());
         assert!(!m.is_empty());
@@ -291,5 +372,133 @@ mod tests {
     fn ca_error_no_ca_descriptor_displays_program_number() {
         let e = CaError::NoCaDescriptor { program_number: 42 };
         assert!(e.to_string().contains("42"));
+    }
+
+    // --- #763 Task 5 ---
+
+    #[test]
+    fn set_requery_interval_updates_and_resets_accumulator() {
+        let mut m = ManagedCa::new();
+        assert_eq!(m.requery_interval(), REQUERY_DEFAULT);
+        m.set_requery_interval(Duration::from_secs(3));
+        assert_eq!(m.requery_interval(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn tick_fires_once_interval_elapses_and_resets() {
+        let mut m = ManagedCa::new();
+        m.set_requery_interval(Duration::from_secs(5));
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+            },
+        );
+        assert!(
+            !m.tick(Duration::from_secs(3)),
+            "before the interval: no fire"
+        );
+        assert!(
+            m.tick(Duration::from_secs(3)),
+            "crossing the interval: fires"
+        );
+        assert!(!m.tick(Duration::from_secs(1)), "since resets after firing");
+    }
+
+    #[test]
+    fn tick_disabled_at_zero_interval_never_fires() {
+        let mut m = ManagedCa::new();
+        m.set_requery_interval(Duration::ZERO);
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+            },
+        );
+        assert!(!m.tick(Duration::from_secs(1000)));
+    }
+
+    #[test]
+    fn tick_with_no_active_services_never_fires() {
+        let mut m = ManagedCa::new();
+        m.set_requery_interval(Duration::from_secs(1));
+        assert!(!m.tick(Duration::from_secs(1000)));
+    }
+
+    #[test]
+    fn record_reply_first_ever_some_establishes_baseline_and_reports() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+            },
+        );
+        let out = m.record_reply(1, Some(CaEnable::NotPossibleNoEntitlement), false);
+        assert_eq!(out, Some((CaEnable::NotPossibleNoEntitlement, false)));
+    }
+
+    #[test]
+    fn record_reply_unchanged_status_does_not_re_fire() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+            },
+        );
+        assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
+        assert_eq!(m.record_reply(1, Some(CaEnable::Possible), true), None);
+    }
+
+    #[test]
+    fn record_reply_none_never_fires_but_updates_last() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+            },
+        );
+        assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
+        // Withdrawn: None never fires.
+        assert_eq!(m.record_reply(1, None, false), None);
+        // Re-affirmed with the SAME value as before the withdrawal: fires
+        // again, because `last` was overwritten to `None` in between.
+        assert_eq!(
+            m.record_reply(1, Some(CaEnable::Possible), true),
+            Some((CaEnable::Possible, true))
+        );
+    }
+
+    #[test]
+    fn record_reply_unknown_program_is_a_no_op() {
+        let mut m = ManagedCa::new();
+        assert_eq!(m.record_reply(99, Some(CaEnable::Possible), true), None);
     }
 }

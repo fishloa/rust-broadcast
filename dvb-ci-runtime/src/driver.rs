@@ -191,10 +191,24 @@ impl<D: CaDevice> Driver<D> {
         };
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let built = build_ca_pmt(pmt, list_management, cmd_id);
-        self.send_ca_pmt(&built.to_bytes())?;
-        self.managed
-            .record(pmt.program_number, managed::service_of(pmt, cmd_id));
+        let built_bytes = built.to_bytes();
+        self.send_ca_pmt(&built_bytes)?;
+        self.managed.record(
+            pmt.program_number,
+            managed::service_of(pmt, cmd_id, built_bytes),
+        );
         Ok(())
+    }
+
+    /// Set the entitlement re-query cadence (#763 Task 5): every
+    /// `interval`, the driver re-sends each actively-managed service's
+    /// `ca_pmt` (EN 50221 §8.4.3.4 Table 25, `cmd_id = ok_descrambling`) so
+    /// the CAM re-evaluates and replies, surfacing as
+    /// [`Notification::CaPmtReply`] and — on a status change —
+    /// [`Notification::Entitlement`]. `Duration::ZERO` disables re-query.
+    /// Defaults to [`managed::REQUERY_DEFAULT`] (10s) at construction.
+    pub fn set_requery_interval(&mut self, interval: Duration) {
+        self.managed.set_requery_interval(interval);
     }
 
     /// Feed a freshly-parsed CAT (ISO/IEC 13818-1 §2.4.4.5) to the managed
@@ -282,7 +296,31 @@ impl<D: CaDevice> Driver<D> {
         }
         let actions = self.stack.handle(Event::Tick { elapsed: timeout });
         self.run(actions)?;
+        self.requery_tick(timeout)?;
         Ok(false)
+    }
+
+    /// Advance the #763 Task 5 entitlement re-query cadence by `elapsed`
+    /// ([`ManagedCa::tick`](crate::managed::ManagedCa::tick), mirroring
+    /// `resource.rs`'s `DateTime::tick` accumulate-then-fire pattern). When
+    /// the interval elapses, re-send every actively-managed service's last
+    /// built `ca_pmt` via the same [`send_ca_pmt`](Self::send_ca_pmt) path
+    /// [`add_service`](Self::add_service) uses (EN 50221 §8.4.3.4 Table 25) so
+    /// the CAM re-evaluates and replies.
+    fn requery_tick(&mut self, elapsed: Duration) -> io::Result<()> {
+        if !self.managed.tick(elapsed) {
+            return Ok(());
+        }
+        let ca_pmts: Vec<Vec<u8>> = self
+            .managed
+            .services()
+            .values()
+            .map(|s| s.built_ca_pmt.clone())
+            .collect();
+        for ca_pmt in ca_pmts {
+            self.send_ca_pmt(&ca_pmt)?;
+        }
+        Ok(())
     }
 
     /// Pump once ([`pump`](Self::pump)), then invoke `handler` for each
@@ -411,7 +449,9 @@ impl<D: CaDevice> Driver<D> {
                 out
             }
             Notification::CaPmtReply {
-                descrambling_ok, ..
+                program_number,
+                ca_enable,
+                descrambling_ok,
             } => {
                 let mut out = Vec::new();
                 if let Some(prev) = self.last_descrambling_ok {
@@ -422,6 +462,19 @@ impl<D: CaDevice> Driver<D> {
                     }
                 }
                 self.last_descrambling_ok = Some(*descrambling_ok);
+                // #763 Task 5: diff this reply's programme-level status
+                // against the last one recorded for `program_number` and
+                // surface the edge-triggered `Notification::Entitlement`.
+                if let Some((v, ok)) =
+                    self.managed
+                        .record_reply(*program_number, *ca_enable, *descrambling_ok)
+                {
+                    out.push(Notification::Entitlement {
+                        program_number: *program_number,
+                        ca_enable: v,
+                        descrambling_ok: ok,
+                    });
+                }
                 out
             }
             Notification::Mmi(ev) => match Self::mmi_text(ev) {
@@ -695,6 +748,23 @@ mod tests {
             hit,
             "expected APDU {apdu:02X?} on session {session_nb} (session-prefixed {want:02X?}) in writes"
         );
+    }
+
+    /// How many host writes carry `session_number(session_nb)` immediately
+    /// followed by the exact `apdu` bytes — used to distinguish an initial
+    /// send from a later re-send (#763 Task 5's re-query timer).
+    fn count_apdu_on_session(d: &Driver<MockCaDevice>, session_nb: u16, apdu: &[u8]) -> usize {
+        use dvb_ci::spdu::SessionNumber;
+        let mut want = ser(&SessionNumber { session_nb });
+        want.extend_from_slice(apdu);
+        d.device()
+            .ops
+            .iter()
+            .filter(|op| match op {
+                DeviceOp::Write(w) => w.windows(want.len()).any(|x| x == want.as_slice()),
+                _ => false,
+            })
+            .count()
     }
 
     #[test]
@@ -1378,6 +1448,49 @@ mod tests {
         );
     }
 
+    /// Task 4 review fix (MEDIUM): `recompute_emm_pids` must dedup like its
+    /// sibling `recompute_descramble_pids` does — two CAT `CA_descriptor`s
+    /// (distinct `CA_system_id`s, both CAM-advertised) that happen to share
+    /// one `EMM_PID` (a real multi-CAS-on-one-EMM-PID broadcast setup) must
+    /// list that PID exactly once, not twice.
+    #[test]
+    fn set_cat_emm_pids_dedups_when_two_caids_share_one_emm_pid() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_info::CaInfo;
+        use dvb_si::tables::cat::CatSection;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // CAM advertises both CAIDs.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaInfo {
+                    ca_system_ids: vec![0x0648, 0x0100],
+                }),
+            ),
+        );
+        d.take_notifications();
+
+        // CAT maps BOTH CAIDs to the SAME EMM PID.
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0100, 0x1FF0));
+        let cat_bytes = build_cat_fixture(&descriptors);
+        let cat = CatSection::parse(&cat_bytes).unwrap();
+
+        d.set_cat(&cat).unwrap();
+
+        assert_eq!(
+            d.emm_pids(),
+            &[0x1FF0],
+            "0x1FF0 must appear exactly once even though two CAM-advertised CAIDs map to it, got {:?}",
+            d.emm_pids()
+        );
+    }
+
     /// Same layout as [`build_ca_pmt_fixture`] but with a distinct PCR/ES PID
     /// set, so a second added service proves `descramble_pids` is a real
     /// union rather than one programme's PIDs happening to repeat.
@@ -1452,6 +1565,227 @@ mod tests {
             d.descramble_pids(),
             &[0x0100, 0x0101, 0x0200, 0x0201],
             "descramble_pids must be the union across both added services"
+        );
+    }
+
+    // --- #763 Task 5: re-query timer + edge-triggered Entitlement ---
+
+    /// Build a `ca_pmt_reply` (EN 50221 §8.4.3.5, Table 26) for `program_number`
+    /// carrying programme-level `ca_enable` (`None` = `CA_enable_flag` clear).
+    fn ca_pmt_reply_for(
+        program_number: u16,
+        ca_enable: Option<dvb_ci::objects::ca_pmt_reply::CaEnable>,
+    ) -> dvb_ci::objects::ca_pmt_reply::CaPmtReply {
+        dvb_ci::objects::ca_pmt_reply::CaPmtReply {
+            program_number,
+            version_number: 1,
+            current_next_indicator: true,
+            ca_enable,
+            streams: vec![],
+        }
+    }
+
+    #[test]
+    fn requery_timer_resends_ca_pmt_then_reply_change_emits_one_entitlement() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_pmt_reply::CaEnable;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        let expected_ca_pmt =
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        let sends_before_requery = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
+
+        let mut all_notes = Vec::new();
+
+        // Reply 1: not entitled (baseline — first-ever reply for this
+        // program; `descrambling_ok` is derived: `NotPossibleNoEntitlement`
+        // is not in the "possible" set, so `false`).
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&ca_pmt_reply_for(
+                    1546,
+                    Some(CaEnable::NotPossibleNoEntitlement),
+                )),
+            ),
+        );
+        all_notes.extend(d.take_notifications());
+
+        // Advance the clock past the default 10s re-query interval: a single
+        // pump ticks the stack with elapsed = 11s (nothing readable this
+        // turn), which the #763 Task 5 re-query timer picks up and queues
+        // the tracked service's exact ca_pmt for resend (EN 50221 §8.4.3.4
+        // Table 25). EN 50221's link is half-duplex — this tick's own
+        // keep-alive poll already claimed the turn, so the resend is
+        // written on the module's next `T_SB` (the #337 one-write-per-turn
+        // rule), same as any other queued host write in this test suite.
+        d.pump(Duration::from_secs(11)).unwrap();
+        all_notes.extend(d.take_notifications());
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let sends_after_requery = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
+        assert_eq!(
+            sends_after_requery,
+            sends_before_requery + 1,
+            "expected the re-query timer to resend the exact ca_pmt exactly once"
+        );
+
+        // Reply 2: the CAM's re-evaluated answer to the re-query says
+        // descrambling is now possible.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&ca_pmt_reply_for(1546, Some(CaEnable::Possible))),
+            ),
+        );
+        all_notes.extend(d.take_notifications());
+
+        let hits = all_notes
+            .iter()
+            .filter(|n| {
+                matches!(
+                    n,
+                    Notification::Entitlement {
+                        program_number: 1546,
+                        ca_enable: CaEnable::Possible,
+                        descrambling_ok: true,
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            hits, 1,
+            "expected exactly one Entitlement{{program_number:1546, ca_enable:Possible, descrambling_ok:true}}, got {all_notes:?}"
+        );
+    }
+
+    #[test]
+    fn requery_timer_unchanged_reply_across_two_requeries_emits_no_entitlement() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_pmt_reply::CaEnable;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1547);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        // Baseline reply: descrambling possible. First-ever reply — this
+        // establishes the baseline and DOES emit once (per the transition
+        // rule); drop it so the loop below only asserts on the re-queries.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&ca_pmt_reply_for(1547, Some(CaEnable::Possible))),
+            ),
+        );
+        d.take_notifications();
+
+        // Two re-queries, the CAM replying with the SAME unchanged status
+        // both times: no Entitlement either time (negative control).
+        for _ in 0..2 {
+            d.pump(Duration::from_secs(11)).unwrap();
+            d.take_notifications();
+            feed(
+                &mut d,
+                r_apdu(
+                    CA_SESSION,
+                    &ser(&ca_pmt_reply_for(1547, Some(CaEnable::Possible))),
+                ),
+            );
+            let notes = d.take_notifications();
+            assert!(
+                !notes
+                    .iter()
+                    .any(|n| matches!(n, Notification::Entitlement { .. })),
+                "unchanged status across a re-query must not emit Entitlement, got {notes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn requery_reply_withdrawn_to_none_emits_no_entitlement() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_pmt_reply::CaEnable;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1548);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        // Baseline: descrambling possible (drop the baseline Entitlement).
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&ca_pmt_reply_for(1548, Some(CaEnable::Possible))),
+            ),
+        );
+        d.take_notifications();
+
+        // Programme `CA_enable_flag` now clear (`None`) — status withdrawn.
+        // Per the transition rule this NEVER emits Entitlement (#726 HotPlug
+        // covers the coarse withdrawal signal instead).
+        feed(
+            &mut d,
+            r_apdu(CA_SESSION, &ser(&ca_pmt_reply_for(1548, None))),
+        );
+        let notes = d.take_notifications();
+        assert!(
+            !notes
+                .iter()
+                .any(|n| matches!(n, Notification::Entitlement { .. })),
+            "ca_enable transitioning to None must not emit Entitlement, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn set_requery_interval_zero_disables_resend() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.set_requery_interval(Duration::ZERO);
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1549);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let expected_ca_pmt =
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        let sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
+
+        // Even a very long tick must not trigger a re-query once disabled.
+        d.pump(Duration::from_secs(1000)).unwrap();
+
+        let sends_after = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
+        assert_eq!(
+            sends_after, sends_before,
+            "Duration::ZERO must disable the re-query resend"
         );
     }
 }
