@@ -125,6 +125,19 @@ pub enum Notification {
         /// surface.
         descrambling_ok: bool,
     },
+    /// A per-program entitlement status transition (#763). Edge-triggered
+    /// once per program number when [`HostRequest::Descramble`] is re-issued
+    /// with an updated PMT (Task 5), evaluated against the `ca_pmt_reply`
+    /// status (EN 50221 §8.4.3.5, Table 26: programme-level `CA_enable` +
+    /// `ES_info` loop).
+    Entitlement {
+        /// `program_number` the status pertains to.
+        program_number: u16,
+        /// Programme-level `CA_enable` status.
+        ca_enable: CaEnable,
+        /// Whether descrambling is possible per the current status.
+        descrambling_ok: bool,
+    },
     /// An MMI menu/enquiry the host should display.
     Mmi(MmiEvent),
     /// A `host_control` request the CAM made of the host (EN 50221 §8.5.1). The
@@ -309,4 +322,30 @@ pub enum HostControlEvent {
     /// `ask_release()` (Table 30): the CAM asks the host to release any
     /// replacements it holds (header-only request).
     AskRelease,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn notification_entitlement_construction() {
+        let note = Notification::Entitlement {
+            program_number: 1234,
+            ca_enable: CaEnable::Possible,
+            descrambling_ok: true,
+        };
+        match note {
+            Notification::Entitlement {
+                program_number,
+                ca_enable,
+                descrambling_ok,
+            } => {
+                assert_eq!(program_number, 1234);
+                assert_eq!(ca_enable, CaEnable::Possible);
+                assert!(descrambling_ok);
+            }
+            _ => panic!("expected Entitlement variant"),
+        }
+    }
 }
