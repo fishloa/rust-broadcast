@@ -52,7 +52,7 @@ Implemented from the EN 50221 specification.
   `remove_service(pn)` build + send the `ca_pmt` and track the slot's active
   service set; `set_cat(&CatSection)` computes the EMM-PID feed (CAT EMM PIDs
   ∩ the CAM's `ca_info` CAIDs); `emm_pids()`/`descramble_pids()`/`ca_pids()`/
-  `required_pids()` (EMM ∪ ES ∪ ECM) give the PIDs to route into `ci0`.
+  `required_pids()` (EMM ∪ ES ∪ ECM ∪ PCR) give the PIDs to route into `ci0`.
   `set_requery_interval(dt)` periodically re-queries (`cmd_id = query`) so a
   card entitled *after* the initial `ca_pmt` refreshes — a per-programme
   status change surfaces as an edge-triggered `Notification::Entitlement`.

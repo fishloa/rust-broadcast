@@ -59,7 +59,7 @@
 //!   [`descramble_pids`](crate::Driver::descramble_pids) /
 //!   [`ca_pids`](crate::Driver::ca_pids) /
 //!   [`required_pids`](crate::Driver::required_pids) — the PIDs to route into
-//!   the `ci0` data plane (EMM ∪ ES ∪ ECM = `required_pids`).
+//!   the `ci0` data plane (EMM ∪ ES ∪ ECM ∪ PCR = `required_pids`).
 //! - [`Driver::set_requery_interval`](crate::Driver::set_requery_interval) — a
 //!   periodic `ca_pmt` re-query (`cmd_id = query`) so a card entitled *after*
 //!   the initial `ca_pmt` still refreshes; a per-programme status transition

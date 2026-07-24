@@ -125,11 +125,16 @@ pub enum Notification {
         /// surface.
         descrambling_ok: bool,
     },
-    /// A per-program entitlement status transition (#763). Edge-triggered
-    /// once per program number when [`HostRequest::Descramble`] is re-issued
-    /// with an updated PMT (Task 5), evaluated against the `ca_pmt_reply`
-    /// status (EN 50221 §8.4.3.5, Table 26: programme-level `CA_enable` +
-    /// `ES_info` loop).
+    /// A per-programme entitlement status transition (#763). Edge-triggered:
+    /// fires once per `program_number` only when the programme-level
+    /// `CA_enable` status (EN 50221 §8.4.3.5, Table 26) changes versus the
+    /// last observed `ca_pmt_reply` for that programme. The transition is
+    /// detected by the periodic re-query (`Driver::set_requery_interval`),
+    /// which re-sends the active `ca_pmt`s with `ca_pmt_cmd_id = query` so
+    /// the CAM re-evaluates and replies. Complements the coarse #726
+    /// `HotPlug` module/card layer with the fine-grained per-service layer.
+    /// (Programme-level status only; the ES-level `CA_enable` entries are
+    /// not evaluated for this event.)
     Entitlement {
         /// `program_number` the status pertains to.
         program_number: u16,

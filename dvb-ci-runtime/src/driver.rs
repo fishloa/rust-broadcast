@@ -299,10 +299,13 @@ impl<D: CaDevice> Driver<D> {
         self.managed.ca_pids()
     }
 
-    /// `descramble_pids() ∪ ca_pids() ∪ emm_pids()` — every PID class this
-    /// slot needs on `ci0` (ES to descramble ∪ ECM for control words ∪ EMM
-    /// for entitlements). #763 Task 7's turnkey [`CaDescrambler`](crate::descrambler::CaDescrambler)
-    /// filters its `feed_ts` input to exactly this set.
+    /// `descramble_pids() ∪ ca_pids() ∪ emm_pids() ∪ PCR` — every PID class
+    /// this slot needs on `ci0` (ES to descramble ∪ ECM for control words ∪
+    /// EMM for entitlements ∪ each active service's PCR PID — ISO/IEC
+    /// 13818-1 §2.4.4.8 — so the descrambled TS keeps its clock reference
+    /// even when the PCR rides a dedicated PID). #763 Task 7's turnkey
+    /// [`CaDescrambler`](crate::descrambler::CaDescrambler) filters its
+    /// `feed_ts` input to exactly this set.
     #[must_use]
     pub fn required_pids(&self) -> Vec<u16> {
         self.managed.required_pids()
@@ -1268,6 +1271,52 @@ pub(crate) mod tests {
         body.push(0x00); // last_section_number
         body.push(0xE0 | 0x01); // reserved(3) | PCR_PID(13) = 0x0100
         body.push(0x00);
+        body.push(0xF0 | ((prog_ca.len() >> 8) as u8 & 0x0F));
+        body.push(prog_ca.len() as u8);
+        body.extend_from_slice(&prog_ca);
+        // ES0: H.264 video, pid 0x0100, scrambled (own CA_descriptor).
+        body.push(0x1B);
+        body.push(0xE0 | 0x01);
+        body.push(0x00);
+        body.push(0xF0 | ((es0_ca.len() >> 8) as u8 & 0x0F));
+        body.push(es0_ca.len() as u8);
+        body.extend_from_slice(&es0_ca);
+        // ES1: AAC ADTS audio, pid 0x0101, clear.
+        body.push(0x0F);
+        body.push(0xE0 | 0x01);
+        body.push(0x01);
+        body.push(0xF0);
+        body.push(0x00);
+
+        let section_length = body.len() - 3 + 4;
+        body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        body[2] = section_length as u8;
+        let crc = broadcast_common::crc32_mpeg2::compute(&body);
+        body.extend_from_slice(&crc.to_be_bytes());
+        body
+    }
+
+    /// Same layout as [`build_ca_pmt_fixture`] but with the PCR carried on its
+    /// own **dedicated** `PCR_PID` (`0x00FF`) — distinct from every ES PID
+    /// (`0x0100`/`0x0101`) and CA PID (`0x0064`/`0x0065`) — a legitimate DVB
+    /// config (ISO/IEC 13818-1 §2.4.4.8) that `build_ca_pmt_fixture`'s
+    /// `PCR_PID == video ES PID` masks: the #763 final-review regression
+    /// fixture for `required_pids`/`feed_ts` PCR routing.
+    pub(crate) fn build_ca_pmt_fixture_dedicated_pcr(program_number: u16) -> Vec<u8> {
+        const VIACCESS: u16 = 0x0500;
+        let prog_ca = ca_descriptor(VIACCESS, 0x0064);
+        let es0_ca = ca_descriptor(VIACCESS, 0x0065);
+
+        let mut body = Vec::new();
+        body.push(0x02); // table_id (PMT)
+        body.push(0); // section_length placeholder (fixed up below)
+        body.push(0);
+        body.extend_from_slice(&program_number.to_be_bytes());
+        body.push(0xC3); // reserved(2)='11' | version(5)=1 | current_next=1
+        body.push(0x00); // section_number
+        body.push(0x00); // last_section_number
+        body.push(0xE0); // reserved(3) | PCR_PID(13) high byte = 0x00FF >> 8
+        body.push(0xFF); // PCR_PID low byte — dedicated, outside the ES/CA set
         body.push(0xF0 | ((prog_ca.len() >> 8) as u8 & 0x0F));
         body.push(prog_ca.len() as u8);
         body.extend_from_slice(&prog_ca);

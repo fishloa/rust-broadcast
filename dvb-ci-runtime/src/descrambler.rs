@@ -9,16 +9,19 @@
 //!
 //! # Feed policy — filter, don't shovel
 //!
-//! A CI slot descrambles the single TS routed to it, and only needs three PID
+//! A CI slot descrambles the single TS routed to it, and only needs four PID
 //! classes out of that TS: the target services' **ES PIDs**
 //! ([`descramble_pids`](crate::driver::Driver::descramble_pids)), their
 //! **ECM PIDs** ([`ca_pids`](crate::driver::Driver::ca_pids) — ISO/IEC
 //! 13818-1 §2.6.16 `CA_descriptor` `CA_PID`, carrying the control words
 //! without which the module has ES to descramble but no key to do it with),
-//! and the **EMM PIDs** ([`emm_pids`](crate::driver::Driver::emm_pids) —
-//! entitlements). [`CaDescrambler::feed_ts`] filters the input TS to
+//! the **EMM PIDs** ([`emm_pids`](crate::driver::Driver::emm_pids) —
+//! entitlements), and each service's **PCR PID** (ISO/IEC 13818-1 §2.4.4.8 —
+//! when it names a dedicated PID distinct from every ES/CA PID, a legitimate
+//! DVB configuration, the descrambled TS still needs its clock reference).
+//! [`CaDescrambler::feed_ts`] filters the input TS to
 //! [`required_pids`](CaDescrambler::required_pids) = `descramble_pids ∪
-//! ca_pids ∪ emm_pids` and writes only those packets to `ci0` — a 30–50
+//! ca_pids ∪ emm_pids ∪ PCR` and writes only those packets to `ci0` — a 30–50
 //! Mbit/s mux collapses to the handful of wanted services plus a low-rate
 //! ECM/EMM trickle. PAT/PMT are **not** fed on `ci0`: the CAM receives the
 //! PMT via the `ca_pmt` control-plane APDU (Layer 1). [`required_pids`](CaDescrambler::required_pids)
@@ -154,8 +157,8 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         Ok(out)
     }
 
-    /// `descramble_pids ∪ ca_pids ∪ emm_pids` — the PIDs the CAM needs on
-    /// `ci0` (delegates to [`Driver::required_pids`]).
+    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — the PIDs the CAM needs
+    /// on `ci0` (delegates to [`Driver::required_pids`]).
     #[must_use]
     pub fn required_pids(&self) -> Vec<u16> {
         self.driver.required_pids()
@@ -206,8 +209,9 @@ mod tests {
     use crate::dataplane::MockCiDataDevice;
     use crate::device::MockCaDevice;
     use crate::driver::tests::{
-        CA_SESSION, build_ca_pmt_fixture, build_cat_fixture, build_clear_pmt_fixture,
-        ca_descriptor, ca_pmt_reply_for, driver_with_sessions, feed, r_apdu, ser,
+        CA_SESSION, build_ca_pmt_fixture, build_ca_pmt_fixture_dedicated_pcr, build_cat_fixture,
+        build_clear_pmt_fixture, ca_descriptor, ca_pmt_reply_for, driver_with_sessions, feed,
+        r_apdu, ser,
     };
     use crate::managed::CaError;
     use broadcast_common::Parse;
@@ -337,6 +341,45 @@ mod tests {
         assert_eq!(
             out, descrambled_script,
             "feed_ts must return the scripted descrambled TS read back from ci0"
+        );
+    }
+
+    #[test]
+    fn feed_ts_keeps_a_dedicated_pcr_pid_packet() {
+        // #763 final-review Fix 1: a service whose PCR is carried on a
+        // dedicated PID (distinct from every ES/CA PID) must still have that
+        // PID routed to ci0 — otherwise the descrambled TS read back has no
+        // clock reference.
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture_dedicated_pcr(1550);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+
+        assert!(
+            d.required_pids().contains(&0x00FF),
+            "precondition: required_pids must include the dedicated PCR PID, got {:?}",
+            d.required_pids()
+        );
+
+        let mut descrambler = descrambler_with(d, []);
+
+        // One packet on the dedicated PCR PID + one junk packet on a PID not
+        // in required_pids.
+        let pcr_pkt = packet(0x00FF, 0x33);
+        let junk_pkt = packet(0x0AAA, 0x44);
+        let mut scrambled = Vec::new();
+        scrambled.extend_from_slice(&pcr_pkt);
+        scrambled.extend_from_slice(&junk_pkt);
+
+        descrambler.feed_ts(&scrambled).unwrap();
+
+        assert_eq!(
+            descrambler.ci().written_ts(),
+            pcr_pkt,
+            "ci0 must receive the dedicated PCR PID packet (clock reference); \
+             the junk packet must be dropped"
         );
     }
 

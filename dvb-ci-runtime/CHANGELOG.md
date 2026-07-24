@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     (re-exported at the crate root); `CaDescrambler`. `Notification` is
     `#[non_exhaustive]`, so the new variant + `CaPmtReply` field are additive.
 
+### Fixed
+- `required_pids()` (and therefore `CaDescrambler::feed_ts`) now includes each
+  active service's PMT `PCR_PID` (ISO/IEC 13818-1 §2.4.4.8) — previously only
+  ES ∪ ECM ∪ EMM were routed, so a service carrying its PCR on a **dedicated**
+  PID (not equal to any ES/component PID — a legitimate DVB configuration) had
+  those packets filtered out of `ci0`'s feed, leaving the descrambled TS with
+  no clock reference. `PCR_PID == 0x1FFF` ("no PCR" per ISO/IEC 13818-1) is
+  still excluded. `ManagedService` gains a `pcr_pid: u16` field (additive,
+  `#[non_exhaustive]`).
+
 ## [0.13.0] - 2026-07-21
 ### Added
 - **CAM + card hot-plug `Notification`s** (#726): `Notification::HotPlug(HotPlug)`

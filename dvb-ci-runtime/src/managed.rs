@@ -24,6 +24,12 @@ use dvb_si::tables::pmt::PmtSection;
 /// field is in place before the re-query timer is wired up.
 pub const REQUERY_DEFAULT: Duration = Duration::from_secs(10);
 
+/// Sentinel `PCR_PID` value meaning "no PCR carried for this programme" (ISO/IEC
+/// 13818-1 §2.4.4.8, Table 2-33's `PCR_PID` field). A `ManagedService` whose
+/// `pcr_pid` is this value carries no dedicated PCR PID to route — it must be
+/// excluded from [`ManagedCa::required_pids`], never treated as a routable PID.
+const PCR_PID_NONE: u16 = 0x1FFF;
+
 /// Errors from the managed CAS-layer API (`Driver::add_service` and friends,
 /// #763).
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +71,14 @@ pub struct ManagedService {
     /// `CA_PID`s (ECM PIDs) advertised by this programme's `CA_descriptor`s,
     /// programme- and ES-level combined.
     pub ca_pids: Vec<u16>,
+    /// This programme's PMT `PCR_PID` (ISO/IEC 13818-1 §2.4.4.8) — the PID
+    /// carrying the programme clock reference. May coincide with an
+    /// `es_pids` entry (PCR piggybacked on a component stream) or be a PID of
+    /// its own (a dedicated PCR PID, carrying no other stream) — either way a
+    /// caller routing PIDs into `ci0` needs it, or the descrambled TS loses
+    /// its clock reference. `0x1FFF` means the programme carries no PCR (ISO/IEC
+    /// 13818-1 §2.4.4.8) and is excluded from routing.
+    pub pcr_pid: u16,
     /// The `ca_pmt_cmd_id` last sent for this service (EN 50221 §8.4.3.4
     /// Table 25).
     pub cmd: CaPmtCmdId,
@@ -250,16 +264,26 @@ impl ManagedCa {
         &self.ca_pids
     }
 
-    /// `descramble_pids ∪ ca_pids ∪ emm_pids` — every PID class a caller must
-    /// route into `ci0` for this slot to both descramble the tracked
-    /// services (ES + ECM) and keep entitlements current (EMM). Computed on
-    /// demand (small sets); dedup + sorted.
+    /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — every PID class a
+    /// caller must route into `ci0` for this slot to both descramble the
+    /// tracked services (ES + ECM), keep entitlements current (EMM), and
+    /// carry each active service's programme clock reference (PCR — ISO/IEC
+    /// 13818-1 §2.4.4.8). The PCR PID is folded in here rather than into
+    /// [`descramble_pids`](Self::descramble_pids) because a dedicated PCR PID
+    /// carries no elementary stream of its own; a service whose `pcr_pid` is
+    /// `0x1FFF` ("no PCR") contributes nothing. Computed on demand (small
+    /// sets); dedup + sorted.
     #[must_use]
     pub fn required_pids(&self) -> Vec<u16> {
         let mut pids: BTreeSet<u16> = BTreeSet::new();
         pids.extend(self.descramble_pids.iter().copied());
         pids.extend(self.ca_pids.iter().copied());
         pids.extend(self.emm_pids.iter().copied());
+        for service in self.services.values() {
+            if service.pcr_pid != PCR_PID_NONE {
+                pids.insert(service.pcr_pid);
+            }
+        }
         pids.into_iter().collect()
     }
 
@@ -416,6 +440,7 @@ pub(crate) fn service_of(
     ManagedService {
         es_pids: pmt.streams.iter().map(|s| s.elementary_pid).collect(),
         ca_pids,
+        pcr_pid: pmt.pcr_pid,
         cmd,
         last_ca_enable: None,
         last_descrambling_ok: false,
@@ -443,6 +468,7 @@ mod tests {
         let svc = ManagedService {
             es_pids: vec![0x100, 0x101],
             ca_pids: vec![0x0064],
+            pcr_pid: PCR_PID_NONE,
             cmd: CaPmtCmdId::OkDescrambling,
             last_ca_enable: None,
             last_descrambling_ok: false,
@@ -480,6 +506,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -508,6 +535,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -534,6 +562,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -554,6 +583,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -574,6 +604,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -609,6 +640,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100, 0x101],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -622,6 +654,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x200],
                 ca_pids: vec![0x65],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -664,6 +697,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x100],
                 ca_pids: vec![0x64],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -712,6 +746,7 @@ mod tests {
             ManagedService {
                 es_pids: vec![0x0100, 0x0101],
                 ca_pids: vec![0x0064, 0x0065],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -727,6 +762,7 @@ mod tests {
                 // Shares 0x0065 with program 1 to prove dedup, plus a
                 // distinct 0x0066.
                 ca_pids: vec![0x0065, 0x0066],
+                pcr_pid: PCR_PID_NONE,
                 cmd: CaPmtCmdId::OkDescrambling,
                 last_ca_enable: None,
                 last_descrambling_ok: false,
@@ -756,6 +792,94 @@ mod tests {
             m.required_pids(),
             vec![0x0064, 0x0065, 0x0066, 0x0100, 0x0101, 0x0200, 0x1FF0],
             "required_pids must be descramble_pids ∪ ca_pids ∪ emm_pids"
+        );
+    }
+
+    // --- #763 final-review Fix 1: dedicated PCR PID routing ---
+
+    #[test]
+    fn service_of_captures_pcr_pid_and_required_pids_includes_dedicated_pcr() {
+        use broadcast_common::Parse;
+        use dvb_si::tables::pmt::PmtSection;
+
+        // A PMT whose PCR is carried on its own dedicated PID (0x00FF),
+        // distinct from every ES PID (0x0100/0x0101) and CA PID (0x0064/
+        // 0x0065) — a legitimate DVB config `service_of` must not lose.
+        let pmt_bytes = crate::driver::tests::build_ca_pmt_fixture_dedicated_pcr(1550);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        assert_eq!(
+            pmt.pcr_pid, 0x00FF,
+            "fixture precondition: dedicated PCR PID outside the ES/CA set"
+        );
+
+        let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![], vec![]);
+        assert_eq!(svc.pcr_pid, 0x00FF, "service_of must capture pmt.pcr_pid");
+        assert_eq!(svc.es_pids, vec![0x0100, 0x0101]);
+        assert_eq!(svc.ca_pids, vec![0x0064, 0x0065]);
+
+        let mut m = ManagedCa::new();
+        m.record(1550, svc);
+
+        // Bite: without folding pcr_pid into required_pids, this PID is
+        // absent (it's neither an ES nor a CA nor an EMM PID) and the
+        // dedicated PCR clock reference never reaches ci0.
+        assert!(
+            m.required_pids().contains(&0x00FF),
+            "required_pids must include the service's dedicated PCR PID, got {:?}",
+            m.required_pids()
+        );
+    }
+
+    #[test]
+    fn required_pids_excludes_pcr_pid_none() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x0100],
+                ca_pids: vec![0x0064],
+                // PCR_PID_NONE (0x1FFF, ISO/IEC 13818-1 §2.4.4.8) — this
+                // programme carries no PCR of its own.
+                pcr_pid: PCR_PID_NONE,
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+        assert_eq!(
+            m.required_pids(),
+            vec![0x0064, 0x0100],
+            "PCR_PID_NONE (0x1FFF) must never be added to required_pids"
+        );
+    }
+
+    #[test]
+    fn required_pids_pcr_pid_matching_an_es_pid_adds_no_spurious_pid() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x0100],
+                ca_pids: vec![0x0064],
+                // PCR piggybacked on the ES PID (the common case, already
+                // covered by every other fixture in this file) — must not
+                // produce a duplicate/spurious entry.
+                pcr_pid: 0x0100,
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+        assert_eq!(
+            m.required_pids(),
+            vec![0x0064, 0x0100],
+            "a pcr_pid coinciding with an ES PID must not duplicate/add a spurious entry"
         );
     }
 }
