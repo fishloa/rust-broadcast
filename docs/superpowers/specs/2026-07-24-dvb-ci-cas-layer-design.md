@@ -70,7 +70,7 @@ parsed `PmtSection`/`CatSection` → `ManagedCa` → `build_ca_pmt` → `CaDevic
 
 ## Events (existing `Notification` framework)
 - **New:** `Notification::Entitlement { program_number: u16, ca_enable: CaEnable, descrambling_ok: bool }` — **edge-triggered** per program (fires only on a status transition detected by the re-query), mirroring #726's edge pattern. `Notification` is `#[non_exhaustive]` → additive.
-- **Enriched:** `Notification::CaPmtReply` gains `ca_enable: CaEnable` (typed; distinguishes not-entitled vs unavailable vs technical vs …) alongside the existing `descrambling_ok: bool` (derived from `ca_enable`, kept for back-compat). Also add `program_number` if not already present.
+- **Enriched:** `Notification::CaPmtReply` gains `ca_enable: Option<CaEnable>` — `None` = programme `CA_enable_flag` clear (no programme-level status; defer to ES entries), `Some(_)` = the typed status (distinguishes not-entitled vs unavailable vs technical vs …). Preserves the object's own `None`-vs-`Some(Rfu(_))` distinction (do NOT collapse a clear flag to a sentinel `Rfu(0)`). `descrambling_ok: bool` stays (derived: `Some(possible*) => true`, else `false`). `program_number` already present.
 - **Unchanged:** #726 `HotPlug{Cam*/Card*}` stays exactly as-is (coarse module/card layer). The per-program `Entitlement` event is the fine-grained per-service layer. Two distinct, complementary layers — documented as such.
 - Delivered via the existing `pump` / `pump_hotplug` (add a `pump`-level filter is unnecessary; consumers match `Notification::Entitlement`).
 
@@ -89,7 +89,7 @@ Reuse the crate's `thiserror` set; new arms only where real:
 Each must fail if its logic is neutered (mutation-checked).
 
 ## Spec grounding
-EN 50221 §8.4.3.4 (`ca_pmt`/`ca_pmt_reply`, Tables 25/26 — already in `dvb-ci/docs`), EN 300 468 §6.2.16 (CA descriptor tag 0x09) + CAT (ISO/IEC 13818-1 §2.4.4.5), all already transcribed for the crates that implement them. The re-query-to-refresh-entitlement behaviour is CI operational practice (per #763); no new spec PDF required.
+EN 50221 §8.4.3.4 (`ca_pmt`, Table 25) + §8.4.3.5 (`ca_pmt_reply`, Table 26) — already in `dvb-ci/docs`, EN 300 468 §6.2.16 (CA descriptor tag 0x09) + CAT (ISO/IEC 13818-1 §2.4.4.5), all already transcribed for the crates that implement them. The re-query-to-refresh-entitlement behaviour is CI operational practice (per #763); no new spec PDF required.
 
 ## Non-goals (stay in the consumer)
 - **Multi-slot policy** — which CAM/slot descrambles which service, failover, per-CAM capacity. Application policy; this crate stays single-slot, the app orchestrates across slots.

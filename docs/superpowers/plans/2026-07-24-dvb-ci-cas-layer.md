@@ -15,7 +15,7 @@
 - Additive / non-breaking. `Notification` is `#[non_exhaustive]`. Raw `Driver::send_ca_pmt(&[u8])` + existing notifications stay.
 - No raw-byte public API for the new surface — parsed `PmtSection`/`CatSection` in; typed `CaEnable`/PID slices out.
 - No magic numbers outside `#[cfg(test)]` (named consts, incl. `REQUERY_DEFAULT`). #204 label convention for any new label enum (`CaEnable` already has it).
-- Every new/changed public item cites its spec (EN 50221 §8.4.3.4; EN 300 468 §6.2.16 CA descriptor; ISO/IEC 13818-1 §2.4.4.5 CAT). Grounding: `dvb-ci/docs`, `dvb-si/docs`.
+- Every new/changed public item cites its spec (EN 50221 §8.4.3.5 (ca_pmt_reply, Table 26); EN 300 468 §6.2.16 CA descriptor; ISO/IEC 13818-1 §2.4.4.5 CAT). Grounding: `dvb-ci/docs`, `dvb-si/docs`.
 - Version: dvb-ci-runtime 0.13.0 → 0.14.0 (final task).
 - **Preflight (before Task 1):** read `dvb-ci-runtime/src/{event.rs,driver.rs,resource.rs,dataplane.rs}`, `dvb-ci/src/builder.rs` + `objects/ca_pmt*.rs` (exact `build_ca_pmt`/`CaEnable`/`CaPmtReply`-object signatures), `dvb-si/src/tables/{pmt.rs,cat.rs}` + `descriptors/ca.rs`, and how `Notification::CaInfo` exposes the CAM CAIDs. Use those exact signatures — do not guess.
 
@@ -25,10 +25,11 @@
 
 **Files:** Modify `dvb-ci-runtime/src/event.rs` (`Notification::CaPmtReply`), `dvb-ci-runtime/src/resource.rs` or `driver.rs` (wherever `CaPmtReply` is emitted from the parsed `ca_pmt_reply`). Test: in-module.
 
-**Interfaces — Produces:** `Notification::CaPmtReply { program_number: u16, ca_enable: CaEnable, descrambling_ok: bool }` (adds `ca_enable`; `dvb_ci::objects::ca_pmt_reply::CaEnable`).
+**Interfaces — Produces:** `Notification::CaPmtReply { program_number: u16, ca_enable: Option<CaEnable>, descrambling_ok: bool }` (adds `ca_enable`; `dvb_ci::objects::ca_pmt_reply::CaEnable`). `None` = programme `CA_enable_flag` clear; do NOT invent a sentinel.
 
-- [ ] Step 1: Test — feed a scripted `ca_pmt_reply` APDU whose `CA_enable` = `0x03` (descrambling possible) via `MockCaDevice`; assert the emitted `Notification::CaPmtReply.ca_enable == CaEnable::DescramblingPossible` (use the real variant name from `ca_pmt_reply.rs`) and `descrambling_ok == true`. Run → FAIL (field absent).
-- [ ] Step 2: Add `ca_enable: CaEnable` to the variant; at the emit site, read the already-parsed `Option<CaEnable>` off the dvb-ci `CaPmtReply` object (it carries it) and map to the notification; derive `descrambling_ok` from `ca_enable` (keep it). Cite EN 50221 §8.4.3.4 Table 26.
+- [ ] Step 1: Test — feed a scripted `ca_pmt_reply` APDU whose `CA_enable` = `0x03` via `MockCaDevice`; assert the emitted `Notification::CaPmtReply.ca_enable == Some(<the 0x03 variant name from ca_pmt_reply.rs>)` and `descrambling_ok == true`. Add a second test: flag-clear reply → `ca_enable == None`, `descrambling_ok == false`. Run → FAIL (field absent).
+- [ ] Step 2: Add `ca_enable: Option<CaEnable>` to the variant; at the emit site, plumb the dvb-ci `CaPmtReply` object's own `Option<CaEnable>` straight through (preserve `None`); derive `descrambling_ok` (`Some(possible*) => true`, else `false`). Cite EN 50221 §8.4.3.5 (ca_pmt_reply, Table 26).
+- [ ] Step 2a: Fix the ONE exhaustive match site: `dvb-ci-runtime/src/bin/ci-probe.rs` (~L192) destructures `Notification::CaPmtReply { program_number, descrambling_ok }` with no `..` — it's inside a `#[cfg(all(feature="linux", target_os="linux"))]` module, so a macOS build silently skips it. Add the `ca_enable` field (or `..`). **Verify on the Linux target**: `cargo check -p dvb-ci-runtime --features linux --locked --target aarch64-unknown-linux-gnu --bin ci-probe` (do NOT trust the macOS build for this).
 - [ ] Step 3: Run → PASS. Full gate for `-p dvb-ci-runtime`.
 - [ ] Step 4: Commit `feat(dvb-ci-runtime): expose typed CaEnable on CaPmtReply notification (#763)`.
 
