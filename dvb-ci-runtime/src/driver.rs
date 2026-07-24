@@ -192,21 +192,27 @@ impl<D: CaDevice> Driver<D> {
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let built = build_ca_pmt(pmt, list_management, cmd_id);
         let built_bytes = built.to_bytes();
+        // Also build the `query`-variant bytes (same list_management) for the
+        // Task 5 re-query timer to resend — `ok_descrambling` solicits no
+        // reply (EN 50221 §8.4.3.5), so only `query` is fit for that purpose.
+        let requery_bytes = build_ca_pmt(pmt, list_management, CaPmtCmdId::Query).to_bytes();
         self.send_ca_pmt(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
-            managed::service_of(pmt, cmd_id, built_bytes),
+            managed::service_of(pmt, cmd_id, built_bytes, requery_bytes),
         );
         Ok(())
     }
 
     /// Set the entitlement re-query cadence (#763 Task 5): every
     /// `interval`, the driver re-sends each actively-managed service's
-    /// `ca_pmt` (EN 50221 §8.4.3.4 Table 25, `cmd_id = ok_descrambling`) so
-    /// the CAM re-evaluates and replies, surfacing as
-    /// [`Notification::CaPmtReply`] and — on a status change —
-    /// [`Notification::Entitlement`]. `Duration::ZERO` disables re-query.
-    /// Defaults to [`managed::REQUERY_DEFAULT`] (10s) at construction.
+    /// `ca_pmt` (EN 50221 §8.4.3.4 Table 25, `cmd_id = query` — not the
+    /// `ok_descrambling` variant originally sent to start descrambling; per
+    /// §8.4.3.5, `ok_descrambling` solicits no reply) so the CAM re-evaluates
+    /// and replies, surfacing as [`Notification::CaPmtReply`] and — on a
+    /// status change — [`Notification::Entitlement`]. `Duration::ZERO`
+    /// disables re-query. Defaults to [`managed::REQUERY_DEFAULT`] (10s) at
+    /// construction.
     pub fn set_requery_interval(&mut self, interval: Duration) {
         self.managed.set_requery_interval(interval);
     }
@@ -303,10 +309,13 @@ impl<D: CaDevice> Driver<D> {
     /// Advance the #763 Task 5 entitlement re-query cadence by `elapsed`
     /// ([`ManagedCa::tick`](crate::managed::ManagedCa::tick), mirroring
     /// `resource.rs`'s `DateTime::tick` accumulate-then-fire pattern). When
-    /// the interval elapses, re-send every actively-managed service's last
-    /// built `ca_pmt` via the same [`send_ca_pmt`](Self::send_ca_pmt) path
-    /// [`add_service`](Self::add_service) uses (EN 50221 §8.4.3.4 Table 25) so
-    /// the CAM re-evaluates and replies.
+    /// the interval elapses, re-send every actively-managed service's
+    /// `query`-variant `ca_pmt` (`ManagedService::requery_ca_pmt`) via the
+    /// same [`send_ca_pmt`](Self::send_ca_pmt) path
+    /// [`add_service`](Self::add_service) uses (EN 50221 §8.4.3.4 Table 25) —
+    /// `cmd_id = query`, not the `ok_descrambling` bytes originally sent, is
+    /// required for a conformant CAM to re-evaluate and reply (§8.4.3.5:
+    /// `ok_descrambling` solicits no reply).
     fn requery_tick(&mut self, elapsed: Duration) -> io::Result<()> {
         if !self.managed.tick(elapsed) {
             return Ok(());
@@ -315,7 +324,7 @@ impl<D: CaDevice> Driver<D> {
             .managed
             .services()
             .values()
-            .map(|s| s.built_ca_pmt.clone())
+            .map(|s| s.requery_ca_pmt.clone())
             .collect();
         for ca_pmt in ca_pmts {
             self.send_ca_pmt(&ca_pmt)?;
@@ -1600,8 +1609,18 @@ mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
         d.take_notifications();
 
-        let expected_ca_pmt =
+        // The initial `add_service` send is `ok_descrambling` — assert it
+        // happened, so the test proves the resend below (a distinct `query`
+        // cmd_id) is a genuinely different wire message, not the same bytes.
+        let expected_initial_ca_pmt =
             build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        assert_apdu_on_session(&d, CA_SESSION, &expected_initial_ca_pmt);
+
+        // The re-query timer resends the `query`-variant bytes (EN 50221
+        // §8.4.3.5: only `query`/`ok_mmi` solicit a `ca_pmt_reply` from a
+        // conformant CAM — `ok_descrambling` does not).
+        let expected_ca_pmt =
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::Query).to_bytes();
         let sends_before_requery = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
 
         let mut all_notes = Vec::new();
@@ -1775,8 +1794,10 @@ mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
+        // Count the `query`-variant bytes — the ones the timer would resend
+        // if it fired — not the `ok_descrambling` bytes `add_service` sent.
         let expected_ca_pmt =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::Query).to_bytes();
         let sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
 
         // Even a very long tick must not trigger a re-query once disabled.
@@ -1786,6 +1807,59 @@ mod tests {
         assert_eq!(
             sends_after, sends_before,
             "Duration::ZERO must disable the re-query resend"
+        );
+    }
+
+    #[test]
+    fn requery_timer_resends_every_active_service_not_just_one() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // Two services on the managed set: 1546 (`Only`, first-ever) and
+        // 1547 (`Add`, joining the active set).
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let pmt2_bytes = build_ca_pmt_fixture(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        // The `query`-variant bytes the re-query timer resends for each
+        // service — same `list_management` each got at `add_service` time.
+        let expected1 =
+            build_ca_pmt(&pmt1, CaPmtListManagement::Only, CaPmtCmdId::Query).to_bytes();
+        let expected2 = build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::Query).to_bytes();
+        let sends_before1 = count_apdu_on_session(&d, CA_SESSION, &expected1);
+        let sends_before2 = count_apdu_on_session(&d, CA_SESSION, &expected2);
+
+        // Advance the clock past the default 10s re-query interval: this
+        // queues BOTH services' resends (`requery_tick` iterates the whole
+        // active set), but EN 50221's half-duplex link (the #337
+        // one-write-per-turn rule) only lets one out per turn — feed enough
+        // `T_SB` acks to flush both queued writes, mirroring `feed`'s own
+        // multi-turn drain loop.
+        d.pump(Duration::from_secs(11)).unwrap();
+        feed(&mut d, sb());
+
+        let sends_after1 = count_apdu_on_session(&d, CA_SESSION, &expected1);
+        let sends_after2 = count_apdu_on_session(&d, CA_SESSION, &expected2);
+        assert_eq!(
+            sends_after1,
+            sends_before1 + 1,
+            "expected service 1546's query ca_pmt resent exactly once on the shared tick"
+        );
+        assert_eq!(
+            sends_after2,
+            sends_before2 + 1,
+            "expected service 1547's query ca_pmt resent exactly once on the shared tick"
         );
     }
 }

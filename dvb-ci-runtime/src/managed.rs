@@ -56,6 +56,7 @@ pub enum CaError {
 /// read+written by `ManagedCa::record_reply` (#763 Task 5's edge-triggered
 /// `Notification::Entitlement`).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ManagedService {
     /// Elementary-stream PIDs carried by this programme (every stream, not
     /// only the CA-bearing ones — a caller routing PIDs into `ci0` needs the
@@ -75,12 +76,20 @@ pub struct ManagedService {
     /// The last observed `descrambling_ok` (derived from `last_ca_enable`),
     /// paired with it for the Task 5 transition diff.
     pub(crate) last_descrambling_ok: bool,
-    /// The exact `ca_pmt` bytes last sent for this service (built via
-    /// [`dvb_ci::builder::build_ca_pmt`], EN 50221 §8.4.3.4 Table 25) — kept
-    /// so the Task 5 re-query timer can re-send byte-identically via the same
-    /// [`Driver::send_ca_pmt`](crate::driver::Driver::send_ca_pmt) path
-    /// [`Driver::add_service`](crate::driver::Driver::add_service) used.
+    /// The exact `ca_pmt` bytes sent by [`Driver::add_service`](crate::driver::Driver::add_service)
+    /// to start descrambling — `cmd_id = ok_descrambling` (EN 50221 §8.4.3.4
+    /// Table 25). Kept for the add_service oracle test to assert what was
+    /// actually sent; per EN 50221 §8.4.3.5, `ok_descrambling` solicits **no**
+    /// `ca_pmt_reply`, so this is *not* what the Task 5 re-query timer resends
+    /// — see [`requery_ca_pmt`](Self::requery_ca_pmt).
     pub(crate) built_ca_pmt: Vec<u8>,
+    /// The `ca_pmt` bytes built with `cmd_id = query` (same `list_management`
+    /// as the initial send) for the Task 5 re-query timer to resend on its
+    /// cadence: per EN 50221 §8.4.3.5, only `query` (or `ok_mmi`) elicits a
+    /// fresh `ca_pmt_reply` from a conformant CAM — `ok_descrambling` does
+    /// not — so re-sending `built_ca_pmt`'s bytes is not spec-guaranteed to
+    /// produce one.
+    pub(crate) requery_ca_pmt: Vec<u8>,
 }
 
 /// The [`Driver`](crate::Driver)'s owned CAS-layer state (#763 Layer 1) — one
@@ -320,11 +329,15 @@ pub(crate) fn pmt_has_ca(pmt: &PmtSection<'_>) -> bool {
 }
 
 /// The owned [`ManagedService`] state to record for `pmt`, sent with `cmd`;
-/// `built_ca_pmt` is the exact bytes sent (kept for Task 5's re-query resend).
+/// `built_ca_pmt` is the exact `ok_descrambling` bytes sent (kept for the
+/// add_service oracle test) and `requery_ca_pmt` is the `query`-variant bytes
+/// the Task 5 re-query timer resends (see the field docs on
+/// [`ManagedService`]).
 pub(crate) fn service_of(
     pmt: &PmtSection<'_>,
     cmd: CaPmtCmdId,
     built_ca_pmt: Vec<u8>,
+    requery_ca_pmt: Vec<u8>,
 ) -> ManagedService {
     let mut ca_pids = ca_pids_in(&pmt.program_info);
     for s in &pmt.streams {
@@ -337,6 +350,7 @@ pub(crate) fn service_of(
         last_ca_enable: None,
         last_descrambling_ok: false,
         built_ca_pmt,
+        requery_ca_pmt,
     }
 }
 
@@ -362,6 +376,7 @@ mod tests {
             last_ca_enable: None,
             last_descrambling_ok: false,
             built_ca_pmt: vec![0xAA, 0xBB],
+            requery_ca_pmt: vec![0xCC, 0xDD],
         };
         m.record(7, svc.clone());
         assert!(!m.is_empty());
@@ -397,6 +412,7 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
             },
         );
         assert!(
@@ -423,6 +439,7 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
             },
         );
         assert!(!m.tick(Duration::from_secs(1000)));
@@ -447,6 +464,7 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
             },
         );
         let out = m.record_reply(1, Some(CaEnable::NotPossibleNoEntitlement), false);
@@ -465,6 +483,7 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
             },
         );
         assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
@@ -483,6 +502,7 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
             },
         );
         assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
