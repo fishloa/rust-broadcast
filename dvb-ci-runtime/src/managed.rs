@@ -90,6 +90,13 @@ pub struct ManagedService {
     /// not — so re-sending `built_ca_pmt`'s bytes is not spec-guaranteed to
     /// produce one.
     pub(crate) requery_ca_pmt: Vec<u8>,
+    /// The owned raw PMT section bytes this service was built from (#763
+    /// Task 6), kept so [`Driver::remove_service`](crate::driver::Driver::remove_service)
+    /// can re-drive the existing [`Driver::remove_program`](crate::driver::Driver::remove_program)
+    /// path (which needs the raw PMT to build the `Update`/`NotSelected`
+    /// `ca_pmt`, EN 50221 §8.4.3.4 Table 25) without the caller re-supplying
+    /// it.
+    pub(crate) pmt_raw: Vec<u8>,
 }
 
 /// The [`Driver`](crate::Driver)'s owned CAS-layer state (#763 Layer 1) — one
@@ -179,6 +186,36 @@ impl ManagedCa {
     pub(crate) fn record(&mut self, program_number: u16, service: ManagedService) {
         self.services.insert(program_number, service);
         self.recompute_descramble_pids();
+    }
+
+    /// Stop tracking `program_number` (#763 Task 6's
+    /// [`Driver::remove_service`](crate::driver::Driver::remove_service)),
+    /// recomputing [`descramble_pids`](Self::descramble_pids) afterwards.
+    /// Returns whether the programme was actually tracked (`false` is a
+    /// no-op — nothing to remove).
+    pub(crate) fn remove(&mut self, program_number: u16) -> bool {
+        let removed = self.services.remove(&program_number).is_some();
+        if removed {
+            self.recompute_descramble_pids();
+        }
+        removed
+    }
+
+    /// Clear all module-scoped managed state (#763 Task 6's CAM hot-plug
+    /// fix): the active service set, the CAT/CAM CAID-derived EMM-PID state,
+    /// and the descramble-PID union, plus the re-query accumulator (`since`)
+    /// so a freshly (re)inserted module doesn't inherit a departed module's
+    /// partially-elapsed re-query countdown. `requery_interval` is
+    /// deliberately **not** reset — it is host configuration
+    /// ([`set_requery_interval`](Self::set_requery_interval)), not
+    /// per-module state, and must survive a CAM insert/remove edge.
+    pub(crate) fn clear(&mut self) {
+        self.services.clear();
+        self.cat_emm_pids.clear();
+        self.cam_caids.clear();
+        self.emm_pids.clear();
+        self.descramble_pids.clear();
+        self.since = Duration::ZERO;
     }
 
     /// The EMM PIDs to route into `ci0`: the last `set_cat`'s CAID → EMM-PID
@@ -338,6 +375,7 @@ pub(crate) fn service_of(
     cmd: CaPmtCmdId,
     built_ca_pmt: Vec<u8>,
     requery_ca_pmt: Vec<u8>,
+    pmt_raw: Vec<u8>,
 ) -> ManagedService {
     let mut ca_pids = ca_pids_in(&pmt.program_info);
     for s in &pmt.streams {
@@ -351,6 +389,7 @@ pub(crate) fn service_of(
         last_descrambling_ok: false,
         built_ca_pmt,
         requery_ca_pmt,
+        pmt_raw,
     }
 }
 
@@ -377,6 +416,7 @@ mod tests {
             last_descrambling_ok: false,
             built_ca_pmt: vec![0xAA, 0xBB],
             requery_ca_pmt: vec![0xCC, 0xDD],
+            pmt_raw: vec![0x02, 0x00],
         };
         m.record(7, svc.clone());
         assert!(!m.is_empty());
@@ -413,6 +453,7 @@ mod tests {
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
                 requery_ca_pmt: vec![],
+                pmt_raw: vec![],
             },
         );
         assert!(
@@ -440,6 +481,7 @@ mod tests {
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
                 requery_ca_pmt: vec![],
+                pmt_raw: vec![],
             },
         );
         assert!(!m.tick(Duration::from_secs(1000)));
@@ -465,6 +507,7 @@ mod tests {
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
                 requery_ca_pmt: vec![],
+                pmt_raw: vec![],
             },
         );
         let out = m.record_reply(1, Some(CaEnable::NotPossibleNoEntitlement), false);
@@ -484,6 +527,7 @@ mod tests {
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
                 requery_ca_pmt: vec![],
+                pmt_raw: vec![],
             },
         );
         assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
@@ -503,6 +547,7 @@ mod tests {
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
                 requery_ca_pmt: vec![],
+                pmt_raw: vec![],
             },
         );
         assert!(m.record_reply(1, Some(CaEnable::Possible), true).is_some());
@@ -520,5 +565,105 @@ mod tests {
     fn record_reply_unknown_program_is_a_no_op() {
         let mut m = ManagedCa::new();
         assert_eq!(m.record_reply(99, Some(CaEnable::Possible), true), None);
+    }
+
+    // --- #763 Task 6: remove + clear ---
+
+    #[test]
+    fn remove_drops_tracked_service_and_recomputes_descramble_pids_false_for_untracked() {
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100, 0x101],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+        m.record(
+            2,
+            ManagedService {
+                es_pids: vec![0x200],
+                ca_pids: vec![0x65],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+
+        assert!(
+            !m.remove(99),
+            "removing an untracked program_number must return false"
+        );
+        assert_eq!(
+            m.services().len(),
+            2,
+            "an untracked remove must not disturb the tracked set"
+        );
+
+        assert!(
+            m.remove(1),
+            "removing a tracked program_number must return true"
+        );
+        assert!(m.services().get(&1).is_none());
+        assert_eq!(
+            m.descramble_pids(),
+            &[0x200],
+            "descramble_pids must recompute (drop program 1's PIDs) after remove"
+        );
+    }
+
+    #[test]
+    fn clear_resets_module_state_but_preserves_requery_interval() {
+        use dvb_si::tables::cat::CatCaEntry;
+
+        let mut m = ManagedCa::new();
+        m.set_requery_interval(Duration::from_secs(3));
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x100],
+                ca_pids: vec![0x64],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+        m.set_cat(&[CatCaEntry {
+            ca_system_id: 0x0648,
+            ca_pid: 0x1FF0,
+            private_data: Vec::new(),
+        }]);
+        m.set_cam_caids([0x0648].into_iter().collect());
+        assert!(!m.emm_pids().is_empty(), "precondition: emm_pids populated");
+        assert!(
+            !m.descramble_pids().is_empty(),
+            "precondition: descramble_pids populated"
+        );
+
+        m.clear();
+
+        assert!(m.services().is_empty(), "services must be cleared");
+        assert!(m.emm_pids().is_empty(), "emm_pids must be cleared");
+        assert!(
+            m.descramble_pids().is_empty(),
+            "descramble_pids must be cleared"
+        );
+        assert_eq!(
+            m.requery_interval(),
+            Duration::from_secs(3),
+            "requery_interval is host config, must survive clear()"
+        );
     }
 }

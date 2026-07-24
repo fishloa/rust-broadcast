@@ -7,6 +7,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 
+use broadcast_common::Serialize;
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::cat::CatSection;
@@ -196,11 +197,47 @@ impl<D: CaDevice> Driver<D> {
         // Task 5 re-query timer to resend — `ok_descrambling` solicits no
         // reply (EN 50221 §8.4.3.5), so only `query` is fit for that purpose.
         let requery_bytes = build_ca_pmt(pmt, list_management, CaPmtCmdId::Query).to_bytes();
+        // `PmtSection` has no raw-bytes accessor — re-serialize (byte-identical
+        // round-trip, a project invariant) to recover owned PMT bytes so
+        // `remove_service` (#763 Task 6) can later re-drive `remove_program`,
+        // which needs the raw section.
+        let mut pmt_raw = vec![0u8; pmt.serialized_len()];
+        let n = pmt
+            .serialize_into(&mut pmt_raw)
+            .expect("PmtSection::serialize_into on a freshly-sized buffer cannot fail");
+        pmt_raw.truncate(n);
         self.send_ca_pmt(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
-            managed::service_of(pmt, cmd_id, built_bytes, requery_bytes),
+            managed::service_of(pmt, cmd_id, built_bytes, requery_bytes, pmt_raw),
         );
+        Ok(())
+    }
+
+    /// Stop descrambling a previously-added service (#763 Task 6): sends the
+    /// removal `ca_pmt` (`list_management = update`, `cmd_id = not_selected`,
+    /// EN 50221 §8.4.3.4 Table 25) via the existing
+    /// [`remove_program`](Self::remove_program) path — re-driving it with the
+    /// raw PMT bytes stashed at [`add_service`](Self::add_service) time — then
+    /// drops the service from the managed set.
+    ///
+    /// Removing a `program_number` that isn't currently tracked (never
+    /// `add_service`'d, or already removed) is a **no-op**, not an error:
+    /// [`CaError`] has no not-found arm, and `remove_service` is idempotent.
+    ///
+    /// # Errors
+    /// [`CaError::Io`] if sending the removal `ca_pmt` fails.
+    pub fn remove_service(&mut self, program_number: u16) -> Result<(), CaError> {
+        let raw = self
+            .managed
+            .services()
+            .get(&program_number)
+            .map(|s| s.pmt_raw.clone());
+        let Some(raw) = raw else {
+            return Ok(());
+        };
+        self.remove_program(&raw)?;
+        self.managed.remove(program_number);
         Ok(())
     }
 
@@ -422,12 +459,16 @@ impl<D: CaDevice> Driver<D> {
     /// cleanly instead of reusing stale session numbers) and cleared Part B
     /// baselines (so the next module's `ca_info`/`ca_pmt_reply` establishes
     /// its own fresh baseline rather than diffing against the departed
-    /// module's).
+    /// module's), AND the managed CAS-layer state (#763 Task 6 fix): a stale
+    /// `services`/`descramble_pids`/`emm_pids` set must not survive a
+    /// departed or freshly-inserted module — the host must re-provision from
+    /// scratch (the next `add_service` then correctly picks `Only` again).
     fn reset_module_state(&mut self) {
         self.stack = CiStack::new();
         self.next_timer = None;
         self.last_caids = None;
         self.last_descrambling_ok = None;
+        self.managed.clear();
     }
 
     /// Best-effort app-layer card-presence inference (Part B, #726): EN 50221
@@ -1860,6 +1901,140 @@ mod tests {
             sends_after2,
             sends_before2 + 1,
             "expected service 1547's query ca_pmt resent exactly once on the shared tick"
+        );
+    }
+
+    // --- #763 Task 6: remove_service + clear managed state on CAM hot-plug ---
+
+    #[test]
+    fn remove_service_sends_update_not_selected_and_drops_from_managed_state() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // 1546 (`Only`, distinct PIDs 0x100/0x101) and 1547 (`Add`, distinct
+        // PIDs 0x200/0x201) — distinct PID sets so removing 1546 is
+        // observably different from removing 1547.
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        d.remove_service(1546).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Oracle: the same PMT re-built directly via
+        // dvb_ci::builder::build_ca_pmt with `Update`/`NotSelected` (EN 50221
+        // §8.4.3.4 Table 25) — the exact bytes `remove_program` sends.
+        let expected =
+            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        assert_apdu_on_session(&d, CA_SESSION, &expected);
+
+        assert_eq!(
+            d.descramble_pids(),
+            &[0x0200, 0x0201],
+            "1546's ES PIDs must be gone; 1547's must remain"
+        );
+        assert!(
+            d.managed_ca().services().get(&1546).is_none(),
+            "1546 must no longer be tracked"
+        );
+        assert!(
+            d.managed_ca().services().get(&1547).is_some(),
+            "1547 must remain tracked"
+        );
+    }
+
+    #[test]
+    fn remove_service_of_untracked_program_is_a_no_op() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let ops_before = d.device().ops.len();
+        d.remove_service(0xFFFF).unwrap();
+        assert_eq!(
+            d.device().ops.len(),
+            ops_before,
+            "removing an untracked program must not send anything to the device"
+        );
+        assert!(
+            d.managed_ca().services().is_empty(),
+            "removing an untracked program must not disturb the (empty) managed set"
+        );
+    }
+
+    #[test]
+    fn cam_removed_edge_clears_managed_state() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_info::CaInfo;
+        use dvb_si::tables::cat::CatSection;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Populate emm_pids too, via ca_info + set_cat, so the test proves
+        // the fix clears more than just `services`.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaInfo {
+                    ca_system_ids: vec![0x0648],
+                }),
+            ),
+        );
+        d.take_notifications();
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        let cat_bytes = build_cat_fixture(&descriptors);
+        let cat = CatSection::parse(&cat_bytes).unwrap();
+        d.set_cat(&cat).unwrap();
+
+        assert!(
+            !d.managed_ca().services().is_empty(),
+            "precondition: a service is tracked"
+        );
+        assert!(
+            !d.descramble_pids().is_empty(),
+            "precondition: descramble_pids populated"
+        );
+        assert!(!d.emm_pids().is_empty(), "precondition: emm_pids populated");
+
+        // Module physically removed: a CamRemoved hot-plug edge.
+        d.device_mut().slot.module_present = false;
+        d.pump(Duration::from_millis(10)).unwrap();
+        let notes = d.take_notifications();
+        assert!(
+            notes.contains(&Notification::HotPlug(HotPlug::CamRemoved)),
+            "expected CamRemoved, got {notes:?}"
+        );
+
+        assert!(
+            d.managed_ca().services().is_empty(),
+            "services must be cleared on CamRemoved"
+        );
+        assert!(
+            d.descramble_pids().is_empty(),
+            "descramble_pids must be cleared on CamRemoved"
+        );
+        assert!(
+            d.emm_pids().is_empty(),
+            "emm_pids must be cleared on CamRemoved"
         );
     }
 }
