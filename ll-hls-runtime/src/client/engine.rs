@@ -6,12 +6,21 @@ use alloc::vec::Vec;
 
 use broadcast_common::Unpackage;
 use transmux::hls::{ByteRange, MapTag, PreloadHintType};
-use transmux::{Fmp4Demux, MediaPlaylist, MediaSegment, OpenSegment};
+use transmux::{Fmp4Demux, MediaPlaylist, MediaSegment, OpenSegment, TrackSpec, TsDemux};
 
 use super::action::{Action, BlockingReload, ResourceId};
 use super::error::{Error, Result};
 use super::output::Output;
 use super::url;
+
+/// First byte of every MPEG-2 TS packet (ITU-T H.222.0 / ISO/IEC 13818-1
+/// §2.4.3.2 `sync_byte`). Classic MPEG-TS-segment HLS (HLS v3, RFC 8216 —
+/// the dominant legacy/IPTV form) has no `EXT-X-MAP`/init segment at all:
+/// each `.ts` segment is a self-contained PAT/PMT/PES stream, so this byte
+/// is the only available signal to distinguish one from an fMP4/CMAF
+/// segment (which starts with an ISOBMFF box: `ftyp`/`styp`/`moof`) once the
+/// playlist itself has never advertised a Media Initialization Section.
+const TS_SYNC_BYTE: u8 = 0x47;
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
@@ -71,6 +80,19 @@ use super::url;
 ///   closes is signalled late (after those parts' samples, not before). This
 ///   is a gap in the current wire model ([`transmux::hls::OpenSegment`]), not
 ///   something this crate can fix locally.
+/// - **Classic MPEG-TS-segment HLS** (issue #760): a playlist that never
+///   advertises an `EXT-X-MAP` (HLS v3, the dominant legacy/IPTV form —
+///   self-contained `.ts` segments carrying their own PAT/PMT/PES, no
+///   separate init resource) routes each fetched Part/Segment through
+///   [`transmux::TsDemux`] instead, content-sniffed by the MPEG-TS sync byte
+///   rather than blocked on an init fetch that will never come. The first
+///   successfully demuxed segment's recovered
+///   [`TrackSpec`]s synthesize the one [`Output::Init`] this crate's contract
+///   requires (via [`transmux::build_init_segment`]) so downstream callers
+///   (e.g. `multimux`'s `HlsPull`, which recovers track specs from
+///   `Output::Init`) need no TS-specific handling of their own. The
+///   fMP4/CMAF plus LL (parts/preload-hint) path above is entirely
+///   unchanged; the two never overlap for a single playlist.
 #[derive(Debug)]
 pub struct LlHlsClient {
     playlist_url: String,
@@ -302,7 +324,13 @@ impl LlHlsClient {
                 }
             }
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
-                if self.init_bytes.is_none() {
+                if self.is_ts_segment(bytes) {
+                    // Classic MPEG-TS-segment HLS (issue #760): no init
+                    // resource will ever arrive for this playlist, so demux
+                    // this self-contained TS segment straight away rather
+                    // than buffering it forever waiting for one.
+                    self.finish_ts_resource(id, bytes)?;
+                } else if self.init_bytes.is_none() {
                     self.pending_demux.push_back((id, bytes.to_vec()));
                 } else {
                     self.finish_media_resource(id, bytes)?;
@@ -330,6 +358,42 @@ impl LlHlsClient {
             ResourceId::Init => {}
         }
         Ok(())
+    }
+
+    /// The classic-TS-HLS counterpart to [`Self::finish_media_resource`]:
+    /// demux + emit + mark-delivered for a self-contained MPEG-TS Part/
+    /// Segment resource — never buffered pending an init fetch, since
+    /// [`Self::is_ts_segment`] only routes here once this playlist is known
+    /// to advertise no `EXT-X-MAP` at all.
+    fn finish_ts_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        match id {
+            ResourceId::Part { msn, part } => {
+                self.emit_discontinuity_if_needed(msn);
+                self.demux_and_emit_ts(id, bytes)?;
+                self.delivered_parts.insert((msn, part));
+            }
+            ResourceId::Segment { msn } => {
+                self.emit_discontinuity_if_needed(msn);
+                self.demux_and_emit_ts(id, bytes)?;
+                self.delivered_segments.insert(msn);
+            }
+            ResourceId::Init => {}
+        }
+        Ok(())
+    }
+
+    /// `true` when `bytes` should be routed to [`Self::finish_ts_resource`]
+    /// (classic MPEG-TS-segment HLS, issue #760) rather than the fMP4/CMAF
+    /// path: this playlist has never advertised an `EXT-X-MAP` (no init
+    /// fetch is outstanding or cached — [`Self::init_uri`] is `None`; by the
+    /// time any Part/Segment fetch response reaches [`Self::on_resource`],
+    /// [`Self::on_playlist`] has already fully processed the playlist that
+    /// requested it, including any map it carries, so this check is never
+    /// stale) **and** `bytes` starts with the MPEG-TS sync byte — an
+    /// fMP4/CMAF resource always starts with an ISOBMFF box
+    /// (`ftyp`/`styp`/`moof`), never [`TS_SYNC_BYTE`].
+    fn is_ts_segment(&self, bytes: &[u8]) -> bool {
+        self.init_uri.is_none() && bytes.first() == Some(&TS_SYNC_BYTE)
     }
 
     /// Report that a previously requested [`ResourceId`] (or the playlist
@@ -537,6 +601,40 @@ impl LlHlsClient {
         Ok(())
     }
 
+    /// The classic-TS-HLS counterpart to [`Self::demux_and_emit`]: demux a
+    /// self-contained MPEG-TS Part/Segment resource via [`TsDemux`] directly
+    /// (no init bytes to concatenate — each `.ts` segment carries its own
+    /// PAT/PMT/PES). On the very first such resource this client demuxes,
+    /// also synthesizes the one [`Output::Init`] the crate's output contract
+    /// requires ("exactly one `Init` precedes any `Samples`") from the
+    /// recovered [`TrackSpec`]s via [`transmux::build_init_segment`] — a real
+    /// `ftyp`+fragmented-`moov`, byte-for-byte demuxable by
+    /// `transmux::Fmp4Demux` like any other init segment, so callers built
+    /// against the fMP4 path (e.g. `multimux`'s `HlsPull`, which recovers
+    /// track specs from `Output::Init`) need no TS-specific handling.
+    fn demux_and_emit_ts(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let mut demux = TsDemux::new();
+        let media = demux
+            .demux(bytes)
+            .map_err(|source| Error::Demux { id, source })?;
+        if !self.init_emitted {
+            let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+            let init_bytes = transmux::build_init_segment(&specs, media.movie_timescale)
+                .map_err(|source| Error::Demux { id, source })?;
+            self.pending_outputs.push_back(Output::Init(init_bytes));
+            self.init_emitted = true;
+        }
+        for track in media.tracks {
+            if !track.samples.is_empty() {
+                self.pending_outputs.push_back(Output::Samples {
+                    track_id: track.spec.track_id,
+                    samples: track.samples,
+                });
+            }
+        }
+        Ok(())
+    }
+
     fn emit_discontinuity_if_needed(&mut self, msn: u64) {
         if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
             self.pending_outputs.push_back(Output::Discontinuity);
@@ -612,5 +710,42 @@ mod tests {
             client.pending_demux.iter().any(|(bid, _)| *bid == id),
             "expected the resource to be buffered pending the init segment"
         );
+    }
+
+    // Issue #760: classic MPEG-TS-segment HLS routing. `is_ts_segment` must
+    // say yes to a genuine TS resource (sync byte, no map ever seen)...
+    #[test]
+    fn is_ts_segment_true_when_no_map_seen_and_sync_byte_present() {
+        let client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        assert!(client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
+    }
+
+    // ...but say no to an ISOBMFF (fMP4/CMAF) resource even when no map has
+    // been seen yet — the content itself is never TS, so it must fall
+    // through to the ordinary init-buffering path rather than being
+    // misrouted into `TsDemux` (which would reject it as malformed TS).
+    #[test]
+    fn is_ts_segment_false_for_an_isobmff_resource_with_no_map_seen() {
+        let client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        let ftyp_box = b"\x00\x00\x00\x18ftypiso5\x00\x00\x02\x00iso5iso6mp41";
+        assert!(!client.is_ts_segment(ftyp_box));
+    }
+
+    // The playlist signal takes precedence over content-sniffing: once this
+    // playlist is known to advertise an `EXT-X-MAP` (an init fetch has been
+    // requested/cached), even a resource whose first byte happens to be
+    // `0x47` must NOT be misrouted through `TsDemux` -- it is that
+    // playlist's own fMP4/CMAF init + part/segment concatenation the
+    // fetched bytes belong with.
+    #[test]
+    fn is_ts_segment_false_once_a_map_has_been_requested() {
+        let mut client = LlHlsClient::new("http://example.com/playlist.m3u8");
+        client
+            .ensure_init_requested(&MapTag {
+                uri: "init.mp4".to_string(),
+                byte_range: None,
+            })
+            .expect("ensure_init_requested succeeds");
+        assert!(!client.is_ts_segment(&[TS_SYNC_BYTE, 0x40, 0x11, 0x00]));
     }
 }

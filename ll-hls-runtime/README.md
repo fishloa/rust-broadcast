@@ -48,6 +48,14 @@ and how), performs the IO itself, and feeds the response back in; decoded
   surfaces as `Output::Discontinuity`; resources arriving before the init
   segment are buffered and replayed once it arrives, so a caller's fetches may
   complete in any order.
+- **Classic MPEG-TS-segment HLS** (issue #760) — a playlist that never
+  advertises an `EXT-X-MAP` (HLS v3, the dominant legacy/IPTV form:
+  self-contained `.ts` segments, no init resource) routes each fetched
+  Part/Segment through `transmux::TsDemux` instead, content-sniffed by the
+  MPEG-TS sync byte once the playlist is known to carry no map. The first
+  demuxed segment's recovered track specs synthesize the one `Output::Init`
+  the contract above requires, so callers built against the fMP4 path need
+  no TS-specific handling. The fMP4/CMAF + LL path is entirely unchanged.
 
 ## Reuse, not re-description
 
@@ -55,7 +63,8 @@ The `client` module defines **no playlist model of its own**. Parsing is
 `transmux::hls::MediaPlaylist::parse` (issue #717 slice 1 — the symmetric
 inverse of the LL-HLS origin's own `to_m3u8()` renderer, so origin and client
 share one wire model); demuxing a fetched CMAF part or segment into access
-units is `transmux::Fmp4Demux`. `client` holds only the client **engine**.
+units is `transmux::Fmp4Demux` (or, for classic MPEG-TS-segment HLS, issue
+#760's `transmux::TsDemux`). `client` holds only the client **engine**.
 
 ## Zero IO in the core
 

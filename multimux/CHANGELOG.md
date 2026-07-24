@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+- **`HlsPullSource` now ingests classic MPEG-TS-segment HLS** (issue #760,
+  via `ll-hls-runtime` 0.1.x's new `LlHlsClient` TS routing): pulling a
+  legacy/IPTV origin whose Media Playlist carries no `EXT-X-MAP` (whole
+  `.ts` segments, no init resource) now works end to end — `connect()`
+  recovers real `TrackSpec`s from the client's synthesized `Output::Init`
+  and `next_samples()` yields every real access unit, with no TS-specific
+  code needed in this crate at all.
+
 ## [0.3.1] - 2026-07-21
 
 ### Changed
