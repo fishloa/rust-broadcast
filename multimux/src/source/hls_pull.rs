@@ -16,6 +16,18 @@
 //!    already uses to decode samples, not a hand-rolled `moov` parse.
 //! 2. Relays every subsequent `Output::Samples` batch straight through.
 //!
+//! # Classic MPEG-TS-segment HLS (issue #760)
+//!
+//! A pulled origin whose Media Playlist carries no `EXT-X-MAP` (HLS v3, the
+//! dominant legacy/IPTV form — whole `.ts` segments, no separate init
+//! resource) works with **no extra code in this module**: `LlHlsClient`
+//! itself routes those segments through `transmux::TsDemux` instead of
+//! `Fmp4Demux`, and synthesizes the one `Output::Init` this module's
+//! `wait_for_init` already expects from the recovered `TrackSpec`s (via
+//! `transmux::build_init_segment`) — a real, `Fmp4Demux`-decodable
+//! `ftyp`+`moov`, indistinguishable from a genuine fMP4/CMAF origin's own
+//! init segment from this module's point of view.
+//!
 //! # Auth
 //!
 //! Credentials (Basic/Digest/Bearer) are passed to `TokioClient` as a
@@ -585,6 +597,122 @@ mod tests {
         assert!(
             result.is_err(),
             "wrong credentials must fail connect(), not silently proceed"
+        );
+
+        server.abort();
+    }
+
+    // Issue #760: classic MPEG-TS-segment HLS (HLS v3 — no `EXT-X-MAP`,
+    // self-contained `.ts` segments, the dominant legacy/IPTV form) pulled
+    // by `HlsPullSource` over real loopback HTTP. The origin here is a
+    // hand-rolled axum router serving the real, committed
+    // `ll-hls-runtime/tests/fixtures/ts-hls/` fixture (ffmpeg
+    // `-f hls -hls_segment_type mpegts` output generated from the
+    // workspace's own `fixtures/ts/h264_aac.ts` — see that fixture's
+    // `PROVENANCE.md`) rather than multimux's own LL-HLS engine (which only
+    // ever produces fMP4/CMAF) — proving `HlsPullSource::connect` recovers
+    // real `TrackSpec`s (from the client's issue-#760-synthesized
+    // `Output::Init`) and `next_samples` pulls every real access unit,
+    // entirely through the production `TokioClient` -> `LlHlsClient` stack —
+    // no TS-specific code in this crate at all.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn pulls_classic_ts_segment_hls_and_recovers_track_specs_and_samples() {
+        use axum::Router;
+        use axum::response::IntoResponse;
+        use axum::routing::get;
+        use transmux::TsDemux;
+
+        let fixture_dir = std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../ll-hls-runtime/tests/fixtures/ts-hls"
+        ));
+        let playlist_text =
+            std::fs::read_to_string(fixture_dir.join("index.m3u8")).expect("read fixture playlist");
+        assert!(
+            !playlist_text.contains("EXT-X-MAP"),
+            "sanity: fixture must genuinely carry no EXT-X-MAP"
+        );
+        let seg0 = std::fs::read(fixture_dir.join("index0.ts")).expect("read fixture segment 0");
+        let seg1 = std::fs::read(fixture_dir.join("index1.ts")).expect("read fixture segment 1");
+
+        // Independent oracle: total real samples across both segments,
+        // demuxed directly -- not through the pulled client at all.
+        let mut want_total_samples = 0usize;
+        for bytes in [&seg0, &seg1] {
+            let media = TsDemux::new().demux(bytes).expect("oracle demux");
+            want_total_samples += media.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
+        }
+        assert!(want_total_samples > 0, "sanity: fixture must carry samples");
+
+        let seg0_for_route = seg0.clone();
+        let seg1_for_route = seg1.clone();
+        let app = Router::new()
+            .route(
+                "/media.m3u8",
+                get(move || {
+                    let text = playlist_text.clone();
+                    async move { text.into_response() }
+                }),
+            )
+            .route(
+                "/index0.ts",
+                get(move || {
+                    let bytes = seg0_for_route.clone();
+                    async move { bytes.into_response() }
+                }),
+            )
+            .route(
+                "/index1.ts",
+                get(move || {
+                    let bytes = seg1_for_route.clone();
+                    async move { bytes.into_response() }
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("listener has a local address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+
+        let source = HlsPullSource::new("pulled-ts-hls", format!("http://{addr}/media.m3u8"));
+        let mut session = tokio::time::timeout(Duration::from_secs(10), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect must succeed against a classic TS-segment HLS origin");
+
+        let specs = session.track_specs();
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Avc { .. })),
+            "must recover the fixture's AVC video track from the synthesized Init: {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Aac { .. })),
+            "must recover the fixture's AAC audio track from the synthesized Init: {specs:?}"
+        );
+
+        let mut total_samples = 0usize;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while total_samples < want_total_samples && tokio::time::Instant::now() < deadline {
+            match tokio::time::timeout(Duration::from_secs(5), session.next_samples())
+                .await
+                .expect("next_samples timed out")
+                .expect("next_samples must not error")
+            {
+                Some(batch) => total_samples += batch.len(),
+                None => break,
+            }
+        }
+
+        assert_eq!(
+            total_samples, want_total_samples,
+            "must pull every sample the real TS-HLS origin served, no gaps/duplicates"
         );
 
         server.abort();

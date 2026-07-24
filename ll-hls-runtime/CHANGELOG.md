@@ -6,6 +6,21 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`client::LlHlsClient` now ingests classic MPEG-TS-segment HLS** (issue
+  #760): a Media Playlist that never advertises an `EXT-X-MAP` (HLS v3, RFC
+  8216 — the dominant legacy/IPTV form: self-contained `.ts` segments
+  carrying their own PAT/PMT/PES, no separate init resource) routes each
+  fetched Part/Segment through `transmux::TsDemux` instead of the fMP4/CMAF
+  `transmux::Fmp4Demux` path, content-sniffed by the MPEG-TS sync byte
+  (`0x47`) once the playlist itself is known to carry no map. The first
+  successfully demuxed segment's recovered `TrackSpec`s synthesize the one
+  `Output::Init` the crate's output contract requires (via
+  `transmux::build_init_segment`), so downstream callers built against the
+  fMP4 path (e.g. `multimux`'s `HlsPull`) need no TS-specific handling of
+  their own. The fMP4/CMAF + LL (parts/preload-hint) path is entirely
+  unchanged; the two never overlap for a single playlist.
+
 ## [0.1.0] - 2026-07-21
 
 ### Fixed
