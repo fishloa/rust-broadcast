@@ -9,13 +9,14 @@
 //! tracks what was sent. [`Driver::add_service`](crate::driver::Driver::add_service)
 //! builds + sends the `ca_pmt` and records the service here.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use dvb_ci::objects::ca_pmt::CaPmtCmdId;
 use dvb_ci::objects::ca_pmt_reply::CaEnable;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::descriptors::ca::TAG as CA_DESCRIPTOR_TAG;
+use dvb_si::tables::cat::CatCaEntry;
 use dvb_si::tables::pmt::PmtSection;
 
 /// Default entitlement re-query cadence (#763 Task 5's `Resource::tick`-driven
@@ -39,6 +40,11 @@ pub enum CaError {
     /// Sending the built `ca_pmt` to the device failed.
     #[error("ca_pmt send failed: {0}")]
     Io(#[from] std::io::Error),
+    /// The CAT's descriptor loop (ISO/IEC 13818-1 §2.4.4.5) carried a
+    /// truncated `CA_descriptor` (EN 300 468 §6.2.16) — [`Driver::set_cat`](crate::driver::Driver::set_cat)
+    /// could not extract the CAID/EMM-PID map.
+    #[error("CAT CA_descriptor parse failed: {0}")]
+    Cat(#[from] dvb_si::error::Error),
 }
 
 /// One actively-managed service (owned, no borrowed lifetime — copied out of
@@ -79,6 +85,21 @@ pub struct ManagedCa {
     /// tick-driven re-query.
     #[allow(dead_code)]
     since: Duration,
+    /// The last `set_cat`'s CAID → EMM PID map (ISO/IEC 13818-1 §2.4.4.5's
+    /// `CA_descriptor`s, EN 300 468 §6.2.16). Kept even when it yields no
+    /// `emm_pids` (no `ca_info` seen yet) so a later `ca_info` can recompute
+    /// against it (#763 Task 4).
+    cat_emm_pids: BTreeMap<u16, u16>,
+    /// The last-observed `Notification::CaInfo` CAID set — the CAM's
+    /// advertised systems (#763 Task 4).
+    cam_caids: BTreeSet<u16>,
+    /// `cat_emm_pids` ∩ `cam_caids` — the EMM PIDs to route into `ci0`.
+    /// Recomputed on every [`set_cat`](Self::set_cat)/
+    /// [`set_cam_caids`](Self::set_cam_caids) call.
+    emm_pids: Vec<u16>,
+    /// Union of active services' ES PIDs. Recomputed on every
+    /// [`record`](Self::record) call.
+    descramble_pids: Vec<u16>,
 }
 
 impl Default for ManagedCa {
@@ -87,6 +108,10 @@ impl Default for ManagedCa {
             services: BTreeMap::new(),
             requery_interval: REQUERY_DEFAULT,
             since: Duration::ZERO,
+            cat_emm_pids: BTreeMap::new(),
+            cam_caids: BTreeSet::new(),
+            emm_pids: Vec::new(),
+            descramble_pids: Vec::new(),
         }
     }
 }
@@ -125,6 +150,60 @@ impl ManagedCa {
     /// Record a service after its `ca_pmt` has been built and sent.
     pub(crate) fn record(&mut self, program_number: u16, service: ManagedService) {
         self.services.insert(program_number, service);
+        self.recompute_descramble_pids();
+    }
+
+    /// The EMM PIDs to route into `ci0`: the last `set_cat`'s CAID → EMM-PID
+    /// map, intersected with the CAM's advertised CAIDs (last `ca_info`) — a
+    /// CAT entry for a CAID the CAM never advertised is never fed (#763 Task
+    /// 4).
+    #[must_use]
+    pub fn emm_pids(&self) -> &[u16] {
+        &self.emm_pids
+    }
+
+    /// The union of every actively-managed service's elementary-stream PIDs
+    /// — the PIDs a caller must route into `ci0` for descrambling.
+    #[must_use]
+    pub fn descramble_pids(&self) -> &[u16] {
+        &self.descramble_pids
+    }
+
+    /// Store the CAT's CAID → EMM-PID map (ISO/IEC 13818-1 §2.4.4.5's
+    /// `CA_descriptor`s, EN 300 468 §6.2.16) and recompute [`emm_pids`](Self::emm_pids).
+    /// Calling this before any `ca_info` is not an error: the map is kept so
+    /// a later [`set_cam_caids`](Self::set_cam_caids) recomputes against it.
+    pub(crate) fn set_cat(&mut self, entries: &[CatCaEntry]) {
+        self.cat_emm_pids = entries.iter().map(|e| (e.ca_system_id, e.ca_pid)).collect();
+        self.recompute_emm_pids();
+    }
+
+    /// Record the CAM's advertised CAID set (from `Notification::CaInfo`)
+    /// and recompute [`emm_pids`](Self::emm_pids).
+    pub(crate) fn set_cam_caids(&mut self, caids: BTreeSet<u16>) {
+        self.cam_caids = caids;
+        self.recompute_emm_pids();
+    }
+
+    /// `emm_pids` = `cat_emm_pids` ∩ `cam_caids`, in CAID order (the map's
+    /// natural iteration order).
+    fn recompute_emm_pids(&mut self) {
+        self.emm_pids = self
+            .cat_emm_pids
+            .iter()
+            .filter(|(caid, _)| self.cam_caids.contains(caid))
+            .map(|(_, pid)| *pid)
+            .collect();
+    }
+
+    /// `descramble_pids` = the union (dedup, sorted) of every active
+    /// service's `es_pids`.
+    fn recompute_descramble_pids(&mut self) {
+        let mut pids: BTreeSet<u16> = BTreeSet::new();
+        for service in self.services.values() {
+            pids.extend(service.es_pids.iter().copied());
+        }
+        self.descramble_pids = pids.into_iter().collect();
     }
 }
 

@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
+use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pmt::PmtSection;
 
 use crate::device::{CaDevice, SlotInfo};
@@ -196,6 +197,41 @@ impl<D: CaDevice> Driver<D> {
         Ok(())
     }
 
+    /// Feed a freshly-parsed CAT (ISO/IEC 13818-1 §2.4.4.5) to the managed
+    /// CAS-layer state: extracts its `CA_descriptor`s (EN 300 468 §6.2.16,
+    /// CAID → EMM PID) and recomputes [`emm_pids`](Self::emm_pids) against
+    /// the CAM's advertised CAIDs (last `Notification::CaInfo`, captured
+    /// automatically as it arrives — see [`pump`](Self::pump)).
+    ///
+    /// Calling this before any `ca_info` has been observed is **not** an
+    /// error: [`emm_pids`](Self::emm_pids) stays empty until the CAM
+    /// advertises its CAIDs, then recomputes against the CAT stored here —
+    /// `set_cat` need not be re-called once `ca_info` arrives.
+    ///
+    /// # Errors
+    /// [`CaError::Cat`] if the CAT's descriptor loop carries a truncated
+    /// `CA_descriptor`.
+    pub fn set_cat(&mut self, cat: &CatSection<'_>) -> Result<(), CaError> {
+        let entries = cat.ca_descriptors().map_err(CaError::Cat)?;
+        self.managed.set_cat(&entries);
+        Ok(())
+    }
+
+    /// The EMM PIDs to route into `ci0` — the last [`set_cat`](Self::set_cat)'s
+    /// CAID → EMM-PID map intersected with the CAM's advertised CAIDs (#763
+    /// Task 4).
+    #[must_use]
+    pub fn emm_pids(&self) -> &[u16] {
+        self.managed.emm_pids()
+    }
+
+    /// The PIDs to route into `ci0` for descrambling — the union of every
+    /// actively-managed service's elementary-stream PIDs (#763 Task 4).
+    #[must_use]
+    pub fn descramble_pids(&self) -> &[u16] {
+        self.managed.descramble_pids()
+    }
+
     /// Answer an MMI menu/list by 1-based `choice_ref` (0 = back/cancel).
     pub fn mmi_menu_answer(&mut self, choice_ref: u8) -> io::Result<()> {
         let actions = self
@@ -367,6 +403,10 @@ impl<D: CaDevice> Driver<D> {
                         out.push(Notification::HotPlug(HotPlug::CardChanged));
                     }
                 }
+                // #763 Task 4: feed the CAM's advertised CAIDs to the managed
+                // CAS-layer state so `emm_pids` recomputes against the
+                // already-stored CAT map (if `set_cat` ran first).
+                self.managed.set_cam_caids(new_set.clone());
                 self.last_caids = Some(new_set);
                 out
             }
@@ -1227,5 +1267,191 @@ mod tests {
         assert_apdu_on_session(&d, CA_SESSION, &expected2);
 
         assert_eq!(d.managed_ca().services().len(), 2);
+    }
+
+    // --- #763 Task 4: set_cat + emm_pids/descramble_pids ---
+
+    /// A hand-built CAT section (ISO/IEC 13818-1 §2.4.4.5): table_id 0x01, a
+    /// flat descriptor loop of `CA_descriptor`s (EN 300 468 §6.2.16, tag
+    /// 0x09; the `ca_descriptor` helper above builds the same TLV used for
+    /// PMTs). No off-air CAT capture exists in this repo's fixture corpus
+    /// (verified: none of the committed `.ts` captures carry PID 0x0001),
+    /// mirroring the same hand-rolled-fixture precedent as
+    /// `build_ca_pmt_fixture` and `dvb_si::tables::cat`'s own unit tests.
+    fn build_cat_fixture(descriptors: &[u8]) -> Vec<u8> {
+        const EXTENSION_HEADER_LEN: u16 = 5;
+        const CRC_LEN: u16 = 4;
+        let section_length = EXTENSION_HEADER_LEN + descriptors.len() as u16 + CRC_LEN;
+        let mut v = Vec::new();
+        v.push(0x01); // table_id (CAT)
+        v.push(0xB0 | ((section_length >> 8) as u8 & 0x0F));
+        v.push((section_length & 0xFF) as u8);
+        v.extend_from_slice(&[0xFF, 0xFF]); // table_id_extension (reserved for CAT)
+        v.push(0xC1); // reserved(2)='11' | version(5)=0 | current_next=1
+        v.push(0x00); // section_number
+        v.push(0x00); // last_section_number
+        v.extend_from_slice(descriptors);
+        let crc = broadcast_common::crc32_mpeg2::compute(&v);
+        v.extend_from_slice(&crc.to_be_bytes());
+        v
+    }
+
+    #[test]
+    fn set_cat_computes_emm_pids_as_cat_inter_ca_info_caids() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_info::CaInfo;
+        use dvb_si::tables::cat::CatSection;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // ca_info arrives first: the CAM advertises CAIDs 0x0648, 0x0100.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaInfo {
+                    ca_system_ids: vec![0x0648, 0x0100],
+                }),
+            ),
+        );
+        d.take_notifications();
+
+        // CAT maps 0x0648 -> 0x1FF0 (advertised) and 0x0500 -> 0x1FF1 (not
+        // advertised by this CAM).
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, 0x1FF1));
+        let cat_bytes = build_cat_fixture(&descriptors);
+        let cat = CatSection::parse(&cat_bytes).unwrap();
+
+        d.set_cat(&cat).unwrap();
+
+        assert_eq!(
+            d.emm_pids(),
+            &[0x1FF0],
+            "0x0500 -> 0x1FF1 must be excluded: the CAM never advertised CAID 0x0500"
+        );
+    }
+
+    #[test]
+    fn set_cat_before_ca_info_is_not_an_error_and_recomputes_once_ca_info_arrives() {
+        use broadcast_common::Parse;
+        use dvb_ci::objects::ca_info::CaInfo;
+        use dvb_si::tables::cat::CatSection;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let mut descriptors = Vec::new();
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, 0x1FF1));
+        let cat_bytes = build_cat_fixture(&descriptors);
+        let cat = CatSection::parse(&cat_bytes).unwrap();
+
+        // set_cat with no ca_info observed yet: not an error, emm_pids stays
+        // empty (nothing to intersect against).
+        d.set_cat(&cat).unwrap();
+        assert!(
+            d.emm_pids().is_empty(),
+            "emm_pids must be empty before any ca_info arrives, got {:?}",
+            d.emm_pids()
+        );
+
+        // ca_info now arrives: emm_pids recomputes against the CAT stored
+        // earlier, without a second set_cat call.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaInfo {
+                    ca_system_ids: vec![0x0648, 0x0100],
+                }),
+            ),
+        );
+        d.take_notifications();
+
+        assert_eq!(
+            d.emm_pids(),
+            &[0x1FF0],
+            "emm_pids must recompute once ca_info arrives, using the CAT stored by the earlier set_cat"
+        );
+    }
+
+    /// Same layout as [`build_ca_pmt_fixture`] but with a distinct PCR/ES PID
+    /// set, so a second added service proves `descramble_pids` is a real
+    /// union rather than one programme's PIDs happening to repeat.
+    fn build_ca_pmt_fixture_distinct_pids(program_number: u16) -> Vec<u8> {
+        const VIACCESS: u16 = 0x0500;
+        let prog_ca = ca_descriptor(VIACCESS, 0x0074);
+        let es0_ca = ca_descriptor(VIACCESS, 0x0075);
+
+        let mut body = Vec::new();
+        body.push(0x02); // table_id (PMT)
+        body.push(0);
+        body.push(0);
+        body.extend_from_slice(&program_number.to_be_bytes());
+        body.push(0xC3);
+        body.push(0x00);
+        body.push(0x00);
+        body.push(0xE0 | 0x02); // PCR_PID = 0x0200
+        body.push(0x00);
+        body.push(0xF0 | ((prog_ca.len() >> 8) as u8 & 0x0F));
+        body.push(prog_ca.len() as u8);
+        body.extend_from_slice(&prog_ca);
+        // ES0: H.264 video, pid 0x0200, scrambled.
+        body.push(0x1B);
+        body.push(0xE0 | 0x02);
+        body.push(0x00);
+        body.push(0xF0 | ((es0_ca.len() >> 8) as u8 & 0x0F));
+        body.push(es0_ca.len() as u8);
+        body.extend_from_slice(&es0_ca);
+        // ES1: AAC ADTS audio, pid 0x0201, clear.
+        body.push(0x0F);
+        body.push(0xE0 | 0x02);
+        body.push(0x01);
+        body.push(0xF0);
+        body.push(0x00);
+
+        let section_length = body.len() - 3 + 4;
+        body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        body[2] = section_length as u8;
+        let crc = broadcast_common::crc32_mpeg2::compute(&body);
+        body.extend_from_slice(&crc.to_be_bytes());
+        body
+    }
+
+    #[test]
+    fn descramble_pids_is_the_union_of_active_services_es_pids() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        assert!(
+            d.descramble_pids().is_empty(),
+            "no service added yet: descramble_pids must be empty"
+        );
+
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        assert_eq!(d.descramble_pids(), &[0x0100, 0x0101]);
+
+        let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Union of both programmes' ES PIDs, sorted.
+        assert_eq!(
+            d.descramble_pids(),
+            &[0x0100, 0x0101, 0x0200, 0x0201],
+            "descramble_pids must be the union across both added services"
+        );
     }
 }
