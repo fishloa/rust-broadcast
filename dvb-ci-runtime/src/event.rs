@@ -114,12 +114,12 @@ pub enum Notification {
     CaPmtReply {
         /// `program_number` the reply pertains to.
         program_number: u16,
-        /// Programme-level `CA_enable` (EN 50221 §8.4.3.4 Table 26). When the
-        /// module left the programme `CA_enable_flag` bit clear (no
-        /// programme-level status given), this surfaces as
-        /// [`CaEnable::Rfu`]`(0)` — `0x00` is itself an RFU value in Table 26,
-        /// so it never collides with a real flag-set status.
-        ca_enable: CaEnable,
+        /// Programme-level `CA_enable` (EN 50221 §8.4.3.5 Table 26). `None`
+        /// iff the programme `CA_enable_flag` bit was clear (no
+        /// programme-level status given) — plumbed straight through from the
+        /// `dvb_ci` `CaPmtReply` object's own `Option<CaEnable>`, never
+        /// collapsed to a sentinel.
+        ca_enable: Option<CaEnable>,
         /// Whether descrambling is (or was) possible, derived from
         /// `ca_enable`. Kept for back-compat with the pre-#763 boolean-only
         /// surface.

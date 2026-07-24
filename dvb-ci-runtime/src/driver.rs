@@ -877,7 +877,7 @@ mod tests {
         d.take_notifications();
 
         // `CA_enable` = 0x03 (possible under conditions, technical dialogue) —
-        // EN 50221 §8.4.3.4 Table 26.
+        // EN 50221 §8.4.3.5 Table 26.
         feed(
             &mut d,
             r_apdu(
@@ -895,10 +895,43 @@ mod tests {
         assert!(
             notes.contains(&Notification::CaPmtReply {
                 program_number: 7,
-                ca_enable: CaEnable::PossibleTechnicalDialogue,
+                ca_enable: Some(CaEnable::PossibleTechnicalDialogue),
                 descrambling_ok: true,
             }),
             "expected typed ca_enable on CaPmtReply, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn ca_pmt_reply_flag_clear_surfaces_none() {
+        use dvb_ci::objects::ca_pmt_reply::CaPmtReply;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // Programme `CA_enable_flag` clear -> no programme-level status given
+        // — EN 50221 §8.4.3.5 Table 26.
+        feed(
+            &mut d,
+            r_apdu(
+                CA_SESSION,
+                &ser(&CaPmtReply {
+                    program_number: 7,
+                    version_number: 1,
+                    current_next_indicator: true,
+                    ca_enable: None,
+                    streams: vec![],
+                }),
+            ),
+        );
+        let notes = d.take_notifications();
+        assert!(
+            notes.contains(&Notification::CaPmtReply {
+                program_number: 7,
+                ca_enable: None,
+                descrambling_ok: false,
+            }),
+            "expected ca_enable None on flag-clear CaPmtReply, got {notes:?}"
         );
     }
 

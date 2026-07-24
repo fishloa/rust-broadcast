@@ -191,11 +191,12 @@ mod imp {
                 }
                 if let Notification::CaPmtReply {
                     program_number,
+                    ca_enable,
                     descrambling_ok,
                 } = note
                 {
                     println!(
-                        "ca_pmt_reply: program {program_number} descrambling_ok={descrambling_ok}"
+                        "ca_pmt_reply: program {program_number} ca_enable={ca_enable:?} descrambling_ok={descrambling_ok}"
                     );
                     done = true;
                 } else {
