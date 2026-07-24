@@ -57,6 +57,10 @@ const TS_SYNC_BYTE: u8 = 0x47;
 /// 3 bits are `transport_error_indicator`/`payload_unit_start_indicator`/
 /// `transport_priority`, the low 5 are `PID[12:8]`.
 const TS_PID_HIGH_MASK: u8 = 0x1F;
+/// Number of whole TS packets to read from `ci0` per [`CiDataDevice::read`]
+/// call while draining descrambled output in `feed_ts` — a batch buffer size,
+/// not a wire value.
+const READ_BATCH_PACKETS: usize = 32;
 
 /// The 13-bit PID carried by one 188-byte TS packet's header (bytes 1–2),
 /// masking off the non-PID flag bits in byte 1.
@@ -146,7 +150,7 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
         }
 
         let mut out = Vec::new();
-        let mut buf = [0u8; 32 * TS_PACKET_LEN];
+        let mut buf = [0u8; READ_BATCH_PACKETS * TS_PACKET_LEN];
         loop {
             let n = self.ci.read(&mut buf)?;
             if n == 0 {
