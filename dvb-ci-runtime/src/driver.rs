@@ -289,6 +289,24 @@ impl<D: CaDevice> Driver<D> {
         self.managed.descramble_pids()
     }
 
+    /// The union of every actively-managed service's `CA_PID`s (ECM PIDs —
+    /// ISO/IEC 13818-1 §2.6.16 `CA_descriptor` `CA_PID`, programme + ES level
+    /// combined) — the control-word channel, without which the module has ES
+    /// to descramble but no control words to do it with (#763 Task 7).
+    #[must_use]
+    pub fn ca_pids(&self) -> &[u16] {
+        self.managed.ca_pids()
+    }
+
+    /// `descramble_pids() ∪ ca_pids() ∪ emm_pids()` — every PID class this
+    /// slot needs on `ci0` (ES to descramble ∪ ECM for control words ∪ EMM
+    /// for entitlements). #763 Task 7's turnkey [`CaDescrambler`](crate::descrambler::CaDescrambler)
+    /// filters its `feed_ts` input to exactly this set.
+    #[must_use]
+    pub fn required_pids(&self) -> Vec<u16> {
+        self.managed.required_pids()
+    }
+
     /// Answer an MMI menu/list by 1-based `choice_ref` (0 = back/cancel).
     pub fn mmi_menu_answer(&mut self, choice_ref: u8) -> io::Result<()> {
         let actions = self
@@ -564,14 +582,14 @@ impl<D: CaDevice> Driver<D> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::device::{DeviceOp, MockCaDevice};
     use crate::event::{HostControlEvent, HotPlug, Notification};
     use broadcast_common::Serialize;
     use dvb_ci::tpdu::tags;
 
-    fn ser<S: Serialize>(s: &S) -> Vec<u8> {
+    pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
         let mut b = vec![0u8; s.serialized_len()];
         match s.serialize_into(&mut b) {
             Ok(n) => b.truncate(n),
@@ -592,7 +610,7 @@ mod tests {
 
     /// Wrap an APDU for delivery on `session_nb` (session_number prefix), then as
     /// a module→host R_TPDU on tcid 1.
-    fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
+    pub(crate) fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
         use dvb_ci::spdu::SessionNumber;
         let mut spdu = ser(&SessionNumber { session_nb });
         spdu.extend_from_slice(apdu);
@@ -601,14 +619,14 @@ mod tests {
 
     /// A standalone module→host `T_SB` (data_available clear) ack — flushes one
     /// queued host write per turn (#337).
-    fn sb() -> Vec<u8> {
+    pub(crate) fn sb() -> Vec<u8> {
         use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
         vec![tpdu_tags::SB, 0x02, 0x01, SbValue::new(false).0]
     }
 
     /// Feed one scripted module frame into the mock and pump it, then pump a
     /// handful of SB acks so any queued host writes flush.
-    fn feed(d: &mut Driver<MockCaDevice>, frame: Vec<u8>) {
+    pub(crate) fn feed(d: &mut Driver<MockCaDevice>, frame: Vec<u8>) {
         d.device_mut().inbound.push_back(frame);
         d.pump(Duration::from_millis(10)).unwrap();
         for _ in 0..8 {
@@ -620,7 +638,7 @@ mod tests {
     /// Drive the EN 50221 handshake through the `Driver` until host_control and
     /// the other module-provided sessions are open (mirrors the stack-level
     /// `stack_with_ca_session`, but exercises the real driver I/O path).
-    fn driver_with_sessions() -> Driver<MockCaDevice> {
+    pub(crate) fn driver_with_sessions() -> Driver<MockCaDevice> {
         use dvb_ci::objects::resource_manager::Profile;
         use dvb_ci::resource::{
             APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, HOST_CONTROL, MMI,
@@ -684,7 +702,7 @@ mod tests {
     // registration order: RM=1, app_info=2, conditional_access=3, mmi=4,
     // host_control=5. (Asserted by `handshake_opens_expected_sessions`.)
     const RM_SESSION: u16 = 1;
-    const CA_SESSION: u16 = 3;
+    pub(crate) const CA_SESSION: u16 = 3;
     const MMI_SESSION: u16 = 4;
     const HOST_CONTROL_SESSION: u16 = 5;
 
@@ -1207,7 +1225,7 @@ mod tests {
 
     /// A `CA_descriptor` TLV (ISO/IEC 13818-1 §2.6.16): tag `0x09`, len `4`,
     /// `CA_system_id`(2), `reserved(3)`/`CA_PID`(13).
-    fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
+    pub(crate) fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
         [
             0x09,
             0x04,
@@ -1234,7 +1252,7 @@ mod tests {
     /// `build_test_pmt()` (a hand-rolled buffer "that mirrors a real
     /// CA-protected service") — real `CA_system_id`/`stream_type` values, real
     /// CRC, just not sourced from an off-air capture.
-    fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
+    pub(crate) fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
         let prog_ca = ca_descriptor(VIACCESS, 0x0064);
         let es0_ca = ca_descriptor(VIACCESS, 0x0065);
@@ -1277,7 +1295,7 @@ mod tests {
     /// Same layout as [`build_ca_pmt_fixture`] but with no `CA_descriptor`
     /// anywhere (an ordinary clear/FTA service) — the negative-control PMT for
     /// [`CaError::NoCaDescriptor`].
-    fn build_clear_pmt_fixture(program_number: u16) -> Vec<u8> {
+    pub(crate) fn build_clear_pmt_fixture(program_number: u16) -> Vec<u8> {
         let mut body = Vec::new();
         body.push(0x02);
         body.push(0);
@@ -1398,7 +1416,7 @@ mod tests {
     /// (verified: none of the committed `.ts` captures carry PID 0x0001),
     /// mirroring the same hand-rolled-fixture precedent as
     /// `build_ca_pmt_fixture` and `dvb_si::tables::cat`'s own unit tests.
-    fn build_cat_fixture(descriptors: &[u8]) -> Vec<u8> {
+    pub(crate) fn build_cat_fixture(descriptors: &[u8]) -> Vec<u8> {
         const EXTENSION_HEADER_LEN: u16 = 5;
         const CRC_LEN: u16 = 4;
         let section_length = EXTENSION_HEADER_LEN + descriptors.len() as u16 + CRC_LEN;
@@ -1622,7 +1640,7 @@ mod tests {
 
     /// Build a `ca_pmt_reply` (EN 50221 §8.4.3.5, Table 26) for `program_number`
     /// carrying programme-level `ca_enable` (`None` = `CA_enable_flag` clear).
-    fn ca_pmt_reply_for(
+    pub(crate) fn ca_pmt_reply_for(
         program_number: u16,
         ca_enable: Option<dvb_ci::objects::ca_pmt_reply::CaEnable>,
     ) -> dvb_ci::objects::ca_pmt_reply::CaPmtReply {

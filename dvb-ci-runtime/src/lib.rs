@@ -104,6 +104,7 @@
 #![warn(missing_docs)]
 
 pub mod dataplane;
+pub mod descrambler;
 pub mod device;
 pub mod driver;
 pub mod event;
@@ -118,6 +119,7 @@ pub mod transport;
 pub mod linux;
 
 pub use dataplane::{CiDataDevice, MockCiDataDevice, TS_PACKET_LEN};
+pub use descrambler::CaDescrambler;
 pub use device::{CaDevice, DeviceOp, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo};
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, HotPlug, Notification};

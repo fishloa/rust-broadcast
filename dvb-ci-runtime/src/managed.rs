@@ -124,8 +124,12 @@ pub struct ManagedCa {
     /// [`set_cam_caids`](Self::set_cam_caids) call.
     emm_pids: Vec<u16>,
     /// Union of active services' ES PIDs. Recomputed on every
-    /// [`record`](Self::record) call.
+    /// [`record`](Self::record)/[`remove`](Self::remove) call.
     descramble_pids: Vec<u16>,
+    /// Union of active services' `ca_pids` (ECM PIDs, programme+ES combined).
+    /// Recomputed on every [`record`](Self::record)/[`remove`](Self::remove)
+    /// call, exactly like [`descramble_pids`](Self::descramble_pids).
+    ca_pids: Vec<u16>,
 }
 
 impl Default for ManagedCa {
@@ -138,6 +142,7 @@ impl Default for ManagedCa {
             cam_caids: BTreeSet::new(),
             emm_pids: Vec::new(),
             descramble_pids: Vec::new(),
+            ca_pids: Vec::new(),
         }
     }
 }
@@ -185,18 +190,18 @@ impl ManagedCa {
     /// Record a service after its `ca_pmt` has been built and sent.
     pub(crate) fn record(&mut self, program_number: u16, service: ManagedService) {
         self.services.insert(program_number, service);
-        self.recompute_descramble_pids();
+        self.recompute_service_pids();
     }
 
     /// Stop tracking `program_number` (#763 Task 6's
     /// [`Driver::remove_service`](crate::driver::Driver::remove_service)),
-    /// recomputing [`descramble_pids`](Self::descramble_pids) afterwards.
-    /// Returns whether the programme was actually tracked (`false` is a
-    /// no-op — nothing to remove).
+    /// recomputing [`descramble_pids`](Self::descramble_pids)/[`ca_pids`](Self::ca_pids)
+    /// afterwards. Returns whether the programme was actually tracked
+    /// (`false` is a no-op — nothing to remove).
     pub(crate) fn remove(&mut self, program_number: u16) -> bool {
         let removed = self.services.remove(&program_number).is_some();
         if removed {
-            self.recompute_descramble_pids();
+            self.recompute_service_pids();
         }
         removed
     }
@@ -215,6 +220,7 @@ impl ManagedCa {
         self.cam_caids.clear();
         self.emm_pids.clear();
         self.descramble_pids.clear();
+        self.ca_pids.clear();
         self.since = Duration::ZERO;
     }
 
@@ -232,6 +238,29 @@ impl ManagedCa {
     #[must_use]
     pub fn descramble_pids(&self) -> &[u16] {
         &self.descramble_pids
+    }
+
+    /// The union of every actively-managed service's `CA_PID`s (ECM PIDs,
+    /// ISO/IEC 13818-1 §2.6.16 `CA_descriptor` `CA_PID`, programme + ES level
+    /// combined) — the control-word channel a caller must route into `ci0`
+    /// alongside [`descramble_pids`](Self::descramble_pids); without these
+    /// the module has ES to descramble but no control words to do it with.
+    #[must_use]
+    pub fn ca_pids(&self) -> &[u16] {
+        &self.ca_pids
+    }
+
+    /// `descramble_pids ∪ ca_pids ∪ emm_pids` — every PID class a caller must
+    /// route into `ci0` for this slot to both descramble the tracked
+    /// services (ES + ECM) and keep entitlements current (EMM). Computed on
+    /// demand (small sets); dedup + sorted.
+    #[must_use]
+    pub fn required_pids(&self) -> Vec<u16> {
+        let mut pids: BTreeSet<u16> = BTreeSet::new();
+        pids.extend(self.descramble_pids.iter().copied());
+        pids.extend(self.ca_pids.iter().copied());
+        pids.extend(self.emm_pids.iter().copied());
+        pids.into_iter().collect()
     }
 
     /// Store the CAT's CAID → EMM-PID map (ISO/IEC 13818-1 §2.4.4.5's
@@ -314,14 +343,17 @@ impl ManagedCa {
         }
     }
 
-    /// `descramble_pids` = the union (dedup, sorted) of every active
-    /// service's `es_pids`.
-    fn recompute_descramble_pids(&mut self) {
-        let mut pids: BTreeSet<u16> = BTreeSet::new();
+    /// `descramble_pids`/`ca_pids` = the union (dedup, sorted) of every
+    /// active service's `es_pids`/`ca_pids` respectively.
+    fn recompute_service_pids(&mut self) {
+        let mut descramble: BTreeSet<u16> = BTreeSet::new();
+        let mut ca: BTreeSet<u16> = BTreeSet::new();
         for service in self.services.values() {
-            pids.extend(service.es_pids.iter().copied());
+            descramble.extend(service.es_pids.iter().copied());
+            ca.extend(service.ca_pids.iter().copied());
         }
-        self.descramble_pids = pids.into_iter().collect();
+        self.descramble_pids = descramble.into_iter().collect();
+        self.ca_pids = ca.into_iter().collect();
     }
 }
 
@@ -660,10 +692,70 @@ mod tests {
             m.descramble_pids().is_empty(),
             "descramble_pids must be cleared"
         );
+        assert!(m.ca_pids().is_empty(), "ca_pids must be cleared");
         assert_eq!(
             m.requery_interval(),
             Duration::from_secs(3),
             "requery_interval is host config, must survive clear()"
+        );
+    }
+
+    // --- #763 Task 7: ca_pids()/required_pids() ---
+
+    #[test]
+    fn ca_pids_is_the_dedup_sorted_union_of_active_services_and_required_pids_unions_all_three() {
+        use dvb_si::tables::cat::CatCaEntry;
+
+        let mut m = ManagedCa::new();
+        m.record(
+            1,
+            ManagedService {
+                es_pids: vec![0x0100, 0x0101],
+                ca_pids: vec![0x0064, 0x0065],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+        m.record(
+            2,
+            ManagedService {
+                es_pids: vec![0x0200],
+                // Shares 0x0065 with program 1 to prove dedup, plus a
+                // distinct 0x0066.
+                ca_pids: vec![0x0065, 0x0066],
+                cmd: CaPmtCmdId::OkDescrambling,
+                last_ca_enable: None,
+                last_descrambling_ok: false,
+                built_ca_pmt: vec![],
+                requery_ca_pmt: vec![],
+                pmt_raw: vec![],
+            },
+        );
+
+        assert_eq!(
+            m.ca_pids(),
+            &[0x0064, 0x0065, 0x0066],
+            "ca_pids must be the dedup+sorted union of both services' ca_pids"
+        );
+
+        // Populate emm_pids too (CAT ∩ ca_info CAIDs), so required_pids
+        // exercises all three classes.
+        m.set_cat(&[CatCaEntry {
+            ca_system_id: 0x0648,
+            ca_pid: 0x1FF0,
+            private_data: Vec::new(),
+        }]);
+        m.set_cam_caids([0x0648].into_iter().collect());
+        assert_eq!(m.emm_pids(), &[0x1FF0], "precondition: emm_pids populated");
+
+        assert_eq!(
+            m.required_pids(),
+            vec![0x0064, 0x0065, 0x0066, 0x0100, 0x0101, 0x0200, 0x1FF0],
+            "required_pids must be descramble_pids ∪ ca_pids ∪ emm_pids"
         );
     }
 }
