@@ -169,10 +169,11 @@ impl<D: CaDevice> Driver<D> {
     /// ([`descramble_programs`](Self::descramble_programs)/
     /// [`add_program`](Self::add_program)).
     ///
-    /// `list_management` is `Only` (EN 50221 Table 25) when this is the first
-    /// service ever added to an empty managed set, `Add` when joining an
-    /// already-active set — the same convention
-    /// [`add_program`](Self::add_program) uses for a raw PMT.
+    /// `list_management` (EN 50221 Table 25) is auto-selected from the tracked
+    /// set: `Only` when this is the first service added to an empty managed
+    /// set, `Add` when joining an already-active set. (Contrast the raw
+    /// [`add_program`](Self::add_program), which always sends `Add` and leaves
+    /// list-management sequencing to the caller.)
     ///
     /// # Errors
     /// [`CaError::NoCaDescriptor`] if `pmt` carries no `CA_descriptor`
@@ -1517,7 +1518,7 @@ pub(crate) mod tests {
     }
 
     /// Task 4 review fix (MEDIUM): `recompute_emm_pids` must dedup like its
-    /// sibling `recompute_descramble_pids` does — two CAT `CA_descriptor`s
+    /// sibling `recompute_service_pids` does — two CAT `CA_descriptor`s
     /// (distinct `CA_system_id`s, both CAM-advertised) that happen to share
     /// one `EMM_PID` (a real multi-CAS-on-one-EMM-PID broadcast setup) must
     /// list that PID exactly once, not twice.

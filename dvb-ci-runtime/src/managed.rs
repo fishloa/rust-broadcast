@@ -280,7 +280,7 @@ impl ManagedCa {
     }
 
     /// `emm_pids` = `cat_emm_pids` ∩ `cam_caids`, deduped and sorted by PID
-    /// (matching [`recompute_descramble_pids`](Self::recompute_descramble_pids)'s
+    /// (matching [`recompute_service_pids`](Self::recompute_service_pids)'s
     /// convention) — two CAIDs the CAT maps to the *same* EMM PID must not
     /// list that PID twice.
     fn recompute_emm_pids(&mut self) {

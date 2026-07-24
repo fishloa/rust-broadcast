@@ -44,6 +44,31 @@
 //!   [`trace::decode_frame`]/[`decode_log`](crate::trace::decode_log) annotate a
 //!   capture (TPDU → SPDU → APDU) for live-CAM debugging.
 //!
+//! # Managed CAS layer (#763)
+//!
+//! A single-slot CA orchestration layer sits on top of the raw `ca_pmt` /
+//! `ca_pmt_reply` surface, fed **parsed `dvb-si` structs** (never raw bytes):
+//!
+//! - [`Driver::add_service`](crate::Driver::add_service) /
+//!   [`remove_service`](crate::Driver::remove_service) — build + send the
+//!   `ca_pmt` from a [`dvb_si::tables::pmt::PmtSection`] and track the slot's
+//!   active service set (multi-programme list-management handled internally).
+//! - [`Driver::set_cat`](crate::Driver::set_cat) — feed the CAT; the EMM-PID
+//!   set becomes the CAT's EMM PIDs ∩ the CAM's advertised `ca_info` CAIDs.
+//! - [`Driver::emm_pids`](crate::Driver::emm_pids) /
+//!   [`descramble_pids`](crate::Driver::descramble_pids) /
+//!   [`ca_pids`](crate::Driver::ca_pids) /
+//!   [`required_pids`](crate::Driver::required_pids) — the PIDs to route into
+//!   the `ci0` data plane (EMM ∪ ES ∪ ECM = `required_pids`).
+//! - [`Driver::set_requery_interval`](crate::Driver::set_requery_interval) — a
+//!   periodic `ca_pmt` re-query (`cmd_id = query`) so a card entitled *after*
+//!   the initial `ca_pmt` still refreshes; a per-programme status transition
+//!   surfaces as an edge-triggered [`Notification::Entitlement`].
+//! - [`CaDescrambler`] — a turnkey wrapper that additionally owns the `ci0`
+//!   [`CiDataDevice`]: `feed_ts` filters a scrambled TS chunk to
+//!   `required_pids()` and returns the descrambled TS. One `CaDescrambler` =
+//!   one CI slot = one TS path (multi-tuner ⇒ one per slot).
+//!
 //! # `ci-probe`
 //!
 //! With the `linux` feature this crate also builds a **`ci-probe`** binary that

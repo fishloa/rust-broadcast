@@ -58,15 +58,25 @@ pub struct CaDescrambler<D: CaDevice, C: CiDataDevice> { /* Driver<D> + C */ }
 impl<D,C> CaDescrambler<D,C> {
     pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError>;
     pub fn set_cat(&mut self, cat: &CatSection<'_>) -> Result<(), CaError>;
-    /// Route ES+EMM PIDs from a scrambled TS chunk into ci0, return descrambled TS.
+    /// Filter a scrambled TS chunk to `required_pids()` and write only those
+    /// packets into ci0, then return the descrambled TS read back out.
     pub fn feed_ts(&mut self, scrambled: &[u8]) -> io::Result<Vec<u8>>;
+    /// The PIDs the CAM needs on ci0: `descramble_pids ∪ ca_pids ∪ emm_pids`
+    /// (ES to descramble ∪ ECM for control words ∪ EMM for entitlements).
+    /// Exposed so an efficient caller can pre-filter at the tuner/HW PID
+    /// filter and never hand `feed_ts` the full mux.
+    pub fn required_pids(&self) -> Vec<u16>;
     pub fn take_notifications(&mut self) -> Vec<Notification>;  // delegates
 }
 ```
 The caller never does PID math or byte-level `ca_pmt`/CAT work.
 
+**Feed policy — filter, don't shovel.** A CI slot descrambles the single TS routed to it, and the module only needs three PID classes from that TS: the target services' **ES PIDs** (`descramble_pids`), their **ECM PIDs** (`ca_pids` — carry the control words), and the **EMM PIDs** (`emm_pids`). `feed_ts` drops everything else before writing to ci0, so a 30–50 Mbit/s mux collapses to the handful of services being descrambled plus a low-rate ECM/EMM trickle. PAT/PMT are *not* fed on ci0 — the CAM receives the PMT via the `ca_pmt` control-plane APDU. `feed_ts` reads the 13-bit PID inline (named consts, no `mpeg-ts` dependency).
+
+**Multi-tuner is multi-slot.** One `CaDescrambler` = one slot = one input TS path. Descrambling services off several tuners means one `CaDescrambler` per slot, each fed its own tuner's filtered subset. Merging selected services from multiple muxes into a single slot requires remux + PID remap (PIDs collide across muxes) — a muxer's job, upstream (multimux), explicitly **out of scope** here.
+
 ## Data flow
-parsed `PmtSection`/`CatSection` → `ManagedCa` → `build_ca_pmt` → `CaDevice` (ci control plane). CAM `ca_pmt_reply` → `Notification::CaPmtReply{ program_number, ca_enable: CaEnable, descrambling_ok }`. `Resource::tick` at the re-query interval re-sends the active `ca_pmt`s; on a per-program `(ca_enable, descrambling_ok)` transition the core emits the edge event. Turnkey layer additionally shuttles scrambled/descrambled TS through `ci0`, routing `emm_pids() ∪ descramble_pids()`.
+parsed `PmtSection`/`CatSection` → `ManagedCa` → `build_ca_pmt` → `CaDevice` (ci control plane). CAM `ca_pmt_reply` → `Notification::CaPmtReply{ program_number, ca_enable: CaEnable, descrambling_ok }`. `Resource::tick` at the re-query interval re-sends the active `ca_pmt`s; on a per-program `(ca_enable, descrambling_ok)` transition the core emits the edge event. Turnkey layer additionally shuttles scrambled/descrambled TS through `ci0`, filtering each chunk to `required_pids()` = `descramble_pids() ∪ ca_pids() ∪ emm_pids()` (ES ∪ ECM ∪ EMM) so only the CA-relevant PIDs of the services being descrambled reach the slot.
 
 ## Events (existing `Notification` framework)
 - **New:** `Notification::Entitlement { program_number: u16, ca_enable: CaEnable, descrambling_ok: bool }` — **edge-triggered** per program (fires only on a status transition detected by the re-query), mirroring #726's edge pattern. `Notification` is `#[non_exhaustive]` → additive.
@@ -85,7 +95,7 @@ Reuse the crate's `thiserror` set; new arms only where real:
 2. `set_cat(&CatSection)` → `emm_pids()` equals CAT EMM PIDs ∩ scripted `ca_info` CAIDs (and excludes CAIDs the CAM doesn't advertise).
 3. Re-query edge: scripted CAM returns `descrambling_ok=false` on reply 1 and `true` on reply 2 (after the tick interval) → assert **exactly one** `Notification::Entitlement` with the right `program_number`/`ca_enable`; no event when status is unchanged across re-queries (negative control).
 4. `CaPmtReply` now carries the typed `ca_enable`.
-5. Turnkey `CaDescrambler` over `MockCiDataDevice` end-to-end: feed scrambled TS + PMT/CAT → the right PIDs routed into ci0, descrambled TS returned, entitlement events surfaced.
+5. Turnkey `CaDescrambler` over `MockCiDataDevice` end-to-end: feed a scrambled TS carrying both wanted (in `required_pids()`) and unwanted PIDs → assert only the `required_pids()` packets are written into ci0 (unwanted dropped — the bite: a reintroduced no-filter passes the whole chunk), descrambled TS returned, entitlement events surfaced via the delegated `take_notifications()`.
 Each must fail if its logic is neutered (mutation-checked).
 
 ## Spec grounding
