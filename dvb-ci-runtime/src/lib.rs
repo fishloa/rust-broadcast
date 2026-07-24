@@ -107,6 +107,7 @@ pub mod dataplane;
 pub mod device;
 pub mod driver;
 pub mod event;
+pub mod managed;
 pub mod resource;
 pub mod session;
 pub mod stack;
@@ -122,6 +123,7 @@ pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, HotPlug, Notification};
 #[cfg(all(feature = "linux", target_os = "linux"))]
 pub use linux::{LinuxCaDevice, LinuxCiDataDevice};
+pub use managed::{CaError, ManagedCa, ManagedService};
 pub use stack::CiStack;
 
 /// Re-export of the wire-codec crate this runtime drives.

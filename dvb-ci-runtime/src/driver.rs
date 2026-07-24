@@ -7,8 +7,13 @@ use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 
+use dvb_ci::builder::build_ca_pmt;
+use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
+use dvb_si::tables::pmt::PmtSection;
+
 use crate::device::{CaDevice, SlotInfo};
 use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
+use crate::managed::{self, CaError, ManagedCa};
 use crate::stack::CiStack;
 
 /// Substrings (case-insensitive) in MMI menu/list/enquiry text that
@@ -51,6 +56,9 @@ pub struct Driver<D: CaDevice> {
     /// Last `ca_pmt_reply` `descrambling_ok` seen for the current module
     /// (Part B card inference, best-effort). `None` = not seen yet.
     last_descrambling_ok: Option<bool>,
+    /// The slot's managed CAS-layer state (#763 Layer 1) — active services
+    /// built via [`add_service`](Self::add_service).
+    managed: ManagedCa,
 }
 
 impl<D: CaDevice> Driver<D> {
@@ -66,7 +74,14 @@ impl<D: CaDevice> Driver<D> {
             last_slot: None,
             last_caids: None,
             last_descrambling_ok: None,
+            managed: ManagedCa::new(),
         }
+    }
+
+    /// The slot's managed CAS-layer state (#763 Layer 1) — the active
+    /// service set built via [`add_service`](Self::add_service).
+    pub fn managed_ca(&self) -> &ManagedCa {
+        &self.managed
     }
 
     /// Borrow the underlying device (e.g. to inspect a mock's recorded ops).
@@ -142,6 +157,43 @@ impl<D: CaDevice> Driver<D> {
             .stack
             .handle(Event::Host(HostRequest::RemoveProgram(pmt_section)));
         self.run(actions)
+    }
+
+    /// Build + send the `ca_pmt` for `pmt` (via
+    /// [`dvb_ci::builder::build_ca_pmt`], ETSI EN 50221 §8.4.3.4 Table 25) and
+    /// track it in the slot's managed active-service set (#763 Layer 1).
+    /// Additive alongside the raw [`send_ca_pmt`](Self::send_ca_pmt) and the
+    /// existing multi-programme API
+    /// ([`descramble_programs`](Self::descramble_programs)/
+    /// [`add_program`](Self::add_program)).
+    ///
+    /// `list_management` is `Only` (EN 50221 Table 25) when this is the first
+    /// service ever added to an empty managed set, `Add` when joining an
+    /// already-active set — the same convention
+    /// [`add_program`](Self::add_program) uses for a raw PMT.
+    ///
+    /// # Errors
+    /// [`CaError::NoCaDescriptor`] if `pmt` carries no `CA_descriptor`
+    /// (ETSI EN 300 468 §6.2.16, tag `0x09`) at programme or
+    /// elementary-stream level — there would be nothing for the CAM to
+    /// descramble. [`CaError::Io`] if sending the built `ca_pmt` fails.
+    pub fn add_service(&mut self, pmt: &PmtSection<'_>) -> Result<(), CaError> {
+        if !managed::pmt_has_ca(pmt) {
+            return Err(CaError::NoCaDescriptor {
+                program_number: pmt.program_number,
+            });
+        }
+        let list_management = if self.managed.is_empty() {
+            CaPmtListManagement::Only
+        } else {
+            CaPmtListManagement::Add
+        };
+        let cmd_id = CaPmtCmdId::OkDescrambling;
+        let built = build_ca_pmt(pmt, list_management, cmd_id);
+        self.send_ca_pmt(&built.to_bytes())?;
+        self.managed
+            .record(pmt.program_number, managed::service_of(pmt, cmd_id));
+        Ok(())
     }
 
     /// Answer an MMI menu/list by 1-based `choice_ref` (0 = back/cancel).
@@ -989,5 +1041,191 @@ mod tests {
             vec![HotPlug::CamPresent],
             "expected the closure to receive HotPlug::CamPresent exactly once, got {seen:?}"
         );
+    }
+
+    // --- #763 Task 3: ManagedCa + add_service ---
+
+    /// A `CA_descriptor` TLV (ISO/IEC 13818-1 §2.6.16): tag `0x09`, len `4`,
+    /// `CA_system_id`(2), `reserved(3)`/`CA_PID`(13).
+    fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
+        [
+            0x09,
+            0x04,
+            (ca_system_id >> 8) as u8,
+            ca_system_id as u8,
+            0xE0 | ((pid >> 8) as u8 & 0x1F),
+            pid as u8,
+        ]
+    }
+
+    /// A synthetic scrambled-service PMT: programme-level `CA_descriptor`
+    /// (`CA_system_id` `0x0500` = Viaccess, a real assigned value per the
+    /// TSDuck CA-system registry consumed by `dvb_si::descriptors::ca::ca_system_name`),
+    /// one scrambled H.264 video ES (own `CA_descriptor`), and one clear AAC
+    /// audio ES.
+    ///
+    /// **Provenance:** no committed capture in this repo's fixture corpus
+    /// carries a scrambled PMT — `fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts`'s
+    /// five PMTs (verified via `cargo run -p dvb-tools -- dump ... --json`)
+    /// are all clear/FTA services, and no CA-descriptor-bearing capture exists
+    /// under `private/fixtures/` either. This hand-rolls the wire bytes per
+    /// ISO/IEC 13818-1 §2.4.4.8's PMT syntax instead, mirroring the exact
+    /// precedent already established by `dvb-ci/src/builder.rs`'s
+    /// `build_test_pmt()` (a hand-rolled buffer "that mirrors a real
+    /// CA-protected service") — real `CA_system_id`/`stream_type` values, real
+    /// CRC, just not sourced from an off-air capture.
+    fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
+        const VIACCESS: u16 = 0x0500;
+        let prog_ca = ca_descriptor(VIACCESS, 0x0064);
+        let es0_ca = ca_descriptor(VIACCESS, 0x0065);
+
+        let mut body = Vec::new();
+        body.push(0x02); // table_id (PMT)
+        body.push(0); // section_length placeholder (fixed up below)
+        body.push(0);
+        body.extend_from_slice(&program_number.to_be_bytes());
+        body.push(0xC3); // reserved(2)='11' | version(5)=1 | current_next=1
+        body.push(0x00); // section_number
+        body.push(0x00); // last_section_number
+        body.push(0xE0 | 0x01); // reserved(3) | PCR_PID(13) = 0x0100
+        body.push(0x00);
+        body.push(0xF0 | ((prog_ca.len() >> 8) as u8 & 0x0F));
+        body.push(prog_ca.len() as u8);
+        body.extend_from_slice(&prog_ca);
+        // ES0: H.264 video, pid 0x0100, scrambled (own CA_descriptor).
+        body.push(0x1B);
+        body.push(0xE0 | 0x01);
+        body.push(0x00);
+        body.push(0xF0 | ((es0_ca.len() >> 8) as u8 & 0x0F));
+        body.push(es0_ca.len() as u8);
+        body.extend_from_slice(&es0_ca);
+        // ES1: AAC ADTS audio, pid 0x0101, clear.
+        body.push(0x0F);
+        body.push(0xE0 | 0x01);
+        body.push(0x01);
+        body.push(0xF0);
+        body.push(0x00);
+
+        let section_length = body.len() - 3 + 4;
+        body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        body[2] = section_length as u8;
+        let crc = broadcast_common::crc32_mpeg2::compute(&body);
+        body.extend_from_slice(&crc.to_be_bytes());
+        body
+    }
+
+    /// Same layout as [`build_ca_pmt_fixture`] but with no `CA_descriptor`
+    /// anywhere (an ordinary clear/FTA service) — the negative-control PMT for
+    /// [`CaError::NoCaDescriptor`].
+    fn build_clear_pmt_fixture(program_number: u16) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(0x02);
+        body.push(0);
+        body.push(0);
+        body.extend_from_slice(&program_number.to_be_bytes());
+        body.push(0xC3);
+        body.push(0x00);
+        body.push(0x00);
+        body.push(0xE0 | 0x01);
+        body.push(0x00);
+        body.push(0xF0); // program_info_length = 0
+        body.push(0x00);
+        // ES0: H.264 video, pid 0x0100, clear.
+        body.push(0x1B);
+        body.push(0xE0 | 0x01);
+        body.push(0x00);
+        body.push(0xF0);
+        body.push(0x00);
+
+        let section_length = body.len() - 3 + 4;
+        body[1] = 0xB0 | ((section_length >> 8) as u8 & 0x0F);
+        body[2] = section_length as u8;
+        let crc = broadcast_common::crc32_mpeg2::compute(&body);
+        body.extend_from_slice(&crc.to_be_bytes());
+        body
+    }
+
+    #[test]
+    fn add_service_builds_and_sends_ca_pmt_matching_builder_oracle() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        d.add_service(&pmt).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Oracle: the same PMT built directly via dvb_ci::builder::build_ca_pmt
+        // with `Only` (first-ever service on an empty managed set) +
+        // `ok_descrambling`.
+        let expected =
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        assert_apdu_on_session(&d, CA_SESSION, &expected);
+
+        // The service was recorded with its ES/CA PIDs.
+        let svc = d
+            .managed_ca()
+            .services()
+            .get(&1546)
+            .expect("program_number 1546 must be tracked after add_service");
+        assert_eq!(svc.es_pids, vec![0x0100, 0x0101]);
+        assert_eq!(svc.ca_pids, vec![0x0064, 0x0065]);
+        assert_eq!(svc.cmd, CaPmtCmdId::OkDescrambling);
+        assert_eq!(svc.last_ca_enable, None);
+    }
+
+    #[test]
+    fn add_service_rejects_pmt_without_ca_descriptor() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        let pmt_bytes = build_clear_pmt_fixture(999);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        let err = d.add_service(&pmt).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CaError::NoCaDescriptor {
+                    program_number: 999
+                }
+            ),
+            "expected NoCaDescriptor{{program_number: 999}}, got {err:?}"
+        );
+        assert!(
+            d.managed_ca().services().is_empty(),
+            "a rejected PMT must not be recorded"
+        );
+    }
+
+    #[test]
+    fn add_service_second_call_uses_add_list_management() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let pmt2_bytes = build_ca_pmt_fixture(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Second service joins an already-active set → `Add`, not `Only`.
+        let expected2 =
+            build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling).to_bytes();
+        assert_apdu_on_session(&d, CA_SESSION, &expected2);
+
+        assert_eq!(d.managed_ca().services().len(), 2);
     }
 }
