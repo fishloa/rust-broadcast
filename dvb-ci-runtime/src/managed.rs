@@ -94,16 +94,12 @@ pub struct ManagedService {
     /// to start descrambling — `cmd_id = ok_descrambling` (EN 50221 §8.4.3.4
     /// Table 25). Kept for the add_service oracle test to assert what was
     /// actually sent; per EN 50221 §8.4.3.5, `ok_descrambling` solicits **no**
-    /// `ca_pmt_reply`, so this is *not* what the Task 5 re-query timer resends
-    /// — see [`requery_ca_pmt`](Self::requery_ca_pmt).
+    /// `ca_pmt_reply`, so this is *not* what the #765 re-query timer resends —
+    /// `Driver::requery_tick` rebuilds a fresh `query`-variant `ca_pmt` per
+    /// tick from [`pmt_raw`](Self::pmt_raw), with `list_management`
+    /// recomputed against the *current* active set each time (not frozen at
+    /// this service's `add_service` time).
     pub(crate) built_ca_pmt: Vec<u8>,
-    /// The `ca_pmt` bytes built with `cmd_id = query` (same `list_management`
-    /// as the initial send) for the Task 5 re-query timer to resend on its
-    /// cadence: per EN 50221 §8.4.3.5, only `query` (or `ok_mmi`) elicits a
-    /// fresh `ca_pmt_reply` from a conformant CAM — `ok_descrambling` does
-    /// not — so re-sending `built_ca_pmt`'s bytes is not spec-guaranteed to
-    /// produce one.
-    pub(crate) requery_ca_pmt: Vec<u8>,
     /// The owned raw PMT section bytes this service was built from (#763
     /// Task 6), kept so [`Driver::remove_service`](crate::driver::Driver::remove_service)
     /// can re-drive the existing [`Driver::remove_program`](crate::driver::Driver::remove_program)
@@ -423,14 +419,14 @@ pub(crate) fn pmt_has_ca(pmt: &PmtSection<'_>) -> bool {
 
 /// The owned [`ManagedService`] state to record for `pmt`, sent with `cmd`;
 /// `built_ca_pmt` is the exact `ok_descrambling` bytes sent (kept for the
-/// add_service oracle test) and `requery_ca_pmt` is the `query`-variant bytes
-/// the Task 5 re-query timer resends (see the field docs on
-/// [`ManagedService`]).
+/// add_service oracle test). `pmt_raw` is kept so a later re-query
+/// (`Driver::requery_tick`, #765) can rebuild a fresh `query`-variant
+/// `ca_pmt` against the *current* active set rather than freezing
+/// `list_management` at this moment.
 pub(crate) fn service_of(
     pmt: &PmtSection<'_>,
     cmd: CaPmtCmdId,
     built_ca_pmt: Vec<u8>,
-    requery_ca_pmt: Vec<u8>,
     pmt_raw: Vec<u8>,
 ) -> ManagedService {
     let mut ca_pids = ca_pids_in(&pmt.program_info);
@@ -445,7 +441,6 @@ pub(crate) fn service_of(
         last_ca_enable: None,
         last_descrambling_ok: false,
         built_ca_pmt,
-        requery_ca_pmt,
         pmt_raw,
     }
 }
@@ -473,7 +468,6 @@ mod tests {
             last_ca_enable: None,
             last_descrambling_ok: false,
             built_ca_pmt: vec![0xAA, 0xBB],
-            requery_ca_pmt: vec![0xCC, 0xDD],
             pmt_raw: vec![0x02, 0x00],
         };
         m.record(7, svc.clone());
@@ -511,7 +505,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -540,7 +533,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -567,7 +559,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -588,7 +579,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -609,7 +599,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -645,7 +634,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -659,7 +647,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -702,7 +689,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -751,7 +737,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -767,7 +752,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -812,7 +796,7 @@ mod tests {
             "fixture precondition: dedicated PCR PID outside the ES/CA set"
         );
 
-        let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![], vec![]);
+        let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![]);
         assert_eq!(svc.pcr_pid, 0x00FF, "service_of must capture pmt.pcr_pid");
         assert_eq!(svc.es_pids, vec![0x0100, 0x0101]);
         assert_eq!(svc.ca_pids, vec![0x0064, 0x0065]);
@@ -845,7 +829,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
@@ -872,7 +855,6 @@ mod tests {
                 last_ca_enable: None,
                 last_descrambling_ok: false,
                 built_ca_pmt: vec![],
-                requery_ca_pmt: vec![],
                 pmt_raw: vec![],
             },
         );
