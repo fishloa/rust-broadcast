@@ -287,9 +287,19 @@ impl ServerSession {
 
         self.bytes_received = self.bytes_received.saturating_add(chunk_input.len() as u64);
 
-        let messages = self.assembler.push(&chunk_input)?;
-        for msg in &messages {
-            self.dispatch_message(msg, &mut out, &mut events)?;
+        // Dispatch each message as soon as it is parsed (rather than
+        // collecting a full batch from one `push` first): a Set Chunk Size
+        // protocol control message (§5.4.1) must take effect for the very
+        // next chunk that follows it, even when both arrive in the same
+        // `handle_data` call — a real ffmpeg publisher does exactly this
+        // (its own `connect`-time SetChunkSize is immediately followed, in
+        // the same TCP segment, by chunks already framed at the new size).
+        // Collecting the whole batch under one `ChunkAssembler::push` call
+        // would parse those later chunks with the *old* chunk size and
+        // misparse them.
+        self.assembler.feed(&chunk_input);
+        while let Some(msg) = self.assembler.next_message()? {
+            self.dispatch_message(&msg, &mut out, &mut events)?;
         }
 
         self.maybe_ack(&mut out);
@@ -1438,6 +1448,64 @@ mod tests {
                 0,
                 0, // PreviousTagSize0 = 0
             ]
+        );
+    }
+
+    // ── Regression: client Set Chunk Size mid-buffer (#738 Task 8) ────────
+
+    #[test]
+    fn client_set_chunk_size_takes_effect_before_next_message_in_same_call() {
+        // Reproduces the exact bug a real `ffmpeg` publish surfaced: the
+        // client sends its own SetChunkSize (as ffmpeg does, right after
+        // `connect`) and, in the very same TCP segment / `handle_data` call,
+        // the next message is already framed at the *new* chunk size. If
+        // `ServerSession` collected a whole batch of messages from one
+        // `ChunkAssembler::push` before dispatching any of them (applying
+        // SetChunkSize's effect only afterwards), that next message would
+        // be misparsed under the *old* chunk size.
+        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+
+        const NEW_CHUNK_SIZE: u32 = 4096;
+        let set_chunk_size_bytes =
+            ChunkWriter::new().write(&ProtocolControl::SetChunkSize(NEW_CHUNK_SIZE).to_message());
+
+        // A video payload bigger than the *default* 128-byte chunk size but
+        // written by a client-side writer already using the new size, so it
+        // lands as a single physical chunk — the shape a real client
+        // produces immediately after raising its chunk size.
+        let big_payload = vec![0x17u8; 300];
+        let mut client_writer = ChunkWriter::new();
+        client_writer.set_chunk_size(NEW_CHUNK_SIZE);
+        let video_bytes = client_writer.write(&Message {
+            chunk_stream_id: 6,
+            timestamp: 0,
+            message_type_id: msg_type::VIDEO,
+            message_stream_id: 1,
+            payload: big_payload.clone(),
+        });
+
+        let mut combined = set_chunk_size_bytes;
+        combined.extend_from_slice(&video_bytes);
+
+        // Both messages arrive in a single `handle_data` call: this is the
+        // exact shape that broke before the incremental-dispatch fix.
+        let (_out, events) = session.handle_data(&combined).expect(
+            "SetChunkSize must take effect before parsing the message that follows it \
+                     in the same handle_data call, not only on a subsequent call",
+        );
+
+        let media = events
+            .iter()
+            .find_map(|e| match e {
+                ServerEvent::Media { flv } => Some(flv.clone()),
+                _ => None,
+            })
+            .expect("the video message must still be parsed into a Media event");
+        assert!(
+            media
+                .windows(big_payload.len())
+                .any(|w| w == big_payload.as_slice()),
+            "the video payload must survive intact through the chunk-size change"
         );
     }
 

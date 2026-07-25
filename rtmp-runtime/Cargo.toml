@@ -31,3 +31,10 @@ default = []
 serde = ["dep:serde"]
 # Real-socket server IO over the sans-IO core (pulls tokio).
 tokio = ["dep:tokio"]
+
+[[example]]
+name = "capture_publish"
+required-features = ["tokio"]
+
+[dev-dependencies]
+transmux = { path = "../transmux", version = "0.18", default-features = false, features = ["std"] }

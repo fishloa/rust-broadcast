@@ -697,14 +697,50 @@ impl ChunkAssembler {
     /// the buffer (in arrival order), leaving any trailing partial chunk or
     /// partial message buffered internally for the next call.
     ///
+    /// Callers that need to react to a message's side effects (e.g. a Set
+    /// Chunk Size protocol control message, §5.4.1) **before** parsing the
+    /// bytes that follow it in the same input — because the sender may
+    /// switch to the new chunk size for its very next chunk — should use the
+    /// crate-internal incremental `feed`/`next_message` pair instead,
+    /// dispatching each message immediately. `push` collects every message
+    /// from `input` under a single, unchanging `chunk_size`, which
+    /// misparses a buffer that itself contains a Set Chunk Size followed by
+    /// chunks already framed at the new size (see
+    /// [`ServerSession`](crate::server::ServerSession), which uses the
+    /// incremental form for exactly this reason).
+    ///
     /// # Errors
     /// [`RtmpError::Malformed`] on structurally invalid input (e.g. a Type
     /// 1/2/3 chunk on a csid that has never seen a Type 0). Never errors
     /// merely because the input ends mid-chunk — that is buffered, not an
     /// error.
     pub fn push(&mut self, input: &[u8]) -> Result<Vec<Message>> {
-        self.pending.extend_from_slice(input);
+        self.feed(input);
         let mut out = Vec::new();
+        while let Some(msg) = self.next_message()? {
+            out.push(msg);
+        }
+        Ok(out)
+    }
+
+    /// Buffer inbound bytes without parsing them yet. Pair with repeated
+    /// calls to [`next_message`](Self::next_message) to parse and dispatch
+    /// one message at a time (see [`push`](Self::push)'s docs for why this
+    /// matters for Set Chunk Size).
+    pub(crate) fn feed(&mut self, input: &[u8]) {
+        self.pending.extend_from_slice(input);
+    }
+
+    /// Parse and return the next complete [`Message`] out of the
+    /// previously-[`feed`](Self::feed) bytes, or `Ok(None)` if what remains
+    /// buffered isn't (yet) a complete message. Internally keeps parsing
+    /// individual chunks — which may belong to other interleaved csids, or
+    /// be a non-final chunk of the same in-progress message — until either a
+    /// full message is assembled or the buffered bytes run out.
+    ///
+    /// # Errors
+    /// Same as [`push`](Self::push).
+    pub(crate) fn next_message(&mut self) -> Result<Option<Message>> {
         loop {
             match Self::try_parse_one(&self.pending, &self.csids, self.chunk_size) {
                 Ok(Some(parsed)) => {
@@ -720,23 +756,24 @@ impl ChunkAssembler {
                     if parsed.payload.len() as u32 == parsed.message_length {
                         state.payload.clear();
                         state.in_progress = false;
-                        out.push(Message {
+                        return Ok(Some(Message {
                             chunk_stream_id: parsed.csid,
                             timestamp: parsed.timestamp,
                             message_type_id: parsed.message_type_id,
                             message_stream_id: parsed.message_stream_id,
                             payload: parsed.payload,
-                        });
-                    } else {
-                        state.payload = parsed.payload;
-                        state.in_progress = true;
+                        }));
                     }
+                    state.payload = parsed.payload;
+                    state.in_progress = true;
+                    // This chunk only partially filled its message (or
+                    // belongs to a different, interleaved csid) — keep
+                    // looping to try the next chunk in `pending`.
                 }
-                Ok(None) => break,
+                Ok(None) => return Ok(None),
                 Err(e) => return Err(e),
             }
         }
-        Ok(out)
     }
 
     /// Attempt to parse exactly one chunk (basic header + message header +
