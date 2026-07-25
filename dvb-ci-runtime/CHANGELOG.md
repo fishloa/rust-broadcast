@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Entitlement re-query (#763's `set_requery_interval`) now rebuilds each
+  service's `ca_pmt` list-management (`First`/`More`/`Last`/`Only`, EN 50221
+  §8.4.3.4 Table 25) against the **current** active set on every tick, instead
+  of resending the value frozen at that service's `add_service` time (#765).
+  A sole surviving service — after its siblings were `remove_service`'d — now
+  correctly re-queries with `Only` rather than a stale `Add`, which a
+  strictly-conformant CAM could reject. The internal per-service
+  `requery_ca_pmt` byte-copy is removed; re-query is rebuilt from the already-
+  stored `pmt_raw` instead.
 
 ## [0.14.0] - 2026-07-24
 ### Added

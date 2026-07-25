@@ -194,14 +194,13 @@ impl<D: CaDevice> Driver<D> {
         let cmd_id = CaPmtCmdId::OkDescrambling;
         let built = build_ca_pmt(pmt, list_management, cmd_id);
         let built_bytes = built.to_bytes();
-        // Also build the `query`-variant bytes (same list_management) for the
-        // Task 5 re-query timer to resend — `ok_descrambling` solicits no
-        // reply (EN 50221 §8.4.3.5), so only `query` is fit for that purpose.
-        let requery_bytes = build_ca_pmt(pmt, list_management, CaPmtCmdId::Query).to_bytes();
         // `PmtSection` has no raw-bytes accessor — re-serialize (byte-identical
         // round-trip, a project invariant) to recover owned PMT bytes so
-        // `remove_service` (#763 Task 6) can later re-drive `remove_program`,
-        // which needs the raw section.
+        // `remove_service` (#763 Task 6) can later re-drive `remove_program`
+        // (which needs the raw section), and so `requery_tick` (#765) can
+        // rebuild a fresh `query`-variant `ca_pmt` against the *current*
+        // active set on every re-query tick rather than freezing
+        // `list_management` at this moment.
         let mut pmt_raw = vec![0u8; pmt.serialized_len()];
         let n = pmt
             .serialize_into(&mut pmt_raw)
@@ -210,7 +209,7 @@ impl<D: CaDevice> Driver<D> {
         self.send_ca_pmt(&built_bytes)?;
         self.managed.record(
             pmt.program_number,
-            managed::service_of(pmt, cmd_id, built_bytes, requery_bytes, pmt_raw),
+            managed::service_of(pmt, cmd_id, built_bytes, pmt_raw),
         );
         Ok(())
     }
@@ -368,22 +367,48 @@ impl<D: CaDevice> Driver<D> {
     /// Advance the #763 Task 5 entitlement re-query cadence by `elapsed`
     /// ([`ManagedCa::tick`](crate::managed::ManagedCa::tick), mirroring
     /// `resource.rs`'s `DateTime::tick` accumulate-then-fire pattern). When
-    /// the interval elapses, re-send every actively-managed service's
-    /// `query`-variant `ca_pmt` (`ManagedService::requery_ca_pmt`) via the
-    /// same [`send_ca_pmt`](Self::send_ca_pmt) path
-    /// [`add_service`](Self::add_service) uses (EN 50221 §8.4.3.4 Table 25) —
-    /// `cmd_id = query`, not the `ok_descrambling` bytes originally sent, is
-    /// required for a conformant CAM to re-evaluate and reply (§8.4.3.5:
-    /// `ok_descrambling` solicits no reply).
+    /// the interval elapses, rebuild and re-send a `ca_pmt` for every
+    /// actively-managed service, `cmd_id = query` (`ok_descrambling`
+    /// solicits no reply, EN 50221 §8.4.3.5, so only `query`/`ok_mmi` make a
+    /// conformant CAM re-evaluate and reply).
+    ///
+    /// **#765 fix**: the re-query set is rebuilt fresh from each service's
+    /// stored `pmt_raw` on *every* tick, with `list_management` recomputed
+    /// against the *current* active set (`services`, a `BTreeMap` — a
+    /// deterministic `program_number` order) — not frozen at that service's
+    /// `add_service` time. A single active service re-queries `Only`; N
+    /// active services re-query `First` (lowest `program_number`), `More`
+    /// (middle), `Last` (highest) — EN 50221 §8.4.3.4 Table 25. Freezing the
+    /// original list_management (the pre-#765 behaviour) could leave a sole
+    /// surviving service re-querying with a stale `Add` after its siblings
+    /// were removed — no preceding `First`/`Only` in the sequence, which a
+    /// strictly-conformant CAM may reject.
     fn requery_tick(&mut self, elapsed: Duration) -> io::Result<()> {
+        use broadcast_common::Parse;
+
         if !self.managed.tick(elapsed) {
             return Ok(());
         }
+        let n = self.managed.services().len();
         let ca_pmts: Vec<Vec<u8>> = self
             .managed
             .services()
             .values()
-            .map(|s| s.requery_ca_pmt.clone())
+            .enumerate()
+            .map(|(i, s)| {
+                let list_management = if n == 1 {
+                    CaPmtListManagement::Only
+                } else if i == 0 {
+                    CaPmtListManagement::First
+                } else if i == n - 1 {
+                    CaPmtListManagement::Last
+                } else {
+                    CaPmtListManagement::More
+                };
+                let pmt = PmtSection::parse(&s.pmt_raw)
+                    .expect("pmt_raw was produced by PmtSection::serialize_into at add_service time and must re-parse");
+                build_ca_pmt(&pmt, list_management, CaPmtCmdId::Query).to_bytes()
+            })
             .collect();
         for ca_pmt in ca_pmts {
             self.send_ca_pmt(&ca_pmt)?;
@@ -1941,11 +1966,14 @@ pub(crate) mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
         d.take_notifications();
 
-        // The `query`-variant bytes the re-query timer resends for each
-        // service — same `list_management` each got at `add_service` time.
+        // The `query`-variant bytes the re-query timer rebuilds for each
+        // service — #765: list_management reflects each service's POSITION
+        // in the current active set (lowest program_number = First, highest
+        // = Last), not whatever it got at `add_service` time.
         let expected1 =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Only, CaPmtCmdId::Query).to_bytes();
-        let expected2 = build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::Query).to_bytes();
+            build_ca_pmt(&pmt1, CaPmtListManagement::First, CaPmtCmdId::Query).to_bytes();
+        let expected2 =
+            build_ca_pmt(&pmt2, CaPmtListManagement::Last, CaPmtCmdId::Query).to_bytes();
         let sends_before1 = count_apdu_on_session(&d, CA_SESSION, &expected1);
         let sends_before2 = count_apdu_on_session(&d, CA_SESSION, &expected2);
 
@@ -1969,6 +1997,110 @@ pub(crate) mod tests {
             sends_after2,
             sends_before2 + 1,
             "expected service 1547's query ca_pmt resent exactly once on the shared tick"
+        );
+    }
+
+    // --- #765: re-query must reflect the CURRENT active set, not the
+    // list_management frozen at each service's add_service time ---
+
+    #[test]
+    fn requery_after_remove_uses_only_for_sole_survivor() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // add_service(1546) -> Only (first-ever); add_service(1547) -> Add
+        // (joining the active set).
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        // Remove 1546: 1547 is now the SOLE survivor.
+        d.remove_service(1546).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        // The #765 bite: the resent ca_pmt for the sole survivor must use
+        // `Only` — reflecting the CURRENT (post-remove) active set — not
+        // `Add`, the list_management 1547 was frozen with back when 1546
+        // was still active at its own add_service time. A pre-fix
+        // frozen-bytes scheme resends `Add` here and fails this assertion.
+        let expected_only =
+            build_ca_pmt(&pmt2, CaPmtListManagement::Only, CaPmtCmdId::Query).to_bytes();
+        let expected_stale_add =
+            build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::Query).to_bytes();
+        let sends_only_before = count_apdu_on_session(&d, CA_SESSION, &expected_only);
+        let sends_add_before = count_apdu_on_session(&d, CA_SESSION, &expected_stale_add);
+
+        d.pump(Duration::from_secs(11)).unwrap();
+        feed(&mut d, sb());
+
+        assert_eq!(
+            count_apdu_on_session(&d, CA_SESSION, &expected_only),
+            sends_only_before + 1,
+            "sole-survivor re-query must resend with list_management = Only"
+        );
+        assert_eq!(
+            count_apdu_on_session(&d, CA_SESSION, &expected_stale_add),
+            sends_add_before,
+            "sole-survivor re-query must NOT resend the stale Add list_management"
+        );
+    }
+
+    #[test]
+    fn requery_two_services_uses_first_then_last() {
+        use broadcast_common::Parse;
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        // Two active services, kept both active across the re-query tick —
+        // program_number order is 1546 < 1547 (services is a BTreeMap).
+        let pmt1_bytes = build_ca_pmt_fixture(1546);
+        let pmt1 = PmtSection::parse(&pmt1_bytes).unwrap();
+        d.add_service(&pmt1).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
+        let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
+        d.add_service(&pmt2).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.take_notifications();
+
+        // Bite: a frozen-per-service scheme would resend 1546 with `Only`
+        // (its own add_service-time list_management) and 1547 with `Add`
+        // (its own) — neither of which is `First`/`Last`.
+        let expected_first =
+            build_ca_pmt(&pmt1, CaPmtListManagement::First, CaPmtCmdId::Query).to_bytes();
+        let expected_last =
+            build_ca_pmt(&pmt2, CaPmtListManagement::Last, CaPmtCmdId::Query).to_bytes();
+        let sends_first_before = count_apdu_on_session(&d, CA_SESSION, &expected_first);
+        let sends_last_before = count_apdu_on_session(&d, CA_SESSION, &expected_last);
+
+        d.pump(Duration::from_secs(11)).unwrap();
+        feed(&mut d, sb());
+
+        assert_eq!(
+            count_apdu_on_session(&d, CA_SESSION, &expected_first),
+            sends_first_before + 1,
+            "the lowest-program_number active service must re-query with First"
+        );
+        assert_eq!(
+            count_apdu_on_session(&d, CA_SESSION, &expected_last),
+            sends_last_before + 1,
+            "the highest-program_number active service must re-query with Last"
         );
     }
 
