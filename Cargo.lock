@@ -2262,6 +2262,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtmp-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "log",
+ "serde",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "rtp-packet"
 version = "0.2.0"
 dependencies = [
