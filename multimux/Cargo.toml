@@ -15,6 +15,10 @@ all-features = true
 [dependencies]
 transmux          = { path = "../transmux",     version = "0.18" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.3", features = ["tokio"] }
+# RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
+# `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
+# adapter over the sans-IO `ServerSession`.
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.1", features = ["tokio"] }
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over

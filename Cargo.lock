@@ -1706,6 +1706,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "percent-encoding",
  "reqwest",
+ "rtmp-runtime",
  "rtsp-runtime",
  "sdp-types",
  "serde",

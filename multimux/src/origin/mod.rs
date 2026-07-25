@@ -585,7 +585,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// that route's [`crate::config::InputSpec`], it connects
 /// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
 /// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// or [`crate::source::hls_pull::HlsPullSource`] — one `match` arm per variant,
+/// [`crate::source::hls_pull::HlsPullSource`], or [`crate::source::rtmp::RtmpSource`]
+/// — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
 /// connectors have different `Source` associated types, so this dispatch
 /// stays monomorphised rather than boxed) — runs it through
@@ -716,6 +717,24 @@ pub async fn serve_with_registry(
                 let connector =
                     crate::source::hls_pull::HlsPullSource::new(name.clone(), url.clone())
                         .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::Rtmp {
+                listen,
+                app,
+                stream_key,
+            } => {
+                let connector = crate::source::rtmp::RtmpSource::new(name.clone(), listen.clone())
+                    .with_app(app.clone())
+                    .with_stream_key(stream_key.clone());
                 tokio::spawn(supervise(
                     connector,
                     store,

@@ -95,6 +95,14 @@ impl SourceConnector for crate::source::hls_pull::HlsPullSource {
     }
 }
 
+impl SourceConnector for crate::source::rtmp::RtmpSource {
+    type Source = crate::source::rtmp::RtmpSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::rtmp::RtmpSource::connect(self).await
+    }
+}
+
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
 /// it to `min` after a successful (re)connect so a long outage doesn't

@@ -1,8 +1,8 @@
 //! multimux configuration: routes + segmentation/window/bind parameters.
 //!
 //! CLI-first with an optional JSON config file. A route maps one input
-//! ([`InputSpec`] — RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP, or
-//! HLS-pull) to a served stream name.
+//! ([`InputSpec`] — RTSP pull, raw RTP/UDP, MPEG-TS/UDP, MPEG-TS/HTTP,
+//! HLS-pull, or RTMP push) to a served stream name.
 
 use crate::error::{MultimuxError, Result};
 use crate::output::OutputKind;
@@ -35,6 +35,9 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::ts_http`].
 /// - [`InputSpec::HlsPull`] pulls a remote (LL-)HLS Media Playlist — see
 ///   [`crate::source::hls_pull`].
+/// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (the one
+///   *push* input in this list — every other variant dials out) — see
+///   [`crate::source::rtmp`].
 ///
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
 /// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
@@ -112,6 +115,21 @@ pub enum InputSpec {
         /// [`AuthSpec`].
         #[serde(default)]
         auth: Option<AuthSpec>,
+    },
+    /// Accept an inbound RTMP push publisher (issue #738).
+    Rtmp {
+        /// `host:port` to bind the RTMP listen socket to (e.g.
+        /// `"0.0.0.0:1935"`, the IANA-assigned RTMP port).
+        listen: String,
+        /// If set, the publisher's `connect` `app` name must match exactly
+        /// or the route's `connect()` fails.
+        #[serde(default)]
+        app: Option<String>,
+        /// If set, the publisher's `publish` stream key must match exactly
+        /// (enforced by the RTMP session itself — a mismatch never reaches
+        /// this crate as a `Publish`/`Media` event).
+        #[serde(default)]
+        stream_key: Option<String>,
     },
     /// External input scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
@@ -453,6 +471,16 @@ impl std::fmt::Debug for InputSpec {
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
                 .finish(),
+            InputSpec::Rtmp {
+                listen,
+                app,
+                stream_key,
+            } => f
+                .debug_struct("Rtmp")
+                .field("listen", listen)
+                .field("app", app)
+                .field("stream_key", &stream_key.as_ref().map(|_| "***"))
+                .finish(),
             InputSpec::Custom { type_tag, .. } => f
                 .debug_struct("Custom")
                 .field("type_tag", type_tag)
@@ -507,6 +535,7 @@ impl InputSpec {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }
+            InputSpec::Rtmp { listen, .. } => validate_listen_addr(listen),
             // Always structurally valid: the registered factory (resolved at
             // `crate::origin::serve_with_registry` time, not here) validates
             // `params` itself.
@@ -612,6 +641,17 @@ fn validate_udp_addr(addr: &str) -> Result<()> {
         .map_err(|e| MultimuxError::ConfigInvalid {
             field: "routes.input.addr",
             reason: format!("bad UDP address {addr:?}: {e}"),
+        })
+}
+
+/// An RTMP `listen` address must parse as a socket address (same shape as
+/// [`validate_udp_addr`], distinct field name for a clearer error message).
+fn validate_listen_addr(addr: &str) -> Result<()> {
+    addr.parse::<SocketAddr>()
+        .map(|_| ())
+        .map_err(|e| MultimuxError::ConfigInvalid {
+            field: "routes.input.listen",
+            reason: format!("bad listen address {addr:?}: {e}"),
         })
 }
 
