@@ -8,11 +8,20 @@
 //! front and returns one [`Media`](crate::media::Media). A live RTMP publisher instead delivers
 //! FLV tags forever — re-running the one-shot demuxer over an
 //! ever-growing buffer on every new tag would grow memory (and CPU) without
-//! bound. [`StreamingFlvDemux`] is the incremental analogue: feed bytes of
-//! any size/alignment via [`feed`](StreamingFlvDemux::feed), get back the
-//! [`DemuxEvent`]s newly resolved from the buffer; call
+//! bound. [`StreamingFlvDemux`] is the incremental analogue, mirroring
+//! [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux)'s pull API
+//! exactly so a caller can drive either demuxer with the same drain loop:
+//! feed bytes of any size/alignment via [`feed`](StreamingFlvDemux::feed),
+//! drain newly-resolved [`DemuxEvent`]s one at a time via
+//! [`poll_event`](StreamingFlvDemux::poll_event), and call
 //! [`finish`](StreamingFlvDemux::finish) once, at end of input, to flush
-//! each track's trailing pending sample.
+//! each track's trailing pending sample (then drain those with `poll_event`
+//! too). One difference from `StreamingTsDemux::feed` (which is infallible):
+//! FLV's `feed` can return `Err` for a hard structural problem — a bad
+//! signature, an implausible header `DataOffset`, or a corrupt codec-config
+//! payload — because unlike an MPEG-2 TS bitstream (which resynchronises on
+//! `0x47` and simply skips anything it can't parse), a malformed FLV tag
+//! header leaves no safe resynchronisation point to skip to.
 //!
 //! This module adds only the incremental tag-boundary buffering and
 //! per-sample duration bookkeeping; it reuses [`crate::flv`]'s tag-header
@@ -60,6 +69,7 @@
 //!
 //! `no_std` + `alloc`.
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use broadcast_common::Parse;
@@ -68,8 +78,8 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::flv::{
     AUDIO_SAMPLE_SIZE_BITS, CODEC_ID_AVC, FLV_HEADER_LEN, FLV_SIGNATURE, FLV_TIMESCALE,
-    FRAME_TYPE_KEYFRAME, FlvError, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz,
-    avc_packet_type, build_aac_esds, read_si24, tag_type,
+    FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN,
+    aac_packet_type, asc_rate_hz, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
 use crate::media::Track;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -107,7 +117,7 @@ impl TrackState {
     /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
     /// the *previous* pending sample now that its duration (`dts - prev.dts`)
     /// is known.
-    fn advance(&mut self, sample: Sample, dts: u32, events: &mut Vec<DemuxEvent>) {
+    fn advance(&mut self, sample: Sample, dts: u32, events: &mut VecDeque<DemuxEvent>) {
         let track_id = self
             .track_id
             .expect("TrackState::advance called before the track's config resolved");
@@ -116,7 +126,7 @@ impl TrackState {
             self.last_duration = duration;
             let mut emitted = prev.sample;
             emitted.duration = duration;
-            events.push(DemuxEvent::Sample {
+            events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
             });
@@ -126,14 +136,14 @@ impl TrackState {
 
     /// Flush a trailing pending sample at end-of-stream, reusing the last
     /// known forward delta (`0` if this track only ever saw one sample).
-    fn flush(&mut self, events: &mut Vec<DemuxEvent>) {
+    fn flush(&mut self, events: &mut VecDeque<DemuxEvent>) {
         let Some(track_id) = self.track_id else {
             return;
         };
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
             emitted.duration = self.last_duration;
-            events.push(DemuxEvent::Sample {
+            events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
             });
@@ -156,6 +166,12 @@ pub struct StreamingFlvDemux {
     video: TrackState,
     audio: TrackState,
     next_track_id: u32,
+    /// Pending events, drained one at a time via
+    /// [`poll_event`](Self::poll_event) — mirrors
+    /// [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux)'s internal
+    /// queue exactly, so a caller can drive both demuxers with the same
+    /// `while let Some(ev) = demux.poll_event()` loop.
+    events: VecDeque<DemuxEvent>,
 }
 
 impl Default for StreamingFlvDemux {
@@ -173,23 +189,27 @@ impl StreamingFlvDemux {
             video: TrackState::default(),
             audio: TrackState::default(),
             next_track_id: 1,
+            events: VecDeque::new(),
         }
     }
 
     /// Feed the next chunk of FLV bytes — any size, any alignment (the FLV
     /// header must appear at the start of the very first `feed` call; tag
     /// boundaries may land anywhere, including one byte at a time across
-    /// many calls). Returns the [`DemuxEvent`]s newly resolved from the
-    /// buffer, retaining any partial trailing tag internally for the next
-    /// `feed` call (see the module `# Memory` note).
+    /// many calls). Newly-resolved [`DemuxEvent`]s are enqueued internally;
+    /// drain them with [`poll_event`](Self::poll_event). Any partial
+    /// trailing tag is retained internally for the next `feed` call (see the
+    /// module `# Memory` note).
     ///
     /// Returns [`FlvError::BadSignature`] if the first bytes are not the
-    /// `"FLV"` signature, or a codec-config parse error
-    /// ([`FlvError::Codec`]) if a sequence-header tag's payload is corrupt.
-    /// Never panics on truncated or garbage input.
-    pub fn feed(&mut self, input: &[u8]) -> Result<Vec<DemuxEvent>, FlvError> {
+    /// `"FLV"` signature, [`FlvError::HeaderTooLarge`] if the header's
+    /// `DataOffset` exceeds this crate's maximum accepted header size (a
+    /// malicious value could otherwise force the pre-header buffer to grow
+    /// without bound), or a codec-config parse error ([`FlvError::Codec`])
+    /// if a sequence-header tag's payload is corrupt. Never panics on
+    /// truncated or garbage input.
+    pub fn feed(&mut self, input: &[u8]) -> Result<(), FlvError> {
         self.pending.extend_from_slice(input);
-        let mut events = Vec::new();
 
         loop {
             if !self.header_seen {
@@ -205,13 +225,25 @@ impl StreamingFlvDemux {
                 }
                 // DataOffset (bytes [5:9]) points past the header to the
                 // first PreviousTagSize0 — mirrors `crate::flv::iter_tags`.
+                // Validated against `MAX_FLV_HEADER_LEN` *before* using it to
+                // size a skip: a malicious value (e.g. 0xFFFF_FFFF) would
+                // otherwise never satisfy the `pending.len() < skip` check
+                // below, so every `feed` call would simply keep appending to
+                // `pending` forever waiting for a "header" that never
+                // completes (#738 T11a review, Important — remote OOM/DoS).
                 let data_offset = u32::from_be_bytes([
                     self.pending[5],
                     self.pending[6],
                     self.pending[7],
                     self.pending[8],
-                ]) as usize;
-                let skip = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
+                ]);
+                if data_offset as usize > MAX_FLV_HEADER_LEN {
+                    return Err(FlvError::HeaderTooLarge {
+                        declared: data_offset,
+                        max: MAX_FLV_HEADER_LEN,
+                    });
+                }
+                let skip = (data_offset as usize).max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
                 if self.pending.len() < skip {
                     break; // a non-standard larger header hasn't fully arrived
                 }
@@ -238,43 +270,63 @@ impl StreamingFlvDemux {
             // Copy the body out before draining (the drain below invalidates
             // any borrow of `self.pending`).
             let body: Vec<u8> = self.pending[body_start..body_end].to_vec();
-            self.process_tag(tag_type_byte, timestamp, &body, &mut events)?;
+            Self::process_tag(
+                &mut self.video,
+                &mut self.audio,
+                &mut self.next_track_id,
+                tag_type_byte,
+                timestamp,
+                &body,
+                &mut self.events,
+            )?;
             self.pending.drain(0..total);
         }
 
-        Ok(events)
+        Ok(())
+    }
+
+    /// Drain the next pending event, if any (FIFO) — identical shape to
+    /// [`StreamingTsDemux::poll_event`](crate::ts_demux::StreamingTsDemux::poll_event).
+    pub fn poll_event(&mut self) -> Option<DemuxEvent> {
+        self.events.pop_front()
     }
 
     /// Flush each track's trailing pending sample (end of input — no more
-    /// bytes coming). Idempotent: a second call with nothing newly pending
-    /// returns an empty `Vec`.
-    pub fn finish(&mut self) -> Vec<DemuxEvent> {
-        let mut events = Vec::new();
-        self.video.flush(&mut events);
-        self.audio.flush(&mut events);
-        events
+    /// bytes coming) into the event queue; drain it with
+    /// [`poll_event`](Self::poll_event). Idempotent: a second call with
+    /// nothing newly pending enqueues nothing.
+    pub fn finish(&mut self) {
+        self.video.flush(&mut self.events);
+        self.audio.flush(&mut self.events);
     }
 
     fn process_tag(
-        &mut self,
+        video: &mut TrackState,
+        audio: &mut TrackState,
+        next_track_id: &mut u32,
         tag_type_byte: u8,
         timestamp: u32,
         body: &[u8],
-        events: &mut Vec<DemuxEvent>,
+        events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
         match tag_type_byte {
-            tag_type::VIDEO => self.process_video_tag(timestamp, body, events),
-            tag_type::AUDIO => self.process_audio_tag(timestamp, body, events),
+            tag_type::VIDEO => {
+                Self::process_video_tag(video, next_track_id, timestamp, body, events)
+            }
+            tag_type::AUDIO => {
+                Self::process_audio_tag(audio, next_track_id, timestamp, body, events)
+            }
             tag_type::SCRIPT => Ok(()), // onMetaData — informational, skipped
             _ => Ok(()),                // unknown tag type — skipped leniently
         }
     }
 
     fn process_video_tag(
-        &mut self,
+        video: &mut TrackState,
+        next_track_id: &mut u32,
         timestamp: u32,
         body: &[u8],
-        events: &mut Vec<DemuxEvent>,
+        events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
         if body.len() < 2 {
             return Ok(());
@@ -293,15 +345,24 @@ impl StreamingFlvDemux {
         let data = &body[5..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER => {
-                if self.video.track_id.is_none() && !data.is_empty() {
+                if video.track_id.is_none() && !data.is_empty() {
+                    // `AVCDecoderConfigurationRecord::parse` rejects 0 SPS
+                    // (#738 T11a review, Critical — see `avc_config.rs`), so
+                    // this never panics on a malicious sequence header; the
+                    // `.first()` below is additional defense-in-depth against
+                    // a directly-constructed (non-`parse`) empty-SPS record.
                     let record = AVCDecoderConfigurationRecord::parse(data)?;
                     let config = AVCConfigurationBox::new(record);
-                    let (width, height) = crate::sps::decode_avc_sps(&config.config.sps[0].0)
+                    let (width, height) = config
+                        .config
+                        .sps
+                        .first()
+                        .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
                         .map(|i| (i.width as u16, i.height as u16))
                         .unwrap_or((0, 0));
-                    let track_id = self.next_track_id;
-                    self.next_track_id += 1;
-                    self.video.track_id = Some(track_id);
+                    let track_id = *next_track_id;
+                    *next_track_id += 1;
+                    video.track_id = Some(track_id);
                     let spec = TrackSpec::new(
                         track_id,
                         FLV_TIMESCALE,
@@ -311,14 +372,14 @@ impl StreamingFlvDemux {
                             height,
                         },
                     );
-                    events.push(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
                 }
             }
             avc_packet_type::NALU => {
                 // Dropped (not buffered) if the sequence header hasn't
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
-                if self.video.track_id.is_some() {
+                if video.track_id.is_some() {
                     let sample = Sample {
                         data: data.to_vec(),
                         duration: 0, // filled in by `TrackState::advance`/`flush`
@@ -326,7 +387,7 @@ impl StreamingFlvDemux {
                         composition_offset: composition_time,
                         source_timing: None,
                     };
-                    self.video.advance(sample, timestamp, events);
+                    video.advance(sample, timestamp, events);
                 }
             }
             avc_packet_type::END_OF_SEQUENCE => {}
@@ -336,10 +397,11 @@ impl StreamingFlvDemux {
     }
 
     fn process_audio_tag(
-        &mut self,
+        audio: &mut TrackState,
+        next_track_id: &mut u32,
         timestamp: u32,
         body: &[u8],
-        events: &mut Vec<DemuxEvent>,
+        events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
         if body.is_empty() {
             return Ok(());
@@ -356,14 +418,14 @@ impl StreamingFlvDemux {
         let data = &body[2..];
         match aac_pkt_type {
             aac_packet_type::SEQUENCE_HEADER => {
-                if self.audio.track_id.is_none() && !data.is_empty() {
+                if audio.track_id.is_none() && !data.is_empty() {
                     let asc = AudioSpecificConfig::parse(data)?;
                     let channels = asc.channel_configuration.raw() as u16;
                     let rate = asc_rate_hz(&asc);
                     let esds = build_aac_esds(data.to_vec());
-                    let track_id = self.next_track_id;
-                    self.next_track_id += 1;
-                    self.audio.track_id = Some(track_id);
+                    let track_id = *next_track_id;
+                    *next_track_id += 1;
+                    audio.track_id = Some(track_id);
                     let spec = TrackSpec::new(
                         track_id,
                         FLV_TIMESCALE,
@@ -374,14 +436,14 @@ impl StreamingFlvDemux {
                             sample_size: AUDIO_SAMPLE_SIZE_BITS,
                         },
                     );
-                    events.push(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
                 }
             }
             aac_packet_type::RAW => {
                 // Dropped (not buffered) if the sequence header hasn't
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
-                if self.audio.track_id.is_some() {
+                if audio.track_id.is_some() {
                     let sample = Sample {
                         data: data.to_vec(),
                         duration: 0, // filled in by `TrackState::advance`/`flush`
@@ -389,7 +451,7 @@ impl StreamingFlvDemux {
                         composition_offset: 0,
                         source_timing: None,
                     };
-                    self.audio.advance(sample, timestamp, events);
+                    audio.advance(sample, timestamp, events);
                 }
             }
             _ => {}
@@ -450,13 +512,45 @@ mod tests {
     }
 
     fn flv_header() -> Vec<u8> {
+        header_with_data_offset(FLV_HEADER_LEN as u32)
+    }
+
+    /// An FLV header with an explicit (possibly non-conformant) `DataOffset`,
+    /// with its trailing `PreviousTagSize0` always zero.
+    fn header_with_data_offset(data_offset: u32) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(&FLV_SIGNATURE);
         out.push(1); // version
         out.push(0x01); // TypeFlags: video present
-        out.extend_from_slice(&(FLV_HEADER_LEN as u32).to_be_bytes());
+        out.extend_from_slice(&data_offset.to_be_bytes());
         out.extend_from_slice(&0u32.to_be_bytes()); // PreviousTagSize0
         out
+    }
+
+    /// Feed `input` then drain every event newly queued by it via
+    /// `poll_event` — the uniform pull-loop shape a real caller (e.g. an
+    /// RTMP `RtmpSource`) drives both `StreamingFlvDemux` and
+    /// `StreamingTsDemux` with.
+    fn feed_and_drain(
+        demux: &mut StreamingFlvDemux,
+        input: &[u8],
+    ) -> Result<Vec<DemuxEvent>, FlvError> {
+        demux.feed(input)?;
+        let mut events = Vec::new();
+        while let Some(ev) = demux.poll_event() {
+            events.push(ev);
+        }
+        Ok(events)
+    }
+
+    /// `finish` then drain the trailing events it queued.
+    fn finish_and_drain(demux: &mut StreamingFlvDemux) -> Vec<DemuxEvent> {
+        demux.finish();
+        let mut events = Vec::new();
+        while let Some(ev) = demux.poll_event() {
+            events.push(ev);
+        }
+        events
     }
 
     /// Build a synthetic FLV: header + one AVC sequence-header tag + `n`
@@ -496,8 +590,8 @@ mod tests {
     fn whole_buffer_one_feed_call_matches_one_shot_shape() {
         let flv = synthetic_avc_flv(4, 100);
         let mut demux = StreamingFlvDemux::new();
-        let mut events = demux.feed(&flv).unwrap();
-        events.extend(demux.finish());
+        let mut events = feed_and_drain(&mut demux, &flv).unwrap();
+        events.extend(finish_and_drain(&mut demux));
 
         let added = events
             .iter()
@@ -524,17 +618,17 @@ mod tests {
         let flv = synthetic_avc_flv(6, 33);
 
         let mut whole = StreamingFlvDemux::new();
-        let mut whole_events = whole.feed(&flv).unwrap();
-        whole_events.extend(whole.finish());
+        let mut whole_events = feed_and_drain(&mut whole, &flv).unwrap();
+        whole_events.extend(finish_and_drain(&mut whole));
         let whole_samples = video_samples(&whole_events);
 
         // Feed in arbitrary small chunks that don't align to tag boundaries.
         let mut chunked = StreamingFlvDemux::new();
         let mut chunked_events = Vec::new();
         for chunk in flv.chunks(7) {
-            chunked_events.extend(chunked.feed(chunk).unwrap());
+            chunked_events.extend(feed_and_drain(&mut chunked, chunk).unwrap());
         }
-        chunked_events.extend(chunked.finish());
+        chunked_events.extend(finish_and_drain(&mut chunked));
         let chunked_samples = video_samples(&chunked_events);
 
         assert_eq!(
@@ -548,16 +642,16 @@ mod tests {
         let flv = synthetic_avc_flv(5, 40);
 
         let mut whole = StreamingFlvDemux::new();
-        let mut whole_events = whole.feed(&flv).unwrap();
-        whole_events.extend(whole.finish());
+        let mut whole_events = feed_and_drain(&mut whole, &flv).unwrap();
+        whole_events.extend(finish_and_drain(&mut whole));
         let whole_samples = video_samples(&whole_events);
 
         let mut byte_demux = StreamingFlvDemux::new();
         let mut byte_events = Vec::new();
         for b in &flv {
-            byte_events.extend(byte_demux.feed(core::slice::from_ref(b)).unwrap());
+            byte_events.extend(feed_and_drain(&mut byte_demux, core::slice::from_ref(b)).unwrap());
         }
-        byte_events.extend(byte_demux.finish());
+        byte_events.extend(finish_and_drain(&mut byte_demux));
         let byte_samples = video_samples(&byte_events);
 
         assert_eq!(
@@ -577,7 +671,7 @@ mod tests {
         // on a tag boundary (no partial tag outstanding).
         let last_tag_len = TAG_HEADER_LEN + 2 + 3 + 1 + PREV_TAG_SIZE_LEN; // NALU tag shape
         let split = flv.len() - last_tag_len;
-        let _ = demux.feed(&flv[..split]).unwrap();
+        demux.feed(&flv[..split]).unwrap();
 
         // At a clean tag boundary, nothing partial should remain buffered.
         assert_eq!(
@@ -588,7 +682,7 @@ mod tests {
 
         // Now feed one byte of the final tag: pending must hold only that
         // one byte, never the whole stream so far.
-        let _ = demux.feed(&flv[split..split + 1]).unwrap();
+        demux.feed(&flv[split..split + 1]).unwrap();
         assert_eq!(
             demux.pending.len(),
             1,
@@ -614,8 +708,8 @@ mod tests {
         let flv = synthetic_avc_flv(2, 10);
         let mut demux = StreamingFlvDemux::new();
         // Fewer bytes than the header needs: must not error, must not panic.
-        let events = demux.feed(&flv[..5]).unwrap();
-        assert!(events.is_empty());
+        demux.feed(&flv[..5]).unwrap();
+        assert!(demux.poll_event().is_none());
     }
 
     #[test]
@@ -634,15 +728,80 @@ mod tests {
         assert!(matches!(err, FlvError::Codec(_)));
     }
 
+    /// A structurally valid-but-hostile `AVCDecoderConfigurationRecord`
+    /// declaring **0 SPS** (`numOfSequenceParameterSets = 0`).
+    fn zero_sps_avcc_bytes() -> Vec<u8> {
+        vec![
+            0x01, // configurationVersion
+            0x42, // AVCProfileIndication (Baseline)
+            0x00, // profile_compatibility
+            0x1F, // AVCLevelIndication
+            0xFF, // reserved(6)+lengthSizeMinusOne(2) = 3
+            0xE0, // reserved(3)+numOfSequenceParameterSets(5) = 0
+            0x00, // numOfPictureParameterSets = 0
+        ]
+    }
+
+    #[test]
+    fn zero_sps_avcc_is_an_error_not_a_panic() {
+        // #738 T11a review (Critical): a malicious RTMP publisher's sequence
+        // header declaring 0 SPS must error `feed`, not panic at
+        // `config.sps[0]` — `AVCDecoderConfigurationRecord::parse` now
+        // rejects 0 SPS (see `avc_config.rs::test_avc_config_zero_sps_rejected`);
+        // this proves the streaming path surfaces that as a clean `Err`,
+        // with no index-panic reachable through `feed`.
+        let mut out = flv_header();
+        let mut seq_body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::SEQUENCE_HEADER];
+        seq_body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
+        seq_body.extend_from_slice(&zero_sps_avcc_bytes());
+        write_tag(&mut out, tag_type::VIDEO, 0, &seq_body);
+
+        let mut demux = StreamingFlvDemux::new();
+        let err = demux.feed(&out).unwrap_err();
+        assert!(
+            matches!(err, FlvError::Codec(_)),
+            "expected FlvError::Codec (0-SPS avcC rejected), got {err:?}"
+        );
+    }
+
+    #[test]
+    fn absurd_data_offset_is_rejected_immediately_buffer_stays_small() {
+        // #738 T11a review (Important): a malicious `DataOffset` (here
+        // claiming a ~4 GiB header) must be rejected the moment enough
+        // bytes have arrived to read it, not silently buffered while `feed`
+        // waits forever for a "header" that will never complete — the
+        // remote-OOM/DoS this guards against.
+        let mut header = header_with_data_offset(0xFFFF_FFFF);
+        header.extend_from_slice(&[0, 0, 0, 0]); // "and a little data" per the brief
+        let fed_len = header.len();
+
+        let mut demux = StreamingFlvDemux::new();
+        let err = demux.feed(&header).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FlvError::HeaderTooLarge { declared, max }
+                    if declared == 0xFFFF_FFFF && max == MAX_FLV_HEADER_LEN
+            ),
+            "expected HeaderTooLarge, got {err:?}"
+        );
+        assert_eq!(
+            demux.pending.len(),
+            fed_len,
+            "pending must hold only what was actually fed ({fed_len} bytes) — the demux \
+             must not attempt to wait for the malicious DataOffset's implied ~4 GiB header"
+        );
+    }
+
     #[test]
     fn unknown_tag_type_is_skipped_leniently() {
         let mut out = flv_header();
         // An unrecognised tag type (not 8/9/18) with an arbitrary body.
         write_tag(&mut out, 0xAA, 0, &[1, 2, 3]);
         let mut demux = StreamingFlvDemux::new();
-        let events = demux.feed(&out).unwrap();
+        demux.feed(&out).unwrap();
         assert!(
-            events.is_empty(),
+            demux.poll_event().is_none(),
             "unknown tag types must be skipped, not error"
         );
     }
@@ -657,14 +816,12 @@ mod tests {
         let mut demux = StreamingFlvDemux::new();
         let mut events = Vec::new();
         for b in &flv[..FLV_HEADER_LEN + PREV_TAG_SIZE_LEN] {
-            events.extend(demux.feed(core::slice::from_ref(b)).unwrap());
+            events.extend(feed_and_drain(&mut demux, core::slice::from_ref(b)).unwrap());
         }
         events.extend(
-            demux
-                .feed(&flv[FLV_HEADER_LEN + PREV_TAG_SIZE_LEN..])
-                .unwrap(),
+            feed_and_drain(&mut demux, &flv[FLV_HEADER_LEN + PREV_TAG_SIZE_LEN..]).unwrap(),
         );
-        events.extend(demux.finish());
+        events.extend(finish_and_drain(&mut demux));
 
         let samples = video_samples(&events);
         assert_eq!(samples.len(), 2);

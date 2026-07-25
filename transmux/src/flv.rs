@@ -77,6 +77,18 @@ pub(crate) const TAG_HEADER_LEN: usize = 11;
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) const PREV_TAG_SIZE_LEN: usize = 4;
+/// A generous upper bound on a conformant `DataOffset` (§E.2): the header
+/// itself is always [`FLV_HEADER_LEN`] (9) bytes; this crate's own
+/// [`FlvMux`] never emits a `DataOffset` other than 9. A value far beyond
+/// this is not a "larger but still real" header, it is either a corrupt
+/// stream or a malicious `DataOffset` crafted to grow
+/// [`crate::flv_stream::StreamingFlvDemux`]'s pre-header buffer without
+/// bound while it waits for a "header" that never completes (#738 T11a
+/// review, Important — remote OOM/DoS). Rejected via
+/// [`FlvError::HeaderTooLarge`] before any buffering.
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const MAX_FLV_HEADER_LEN: usize = 1024;
 
 /// `TagType` values (§E.4.1).
 ///
@@ -177,6 +189,16 @@ pub enum FlvError {
     },
     /// The stream carried no supported track (no AVC video and no AAC audio).
     NoSupportedTrack,
+    /// The FLV header's `DataOffset` (§E.2) exceeded this crate's maximum
+    /// accepted header size — rejected before buffering to bound
+    /// [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux)'s
+    /// pre-header buffer (#738 T11a review, Important).
+    HeaderTooLarge {
+        /// The declared `DataOffset`.
+        declared: u32,
+        /// The maximum this crate accepts.
+        max: usize,
+    },
     /// A [`Media`] track used a codec FLV cannot carry (only AVC + AAC).
     UnsupportedCodec {
         /// The codec name.
@@ -202,6 +224,10 @@ impl fmt::Display for FlvError {
                     "FLV carried no supported track (need AVC video or AAC audio)"
                 )
             }
+            FlvError::HeaderTooLarge { declared, max } => write!(
+                f,
+                "FLV header DataOffset {declared} exceeds the maximum accepted {max} bytes"
+            ),
             FlvError::UnsupportedCodec { codec } => {
                 write!(
                     f,
@@ -320,6 +346,7 @@ impl From<FlvErrorAsError> for Error {
                 FlvError::BadSignature(_) => "FLV bad signature",
                 FlvError::NoSupportedTrack => "FLV no supported track",
                 FlvError::UnsupportedCodec { .. } => "FLV unsupported codec",
+                FlvError::HeaderTooLarge { .. } => "FLV header DataOffset too large",
                 _ => "FLV error",
             }),
         }
@@ -453,7 +480,16 @@ impl<'a> Unpackage for FlvDemux<'a> {
         let mut track_id = 1u32;
         if let Some(config) = avc_config {
             if !video_samples.is_empty() {
-                let (width, height) = crate::sps::decode_avc_sps(&config.config.sps[0].0)
+                // #738 T11a review (Critical): `AVCDecoderConfigurationRecord::parse`
+                // now rejects 0 SPS, so this is unreachable via `parse` — but
+                // `config.sps` is a public field and a directly-constructed
+                // record could still be empty, so index defensively via
+                // `.first()` rather than `[0]` (no panic either way).
+                let (width, height) = config
+                    .config
+                    .sps
+                    .first()
+                    .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
                     .map(|i| (i.width as u16, i.height as u16))
                     .unwrap_or((0, 0));
                 tracks.push(Track::new(

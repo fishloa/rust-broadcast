@@ -125,6 +125,21 @@ impl<'a> Parse<'a> for AVCDecoderConfigurationRecord {
         let b5 = read_u8(bytes, &mut cursor, "numOfSequenceParameterSets byte")?;
         let _reserved_3 = (b5 >> 5) & 0x07;
         let num_sps = (b5 & 0x1F) as usize;
+        // Reject 0 SPS (#738 T11a review, Critical): every real-world
+        // decode path in this crate (`FlvDemux`/`StreamingFlvDemux`'s
+        // `decode_avc_sps(&config.config.sps[0].0)`) assumes at least one
+        // SPS is present; a conformant encoder always emits >= 1. Guarding
+        // here — not just at the two indexing call sites — closes the hole
+        // for every current and future caller of `parse`, matching this
+        // crate's "no raw-byte public API / decode-completeness" discipline.
+        if num_sps == 0 {
+            return Err(Error::InvalidValue {
+                field: "numOfSequenceParameterSets",
+                value: 0,
+                reason: "an AVCDecoderConfigurationRecord must declare at least one SPS \
+                         (ISO/IEC 14496-15:2017 §5.3.3); a conformant encoder never emits 0",
+            });
+        }
 
         // SPS array
         let mut sps = Vec::with_capacity(num_sps);
@@ -564,9 +579,12 @@ mod tests {
             0x00,
             0x1E,        // configVersion=1, profile=244, compat=0, level=30
             0xFC | 0x03, // lenSize=3
-            0xE0,        // numSPS=0
-            0x00,        // numPPS=0
+            0xE0 | 0x01, // numSPS=1 (#738: parse now rejects 0)
         ];
+        let sps = vec![0x67, 0xF4, 0x00, 0x1E];
+        body.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        body.extend_from_slice(&sps);
+        body.push(0x00); // numPPS=0
         // High-profile ext (all zeros with reserved bits set)
         body.push(0xFC | 0x01); // chroma_format=1
         body.push(0xF8); // bit_depth_luma=0
@@ -584,19 +602,50 @@ mod tests {
     fn test_avc_config_profile_144_no_ext() {
         // profile=144 is NOT a real H.264 profile_idc (see module doc, #563) —
         // it must NOT be treated as requiring the high-profile extension.
-        let body = vec![
+        let mut body = vec![
             0x01,
             0x90,
             0x00,
             0x1E,        // configVersion=1, profile=144, compat=0, level=30
             0xFC | 0x03, // lenSize=3
-            0xE0,        // numSPS=0
-            0x00,        // numPPS=0
+            0xE0 | 0x01, // numSPS=1 (#738: parse now rejects 0)
         ];
+        let sps = vec![0x67, 0x90, 0x00, 0x1E];
+        body.extend_from_slice(&(sps.len() as u16).to_be_bytes());
+        body.extend_from_slice(&sps);
+        body.push(0x00); // numPPS=0
         let record = AVCDecoderConfigurationRecord::parse(&body).unwrap();
         assert_eq!(record.profile_indication, 144);
         assert_eq!(record.chroma_format, None);
         assert_eq!(record.bit_depth_luma_minus8, None);
         assert_eq!(record.bit_depth_chroma_minus8, None);
+    }
+
+    #[test]
+    fn test_avc_config_zero_sps_rejected() {
+        // #738 T11a review (Critical): a malicious/broken avcC declaring 0
+        // SPS must be rejected here, not accepted and later panic at
+        // `config.sps[0]` in `FlvDemux`/`StreamingFlvDemux`.
+        let body = vec![
+            0x01,        // configurationVersion
+            0x42,        // AVCProfileIndication (Baseline)
+            0x00,        // profile_compatibility
+            0x1F,        // AVCLevelIndication
+            0xFC | 0x03, // lengthSizeMinusOne = 3
+            0xE0,        // numOfSequenceParameterSets = 0
+            0x00,        // numOfPictureParameterSets = 0
+        ];
+        let err = AVCDecoderConfigurationRecord::parse(&body).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "numOfSequenceParameterSets",
+                    value: 0,
+                    ..
+                }
+            ),
+            "0 SPS must be a structured InvalidValue error, not silently accepted: {err:?}"
+        );
     }
 }

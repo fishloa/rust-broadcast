@@ -11,12 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `StreamingFlvDemux` (issue #738): incremental (event-driven) FLV → samples
   demux for live RTMP ingest, the FLV analogue of `StreamingTsDemux`. Feed
-  bytes of any size/alignment via `feed` (down to one byte at a time), get
-  back `DemuxEvent`s (`TrackAdded`/`Sample`); `finish` flushes each track's
-  trailing pending sample. Reuses `FlvDemux`'s tag-header and codec-config
-  (AVC/AAC) parsing verbatim rather than duplicating it. Memory-bounded
-  regardless of stream length: the internal buffer never holds more than one
-  in-progress tag, plus one pending sample per track.
+  bytes of any size/alignment via `feed` (down to one byte at a time; feed's
+  fallible over a hard structural error — bad signature, an implausible
+  header `DataOffset`, or a corrupt codec config), drain `DemuxEvent`s
+  (`TrackAdded`/`Sample`) one at a time via `poll_event`, and call `finish` to
+  flush each track's trailing pending sample — the exact `feed`/`poll_event`/
+  `finish` pull idiom `StreamingTsDemux` uses, so a caller can drive both
+  demuxers with one uniform drain loop. Reuses `FlvDemux`'s tag-header and
+  codec-config (AVC/AAC) parsing verbatim rather than duplicating it.
+  Memory-bounded regardless of stream length: the internal buffer never holds
+  more than one in-progress tag, plus one pending sample per track; a header
+  `DataOffset` above a sane bound is rejected before buffering rather than
+  grown toward, closing a remote OOM/DoS a malicious `DataOffset` could
+  otherwise trigger. `AVCDecoderConfigurationRecord::parse` (`avc_config.rs`)
+  now also rejects an avcC declaring 0 SPS, closing a remote-crash (index
+  panic) hole on this same untrusted-ingest path.
 
 ## [0.18.1] - 2026-07-21
 
