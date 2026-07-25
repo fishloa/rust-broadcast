@@ -42,9 +42,8 @@
 //!   server session over a real `tokio::net::TcpStream`.
 //! - [`error`] — the [`RtmpError`] type.
 //!
-//! This release is the crate scaffold only (#738 Task 1) — the modules above
-//! are stubs; the handshake/chunk/message/amf0/server logic and the `tokio`
-//! adapter land in subsequent tasks.
+//! The handshake/chunk/message/amf0/server sans-IO engine and the `tokio`
+//! adapter (feature `tokio`) are all implemented (#738 Tasks 1-9).
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -55,6 +54,7 @@ pub mod chunk;
 pub mod error;
 pub mod handshake;
 #[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod io;
 pub mod message;
 pub mod server;

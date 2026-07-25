@@ -275,7 +275,9 @@ impl ServerSession {
     /// # Errors
     /// [`RtmpError`] on malformed handshake/chunk/AMF0 input, or a command
     /// used out of order (e.g. `publish` before `connect`). Never panics on
-    /// truncated or garbage input.
+    /// truncated or garbage input. On `Err` the session should be considered
+    /// unrecoverable/torn down: internal state may have partially advanced
+    /// past the offending input, so the caller must not keep driving it.
     pub fn handle_data(&mut self, input: &[u8]) -> Result<(Vec<u8>, Vec<ServerEvent>)> {
         let mut out = Vec::new();
         let mut events = Vec::new();
