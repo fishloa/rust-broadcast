@@ -5,16 +5,25 @@
 //! layout: chunk format (§5.3.1), basic header (§5.3.1.1), the four message
 //! header `fmt` variants (§5.3.1.2), and extended timestamp (§5.3.1.3).
 //!
-//! This module implements the chunk **header** wire types only — reassembling
-//! a stream of chunks into whole messages (tracking prior-chunk state per
-//! csid so `fmt` 1/2/3 headers can inherit the fields they omit) is a
-//! stateful job that lands in a later task (#738 Task 4).
+//! This module implements the chunk **header** wire types (`BasicHeader`,
+//! `MessageHeader`) and the stateful reassembly engine built on top of them:
+//! [`ChunkAssembler`] (inbound, tracks prior-chunk state per csid so `fmt`
+//! 1/2/3 headers can inherit the fields they omit, and reassembles chunked
+//! payload back into whole [`Message`]s) and [`ChunkWriter`] (outbound,
+//! splits a [`Message`] into `fmt` 0 + 3 chunks at the configured chunk
+//! size).
+
+use std::collections::HashMap;
 
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
 
 type Result<T> = core::result::Result<T, RtmpError>;
+
+/// Default maximum chunk size (§5.3, §5.4.1): 128 bytes, in effect until a
+/// Set Chunk Size protocol control message changes it.
+pub const DEFAULT_CHUNK_SIZE: u32 = 128;
 
 /// The 24-bit sentinel value that, in a Type 0/1/2 message header's
 /// `timestamp`/`timestamp delta` field, signals that the field does not carry
@@ -574,6 +583,490 @@ fn extended_len(field: u32) -> usize {
     }
 }
 
+// ── Message (the assembled unit) ────────────────────────────────────────
+
+/// One fully reassembled RTMP message: the payload of a single message
+/// stream at a single (resolved, absolute) timestamp (§6.1). Produced by
+/// [`ChunkAssembler::push`] and consumed by [`ChunkWriter::write`].
+///
+/// Task 5 (`message.rs`) adds typed interpretation of `payload`/
+/// `message_type_id`; this carrier stays stable underneath that.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    /// Chunk stream id this message was carried on.
+    pub chunk_stream_id: u32,
+    /// Absolute timestamp (already resolved from any timestamp delta /
+    /// Extended Timestamp — never a delta).
+    pub timestamp: u32,
+    /// Message type id (§6/§7.1).
+    pub message_type_id: u8,
+    /// Message stream id.
+    pub message_stream_id: u32,
+    /// The whole message payload (reassembled across every chunk it was
+    /// split into).
+    pub payload: Vec<u8>,
+}
+
+// ── ChunkAssembler (stateful inbound reassembly, §5.3) ──────────────────
+
+/// Per-csid reassembly state: the most recently resolved header fields (used
+/// by `fmt` 1/2/3 to inherit the fields they omit) plus the payload
+/// accumulated so far for the message currently in progress on this csid.
+#[derive(Debug, Clone, Default)]
+struct CsidState {
+    /// Absolute timestamp of the current/most recent message on this csid.
+    timestamp: u32,
+    /// Delta most recently applied to reach `timestamp` — re-applied
+    /// unchanged when a Type 3 chunk begins a new message (inherits the
+    /// prior delta). Per §3.1.2 Type 3: when a Type 3 chunk immediately
+    /// follows a Type 0 chunk with no intervening Type 1/2, its implied
+    /// delta equals the Type 0 chunk's own absolute timestamp — so a Type 0
+    /// chunk seeds this field with its `timestamp`, not `0`.
+    timestamp_delta: u32,
+    /// Total length in bytes of the current/most recent message.
+    message_length: u32,
+    /// Message type id of the current/most recent message.
+    message_type_id: u8,
+    /// Message stream id of the current/most recent message.
+    message_stream_id: u32,
+    /// Whether the most recent Type 0/1/2 header on this csid used the
+    /// Extended Timestamp (§5.3.1.3) — a Type 3 chunk then also carries (and
+    /// must consume) that 4-byte field, per csid, until the next Type 0/1/2
+    /// changes the flag.
+    extended: bool,
+    /// Whether a Type 0/1/2 header has ever been seen on this csid (Type
+    /// 1/2/3 headers inherit from it; nothing to inherit before the first
+    /// Type 0).
+    initialized: bool,
+    /// Whether a message is currently mid-accumulation on this csid (a
+    /// prior chunk started it but its `message_length` bytes are not all
+    /// in yet). Distinguishes, for a Type 3 chunk, a **continuation** of
+    /// that in-progress message (`true`) from the **start of a new**
+    /// message reusing the prior header (`false`, at a message boundary) —
+    /// `payload.len()` alone can't tell them apart once a message has
+    /// completed and `payload` was reset to empty for the next one.
+    in_progress: bool,
+    /// Payload bytes accumulated so far for the message in progress
+    /// (`message_length` total once complete). Reset to empty once a
+    /// message completes.
+    payload: Vec<u8>,
+}
+
+/// Stateful inbound chunk reassembler (§5.3): feed inbound bytes, get back
+/// each complete [`Message`] as soon as its last chunk arrives.
+///
+/// Maintains per-`chunk_stream_id` state, so multiple chunk streams may be
+/// interleaved on the same connection (as the wire format requires) and are
+/// each reassembled independently.
+#[derive(Debug)]
+pub struct ChunkAssembler {
+    chunk_size: u32,
+    csids: HashMap<u32, CsidState>,
+    /// Bytes carried over from a previous `push` call that did not yet form
+    /// a complete chunk (partial basic header, message header, extended
+    /// timestamp, or payload slice).
+    pending: Vec<u8>,
+}
+
+impl Default for ChunkAssembler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChunkAssembler {
+    /// New assembler, chunk size at the §5.3 default (128 bytes).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            csids: HashMap::new(),
+            pending: Vec::new(),
+        }
+    }
+
+    /// Update the chunk size in effect for subsequent chunks (called on
+    /// receipt of a Set Chunk Size protocol control message, §5.4.1).
+    pub fn set_chunk_size(&mut self, n: u32) {
+        self.chunk_size = n;
+    }
+
+    /// Feed inbound bytes; returns each complete [`Message`] decoded from
+    /// the buffer (in arrival order), leaving any trailing partial chunk or
+    /// partial message buffered internally for the next call.
+    ///
+    /// # Errors
+    /// [`RtmpError::Malformed`] on structurally invalid input (e.g. a Type
+    /// 1/2/3 chunk on a csid that has never seen a Type 0). Never errors
+    /// merely because the input ends mid-chunk — that is buffered, not an
+    /// error.
+    pub fn push(&mut self, input: &[u8]) -> Result<Vec<Message>> {
+        self.pending.extend_from_slice(input);
+        let mut out = Vec::new();
+        loop {
+            match Self::try_parse_one(&self.pending, &self.csids, self.chunk_size) {
+                Ok(Some(parsed)) => {
+                    self.pending.drain(..parsed.consumed);
+                    let state = self.csids.entry(parsed.csid).or_default();
+                    state.timestamp = parsed.timestamp;
+                    state.timestamp_delta = parsed.timestamp_delta;
+                    state.message_length = parsed.message_length;
+                    state.message_type_id = parsed.message_type_id;
+                    state.message_stream_id = parsed.message_stream_id;
+                    state.extended = parsed.extended;
+                    state.initialized = true;
+                    if parsed.payload.len() as u32 == parsed.message_length {
+                        state.payload.clear();
+                        state.in_progress = false;
+                        out.push(Message {
+                            chunk_stream_id: parsed.csid,
+                            timestamp: parsed.timestamp,
+                            message_type_id: parsed.message_type_id,
+                            message_stream_id: parsed.message_stream_id,
+                            payload: parsed.payload,
+                        });
+                    } else {
+                        state.payload = parsed.payload;
+                        state.in_progress = true;
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(out)
+    }
+
+    /// Attempt to parse exactly one chunk (basic header + message header +
+    /// any extended timestamp + its payload slice) from the front of `buf`,
+    /// resolving it against the existing per-csid `states` without mutating
+    /// them. Returns:
+    /// - `Ok(Some(_))` — a full chunk was parsed; `consumed` bytes should be
+    ///   dropped from the front of the caller's buffer and the returned
+    ///   resolved fields committed to that csid's state.
+    /// - `Ok(None)` — not enough bytes yet for a full chunk (structurally
+    ///   plausible so far); caller should wait for more input.
+    /// - `Err(_)` — structurally invalid input.
+    fn try_parse_one(
+        buf: &[u8],
+        states: &HashMap<u32, CsidState>,
+        chunk_size: u32,
+    ) -> Result<Option<ParsedChunk>> {
+        let bh = match BasicHeader::parse(buf) {
+            Ok(bh) => bh,
+            Err(RtmpError::BufferTooShort { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        // `BasicHeader::parse` having succeeded means `buf` holds at least
+        // as many bytes as this form needs; re-derive that count from the
+        // marker bits actually on the wire (not from `basic_header_form`,
+        // which reflects the *minimal* form for the csid and may disagree
+        // with a wire that legally used a longer form for a csid in the
+        // 64..=319 overlap range).
+        let marker = buf[0] & BASIC_HEADER_MARKER_MASK;
+        let header_len = match marker {
+            BASIC_HEADER_2BYTE_MARKER => 2,
+            BASIC_HEADER_3BYTE_MARKER => 3,
+            _ => 1,
+        };
+
+        let existing = states.get(&bh.chunk_stream_id);
+
+        let rest = &buf[header_len..];
+        let (mh, mh_consumed) = match MessageHeader::parse(bh.fmt, rest) {
+            Ok(v) => v,
+            Err(RtmpError::BufferTooShort { .. }) => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let mut consumed = header_len + mh_consumed;
+
+        // Resolve this chunk's header fields (timestamp/length/type/stream
+        // id/extended-flag) and whether it begins a new message or
+        // continues the one already in progress on this csid.
+        let (resolved, starts_new) = match (bh.fmt, mh) {
+            (
+                Fmt::Type0,
+                MessageHeader::Type0 {
+                    timestamp,
+                    message_length,
+                    message_type_id,
+                    message_stream_id,
+                },
+            ) => {
+                let used_extended = mh_consumed > TYPE0_LEN;
+                (
+                    ResolvedHeader {
+                        // §3.1.2: a Type 3 immediately following this Type 0
+                        // (no intervening Type 1/2) implies a delta equal to
+                        // this Type 0's own absolute timestamp.
+                        timestamp_delta: timestamp,
+                        timestamp,
+                        message_length,
+                        message_type_id,
+                        message_stream_id,
+                        extended: used_extended,
+                    },
+                    true,
+                )
+            }
+            (
+                Fmt::Type1,
+                MessageHeader::Type1 {
+                    timestamp_delta,
+                    message_length,
+                    message_type_id,
+                },
+            ) => {
+                let existing = existing.ok_or(RtmpError::Malformed {
+                    what: "type 1 chunk header on a csid with no prior chunk to inherit from",
+                })?;
+                let used_extended = mh_consumed > TYPE1_LEN;
+                (
+                    ResolvedHeader {
+                        timestamp: existing.timestamp.wrapping_add(timestamp_delta),
+                        timestamp_delta,
+                        message_length,
+                        message_type_id,
+                        message_stream_id: existing.message_stream_id,
+                        extended: used_extended,
+                    },
+                    true,
+                )
+            }
+            (Fmt::Type2, MessageHeader::Type2 { timestamp_delta }) => {
+                let existing = existing.ok_or(RtmpError::Malformed {
+                    what: "type 2 chunk header on a csid with no prior chunk to inherit from",
+                })?;
+                let used_extended = mh_consumed > TYPE2_LEN;
+                (
+                    ResolvedHeader {
+                        timestamp: existing.timestamp.wrapping_add(timestamp_delta),
+                        timestamp_delta,
+                        message_length: existing.message_length,
+                        message_type_id: existing.message_type_id,
+                        message_stream_id: existing.message_stream_id,
+                        extended: used_extended,
+                    },
+                    true,
+                )
+            }
+            (Fmt::Type3, MessageHeader::Type3) => {
+                let existing = existing.ok_or(RtmpError::Malformed {
+                    what: "type 3 chunk header on a csid with no prior chunk to inherit from",
+                })?;
+                let continuation = existing.in_progress;
+                if existing.extended {
+                    if buf.len() < consumed + EXTENDED_TIMESTAMP_LEN {
+                        return Ok(None);
+                    }
+                    // Present per §3.1.3 whenever the most recent Type 0/1/2
+                    // on this csid used one. A continuation chunk's message
+                    // timestamp is already fixed (ignore the value); a
+                    // new-message Type 3 re-applies the inherited delta
+                    // (also ignoring the value: Type 3 has nothing of its
+                    // own to contribute, by definition it inherits).
+                    consumed += EXTENDED_TIMESTAMP_LEN;
+                }
+                if continuation {
+                    (
+                        ResolvedHeader {
+                            timestamp: existing.timestamp,
+                            timestamp_delta: existing.timestamp_delta,
+                            message_length: existing.message_length,
+                            message_type_id: existing.message_type_id,
+                            message_stream_id: existing.message_stream_id,
+                            extended: existing.extended,
+                        },
+                        false,
+                    )
+                } else {
+                    (
+                        ResolvedHeader {
+                            timestamp: existing.timestamp.wrapping_add(existing.timestamp_delta),
+                            timestamp_delta: existing.timestamp_delta,
+                            message_length: existing.message_length,
+                            message_type_id: existing.message_type_id,
+                            message_stream_id: existing.message_stream_id,
+                            extended: existing.extended,
+                        },
+                        true,
+                    )
+                }
+            }
+            // `MessageHeader::parse` is always called with the `Fmt` that
+            // selects its own variant, so every other pairing is
+            // unreachable.
+            _ => unreachable!("MessageHeader::parse always returns the variant for its Fmt"),
+        };
+
+        let already_accumulated = if starts_new {
+            0
+        } else {
+            existing.map(|s| s.payload.len()).unwrap_or(0)
+        };
+        let remaining_needed =
+            (resolved.message_length as usize).saturating_sub(already_accumulated);
+        let take = (chunk_size as usize).min(remaining_needed);
+
+        if buf.len() < consumed + take {
+            return Ok(None);
+        }
+
+        let mut payload = if starts_new {
+            Vec::with_capacity(resolved.message_length as usize)
+        } else {
+            existing.map(|s| s.payload.clone()).unwrap_or_default()
+        };
+        payload.extend_from_slice(&buf[consumed..consumed + take]);
+        consumed += take;
+
+        Ok(Some(ParsedChunk {
+            csid: bh.chunk_stream_id,
+            consumed,
+            timestamp: resolved.timestamp,
+            timestamp_delta: resolved.timestamp_delta,
+            message_length: resolved.message_length,
+            message_type_id: resolved.message_type_id,
+            message_stream_id: resolved.message_stream_id,
+            extended: resolved.extended,
+            payload,
+        }))
+    }
+}
+
+/// Header fields resolved for one chunk, after applying `fmt`-specific
+/// inheritance from the csid's prior state.
+struct ResolvedHeader {
+    timestamp: u32,
+    timestamp_delta: u32,
+    message_length: u32,
+    message_type_id: u8,
+    message_stream_id: u32,
+    extended: bool,
+}
+
+/// One fully-parsed chunk (header resolved + its payload slice taken),
+/// ready to be committed to the owning [`ChunkAssembler`]'s per-csid state.
+struct ParsedChunk {
+    csid: u32,
+    consumed: usize,
+    timestamp: u32,
+    timestamp_delta: u32,
+    message_length: u32,
+    message_type_id: u8,
+    message_stream_id: u32,
+    extended: bool,
+    payload: Vec<u8>,
+}
+
+// ── ChunkWriter (outbound, §5.3) ─────────────────────────────────────────
+
+/// Stateless-per-message outbound chunk writer (§5.3): serializes a
+/// [`Message`] into chunk bytes at the current chunk size.
+///
+/// Simple, always-correct strategy: the first chunk is always Type 0 (full
+/// absolute-timestamp header) and every continuation chunk is Type 3
+/// (0-byte header, inheriting everything). This is spec-valid — Type 1/2's
+/// more compact delta-based headers are a size optimisation this writer
+/// does not perform.
+#[derive(Debug, Clone)]
+pub struct ChunkWriter {
+    chunk_size: u32,
+}
+
+impl Default for ChunkWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ChunkWriter {
+    /// New writer, chunk size at the §5.3 default (128 bytes).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+        }
+    }
+
+    /// Update the chunk size used for subsequent [`ChunkWriter::write`]
+    /// calls (called on sending a Set Chunk Size protocol control message,
+    /// §5.4.1).
+    pub fn set_chunk_size(&mut self, n: u32) {
+        self.chunk_size = n;
+    }
+
+    /// Serialize `msg` into chunk bytes at the current chunk size: a Type 0
+    /// first chunk carrying up to `chunk_size` payload bytes, then Type 3
+    /// continuation chunks for the remainder.
+    ///
+    /// # Panics
+    /// If `msg.chunk_stream_id` is outside the basic header's encodable
+    /// range (2..=65599) — the same precondition [`BasicHeader::serialize_into`]
+    /// enforces. Every `chunk_stream_id` produced by [`ChunkAssembler::push`]
+    /// satisfies this (`BasicHeader::parse` never yields one outside the
+    /// range), so a `Message` round-tripped from the assembler never panics
+    /// here; callers building a `Message` from scratch must respect it.
+    #[must_use]
+    pub fn write(&mut self, msg: &Message) -> Vec<u8> {
+        let chunk_size = (self.chunk_size as usize).max(1);
+        let message_length = msg.payload.len() as u32;
+        let extended = needs_extended_timestamp(msg.timestamp);
+
+        let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + 16);
+
+        let bh0 = BasicHeader {
+            fmt: Fmt::Type0,
+            chunk_stream_id: msg.chunk_stream_id,
+        };
+        let mh0 = MessageHeader::Type0 {
+            timestamp: msg.timestamp,
+            message_length,
+            message_type_id: msg.message_type_id,
+            message_stream_id: msg.message_stream_id,
+        };
+        write_serialized(&mut out, &bh0);
+        write_serialized(&mut out, &mh0);
+
+        let mut offset = 0usize;
+        let take0 = chunk_size.min(msg.payload.len());
+        out.extend_from_slice(&msg.payload[offset..offset + take0]);
+        offset += take0;
+
+        while offset < msg.payload.len() {
+            let bh = BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: msg.chunk_stream_id,
+            };
+            write_serialized(&mut out, &bh);
+            if extended {
+                out.extend_from_slice(&msg.timestamp.to_be_bytes());
+            }
+            let take = chunk_size.min(msg.payload.len() - offset);
+            out.extend_from_slice(&msg.payload[offset..offset + take]);
+            offset += take;
+        }
+
+        out
+    }
+}
+
+/// Serialize `item` and append the bytes to `out`.
+///
+/// # Panics
+/// If `item.serialize_into` errors (only possible, for the [`BasicHeader`]s
+/// this is used with, when `chunk_stream_id` is outside the encodable
+/// range) — see [`ChunkWriter::write`]'s panics section.
+fn write_serialized<T: Serialize<Error = RtmpError>>(out: &mut Vec<u8>, item: &T) {
+    let len = item.serialized_len();
+    let start = out.len();
+    out.resize(start + len, 0);
+    let n = item
+        .serialize_into(&mut out[start..])
+        .expect("valid chunk_stream_id (2..=65599) is a ChunkWriter::write precondition");
+    out.truncate(start + n);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1066,5 +1559,407 @@ mod tests {
         // palindromic value like 0x01010101 would pass either order).
         let v: u32 = 0xAABB_CCDD;
         assert_ne!(v.to_le_bytes(), v.to_be_bytes());
+    }
+
+    // ── ChunkAssembler / ChunkWriter ─────────────────────────────────────
+
+    fn msg(csid: u32, timestamp: u32, type_id: u8, stream_id: u32, payload: Vec<u8>) -> Message {
+        Message {
+            chunk_stream_id: csid,
+            timestamp,
+            message_type_id: type_id,
+            message_stream_id: stream_id,
+            payload,
+        }
+    }
+
+    #[test]
+    fn writer_assembler_round_trip_small_message_single_chunk() {
+        let original = msg(4, 1000, 9, 1, vec![0xAB; 50]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&bytes).unwrap();
+        assert_eq!(out.len(), 1, "one message must come back out");
+        assert_eq!(out[0], original);
+    }
+
+    #[test]
+    fn writer_assembler_round_trip_message_larger_than_chunk_size() {
+        // 300-byte payload at the default 128-byte chunk size => 3 chunks
+        // (128 + 128 + 44): Type 0 first chunk, two Type 3 continuations.
+        let original = msg(6, 5000, 9, 42, (0u8..=255).cycle().take(300).collect());
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        // Sanity: verify the byte stream really contains 3 chunks (1 basic
+        // header for csid 6 is 1 byte; Type 0 header is TYPE0_LEN; then 128
+        // payload bytes; then two Type 3 (1-byte basic header, 0-byte
+        // message header) + payload chunks of 128 and 44).
+        let expected_len = 1 + TYPE0_LEN + 128 + (1 + 128) + (1 + 44);
+        assert_eq!(bytes.len(), expected_len);
+
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&bytes).unwrap();
+        assert_eq!(
+            out.len(),
+            1,
+            "the 3 chunks must reassemble into ONE message"
+        );
+        assert_eq!(out[0], original);
+        assert_eq!(out[0].payload.len(), 300);
+    }
+
+    #[test]
+    fn assembler_multi_chunk_payload_reassembled_in_order() {
+        // Hand-built stream: Type 0 header (csid 3, len 10, type 8, stream
+        // 0, timestamp 0) with 4 payload bytes, chunk size forced to 4, then
+        // two Type 3 continuations of 4 and 2 bytes — assert the payload
+        // comes back concatenated in the right order, not reordered.
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(4);
+
+        let bh0 = BasicHeader {
+            fmt: Fmt::Type0,
+            chunk_stream_id: 3,
+        };
+        let mh0 = MessageHeader::Type0 {
+            timestamp: 0,
+            message_length: 10,
+            message_type_id: 8,
+            message_stream_id: 0,
+        };
+        let mut input = Vec::new();
+        write_serialized(&mut input, &bh0);
+        write_serialized(&mut input, &mh0);
+        input.extend_from_slice(&[1, 2, 3, 4]);
+
+        let bh3 = BasicHeader {
+            fmt: Fmt::Type3,
+            chunk_stream_id: 3,
+        };
+        write_serialized(&mut input, &bh3);
+        input.extend_from_slice(&[5, 6, 7, 8]);
+        write_serialized(&mut input, &bh3);
+        input.extend_from_slice(&[9, 10]);
+
+        let out = assembler.push(&input).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn assembler_header_inheritance_type0_type1_type2_type3() {
+        // fmt0 (ts=1000, len=5, type=8, stream=7) -> fmt1 (delta=20) ->
+        // fmt2 (delta=30) -> fmt3 (inherits fmt2's delta=30). Each chunk's
+        // message completes in one go (message_length == chunk_size == 5)
+        // so every header starts a fresh message on this csid.
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(5);
+        let csid = 5;
+
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 1000,
+                message_length: 5,
+                message_type_id: 8,
+                message_stream_id: 7,
+            },
+        );
+        input.extend_from_slice(&[0; 5]);
+
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type1,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type1 {
+                timestamp_delta: 20,
+                message_length: 5,
+                message_type_id: 8,
+            },
+        );
+        input.extend_from_slice(&[1; 5]);
+
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type2,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type2 {
+                timestamp_delta: 30,
+            },
+        );
+        input.extend_from_slice(&[2; 5]);
+
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: csid,
+            },
+        );
+        input.extend_from_slice(&[3; 5]);
+
+        let out = assembler.push(&input).unwrap();
+        assert_eq!(out.len(), 4);
+
+        assert_eq!(out[0].timestamp, 1000);
+        assert_eq!(out[0].message_stream_id, 7);
+        assert_eq!(out[0].message_type_id, 8);
+        assert_eq!(out[0].payload, vec![0; 5]);
+
+        assert_eq!(out[1].timestamp, 1020, "fmt1: 1000 + delta 20");
+        assert_eq!(out[1].message_stream_id, 7, "fmt1 inherits stream id");
+        assert_eq!(out[1].message_type_id, 8);
+        assert_eq!(out[1].payload, vec![1; 5]);
+
+        assert_eq!(out[2].timestamp, 1050, "fmt2: 1020 + delta 30");
+        assert_eq!(out[2].message_stream_id, 7, "fmt2 inherits stream id");
+        assert_eq!(out[2].message_type_id, 8, "fmt2 inherits type id");
+        assert_eq!(out[2].payload, vec![2; 5], "fmt2 inherits message length");
+
+        assert_eq!(
+            out[3].timestamp, 1080,
+            "fmt3 (new message) inherits fmt2's delta 30: 1050 + 30"
+        );
+        assert_eq!(out[3].message_stream_id, 7, "fmt3 inherits stream id");
+        assert_eq!(out[3].message_type_id, 8, "fmt3 inherits type id");
+        assert_eq!(out[3].payload, vec![3; 5], "fmt3 inherits message length");
+    }
+
+    #[test]
+    fn assembler_mid_stream_set_chunk_size_changes_split_boundary() {
+        // First message at chunk_size 128 (default): a 10-byte message on
+        // csid 7 fits in one chunk. Then shrink chunk_size to 4 and send a
+        // second 10-byte message on the same csid (fresh Type 0): it must
+        // now arrive in 3 physical chunks (4 + 4 + 2), and pushing only the
+        // first two must NOT complete the message yet.
+        let mut assembler = ChunkAssembler::new();
+        let csid = 7;
+
+        let first = msg(csid, 100, 8, 1, vec![0xAA; 10]);
+        let mut writer = ChunkWriter::new();
+        let first_bytes = writer.write(&first);
+        let out = assembler.push(&first_bytes).unwrap();
+        assert_eq!(out, vec![first]);
+
+        assembler.set_chunk_size(4);
+        let bh0 = BasicHeader {
+            fmt: Fmt::Type0,
+            chunk_stream_id: csid,
+        };
+        let mh0 = MessageHeader::Type0 {
+            timestamp: 200,
+            message_length: 10,
+            message_type_id: 8,
+            message_stream_id: 1,
+        };
+        let mut chunk1 = Vec::new();
+        write_serialized(&mut chunk1, &bh0);
+        write_serialized(&mut chunk1, &mh0);
+        chunk1.extend_from_slice(&[1, 2, 3, 4]);
+        let out = assembler.push(&chunk1).unwrap();
+        assert!(
+            out.is_empty(),
+            "only 4 of 10 payload bytes arrived, message must not complete yet"
+        );
+
+        let bh3 = BasicHeader {
+            fmt: Fmt::Type3,
+            chunk_stream_id: csid,
+        };
+        let mut chunk2 = Vec::new();
+        write_serialized(&mut chunk2, &bh3);
+        chunk2.extend_from_slice(&[5, 6, 7, 8]);
+        let out = assembler.push(&chunk2).unwrap();
+        assert!(out.is_empty(), "8 of 10 payload bytes, still incomplete");
+
+        let mut chunk3 = Vec::new();
+        write_serialized(&mut chunk3, &bh3);
+        chunk3.extend_from_slice(&[9, 10]);
+        let out = assembler.push(&chunk3).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn writer_assembler_round_trip_extended_timestamp_split_across_chunks() {
+        // timestamp >= EXTENDED_TIMESTAMP_MARKER forces the Type 0 header
+        // (and every Type 3 continuation) to carry the 4-byte Extended
+        // Timestamp (§3.1.3) — payload longer than chunk_size so at least
+        // one Type 3 continuation chunk exercises the "fmt3 also carries
+        // extended timestamp" edge.
+        let original = msg(8, EXTENDED_TIMESTAMP_MARKER + 12345, 9, 2, vec![0x7E; 300]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        // Sanity: the first chunk's basic header + Type0 header must be
+        // TYPE0_LEN + 4 (extended) bytes, and each Type 3 continuation
+        // basic header must be immediately followed by 4 extended bytes
+        // before its payload slice.
+        let bh_len = 1; // csid 8 fits the 1-byte basic header form.
+        let first_header_len = bh_len + TYPE0_LEN + EXTENDED_TIMESTAMP_LEN;
+        assert_eq!(&bytes[bh_len..bh_len + 3], [0xFF, 0xFF, 0xFF]);
+        let ext_offset = bh_len + TYPE0_LEN;
+        assert_eq!(
+            &bytes[ext_offset..ext_offset + 4],
+            &original.timestamp.to_be_bytes()
+        );
+        let first_payload_take = 128usize;
+        let second_chunk_start = first_header_len + first_payload_take;
+        // second chunk: 1-byte Type 3 basic header + 4-byte extended ts.
+        assert_eq!(bytes[second_chunk_start] >> 6, Fmt::Type3.to_bits());
+        let second_ext_offset = second_chunk_start + 1;
+        assert_eq!(
+            &bytes[second_ext_offset..second_ext_offset + 4],
+            &original.timestamp.to_be_bytes(),
+            "fmt3 continuation must carry the same extended timestamp"
+        );
+
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&bytes).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0], original);
+        assert_eq!(out[0].timestamp, EXTENDED_TIMESTAMP_MARKER + 12345);
+    }
+
+    #[test]
+    fn assembler_partial_feed_split_mid_header_no_drop_or_duplicate() {
+        let original = msg(9, 42, 8, 3, vec![0x11; 200]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        // Split at an arbitrary offset that lands inside the Type 0 header
+        // (byte 3 of 11), well before any payload.
+        let split_at = 4;
+        assert!(split_at < 1 + TYPE0_LEN);
+
+        let mut assembler = ChunkAssembler::new();
+        let out1 = assembler.push(&bytes[..split_at]).unwrap();
+        assert!(out1.is_empty(), "partial header must not error or complete");
+        let out2 = assembler.push(&bytes[split_at..]).unwrap();
+        assert_eq!(out2.len(), 1, "message must complete exactly once");
+        assert_eq!(out2[0], original);
+    }
+
+    #[test]
+    fn assembler_partial_feed_split_mid_payload_no_drop_or_duplicate() {
+        let original = msg(10, 42, 8, 3, vec![0x22; 300]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        // Split partway through the first (128-byte) payload chunk.
+        let split_at = 1 + TYPE0_LEN + 60;
+        let mut assembler = ChunkAssembler::new();
+        let out1 = assembler.push(&bytes[..split_at]).unwrap();
+        assert!(out1.is_empty());
+        let out2 = assembler.push(&bytes[split_at..]).unwrap();
+        assert_eq!(out2.len(), 1);
+        assert_eq!(out2[0], original);
+    }
+
+    #[test]
+    fn assembler_partial_feed_byte_at_a_time_never_drops_or_duplicates() {
+        let original = msg(11, 7, 9, 4, vec![0x33; 260]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        let mut assembler = ChunkAssembler::new();
+        let mut collected = Vec::new();
+        for b in &bytes {
+            collected.extend(assembler.push(std::slice::from_ref(b)).unwrap());
+        }
+        assert_eq!(collected.len(), 1);
+        assert_eq!(collected[0], original);
+    }
+
+    #[test]
+    fn assembler_type1_on_unseen_csid_is_malformed() {
+        let mut assembler = ChunkAssembler::new();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type1,
+                chunk_stream_id: 20,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type1 {
+                timestamp_delta: 5,
+                message_length: 3,
+                message_type_id: 1,
+            },
+        );
+        input.extend_from_slice(&[0, 0, 0]);
+        assert!(matches!(
+            assembler.push(&input),
+            Err(RtmpError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn assembler_type3_on_unseen_csid_is_malformed() {
+        let mut assembler = ChunkAssembler::new();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: 21,
+            },
+        );
+        assert!(matches!(
+            assembler.push(&input),
+            Err(RtmpError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn assembler_truncated_input_never_panics_across_many_split_points() {
+        let original = msg(12, 99, 8, 5, vec![0x44; 400]);
+        let mut writer = ChunkWriter::new();
+        let bytes = writer.write(&original);
+
+        // Feed every possible byte-prefix of the stream to a fresh
+        // assembler each time: none may panic, and any that do parse fully
+        // must reproduce the original message exactly.
+        for split in 0..=bytes.len() {
+            let mut assembler = ChunkAssembler::new();
+            let first = assembler.push(&bytes[..split]);
+            let Ok(first_msgs) = first else {
+                continue;
+            };
+            let second = assembler.push(&bytes[split..]).unwrap();
+            let mut all = first_msgs;
+            all.extend(second);
+            assert_eq!(all, vec![original.clone()]);
+        }
+    }
+
+    #[test]
+    fn writer_default_chunk_size_matches_assembler_default() {
+        assert_eq!(ChunkWriter::new().chunk_size, DEFAULT_CHUNK_SIZE);
+        assert_eq!(ChunkAssembler::new().chunk_size, DEFAULT_CHUNK_SIZE);
     }
 }
