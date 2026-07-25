@@ -36,6 +36,19 @@
 //! wraparound behaviour for this field, so this is a documented
 //! implementation choice, not a spec requirement.
 //!
+//! Two further implementation choices, not spec requirements:
+//!
+//! - At most **one** Acknowledgement is emitted per
+//!   [`handle_data`](ServerSession::handle_data) call, even if the input
+//!   buffer crossed `window_ack_size` multiple times over (e.g. a single
+//!   call carrying several times the window in bytes). The threshold check
+//!   runs once, after all messages in that call have been dispatched, not
+//!   once per `window_ack_size`-sized increment.
+//! - Handshake bytes are excluded from the Ack byte count: the running
+//!   total only accumulates post-handshake (chunk-stream) bytes — bytes
+//!   consumed while still inside the C0/C1/C2 ↔ S0/S1/S2 handshake exchange
+//!   never reach the counter.
+//!
 //! # Reply csid convention
 //!
 //! Protocol control and User Control messages MUST/SHOULD use chunk stream
@@ -206,6 +219,11 @@ pub struct ServerSession {
     state: State,
     app: Option<String>,
     next_stream_id: u32,
+    /// The message stream id allocated by the most recent successful
+    /// `createStream` (§7.2.2), or `None` if none has succeeded yet.
+    /// `publish` requires this to be `Some` (in addition to `state ==
+    /// Connected`) — a stream must actually have been created first.
+    created_stream_id: Option<u32>,
     /// Threshold (in bytes received) at which an Acknowledgement is due
     /// (§5.4.3/§5.4.4). Starts at `config.window_ack_size`; updated if the
     /// peer sends its own `WindowAckSize`/`SetPeerBandwidth`.
@@ -233,6 +251,7 @@ impl ServerSession {
             state: State::Init,
             app: None,
             next_stream_id: FIRST_STREAM_ID,
+            created_stream_id: None,
             ack_threshold,
             bytes_received: 0,
             bytes_acked: 0,
@@ -403,6 +422,14 @@ impl ServerSession {
     /// `connect` (§7.2.1, `NetConnection`): capture `app`, reply
     /// WindowAckSize + SetPeerBandwidth + SetChunkSize + `_result`, emit
     /// [`ServerEvent::Connected`].
+    ///
+    /// # Errors
+    /// [`RtmpError::Malformed`] if the command has no command-object
+    /// argument (arg0), or arg0 is not an AMF0 Object, or the object has no
+    /// `app` property of type String — a present-but-empty `app` string
+    /// (`""`) is tolerated (it is a valid, if unhelpful, application name).
+    /// [`RtmpError::UnexpectedState`] if the session has already reached
+    /// [`State::Closed`].
     fn handle_connect(
         &mut self,
         command: &Command,
@@ -410,23 +437,31 @@ impl ServerSession {
         out: &mut Vec<u8>,
         events: &mut Vec<ServerEvent>,
     ) -> Result<()> {
-        let app = command
-            .arguments
-            .first()
-            .and_then(|v| match v {
-                Amf0Value::Object(pairs) => pairs.iter().find_map(|(k, v)| {
-                    if k == "app" {
-                        match v {
-                            Amf0Value::String(s) => Some(s.clone()),
-                            _ => None,
-                        }
-                    } else {
-                        None
-                    }
-                }),
-                _ => None,
-            })
-            .unwrap_or_default();
+        if self.state == State::Closed {
+            return Err(RtmpError::UnexpectedState {
+                what: "connect received after the session was closed",
+            });
+        }
+
+        let Some(Amf0Value::Object(pairs)) = command.arguments.first() else {
+            return Err(RtmpError::Malformed {
+                what: "connect command object / app",
+            });
+        };
+        let Some(app) = pairs.iter().find_map(|(k, v)| {
+            if k == "app" {
+                match v {
+                    Amf0Value::String(s) => Some(s.clone()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        }) else {
+            return Err(RtmpError::Malformed {
+                what: "connect command object / app",
+            });
+        };
 
         self.app = Some(app.clone());
         self.state = State::Connected;
@@ -477,20 +512,26 @@ impl ServerSession {
 
     /// `createStream` (§7.2.2, `NetConnection`): allocate a message stream
     /// id, reply `_result` with it.
+    ///
+    /// # Errors
+    /// [`RtmpError::UnexpectedState`] unless `state == State::Connected` —
+    /// this rejects `createStream` before a successful `connect`, and also
+    /// after [`State::Closed`] (post-`deleteStream`/`FCUnpublish`).
     fn handle_create_stream(
         &mut self,
         command: &Command,
         msg: &Message,
         out: &mut Vec<u8>,
     ) -> Result<()> {
-        if self.app.is_none() {
+        if self.state != State::Connected {
             return Err(RtmpError::UnexpectedState {
-                what: "createStream received before a successful connect",
+                what: "createStream received before a successful connect (or after the session was closed)",
             });
         }
 
         let stream_id = self.next_stream_id;
         self.next_stream_id += 1;
+        self.created_stream_id = Some(stream_id);
 
         let result = Command {
             name: "_result".to_string(),
@@ -504,6 +545,13 @@ impl ServerSession {
     /// `publish` (§7.2.2.6, `NetStream`): capture the stream key, enforce
     /// `expected_stream_key` if configured, reply StreamBegin + `onStatus`,
     /// transition to [`State::Publishing`], emit [`ServerEvent::Publish`].
+    ///
+    /// # Errors
+    /// [`RtmpError::UnexpectedState`] unless `state == State::Connected`
+    /// *and* a stream was actually allocated by a preceding `createStream`
+    /// (`created_stream_id.is_some()`) — this rejects `publish` before
+    /// `connect`, `publish` before `createStream`, and `publish` after
+    /// [`State::Closed`].
     fn handle_publish(
         &mut self,
         command: &Command,
@@ -511,11 +559,15 @@ impl ServerSession {
         out: &mut Vec<u8>,
         events: &mut Vec<ServerEvent>,
     ) -> Result<()> {
-        let Some(app) = self.app.clone() else {
+        if self.state != State::Connected || self.created_stream_id.is_none() {
             return Err(RtmpError::UnexpectedState {
-                what: "publish received before a successful connect",
+                what: "publish received before a successful connect+createStream (or after the session was closed)",
             });
-        };
+        }
+        let app = self
+            .app
+            .clone()
+            .expect("state == Connected implies app was captured by connect");
 
         let stream_key = match command.arguments.get(1) {
             Some(Amf0Value::String(s)) => s.clone(),
@@ -645,8 +697,7 @@ impl ServerSession {
 /// Build the 13-byte FLV file header: 9-byte header (Annex E.2) + the first
 /// `PreviousTagSize0` (always `0`).
 fn flv_file_header() -> Vec<u8> {
-    let mut v =
-        Vec::with_capacity(usize::try_from(FLV_HEADER_SIZE).unwrap() + FLV_PREV_TAG_SIZE_LEN);
+    let mut v = Vec::with_capacity(FLV_HEADER_SIZE as usize + FLV_PREV_TAG_SIZE_LEN);
     v.extend_from_slice(&FLV_SIGNATURE);
     v.push(FLV_VERSION);
     v.push(FLV_TYPE_FLAGS_AUDIO_VIDEO);
@@ -690,6 +741,7 @@ mod tests {
     use super::*;
     use crate::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
     use crate::message::CONTROL_CHUNK_STREAM_ID as CTRL_CSID;
+    use broadcast_common::Serialize;
 
     // ── Test-only wire builders (this crate's own encoders) ─────────────
 
@@ -736,6 +788,11 @@ mod tests {
             ),
         ])];
         let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
+        ChunkWriter::new().write(&msg)
+    }
+
+    fn connect_bytes_no_args() -> Vec<u8> {
+        let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, vec![]);
         ChunkWriter::new().write(&msg)
     }
 
@@ -871,6 +928,31 @@ mod tests {
         let (_out3, _) = session.handle_data(&build_c2()).unwrap();
     }
 
+    #[test]
+    fn c2_pipelined_with_connect_chunk_in_one_call_still_parses_connect() {
+        // Real clients commonly send C2 back-to-back with the very next
+        // chunk-encoded message (e.g. `connect`) in the same TCP segment,
+        // so both arrive together in a single `handle_data` call. The
+        // post-handshake leftover bytes from that call must be handed to
+        // the chunk assembler within the SAME call, not merely buffered
+        // for a subsequent one.
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+
+        let mut pipelined = build_c2();
+        pipelined.extend_from_slice(&connect_bytes("live"));
+
+        let (_out, events) = session.handle_data(&pipelined).unwrap();
+        assert_eq!(
+            events,
+            vec![ServerEvent::Connected {
+                app: "live".to_string()
+            }],
+            "C2 pipelined with the connect chunk in one handle_data call must \
+             still yield Connected from that call (leftover bytes must not be dropped)"
+        );
+    }
+
     // ── connect ───────────────────────────────────────────────────────────
 
     #[test]
@@ -891,6 +973,20 @@ mod tests {
         assert!(
             commands.iter().any(|c| c.name == "_result"),
             "connect reply must contain a _result command"
+        );
+    }
+
+    #[test]
+    fn connect_without_command_object_is_malformed() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+
+        // No arguments at all: arg0 (the command object) is missing.
+        let err = session.handle_data(&connect_bytes_no_args()).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "connect with no command-object argument must error, not default app to \"\""
         );
     }
 
@@ -972,6 +1068,48 @@ mod tests {
             .handle_data(&publish_bytes(1, "testkey"))
             .unwrap_err();
         assert!(matches!(err, RtmpError::UnexpectedState { .. }));
+    }
+
+    #[test]
+    fn publish_without_create_stream_is_unexpected_state() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+
+        // createStream never called: publish must not succeed on app-only.
+        let err = session
+            .handle_data(&publish_bytes(1, "testkey"))
+            .unwrap_err();
+        assert!(matches!(err, RtmpError::UnexpectedState { .. }));
+    }
+
+    #[test]
+    fn create_stream_after_closed_is_unexpected_state() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+        session.handle_data(&create_stream_bytes()).unwrap();
+        session.handle_data(&publish_bytes(1, "testkey")).unwrap();
+
+        let delete_stream = command_message(
+            CLIENT_CSID,
+            1,
+            "deleteStream",
+            4.0,
+            vec![Amf0Value::Null, Amf0Value::Number(1.0)],
+        );
+        let (_out, events) = session
+            .handle_data(&ChunkWriter::new().write(&delete_stream))
+            .unwrap();
+        assert_eq!(events, vec![ServerEvent::Eof]);
+
+        let err = session.handle_data(&create_stream_bytes()).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::UnexpectedState { .. }),
+            "createStream after State::Closed must be rejected, not silently re-allowed"
+        );
     }
 
     // ── Audio/Video → Media / FLV ─────────────────────────────────────────
@@ -1084,6 +1222,43 @@ mod tests {
         assert_eq!(
             flv_stream.len(),
             13 + tag1_total + FLV_TAG_HEADER_LEN + 8 + FLV_PREV_TAG_SIZE_LEN
+        );
+    }
+
+    #[test]
+    fn data_amf0_onmetadata_emits_media_with_script_tag_type() {
+        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+
+        // A representative onMetadata Data-AMF0 payload: handler-name
+        // string followed by a properties object (§7.1's Data Message
+        // shape), same as e.g. width/height/framerate metadata a real
+        // encoder sends.
+        let mut payload = Amf0Value::String("onMetaData".to_string()).to_bytes();
+        payload.extend(
+            Amf0Value::Object(vec![
+                ("width".to_string(), Amf0Value::Number(1920.0)),
+                ("height".to_string(), Amf0Value::Number(1080.0)),
+            ])
+            .to_bytes(),
+        );
+
+        let (_out, events) = session
+            .handle_data(&av_bytes(1, msg_type::DATA_AMF0, 4, 0, payload))
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        let ServerEvent::Media { flv } = &events[0] else {
+            panic!("expected Media event");
+        };
+        assert!(
+            flv.starts_with(b"FLV"),
+            "the first Media event must carry the FLV file header"
+        );
+        let tag_type = flv[FLV_HEADER_SIZE as usize + FLV_PREV_TAG_SIZE_LEN];
+        assert_eq!(
+            tag_type,
+            msg_type::DATA_AMF0,
+            "Data-AMF0 message must produce a script(18) FLV tag"
         );
     }
 
