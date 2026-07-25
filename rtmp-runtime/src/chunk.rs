@@ -686,9 +686,11 @@ impl ChunkAssembler {
     }
 
     /// Update the chunk size in effect for subsequent chunks (called on
-    /// receipt of a Set Chunk Size protocol control message, §5.4.1).
+    /// receipt of a Set Chunk Size protocol control message, §5.4.1). Floored
+    /// at 1 (a chunk size of 0 would never make progress splitting payload),
+    /// matching [`ChunkWriter::set_chunk_size`]'s floor.
     pub fn set_chunk_size(&mut self, n: u32) {
-        self.chunk_size = n;
+        self.chunk_size = n.max(1);
     }
 
     /// Feed inbound bytes; returns each complete [`Message`] decoded from
@@ -809,6 +811,13 @@ impl ChunkAssembler {
                     true,
                 )
             }
+            // TODO(#738 follow-up): a Type 1/2 header arriving while a
+            // message is already `in_progress` on this csid (a header
+            // interleaved mid-message, rather than at a message boundary)
+            // is not detected here — it silently resets `payload`/state and
+            // drops the in-flight bytes rather than erroring. Real streams
+            // shouldn't do this, but a malformed/desynced one could; needs
+            // its own test + design before implementing.
             (
                 Fmt::Type1,
                 MessageHeader::Type1 {
@@ -1961,5 +1970,124 @@ mod tests {
     fn writer_default_chunk_size_matches_assembler_default() {
         assert_eq!(ChunkWriter::new().chunk_size, DEFAULT_CHUNK_SIZE);
         assert_eq!(ChunkAssembler::new().chunk_size, DEFAULT_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn assembler_type3_immediately_after_type0_uses_type0_timestamp_as_implied_delta() {
+        // §3.1.2: a Type 3 chunk that starts a NEW message immediately after
+        // a Type 0 (nothing intervening) has an implied `timestamp_delta`
+        // equal to that Type 0's own absolute timestamp — NOT 0. Every other
+        // existing test intervenes a Type 1/2 before the fmt3, so this is
+        // the only test that reaches this resolution path directly (bites a
+        // mutation of `timestamp_delta: timestamp` -> `timestamp_delta: 0`
+        // in the Type 0 arm).
+        let mut assembler = ChunkAssembler::new();
+        let csid = 40;
+
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 1000,
+                message_length: 5,
+                message_type_id: 8,
+                message_stream_id: 2,
+            },
+        );
+        input.extend_from_slice(&[1, 2, 3, 4, 5]);
+
+        // Immediately (same csid, nothing between) a fmt3 chunk starting a
+        // new message, inheriting message_length 5 from the Type 0 above.
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: csid,
+            },
+        );
+        input.extend_from_slice(&[9, 9, 9, 9, 9]);
+
+        let out = assembler.push(&input).unwrap();
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].timestamp, 1000);
+        assert_eq!(
+            out[1].timestamp, 2000,
+            "fmt3 immediately after fmt0 implies delta == the fmt0's own timestamp (1000), not 0: 1000 + 1000"
+        );
+    }
+
+    #[test]
+    fn assembler_type2_on_unseen_csid_is_malformed() {
+        let mut assembler = ChunkAssembler::new();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type2,
+                chunk_stream_id: 22,
+            },
+        );
+        write_serialized(&mut input, &MessageHeader::Type2 { timestamp_delta: 5 });
+        assert!(matches!(
+            assembler.push(&input),
+            Err(RtmpError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn assembler_set_chunk_size_zero_is_floored_to_one() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(0);
+        assert_eq!(assembler.chunk_size, 1, "floored at 1, not stuck at 0");
+
+        // A message chunked consistently with the floored size (1 payload
+        // byte per physical chunk) still assembles correctly — the floor
+        // makes progress possible rather than wedging on every push.
+        let csid = 41;
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 1,
+                message_length: 3,
+                message_type_id: 8,
+                message_stream_id: 0,
+            },
+        );
+        input.push(0xAA);
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: csid,
+            },
+        );
+        input.push(0xBB);
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type3,
+                chunk_stream_id: csid,
+            },
+        );
+        input.push(0xCC);
+
+        let out = assembler.push(&input).unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].payload, vec![0xAA, 0xBB, 0xCC]);
     }
 }
