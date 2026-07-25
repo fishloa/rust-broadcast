@@ -55,22 +55,33 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 // ---------------------------------------------------------------------------
 
 /// FLV signature `"FLV"` (§E.2).
-const FLV_SIGNATURE: [u8; 3] = *b"FLV";
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) to
+/// validate the header incrementally without duplicating this constant.
+pub(crate) const FLV_SIGNATURE: [u8; 3] = *b"FLV";
 /// FLV file-format version this crate emits (§E.2).
 const FLV_VERSION: u8 = 1;
 /// FLV header length in bytes (§E.2): signature(3) + version(1) + flags(1) + data_offset(4).
-const FLV_HEADER_LEN: usize = 9;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const FLV_HEADER_LEN: usize = 9;
 /// `TypeFlags` bit 0 — audio tags present (§E.2).
 const TYPE_FLAG_AUDIO: u8 = 0x04;
 /// `TypeFlags` bit 2 — video tags present (§E.2).
 const TYPE_FLAG_VIDEO: u8 = 0x01;
 /// Size of a tag header before its body (§E.4.1): type(1)+size(3)+ts(3)+tsext(1)+stream(3).
-const TAG_HEADER_LEN: usize = 11;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const TAG_HEADER_LEN: usize = 11;
 /// Size of the `PreviousTagSize` trailer after every tag (§E.4.1).
-const PREV_TAG_SIZE_LEN: usize = 4;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const PREV_TAG_SIZE_LEN: usize = 4;
 
 /// `TagType` values (§E.4.1).
-mod tag_type {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) mod tag_type {
     /// Audio tag (`AudioTagHeader` + AACAUDIODATA).
     pub const AUDIO: u8 = 8;
     /// Video tag (`VideoTagHeader` + AVCVIDEOPACKET).
@@ -80,14 +91,20 @@ mod tag_type {
 }
 
 /// `CodecID` for AVC/H.264 in a `VideoTagHeader` (§E.4.3).
-const CODEC_ID_AVC: u8 = 7;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const CODEC_ID_AVC: u8 = 7;
 /// `FrameType` for a keyframe / seekable frame (§E.4.3).
-const FRAME_TYPE_KEYFRAME: u8 = 1;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const FRAME_TYPE_KEYFRAME: u8 = 1;
 /// `FrameType` for an inter frame (non-seekable) (§E.4.3).
 const FRAME_TYPE_INTER: u8 = 2;
 
 /// `AVCPacketType` values (§E.4.3.2).
-mod avc_packet_type {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) mod avc_packet_type {
     /// AVC sequence header — the `AVCDecoderConfigurationRecord` (`avcC`).
     pub const SEQUENCE_HEADER: u8 = 0;
     /// One or more length-prefixed NAL units.
@@ -97,7 +114,9 @@ mod avc_packet_type {
 }
 
 /// `SoundFormat` for AAC in an `AudioTagHeader` (§E.4.2).
-const SOUND_FORMAT_AAC: u8 = 10;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const SOUND_FORMAT_AAC: u8 = 10;
 /// `SoundRate` code 3 = 44 kHz — always used for AAC (real rate is in the ASC) (§E.4.2).
 const SOUND_RATE_44K: u8 = 3;
 /// `SoundSize` code 1 = 16-bit samples (§E.4.2).
@@ -108,7 +127,9 @@ const SOUND_TYPE_STEREO: u8 = 1;
 const SOUND_TYPE_MONO: u8 = 0;
 
 /// `AACPacketType` values (§E.4.2.2).
-mod aac_packet_type {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) mod aac_packet_type {
     /// AAC sequence header — the `AudioSpecificConfig`.
     pub const SEQUENCE_HEADER: u8 = 0;
     /// One raw AAC access unit.
@@ -117,7 +138,9 @@ mod aac_packet_type {
 
 /// The IR timescale FLV uses: milliseconds (FLV tag timestamps are in ms, §E.4.1),
 /// so sample durations / composition offsets round-trip losslessly.
-const FLV_TIMESCALE: u32 = 1000;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const FLV_TIMESCALE: u32 = 1000;
 
 // `esds` construction constants (mirroring `ts_demux`).
 /// MPEG-4 Audio object type indication for AAC (ISO/IEC 14496-1 §7.2.6.6 Table 5).
@@ -129,7 +152,9 @@ const ESDS_AUDIO_ES_ID: u16 = 1;
 /// `SLConfigDescriptor.predefined = 2` (MP4 default; ISO/IEC 14496-1 §7.3.2.3).
 const SL_CONFIG_PREDEFINED_MP4: u8 = 0x02;
 /// Audio sample size in bits carried in the sample entry (typically 16).
-const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -472,7 +497,10 @@ impl<'a> Unpackage for FlvDemux<'a> {
 }
 
 /// Read a signed 24-bit big-endian integer (FLV `CompositionTime`, §E.4.3.2).
-fn read_si24(b: &[u8]) -> i32 {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) so
+/// the two demuxers agree byte-for-byte on `CompositionTime` decoding.
+pub(crate) fn read_si24(b: &[u8]) -> i32 {
     let raw = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | (b[2] as u32);
     // Sign-extend from 24 bits.
     if raw & 0x0080_0000 != 0 {
@@ -514,7 +542,9 @@ fn backfill_last_duration(samples: &mut [Sample]) {
 
 /// Build an AAC `esds` from a raw `AudioSpecificConfig` byte slice (mirrors the
 /// `ts_demux` AAC path).
-fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
     EsdsBox::new(ESDescriptor {
         es_id: ESDS_AUDIO_ES_ID,
         stream_dependence_flag: false,
@@ -541,7 +571,9 @@ fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
 
 /// Sampling rate in Hz from a parsed ASC: the explicit escape rate if present,
 /// else the `samplingFrequencyIndex` table (ISO/IEC 14496-3 §1.6.3.4 Table 1.10).
-fn asc_rate_hz(asc: &AudioSpecificConfig) -> u32 {
+///
+/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
+pub(crate) fn asc_rate_hz(asc: &AudioSpecificConfig) -> u32 {
     if let Some(f) = asc.sampling_frequency {
         return f;
     }

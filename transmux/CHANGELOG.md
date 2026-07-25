@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `StreamingFlvDemux` (issue #738): incremental (event-driven) FLV → samples
+  demux for live RTMP ingest, the FLV analogue of `StreamingTsDemux`. Feed
+  bytes of any size/alignment via `feed` (down to one byte at a time), get
+  back `DemuxEvent`s (`TrackAdded`/`Sample`); `finish` flushes each track's
+  trailing pending sample. Reuses `FlvDemux`'s tag-header and codec-config
+  (AVC/AAC) parsing verbatim rather than duplicating it. Memory-bounded
+  regardless of stream length: the internal buffer never holds more than one
+  in-progress tag, plus one pending sample per track.
+
 ## [0.18.1] - 2026-07-21
 
 ### Added
