@@ -728,6 +728,20 @@ pub async fn serve_with_registry(
                     shutdown_rx,
                 ))
             }
+            crate::config::InputSpec::DashPull { url, auth } => {
+                let connector =
+                    crate::source::dash_pull::DashPullSource::new(name.clone(), url.clone())
+                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
             crate::config::InputSpec::Rtmp {
                 listen,
                 app,

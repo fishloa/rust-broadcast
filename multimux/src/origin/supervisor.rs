@@ -95,6 +95,14 @@ impl SourceConnector for crate::source::hls_pull::HlsPullSource {
     }
 }
 
+impl SourceConnector for crate::source::dash_pull::DashPullSource {
+    type Source = crate::source::dash_pull::DashPullSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::dash_pull::DashPullSource::connect(self).await
+    }
+}
+
 impl SourceConnector for crate::source::rtmp::RtmpSource {
     type Source = crate::source::rtmp::RtmpSession;
 

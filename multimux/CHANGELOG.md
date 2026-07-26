@@ -3,6 +3,19 @@
 ## [Unreleased]
 
 ### Added
+- **DASH-pull ingest input `InputSpec::DashPull`** (issue #758, via
+  `transmux`'s hand-rolled MPD parser, `transmux::dash_parse`): a route can
+  now pull a remote MPEG-DASH presentation — fetch + parse the MPD, resolve
+  each selected Representation's `SegmentTemplate`/`SegmentTimeline`
+  init+media segment URLs, and demux the fetched fMP4/CMAF bytes via
+  `transmux::Fmp4Demux` (each media segment concatenated onto its
+  Representation's cached init bytes, matching `ll-hls-runtime`'s own
+  CMAF-part demux pattern), remapping each Representation's local track_id
+  to a session-wide unique id. Supports `$Number$`/`$Time$` addressing, fMP4,
+  and both static and dynamic (live, MPD-refresh) presentations;
+  `SegmentList`/`SegmentBase` addressing is deferred. Every network step is
+  bounded by `IngestTimeouts`, so a stalled/unreachable DASH origin cannot
+  wedge the route.
 - **SRT ingest input `InputSpec::Srt`** (issue #739, via `srt-runtime`'s
   real-socket `SrtListener`/`SrtSocket` adapter): a route can now ingest an
   SRT-carried MPEG-2 Transport Stream in either listener mode (binds once
