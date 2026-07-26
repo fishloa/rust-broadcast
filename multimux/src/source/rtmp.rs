@@ -14,17 +14,36 @@
 //!
 //! FLV carries no PMT-style "this many tracks are coming" declaration (see
 //! [`transmux::flv_stream`]'s module doc, "No `TracksResolved`"), so
-//! [`RtmpSource::connect`] instead waits for the first
-//! [`rtmp_runtime::server::ServerEvent::Media`] batch that resolves *any*
-//! track, then returns — exactly mirroring [`crate::source::ts_http`]'s
-//! per-chunk PMT wait, just without a `TracksResolved` flag to check.
-//! [`RtmpSession::next_samples`] ignores samples for any track that
-//! resolves later (an audio sequence header arriving in a subsequent
-//! read), same "unrouted track -> ignored" policy as
-//! [`crate::source::ts_http::TsHttpSession::next_samples`] applies to a
-//! post-connect PMT version bump.
+//! [`RtmpSource::connect`] instead leans on that module's own documented
+//! **ordering assumption** (Annex E: a track's AVC/AAC sequence-header tag
+//! always precedes that track's media tags — true of every conformant
+//! encoder) and waits for the first [`transmux::DemuxEvent::Sample`], not
+//! just the first [`transmux::DemuxEvent::TrackAdded`]: every codec config
+//! (video *and* audio) is therefore guaranteed to have already resolved by
+//! the time any media sample exists, so `connect()` never returns a
+//! partial (e.g. video-only) track set even when the two sequence headers
+//! land in separate [`rtmp_runtime::io::RtmpConnection::next_events`] reads
+//! (#738 T11b review, Important). That first `Sample` (and any others
+//! drained in the same batch) is buffered into the returned [`RtmpSession`]
+//! rather than discarded, so [`RtmpSession::next_samples`] returns it
+//! first, before reading more — no media dropped. Only a *genuinely*
+//! later-appearing track (one whose sequence header arrives after the
+//! first media sample — non-conformant, but defended against anyway) is
+//! ignored post-connect, mirroring
+//! [`crate::source::ts_http::TsHttpSession::next_samples`]'s "unrouted
+//! track -> ignored" policy for a post-connect PMT version bump.
+//!
+//! Both `connect()`'s track-resolution wait and `next_samples()`'s live
+//! reads are bounded by an [`IngestTimeouts`] (`with_timeouts`, mirroring
+//! every other source in this module): a
+//! publisher that completes the handshake and then goes idle, or one that
+//! connects and never sends `publish`, would otherwise hang `connect()` or
+//! `next_samples()` forever — and because `supervise()` awaits `connect()`
+//! sequentially against the bind-once, reused-forever listener (see above),
+//! that would wedge the *entire* route, never accepting another publisher
+//! (#738 T11b review, Critical).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use rtmp_runtime::io::{AsyncRtmpServer, RtmpConnection};
@@ -34,7 +53,7 @@ use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingFlvDemux};
 
 use crate::error::{MultimuxError, Result};
-use crate::source::Source;
+use crate::source::{IngestTimeouts, Source};
 
 /// An RTMP push-ingest listener: binds `listen` once and accepts publishers
 /// against it, gated by an optional `app`/`stream_key` (see
@@ -44,6 +63,7 @@ pub struct RtmpSource {
     listen: String,
     app: Option<String>,
     stream_key: Option<String>,
+    timeouts: IngestTimeouts,
     /// Bind-once, reuse-forever: see the module doc.
     server: OnceCell<Arc<AsyncRtmpServer>>,
 }
@@ -72,8 +92,19 @@ impl RtmpSource {
             listen: listen.into(),
             app: None,
             stream_key: None,
+            timeouts: IngestTimeouts::default(),
             server: OnceCell::new(),
         }
+    }
+
+    /// Overrides the default [`IngestTimeouts`] — see
+    /// `TsHttpSource::with_timeouts` for the pattern this mirrors: `connect`
+    /// bounds the whole track-resolution wait, `read` bounds each
+    /// `next_samples` read.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: IngestTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Requires the publisher's `connect` `app` name to match exactly, if
@@ -99,16 +130,21 @@ impl RtmpSource {
 
     /// Binds the listen socket on first call (reused on every subsequent
     /// call/reconnect — see the module doc), accepts the next publisher,
-    /// and drives it until the first batch of
-    /// [`ServerEvent::Media`] resolves at least one track, returning a
-    /// [`RtmpSession`] built from the resolved [`TrackSpec`]s.
+    /// and drives it until the first [`DemuxEvent::Sample`] arrives,
+    /// returning a [`RtmpSession`] built from every [`TrackSpec`] resolved
+    /// by then (see the module doc's ordering-assumption note: every
+    /// conformant sequence header precedes any media, so both tracks are
+    /// guaranteed known by the time a sample exists, however many separate
+    /// reads their sequence headers land across).
     ///
-    /// A `Sample` event surfacing before every track in that first batch
-    /// has resolved is discarded, not buffered — mirrors
-    /// [`crate::source::ts_http::TsHttpSource::connect`]'s PMT wait loop,
-    /// which applies the same discipline for the same reason (nothing
-    /// downstream can consume a sample for a track whose `TrackSpec` isn't
-    /// known yet).
+    /// The whole wait (accept already happened; this bounds only the
+    /// handshake/track-resolution reads that follow) is bounded by
+    /// [`IngestTimeouts::connect`]; on expiry the accepted connection is
+    /// dropped (closing that publisher's socket so the listen port is free
+    /// for the next `accept()`) and an `Err` is returned, so
+    /// [`crate::origin::supervisor::supervise`] backs off and calls
+    /// `connect()` again rather than wedging the whole route on a
+    /// stalled/never-publishing client (#738 T11b review, Critical).
     pub async fn connect(&self) -> Result<RtmpSession> {
         let server = self
             .server
@@ -132,50 +168,77 @@ impl RtmpSource {
 
         let mut demux = StreamingFlvDemux::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
+        let mut pending_samples: VecDeque<(u32, Sample)> = VecDeque::new();
 
-        loop {
-            let Some(events) = conn
-                .next_events()
-                .await
-                .map_err(|e| MultimuxError::Connect {
-                    reason: format!("rtmp: {e}"),
-                })?
-            else {
-                return Err(MultimuxError::Connect {
-                    reason: "rtmp: connection ended before any track resolved".into(),
-                });
-            };
+        let wait_for_first_sample = async {
+            loop {
+                let Some(events) =
+                    conn.next_events()
+                        .await
+                        .map_err(|e| MultimuxError::Connect {
+                            reason: format!("rtmp: {e}"),
+                        })?
+                else {
+                    return Err(MultimuxError::Connect {
+                        reason: "rtmp: connection ended before any media sample arrived".into(),
+                    });
+                };
 
-            for event in events {
-                match event {
-                    ServerEvent::Connected { app } => {
-                        if let Some(expected) = &self.app {
-                            if &app != expected {
-                                return Err(MultimuxError::Connect {
-                                    reason: format!(
-                                        "rtmp: app {app:?} does not match configured app {expected:?}"
-                                    ),
-                                });
+                for event in events {
+                    match event {
+                        ServerEvent::Connected { app } => {
+                            if let Some(expected) = &self.app {
+                                if &app != expected {
+                                    return Err(MultimuxError::Connect {
+                                        reason: format!(
+                                            "rtmp: app {app:?} does not match configured app {expected:?}"
+                                        ),
+                                    });
+                                }
                             }
                         }
+                        ServerEvent::Media { flv } => {
+                            demux.feed(&flv).map_err(|e| MultimuxError::Depay {
+                                reason: format!("rtmp/flv: {e}"),
+                            })?;
+                        }
+                        _ => {}
                     }
-                    ServerEvent::Media { flv } => {
-                        demux.feed(&flv).map_err(|e| MultimuxError::Depay {
-                            reason: format!("rtmp/flv: {e}"),
-                        })?;
+                }
+
+                let mut saw_sample = false;
+                while let Some(ev) = demux.poll_event() {
+                    match ev {
+                        DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
+                        DemuxEvent::Sample { track_id, sample } => {
+                            pending_samples.push_back((track_id, sample));
+                            saw_sample = true;
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                }
+
+                if saw_sample {
+                    return Ok::<(), MultimuxError>(());
                 }
             }
+        };
 
-            while let Some(ev) = demux.poll_event() {
-                if let DemuxEvent::TrackAdded(track) = ev {
-                    specs.push(track.spec.clone());
-                }
+        let connect_timeout = self.timeouts.connect;
+        match tokio::time::timeout(connect_timeout, wait_for_first_sample).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                drop(conn);
+                return Err(e);
             }
-
-            if !specs.is_empty() {
-                break;
+            Err(_) => {
+                drop(conn);
+                return Err(MultimuxError::Connect {
+                    reason: format!(
+                        "rtmp: no media sample within {connect_timeout:?} \
+                         (stalled or never-publishing client)"
+                    ),
+                });
             }
         }
 
@@ -185,6 +248,8 @@ impl RtmpSource {
             demux,
             specs,
             known_track_ids,
+            pending_samples,
+            read_timeout: self.timeouts.read,
         })
     }
 }
@@ -205,6 +270,14 @@ pub struct RtmpSession {
     /// track is dropped rather than surfaced for a track the segmenter was
     /// never built with. See [`RtmpSource::connect`]'s doc.
     known_track_ids: BTreeSet<u32>,
+    /// Sample(s) already drained by [`RtmpSource::connect`]'s wait for the
+    /// first [`DemuxEvent::Sample`] (#738 T11b review, Important) — returned
+    /// by [`Self::next_samples`] before any further socket read, so nothing
+    /// observed during `connect()` is ever silently dropped.
+    pending_samples: VecDeque<(u32, Sample)>,
+    /// Bound on each [`Self::next_samples`] read — see
+    /// [`IngestTimeouts::read`].
+    read_timeout: std::time::Duration,
 }
 
 impl RtmpSession {
@@ -213,9 +286,11 @@ impl RtmpSession {
         self.specs.clone()
     }
 
-    /// Reads the next batch of RTMP events and feeds every
-    /// [`ServerEvent::Media`] tag run to the FLV demux, returning every
-    /// completed sample it yields for a track known at connect time.
+    /// Returns any samples [`RtmpSource::connect`] already buffered, if
+    /// present; otherwise reads the next batch of RTMP events (bounded by
+    /// [`IngestTimeouts::read`]) and feeds every [`ServerEvent::Media`] tag
+    /// run to the FLV demux, returning every completed sample it yields for
+    /// a track known at connect time.
     ///
     /// Returns `Ok(None)` once the connection ends (clean EOF, or the
     /// publisher's `deleteStream`/`FCUnpublish`) *and* [`StreamingFlvDemux::finish`]'s
@@ -223,11 +298,23 @@ impl RtmpSession {
     /// drained — [`crate::origin::supervisor::supervise`] then reconnects
     /// (accepting the next publisher) with backoff, exactly as it does for
     /// any other source's end-of-stream.
+    ///
+    /// A read that produces nothing within [`IngestTimeouts::read`] (a
+    /// publisher that goes idle mid-stream without closing the socket)
+    /// surfaces as an `Err`, reconnected by the supervisor exactly like any
+    /// other read error — instead of hanging forever and wedging the route
+    /// (#738 T11b review, Critical).
     pub async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        let events = self
-            .conn
-            .next_events()
+        if !self.pending_samples.is_empty() {
+            return Ok(Some(self.pending_samples.drain(..).collect()));
+        }
+
+        let read_timeout = self.read_timeout;
+        let events = tokio::time::timeout(read_timeout, self.conn.next_events())
             .await
+            .map_err(|_| MultimuxError::Connect {
+                reason: format!("rtmp: no data within {read_timeout:?}"),
+            })?
             .map_err(|e| MultimuxError::Connect {
                 reason: format!("rtmp: {e}"),
             })?;
@@ -278,10 +365,35 @@ mod tests {
     use super::*;
     use crate::origin::supervisor::{Backoff, supervise};
     use crate::store::MediaStore;
+    use rtmp_runtime::server::ServerSession;
     use std::time::Duration;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::watch;
+    use transmux::pipeline::CodecConfig;
+
+    /// Replays `fixture` byte-by-byte through a fresh sans-IO `ServerSession`
+    /// (mirroring what `RtmpConnection::next_events` does per socket read),
+    /// returning the fixture length at which the *first* `ServerEvent::Eof`
+    /// fires — i.e. the natural end of the recorded publish session (a real
+    /// `deleteStream`/`FCUnpublish`/stream-teardown the capture ends with).
+    /// A prefix strictly shorter than this never reaches that teardown, so a
+    /// test can play back such a prefix and then go silent to model a
+    /// genuine mid-stream stall — as opposed to a legitimate end-of-stream —
+    /// without depending on hand-picked byte offsets into the fixture.
+    /// Falls back to the whole fixture length if it never emits `Eof`.
+    fn fixture_len_before_natural_eof(fixture: &[u8]) -> usize {
+        let mut session = ServerSession::new(ServerConfig::default());
+        for (i, byte) in fixture.iter().enumerate() {
+            let (_, events) = session
+                .handle_data(std::slice::from_ref(byte))
+                .expect("handle_data must not error while replaying a real capture");
+            if events.iter().any(|e| matches!(e, ServerEvent::Eof)) {
+                return i;
+            }
+        }
+        fixture.len()
+    }
 
     /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
     /// H.264+AAC) — copied into this crate for hermeticity, see
@@ -404,11 +516,381 @@ mod tests {
             "RTMP publish must land at least one real part/segment in the store"
         );
 
+        // Strengthened (#738 T11b review, Important): assert BOTH track
+        // kinds resolved into the store, not just "some media landed" —
+        // `store.set_track_specs` is fed straight from
+        // `RtmpSession::track_specs()` at pipeline start
+        // (`multimux::pipeline::run_pipeline`), so this directly proves
+        // `RtmpSource::connect` resolved video *and* audio rather than
+        // returning as soon as the first track's config appeared.
+        let specs = store.track_specs();
+        assert_eq!(
+            specs.len(),
+            2,
+            "expected both video and audio TrackSpecs in the store, got {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Avc { .. })),
+            "expected an AVC (video) track among {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Aac { .. })),
+            "expected an AAC (audio) track among {specs:?}"
+        );
+
         client.await.expect("client task must not panic");
         shutdown_tx.send(true).ok();
         tokio::time::timeout(Duration::from_secs(1), handle)
             .await
             .expect("supervise returns promptly on shutdown")
             .expect("supervise task did not panic");
+    }
+
+    /// Biting test (#738 T11b review, Important — the fix-2 regression
+    /// test): the real fixture is split into TWO writes so that video's and
+    /// audio's sequence headers land in SEPARATE `next_events()` reads (with
+    /// a real delay in between, so the server genuinely drains + processes
+    /// the first write before the second arrives). `connect()` must still
+    /// resolve BOTH tracks, and the audio samples that follow must actually
+    /// reach `next_samples()` — not be silently dropped by the old
+    /// "break as soon as `specs` is non-empty" logic, which returned
+    /// video-only here and then discarded every later audio `Sample` as an
+    /// "unrouted track" in `drain_known_samples`.
+    ///
+    /// The split offset is computed empirically (not hand-picked) by
+    /// replaying the fixture byte-by-byte through the same sans-IO
+    /// `ServerSession` + `StreamingFlvDemux` this source uses internally,
+    /// so this test stays correct even if the fixture is ever swapped for a
+    /// different capture.
+    #[tokio::test]
+    async fn connect_resolves_both_tracks_when_sequence_headers_land_in_separate_reads() {
+        let fixture = load_fixture();
+
+        // Find the fixture byte offset at which the FIRST track's
+        // `DemuxEvent::TrackAdded` fires, and the offset for the SECOND —
+        // by construction (single-byte feed, in cumulative fixture-byte
+        // order) the first offset is always strictly before the second.
+        let (first_track_offset, second_track_offset) = {
+            let mut session = ServerSession::new(ServerConfig::default());
+            let mut demux = StreamingFlvDemux::new();
+            let mut offsets = Vec::new();
+            for (i, byte) in fixture.iter().enumerate() {
+                let (_, events) = session
+                    .handle_data(std::slice::from_ref(byte))
+                    .expect("handle_data must not error while replaying a real capture");
+                for event in events {
+                    if let ServerEvent::Media { flv } = event {
+                        demux
+                            .feed(&flv)
+                            .expect("feed must not error on a real capture");
+                    }
+                }
+                while let Some(ev) = demux.poll_event() {
+                    if matches!(ev, DemuxEvent::TrackAdded(_)) {
+                        offsets.push(i + 1);
+                    }
+                }
+                if offsets.len() >= 2 {
+                    break;
+                }
+            }
+            assert_eq!(
+                offsets.len(),
+                2,
+                "fixture must resolve exactly two tracks (video+audio) for this test to be meaningful"
+            );
+            (offsets[0], offsets[1])
+        };
+        assert!(
+            first_track_offset < second_track_offset,
+            "the two tracks must resolve at distinct fixture offsets"
+        );
+
+        // Split right after the first track resolves and strictly before
+        // the second — chunk 1 can therefore only ever yield the first
+        // track's `TrackAdded`; chunk 2 supplies the second.
+        let split = first_track_offset;
+        let (chunk1, chunk2) = fixture.split_at(split);
+        let chunk1 = chunk1.to_vec();
+        let chunk2 = chunk2.to_vec();
+
+        let reserved = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        let source = RtmpSource::new("cam-rtmp-two-chunk", addr.to_string());
+
+        let client = tokio::spawn(async move {
+            let mut stream = None;
+            for _ in 0..200 {
+                match TcpStream::connect(addr).await {
+                    Ok(s) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+            let mut stream = stream.expect("connect to RtmpSource's listener");
+
+            stream
+                .write_all(&chunk1)
+                .await
+                .expect("write chunk 1 (through the first track's sequence header)");
+            // Real delay (not just a cooperative yield) so the server
+            // genuinely reads + processes chunk 1 as its own `next_events()`
+            // batch before chunk 2 ever reaches the socket. The handshake +
+            // connect/createStream/publish acks are all well under the
+            // kernel socket buffer size, so the server's writes never block
+            // waiting for us to read in the meantime.
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            stream
+                .write_all(&chunk2)
+                .await
+                .expect("write chunk 2 (the second track's sequence header onward)");
+
+            let mut sink = [0u8; 8192];
+            loop {
+                match stream.read(&mut sink).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        });
+
+        let mut session = tokio::time::timeout(Duration::from_secs(10), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect");
+
+        let specs = session.track_specs();
+        assert_eq!(
+            specs.len(),
+            2,
+            "connect() must resolve BOTH tracks even though their sequence headers \
+             landed in separate next_events() reads; got {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Avc { .. })),
+            "expected an AVC (video) track among {specs:?}"
+        );
+        assert!(
+            specs
+                .iter()
+                .any(|s| matches!(s.config, CodecConfig::Aac { .. })),
+            "expected an AAC (audio) track among {specs:?}"
+        );
+
+        // Drain samples and confirm BOTH track ids' samples actually reach
+        // `next_samples()` — not just "some media", proving the buffered
+        // first-Sample(s) from `connect()` and every read after are routed,
+        // including audio (the track that used to be silently dropped).
+        let video_id = specs
+            .iter()
+            .find(|s| matches!(s.config, CodecConfig::Avc { .. }))
+            .unwrap()
+            .track_id;
+        let audio_id = specs
+            .iter()
+            .find(|s| matches!(s.config, CodecConfig::Aac { .. }))
+            .unwrap()
+            .track_id;
+
+        let mut video_samples = 0usize;
+        let mut audio_samples = 0usize;
+        while let Ok(Ok(Some(batch))) =
+            tokio::time::timeout(Duration::from_millis(500), session.next_samples()).await
+        {
+            for (track_id, _sample) in batch {
+                if track_id == video_id {
+                    video_samples += 1;
+                } else if track_id == audio_id {
+                    audio_samples += 1;
+                }
+            }
+        }
+        assert!(video_samples > 0, "expected at least one video sample");
+        assert!(
+            audio_samples > 0,
+            "expected at least one audio sample — this is exactly what the old \
+             first-track-break logic dropped when audio's sequence header landed \
+             in a later read than video's"
+        );
+
+        // Close the server-side socket so the client's reply-drain loop
+        // observes EOF and actually finishes — the fixture's own natural
+        // teardown may never be reached (the drain loop above only reads
+        // until it stalls for 500ms, not necessarily to end of stream), so
+        // without an explicit close here the client would otherwise block
+        // forever waiting for a FIN nobody sends.
+        drop(session);
+        client.await.expect("client task must not panic");
+    }
+
+    /// Biting test (#738 T11b review, Critical — fix-1b): a client that
+    /// completes the TCP connect but never sends any RTMP bytes (no C0/C1
+    /// handshake, never mind `publish`) must fail `connect()` within
+    /// `IngestTimeouts::connect`, not hang forever — the exact
+    /// "connects and never publishes" wedge the review flagged (with the
+    /// bind-once `AsyncRtmpServer`, a hung `connect()` would otherwise never
+    /// let `supervise()` `accept()` the next publisher).
+    #[tokio::test]
+    async fn connect_times_out_when_client_never_sends_anything() {
+        let reserved = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        let source =
+            RtmpSource::new("cam-rtmp-silent", addr.to_string()).with_timeouts(IngestTimeouts {
+                connect: Duration::from_millis(200),
+                read: Duration::from_secs(30),
+            });
+
+        let client = tokio::spawn(async move {
+            let mut stream = None;
+            for _ in 0..200 {
+                match TcpStream::connect(addr).await {
+                    Ok(s) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+            // Hold the connection open but never write a byte — never sends
+            // the RTMP handshake, let alone `publish`.
+            let stream = stream.expect("connect to RtmpSource's listener");
+            std::future::pending::<()>().await;
+            drop(stream); // unreachable; keeps `stream` alive for the compiler
+        });
+
+        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect(
+                "connect() must return on its own via IngestTimeouts::connect, \
+                 not hang until this test's own backstop timeout",
+            );
+        assert!(
+            result.is_err(),
+            "a client that connects and never sends anything must fail connect(), not hang forever"
+        );
+
+        client.abort();
+    }
+
+    /// Biting test (#738 T11b review, Critical — fix-1a): a publisher that
+    /// completes the whole handshake/publish/track-resolution dance and then
+    /// goes idle (holds the socket open, sends nothing further) must fail
+    /// `next_samples()` within `IngestTimeouts::read`, not hang forever —
+    /// otherwise `supervise()` never sees an `Err`, never reconnects, and the
+    /// route is wedged even though the publisher is gone in every sense that
+    /// matters.
+    #[tokio::test]
+    async fn read_times_out_when_publisher_goes_idle_after_publish() {
+        let reserved = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        let source =
+            RtmpSource::new("cam-rtmp-stall", addr.to_string()).with_timeouts(IngestTimeouts {
+                connect: Duration::from_secs(10),
+                read: Duration::from_millis(100),
+            });
+
+        let fixture = load_fixture();
+        // Send only a prefix that never reaches the fixture's own natural
+        // session teardown (`ServerEvent::Eof`) — a real capture ends with
+        // one, and sending the whole thing would make the connection end
+        // legitimately rather than modelling a mid-stream stall (a genuine
+        // "goes idle without closing" client never gets to send its own
+        // teardown either). Computed empirically so this stays correct if
+        // the fixture is ever swapped for a different capture.
+        let prefix_len = fixture_len_before_natural_eof(&fixture);
+        assert!(
+            prefix_len > 1000,
+            "expected substantial media before the fixture's natural end, got {prefix_len} bytes"
+        );
+        let prefix = fixture[..prefix_len].to_vec();
+
+        let client = tokio::spawn(async move {
+            let mut stream = None;
+            for _ in 0..200 {
+                match TcpStream::connect(addr).await {
+                    Ok(s) => {
+                        stream = Some(s);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+            let mut stream = stream.expect("connect to RtmpSource's listener");
+            stream
+                .write_all(&prefix)
+                .await
+                .expect("write the fixture prefix (stops short of its natural teardown)");
+            // Drain replies for a bounded window (long enough to observe the
+            // handshake/publish acks) but then go idle *without closing the
+            // socket* — the "publisher stopped sending but connection stays
+            // open" stall this test targets.
+            let mut sink = [0u8; 8192];
+            let _ = tokio::time::timeout(Duration::from_millis(300), async {
+                loop {
+                    match stream.read(&mut sink).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                }
+            })
+            .await;
+            std::future::pending::<()>().await;
+            drop(stream); // unreachable; keeps the socket open for the test
+        });
+
+        let mut session = tokio::time::timeout(Duration::from_secs(10), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect resolves the real fixture's tracks");
+        assert_eq!(session.track_specs().len(), 2, "video+audio resolved");
+
+        // Drain whatever the fixture already delivered (buffered-at-connect
+        // samples, plus anything already sitting in the OS socket buffer);
+        // once genuinely exhausted, the read timeout must fire rather than
+        // hanging past this test's own backstop.
+        let mut saw_timeout_err = false;
+        for _ in 0..2000 {
+            match tokio::time::timeout(Duration::from_secs(2), session.next_samples()).await {
+                Ok(Ok(Some(_batch))) => continue,
+                Ok(Ok(None)) => panic!(
+                    "connection must not report clean EOF while the socket is held open idle"
+                ),
+                Ok(Err(_)) => {
+                    saw_timeout_err = true;
+                    break;
+                }
+                Err(_) => panic!(
+                    "next_samples() must return on its own via IngestTimeouts::read, \
+                     not hang until this test's own backstop timeout"
+                ),
+            }
+        }
+        assert!(
+            saw_timeout_err,
+            "a publisher that goes idle after publish must fail next_samples() via \
+             IngestTimeouts::read, not hang forever"
+        );
+
+        client.abort();
     }
 }
