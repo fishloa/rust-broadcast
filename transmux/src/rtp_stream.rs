@@ -18,13 +18,16 @@
 //!   AU's timestamp is known (one-AU emission latency). `flush`
 //!   emits the final pending AU using the last-computed duration (there is
 //!   no "next" AU to measure against).
-//! - The 32-bit wire RTP timestamp is unwrapped to a monotonic `u64`.
+//! - The 32-bit wire RTP timestamp is unwrapped to a monotonic `u64` **once,
+//!   here at the demux edge** (RFC 3550 §5.1), and carried into each sample's
+//!   **absolute** `dts`/`pts` (media plane step 2c) — nothing downstream
+//!   re-derives it.
 //! - `is_sync` comes straight from the reassembled access unit
 //!   (IDR detection for video; always `true` for audio).
-//! - `composition_offset` is always `0` — **v1 assumes low-delay H.264 with no
-//!   B-frame reorder**: RTP carries only a presentation timestamp on the
-//!   wire, so reconstructing a separate DTS (and therefore a non-zero
-//!   composition offset) when B-frames are present is future work.
+//! - `dts == pts`, i.e. a zero composition offset — **v1 assumes low-delay
+//!   H.264 with no B-frame reorder**: RTP carries only a presentation
+//!   timestamp on the wire, so reconstructing a separate DTS (and therefore a
+//!   non-zero composition offset) when B-frames are present is future work.
 //! - Each track independently rebases its first unwrapped timestamp to
 //!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
 //!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
@@ -199,6 +202,15 @@ fn unwrap_ts(prev: Option<u64>, ts: u32) -> u64 {
     } else {
         prev.saturating_sub(u64::from(delta.unsigned_abs()))
     }
+}
+
+/// Narrow an unwrapped RTP media-clock value into the `i64` range
+/// [`Sample::dts`]/[`Sample::pts`] carry (media plane step 2c). The unwrapped
+/// clock is a `u64` accumulating whole `2^32` windows, so this only clamps at
+/// values no real stream reaches (`i64::MAX` ticks is ~3 million years at
+/// 90 kHz) — it makes the narrowing checked rather than a silent truncation.
+fn to_ticks(uw: u64) -> i64 {
+    uw.min(i64::MAX as u64) as i64
 }
 
 impl RtpStreamDepacketiser {
@@ -379,7 +391,18 @@ impl RtpStreamDepacketiser {
             st.cur_ts = None;
         }
         if let Some(p) = st.pending.take() {
-            out.push(Sample::new(p.data, st.last_duration, p.is_sync, 0));
+            // Absolute dts/pts (media plane step 2c): `unwrapped_ts` is the
+            // already-32-bit-unwrapped RTP media clock this depacketiser
+            // maintains (see `unwrap_ts`) — carried into the sample instead of
+            // being discarded.
+            let ts = to_ticks(p.unwrapped_ts);
+            out.push(Sample::new(
+                p.data,
+                Some(ts),
+                Some(ts),
+                Some(st.last_duration),
+                p.is_sync,
+            ));
         }
         Ok(out)
     }
@@ -404,7 +427,14 @@ impl RtpStreamDepacketiser {
                 let delta = unwrapped.saturating_sub(prev.unwrapped_ts);
                 let duration = u32::try_from(delta).unwrap_or(u32::MAX);
                 st.last_duration = duration;
-                out.push(Sample::new(prev.data, duration, prev.is_sync, 0));
+                let ts = to_ticks(prev.unwrapped_ts);
+                out.push(Sample::new(
+                    prev.data,
+                    Some(ts),
+                    Some(ts),
+                    Some(duration),
+                    prev.is_sync,
+                ));
             }
             st.pending = Some(PendingAu {
                 unwrapped_ts: unwrapped,
@@ -467,18 +497,18 @@ mod tests {
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
         let s0 = d.push(1, &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
-        assert_eq!(s0[0].duration, 3000);
-        assert!(s0[0].is_sync);
-        assert_eq!(s0[0].composition_offset, 0);
+        assert_eq!(s0[0].duration, Some(3000));
+        assert!(s0[0].flags.is_sync);
+        assert_eq!(s0[0].composition_offset(), 0);
         // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
         let s1 = d.push(1, &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
-        assert_eq!(s1[0].duration, 3000);
-        assert!(!s1[0].is_sync);
+        assert_eq!(s1[0].duration, Some(3000));
+        assert!(!s1[0].flags.is_sync);
         // flush → AU2 emitted with the last-known duration (3000).
         let s2 = d.flush(1).unwrap();
         assert_eq!(s2.len(), 1);
-        assert_eq!(s2[0].duration, 3000);
+        assert_eq!(s2[0].duration, Some(3000));
     }
 
     /// Builds one FU-A (RFC 6184 §5.8) fragment payload: `fu_indicator` +
@@ -552,8 +582,8 @@ mod tests {
         assert!(d.push(1, &vpkt(1, 4000, true, &idr)).unwrap().is_empty());
         let s = d.push(1, &vpkt(2, 7000, true, &non)).unwrap();
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0].duration, 3000);
-        assert!(s[0].is_sync);
+        assert_eq!(s[0].duration, Some(3000));
+        assert!(s[0].flags.is_sync);
     }
 
     #[test]

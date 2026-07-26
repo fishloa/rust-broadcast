@@ -251,12 +251,19 @@ fn ts_demux_broadcast_pair() {
     let mut dts = dts0;
     for (i, s) in video.samples.iter().enumerate() {
         let row = csv_video[i];
-        assert_eq!(s.duration, row.duration, "video[{i}] duration matches CSV");
+        assert_eq!(
+            s.duration,
+            Some(row.duration),
+            "video[{i}] duration matches CSV"
+        );
         assert_eq!(dts, row.dts, "video[{i}] DTS matches CSV");
-        let pts = dts + s.composition_offset as i128;
+        let pts = dts + s.composition_offset() as i128;
         assert_eq!(pts, row.pts, "video[{i}] PTS matches CSV");
-        assert_eq!(s.is_sync, row.keyframe, "video[{i}] keyframe matches CSV");
-        dts += s.duration as i128;
+        assert_eq!(
+            s.flags.is_sync, row.keyframe,
+            "video[{i}] keyframe matches CSV"
+        );
+        dts += s.duration.unwrap_or(0) as i128;
     }
 
     // Audio is contiguous: PTS == DTS, uniform duration. The audio track uses a
@@ -272,22 +279,23 @@ fn ts_demux_broadcast_pair() {
         // duration is one MP2 frame = samples_per_frame ticks at the audio
         // timescale; converting to 90 kHz matches the CSV within a rounding tick.
         assert_eq!(
-            s.duration, samples_per_frame,
+            s.duration,
+            Some(samples_per_frame),
             "audio[{i}] duration = 1 MP2 frame"
         );
-        let dur_90k = s.duration as i128 * 90_000 / audio_ts as i128;
+        let dur_90k = s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
         assert!(
             (dur_90k - csv_audio[i].duration as i128).abs() <= 1,
             "audio[{i}] duration matches CSV @90kHz within rounding"
         );
-        assert_eq!(s.composition_offset, 0, "audio has no CTS offset");
+        assert_eq!(s.composition_offset(), 0, "audio has no CTS offset");
     }
     // Sanity: contiguous audio PTS grid (in 90 kHz) derived from the durations
     // spans the same range as the CSV (guards against dropped/extra frames).
     let apts0 = csv_audio[0].pts;
     let total_90k: i128 = audio.samples[..audio.samples.len() - 1]
         .iter()
-        .map(|s| s.duration as i128 * 90_000 / audio_ts as i128)
+        .map(|s| s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128)
         .sum();
     let span_last = apts0 + total_90k;
     let csv_last = csv_audio[csv_audio.len() - 1].pts;

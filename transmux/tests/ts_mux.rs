@@ -266,7 +266,8 @@ fn timing_preserved_for_video() {
             "video sample {i}: DTS delta (duration) must be preserved"
         );
         assert_eq!(
-            b.composition_offset, a.composition_offset,
+            b.composition_offset(),
+            a.composition_offset(),
             "video sample {i}: composition offset (PTS − DTS) must be preserved"
         );
     }

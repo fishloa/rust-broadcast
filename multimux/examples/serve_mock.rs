@@ -73,7 +73,13 @@ async fn main() {
     for i in 0..FRAME_COUNT {
         let is_sync = i % SYNC_INTERVAL_FRAMES == 0;
         let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 64];
-        let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+        let sample = Sample::new(
+            data,
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(i64::from(i) * i64::from(FRAME_DUR)),
+            Some(FRAME_DUR),
+            is_sync,
+        );
         batches.push(vec![(1u32, sample)]);
     }
 

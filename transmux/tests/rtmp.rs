@@ -334,9 +334,10 @@ fn rtmp_demux_matches_flv_demux() {
         for (i, (rs, fs)) in r.samples.iter().zip(&f.samples).enumerate() {
             assert_eq!(rs.data.len(), fs.data.len(), "sample {i} payload size");
             assert_eq!(rs.data, fs.data, "sample {i} payload bytes");
-            assert_eq!(rs.is_sync, fs.is_sync, "sample {i} sync flag");
+            assert_eq!(rs.flags.is_sync, fs.flags.is_sync, "sample {i} sync flag");
             assert_eq!(
-                rs.composition_offset, fs.composition_offset,
+                rs.composition_offset(),
+                fs.composition_offset(),
                 "sample {i} composition offset"
             );
         }
@@ -367,7 +368,10 @@ fn rtmp_mux_round_trip_preserves_samples() {
         assert_eq!(b.samples.len(), m.samples.len(), "sample count preserved");
         for (i, (bs, ms)) in b.samples.iter().zip(&m.samples).enumerate() {
             assert_eq!(bs.data, ms.data, "sample {i} bytes preserved");
-            assert_eq!(bs.is_sync, ms.is_sync, "sample {i} sync flag preserved");
+            assert_eq!(
+                bs.flags.is_sync, ms.flags.is_sync,
+                "sample {i} sync flag preserved"
+            );
         }
     }
 }

@@ -57,7 +57,9 @@ fn video_track() -> TrackSpec {
 }
 
 fn vsample(is_sync: bool, byte: u8) -> Sample {
-    Sample::new(vec![byte; 32], VID_DUR, is_sync, 0)
+    // Duration-only synthetic sample (see `glass_to_glass.rs`): the segmenter
+    // derives the timeline from `duration`, so dts/pts stay `None`.
+    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync)
 }
 
 /// Part URI convention: `seg<segment_seq>.<part_index>.m4s`.
@@ -440,7 +442,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     for (got, want) in got_samples.iter().zip(fed_samples.iter()) {
         assert_eq!(got.data, want.data, "sample bytes must match exactly");
         assert_eq!(got.duration, want.duration);
-        assert_eq!(got.is_sync, want.is_sync);
+        assert_eq!(got.flags.is_sync, want.flags.is_sync);
     }
 
     // === Dedup: playlist #2 shows segment 2 closed with the SAME parts

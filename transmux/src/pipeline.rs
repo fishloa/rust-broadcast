@@ -64,11 +64,11 @@ const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 
 /// [`CodecConfig`], [`DataCarriage`], [`TrackSpec`], [`Sample`],
-/// [`SourceTiming`], [`FragmentTrackData`] moved to [`crate::ir`] (media plane
-/// step 2a) — re-exported here so every existing
+/// [`SampleFlags`], [`Provenance`], [`FragmentTrackData`] moved to
+/// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
 pub use crate::ir::{
-    CodecConfig, DataCarriage, FragmentTrackData, Sample, SourceTiming, TrackSpec,
+    CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, TrackSpec,
 };
 
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
@@ -782,20 +782,20 @@ pub fn build_media_segment_with_events(
     // independent, so the moof size is stable once structured).
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        let any_cts = ft.samples.iter().any(|s| s.composition_offset != 0);
+        let any_cts = ft.samples.iter().any(|s| s.composition_offset() != 0);
         let samples: Vec<TrunSample> = ft
             .samples
             .iter()
             .map(|s| TrunSample {
-                sample_duration: Some(s.duration),
+                sample_duration: Some(s.duration.unwrap_or(0)),
                 sample_size: Some(s.data.len() as u32),
-                sample_flags: Some(if s.is_sync {
+                sample_flags: Some(if s.flags.is_sync {
                     SAMPLE_FLAGS_SYNC
                 } else {
                     SAMPLE_FLAGS_NON_SYNC
                 }),
                 sample_composition_time_offset: if any_cts {
-                    Some(s.composition_offset)
+                    Some(s.composition_offset())
                 } else {
                     None
                 },

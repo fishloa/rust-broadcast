@@ -408,7 +408,13 @@ mod tests {
                 let nal = [0x65u8, 0xAA, (i % 256) as u8];
                 let mut data = (nal.len() as u32).to_be_bytes().to_vec();
                 data.extend_from_slice(&nal);
-                Sample::new(data, frame_dur, i == 0, 0)
+                Sample::new(
+                    data,
+                    Some(i64::from(i) * i64::from(frame_dur)),
+                    Some(i64::from(i) * i64::from(frame_dur)),
+                    Some(frame_dur),
+                    i == 0,
+                )
             })
             .collect();
         let track = Track::new(spec, samples);

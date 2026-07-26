@@ -46,7 +46,7 @@ use core::marker::PhantomData;
 use broadcast_common::Unpackage;
 use mpeg_ps::program_stream::parse_all_packs;
 
-use crate::ac3::Ac3SyncframeInfo;
+use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
@@ -444,18 +444,32 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let mut order: Vec<usize> = (0..units.len()).collect();
     order.sort_by_key(|&i| dts[i]);
 
+    // Absolute dts/pts (media plane step 2c): `interpolate_dts`/
+    // `interpolate_pts` already yield **unwrapped absolute** 90 kHz values
+    // (the PES-level stamps are wrap-unrolled once in `assign_stamps` via
+    // `unwrap_ts`, and unstamped AUs are anchored off them), so MPEG Program
+    // Stream genuinely recovers an absolute clock rather than leaving the
+    // anchor at 0. `composition_offset` folds into the pts/dts pair.
     let samples: Vec<Sample> = order
         .iter()
         .enumerate()
         .map(|(pos, &i)| {
             let dur = frame_duration(&order, &dts, pos);
             let is_idr = au_is_idr(&units[i].data);
-            let composition_offset = (pts[i] - dts[i]) as i32;
-            Sample::from_annexb(&units[i].data, dur, is_idr, composition_offset)
+            Sample::from_annexb(
+                &units[i].data,
+                Some(to_ticks(dts[i])),
+                Some(to_ticks(pts[i])),
+                Some(dur),
+                is_idr,
+            )
         })
         .collect();
 
-    Some(Track::new(
+    // Anchor = the first decode-ordered sample's absolute DTS, kept in
+    // lockstep with `samples[0].dts` per the crate-wide IR invariant.
+    let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
+    Some(Track::new_at(
         TrackSpec::new(
             track_id,
             VIDEO_TIMESCALE,
@@ -466,7 +480,18 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         ),
         samples,
+        anchor,
     ))
+}
+
+/// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
+/// [`Sample::dts`]/[`Sample::pts`] carry (mirrors `ts_demux`'s own
+/// `to_ticks`): `i128` is used internally purely for wrap-arithmetic
+/// headroom, and every real value is a small multiple of the 33-bit range
+/// that fits `i64` with centuries of 90 kHz headroom — so this never clamps
+/// in practice, it just makes the narrowing checked instead of silent.
+fn to_ticks(uw: i128) -> i64 {
+    uw.clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 /// True if an Annex B access unit contains an IDR slice NAL (type 5).
@@ -581,12 +606,60 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     if frames.is_empty() {
         return None;
     }
-    let samples: Vec<Sample> = frames
-        .iter()
-        .map(|&(s, e)| Sample::from_raw(es.es_bytes[s..e].to_vec(), 0))
-        .collect();
 
-    Some(Track::new(
+    // Absolute dts/pts (media plane step 2c). The PES-level stamps are 90 kHz
+    // (ISO/IEC 13818-1 §2.4.3.7) while this track's timescale is
+    // `sample_rate`, so each stamp is rescaled into the track clock. A
+    // syncframe that begins inside an already-stamped PES fragment carries no
+    // stamp of its own; it is placed at the previous frame's time plus the
+    // **intrinsic** AC-3 syncframe duration (1536 samples — ETSI TS 102 366
+    // §4.1, `AC3_SAMPLES_PER_SYNCFRAME`), which is exactly the value
+    // `ts_demux` uses for the same split. That intrinsic duration is also the
+    // per-sample `duration` (previously left at `0`, which made the AC-3
+    // timeline uninterpretable).
+    let rescale_90k = |t90: u64| -> i64 {
+        ((t90 as u128 * sample_rate as u128) / VIDEO_TIMESCALE as u128) as i64
+    };
+    let stamped = assign_stamps(&frames, &es.stamps);
+    let mut samples: Vec<Sample> = Vec::with_capacity(frames.len());
+    let mut next_dts: Option<i64> = None;
+    for (i, &(s, e)) in frames.iter().enumerate() {
+        // Prefer this frame's own stamp (DTS, else PTS — AC-3 is never
+        // reordered, so they coincide); else continue the running clock.
+        let stamp90 = stamped[i].1.or(stamped[i].0);
+        let dts = match (stamp90, next_dts) {
+            (Some(t90), _) => rescale_90k(t90),
+            (None, Some(running)) => running,
+            // No stamp has been seen yet at all: this leading frame precedes
+            // the stream's first PES timestamp, so its absolute time is
+            // genuinely unknown — `None`, never fabricated.
+            (None, None) => {
+                samples.push(Sample::from_raw(
+                    es.es_bytes[s..e].to_vec(),
+                    None,
+                    None,
+                    Some(AC3_SAMPLES_PER_SYNCFRAME),
+                ));
+                continue;
+            }
+        };
+        next_dts = Some(dts + AC3_SAMPLES_PER_SYNCFRAME as i64);
+        samples.push(Sample::from_raw(
+            es.es_bytes[s..e].to_vec(),
+            Some(dts),
+            Some(dts),
+            Some(AC3_SAMPLES_PER_SYNCFRAME),
+        ));
+    }
+
+    // Anchor = the first sample's absolute DTS when known (lockstep with
+    // `samples[0].dts`), else 0.
+    let anchor = samples
+        .first()
+        .and_then(|s| s.dts)
+        .map(|d| d.max(0) as u64)
+        .unwrap_or(0);
+    Some(Track::new_at(
         TrackSpec::new(
             track_id,
             sample_rate,
@@ -598,5 +671,6 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             },
         ),
         samples,
+        anchor,
     ))
 }

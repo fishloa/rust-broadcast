@@ -79,11 +79,15 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("video track");
-    let orig_video_syncs = orig_video.samples.iter().filter(|s| s.is_sync).count();
+    let orig_video_syncs = orig_video
+        .samples
+        .iter()
+        .filter(|s| s.flags.is_sync)
+        .count();
     let orig_video_total: u64 = orig_video
         .samples
         .iter()
-        .map(|s| u64::from(s.duration))
+        .map(|s| u64::from(s.duration.unwrap_or(0)))
         .sum();
 
     // Build codec config from the generated SDP (exercises P2).
@@ -130,14 +134,17 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         orig_video.samples.len()
     );
     // Sync points preserved.
-    let rec_syncs = recovered.iter().filter(|s| s.is_sync).count();
+    let rec_syncs = recovered.iter().filter(|s| s.flags.is_sync).count();
     assert_eq!(rec_syncs, orig_video_syncs, "keyframe count preserved");
     // Total duration within one frame of the original (one-AU flush tolerance).
-    let rec_total: u64 = recovered.iter().map(|s| u64::from(s.duration)).sum();
+    let rec_total: u64 = recovered
+        .iter()
+        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .sum();
     let frame = orig_video
         .samples
         .first()
-        .map(|s| u64::from(s.duration))
+        .map(|s| u64::from(s.duration.unwrap_or(0)))
         .unwrap_or(3000);
     assert!(
         rec_total.abs_diff(orig_video_total) <= frame,
@@ -184,7 +191,10 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         }],
     )
     .expect("build_media_segment (part 1) must succeed");
-    let part1_total: u64 = part1.iter().map(|s| u64::from(s.duration)).sum();
+    let part1_total: u64 = part1
+        .iter()
+        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .sum();
     let seg2 = build_media_segment(
         2,
         &[FragmentTrackData {

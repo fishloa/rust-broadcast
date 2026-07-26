@@ -45,7 +45,7 @@ fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
         for (i, s) in t.samples.iter().enumerate() {
             let start_secs = acc as f64 / scale as f64;
             items.push((start_secs, tpos, i));
-            acc += s.duration as u64;
+            acc += s.duration.unwrap_or(0) as u64;
         }
     }
     // Stable sort by decode-start time; ties keep original (track, sample)
@@ -276,7 +276,9 @@ fn nal_sample(is_sync: bool, dur: u32) -> Sample {
     let mut data = Vec::with_capacity(4 + payload.len());
     data.extend_from_slice(&(payload.len() as u32).to_be_bytes());
     data.extend_from_slice(&payload);
-    Sample::new(data, dur, is_sync, 0)
+    // Duration-driven segmenter: no absolute source time for these synthetic
+    // samples (media plane step 2c — never fabricated).
+    Sample::new(data, None, None, Some(dur), is_sync)
 }
 
 /// Build the worked example from issue #629: 5 segments s0..s4 (target 1s @

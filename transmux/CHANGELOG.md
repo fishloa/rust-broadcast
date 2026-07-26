@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — `Sample` timing is now absolute and optional** (media plane step
+  2c, `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
+  `Sample` is now `{ data, dts: Option<i64>, pts: Option<i64>, duration:
+  Option<u32>, flags: SampleFlags, provenance: Option<Provenance> }`:
+  - `dts`/`pts` are **absolute** tick values in the track's own media timescale
+    (`TrackSpec::timescale`), replacing the previous model in which a sample's
+    time was the running sum of preceding `duration`s anchored on
+    `Track::start_decode_time` — an anchor that FLV, WebM, MPEG Program Stream,
+    RTMP and RTP all left at `0`. The IR can now address a splice point, rebase
+    across sources, and express a send deadline.
+  - 33-bit (MPEG-2 Systems, ISO/IEC 13818-1 §2.4.3.7) and 32-bit (RTP,
+    RFC 3550 §5.1) rollover is unwrapped **once, at the demux edge**, and never
+    re-derived downstream.
+  - `Option`, not mandatory: section-carried tracks (SCTE-35 `stream_type`
+    `0x86`, DSM-CC, private sections) genuinely have no timestamp, so they keep
+    `dts`/`pts`/`duration` of `None` rather than a fabricated value.
+  - `composition_offset` is no longer a stored field — it is implied by the
+    pair, via the new `Sample::composition_offset()` (`pts - dts`), and still
+    round-trips fMP4 `ctts` byte-identically.
+  - `is_sync` moved into the `#[non_exhaustive]` `SampleFlags` struct
+    (`sample.flags.is_sync`; `SampleFlags::SYNC` / `NON_SYNC` / `new`).
+  - `Sample::new`/`from_annexb` take `(data, dts, pts, duration, is_sync)` and
+    `from_raw` takes `(data, dts, pts, duration)`.
+- **BREAKING — `SourceTiming` deleted.** It was write-only (the crate's own docs
+  admitted "all mux paths in this crate ignore this field"). The source
+  container's raw, pre-unwrap wire stamps survive as the debug-only
+  `Provenance { wire_dts, wire_pts }` side-field (`Sample::with_provenance`), so
+  no information is lost — the crate just stops presenting a debug field as a
+  timing model.
+- **BREAKING — `rebase::unroll_33bit_wraps` and `rebase::MPEG_TS_WRAP` removed.**
+  Wrap-unrolling now happens once at the demux edge, so re-folding the IR
+  timeline back into 33 bits in order to unwrap it again was exactly the
+  anti-pattern this step removes. `rebase_to_zero` / `apply_offset` /
+  `insert_discontinuity_gap` now shift every sample's absolute `dts`/`pts` in
+  lockstep with `Track::start_decode_time` (and never fabricate a timestamp for
+  a `None`-timed sample).
+
+### Fixed
+
+- `TsDemux` stored **audio** sample timing in 90 kHz PES-clock ticks while the
+  track's timescale is its sample rate, so `dts` deltas (e.g. 2089) disagreed
+  with `duration` (1024 AAC samples). Audio `dts`/`pts` — and the audio track's
+  `start_decode_time` anchor — are now rescaled into the track's own timescale,
+  the same unit as `duration`. Latent before this release only because the old
+  `SourceTiming` was never read back.
+- `PsDemux` left every AC-3 sample's `duration` at `0`, making the recovered
+  audio timeline uninterpretable; it now carries the intrinsic 1536-sample
+  syncframe duration (ETSI TS 102 366 §4.1) and absolute time rescaled from the
+  PES stamps.
+- `RtpDepacketiser` (batch) discarded the RTP timestamp and the per-AU sync
+  flag entirely, emitting `duration: 0` / `is_sync: true` for every sample. It
+  now carries the unwrapped absolute RTP media clock and the real IDR-derived
+  sync flag.
+
 ## [0.19.0] - 2026-07-26
 
 ### Added

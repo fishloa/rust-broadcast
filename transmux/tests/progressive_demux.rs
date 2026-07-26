@@ -41,9 +41,9 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
     let mut dts: u64 = 0;
     let mut out = Vec::with_capacity(samples.len());
     for s in samples {
-        let pts = dts as i64 + s.composition_offset as i64;
+        let pts = dts as i64 + s.composition_offset() as i64;
         out.push((dts, pts));
-        dts += s.duration as u64;
+        dts += s.duration.unwrap_or(0) as u64;
     }
     out
 }
@@ -129,13 +129,17 @@ fn demux_h264_aac_prog_video_sample_timing_and_sync() {
     assert_eq!(&timing[45..50], &expected_last, "last 5 video (dts,pts)");
 
     // Total decode-timeline duration: 50 * 512 = 25600.
-    let total_duration: u64 = video.samples.iter().map(|s| s.duration as u64).sum();
+    let total_duration: u64 = video
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     assert_eq!(total_duration, 25600);
 
     // stss lists only sample #1 (1-based) as a sync sample — every other
     // sample is non-sync (ffprobe: only the first packet carries the `K` flag).
     for (i, s) in video.samples.iter().enumerate() {
-        assert_eq!(s.is_sync, i == 0, "video sample {i} sync flag");
+        assert_eq!(s.flags.is_sync, i == 0, "video sample {i} sync flag");
     }
 }
 
@@ -167,13 +171,13 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
 
     assert_eq!(
         audio.samples.last().unwrap().duration,
-        136,
+        Some(136),
         "final audio sample duration (short close-out frame)"
     );
 
     // No stss on the audio track ⇒ every sample is a sync sample.
     assert!(
-        audio.samples.iter().all(|s| s.is_sync),
+        audio.samples.iter().all(|s| s.flags.is_sync),
         "every AAC sample is a sync sample (no stss box)"
     );
 
@@ -239,12 +243,13 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
                 orig_track.spec.track_id
             );
             assert_eq!(
-                a.composition_offset, b.composition_offset,
+                a.composition_offset(),
+                b.composition_offset(),
                 "track {} sample {i} composition_offset preserved",
                 orig_track.spec.track_id
             );
             assert_eq!(
-                a.is_sync, b.is_sync,
+                a.flags.is_sync, b.flags.is_sync,
                 "track {} sample {i} sync flag preserved",
                 orig_track.spec.track_id
             );

@@ -263,7 +263,7 @@ impl LlSegmenter {
 
         // Segment boundary: anchor keyframe past target → flush the segment.
         if idx == self.anchor
-            && sample.is_sync
+            && sample.flags.is_sync
             && self.anchor_pending_dur >= self.target_ticks
             && !self.tracks[self.anchor].pending.is_empty()
         {
@@ -271,7 +271,7 @@ impl LlSegmenter {
         }
 
         if idx == self.anchor {
-            self.anchor_pending_dur += sample.duration as u64;
+            self.anchor_pending_dur += sample.duration.unwrap_or(0) as u64;
         }
         self.tracks[idx].pending.push(sample);
 
@@ -369,7 +369,10 @@ impl LlSegmenter {
 
         // Advance decode times and drop the drained samples.
         for (t, &n) in self.tracks.iter_mut().zip(&take_counts) {
-            let dur: u64 = t.pending[..n].iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t.pending[..n]
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             t.base_decode += dur;
             t.pending.drain(..n);
         }
@@ -462,7 +465,7 @@ impl Package for LlSegmenter {
             let (track_id, sample) = {
                 let c = &mut cursors[i];
                 let s = c.samples[c.idx].clone();
-                c.dts_ticks += s.duration as u64;
+                c.dts_ticks += s.duration.unwrap_or(0) as u64;
                 c.idx += 1;
                 (c.track_id, s)
             };
@@ -496,20 +499,20 @@ pub(crate) fn build_chunk(
 
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        let any_cts = ft.samples.iter().any(|s| s.composition_offset != 0);
+        let any_cts = ft.samples.iter().any(|s| s.composition_offset() != 0);
         let samples: Vec<TrunSample> = ft
             .samples
             .iter()
             .map(|s| TrunSample {
-                sample_duration: Some(s.duration),
+                sample_duration: Some(s.duration.unwrap_or(0)),
                 sample_size: Some(s.data.len() as u32),
-                sample_flags: Some(if s.is_sync {
+                sample_flags: Some(if s.flags.is_sync {
                     SAMPLE_FLAGS_SYNC
                 } else {
                     SAMPLE_FLAGS_NON_SYNC
                 }),
                 sample_composition_time_offset: if any_cts {
-                    Some(s.composition_offset)
+                    Some(s.composition_offset())
                 } else {
                     None
                 },

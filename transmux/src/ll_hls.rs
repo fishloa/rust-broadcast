@@ -268,7 +268,7 @@ impl LlHlsSegmenter {
 
         // Segment boundary: anchor keyframe past target → finalize the segment.
         if idx == self.anchor
-            && sample.is_sync
+            && sample.flags.is_sync
             && self.anchor_seg_dur >= self.target_ticks
             && !self.tracks[self.anchor].pending.is_empty()
         {
@@ -276,8 +276,8 @@ impl LlHlsSegmenter {
         }
 
         if idx == self.anchor {
-            self.anchor_seg_dur += sample.duration as u64;
-            self.anchor_part_dur += sample.duration as u64;
+            self.anchor_seg_dur += sample.duration.unwrap_or(0) as u64;
+            self.anchor_part_dur += sample.duration.unwrap_or(0) as u64;
         }
         self.tracks[idx].pending.push(sample);
 
@@ -355,7 +355,11 @@ impl LlHlsSegmenter {
 
         // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
-            let dur: u64 = t.pending.iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t
+                .pending
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             t.seg_base_decode += dur;
             t.part_base_decode = t.seg_base_decode;
             t.pending.clear();
@@ -403,7 +407,7 @@ impl LlHlsSegmenter {
         let independent = anchor_state
             .pending
             .get(anchor_state.part_start)
-            .map(|s| s.is_sync)
+            .map(|s| s.flags.is_sync)
             .unwrap_or(false);
 
         // Part duration = the anchor's buffered-since-last-part duration.
@@ -431,7 +435,7 @@ impl LlHlsSegmenter {
         for (t, &end) in self.tracks.iter_mut().zip(&take_ends) {
             let dur: u64 = t.pending[t.part_start..end]
                 .iter()
-                .map(|s| s.duration as u64)
+                .map(|s| s.duration.unwrap_or(0) as u64)
                 .sum();
             t.part_base_decode += dur;
             t.part_start = end;

@@ -78,11 +78,14 @@ impl ProgressiveMux {
 fn build_stts(samples: &[Sample]) -> TimeToSampleBox {
     let mut entries: Vec<SttsEntry> = Vec::new();
     for s in samples {
+        // A sample with no known duration contributes a `0` delta — exactly the
+        // value the pre-2c mandatory `u32` field carried for it.
+        let delta = s.duration.unwrap_or(0);
         match entries.last_mut() {
-            Some(last) if last.sample_delta == s.duration => last.sample_count += 1,
+            Some(last) if last.sample_delta == delta => last.sample_count += 1,
             _ => entries.push(SttsEntry {
                 sample_count: 1,
-                sample_delta: s.duration,
+                sample_delta: delta,
             }),
         }
     }
@@ -98,16 +101,16 @@ fn build_stts(samples: &[Sample]) -> TimeToSampleBox {
 /// is omitted per §8.6.1.3). Uses version 1 (signed offsets) to support
 /// negative offsets from B-frame reordering.
 fn build_ctts(samples: &[Sample]) -> Option<CompositionOffsetBox> {
-    if samples.iter().all(|s| s.composition_offset == 0) {
+    if samples.iter().all(|s| s.composition_offset() == 0) {
         return None;
     }
     let mut entries: Vec<CttsEntry> = Vec::new();
     for s in samples {
         match entries.last_mut() {
-            Some(last) if last.sample_offset == s.composition_offset => last.sample_count += 1,
+            Some(last) if last.sample_offset == s.composition_offset() => last.sample_count += 1,
             _ => entries.push(CttsEntry {
                 sample_count: 1,
-                sample_offset: s.composition_offset,
+                sample_offset: s.composition_offset(),
             }),
         }
     }
@@ -122,13 +125,19 @@ fn build_ctts(samples: &[Sample]) -> Option<CompositionOffsetBox> {
 /// `None` when every sample is a sync sample (then the box is omitted and all
 /// samples are implicitly random-access points).
 fn build_stss(samples: &[Sample]) -> Option<SyncSampleBox> {
-    if samples.iter().all(|s| s.is_sync) {
+    if samples.iter().all(|s| s.flags.is_sync) {
         return None;
     }
     let entries: Vec<u32> = samples
         .iter()
         .enumerate()
-        .filter_map(|(i, s)| if s.is_sync { Some(i as u32 + 1) } else { None })
+        .filter_map(|(i, s)| {
+            if s.flags.is_sync {
+                Some(i as u32 + 1)
+            } else {
+                None
+            }
+        })
         .collect();
     Some(SyncSampleBox {
         version: 0,
@@ -412,7 +421,11 @@ impl ProgressiveMux {
 fn set_track_durations(moov: &mut MovieBox, media: &Media, movie_timescale: u32) {
     let mut max_movie_duration = 0u64;
     for (i, track) in media.tracks.iter().enumerate() {
-        let media_duration: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
+        let media_duration: u64 = track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         let ts = if track.timescale() == 0 {
             1
         } else {

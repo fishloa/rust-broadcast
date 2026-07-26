@@ -325,7 +325,13 @@ mod tests {
         for i in 0..FRAME_COUNT {
             let is_sync = i % 15 == 0;
             let data = vec![0xABu8.wrapping_add(i as u8); 32];
-            let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+            let sample = Sample::new(
+                data,
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(FRAME_DUR),
+                is_sync,
+            );
             seg.push(TRACK_ID, sample).expect("push succeeds");
             for part in seg.take_ready_parts() {
                 store.add_part(part);

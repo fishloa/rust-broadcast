@@ -412,14 +412,25 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         avc_packet_type::NALU => {
                             let dts = tag.timestamp;
                             let duration = delta_duration(&mut last_video_dts, dts);
+                            // Absolute dts/pts (media plane step 2c): the FLV
+                            // tag timestamp is already an absolute wire clock
+                            // (milliseconds, matching `FLV_TIMESCALE`), unlike
+                            // the five demuxers this step fixes that used to
+                            // leave the anchor at 0 — FLV's `CompositionTime`
+                            // (§E.4.3.2) folds directly into `pts`.
+                            let dts_abs = dts as i64;
+                            let pts_abs = dts_abs + composition_time as i64;
                             video_samples.push(Sample {
                                 // FLV NALU data is already 4-byte length-prefixed,
                                 // matching the IR (crate::annexb) — pass through.
                                 data: data.to_vec().into(),
-                                duration,
-                                is_sync: frame_type == FRAME_TYPE_KEYFRAME,
-                                composition_offset: composition_time,
-                                source_timing: None,
+                                dts: Some(dts_abs),
+                                pts: Some(pts_abs),
+                                duration: Some(duration),
+                                flags: crate::ir::SampleFlags::new(
+                                    frame_type == FRAME_TYPE_KEYFRAME,
+                                ),
+                                provenance: None,
                             });
                         }
                         avc_packet_type::END_OF_SEQUENCE => {}
@@ -455,12 +466,14 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         aac_packet_type::RAW => {
                             let dts = tag.timestamp;
                             let duration = delta_duration(&mut last_audio_dts, dts);
+                            let dts_abs = dts as i64;
                             audio_samples.push(Sample {
                                 data: data.to_vec().into(),
-                                duration,
-                                is_sync: true,
-                                composition_offset: 0,
-                                source_timing: None,
+                                dts: Some(dts_abs),
+                                pts: Some(dts_abs),
+                                duration: Some(duration),
+                                flags: crate::ir::SampleFlags::SYNC,
+                                provenance: None,
                             });
                         }
                         _ => {}
@@ -492,7 +505,8 @@ impl<'a> Unpackage for FlvDemux<'a> {
                     .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
                     .map(|i| (i.width as u16, i.height as u16))
                     .unwrap_or((0, 0));
-                tracks.push(Track::new(
+                let anchor = anchor_of(&video_samples);
+                tracks.push(Track::new_at(
                     TrackSpec::new(
                         track_id,
                         FLV_TIMESCALE,
@@ -503,13 +517,15 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         },
                     ),
                     video_samples,
+                    anchor,
                 ));
                 track_id += 1;
             }
         }
         if let Some(esds) = aac_esds {
             if !audio_samples.is_empty() {
-                tracks.push(Track::new(
+                let anchor = anchor_of(&audio_samples);
+                tracks.push(Track::new_at(
                     TrackSpec::new(
                         track_id,
                         FLV_TIMESCALE,
@@ -521,6 +537,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         },
                     ),
                     audio_samples,
+                    anchor,
                 ));
             }
         }
@@ -574,6 +591,17 @@ fn backfill_last_duration(samples: &mut [Sample]) {
         // Last sample: reuse the previous forward delta as a best estimate.
         samples[n - 1].duration = samples[n - 2].duration;
     }
+}
+
+/// The AVC track's `Track::start_decode_time` anchor: the first video
+/// sample's absolute dts (media plane step 2c) — kept in lockstep with
+/// `samples[0].dts` per the crate-wide invariant.
+fn anchor_of(samples: &[Sample]) -> u64 {
+    samples
+        .first()
+        .and_then(|s| s.dts)
+        .map(|d| d.max(0) as u64)
+        .unwrap_or(0)
 }
 
 /// Build an AAC `esds` from a raw `AudioSpecificConfig` byte slice (mirrors the
@@ -794,9 +822,9 @@ impl Package for FlvMux {
         if let Some(vt) = video {
             let mut dts = 0u32;
             for s in &vt.samples {
-                let comp = s.composition_offset;
+                let comp = s.composition_offset();
                 let mut body = Vec::with_capacity(5 + s.data.len());
-                let ft = if s.is_sync {
+                let ft = if s.flags.is_sync {
                     FRAME_TYPE_KEYFRAME
                 } else {
                     FRAME_TYPE_INTER
@@ -817,7 +845,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                dts = dts.saturating_add(s.duration);
+                dts = dts.saturating_add(s.duration.unwrap_or(0));
             }
         }
         if let Some(at) = audio {
@@ -837,7 +865,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                dts = dts.saturating_add(s.duration);
+                dts = dts.saturating_add(s.duration.unwrap_or(0));
             }
         }
         // Stable sort by DTS, tie-broken by original emission order.
@@ -896,7 +924,11 @@ fn codec_name(c: &CodecConfig) -> &'static str {
 fn media_duration_seconds(media: &Media) -> f64 {
     let mut max = 0.0f64;
     for t in &media.tracks {
-        let ticks: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+        let ticks: u64 = t
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         let ts = if t.spec.timescale == 0 {
             FLV_TIMESCALE
         } else {

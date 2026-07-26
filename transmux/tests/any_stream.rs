@@ -447,9 +447,20 @@ fn section_tracks_carry_valid_reassembled_sections() {
                 es.stream_type,
                 sample.data.len()
             );
+            // media plane step 2c: a section-carried sample genuinely has no
+            // timestamp, so dts/pts/duration must ALL stay `None` — never
+            // fabricated (SCTE-35 / DSM-CC / private sections).
             assert!(
-                sample.source_timing.is_none(),
-                "a section sample must carry no PTS/DTS (source_timing: None)"
+                sample.dts.is_none(),
+                "a section sample must carry no DTS (dts: None), never a fabricated one"
+            );
+            assert!(
+                sample.pts.is_none(),
+                "a section sample must carry no PTS (pts: None), never a fabricated one"
+            );
+            assert!(
+                sample.duration.is_none(),
+                "a section sample must carry no duration either"
             );
         }
         checked += 1;

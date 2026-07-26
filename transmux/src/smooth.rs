@@ -341,7 +341,7 @@ impl SmoothPackager {
         let mut total_media_ticks = 0u64;
 
         for group in &groups {
-            let group_media_dur: u64 = group.iter().map(|s| s.duration as u64).sum();
+            let group_media_dur: u64 = group.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
             let start_smooth = Self::to_smooth_ticks(media_decode_time, media_timescale);
             let dur_smooth =
                 Self::to_smooth_ticks(media_decode_time + group_media_dur, media_timescale)
@@ -610,12 +610,12 @@ fn segment_samples(samples: &[Sample], media_timescale: u32, target_secs: u32) -
     let mut acc_dur = 0u64;
     for (i, s) in samples.iter().enumerate() {
         // Cut before this sample when it is a keyframe past the target.
-        if i > start && s.is_sync && acc_dur >= target_ticks {
+        if i > start && s.flags.is_sync && acc_dur >= target_ticks {
             groups.push(&samples[start..i]);
             start = i;
             acc_dur = 0;
         }
-        acc_dur += s.duration as u64;
+        acc_dur += s.duration.unwrap_or(0) as u64;
     }
     groups.push(&samples[start..]);
     groups
@@ -640,19 +640,19 @@ fn build_smooth_fragment(
         compatible_brands: alloc::vec![STYP_MAJOR_BRAND, *b"msix"],
     };
 
-    let any_cts = samples.iter().any(|s| s.composition_offset != 0);
+    let any_cts = samples.iter().any(|s| s.composition_offset() != 0);
     let trun_samples: Vec<TrunSample> = samples
         .iter()
         .map(|s| TrunSample {
-            sample_duration: Some(s.duration),
+            sample_duration: Some(s.duration.unwrap_or(0)),
             sample_size: Some(s.data.len() as u32),
-            sample_flags: Some(if s.is_sync {
+            sample_flags: Some(if s.flags.is_sync {
                 SAMPLE_FLAGS_SYNC
             } else {
                 SAMPLE_FLAGS_NON_SYNC
             }),
             sample_composition_time_offset: if any_cts {
-                Some(s.composition_offset)
+                Some(s.composition_offset())
             } else {
                 None
             },
@@ -889,10 +889,12 @@ mod tests {
         // 4 samples, timescale 1 tick/sample, target 2s: sync at 0 and 2.
         let mk = |sync: bool| Sample {
             data: alloc::vec![0u8; 4].into(),
-            duration: 1,
-            is_sync: sync,
-            composition_offset: 0,
-            source_timing: None,
+            // Grouping is duration-driven; absolute time is irrelevant here.
+            dts: None,
+            pts: None,
+            duration: Some(1),
+            flags: crate::ir::SampleFlags::new(sync),
+            provenance: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
         let groups = segment_samples(&samples, 1, 2);

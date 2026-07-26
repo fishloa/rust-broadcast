@@ -10,9 +10,9 @@
 //!   ([`TrackSpec`] wrapping [`CodecConfig`]) plus its decode-ordered
 //!   [`Sample`]s, an absolute decode-time anchor, and optional CENC/CBCS
 //!   crypto metadata ([`TrackEncryption`]).
-//! - [`Sample`] — one coded access unit: data bytes, duration, sync flag,
-//!   composition offset, and optional [`SourceTiming`] recovered from the
-//!   source container.
+//! - [`Sample`] — one coded access unit: data bytes, absolute optional
+//!   `dts`/`pts` (media plane step 2c), optional duration, [`SampleFlags`],
+//!   and optional debug-only [`Provenance`].
 //! - [`CodecConfig`] — per-track codec configuration (decoder config record +
 //!   geometry, or the opaque [`CodecConfig::Data`] carriage for PMT-listed
 //!   streams this crate does not decode — see [`DataCarriage`]).
@@ -21,12 +21,16 @@
 //!
 //! # Invariants
 //!
-//! - [`Sample`] timing is stored *relatively*: a sample's DTS is the running
-//!   sum of preceding [`Sample::duration`]s within its track; PTS is
-//!   `DTS + composition_offset`. [`Track::start_decode_time`] is the missing
-//!   absolute anchor — the DTS the track's first sample sits at on the
+//! - [`Sample::dts`]/[`Sample::pts`] are stored *absolutely*, in the track's
+//!   media timescale (media plane step 2c) — `None` only for section-carried
+//!   tracks (SCTE-35/DSM-CC/private sections), which have no timestamp at
+//!   all, never fabricated. [`Track::start_decode_time`] is kept in lockstep
+//!   as the track's anchor (equal to its first sample's `dts` when the track
+//!   is timed) — the DTS the track's first sample sits at on the
 //!   presentation timeline (maps onto the fragment `tfdt`
 //!   `baseMediaDecodeTime`, ISO/IEC 14496-12:2015 §8.8.12).
+//! - 33-bit (TS) / 32-bit (RTP) rollover is unwrapped once, at the demux edge
+//!   (`crate::ts_demux`, `crate::rtp`) — never re-derived downstream.
 //! - Samples within a [`Track`] are always in decode order.
 //! - [`Track::encryption`], when present, must have exactly one
 //!   [`crate::cenc::SampleEncryptionEntry`] per [`Track::samples`] entry.
@@ -45,5 +49,5 @@ mod track;
 
 pub use codec::{CodecConfig, DataCarriage};
 pub use media::{Media, PcrSample};
-pub use sample::{FragmentTrackData, Sample, SourceTiming};
+pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
 pub use track::{Track, TrackEncryption, TrackSpec};

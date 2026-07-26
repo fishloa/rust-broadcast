@@ -380,7 +380,7 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     let mut dts_acc = 0u64;
     for (i, s) in vid.samples.iter().enumerate() {
         let ir_dts = dts0_oracle + dts_acc;
-        let ir_pts = (ir_dts as i64 + s.composition_offset as i64) as u64;
+        let ir_pts = (ir_dts as i64 + s.composition_offset() as i64) as u64;
         assert_eq!(
             ir_dts, video_oracle[i].dts,
             "video sample {i} DTS must match oracle"
@@ -390,10 +390,10 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
             "video sample {i} PTS must match oracle"
         );
         assert_eq!(
-            s.is_sync, video_oracle[i].keyframe,
+            s.flags.is_sync, video_oracle[i].keyframe,
             "video sample {i} keyframe flag must match oracle"
         );
-        dts_acc += s.duration as u64;
+        dts_acc += s.duration.unwrap_or(0) as u64;
     }
 
     // Audio: all sync; PTS == DTS (no B-frames). Each frame is 1024 samples @ the
@@ -426,8 +426,8 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
             audio_oracle[i].pts, audio_oracle[i].dts,
             "audio has no reordering"
         );
-        assert!(s.is_sync, "audio sample {i} must be a sync sample");
-        n_samples += s.duration as u64;
+        assert!(s.flags.is_sync, "audio sample {i} must be a sync sample");
+        n_samples += s.duration.unwrap_or(0) as u64;
     }
 }
 

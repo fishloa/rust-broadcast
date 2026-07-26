@@ -62,21 +62,23 @@ pub struct Track {
     /// Absolute decode time of the track's **first** sample, in this track's
     /// media timescale ([`TrackSpec::timescale`]) ticks.
     ///
-    /// [`Sample`] timing is stored *relatively* (per-sample [`Sample::duration`];
-    /// a sample's DTS is the running sum of preceding durations, its PTS is
-    /// `DTS + composition_offset`). This field is the missing absolute anchor:
-    /// the DTS the first sample sits at on the presentation timeline. It maps
-    /// directly onto the fragment `tfdt` `baseMediaDecodeTime`
-    /// (ISO/IEC 14496-12:2015 §8.8.12) that [`crate::media::CmafMux`] writes
-    /// for the first media segment.
+    /// Since media plane step 2c, [`Sample::dts`]/[`Sample::pts`] are
+    /// themselves absolute (in the same timescale), so this field is
+    /// redundant with (and must be kept equal to) `samples.first().dts` for a
+    /// timed track — it survives as the anchor consumers reach for without
+    /// touching the sample slice (e.g. building the fragment `tfdt`
+    /// `baseMediaDecodeTime`, ISO/IEC 14496-12:2015 §8.8.12), and as the
+    /// track-level anchor for tracks with no samples at all.
     ///
     /// Demuxers that recover an absolute timeline populate it
     /// ([`crate::media::Fmp4Demux`] from the first movie fragment's `tfdt`;
-    /// [`TsDemux`](crate::ts_demux::TsDemux) from the first sample's DTS).
-    /// Demuxers whose source carries no absolute anchor (FLV, WebM, MPEG
-    /// Program Stream, RTMP, RTP) leave it `0`. It is the input to the
-    /// timeline transforms in [`crate::rebase`] (rebase-to-zero, offset,
-    /// 33-bit MPEG wrap-unroll — ISO/IEC 13818-1 33-bit timestamps).
+    /// [`TsDemux`](crate::ts_demux::TsDemux) from the first sample's
+    /// unwrapped DTS). Demuxers whose source carries no absolute anchor
+    /// (WebM, MPEG Program Stream) leave it `0`; FLV, RTMP, and RTP recover
+    /// one from their own source clock (media plane step 2c) and set it
+    /// accordingly. It is the input to the timeline transforms in
+    /// [`crate::rebase`] (rebase-to-zero, offset), which shift every sample's
+    /// `dts`/`pts` in lockstep.
     pub start_decode_time: u64,
     /// CENC/CBCS crypto metadata for this track's samples, or `None` for
     /// cleartext. Populated by [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)'s

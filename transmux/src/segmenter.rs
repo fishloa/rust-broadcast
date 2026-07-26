@@ -215,7 +215,7 @@ impl Segmenter {
 
         // Cut before buffering when the anchor hits a keyframe past the target.
         if idx == self.anchor
-            && sample.is_sync
+            && sample.flags.is_sync
             && self.anchor_pending_dur >= self.target_ticks
             && !self.tracks[self.anchor].pending.is_empty()
         {
@@ -223,7 +223,7 @@ impl Segmenter {
         }
 
         if idx == self.anchor {
-            self.anchor_pending_dur += sample.duration as u64;
+            self.anchor_pending_dur += sample.duration.unwrap_or(0) as u64;
         }
         self.tracks[idx].pending.push(sample);
         Ok(())
@@ -309,7 +309,11 @@ impl Segmenter {
 
         self.next_seq += 1;
         for t in &mut self.tracks {
-            let dur: u64 = t.pending.iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t
+                .pending
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             t.base_decode += dur;
             t.pending.clear();
         }

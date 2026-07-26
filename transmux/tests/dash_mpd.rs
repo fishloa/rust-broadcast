@@ -102,7 +102,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         let (track_id, sample) = {
             let c = &mut cursors[i];
             let s = c.samples[c.idx].clone();
-            c.dts_ticks += s.duration as u64;
+            c.dts_ticks += s.duration.unwrap_or(0) as u64;
             c.idx += 1;
             (c.track_id, s)
         };
@@ -127,7 +127,11 @@ fn recover_segment_timing(
         buf.extend_from_slice(seg);
         let media = Fmp4Demux::new().unpackage(&buf[..]).expect("demux segment");
         for t in &media.tracks {
-            let dur: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t
+                .samples
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             let entry = out.entry(t.spec.track_id).or_default();
             entry.0.push(dur);
             entry.1.push(t.start_decode_time);
@@ -425,7 +429,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
             .expect("track")
             .samples
             .iter()
-            .map(|s| s.duration as u64)
+            .map(|s| s.duration.unwrap_or(0) as u64)
             .sum();
         assert_eq!(
             sum_of_real_segments, track_total,

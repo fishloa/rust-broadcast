@@ -631,7 +631,12 @@ pub(crate) fn mux_tracks_at(
                     });
                 }
             } else {
-                let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
+                // media plane step 2c: `composition_offset()` derives PTS−DTS
+                // from the sample's own absolute `dts`/`pts` when both are
+                // known (§0 invariant), falling back to `0` — identical to
+                // the old stored field's value for every real (non-`None`)
+                // sample this muxer ever sees.
+                let pts_local = dts_ticks_local as i64 + sample.composition_offset() as i64;
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
@@ -647,7 +652,7 @@ pub(crate) fn mux_tracks_at(
                 );
             }
 
-            dts_ticks_local += sample.duration as u64;
+            dts_ticks_local += sample.duration.unwrap_or(0) as u64;
         }
     }
 
@@ -718,8 +723,10 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 /// by the caller instead ([`SectionPacketiser`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
-        EsKind::Avc => build_annexb_au(&sample.data, sample.is_sync, &plan.avc_sps_pps),
-        EsKind::Hevc => build_hevc_annexb_au(&sample.data, sample.is_sync, &plan.hevc_vps_sps_pps),
+        EsKind::Avc => build_annexb_au(&sample.data, sample.flags.is_sync, &plan.avc_sps_pps),
+        EsKind::Hevc => {
+            build_hevc_annexb_au(&sample.data, sample.flags.is_sync, &plan.hevc_vps_sps_pps)
+        }
         EsKind::Aac => {
             let asc = plan
                 .asc

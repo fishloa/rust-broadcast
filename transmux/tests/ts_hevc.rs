@@ -151,10 +151,10 @@ fn first_au_is_irap_and_not_all_sync() {
 
     assert!(!track.samples.is_empty(), "HEVC track must carry samples");
     assert!(
-        track.samples[0].is_sync,
+        track.samples[0].flags.is_sync,
         "first access unit must be an IRAP keyframe (is_sync)"
     );
-    let sync_count = track.samples.iter().filter(|s| s.is_sync).count();
+    let sync_count = track.samples.iter().filter(|s| s.flags.is_sync).count();
     assert!(
         sync_count >= 1,
         "at least one sync sample (the IRAP): got {sync_count}"

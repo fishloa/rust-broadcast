@@ -42,18 +42,23 @@
 //! track, mirroring the AC-3/E-AC-3 recovery path (issue #560, see
 //! [`crate::dts`]).
 //!
-//! Every video and audio sample additionally carries a [`SourceTiming`]
-//! recovered from the PES clock (issue #556): video/AAC/MPEG-audio samples get the unwrapped
-//! PTS/DTS of the access unit they were decoded from (with per-frame
-//! interpolation when a PES payload splits into several frames); AC-3/E-AC-3/DTS
-//! elementary streams are additionally split into individual syncframes/core
-//! frames (rather than one zero-duration `Sample` per PES access unit — see
-//! [`crate::ac3`] / [`crate::dts`]) so real durations and exact PES-boundary
-//! timestamps survive into the IR. Video/data-track sample durations are resolved
-//! **one access unit behind**: the timestamp delta to the *next* access unit
-//! (33-bit-unwrapped DTS for video, PTS for data — ISO/IEC 13818-1 §2.4.3.7)
-//! finalizes the *previous* sample's duration, with the final sample of a
-//! finished stream reusing the previous duration ([`finish`](StreamingTsDemux::finish)).
+//! Every video and audio sample additionally carries **absolute** `dts`/`pts`
+//! (media plane step 2c) recovered from the PES clock (issue #556): the
+//! 33-bit wire PTS/DTS is unwrapped incrementally, once, right here at the
+//! demux edge (by this module's internal `WrapState`, matching
+//! `timed_metadata::Timeline`'s
+//! semantics) — nothing downstream re-derives it. Video/AAC/MPEG-audio
+//! samples get the unwrapped PTS/DTS of the access unit they were decoded
+//! from (with per-frame interpolation when a PES payload splits into several
+//! frames); AC-3/E-AC-3/DTS elementary streams are additionally split into
+//! individual syncframes/core frames (rather than one zero-duration `Sample`
+//! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
+//! durations and exact PES-boundary timestamps survive into the IR.
+//! Video/data-track sample durations are resolved **one access unit
+//! behind**: the timestamp delta to the *next* access unit (unwrapped DTS
+//! for video, PTS for data — ISO/IEC 13818-1 §2.4.3.7) finalizes the
+//! *previous* sample's duration, with the final sample of a finished stream
+//! reusing the previous duration ([`finish`](StreamingTsDemux::finish)).
 //!
 //! Any PMT `stream_type` that is not a decoded codec is carried losslessly as
 //! an opaque [`CodecConfig::Data`] track (issues #557/#576) rather than
@@ -75,8 +80,8 @@
 //! DSM-CC synchronized download, `0x86` SCTE-35/ANSI-scoped) carry PSI/private
 //! *sections* directly on the PID (§2.4.4) — each reassembled via
 //! [`mpeg_ts::ts::SectionReassembler`] instead of a PES assembler, and each
-//! complete section becomes one `Sample` with no PTS/DTS
-//! (`source_timing: None`, since sections carry no timestamp at all).
+//! complete section becomes one `Sample` with no timestamp at all
+//! (`dts: None, pts: None` — never fabricated).
 //! [`CodecConfig::Data`]'s `carriage` field ([`DataCarriage`]) records which
 //! family a track uses. The demuxer also collects every PCR observation from
 //! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
@@ -128,7 +133,7 @@ use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
 use crate::nal::{NalCodec, access_unit_is_rap, is_keyframe_nal, nal_unit_type};
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
-use crate::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
+use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 
 // ── PSI constants (ISO/IEC 13818-1 §2.4.4) ──────────────────────────────────
 
@@ -450,16 +455,41 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
     prev_unwrapped + delta
 }
 
-/// Interpolated 90 kHz PES-clock timestamp for a sample `elapsed_samples`
-/// into a source access unit anchored at the unwrapped `anchor_uw` PTS/DTS
-/// (ISO/IEC 13818-1 §2.4.3.7): `anchor + elapsed_samples * 90000 /
-/// sample_rate`, floored (u128 math to avoid overflow on a full 33-bit
-/// anchor). `elapsed_samples == 0` returns `anchor` exactly — the PES-boundary
-/// sample's timestamp is never touched by interpolation (issue #556).
-fn interpolate_ts(anchor_uw: i128, elapsed_samples: u64, sample_rate: u32) -> u64 {
-    let base = anchor_uw.max(0) as u128;
-    let offset = (elapsed_samples as u128 * VIDEO_TIMESCALE as u128) / sample_rate.max(1) as u128;
-    (base + offset) as u64
+/// Rescale an unwrapped 90 kHz PES-clock timestamp (ISO/IEC 13818-1 §2.4.3.7)
+/// into a track's own media timescale, floored (u128 math so a full 33-bit
+/// anchor cannot overflow).
+///
+/// The PES clock is always 90 kHz, but an audio track's IR timescale is its
+/// **sample rate** (`TrackSpec::timescale`), and since media plane step 2c
+/// `Sample::dts`/`Sample::pts` are defined to be in that track timescale — the
+/// same unit as `Sample::duration`. Storing the raw 90 kHz value for an audio
+/// track would make `dts` deltas (e.g. 2089) disagree with `duration` (1024
+/// AAC samples), which is exactly the quantity every downstream consumer
+/// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
+/// opaque `Data`) this is the identity.
+fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
+    let base = anchor_90k.max(0) as u128;
+    let ts = timescale.max(1) as u128;
+    let scaled = if ts == VIDEO_TIMESCALE as u128 {
+        base
+    } else {
+        (base * ts) / VIDEO_TIMESCALE as u128
+    };
+    scaled.min(i64::MAX as u128) as i64
+}
+
+/// Absolute timestamp, **in the track's own media timescale**, for an audio
+/// sample `elapsed_samples` into a source access unit anchored at the
+/// unwrapped 90 kHz `anchor_uw` PTS/DTS (ISO/IEC 13818-1 §2.4.3.7).
+///
+/// The anchor is rescaled into the track clock (see [`rescale_to_track`]) and
+/// `elapsed_samples` — already a count of audio samples, i.e. track ticks — is
+/// added directly, so consecutive frames advance by exactly their intrinsic
+/// `duration`. `elapsed_samples == 0` returns the rescaled anchor exactly: a
+/// PES-boundary sample's timestamp is never touched by interpolation
+/// (issue #556).
+fn interpolate_ts(anchor_uw: i128, elapsed_samples: u64, sample_rate: u32) -> i64 {
+    rescale_to_track(anchor_uw, sample_rate).saturating_add(elapsed_samples as i64)
 }
 
 /// Whether an MPEG-2 video access unit is a random-access point: it carries a
@@ -772,9 +802,31 @@ enum AudioKind {
 struct PendingOneBehind {
     data: Vec<u8>,
     is_sync: bool,
-    composition_offset: i32,
     pts_uw: i128,
     dts_uw: i128,
+}
+
+/// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
+/// [`Sample::dts`]/[`Sample::pts`] carry. `i128` is only used internally for
+/// wrap arithmetic headroom; every real value here is a small non-negative
+/// multiple of the 33-bit range and fits `i64` with room to spare for
+/// centuries of continuous 90 kHz runtime, so this never actually clamps in
+/// practice — it exists to make the conversion a checked one, not a silent
+/// truncation.
+fn to_ticks(uw: i128) -> i64 {
+    uw.clamp(i64::MIN as i128, i64::MAX as i128) as i64
+}
+
+/// Debug-only [`Provenance`] for a 33-bit-wrapped TS/PES clock: the raw wire
+/// value is exactly the absolute unwrapped value modulo the wrap (unwrap only
+/// ever adds whole multiples of it), so it is recovered losslessly from the
+/// already-unwrapped `dts`/`pts` with no extra state threaded through the
+/// demux (issue #556 successor — media plane step 2c).
+fn ts_provenance(dts: i64, pts: i64) -> Provenance {
+    Provenance {
+        wire_dts: Some((dts as u64) % TS_WRAP),
+        wire_pts: Some((pts as u64) % TS_WRAP),
+    }
 }
 
 /// Per-track live (config-known) processing state.
@@ -948,7 +1000,6 @@ fn advance_one_behind(
     last_duration: &mut u32,
     data: Vec<u8>,
     is_sync: bool,
-    composition_offset: i32,
     pts_uw: i128,
     dts_uw: i128,
     duration_from_pts: bool,
@@ -962,24 +1013,23 @@ fn advance_one_behind(
             (dts_uw - prev.dts_uw).max(0) as u32
         };
         *last_duration = duration;
+        let dts = to_ticks(prev.dts_uw);
+        let pts = to_ticks(prev.pts_uw);
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
                 data: prev.data.into(),
-                duration,
-                is_sync: prev.is_sync,
-                composition_offset: prev.composition_offset,
-                source_timing: Some(SourceTiming {
-                    pts: prev.pts_uw.max(0) as u64,
-                    dts: prev.dts_uw.max(0) as u64,
-                }),
+                dts: Some(dts),
+                pts: Some(pts),
+                duration: Some(duration),
+                flags: SampleFlags::new(prev.is_sync),
+                provenance: Some(ts_provenance(dts, pts)),
             },
         });
     }
     *pending = Some(PendingOneBehind {
         data,
         is_sync,
-        composition_offset,
         pts_uw,
         dts_uw,
     });
@@ -995,17 +1045,17 @@ fn flush_one_behind(
     events: &mut VecDeque<DemuxEvent>,
 ) {
     if let Some(p) = pending.take() {
+        let dts = to_ticks(p.dts_uw);
+        let pts = to_ticks(p.pts_uw);
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                duration: last_duration,
-                is_sync: p.is_sync,
-                composition_offset: p.composition_offset,
-                source_timing: Some(SourceTiming {
-                    pts: p.pts_uw.max(0) as u64,
-                    dts: p.dts_uw.max(0) as u64,
-                }),
+                dts: Some(dts),
+                pts: Some(pts),
+                duration: Some(last_duration),
+                flags: SampleFlags::new(p.is_sync),
+                provenance: Some(ts_provenance(dts, pts)),
             },
         });
     }
@@ -1049,20 +1099,32 @@ fn emit_audio_au(
     events: &mut VecDeque<DemuxEvent>,
 ) {
     let mut elapsed = 0u64;
+    // Every frame split out of this access unit came from the same PES packet,
+    // so they share that PES header's raw 90 kHz wire stamps — that, not the
+    // rescaled per-frame value, is what `Provenance` means (media plane step
+    // 2c: the source container's original stamps, pre-unwrap).
+    let au_provenance = ts_provenance(to_ticks(dts_uw), to_ticks(pts_uw));
+    // Build one audio Sample at `elapsed` samples into this access unit: the
+    // per-frame interpolated absolute dts/pts, in the TRACK timescale
+    // (issue #556 semantics preserved exactly — media plane step 2c stores
+    // them directly instead of discarding them into a write-only
+    // `SourceTiming`).
+    let audio_sample = |data: Vec<u8>, duration: u32, elapsed: u64| -> Sample {
+        let dts = interpolate_ts(dts_uw, elapsed, sample_rate);
+        let pts = interpolate_ts(pts_uw, elapsed, sample_rate);
+        Sample::from_raw(data, Some(dts), Some(pts), Some(duration)).with_provenance(au_provenance)
+    };
     match kind {
         AudioKind::Aac => {
             for frame in split_adts_frames(au_data) {
                 if frame.len() > ADTS_HEADER_SIZE {
                     events.push_back(DemuxEvent::Sample {
                         track_id,
-                        sample: Sample::from_raw(
+                        sample: audio_sample(
                             frame[ADTS_HEADER_SIZE..].to_vec(),
                             AAC_SAMPLES_PER_FRAME,
-                        )
-                        .with_source_timing(SourceTiming {
-                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
-                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
-                        }),
+                            elapsed,
+                        ),
                     });
                 }
                 elapsed += AAC_SAMPLES_PER_FRAME as u64;
@@ -1072,11 +1134,7 @@ fn emit_audio_au(
             for frame in split_ac3_syncframes(au_data) {
                 events.push_back(DemuxEvent::Sample {
                     track_id,
-                    sample: Sample::from_raw(frame.to_vec(), AC3_SAMPLES_PER_SYNCFRAME)
-                        .with_source_timing(SourceTiming {
-                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
-                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
-                        }),
+                    sample: audio_sample(frame.to_vec(), AC3_SAMPLES_PER_SYNCFRAME, elapsed),
                 });
                 elapsed += AC3_SAMPLES_PER_SYNCFRAME as u64;
             }
@@ -1086,12 +1144,7 @@ fn emit_audio_au(
                 let duration = split.info.samples_per_frame();
                 events.push_back(DemuxEvent::Sample {
                     track_id,
-                    sample: Sample::from_raw(split.data, duration).with_source_timing(
-                        SourceTiming {
-                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
-                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
-                        },
-                    ),
+                    sample: audio_sample(split.data, duration, elapsed),
                 });
                 elapsed += duration as u64;
             }
@@ -1100,11 +1153,7 @@ fn emit_audio_au(
             for frame in split_dts_core_frames(au_data) {
                 events.push_back(DemuxEvent::Sample {
                     track_id,
-                    sample: Sample::from_raw(frame.data.to_vec(), frame.samples)
-                        .with_source_timing(SourceTiming {
-                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
-                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
-                        }),
+                    sample: audio_sample(frame.data.to_vec(), frame.samples, elapsed),
                 });
                 elapsed += frame.samples as u64;
             }
@@ -1113,11 +1162,7 @@ fn emit_audio_au(
             for frame in split_mpeg_audio_frames(au_data) {
                 events.push_back(DemuxEvent::Sample {
                     track_id,
-                    sample: Sample::from_raw(frame.to_vec(), *samples_per_frame)
-                        .with_source_timing(SourceTiming {
-                            pts: interpolate_ts(pts_uw, elapsed, sample_rate),
-                            dts: interpolate_ts(dts_uw, elapsed, sample_rate),
-                        }),
+                    sample: audio_sample(frame.to_vec(), *samples_per_frame, elapsed),
                 });
                 elapsed += *samples_per_frame as u64;
             }
@@ -1142,13 +1187,11 @@ fn push_live_au(
             codec,
         } => {
             let (bytes, is_sync) = video_sample_bytes(*codec, data);
-            let composition_offset = (pts_uw - dts_uw) as i32;
             advance_one_behind(
                 pending,
                 last_duration,
                 bytes,
                 is_sync,
-                composition_offset,
                 pts_uw,
                 dts_uw,
                 false,
@@ -1165,7 +1208,6 @@ fn push_live_au(
                 last_duration,
                 data.to_vec(),
                 true,
-                0,
                 pts_uw,
                 dts_uw,
                 true,
@@ -1186,7 +1228,6 @@ fn push_live_au(
                 last_duration,
                 data.to_vec(),
                 is_sync,
-                0,
                 pts_uw,
                 dts_uw,
                 true,
@@ -1195,11 +1236,12 @@ fn push_live_au(
             );
         }
         LiveKind::Section => {
-            // Sections carry no PTS/DTS (`pts_uw`/`dts_uw` are dummy zeros
-            // from `on_completed_section`) — emit immediately, no lookahead.
+            // Sections carry no timestamp at all (`pts_uw`/`dts_uw` are dummy
+            // zeros from `on_completed_section`, never read here) — emit
+            // immediately, no lookahead, and never fabricate a dts/pts/duration.
             events.push_back(DemuxEvent::Sample {
                 track_id,
-                sample: Sample::from_raw(data.to_vec(), 0),
+                sample: Sample::from_raw(data.to_vec(), None, None, None),
             });
         }
     }
@@ -1786,8 +1828,9 @@ pub enum DemuxEvent {
     /// never emitted today; it is part of the event API for a future
     /// incremental config upgrade (e.g. a mid-stream SPS change).
     TrackUpdated(Track),
-    /// A completed access unit / audio frame, with per-sample
-    /// [`SourceTiming`] (issue #556 semantics preserved exactly).
+    /// A completed access unit / audio frame, with absolute per-sample
+    /// `dts`/`pts` (issue #556 semantics preserved exactly; media plane step
+    /// 2c: absolute rather than carried in a separate `SourceTiming`).
     Sample {
         /// The owning track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
         track_id: u32,
@@ -2140,7 +2183,13 @@ impl StreamingTsDemux {
                 } => {
                     let track_id = self.next_track_id;
                     self.next_track_id += 1;
-                    let anchor = stream.first_dts_uw.unwrap_or(0).max(0) as u64;
+                    // `first_dts_uw` is the PES clock (90 kHz); the anchor must
+                    // be in this track's OWN timescale so it stays in lockstep
+                    // with `samples[0].dts` (media plane step 2c invariant) —
+                    // identity for a 90 kHz video/Data track, a real rescale
+                    // for an audio track whose timescale is its sample rate.
+                    let anchor =
+                        rescale_to_track(stream.first_dts_uw.unwrap_or(0), timescale) as u64;
                     let spec = TrackSpec::new(track_id, timescale, config)
                         .with_source(next_pid, stream.descriptors.clone());
                     self.events.push_back(DemuxEvent::TrackAdded(Track::new_at(
@@ -2471,7 +2520,8 @@ mod tests {
                 let nal = [0x65u8, 0xAA, i as u8];
                 let mut data = (nal.len() as u32).to_be_bytes().to_vec();
                 data.extend_from_slice(&nal);
-                Sample::new(data, frame_dur, i == 0, 0)
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), i == 0)
             })
             .collect();
         let track = Track::new(spec, samples);

@@ -207,7 +207,11 @@ fn segments_are_whole_packets_with_pat_pmt_and_expected_count() {
 
     // Segment count == ceil(total_video_duration / target) computed from the IR.
     let v = video_idx(&ir);
-    let total_ticks: u64 = ir.tracks[v].samples.iter().map(|s| s.duration as u64).sum();
+    let total_ticks: u64 = ir.tracks[v]
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     let scale = ir.tracks[v].spec.timescale.max(1) as u64;
     let target = 1u64; // seconds
     let expected = total_ticks.div_ceil(target * scale).max(1) as usize;
@@ -231,7 +235,7 @@ fn each_segment_starts_on_a_keyframe() {
         let v = video_idx(&m);
         let first = &m.tracks[v].samples[0];
         assert!(
-            first.is_sync,
+            first.flags.is_sync,
             "segment {i}: first video sample must be a sync sample"
         );
         assert!(
@@ -294,7 +298,11 @@ fn playlist_is_consistent_with_segments() {
 
     // Sum of #EXTINF ≈ total video duration (within rounding).
     let v = video_idx(&ir);
-    let total_ticks: u64 = ir.tracks[v].samples.iter().map(|s| s.duration as u64).sum();
+    let total_ticks: u64 = ir.tracks[v]
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     let scale = ir.tracks[v].spec.timescale.max(1) as f64;
     let total_secs = total_ticks as f64 / scale;
     let sum: f64 = extinfs.iter().sum();
@@ -345,7 +353,8 @@ fn concatenated_segments_round_trip_losslessly() {
             "video sample {i}: duration preserved"
         );
         assert_eq!(
-            b.composition_offset, a.composition_offset,
+            b.composition_offset(),
+            a.composition_offset(),
             "video sample {i}: composition offset preserved"
         );
     }
@@ -384,7 +393,7 @@ fn first_segment_is_independently_decodable() {
 
     // Its first video sample is a sync sample.
     assert!(
-        m.tracks[v].samples[0].is_sync,
+        m.tracks[v].samples[0].flags.is_sync,
         "first segment's first video sample must be a sync sample"
     );
 
@@ -408,7 +417,7 @@ fn first_segment_is_independently_decodable() {
     let last = demux(out.segments.last().unwrap());
     let lv = video_idx(&last);
     assert!(
-        last.tracks[lv].samples[0].is_sync,
+        last.tracks[lv].samples[0].flags.is_sync,
         "last segment's first video sample must be a sync sample"
     );
     assert_eq!(

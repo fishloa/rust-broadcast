@@ -67,7 +67,12 @@ fn codec_kind(c: &CodecConfig) -> &'static str {
 #[derive(Debug, Clone, PartialEq)]
 struct FullSample {
     data: Bytes,
-    duration: u32,
+    /// Absolute decode/presentation time (media plane step 2c) — compared
+    /// across the batch and streaming demuxers so the two must agree on the
+    /// recovered timeline, not just on durations.
+    dts: Option<i64>,
+    pts: Option<i64>,
+    duration: Option<u32>,
     is_sync: bool,
     composition_offset: i32,
 }
@@ -106,9 +111,11 @@ fn one_shot_full() -> Vec<FullTrack> {
                     .iter()
                     .map(|s| FullSample {
                         data: s.data.clone(),
+                        dts: s.dts,
+                        pts: s.pts,
                         duration: s.duration,
-                        is_sync: s.is_sync,
-                        composition_offset: s.composition_offset,
+                        is_sync: s.flags.is_sync,
+                        composition_offset: s.composition_offset(),
                     })
                     .collect(),
             }
@@ -140,9 +147,11 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
                     .expect("Sample must follow its track's TrackAdded");
                 tracks[i].samples.push(FullSample {
                     data: sample.data.clone(),
+                    dts: sample.dts,
+                    pts: sample.pts,
                     duration: sample.duration,
-                    is_sync: sample.is_sync,
-                    composition_offset: sample.composition_offset,
+                    is_sync: sample.flags.is_sync,
+                    composition_offset: sample.composition_offset(),
                 });
             }
             _ => {}
@@ -232,8 +241,8 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     .expect("Sample must follow its track's TrackAdded");
                 summaries[i].sample_count += 1;
                 summaries[i].total_bytes += sample.data.len();
-                summaries[i].total_duration += sample.duration as u64;
-                if sample.is_sync {
+                summaries[i].total_duration += sample.duration.unwrap_or(0) as u64;
+                if sample.flags.is_sync {
                     summaries[i].keyframes += 1;
                 }
             }
@@ -273,7 +282,7 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
                 *track_id,
                 sample.data.clone(),
                 sample.duration,
-                sample.is_sync,
+                sample.flags.is_sync,
             )),
             _ => None,
         })
@@ -285,7 +294,7 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
                 *track_id,
                 sample.data.clone(),
                 sample.duration,
-                sample.is_sync,
+                sample.flags.is_sync,
             )),
             _ => None,
         })

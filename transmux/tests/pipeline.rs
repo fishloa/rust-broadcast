@@ -136,16 +136,23 @@ fn extract_samples(
     let base = moof_off + trun.data_offset.expect("data_offset present") as usize;
     let mut samples = Vec::new();
     let mut cursor = base;
+    // Absolute dts from the running trun duration sum; pts folds in the trun
+    // composition offset (media plane step 2c).
+    let mut next_dts: i64 = 0;
     for (i, ts) in trun.samples.iter().enumerate() {
         let size = ts.sample_size.expect("sample_size present") as usize;
         let data_bytes = data[cursor..cursor + size].to_vec();
         cursor += size;
+        let dur = ts.sample_duration.unwrap_or(3000);
+        let co = ts.sample_composition_time_offset.unwrap_or(0) as i64;
         samples.push(Sample::new(
             data_bytes,
-            ts.sample_duration.unwrap_or(3000),
+            Some(next_dts),
+            Some(next_dts + co),
+            Some(dur),
             i == 0,
-            ts.sample_composition_time_offset.unwrap_or(0),
         ));
+        next_dts += i64::from(dur);
     }
     (track_id, samples)
 }

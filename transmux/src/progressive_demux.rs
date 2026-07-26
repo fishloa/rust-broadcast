@@ -162,6 +162,12 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
     let sync_flags = expand_stss(stss, total_samples);
 
     let mut samples = Vec::with_capacity(total_samples);
+    // Absolute decode time (media plane step 2c): a progressive movie's media
+    // timeline starts at 0 and `stts` carries per-sample decode *deltas*
+    // (ISO/IEC 14496-12:2015 §8.6.1.2), so sample `i`'s absolute DTS is the
+    // running sum of the preceding deltas; PTS folds in the `ctts`
+    // composition offset (§8.6.1.3).
+    let mut next_dts: i64 = 0;
     for i in 0..total_samples {
         let (start, size) = layout[i];
         let end = start
@@ -174,12 +180,15 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
                 what: "progressive sample data",
             });
         }
+        let dts = next_dts;
         samples.push(Sample::new(
             file[start..end].to_vec(),
-            durations[i],
+            Some(dts),
+            Some(dts + composition_offsets[i] as i64),
+            Some(durations[i]),
             sync_flags[i],
-            composition_offsets[i],
         ));
+        next_dts += durations[i] as i64;
     }
     Ok(samples)
 }

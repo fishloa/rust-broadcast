@@ -185,7 +185,12 @@ impl Package for TsHlsPackager {
                 .tracks
                 .iter()
                 .zip(&seg.ranges)
-                .map(|(t, r)| t.samples[..r.start].iter().map(|s| s.duration as u64).sum())
+                .map(|(t, r)| {
+                    t.samples[..r.start]
+                        .iter()
+                        .map(|s| s.duration.unwrap_or(0) as u64)
+                        .sum()
+                })
                 .collect();
             let bytes = mux_tracks_at(&media.tracks, &sample_slices, &base_dts)?;
             ts_segments.push(bytes);
@@ -193,7 +198,7 @@ impl Package for TsHlsPackager {
             // Segment duration = the anchor track's buffered duration (seconds).
             let anchor_ticks: u64 = media.tracks[anchor].samples[seg.ranges[anchor].clone()]
                 .iter()
-                .map(|s| s.duration as u64)
+                .map(|s| s.duration.unwrap_or(0) as u64)
                 .sum();
             let ts_scale = media.tracks[anchor].spec.timescale.max(1) as u64;
             // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
@@ -303,11 +308,11 @@ fn anchor_segment_boundaries(samples: &[Sample], target_ticks: u64) -> Vec<usize
     for (i, s) in samples.iter().enumerate() {
         // Cut before this sample when it is a keyframe past the target and it is
         // not the very first sample (the leading segment already starts at 0).
-        if is_cut_point(i > 0, s.is_sync, buffered, target_ticks) {
+        if is_cut_point(i > 0, s.flags.is_sync, buffered, target_ticks) {
             starts.push(i);
             buffered = 0;
         }
-        buffered += s.duration as u64;
+        buffered += s.duration.unwrap_or(0) as u64;
     }
     starts
 }
@@ -337,7 +342,7 @@ fn partition_tracks(
         let mut cursor = 0usize;
         for &b in anchor_boundaries {
             while cursor < b {
-                acc += anchor_samples[cursor].duration as u64;
+                acc += anchor_samples[cursor].duration.unwrap_or(0) as u64;
                 cursor += 1;
             }
             start_times.push(acc as f64 / anchor_scale as f64);
@@ -380,7 +385,7 @@ fn partition_tracks(
                 seg += 1;
                 seg_start_idx = i;
             }
-            acc_ticks += s.duration as u64;
+            acc_ticks += s.duration.unwrap_or(0) as u64;
         }
         // Trailing samples belong to the current (last reached) segment.
         out[seg].ranges[t_idx] = seg_start_idx..track.samples.len();
@@ -597,7 +602,7 @@ impl StreamingTsHlsSegmenter {
         if idx == self.anchor
             && is_cut_point(
                 !self.tracks[self.anchor].pending.is_empty(),
-                sample.is_sync,
+                sample.flags.is_sync,
                 self.anchor_pending_dur,
                 self.target_ticks,
             )
@@ -606,7 +611,7 @@ impl StreamingTsHlsSegmenter {
         }
 
         if idx == self.anchor {
-            self.anchor_pending_dur += sample.duration as u64;
+            self.anchor_pending_dur += sample.duration.unwrap_or(0) as u64;
         }
         self.tracks[idx].pending.push(sample);
         Ok(cut)
@@ -784,7 +789,7 @@ impl StreamingTsHlsSegmenter {
                     if start_secs >= next_start_secs {
                         return j;
                     }
-                    acc += s.duration as u64;
+                    acc += s.duration.unwrap_or(0) as u64;
                 }
                 t.pending.len()
             })
@@ -818,7 +823,10 @@ impl StreamingTsHlsSegmenter {
         // Drop the flushed prefix of each track's pending buffer and advance
         // its base_decode past it.
         for (t, &n) in self.tracks.iter_mut().zip(&split_at) {
-            let dur: u64 = t.pending[..n].iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t.pending[..n]
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             t.base_decode += dur;
             t.pending.drain(..n);
         }
@@ -857,10 +865,13 @@ mod tests {
     fn sample(dur: u32, sync: bool) -> Sample {
         Sample {
             data: vec![0u8; 4].into(),
-            duration: dur,
-            is_sync: sync,
-            composition_offset: 0,
-            source_timing: None,
+            // Boundary selection is duration-driven; absolute time is not
+            // what this helper exercises.
+            dts: None,
+            pts: None,
+            duration: Some(dur),
+            flags: crate::ir::SampleFlags::new(sync),
+            provenance: None,
         }
     }
 

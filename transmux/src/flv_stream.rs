@@ -125,7 +125,7 @@ impl TrackState {
             let duration = dts.saturating_sub(prev.dts);
             self.last_duration = duration;
             let mut emitted = prev.sample;
-            emitted.duration = duration;
+            emitted.duration = Some(duration);
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -142,7 +142,7 @@ impl TrackState {
         };
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
-            emitted.duration = self.last_duration;
+            emitted.duration = Some(self.last_duration);
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -380,12 +380,19 @@ impl StreamingFlvDemux {
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
                 if video.track_id.is_some() {
+                    // Absolute dts/pts (media plane step 2c): the FLV tag
+                    // timestamp is already an absolute wire clock
+                    // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
+                    // (§E.4.3.2) folds directly into `pts`.
+                    let dts_abs = timestamp as i64;
+                    let pts_abs = dts_abs + composition_time as i64;
                     let sample = Sample {
                         data: data.to_vec().into(),
-                        duration: 0, // filled in by `TrackState::advance`/`flush`
-                        is_sync: frame_type == FRAME_TYPE_KEYFRAME,
-                        composition_offset: composition_time,
-                        source_timing: None,
+                        dts: Some(dts_abs),
+                        pts: Some(pts_abs),
+                        duration: None, // filled in by `TrackState::advance`/`flush`
+                        flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
+                        provenance: None,
                     };
                     video.advance(sample, timestamp, events);
                 }
@@ -444,12 +451,14 @@ impl StreamingFlvDemux {
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
                 if audio.track_id.is_some() {
+                    let dts_abs = timestamp as i64;
                     let sample = Sample {
                         data: data.to_vec().into(),
-                        duration: 0, // filled in by `TrackState::advance`/`flush`
-                        is_sync: true,
-                        composition_offset: 0,
-                        source_timing: None,
+                        dts: Some(dts_abs),
+                        pts: Some(dts_abs),
+                        duration: None, // filled in by `TrackState::advance`/`flush`
+                        flags: crate::ir::SampleFlags::SYNC,
+                        provenance: None,
                     };
                     audio.advance(sample, timestamp, events);
                 }
@@ -581,7 +590,12 @@ mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.duration, sample.data.clone())),
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample
+                        .duration
+                        .expect("FLV video samples always carry a duration"),
+                    sample.data.clone(),
+                )),
                 _ => None,
             })
             .collect()

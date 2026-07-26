@@ -371,7 +371,7 @@ fn ir_trick_track_wired_to_signalling() {
     );
     // Every trick track sample is a sync sample.
     for (i, s) in trick_track.samples.iter().enumerate() {
-        assert!(s.is_sync, "trick track sample {i} must be is_sync");
+        assert!(s.flags.is_sync, "trick track sample {i} must be is_sync");
     }
 
     // Also verify DASH TrickModeRepr carries the source dimensions.
@@ -382,7 +382,11 @@ fn ir_trick_track_wired_to_signalling() {
         width: Some(src_w),
         height: Some(src_h),
         timescale: video.spec.timescale,
-        total_duration: trick_track.samples.iter().map(|s| s.duration as u64).sum(),
+        total_duration: trick_track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum(),
     };
     assert_eq!(
         trick_repr.width,
@@ -428,7 +432,10 @@ fn minimal_video_media() -> transmux::media::Media {
         },
     );
     let samples: Vec<Sample> = (0u8..8)
-        .map(|i| Sample::new(vec![i; 8], 3000, i == 0, 0))
+        .map(|i| {
+            let dts = i64::from(i) * 3000;
+            Sample::new(vec![i; 8], Some(dts), Some(dts), Some(3000), i == 0)
+        })
         .collect();
     let track = Track::new(spec, samples);
     Media {

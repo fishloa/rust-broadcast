@@ -344,7 +344,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
             "sample {i} bytes must round-trip byte-identical"
         );
         assert_eq!(
-            got.is_sync, want.is_sync,
+            got.flags.is_sync, want.flags.is_sync,
             "sample {i} sync flag must round-trip"
         );
     }

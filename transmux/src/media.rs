@@ -106,6 +106,14 @@ struct TrackBuilder {
     /// `tfdt` seen for this track (`None` until that fragment is absorbed; a
     /// stream with no `tfdt` at all yields a `0` anchor).
     start_decode_time: Option<u64>,
+    /// Running absolute decode time for the *next* sample to be pushed, in
+    /// this track's media timescale (media plane step 2c: `Sample::dts` is
+    /// now absolute, so this replaces the old "reconstruct via anchor + Σ
+    /// duration downstream" model with the equivalent running value carried
+    /// forward while demuxing). Seeded from the first fragment's `tfdt`
+    /// (falling back to `0` if the stream never carries one), then advanced
+    /// by each sample's duration in decode order.
+    next_dts: i64,
 }
 
 impl<'a> Unpackage for Fmp4Demux<'a> {
@@ -130,6 +138,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                     spec,
                     samples: Vec::new(),
                     start_decode_time: None,
+                    next_dts: 0,
                 });
             }
         }
@@ -199,9 +208,12 @@ fn absorb_fragment(
         };
         // The absolute decode-time anchor is the baseMediaDecodeTime of the
         // FIRST fragment seen for this track (ISO/IEC 14496-12:2015 §8.8.12).
+        // Also seeds the running `next_dts` cursor samples are placed on.
         if builder.start_decode_time.is_none() {
             if let Some(tfdt) = &traf.tfdt {
-                builder.start_decode_time = Some(tfdt.base_media_decode_time());
+                let base = tfdt.base_media_decode_time();
+                builder.start_decode_time = Some(base);
+                builder.next_dts = base as i64;
             }
         }
         for trun in &traf.trun {
@@ -233,7 +245,7 @@ fn absorb_fragment(
                     .or(tfhd.default_sample_flags)
                     .unwrap_or(0);
                 let is_sync = flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0);
+                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0) as i64;
 
                 let start = usize::try_from(cursor)
                     .map_err(|_| Error::InvalidInput("negative sample data offset"))?;
@@ -245,16 +257,25 @@ fn absorb_fragment(
                         what: "fragment sample data",
                     });
                 }
+                // Absolute dts/pts (media plane step 2c): `next_dts` is the
+                // running cursor seeded from this track's first `tfdt` (or 0
+                // if the stream never carried one); pts folds in the trun
+                // composition offset directly rather than storing it
+                // separately.
+                let dts = builder.next_dts;
+                let pts = dts + composition_offset;
                 builder.samples.push(Sample {
                     data: file[start..end].to_vec().into(),
-                    duration,
-                    is_sync,
-                    composition_offset,
+                    dts: Some(dts),
+                    pts: Some(pts),
+                    duration: Some(duration),
+                    flags: crate::ir::SampleFlags::new(is_sync),
                     // fMP4 sources carry no per-sample source-container
                     // timestamps distinct from the fragment's own tfdt/trun
-                    // timing (see `Sample::source_timing`).
-                    source_timing: None,
+                    // timing (see `Sample::provenance`).
+                    provenance: None,
                 });
+                builder.next_dts += duration as i64;
                 cursor += size as i64;
             }
         }
@@ -384,7 +405,11 @@ impl Package for HlsPackager {
         // float intrinsic (`f64::ceil`) is needed in `no_std`.
         let mut target_secs = 0u32;
         for t in &media.tracks {
-            let ticks: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+            let ticks: u64 = t
+                .samples
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             let ts = if t.spec.timescale == 0 {
                 1
             } else {

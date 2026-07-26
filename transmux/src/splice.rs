@@ -131,7 +131,11 @@ fn is_video(config: &CodecConfig) -> bool {
 /// The decode time of a track's first sample beyond its last (its **end decode
 /// time**): `start_decode_time + Σ sample durations`.
 fn track_end_decode_time(track: &Track) -> u64 {
-    let span: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
+    let span: u64 = track
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     track.start_decode_time.saturating_add(span)
 }
 
@@ -194,7 +198,7 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
     // Every `b` track that carries samples must open on a sync sample.
     for &bj in &mapping {
         if let Some(first) = b.tracks[bj].samples.first() {
-            if !first.is_sync {
+            if !first.flags.is_sync {
                 return Err(Error::InvalidInput(
                     "concat: appended track does not begin on a sync sample",
                 ));
@@ -220,7 +224,7 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
                 // Presentation time of b's first sample on the joined timeline:
                 // it decodes at join_dts (== a's end), plus its composition offset.
                 presentation_time: join_dts
-                    .saturating_add_signed(bt.samples[0].composition_offset as i64),
+                    .saturating_add_signed(bt.samples[0].composition_offset() as i64),
             });
         }
 
@@ -260,10 +264,10 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
         if dts > at_ticks {
             break;
         }
-        if s.is_sync {
+        if s.flags.is_sync {
             best = (dts, i);
         }
-        dts = dts.saturating_add(s.duration as u64);
+        dts = dts.saturating_add(s.duration.unwrap_or(0) as u64);
     }
     Some(best)
 }
@@ -297,7 +301,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
 
     for &aj in &mapping {
         if let Some(first) = ad.tracks[aj].samples.first() {
-            if !first.is_sync {
+            if !first.flags.is_sync {
                 return Err(Error::InvalidInput(
                     "splice_insert: ad track does not begin on a sync sample",
                 ));
@@ -348,7 +352,11 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
             sample_index_at_offset(bt, offset_in_track_ticks)
         };
 
-        let ad_span: u64 = adt.samples.iter().map(|s| s.duration as u64).sum();
+        let ad_span: u64 = adt
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
 
         let mut samples: Vec<Sample> = Vec::with_capacity(bt.samples.len() + adt.samples.len());
         // 1. Base up to the split (unchanged).
@@ -365,7 +373,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let boundary_dts: u64 = bt.start_decode_time
             + bt.samples[..split_index]
                 .iter()
-                .map(|s| s.duration as u64)
+                .map(|s| s.duration.unwrap_or(0) as u64)
                 .sum::<u64>();
 
         // Ad-in point.
@@ -374,7 +382,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
                 track_id: bt.spec.track_id,
                 sample_index: ad_index,
                 presentation_time: boundary_dts
-                    .saturating_add_signed(adt.samples[0].composition_offset as i64),
+                    .saturating_add_signed(adt.samples[0].composition_offset() as i64),
             });
         }
         // Resume point (the base sample that follows the ad), only if base has a
@@ -385,7 +393,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
                 track_id: bt.spec.track_id,
                 sample_index: resume_index,
                 presentation_time: resume_dts
-                    .saturating_add_signed(bt.samples[split_index].composition_offset as i64),
+                    .saturating_add_signed(bt.samples[split_index].composition_offset() as i64),
             });
         }
 
@@ -411,7 +419,7 @@ fn sample_index_at_offset(track: &Track, offset_ticks: u64) -> usize {
         if acc >= offset_ticks {
             return i;
         }
-        acc = acc.saturating_add(s.duration as u64);
+        acc = acc.saturating_add(s.duration.unwrap_or(0) as u64);
     }
     track.samples.len()
 }

@@ -175,15 +175,15 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let mut pts = Vec::with_capacity(75);
     let mut dts: i64 = 0;
     for s in &vid.samples {
-        pts.push(dts + s.composition_offset as i64);
-        dts += s.duration as i64;
+        pts.push(dts + s.composition_offset() as i64);
+        dts += s.duration.unwrap_or(0) as i64;
     }
     let first_in = pts
         .iter()
         .position(|&p| p >= start as i64 && p < end as i64)
         .expect("window selects at least one video sample");
     let mut snapped = first_in;
-    while snapped > 0 && !vid.samples[snapped].is_sync {
+    while snapped > 0 && !vid.samples[snapped].flags.is_sync {
         snapped -= 1;
     }
     let expected_video: Vec<Bytes> = vid.samples[snapped..]
@@ -213,7 +213,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     );
     // (b) first kept video sample is a sync sample.
     assert!(
-        round.tracks[0].samples[0].is_sync,
+        round.tracks[0].samples[0].flags.is_sync,
         "first kept video sample must be a sync sample (keyframe)"
     );
     // (c) coded bytes equal the corresponding originals.

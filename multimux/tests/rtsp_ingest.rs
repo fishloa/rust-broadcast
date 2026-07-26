@@ -255,10 +255,10 @@ async fn run() {
     );
     let (track_id0, sample0) = &samples[0];
     assert_eq!(*track_id0, 1, "the sole video track routes to track id 1");
-    assert!(sample0.is_sync, "the first access unit was the IDR");
+    assert!(sample0.flags.is_sync, "the first access unit was the IDR");
     let (track_id1, sample1) = &samples[1];
     assert_eq!(*track_id1, 1);
-    assert!(!sample1.is_sync, "the second access unit was non-IDR");
+    assert!(!sample1.flags.is_sync, "the second access unit was non-IDR");
 
     server.await.expect("server task");
 }

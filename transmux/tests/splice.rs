@@ -39,7 +39,16 @@ fn avc_spec(track_id: u32) -> TrackSpec {
 /// Build a sample whose `data` bytes are a recognizable pattern (so byte
 /// preservation is verifiable). `tag` distinguishes samples across media.
 fn sample(tag: u8, index: usize, duration: u32, is_sync: bool) -> Sample {
-    Sample::new(vec![tag, index as u8, 0xAB, 0xCD], duration, is_sync, 0)
+    // Absolute dts/pts on the sample's own uniform grid (media plane step 2c):
+    // sample `index` sits at `index * duration`.
+    let dts = index as i64 * i64::from(duration);
+    Sample::new(
+        vec![tag, index as u8, 0xAB, 0xCD],
+        Some(dts),
+        Some(dts),
+        Some(duration),
+        is_sync,
+    )
 }
 
 /// A video track: first sample is a sync sample (keyframe), then `sync_period`
@@ -56,7 +65,11 @@ fn media_of(track: Track, start_decode_time: u64) -> Media {
 }
 
 fn track_span(track: &Track) -> u64 {
-    track.samples.iter().map(|s| s.duration as u64).sum()
+    track
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum()
 }
 
 /// Reconstruct each sample's DTS from a track (start + running sum).
@@ -65,7 +78,7 @@ fn dts_sequence(track: &Track) -> Vec<u64> {
     let mut out = Vec::new();
     for s in &track.samples {
         out.push(dts);
-        dts += s.duration as u64;
+        dts += s.duration.unwrap_or(0) as u64;
     }
     out
 }
@@ -271,7 +284,7 @@ fn splice_snaps_to_preceding_keyframe() {
 
     // An ad whose first sample is NOT sync → Err.
     let mut bad_ad_track = video_track(1, 0xAD, 3, 3000, 3);
-    bad_ad_track.samples[0].is_sync = false;
+    bad_ad_track.samples[0].flags.is_sync = false;
     let bad_ad = media_of(bad_ad_track, 0);
     assert!(
         splice_insert(&base, &bad_ad, 9000).is_err(),

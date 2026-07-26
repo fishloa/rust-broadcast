@@ -420,12 +420,27 @@ impl RtpPacketiser {
     }
 }
 
-/// The decode timestamp of sample `i`, in the track's media timescale — the sum
-/// of preceding sample durations (falling back to the index when durations are
-/// zero so packets still get strictly increasing timestamps per AU).
+/// The decode timestamp of sample `i`, in the track's media timescale,
+/// **relative to the track's first sample** (so the emitted RTP timestamp
+/// series starts at 0 for the first AU regardless of where the source
+/// timeline sits — RFC 3550 §5.1 only constrains the increments).
+///
+/// Media plane step 2c: read from the sample's own **absolute** `dts` when
+/// both it and the first sample's are known (the exact per-AU decode time the
+/// demuxer recovered, including any composition reordering), falling back to
+/// the running sum of preceding durations for a track whose samples carry no
+/// timestamps (a section-carried track, which RTP never packetises anyway).
 fn sample_dts(track: &crate::media::Track, i: usize) -> u64 {
-    let sum: u64 = track.samples[..i].iter().map(|s| s.duration as u64).sum();
-    sum
+    if let (Some(first), Some(cur)) = (
+        track.samples.first().and_then(|s| s.dts),
+        track.samples.get(i).and_then(|s| s.dts),
+    ) {
+        return (cur - first).max(0) as u64;
+    }
+    track.samples[..i]
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum()
 }
 
 /// Rescale a tick count from `from` to `to` timescale (round to nearest).
@@ -669,7 +684,53 @@ impl Unpackage for RtpDepacketiser {
 /// A reassembled RTP track (coded samples only; config comes from SDP).
 struct RtpTrack {
     id: u32,
-    samples: Vec<Vec<u8>>,
+    samples: Vec<ReassembledAu>,
+}
+
+/// The RTP timestamp modulus: the header field is 32 bits (RFC 3550 §5.1), so
+/// the media clock wraps every `2^32` ticks (at the 90 kHz video clock, ≈ 13.3
+/// hours).
+const RTP_TS_WRAP: i64 = 1 << 32;
+/// Half the 32-bit range — the classic wrap-detection threshold: a step of
+/// more than half the range is read as a wrap, not a real jump.
+const RTP_TS_WRAP_HALF: i64 = RTP_TS_WRAP / 2;
+
+/// Incremental 32-bit RTP-timestamp wrap-unroll (RFC 3550 §5.1), one access
+/// unit at a time — the RTP analogue of `ts_demux`'s 33-bit `WrapState`, and
+/// the **only** place this crate unwraps an RTP clock (media plane step 2c:
+/// unwrapped once, at the demux edge, never re-derived downstream).
+///
+/// The delta is computed on the wrapped clock and applied to an unwrapped
+/// accumulator, so ordinary small backward steps (B-frame reordering) survive
+/// and only a near-full-range jump is treated as a wrap.
+#[derive(Default)]
+struct RtpWrapState {
+    initialized: bool,
+    prev_raw: u32,
+    prev_uw: i64,
+}
+
+impl RtpWrapState {
+    /// Feed the next AU's raw 32-bit RTP timestamp, returning the unwrapped
+    /// absolute value.
+    fn push(&mut self, raw: u32) -> i64 {
+        if !self.initialized {
+            self.initialized = true;
+            self.prev_raw = raw;
+            self.prev_uw = raw as i64;
+            return self.prev_uw;
+        }
+        let mut delta = raw as i64 - self.prev_raw as i64;
+        if delta > RTP_TS_WRAP_HALF {
+            delta -= RTP_TS_WRAP; // wrapped backward across 2^32
+        } else if delta < -RTP_TS_WRAP_HALF {
+            delta += RTP_TS_WRAP; // wrapped forward across 2^32
+        }
+        let uw = self.prev_uw + delta;
+        self.prev_raw = raw;
+        self.prev_uw = uw;
+        uw
+    }
 }
 
 /// Reassembled RTP samples, exposed on [`Media`] via a light wrapper. Since the
@@ -681,24 +742,60 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
     let ir_tracks = tracks
         .into_iter()
         .map(|t| {
-            let samples = t
+            // Absolute dts/pts (media plane step 2c) from the RTP media clock,
+            // with the 32-bit wrap unrolled ONCE here at the demux edge
+            // ([`RtpWrapState`], RFC 3550 §5.1).
+            //
+            // Honest scope: RTP's timestamp origin is a *random* offset (§5.1),
+            // so without an RTCP SR (`rtcp::SenderReport`) NTP↔RTP mapping this
+            // is an absolute **media-clock** timeline with an arbitrary epoch,
+            // not a wall-clock one. That is exactly what the IR's `dts`/`pts`
+            // mean (ticks in the track timescale), and it preserves real
+            // inter-sample timing — a consumer needing a zero origin applies
+            // `crate::rebase::rebase_to_zero`. Discarding it (the pre-2c
+            // behaviour) lost the timeline outright, so `None` would be the
+            // strictly worse and less honest choice here.
+            let mut wrap = RtpWrapState::default();
+            let stamped: Vec<(i64, bool, Vec<u8>)> = t
                 .samples
                 .into_iter()
-                .map(|data| Sample {
-                    data: data.into(),
-                    duration: 0,
-                    is_sync: true,
-                    composition_offset: 0,
-                    source_timing: None,
+                .map(|au| (wrap.push(au.timestamp), au.is_sync, au.data))
+                .collect();
+            // Duration = delta to the next AU's decode time; the final AU
+            // reuses the previous delta (the same one-behind rule
+            // `ts_demux`/`flv` use), and a single-AU track has no measurable
+            // duration at all.
+            let n = stamped.len();
+            let samples: Vec<Sample> = stamped
+                .iter()
+                .enumerate()
+                .map(|(i, &(dts, is_sync, ref data))| {
+                    let duration = if i + 1 < n {
+                        Some((stamped[i + 1].0 - dts).max(0) as u32)
+                    } else if n >= 2 {
+                        Some((dts - stamped[i - 1].0).max(0) as u32)
+                    } else {
+                        None
+                    };
+                    Sample {
+                        data: data.clone().into(),
+                        dts: Some(dts),
+                        pts: Some(dts),
+                        duration,
+                        flags: crate::ir::SampleFlags::new(is_sync),
+                        provenance: None,
+                    }
                 })
                 .collect();
             // A placeholder AVC config: the RTP wire has no config; the SDP does.
             // We only need identity + samples for round-trip use, so build a
             // minimal AVC spec (never serialized to a container here).
-            // RTP carries no absolute decode-time anchor (the RTP timestamp is a
-            // random-offset clock, not a presentation timeline), so leave the
-            // start_decode_time at 0; use Track::new to default it.
-            crate::media::Track::new(placeholder_spec(t.id), samples)
+            let anchor = samples
+                .first()
+                .and_then(|s| s.dts)
+                .map(|d| d.max(0) as u64)
+                .unwrap_or(0);
+            crate::media::Track::new_at(placeholder_spec(t.id), samples, anchor)
         })
         .collect();
     Media::new(ir_tracks, 0)
@@ -736,11 +833,12 @@ fn placeholder_spec(track_id: u32) -> crate::pipeline::TrackSpec {
 /// A reassembled access unit with its RTP presentation timestamp and a
 /// random-access (sync) flag. RFC 6184 §5.7 (video) / RFC 3640 §3.2 (audio).
 pub(crate) struct ReassembledAu {
-    // Read by the streaming depayloader (rtp_stream, #700 Task 4); the batch
-    // path here consumes only `data`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The AU's raw 32-bit RTP timestamp (RFC 3550 §5.1). Read by the
+    /// streaming depayloader (rtp_stream, #700 Task 4) and, since media plane
+    /// step 2c, by the batch path too — [`rtp_tracks_to_media`] unwraps it
+    /// into the sample's absolute `dts`/`pts`.
     pub timestamp: u32,
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Whether this AU is a random-access point (an IDR for video).
     pub is_sync: bool,
     pub data: Vec<u8>,
 }
@@ -906,11 +1004,12 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
 /// Depacketise an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
 /// access units. NALs are grouped into access units by the RTP timestamp; the
 /// marker bit confirms an AU boundary.
-fn depacketise_video(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    Ok(reassemble_video(packets)?
-        .into_iter()
-        .map(|au| au.data)
-        .collect())
+///
+/// Keeps each AU's RTP timestamp + sync flag (media plane step 2c) so the
+/// caller can build absolute `dts`/`pts`; the 32-bit wrap is unrolled once, in
+/// [`rtp_tracks_to_media`].
+fn depacketise_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    reassemble_video(packets)
 }
 
 /// 4-byte length-prefix a list of NALs into an IR video sample.
@@ -924,12 +1023,10 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     out
 }
 
-/// Depacketise an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs.
-fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
-    Ok(reassemble_audio(packets)?
-        .into_iter()
-        .map(|au| au.data)
-        .collect())
+/// Depacketise an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs,
+/// preserving each AU's RTP timestamp (see [`depacketise_video`]).
+fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    reassemble_audio(packets)
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.

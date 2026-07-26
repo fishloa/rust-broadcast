@@ -99,7 +99,7 @@ fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {
 
 /// Deep-equality assertion between two `Media` values built via different
 /// paths. `pcr` compares via `PcrSample`'s own `PartialEq`; everything else
-/// (tracks/samples/codec configs/source_timing/composition offsets) compares
+/// (tracks/samples/codec configs/absolute dts+pts/durations) compares
 /// via the complete `Debug` dump of `Media::tracks` — every nested type here
 /// (`Sample`, `TrackSpec`, `CodecConfig` and its box types) is derived-Debug
 /// plain data, so any byte, timestamp, or config divergence between the two
@@ -130,7 +130,7 @@ const CHUNK_SIZES: [usize; 8] = [1, 7, 100, 187, 188, 189, 1024, 65536];
 
 /// Test 1 (headline gate) — for every fixture, for every chunk size, feeding
 /// the file through `StreamingTsDemux` in that chunk size must reconstruct a
-/// `Media` byte-identical (all tracks, all sample bytes, all source_timing
+/// `Media` byte-identical (all tracks, all sample bytes, all absolute dts/pts
 /// values, all pcr entries) to the one-shot batch `TsDemux::demux()` result.
 /// Chunk size 1 (byte-at-a-time) is included.
 #[test]

@@ -573,10 +573,16 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
                 }
                 samples.push(Sample {
                     data: file[offset..end].to_vec().into(),
-                    duration: 0,
-                    is_sync: true,
-                    composition_offset: 0,
-                    source_timing: None,
+                    // Progressive (non-fragmented) protected-sample recovery
+                    // never parsed `stts`/`ctts` timing here (pre-existing
+                    // behaviour); `None` is the honest representation now
+                    // that a fabricated placeholder timestamp is no longer
+                    // required to populate the struct.
+                    dts: None,
+                    pts: None,
+                    duration: None,
+                    flags: crate::ir::SampleFlags::SYNC,
+                    provenance: None,
                 });
             }
             samples
@@ -619,6 +625,16 @@ fn collect_fragment_samples(
     let mut out = Vec::new();
     let mut offset = 0usize;
     let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
+    // Running absolute decode-time cursor (media plane step 2c), seeded from
+    // the first fragment's `tfdt` for this track (mirrors
+    // `crate::media::Fmp4Demux`'s `TrackBuilder`); `Track::new` below anchors
+    // at 0 regardless (this path never fed a caller-visible anchor), so this
+    // is purely to give each recovered sample a real, internally-consistent
+    // `dts`/`pts` rather than `None` — the trun/tfdt here genuinely carries
+    // per-sample timing, so `None` would be a fabricated *absence*, not an
+    // honest one.
+    let mut next_dts: i64 = 0;
+    let mut seeded = false;
     while offset + BOX_HEADER_MIN_SIZE <= file.len() {
         let (bx, consumed) = parse_box(&file[offset..])?;
         if bx.header.box_type.is(b"moof") {
@@ -626,7 +642,25 @@ fn collect_fragment_samples(
             pending_moof = Some((offset, moof));
         } else if bx.header.box_type.is(b"mdat") {
             if let Some((moof_off, moof)) = pending_moof.take() {
-                absorb_protected_fragment(file, moof_off, &moof, target_track_id, &mut out)?;
+                if !seeded {
+                    if let Some(tfdt) = moof
+                        .traf
+                        .iter()
+                        .find(|t| t.tfhd.track_id == target_track_id)
+                        .and_then(|t| t.tfdt.as_ref())
+                    {
+                        next_dts = tfdt.base_media_decode_time() as i64;
+                    }
+                    seeded = true;
+                }
+                absorb_protected_fragment(
+                    file,
+                    moof_off,
+                    &moof,
+                    target_track_id,
+                    &mut next_dts,
+                    &mut out,
+                )?;
             }
         }
         if consumed == 0 {
@@ -646,6 +680,7 @@ fn absorb_protected_fragment(
     moof_off: usize,
     moof: &MovieFragmentBox,
     target_track_id: u32,
+    next_dts: &mut i64,
     out: &mut Vec<crate::pipeline::Sample>,
 ) -> Result<()> {
     use crate::pipeline::Sample;
@@ -681,7 +716,7 @@ fn absorb_protected_fragment(
                     .or(tfhd.default_sample_flags)
                     .unwrap_or(0);
                 let is_sync = flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0);
+                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0) as i64;
 
                 let start = usize::try_from(cursor)
                     .map_err(|_| Error::InvalidInput("negative sample data offset"))?;
@@ -695,13 +730,17 @@ fn absorb_protected_fragment(
                         what: "protected fragment sample data",
                     });
                 }
+                let dts = *next_dts;
+                let pts = dts + composition_offset;
                 out.push(Sample {
                     data: file[start..end].to_vec().into(),
-                    duration,
-                    is_sync,
-                    composition_offset,
-                    source_timing: None,
+                    dts: Some(dts),
+                    pts: Some(pts),
+                    duration: Some(duration),
+                    flags: crate::ir::SampleFlags::new(is_sync),
+                    provenance: None,
                 });
+                *next_dts += duration as i64;
                 cursor += size as i64;
             }
         }

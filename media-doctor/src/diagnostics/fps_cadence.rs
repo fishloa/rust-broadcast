@@ -99,7 +99,11 @@ fn check_media(media: &Media, report: &mut Report) {
         if track.samples.len() < MIN_SAMPLES_FOR_CADENCE {
             continue;
         }
-        let total_duration: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
+        let total_duration: u64 = track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         if total_duration == 0 {
             continue;
         }

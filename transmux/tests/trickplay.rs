@@ -68,11 +68,14 @@ fn synthetic_spec() -> TrackSpec {
 fn synthetic_track() -> Track {
     let samples: Vec<Sample> = (0..SYNTHETIC_SAMPLE_COUNT)
         .map(|i| {
+            // Absolute dts/pts on the synthetic frame grid (media plane step 2c).
+            let dts = i as i64 * i64::from(SYNTHETIC_SAMPLE_DURATION);
             Sample::new(
                 vec![i as u8; 4],
-                SYNTHETIC_SAMPLE_DURATION,
+                Some(dts),
+                Some(dts),
+                Some(SYNTHETIC_SAMPLE_DURATION),
                 i == 0 || i == SYNTHETIC_SYNC2_INDEX,
-                0,
             )
         })
         .collect();
@@ -121,7 +124,11 @@ fn av_frag_fixture() -> Vec<u8> {
 #[test]
 fn synthetic_duration_folding() {
     let src = synthetic_track();
-    let source_total: u64 = src.samples.iter().map(|s| s.duration as u64).sum();
+    let source_total: u64 = src
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
 
     let trick = derive_iframe_track(&src).expect("derive must succeed");
 
@@ -134,25 +141,31 @@ fn synthetic_duration_folding() {
 
     // Every output sample is a sync sample.
     for (i, s) in trick.samples.iter().enumerate() {
-        assert!(s.is_sync, "output sample {i} must be is_sync");
+        assert!(s.flags.is_sync, "output sample {i} must be is_sync");
     }
 
     // Duration of keyframe 0 spans indices 0..4 → 4 × 100 = 400.
     let expected_dur_0 = (SYNTHETIC_GOP_SIZE as u32) * SYNTHETIC_SAMPLE_DURATION;
     assert_eq!(
-        trick.samples[0].duration, expected_dur_0,
+        trick.samples[0].duration,
+        Some(expected_dur_0),
         "first keyframe duration must fold in the following non-sync samples"
     );
 
     // Duration of keyframe 1 (index 4) spans indices 4..8 → 4 × 100 = 400.
     let expected_dur_1 = (SYNTHETIC_GOP_SIZE as u32) * SYNTHETIC_SAMPLE_DURATION;
     assert_eq!(
-        trick.samples[1].duration, expected_dur_1,
+        trick.samples[1].duration,
+        Some(expected_dur_1),
         "second keyframe duration must fold in the tail non-sync samples"
     );
 
     // Total timeline is conserved.
-    let derived_total: u64 = trick.samples.iter().map(|s| s.duration as u64).sum();
+    let derived_total: u64 = trick
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     assert_eq!(
         derived_total, source_total,
         "derived total duration must equal source total duration"
@@ -200,8 +213,12 @@ fn real_fixture_video_trickplay() {
         .expect("fixture must have a video track");
 
     let source_count = video.samples.len();
-    let source_sync_count = video.samples.iter().filter(|s| s.is_sync).count();
-    let source_total: u64 = video.samples.iter().map(|s| s.duration as u64).sum();
+    let source_sync_count = video.samples.iter().filter(|s| s.flags.is_sync).count();
+    let source_total: u64 = video
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
 
     // Sanity: the fixture must have at least one sync sample for the test to
     // be meaningful.
@@ -228,11 +245,15 @@ fn real_fixture_video_trickplay() {
 
     // Every output sample is a sync sample.
     for (i, s) in trick.samples.iter().enumerate() {
-        assert!(s.is_sync, "output sample {i} must have is_sync=true");
+        assert!(s.flags.is_sync, "output sample {i} must have is_sync=true");
     }
 
     // Total duration is conserved.
-    let derived_total: u64 = trick.samples.iter().map(|s| s.duration as u64).sum();
+    let derived_total: u64 = trick
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
     assert_eq!(
         derived_total, source_total,
         "derived total duration ({derived_total}) must equal source total ({source_total})"
@@ -248,7 +269,10 @@ fn real_fixture_video_trickplay() {
 #[test]
 fn no_sync_samples_returns_error() {
     let samples: Vec<Sample> = (0u8..4)
-        .map(|i| Sample::new(vec![i], 100, false, 0))
+        .map(|i| {
+            let dts = i64::from(i) * 100;
+            Sample::new(vec![i], Some(dts), Some(dts), Some(100), false)
+        })
         .collect();
     let src = Track::new(synthetic_spec(), samples);
 

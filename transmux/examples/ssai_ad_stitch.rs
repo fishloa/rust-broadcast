@@ -132,12 +132,18 @@ fn fixture_path(rel: &str) -> PathBuf {
 
 /// Sum of `samples[..upto]`'s durations, in the track's own timescale ticks.
 fn cumulative(samples: &[Sample], upto: usize) -> u64 {
-    samples[..upto].iter().map(|s| s.duration as u64).sum()
+    samples[..upto]
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum()
 }
 
 /// Sum of `samples[lo..hi]`'s durations.
 fn range_duration(samples: &[Sample], lo: usize, hi: usize) -> u64 {
-    samples[lo..hi].iter().map(|s| s.duration as u64).sum()
+    samples[lo..hi]
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum()
 }
 
 /// First sample index whose cumulative duration (from the track start) is at
@@ -150,7 +156,7 @@ fn index_at_offset(samples: &[Sample], offset_ticks: u64) -> usize {
         if acc >= offset_ticks {
             return i;
         }
-        acc += s.duration as u64;
+        acc += s.duration.unwrap_or(0) as u64;
     }
     samples.len()
 }
@@ -232,7 +238,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         .samples
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.is_sync)
+        .filter(|(_, s)| s.flags.is_sync)
         .map(|(i, _)| i)
         .collect();
     assert!(
@@ -258,7 +264,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     let ad_video_samples = video.samples[content_split..].to_vec();
     let ad_duration_ticks_90k = ad_video_samples
         .iter()
-        .map(|s| s.duration as u64)
+        .map(|s| s.duration.unwrap_or(0) as u64)
         .sum::<u64>();
     let base_audio_samples = audio.samples[..audio_content_split].to_vec();
     let ad_audio_samples = audio.samples[audio_content_split..].to_vec();

@@ -241,14 +241,19 @@ fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
         .expect("capture must contain an H.264 video track");
 
     let mut frames = Vec::new();
-    let mut dts = video.start_decode_time;
     for sample in &video.samples {
-        let pts = dts.wrapping_add(sample.composition_offset as i64 as u64);
+        // media plane step 2c: each sample carries its own **absolute** PTS in
+        // the track timescale, so presentation time is read directly rather
+        // than reconstructed from the track anchor + a running duration sum +
+        // `composition_offset`.
+        let pts = sample
+            .pts
+            .expect("a demuxed H.264 video sample always carries an absolute pts")
+            .max(0) as u64;
         let cc = caption_cc_data(NalCodec::Avc, &sample.data, true);
         if !cc.is_empty() {
             frames.push((pts, cc));
         }
-        dts += u64::from(sample.duration);
     }
     // Samples are in H.264 *decode* order; with B-frames that's not
     // *presentation* order (PTS != DTS, `composition_offset` reorders them).

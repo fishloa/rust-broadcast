@@ -14,7 +14,7 @@ use mpeg_pes::PesAssembler;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::media::CmafMux;
-use transmux::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
+use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDemux};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -101,11 +101,27 @@ fn cumulative_starts(lens: &[usize]) -> Vec<usize> {
     out
 }
 
+/// Rescale a 90 kHz PES-clock timestamp into a track's own media timescale,
+/// floored — mirroring `ts_demux`'s `rescale_to_track` exactly, so the
+/// comparison below stays a 0-drift equality rather than a tolerance.
+///
+/// Needed because since media plane step 2c a sample's absolute `dts`/`pts`
+/// are in the **track** timescale (an audio track's is its sample rate), while
+/// the PES clock is always 90 kHz (ISO/IEC 13818-1 §2.4.3.7). For a 90 kHz
+/// (video / opaque `Data`) track this is the identity.
+fn pes_ts_in_track_ticks(pes_ts: u64, timescale: u32) -> u64 {
+    if timescale == 90_000 {
+        return pes_ts;
+    }
+    ((pes_ts as u128 * timescale as u128) / 90_000u128) as u64
+}
+
 /// Assert that splitting a track's PES access units into `samples` lost no
 /// bytes (concatenation is byte-identical to the concatenated PES payloads)
 /// and that every sample landing exactly on a PES boundary carries that PES's
-/// PTS in `source_timing`, exactly (0 ticks of drift).
-fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu]) {
+/// PTS as its **absolute** `pts`, exactly (0 ticks of drift, in the track's
+/// own timescale) — media plane step 2c.
+fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32) {
     let sample_lens: Vec<usize> = samples.iter().map(|s| s.data.len()).collect();
     let sample_starts = cumulative_starts(&sample_lens);
     let pes_lens: Vec<usize> = pes.iter().map(|p| p.payload.len()).collect();
@@ -123,12 +139,13 @@ fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu]) {
             .iter()
             .position(|&s| s == pes_start)
             .expect("every PES boundary must align exactly with a sample boundary");
-        let st = samples[idx]
-            .source_timing
-            .expect("a PES-boundary sample must carry source_timing");
+        let sample_pts = samples[idx]
+            .pts
+            .expect("a PES-boundary sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
             assert_eq!(
-                st.pts, pts,
+                sample_pts as u64,
+                pes_ts_in_track_ticks(pts, timescale),
                 "PES-boundary sample PTS must equal the PES PTS exactly (0 ticks)"
             );
         }
@@ -156,11 +173,11 @@ fn ac3_syncframe_splitting_exact_pts_and_duration() {
         track.samples.len() >= pes.len(),
         "at least one syncframe per PES access unit"
     );
-    assert_pes_boundary_timing(&track.samples, &pes);
+    assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
             s.duration,
-            transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME,
+            Some(transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME),
             "every AC-3 sample duration must be 1536 (6 blocks x 256 samples)"
         );
     }
@@ -190,22 +207,23 @@ fn eac3_syncframe_splitting_exact_pts_and_duration() {
         track.samples.len() >= pes.len(),
         "at least one access unit per PES access unit"
     );
-    assert_pes_boundary_timing(&track.samples, &pes);
+    assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
-            s.duration, expected_duration,
+            s.duration,
+            Some(expected_duration),
             "every E-AC-3 sample duration must be numblks * 256"
         );
     }
 }
 
-// ── #556: AAC exact PES-boundary PTS + video source_timing ──────────────────
+// ── #556: AAC exact PES-boundary PTS + absolute video dts/pts ───────────────
 
 const H264_AAC_VIDEO_PID: u16 = 0x0100;
 const H264_AAC_AUDIO_PID: u16 = 0x0101;
 
 #[test]
-fn aac_exact_pes_boundary_pts_and_video_source_timing() {
+fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
     let data = read_fixture("h264_aac.ts");
     let video_pes = collect_pes(&data, H264_AAC_VIDEO_PID);
     let audio_pes = collect_pes(&data, H264_AAC_AUDIO_PID);
@@ -224,14 +242,14 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("AAC audio track");
 
-    // Video: every sample now carries source_timing, and the FIRST video
-    // sample's pts/dts match the first video PES exactly.
+    // Video: every sample now carries ABSOLUTE dts/pts (media plane step 2c),
+    // and the FIRST video sample's pts/dts match the first video PES exactly.
     assert!(
         video_track
             .samples
             .iter()
-            .all(|s| s.source_timing.is_some()),
-        "every H.264 sample must carry source_timing (issue #556)"
+            .all(|s| s.dts.is_some() && s.pts.is_some()),
+        "every H.264 sample must carry absolute dts/pts (issue #556 / step 2c)"
     );
     let first_video_pes = &video_pes[0];
     let expected_pts = first_video_pes.pts.expect("first video PES has a PTS");
@@ -239,11 +257,16 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
     // The very first access unit in decode order should be the very first
     // access unit in wire order for this fixture (no B-frame reordering at
     // the stream head), so comparing the track's first sample is valid.
-    let first_sample_ts = video_track.samples[0]
-        .source_timing
-        .expect("first video sample has source_timing");
-    assert_eq!(first_sample_ts.pts, expected_pts);
-    assert_eq!(first_sample_ts.dts, expected_dts);
+    let first = &video_track.samples[0];
+    let vts = video_track.timescale();
+    assert_eq!(
+        first.pts.expect("first video sample has an absolute pts") as u64,
+        pes_ts_in_track_ticks(expected_pts, vts)
+    );
+    assert_eq!(
+        first.dts.expect("first video sample has an absolute dts") as u64,
+        pes_ts_in_track_ticks(expected_dts, vts)
+    );
 
     // AAC: exact PES-boundary PTS. Unlike AC-3/E-AC-3 (which keep the raw
     // syncframe bytes verbatim), each AAC `Sample` strips the 7-byte ADTS
@@ -262,12 +285,13 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
         "total decoded AAC samples must match an independent ADTS frame count"
     );
     for (pes_au, &boundary_idx) in audio_pes.iter().zip(pes_boundary_indices.iter()) {
-        let st = audio_track.samples[boundary_idx]
-            .source_timing
-            .expect("a PES-boundary AAC sample must carry source_timing");
+        let sample_pts = audio_track.samples[boundary_idx]
+            .pts
+            .expect("a PES-boundary AAC sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
             assert_eq!(
-                st.pts, pts,
+                sample_pts as u64,
+                pes_ts_in_track_ticks(pts, audio_track.timescale()),
                 "PES-boundary AAC sample PTS must equal the PES PTS exactly"
             );
         }
@@ -439,11 +463,14 @@ fn data_track_subtitle_pes_passthrough() {
     );
 
     for (sample, pes_au) in data_track.samples.iter().zip(pes.iter()) {
-        let st = sample
-            .source_timing
-            .expect("every Data sample must carry source_timing");
+        let sample_pts = sample
+            .pts
+            .expect("every PES-carried Data sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(st.pts, pts, "Data sample PTS must equal its PES PTS");
+            assert_eq!(
+                sample_pts as u64, pts,
+                "Data sample PTS must equal its PES PTS"
+            );
         }
     }
 }
@@ -572,7 +599,8 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
     assert!(!ac3_track.samples.is_empty());
     for s in &ac3_track.samples {
         assert_ne!(
-            s.duration, 0,
+            s.duration,
+            Some(0),
             "AC-3 trun durations must be non-zero after issue #556 (pre-#556 they were all 0)"
         );
     }
@@ -596,7 +624,7 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
                     carriage: DataCarriage::Pes,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], 0)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
         90_000,
     );
@@ -610,7 +638,7 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
                     height: 480,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], 0)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
         90_000,
     );
@@ -665,17 +693,22 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
     );
 }
 
-// ── SourceTiming::with_source_timing sanity ─────────────────────────────────
+// ── Provenance builder sanity (replaces the deleted `SourceTiming`) ─────────
 
 #[test]
-fn source_timing_builder_round_trips() {
-    let s = Sample::from_raw(vec![0u8; 4], 100).with_source_timing(SourceTiming {
-        pts: 12345,
-        dts: 12000,
-    });
-    let st = s
-        .source_timing
-        .expect("with_source_timing must set the field");
-    assert_eq!(st.pts, 12345);
-    assert_eq!(st.dts, 12000);
+fn provenance_builder_round_trips() {
+    // media plane step 2c: absolute timing lives on the sample itself; the raw
+    // pre-unwrap wire stamps survive only as debug-only `Provenance`.
+    let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100)).with_provenance(
+        transmux::Provenance {
+            wire_dts: Some(12000),
+            wire_pts: Some(12345),
+        },
+    );
+    assert_eq!(s.dts, Some(12000), "absolute dts is carried on the sample");
+    assert_eq!(s.pts, Some(12345), "absolute pts is carried on the sample");
+    assert_eq!(s.composition_offset(), 345, "pts - dts");
+    let p = s.provenance.expect("with_provenance must set the field");
+    assert_eq!(p.wire_dts, Some(12000));
+    assert_eq!(p.wire_pts, Some(12345));
 }
