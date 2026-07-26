@@ -1,31 +1,45 @@
-//! `broadcast_common::Stage` adoption (media plane step 2e).
+//! `broadcast_common::Stage` adoption (media plane steps 2e + 2e-2).
 //!
-//! Two things this file is trying to prove, honestly:
+//! Step 2e found that `Stage::feed` hardcoded `&[u8]`, which genuinely fit the
+//! byte-stream demux family (`StreamingTsDemux`/`StreamingFlvDemux`/
+//! `ProgressiveDemux`/`RtpStreamDepacketiser`) but not the four segmenters
+//! (`Segmenter`/`LlHlsSegmenter`/`LlSegmenter`/`StreamingTsHlsSegmenter`),
+//! whose real per-call input is a typed `(track_id, Sample)` — forcing bytes
+//! on them would have meant inventing a byte encoding nobody downstream
+//! wants. Step 2e-2 fixed the trait instead of forcing the segmenters:
+//! `Stage::In<'a>` is now a generic associated type, so byte-stream stages
+//! declare `type In<'a> = &'a [u8];` and segmenters declare
+//! `type In<'a> = (u32, Sample);` — each family states its own honest input.
 //!
-//! 1. **The `Stage` shape genuinely unifies the byte-stream demux family.**
-//!    [`generic_drive_helper_unifies_ts_flv_and_progressive_demuxers`] drives
-//!    three demuxers that, before this step, had three different native APIs
+//! What this file proves, honestly:
+//!
+//! 1. **The generalised `Stage` genuinely unifies *both* families through one
+//!    driver.** [`generic_drive_helper_unifies_ts_flv_and_progressive_demuxers`]
+//!    drives three demuxers with three different native APIs before step 2e
 //!    (`StreamingTsDemux::feed` returns `()`; `StreamingFlvDemux::feed`
 //!    returns `Result<(), FlvError>`; `ProgressiveDemux` has no incremental
-//!    `feed` at all, just a whole-buffer `Unpackage::unpackage`) through the
-//!    *exact same* generic `drive::<S: Stage>` function, and checks the
-//!    result against each type's own trusted batch/inherent API — not just
-//!    "it compiles".
-//! 2. **Where `Stage` does NOT fit, this crate does not force it.** The four
-//!    segmenters (`Segmenter`, `LlHlsSegmenter`, `LlSegmenter`,
-//!    `StreamingTsHlsSegmenter`) are deliberately not given a `Stage` impl:
-//!    their real per-call input is a typed `Sample` (dts/pts/duration/flags/
-//!    data), not bytes, and `Stage::feed`'s signature is hardcoded to
-//!    `&[u8]` — there is no encoding of `Sample` into bytes anyone downstream
-//!    wants, so a `Stage` impl for them would either silently discard real
-//!    input or exist purely to satisfy the trait shape. See the media-plane
-//!    architecture spec §7 ("`Stage` may under-earn") and this step's report.
+//!    `feed` at all) and
+//!    [`generic_drive_helper_also_spans_segmenter_stages`] drives two
+//!    segmenters with two entirely different `Out` types (`(Vec<u8>,
+//!    SegmentMeta)` vs `Chunk`) — all five through the *exact same* generic
+//!    `drive::<S: Stage>` function, checked against each type's own trusted
+//!    inherent API, not just "it compiles".
+//! 2. **`StreamingTsHlsSegmenter`'s enqueue-then-poll `Stage` path yields
+//!    exactly what its inline-return inherent `push`/`finish` path does** —
+//!    [`ts_hls_segmenter_stage_matches_inline_push`] — since `Stage` had to
+//!    change that type's "return the segment directly" shape into "enqueue,
+//!    then `poll`", and that bridging must not drop or reorder a segment.
 
 use std::path::PathBuf;
 
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
-use transmux::{DemuxEvent, ProgressiveDemux, StreamingFlvDemux, StreamingTsDemux, TsDemux};
+use transmux::{
+    CodecConfig, DecoderConfigDescriptor, DecoderSpecificInfo, DemuxEvent, ESDescriptor, EsdsBox,
+    LlSegmenter, ObjectTypeIndication, ProgressiveDemux, SLConfigDescriptor, Sample, SegmentMeta,
+    Segmenter, StreamType, StreamingFlvDemux, StreamingTsDemux, StreamingTsHlsSegmenter, TrackSpec,
+    TsDemux,
+};
 
 use broadcast_common::Unpackage;
 
@@ -40,20 +54,25 @@ fn read(path: &std::path::Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
-/// The generic drive loop the brief asks for: feed each chunk (draining
-/// `poll()` after every call, since a single `feed` may unlock more than one
-/// output), then `finish()` and drain the rest. Works against *any* `Stage`
-/// implementor, regardless of what its native `feed`/`finish` signatures
-/// looked like before this step.
-fn drive<S>(stage: &mut S, chunks: &[&[u8]]) -> Vec<S::Out>
+/// The generic drive loop, genuinely spanning both `Stage` families: feed
+/// each input item (draining `poll()` after every call, since a single
+/// `feed` may unlock more than one output), then `finish()` and drain the
+/// rest. Works against *any* `Stage` implementor regardless of what its
+/// native `feed`/`finish` signatures looked like before adoption, and
+/// regardless of whether `S::In<'a>` is a borrowed byte slice (the demux
+/// family) or an owned `(u32, Sample)` (the segmenter family) — the only
+/// thing pinning `'a` down is whatever the caller's `inputs` iterator
+/// actually borrows (nothing, for the owned segmenter case).
+fn drive<'a, S, I>(stage: &mut S, inputs: I) -> Vec<S::Out>
 where
     S: Stage,
     S::Error: core::fmt::Debug,
+    I: IntoIterator<Item = S::In<'a>>,
 {
     let mut out = Vec::new();
-    for (i, chunk) in chunks.iter().enumerate() {
+    for (i, input) in inputs.into_iter().enumerate() {
         stage
-            .feed(chunk, Timestamp::from_nanos(i as u64))
+            .feed(input, Timestamp::from_nanos(i as u64))
             .expect("feed");
         while let Some(ev) = stage.poll() {
             out.push(ev);
@@ -79,7 +98,7 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
 
     let ts_chunks: Vec<&[u8]> = ts_bytes.chunks(317).collect();
     let mut ts_stage = StreamingTsDemux::new();
-    let ts_events = drive(&mut ts_stage, &ts_chunks);
+    let ts_events = drive(&mut ts_stage, ts_chunks);
     let ts_added = ts_events
         .iter()
         .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
@@ -107,7 +126,7 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
 
     let flv_chunks: Vec<&[u8]> = flv_bytes.chunks(257).collect();
     let mut flv_stage = StreamingFlvDemux::new();
-    let flv_events = drive(&mut flv_stage, &flv_chunks);
+    let flv_events = drive(&mut flv_stage, flv_chunks);
     let flv_added = flv_events
         .iter()
         .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
@@ -136,7 +155,7 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
 
     let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.chunks(4096).collect();
     let mut prog_stage = ProgressiveDemux::new();
-    let mut prog_media = drive(&mut prog_stage, &prog_chunks);
+    let mut prog_media = drive(&mut prog_stage, prog_chunks);
     assert_eq!(
         prog_media.len(),
         1,
@@ -195,4 +214,171 @@ fn demand_saturated_flips_true_at_the_unattributed_bytes_bound() {
         saw_saturated,
         "demand().saturated must flip true once the unattributed replay buffer hits its cap"
     );
+}
+
+// ── Segmenter-family Stage fixtures ─────────────────────────────────────────
+//
+// A minimal but structurally-real AAC `esds`, so `build_init_segment`
+// succeeds — the same fixture shape `transmux/tests/segmenter.rs` uses.
+// Audio-only (no video track) keeps this self-contained: every `Sample` is a
+// sync sample, so the anchor cuts purely on accumulated duration, with no
+// need for a real `avcC`.
+
+fn dummy_esds() -> EsdsBox {
+    EsdsBox::new(ESDescriptor {
+        es_id: 1,
+        stream_dependence_flag: false,
+        url_flag: false,
+        ocr_stream_flag: false,
+        stream_priority: 0,
+        depends_on_es_id: None,
+        url: None,
+        ocr_es_id: None,
+        decoder_config: Some(DecoderConfigDescriptor {
+            object_type_indication: ObjectTypeIndication(0x40),
+            stream_type: StreamType(0x05),
+            up_stream: false,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+            decoder_specific_info: Some(DecoderSpecificInfo {
+                data: vec![0x12, 0x10],
+            }),
+        }),
+        sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
+    })
+}
+
+fn audio_track_spec() -> TrackSpec {
+    TrackSpec::new(
+        1,
+        48_000,
+        CodecConfig::Aac {
+            esds: dummy_esds(),
+            channel_count: 2,
+            sample_rate: 48_000,
+            sample_size: 16,
+        },
+    )
+}
+
+/// 50 audio samples at 1024 ticks (~21.3 ms) each @ 48 kHz — audio samples
+/// are always sync (`Sample::from_raw`), so the anchor cuts purely on
+/// accumulated duration against the segmenter's target.
+fn audio_samples(n: usize) -> Vec<(u32, Sample)> {
+    (0..n)
+        .map(|_| (1u32, Sample::from_raw(vec![0u8; 4], None, None, Some(1024))))
+        .collect()
+}
+
+/// The second half of the acceptance evidence this step's brief asks for:
+/// [`drive`] genuinely spans the segmenter family too, not just the
+/// byte-stream demux family above. Drives `Segmenter` and `LlSegmenter` —
+/// two segmenters with entirely different `Out` types (`(Vec<u8>,
+/// SegmentMeta)` vs `Chunk`) — through the *same* generic `drive::<S: Stage>`
+/// function used for the demuxers, and checks the result against each type's
+/// own trusted inherent `push`/`take_ready*`/`flush` API run over the exact
+/// same samples — not just "it compiles".
+#[test]
+fn generic_drive_helper_also_spans_segmenter_stages() {
+    let track = audio_track_spec();
+    let samples = audio_samples(50);
+
+    // --- Segmenter: inherent API (oracle) vs Stage-driven -------------------
+    let mut oracle_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
+    let mut oracle_seg_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
+    for (track_id, sample) in samples.clone() {
+        oracle_seg.push(track_id, sample).unwrap();
+        oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
+    }
+    oracle_seg.flush().unwrap();
+    oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
+    assert!(
+        !oracle_seg_out.is_empty(),
+        "fixture must actually exercise at least one segment cut"
+    );
+
+    let mut stage_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
+    let stage_seg_out = drive(&mut stage_seg, samples.clone());
+    assert_eq!(
+        stage_seg_out, oracle_seg_out,
+        "Stage-driven Segmenter must yield the exact same (bytes, meta) sequence as the inherent push/take_ready_with_meta/flush API"
+    );
+
+    // --- LlSegmenter: inherent API (oracle) vs Stage-driven ------------------
+    let mut oracle_ll = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
+    let mut oracle_ll_out: Vec<transmux::Chunk> = Vec::new();
+    for (track_id, sample) in samples.clone() {
+        oracle_ll.push(track_id, sample).unwrap();
+        oracle_ll_out.extend(oracle_ll.take_ready());
+    }
+    oracle_ll.flush().unwrap();
+    oracle_ll_out.extend(oracle_ll.take_ready());
+    assert!(
+        !oracle_ll_out.is_empty(),
+        "fixture must actually exercise at least one chunk emission"
+    );
+
+    let mut stage_ll = LlSegmenter::new(vec![track], 1000, 0.1, 4).unwrap();
+    let stage_ll_out = drive(&mut stage_ll, samples);
+    assert_eq!(
+        stage_ll_out.len(),
+        oracle_ll_out.len(),
+        "Stage-driven LlSegmenter must yield the same chunk count as the inherent push/take_ready/flush API"
+    );
+    for (stage_chunk, oracle_chunk) in stage_ll_out.iter().zip(oracle_ll_out.iter()) {
+        // `Chunk` isn't `PartialEq` (it isn't a wire-comparable spec type in
+        // its own right), so compare the fields that matter field-by-field.
+        assert_eq!(stage_chunk.data, oracle_chunk.data);
+        assert_eq!(stage_chunk.segment_number, oracle_chunk.segment_number);
+        assert_eq!(stage_chunk.is_segment_start, oracle_chunk.is_segment_start);
+        assert_eq!(stage_chunk.sequence_number, oracle_chunk.sequence_number);
+    }
+}
+
+/// `StreamingTsHlsSegmenter` is the one segmenter whose inherent
+/// `push`/`finish` already return the cut segment **inline** rather than via
+/// a drain — under `Stage` those calls instead enqueue into a staging queue
+/// for `poll` to hand back (see the impl's own docs). This test proves that
+/// bridging is behaviour-neutral: driving the segmenter via `Stage::feed`/
+/// `poll`/`finish` yields exactly the same sequence of segments, in the same
+/// order, as collecting `push`'s/`finish`'s inline `Option<TsSegment>`
+/// return values directly.
+#[test]
+fn ts_hls_segmenter_stage_matches_inline_push() {
+    let track = audio_track_spec();
+    let samples = audio_samples(50);
+
+    // --- Inline inherent API (oracle) ---------------------------------------
+    let mut inline_seg = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
+    let mut inline_out = Vec::new();
+    for (track_id, sample) in samples.clone() {
+        if let Some(seg) = inline_seg.push(track_id, sample).unwrap() {
+            inline_out.push(seg);
+        }
+    }
+    if let Some(seg) = inline_seg.finish().unwrap() {
+        inline_out.push(seg);
+    }
+    assert!(
+        !inline_out.is_empty(),
+        "fixture must actually exercise at least one segment cut"
+    );
+
+    // --- Stage enqueue-then-poll path ----------------------------------------
+    let mut stage_seg = StreamingTsHlsSegmenter::new(vec![track], 1, 10).unwrap();
+    let stage_out = drive(&mut stage_seg, samples);
+
+    assert_eq!(
+        stage_out.len(),
+        inline_out.len(),
+        "Stage-driven enqueue-then-poll must yield the same segment count as the inline push/finish return values"
+    );
+    for (staged, inline) in stage_out.iter().zip(inline_out.iter()) {
+        assert_eq!(staged.bytes, inline.bytes);
+        assert_eq!(staged.duration, inline.duration);
+        assert_eq!(staged.discontinuous, inline.discontinuous);
+        assert_eq!(staged.uri, inline.uri);
+        assert_eq!(staged.sequence, inline.sequence);
+    }
 }

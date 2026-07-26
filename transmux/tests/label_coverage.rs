@@ -45,6 +45,10 @@ const SKIP: &[&str] = &[
     // lossy — the typed variant *is* the label.
     "CodecConfig",
     "DemuxEvent",
+    // `LlHlsSegmenter`'s `Stage::Out` (media plane step 2e-2): a dispatch
+    // enum wrapping two full structured payloads (`PartInfo`/`SegmentInfo`),
+    // same shape as `DemuxEvent` above — not a spec-defined flat code.
+    "LlHlsStageOutput",
     "Output",
     "SampleEntryVariant",
     "StblChild",

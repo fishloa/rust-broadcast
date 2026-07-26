@@ -43,7 +43,10 @@
 //! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
 //! [`crate::hls::MediaSegment::discontinuous`].
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+
+use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::pipeline::{
@@ -112,6 +115,12 @@ pub struct Segmenter {
     /// The init-segment bytes from the last cut (or the initial build), used to
     /// auto-detect init changes.  `None` before the first segment is cut.
     last_init: Option<Vec<u8>>,
+    /// [`Stage`] adoption staging queue: segments moved out of `ready` (via
+    /// [`take_ready_with_meta`](Self::take_ready_with_meta)) as they are cut,
+    /// so [`Stage::poll`] can hand them back one at a time, in order, without
+    /// disturbing the inherent `take_ready`/`take_ready_with_meta` API (which
+    /// still drains straight from `ready`).
+    stage_ready: VecDeque<(Vec<u8>, SegmentMeta)>,
 }
 
 impl Segmenter {
@@ -185,6 +194,7 @@ impl Segmenter {
             ready: Vec::new(),
             pending_discontinuity: false,
             last_init: None,
+            stage_ready: VecDeque::new(),
         })
     }
 
@@ -320,5 +330,58 @@ impl Segmenter {
         self.anchor_pending_dur = 0;
         self.ready.push((seg, SegmentMeta { discontinuous }));
         Ok(())
+    }
+}
+
+/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, the
+/// segmenter's real per-call input (a track id plus one coded sample) — not
+/// the byte-stream family's `&[u8]`, which would have no honest encoding of a
+/// `Sample` (see the `stage` module docs). `Out` is
+/// [`take_ready_with_meta`](Self::take_ready_with_meta)'s item type: bytes
+/// plus the discontinuity metadata a caller needs for the HLS playlist, not a
+/// bare `Vec<u8>` that would silently drop that flag.
+///
+/// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
+/// [`take_ready_with_meta`](Self::take_ready_with_meta), [`flush`](Self::flush),
+/// [`mark_discontinuity`](Self::mark_discontinuity) — keeps working unchanged;
+/// this impl is an additional, uniform way to drive the same engine, draining
+/// `take_ready_with_meta` into its own staging queue so `poll` can hand
+/// segments back one at a time.
+impl Stage for Segmenter {
+    type In<'a> = (u32, Sample);
+    type Out = (Vec<u8>, SegmentMeta);
+    type Error = Error;
+
+    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        self.push(track_id, sample)?;
+        let ready = self.take_ready_with_meta();
+        self.stage_ready.extend(ready);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.stage_ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.flush()?;
+        let ready = self.take_ready_with_meta();
+        self.stage_ready.extend(ready);
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Segments are only cut in reaction to `push` (a keyframe past the
+        // target duration) or `flush` — no rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// This segmenter enforces no hard cap on buffered samples end-to-end —
+    /// `pending` grows until the anchor cuts a segment — so `saturated` would
+    /// be fabricated; reporting the honest "no preference" default instead.
+    fn demand(&self) -> Demand {
+        Demand::default()
     }
 }

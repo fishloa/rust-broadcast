@@ -65,7 +65,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::Package;
+use broadcast_common::{Demand, Package, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::hls::{MediaPlaylist, MediaSegment};
@@ -510,6 +510,12 @@ pub struct StreamingTsHlsSegmenter {
     /// Running max `#EXT-X-TARGETDURATION` ceiling ever produced (monotonic,
     /// per RFC 8216 §4.3.3.1 — never shrinks even as segments roll off).
     target_duration: u32,
+    /// [`Stage`] adoption staging queue: unlike the other three segmenters,
+    /// [`push`](Self::push)/[`finish`](Self::finish) already return a cut
+    /// `TsSegment` inline rather than via a separate drain — so this queue
+    /// exists purely to bridge "returned inline" to "pulled via
+    /// [`Stage::poll`]" without changing that inherent return shape.
+    stage_ready: VecDeque<TsSegment>,
 }
 
 impl StreamingTsHlsSegmenter {
@@ -571,6 +577,7 @@ impl StreamingTsHlsSegmenter {
             total_segments: 0,
             discontinuity_sequence: 0,
             target_duration: 0,
+            stage_ready: VecDeque::new(),
         })
     }
 
@@ -855,6 +862,57 @@ impl StreamingTsHlsSegmenter {
             uri,
             sequence,
         })
+    }
+}
+
+/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
+/// reasoning as the other three segmenters' impls. `Out = TsSegment` — this
+/// segmenter's own natural output, not unified with any other segmenter's
+/// `Out`.
+///
+/// Unlike the other three segmenters, [`push`](Self::push)/
+/// [`finish`](Self::finish) already return a cut `TsSegment` **inline**
+/// rather than via a separate drain method — `Stage`'s shape still requires
+/// output to come back from [`poll`](Stage::poll), so `feed`/`finish` here
+/// enqueue the inline result into `stage_ready` for `poll` to hand back,
+/// rather than returning it directly. Every inherent method keeps working
+/// unchanged; this impl is an additional, uniform way to drive the same
+/// engine.
+impl Stage for StreamingTsHlsSegmenter {
+    type In<'a> = (u32, Sample);
+    type Out = TsSegment;
+    type Error = Error;
+
+    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        if let Some(segment) = self.push(track_id, sample)? {
+            self.stage_ready.push_back(segment);
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.stage_ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        if let Some(segment) = self.finish()? {
+            self.stage_ready.push_back(segment);
+        }
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Segments are only cut in reaction to `push`/`finish` — no
+        // rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// No hard cap on buffered samples end-to-end (same as `Segmenter`) — the
+    /// honest "no preference" default rather than a fabricated bound.
+    fn demand(&self) -> Demand {
+        Demand::default()
     }
 }
 

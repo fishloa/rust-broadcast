@@ -19,11 +19,24 @@
 //! separate pull, or from two separate pulls — and none of them carry a clock,
 //! which blocks deadline-driven stages (rate-scheduled SI emission, RTCP
 //! timeout, segment-boundary timers) from ever sharing a driver loop with the
-//! byte-shovelling stages. `Stage` unifies the shape: push bytes in with
+//! byte-shovelling stages. `Stage` unifies the shape: push input in with
 //! [`Stage::feed`], pull typed output out with [`Stage::poll`] (repeatable,
 //! decoupled from `feed`), signal end-of-input with [`Stage::finish`], and let
 //! time-driven work happen via [`Stage::next_deadline`] / [`Stage::on_deadline`]
 //! — all without requiring a full media IR or any concrete codec type.
+//!
+//! # `In`: a per-implementor input type, not hardcoded bytes
+//!
+//! The container-demux family's real input is bytes (`&[u8]`), but a
+//! sample-consuming stage's real input is a typed `(track_id, Sample)` — there
+//! is no useful byte encoding of a `Sample` that any caller wants, so forcing
+//! `feed(&[u8], _)` on a segmenter would mean either inventing a fake wire
+//! format nobody consumes or silently discarding real structure. [`Stage::In`]
+//! is a generic associated type precisely so each implementor states its own
+//! honest input shape — `&'a [u8]` for byte-stream stages, `(u32, Sample)` for
+//! the segmenters — while [`Stage::Out`]/[`Stage::Error`] stay per-implementor
+//! too. This is what lets one driver loop, generic only over `S: Stage`, span
+//! both families (see `transmux/tests/stage.rs`'s `drive` helper).
 //!
 //! This module defines the trait plus its two small supporting types; it does
 //! not migrate any existing implementor (that is the workspace's media-plane
@@ -159,13 +172,14 @@ impl Demand {
 
 /// The incremental-drive shape every streaming stage in the workspace adopts.
 ///
-/// A `Stage` consumes bytes via [`feed`](Stage::feed), produces typed output
-/// via repeated [`poll`](Stage::poll) calls (decoupled from `feed` — a single
-/// `feed` may unlock zero, one, or many outputs), is told there is no more
-/// input via [`finish`](Stage::finish), and may need to act purely on the
-/// passage of time via [`next_deadline`](Stage::next_deadline) /
-/// [`on_deadline`](Stage::on_deadline) (e.g. rate-scheduled re-emission with no
-/// new input at all). [`demand`](Stage::demand) lets a driver ask before
+/// A `Stage` consumes input via [`feed`](Stage::feed) (the shape of that input
+/// is [`In`](Stage::In), chosen per implementor — see the [module docs](self)),
+/// produces typed output via repeated [`poll`](Stage::poll) calls (decoupled
+/// from `feed` — a single `feed` may unlock zero, one, or many outputs), is
+/// told there is no more input via [`finish`](Stage::finish), and may need to
+/// act purely on the passage of time via [`next_deadline`](Stage::next_deadline)
+/// / [`on_deadline`](Stage::on_deadline) (e.g. rate-scheduled re-emission with
+/// no new input at all). [`demand`](Stage::demand) lets a driver ask before
 /// feeding more.
 ///
 /// See the [module docs](self) for the four divergent APIs this contract
@@ -185,6 +199,7 @@ impl Demand {
 /// }
 ///
 /// impl Stage for Reverser {
+///     type In<'a> = &'a [u8];
 ///     type Out = Vec<u8>;
 ///     type Error = core::convert::Infallible;
 ///
@@ -233,6 +248,16 @@ impl Demand {
 /// assert_eq!(outputs, vec![vec![b'c', b'b', b'a'], vec![b'e', b'd']]);
 /// ```
 pub trait Stage {
+    /// The shape of input this stage consumes via [`feed`](Stage::feed).
+    ///
+    /// A generic associated type, not a hardcoded `&[u8]`, so each
+    /// implementor states its own honest input: byte-stream stages use
+    /// `&'a [u8]`; sample-consuming stages (e.g. a segmenter) use an owned
+    /// typed input such as `(u32, Sample)` that does not need to borrow
+    /// anything, and can simply not use the `'a` parameter. See the
+    /// [module docs](self) for why this is a GAT rather than a second
+    /// `feed`-like method or an invented byte encoding.
+    type In<'a>;
     /// The type of output this stage produces, pulled via [`poll`](Stage::poll).
     type Out;
     /// The error type this stage returns from [`feed`](Stage::feed) and
@@ -243,7 +268,7 @@ pub trait Stage {
     ///
     /// May unlock output retrievable via subsequent [`poll`](Stage::poll)
     /// calls; a single `feed` call does not itself return output.
-    fn feed(&mut self, input: &[u8], now: Timestamp) -> Result<(), Self::Error>;
+    fn feed(&mut self, input: Self::In<'_>, now: Timestamp) -> Result<(), Self::Error>;
 
     /// Pull one unit of ready output, if any is available.
     ///
@@ -323,6 +348,7 @@ mod tests {
     }
 
     impl Stage for ByteCounter {
+        type In<'a> = &'a [u8];
         type Out = u64;
         type Error = Infallible;
 

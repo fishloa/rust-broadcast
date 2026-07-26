@@ -477,6 +477,7 @@ impl StreamingFlvDemux {
 /// exact same generic loop despite the two disagreeing on `feed`'s return
 /// type (`Result` vs infallible) before this trait.
 impl Stage for StreamingFlvDemux {
+    type In<'a> = &'a [u8];
     type Out = DemuxEvent;
     type Error = FlvError;
 

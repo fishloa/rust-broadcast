@@ -35,7 +35,10 @@
 //! [`low_latency`](crate::hls::MediaPlaylist::low_latency) config is set; see
 //! [`crate::hls`] for the exact RFC 8216bis syntax and sections.
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+
+use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::ll_dash::build_chunk;
@@ -143,6 +146,11 @@ pub struct LlHlsSegmenter {
     ready_parts: Vec<PartInfo>,
     /// Full segments finished but not yet taken by the caller.
     ready_segments: Vec<SegmentInfo>,
+    /// [`Stage`] adoption staging queue: parts/segments moved out of
+    /// `ready_parts`/`ready_segments` as they are cut, so [`Stage::poll`] can
+    /// hand them back one at a time without disturbing the inherent
+    /// `take_ready_parts`/`take_ready_segments` API.
+    stage_ready: VecDeque<LlHlsStageOutput>,
 }
 
 impl LlHlsSegmenter {
@@ -231,6 +239,7 @@ impl LlHlsSegmenter {
             next_part_index: 0,
             ready_parts: Vec::new(),
             ready_segments: Vec::new(),
+            stage_ready: VecDeque::new(),
         })
     }
 
@@ -453,5 +462,82 @@ impl LlHlsSegmenter {
             part_index,
         });
         Ok(())
+    }
+}
+
+/// [`LlHlsSegmenter`]'s [`Stage::Out`] — this segmenter drains two distinct
+/// kinds of ready output today ([`take_ready_parts`](LlHlsSegmenter::take_ready_parts)
+/// / [`take_ready_segments`](LlHlsSegmenter::take_ready_segments)); `Stage`
+/// needs one `Out` type, and an enum is the honest way to carry that
+/// distinction through rather than silently merging or dropping one kind.
+/// Deliberately not unified with any other segmenter's `Out` — see the
+/// `stage` module docs on why each implementor states its own shape.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum LlHlsStageOutput {
+    /// A finished partial segment — see [`PartInfo`].
+    Part(PartInfo),
+    /// A finished full segment — see [`SegmentInfo`].
+    Segment(SegmentInfo),
+}
+
+/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
+/// reasoning as [`crate::segmenter::Segmenter`]'s impl. `Out =
+/// [`LlHlsStageOutput`]`, covering both parts and segments (see that type's
+/// docs).
+///
+/// Every inherent method — [`push`](Self::push), [`take_ready_parts`
+/// ](Self::take_ready_parts), [`take_ready_segments`](Self::take_ready_segments),
+/// [`flush`](Self::flush) — keeps working unchanged; this impl drains both
+/// ready queues (parts first, then segments — mirroring the order a part's
+/// parent segment can only close after that part) into its own staging queue
+/// so `poll` can hand them back one at a time in that order.
+impl Stage for LlHlsSegmenter {
+    type In<'a> = (u32, Sample);
+    type Out = LlHlsStageOutput;
+    type Error = Error;
+
+    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        self.push(track_id, sample)?;
+        self.drain_into_stage_queue();
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.stage_ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.flush()?;
+        self.drain_into_stage_queue();
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Parts/segments are only cut in reaction to `push`/`flush` — no
+        // rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// No hard cap on buffered samples end-to-end (same as `Segmenter`) — the
+    /// honest "no preference" default rather than a fabricated bound.
+    fn demand(&self) -> Demand {
+        Demand::default()
+    }
+}
+
+impl LlHlsSegmenter {
+    /// Move everything currently sitting in `ready_parts`/`ready_segments`
+    /// into the `Stage`-only `stage_ready` queue, parts first.
+    fn drain_into_stage_queue(&mut self) {
+        for part in self.take_ready_parts() {
+            self.stage_ready.push_back(LlHlsStageOutput::Part(part));
+        }
+        for segment in self.take_ready_segments() {
+            self.stage_ready
+                .push_back(LlHlsStageOutput::Segment(segment));
+        }
     }
 }

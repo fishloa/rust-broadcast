@@ -52,10 +52,13 @@
 //! samples-in IR does not carry. A caller with that timing can add it out of
 //! band; its absence does not affect the availability signalling above.
 
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+
+use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::dash::DashPackager;
 use crate::error::{Error, Result};
@@ -156,6 +159,11 @@ pub struct LlSegmenter {
     segment_open: bool,
     /// Chunks finished but not yet taken by the caller.
     ready: Vec<Chunk>,
+    /// [`Stage`] adoption staging queue: chunks moved out of `ready` (via
+    /// [`take_ready`](Self::take_ready)) as they are cut, so [`Stage::poll`]
+    /// can hand them back one at a time without disturbing the inherent
+    /// `take_ready` API.
+    stage_ready: VecDeque<Chunk>,
 }
 
 impl LlSegmenter {
@@ -234,6 +242,7 @@ impl LlSegmenter {
             current_segment: 1,
             segment_open: false,
             ready: Vec::new(),
+            stage_ready: VecDeque::new(),
         })
     }
 
@@ -386,6 +395,53 @@ impl LlSegmenter {
             sequence_number: seq,
         });
         Ok(())
+    }
+}
+
+/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
+/// reasoning as [`crate::segmenter::Segmenter`]'s impl. `Out = Chunk` —
+/// [`take_ready`](Self::take_ready)'s own item type, not unified with any
+/// other segmenter's `Out`.
+///
+/// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
+/// [`flush`](Self::flush) — keeps working unchanged; this impl drains
+/// `take_ready` into its own staging queue so `poll` can hand chunks back one
+/// at a time.
+impl Stage for LlSegmenter {
+    type In<'a> = (u32, Sample);
+    type Out = Chunk;
+    type Error = Error;
+
+    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        self.push(track_id, sample)?;
+        let ready = self.take_ready();
+        self.stage_ready.extend(ready);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.stage_ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.flush()?;
+        let ready = self.take_ready();
+        self.stage_ready.extend(ready);
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Chunks are only cut in reaction to `push`/`flush` — no
+        // rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// No hard cap on buffered samples end-to-end (same as `Segmenter`) — the
+    /// honest "no preference" default rather than a fabricated bound.
+    fn demand(&self) -> Demand {
+        Demand::default()
     }
 }
 

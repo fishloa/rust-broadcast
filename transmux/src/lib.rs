@@ -246,7 +246,7 @@ pub use klv::{
     ber_length, ber_oid, crc16_ccitt, encode_ber_length, encode_ber_oid,
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
-pub use ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
+pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, Track, TrackEncryption};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

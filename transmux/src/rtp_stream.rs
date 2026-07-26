@@ -470,6 +470,7 @@ impl RtpStreamDepacketiser {
 /// `track_id` directly — that inherent API is unchanged and still the right
 /// tool for that case.
 impl Stage for RtpStreamDepacketiser {
+    type In<'a> = &'a [u8];
     type Out = Sample;
     type Error = Error;
 

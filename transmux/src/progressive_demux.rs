@@ -131,6 +131,7 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
 /// that as the `Out` type is the honest shape, not a manufactured event
 /// stream this demuxer doesn't actually have.
 impl Stage for ProgressiveDemux<'_> {
+    type In<'a> = &'a [u8];
     type Out = Media;
     type Error = Error;
 

@@ -2308,6 +2308,7 @@ impl StreamingTsDemux {
 /// output in reaction to `feed`/`finish`, so `next_deadline` is always `None`
 /// and `on_deadline` is a no-op.
 impl Stage for StreamingTsDemux {
+    type In<'a> = &'a [u8];
     type Out = DemuxEvent;
     /// `feed`/`finish` are infallible here — TS resynchronises on `0x47`
     /// rather than erroring on malformed input (see the type's own docs).
