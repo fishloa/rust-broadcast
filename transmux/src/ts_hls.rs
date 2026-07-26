@@ -11,8 +11,10 @@
 //! # Behaviour
 //!
 //! [`TsHlsPackager`] segments the hub [`Media`] IR at keyframe boundaries on the
-//! **anchor track** (the first video track, else the first track), cutting a new
-//! segment on the first sync sample at or past the target duration — mirroring
+//! **anchor track** (the first video track, else the first track whose samples
+//! carry a real duration — never a section-carried track, whose duration is
+//! always `None`), cutting a new segment on the first sync sample at or past
+//! the target duration — mirroring
 //! [`Segmenter`](crate::segmenter::Segmenter)'s CMAF rule so every video segment
 //! begins on a random-access point. Every track's samples are partitioned across
 //! the segments by decode time, so the concatenation of all segments carries the
@@ -70,7 +72,7 @@ use broadcast_common::{Demand, Package, Stage, Timestamp};
 use crate::error::{Error, Result};
 use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::media::{Media, Track};
-use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use crate::ts_mux::mux_tracks_at;
 
 /// Default `#EXT-X-VERSION` for a classic (TS-segment) media playlist. Version 3
@@ -159,12 +161,15 @@ impl Package for TsHlsPackager {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
 
-        // Choose the anchor track: first video (AVC), else the first track —
-        // mirrors Segmenter's anchor selection.
-        let anchor = choose_anchor(media.tracks.iter().map(|t| &t.spec.config));
+        // Choose the anchor track: first video (AVC), else the first
+        // anchor-capable track (one whose samples actually carry a
+        // duration) — mirrors Segmenter's anchor selection, but errors
+        // loudly rather than defaulting to track 0 when nothing qualifies
+        // (issue B9).
+        let anchor = choose_anchor(media.tracks.iter().map(|t| &t.spec.config))?;
 
         let target_ticks = self.anchor_target_ticks(&media.tracks[anchor]);
-        let boundaries = anchor_segment_boundaries(&media.tracks[anchor].samples, target_ticks);
+        let boundaries = anchor_segment_boundaries(&media.tracks[anchor].samples, target_ticks)?;
         let segments = partition_tracks(&media.tracks, anchor, &boundaries);
 
         // Mux each segment independently: each re-emits PAT/PMT then its PES.
@@ -253,19 +258,65 @@ impl TsHlsPackager {
 // duration/anchor-selection arithmetic below, so the two paths can never
 // silently drift apart (issue #571).
 
+/// True when `config`'s samples can carry a real (non-permanently-`None`)
+/// duration, so the track is eligible to be the segmentation anchor
+/// (keyframe-cut boundary track).
+///
+/// False only for a section-carried [`CodecConfig::Data`] track
+/// ([`DataCarriage::Sections`]): ISO/IEC 13818-1 §2.4.4 PSI/private sections
+/// carry no PES timestamp at all, so `TsDemux`/`StreamingTsDemux` never
+/// fabricate a duration for them (media plane step 2c) — every sample is
+/// `duration: None`, so `anchor_pending_dur` could never advance past the
+/// target and the segmenter would never cut (issue #571-successor B9). A
+/// PES-carried `CodecConfig::Data` track ([`DataCarriage::Pes`], e.g. private
+/// PES data) *does* get a real, lookahead-derived duration exactly like
+/// audio/video, so it stays anchor-eligible.
+///
+/// Deliberately narrower than [`CodecConfig::is_muxable_in_bmff`], which
+/// excludes every `Data` track (`Pes` or `Sections`) plus `Subtitle`: unlike
+/// ISOBMFF, this crate's TS mux path (`ts_mux`) *can* and does carry section
+/// tracks verbatim (raw on their own PID rather than PES), so a
+/// section-carried track must stay in the segmenter's track set to be muxed
+/// — it is just never chosen as the anchor.
+fn is_anchor_capable(config: &CodecConfig) -> bool {
+    !matches!(
+        config,
+        CodecConfig::Data {
+            carriage: DataCarriage::Sections,
+            ..
+        }
+    )
+}
+
 /// Choose the anchor track index used for segment-cut boundaries: the first
 /// video track (any [`CodecConfig::is_video`] codec — issue #628), else the
-/// first track — mirrors [`Segmenter`](crate::segmenter::Segmenter)'s anchor
-/// selection.
-fn choose_anchor<'a, I>(configs: I) -> usize
+/// first [`is_anchor_capable`] track — mirrors
+/// [`Segmenter`](crate::segmenter::Segmenter)'s anchor selection.
+///
+/// Never silently falls back to track 0 when no track qualifies (issue B9):
+/// that would pick a track whose duration can never advance (e.g. a
+/// section-only, video-less input with a SCTE-35 splice-info track), and the
+/// segmenter would then buffer forever without ever cutting a segment. That
+/// case is a construction error instead.
+///
+/// # Errors
+/// [`Error::InvalidInput`] if `configs` is empty, or no track is
+/// anchor-capable (every track is a section-carried [`CodecConfig::Data`]
+/// track).
+fn choose_anchor<'a, I>(configs: I) -> Result<usize>
 where
     I: Iterator<Item = &'a CodecConfig>,
 {
+    let configs: Vec<&CodecConfig> = configs.collect();
     configs
-        .enumerate()
-        .find(|(_, c)| c.is_video())
-        .map(|(i, _)| i)
-        .unwrap_or(0)
+        .iter()
+        .position(|c| c.is_video())
+        .or_else(|| configs.iter().position(|c| is_anchor_capable(c)))
+        .ok_or(Error::InvalidInput(
+            "no anchor-capable track: segmentation needs a video track, or at least one \
+             track whose samples carry a real duration — a track set of only \
+             section-carried data tracks can never advance a keyframe-cut boundary",
+        ))
 }
 
 /// Convert a whole-seconds target duration into anchor-track timescale ticks
@@ -299,10 +350,18 @@ fn is_cut_point(has_pending: bool, is_sync: bool, buffered_ticks: u64, target_ti
 /// anchor duration since the last cut has reached `target_ticks` — the same rule
 /// as [`Segmenter`](crate::segmenter::Segmenter), so every segment begins on a
 /// keyframe (random-access point). Returns the ascending list of start indices.
-fn anchor_segment_boundaries(samples: &[Sample], target_ticks: u64) -> Vec<usize> {
+///
+/// # Errors
+/// [`Error::InvalidInput`] if an anchor-track sample carries `duration: None`
+/// — [`choose_anchor`]/[`is_anchor_capable`] should already have kept a
+/// permanently-undurationed (section-carried) track out of the anchor role,
+/// so this is a defensive, named failure rather than silently treating the
+/// missing duration as `0` (which would corrupt the cut arithmetic instead
+/// of just failing loudly).
+fn anchor_segment_boundaries(samples: &[Sample], target_ticks: u64) -> Result<Vec<usize>> {
     let mut starts = vec![0usize];
     if samples.is_empty() {
-        return starts;
+        return Ok(starts);
     }
     let mut buffered: u64 = 0;
     for (i, s) in samples.iter().enumerate() {
@@ -312,9 +371,13 @@ fn anchor_segment_boundaries(samples: &[Sample], target_ticks: u64) -> Vec<usize
             starts.push(i);
             buffered = 0;
         }
-        buffered += s.duration.unwrap_or(0) as u64;
+        let duration = s.duration.ok_or(Error::InvalidInput(
+            "anchor track sample has no duration: the segmentation anchor must carry a real \
+             duration on every sample, or the buffered-duration cut rule can never advance",
+        ))?;
+        buffered += duration as u64;
     }
-    starts
+    Ok(starts)
 }
 
 /// Partition every track's samples into per-segment index ranges.
@@ -524,16 +587,19 @@ impl StreamingTsHlsSegmenter {
     /// track's keyframes, and keeping at most `window` segments in the
     /// rolling media playlist returned by [`Self::playlist`].
     ///
-    /// The anchor is the first video (AVC) track, else the first track — the
-    /// same rule [`TsHlsPackager`] uses. `tracks` must be given in the same
-    /// order the caller will later `push` matching `track_id`s, and in the
-    /// same order as the source `Media`'s tracks, so the muxed PID/PMT layout
-    /// matches [`TsHlsPackager::package`] exactly (needed for the two paths
-    /// to produce byte-identical segments from the same input).
+    /// The anchor is the first video (AVC) track, else the first
+    /// anchor-capable track (a track whose samples carry a real duration) —
+    /// the same rule [`TsHlsPackager`] uses. `tracks` must be given in the
+    /// same order the caller will later `push` matching `track_id`s, and in
+    /// the same order as the source `Media`'s tracks, so the muxed PID/PMT
+    /// layout matches [`TsHlsPackager::package`] exactly (needed for the two
+    /// paths to produce byte-identical segments from the same input).
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate
-    /// `track_id`s, or `window` is `0`.
+    /// `track_id`s, `window` is `0`, or no track is anchor-capable (e.g.
+    /// every track is a section-carried [`CodecConfig::Data`] track, whose
+    /// samples are always `duration: None`).
     pub fn new(tracks: Vec<TrackSpec>, target_secs: u32, window: usize) -> Result<Self> {
         if tracks.is_empty() {
             return Err(Error::InvalidInput(
@@ -549,7 +615,7 @@ impl StreamingTsHlsSegmenter {
             }
         }
 
-        let anchor = choose_anchor(tracks.iter().map(|t| &t.config));
+        let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
         let target_secs = target_secs.max(1);
         let target_ticks = target_ticks_for(target_secs, tracks[anchor].timescale);
 
@@ -596,14 +662,25 @@ impl StreamingTsHlsSegmenter {
     /// [`TsHlsPackager::package`] call over the whole `Media`.
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, or the
-    /// underlying mux fails while cutting.
+    /// [`Error::InvalidInput`] if `track_id` matches no track, the underlying
+    /// mux fails while cutting, or `sample` is pushed for the anchor track
+    /// with `duration: None` (the anchor's buffered duration could never
+    /// advance past the target — a stall bug, not a state this segmenter
+    /// should ever silently accept).
     pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<Option<TsSegment>> {
         let idx = self
             .tracks
             .iter()
             .position(|t| t.spec.track_id == track_id)
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
+
+        if idx == self.anchor && sample.duration.is_none() {
+            return Err(Error::InvalidInput(
+                "push: anchor track sample has no duration — the segmentation anchor must \
+                 carry a real duration on every sample, or the buffered-duration cut rule \
+                 can never advance and the segmenter would stall forever",
+            ));
+        }
 
         let mut cut = None;
         if idx == self.anchor
@@ -937,7 +1014,7 @@ mod tests {
     fn boundaries_cut_on_keyframe_past_target() {
         // Durations 1 each, sync at 0,2,4,6; target 2 ticks.
         let s: Vec<Sample> = (0..8).map(|i| sample(1, i % 2 == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 2);
+        let b = anchor_segment_boundaries(&s, 2).expect("all samples have a duration");
         // Segment 0: [0,2) (buffered reaches 2 at idx2 sync). Then [2,4), [4,6), [6,8).
         assert_eq!(b, vec![0, 2, 4, 6]);
     }
@@ -945,7 +1022,186 @@ mod tests {
     #[test]
     fn boundaries_single_when_target_exceeds_stream() {
         let s: Vec<Sample> = (0..4).map(|i| sample(1, i == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 1000);
+        let b = anchor_segment_boundaries(&s, 1000).expect("all samples have a duration");
         assert_eq!(b, vec![0], "one segment when target dwarfs the stream");
+    }
+
+    // ── Issue B9: a section-carried anchor must not stall the segmenter ────
+    //
+    // A section-carried track (e.g. SCTE-35 `splice_info_section`, carried
+    // directly on its own PID with no PES header — ISO/IEC 13818-1 §2.4.4)
+    // always has `duration: None` (media plane step 2c: never fabricated).
+    // Before this fix, `choose_anchor` fell back to track index 0 whenever
+    // no video track was present, so a track set like "SCTE-35 first, audio
+    // second" picked the SCTE-35 track as the anchor: its buffered duration
+    // could never advance, `push` never returned a segment, and every
+    // track's `pending` buffer grew without bound.
+
+    use crate::mp4esds::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, ObjectTypeIndication,
+        SLConfigDescriptor, StreamType,
+    };
+    use broadcast_common::Unpackage;
+
+    fn dummy_esds() -> EsdsBox {
+        EsdsBox::new(ESDescriptor {
+            es_id: 1,
+            stream_dependence_flag: false,
+            url_flag: false,
+            ocr_stream_flag: false,
+            stream_priority: 0,
+            depends_on_es_id: None,
+            url: None,
+            ocr_es_id: None,
+            decoder_config: Some(DecoderConfigDescriptor {
+                object_type_indication: ObjectTypeIndication(0x40),
+                stream_type: StreamType(0x05),
+                up_stream: false,
+                buffer_size_db: 0,
+                max_bitrate: 0,
+                avg_bitrate: 0,
+                decoder_specific_info: Some(DecoderSpecificInfo {
+                    data: vec![0x12, 0x10],
+                }),
+            }),
+            sl_config: Some(SLConfigDescriptor { body: vec![0x02] }),
+        })
+    }
+
+    /// A section-carried SCTE-35 track spec (ISO/IEC 13818-1 Table 2-34
+    /// stream_type 0x86, ANSI/SCTE 35): permanently `duration: None`, so it
+    /// must never be picked as the segmentation anchor.
+    fn scte35_track(track_id: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            90_000,
+            CodecConfig::Data {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Sections,
+            },
+        )
+    }
+
+    /// A `splice_info_section`-shaped placeholder sample: no timestamp, no
+    /// duration — exactly what `TsDemux`/`StreamingTsDemux` emit for a
+    /// section-carried track (never fabricated).
+    fn section_sample() -> Sample {
+        Sample {
+            data: vec![0xFCu8, 0x30, 0x11].into(),
+            dts: None,
+            pts: None,
+            duration: None,
+            flags: crate::ir::SampleFlags::SYNC,
+            provenance: None,
+        }
+    }
+
+    fn aac_track(track_id: u32, timescale: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            timescale,
+            CodecConfig::Aac {
+                esds: dummy_esds(),
+                channel_count: 2,
+                sample_rate: timescale,
+                sample_size: 16,
+            },
+        )
+    }
+
+    /// An AAC-shaped audio sample: always a sync sample (mirrors
+    /// `Sample::from_raw`), with a real, caller-supplied duration.
+    fn audio_sample(duration: u32) -> Sample {
+        Sample::from_raw(vec![0u8; 4], None, None, Some(duration))
+    }
+
+    #[test]
+    fn streaming_segmenter_advances_past_a_section_track_anchor_and_cuts_real_segments() {
+        const SCTE_ID: u32 = 10;
+        const AUDIO_ID: u32 = 20;
+        const TIMESCALE: u32 = 1000;
+        const TARGET_SECS: u32 = 1; // target_ticks = 1000
+
+        // Section track first, no video — the exact routine DVB/ad-insertion
+        // shape that used to stall forever.
+        let mut seg = StreamingTsHlsSegmenter::new(
+            vec![scte35_track(SCTE_ID), aac_track(AUDIO_ID, TIMESCALE)],
+            TARGET_SECS,
+            usize::MAX,
+        )
+        .expect("construct: audio is anchor-capable even though it isn't first");
+
+        // A couple of section samples up front (duration: None) must not
+        // prevent the audio anchor from advancing.
+        seg.push(SCTE_ID, section_sample()).expect("push section");
+        seg.push(SCTE_ID, section_sample()).expect("push section");
+
+        // 12 audio samples of 200 ticks each: a cut fires once buffered
+        // reaches the 1000-tick target on the 6th and 11th pushes.
+        let mut cuts: Vec<TsSegment> = Vec::new();
+        for _ in 0..12 {
+            if let Some(seg_out) = seg.push(AUDIO_ID, audio_sample(200)).expect("push audio") {
+                cuts.push(seg_out);
+            }
+        }
+
+        assert_eq!(
+            cuts.len(),
+            2,
+            "the audio anchor must have advanced past the 1000-tick target twice \
+             — before the fix this was 0 (the segmenter stalled forever)"
+        );
+        for (i, c) in cuts.iter().enumerate() {
+            assert!(
+                !c.bytes.is_empty(),
+                "cut segment {i} must carry real TS bytes"
+            );
+            assert!(
+                c.duration > 0.0,
+                "cut segment {i} must have a positive duration"
+            );
+        }
+
+        // Every emitted segment is a byte-oracle-verifiable real TS mux —
+        // decode the first one and confirm it actually carries the AAC PES.
+        let demuxed = crate::ts_demux::TsDemux::new()
+            .unpackage(&cuts[0].bytes)
+            .expect("cut segment must be a valid TS stream");
+        assert!(
+            demuxed
+                .tracks
+                .iter()
+                .any(|t| matches!(t.spec.config, CodecConfig::Aac { .. }) && !t.samples.is_empty()),
+            "cut segment must carry the audio track's samples, not just PSI"
+        );
+
+        // The pending buffer stayed bounded (2 audio samples left over after
+        // 12 pushes and 2 cuts) — before the fix this would have grown to
+        // 12 (audio) with the section track's backlog also never draining.
+        let audio_track_state = seg
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == AUDIO_ID)
+            .expect("audio track state");
+        assert_eq!(
+            audio_track_state.pending.len(),
+            2,
+            "pending must be bounded by the cut cadence, not grow without bound"
+        );
+    }
+
+    #[test]
+    fn streaming_segmenter_construction_errors_loudly_with_no_anchorable_track() {
+        // Only section/opaque tracks, no video/audio: there is no track
+        // whose duration can ever advance a cut boundary. Prefer a loud
+        // construction error over a segmenter that silently never cuts.
+        let result =
+            StreamingTsHlsSegmenter::new(vec![scte35_track(10), scte35_track(11)], 1, usize::MAX);
+        match result {
+            Err(Error::InvalidInput(_)) => {}
+            Err(other) => panic!("expected InvalidInput, got a different error: {other:?}"),
+            Ok(_) => panic!("a track set of only section-carried tracks must not construct"),
+        }
     }
 }
