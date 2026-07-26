@@ -442,5 +442,6 @@ fn minimal_video_media() -> transmux::media::Media {
         tracks: vec![track],
         movie_timescale: 90000,
         pcr: vec![],
+        skipped: vec![],
     }
 }

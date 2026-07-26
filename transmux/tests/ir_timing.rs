@@ -119,8 +119,10 @@ fn pes_ts_in_track_ticks(pes_ts: u64, timescale: u32) -> u64 {
 /// Assert that splitting a track's PES access units into `samples` lost no
 /// bytes (concatenation is byte-identical to the concatenated PES payloads)
 /// and that every sample landing exactly on a PES boundary carries that PES's
-/// PTS as its **absolute** `pts`, exactly (0 ticks of drift, in the track's
-/// own timescale) — media plane step 2c.
+/// PTS as its **absolute** `pts`, within 1 tick of the independently-rescaled
+/// PES PTS (media plane step 2c; tolerance per issue B5, media plane step-2
+/// fix wave 1 — see the comment inline below for why 1 tick, not 0, is now
+/// the right bar).
 fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32) {
     let sample_lens: Vec<usize> = samples.iter().map(|s| s.data.len()).collect();
     let sample_starts = cumulative_starts(&sample_lens);
@@ -143,10 +145,26 @@ fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32)
             .pts
             .expect("a PES-boundary sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(
-                sample_pts as u64,
-                pes_ts_in_track_ticks(pts, timescale),
-                "PES-boundary sample PTS must equal the PES PTS exactly (0 ticks)"
+            let oracle = pes_ts_in_track_ticks(pts, timescale);
+            // Issue B5 (media plane step-2 fix wave 1): the demuxer anchors a
+            // track's dts/pts ONCE from the first access unit, then advances
+            // by the intrinsic per-frame duration — it no longer re-derives
+            // every PES boundary's pts from this lossy wire stamp (90000
+            // does not evenly divide a typical audio sample rate, so this
+            // oracle's OWN floor-rescale carries up to 1 tick of rounding
+            // noise per boundary). Demanding bit-exact equality against a
+            // lossy oracle at every boundary would re-encode that same
+            // rounding as a (spurious) per-PES jitter requirement — exactly
+            // the bug this fix removes. A tolerance of 1 tick still catches
+            // a genuinely wrong anchor/track/accumulation bug (which would
+            // show up as a persistent, larger-than-1-tick disagreement at
+            // ANY boundary, checked independently here), while accepting the
+            // legitimate sub-tick 90kHz<->track-timescale quantization.
+            let diff = (sample_pts as i64 - oracle as i64).abs();
+            assert!(
+                diff <= 1,
+                "PES-boundary sample PTS must be within 1 tick of the independently \
+                 rescaled PES PTS; got sample={sample_pts} oracle={oracle} (diff {diff})"
             );
         }
     }
@@ -289,10 +307,20 @@ fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
             .pts
             .expect("a PES-boundary AAC sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(
-                sample_pts as u64,
-                pes_ts_in_track_ticks(pts, audio_track.timescale()),
-                "PES-boundary AAC sample PTS must equal the PES PTS exactly"
+            // Issue B5 (media plane step-2 fix wave 1): tolerance, not exact
+            // equality — see the doc comment on `assert_pes_boundary_timing`
+            // above for why. The demuxer anchors once and advances by the
+            // intrinsic per-frame duration; it no longer re-derives every
+            // PES boundary's pts from the lossy 90 kHz wire stamp, so this
+            // independent oracle's OWN floor-rescale (44.1 kHz doesn't
+            // evenly divide 90 kHz either) can legitimately disagree by 1
+            // tick without indicating drift.
+            let oracle = pes_ts_in_track_ticks(pts, audio_track.timescale());
+            let diff = (sample_pts as i64 - oracle as i64).abs();
+            assert!(
+                diff <= 1,
+                "PES-boundary AAC sample PTS must be within 1 tick of the independently \
+                 rescaled PES PTS; got sample={sample_pts} oracle={oracle} (diff {diff})"
             );
         }
     }

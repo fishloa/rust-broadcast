@@ -29,7 +29,7 @@
 //! crypto metadata onto [`Track::encryption`].
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -55,7 +55,7 @@ use crate::pipeline::{build_init_segment, build_media_segment};
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
-pub use crate::ir::{Media, PcrSample, Track, TrackEncryption};
+pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 
 /// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
 /// (ISO/IEC 14496-12:2015 §8.8.3.1, bit `[16]`). Set = the sample is **not** a
@@ -129,20 +129,28 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
 
-        // A track whose sample entry the crate cannot reconstruct into a
-        // `CodecConfig` is a hard error (media plane step 2d), not a silent
-        // skip: codec coverage (`stpp`/`wvtt`/`ac-4`) landed first, so what
-        // remains unreconstructable is a genuine gap the caller should learn
-        // about — see `Error::UnsupportedSampleEntry`.
+        // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
+        // track whose sample entry the crate cannot reconstruct into a
+        // `CodecConfig` (a QuickTime hint/chapter track, `c608`/`c708`,
+        // GoPro `gpmd`, or any other FourCC with no `CodecConfig`
+        // reconstruction — codec coverage (`stpp`/`wvtt`/`ac-4`) already
+        // landed, so what remains unreconstructable is a genuine gap) is
+        // skipped, not a whole-file failure — mirrors
+        // [`crate::progressive_demux::ProgressiveDemux`]'s per-track
+        // handling, which this used to diverge from. The caller still
+        // learns about it via [`Media::skipped`], never silently.
         let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
+        let mut skipped: Vec<SkippedTrack> = Vec::new();
         for trak in &moov.tracks {
-            let spec = track_spec_from_trak(trak)?;
-            builders.push(TrackBuilder {
-                spec,
-                samples: Vec::new(),
-                start_decode_time: None,
-                next_dts: 0,
-            });
+            match track_spec_from_trak(trak) {
+                Ok(spec) => builders.push(TrackBuilder {
+                    spec,
+                    samples: Vec::new(),
+                    start_decode_time: None,
+                    next_dts: 0,
+                }),
+                Err(err) => skipped.push(skipped_track(err)),
+            }
         }
 
         // 2. Walk every top-level box; each `moof` pairs with the next `mdat`.
@@ -186,6 +194,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             tracks,
             movie_timescale,
             pcr: Vec::new(),
+            skipped,
         })
     }
 }
@@ -323,25 +332,16 @@ impl Package for CmafMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576). Media plane step 2d: this used to be
-        // silently filtered out of both the init and media segments; it now
-        // names the offending track and errors instead, so a caller mixing
-        // carriable and opaque streams must explicitly opt in to dropping
-        // the opaque one — e.g. with
-        // `media.select_tracks_by(|t| !t.spec.config.is_opaque_data())`
-        // before calling `package`.
-        if let Some(t) = media.tracks.iter().find(|t| t.spec.config.is_opaque_data()) {
-            let stream_type = match &t.spec.config {
-                CodecConfig::Data { stream_type, .. } => *stream_type,
-                _ => unreachable!("is_opaque_data() only true for CodecConfig::Data"),
-            };
-            return Err(Error::UnmuxableDataTrack {
-                track_id: t.spec.track_id,
-                stream_type,
-            });
-        }
-
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B1-B4): `build_init_segment` below rejects (naming it) the first
+        // track it cannot place into an ISOBMFF `trak` — an opaque
+        // `CodecConfig::Data` track (issue #557/#576) or a
+        // `CodecConfig::Subtitle` track (B1) — rather than silently
+        // dropping it, so a caller mixing carriable and non-carriable
+        // streams must explicitly opt in to dropping the latter, e.g. with
+        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`
+        // before calling `package`. This is the single shared check every
+        // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = if media.movie_timescale == 0 {
             DEFAULT_MOVIE_TIMESCALE
@@ -519,6 +519,30 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 
     let config = codec_config_from_entry(entry)?;
     Ok(TrackSpec::new(track_id, timescale, config))
+}
+
+/// Build a [`SkippedTrack`] record for a `trak` [`track_spec_from_trak`]
+/// rejected (media plane step-2 fix wave 1, B2/B3).
+///
+/// Prefers the [`Error::UnsupportedSampleEntry`] FourCC — the common
+/// real-world case: an unrecognised `stsd` entry (a QuickTime hint/chapter
+/// track, `c608`/`c708`, GoPro `gpmd`, ...) is the *only* way
+/// `track_spec_from_trak` can fail once it has reached a `stsd` entry at all
+/// ([`codec_config_from_entry`] only errors on
+/// [`SampleEntryVariant::Unknown`](crate::init_segment::SampleEntryVariant::Unknown)).
+/// Any other error means the `trak` was too structurally malformed to even
+/// reach an entry (missing `mdia`/`mdhd`/`minf`/`stbl`/`stsd`), so there is no
+/// FourCC to recover; `"unknown"` names that case honestly rather than
+/// guessing.
+pub(crate) fn skipped_track(err: Error) -> SkippedTrack {
+    let fourcc = match &err {
+        Error::UnsupportedSampleEntry { fourcc } => fourcc.clone(),
+        _ => String::from("unknown"),
+    };
+    SkippedTrack {
+        fourcc,
+        reason: err.to_string(),
+    }
 }
 
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.

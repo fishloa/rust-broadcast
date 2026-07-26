@@ -438,18 +438,55 @@ fn flv_reason(_e: crate::flv::FlvError) -> &'static str {
     "FLV demux failed"
 }
 
+/// Drop tracks a fMP4/CMAF-based mux entry point cannot carry (opaque
+/// `CodecConfig::Data` / `CodecConfig::Subtitle` — see
+/// `CodecConfig::is_muxable_in_bmff`), warning on stderr which ones — so the
+/// CLI does not fail on ordinary real-world input: a real DVB multiplex
+/// routinely carries DVB subtitles/teletext/ANC/SCTE-35 as opaque `Data`
+/// tracks (issue: "the CLI must not fail on normal input", media plane
+/// step-2 fix wave 1). Every fMP4/CMAF-based output format
+/// (Cmaf/Progressive/Hls/Dash) filters through this before muxing; Ts/TsHls
+/// carry `Data` tracks verbatim and are left unfiltered.
+///
+/// # Errors
+/// [`Error::InvalidInput`](crate::Error::InvalidInput) if filtering would
+/// leave no track at all.
+fn filter_for_bmff_mux(media: &Media) -> CliResult<Media> {
+    let dropped: Vec<u32> = media
+        .tracks
+        .iter()
+        .filter(|t| !t.spec.config.is_muxable_in_bmff())
+        .map(|t| t.spec.track_id)
+        .collect();
+    if dropped.is_empty() {
+        return Ok(media.clone());
+    }
+    eprintln!(
+        "warning: dropping track(s) {dropped:?} from CMAF/fMP4 output \
+         (no ISOBMFF carriage in this crate for their codec)"
+    );
+    Ok(media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())?)
+}
+
 /// Dispatch to the correct mux spoke for `opts.format`.
 fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
     match opts.format {
-        OutputFormat::Cmaf => Ok(Output::Bytes(CmafMux::new(1).package(media)?)),
-        OutputFormat::Progressive => Ok(Output::Bytes(ProgressiveMux::new(true).package(media)?)),
+        OutputFormat::Cmaf => {
+            let media = filter_for_bmff_mux(media)?;
+            Ok(Output::Bytes(CmafMux::new(1).package(&media)?))
+        }
+        OutputFormat::Progressive => {
+            let media = filter_for_bmff_mux(media)?;
+            Ok(Output::Bytes(ProgressiveMux::new(true).package(&media)?))
+        }
         OutputFormat::Ts => Ok(Output::Bytes(TsMux::new().package(media)?)),
         OutputFormat::Hls => {
             // CMAF-HLS: a media playlist plus the init+media CMAF segment it maps
             // each track to. HlsPackager emits `{prefix}{track_id}.m4s` URIs; we
             // supply one CMAF artifact per playlist so referenced segments exist.
-            let text = HlsPackager::default().package(media)?;
-            let cmaf = CmafMux::new(1).package(media)?;
+            let media = filter_for_bmff_mux(media)?;
+            let text = HlsPackager::default().package(&media)?;
+            let cmaf = CmafMux::new(1).package(&media)?;
             // The default HlsPackager names segments `seg{track_id}.m4s`; emit the
             // combined CMAF under each referenced name so the playlist resolves.
             let segments = media
@@ -473,6 +510,7 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             })
         }
         OutputFormat::Dash => {
+            let media = filter_for_bmff_mux(media)?;
             let text = if opts.low_latency {
                 // LL-DASH: chunk = half the segment; a placeholder wall-clock
                 // availabilityStartTime (the CLI does not synthesise real UTC).
@@ -483,9 +521,9 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                     LL_DASH_LATENCY_TARGET_MS,
                     LL_DASH_AVAILABILITY_START,
                 )?
-                .package(media)?
+                .package(&media)?
             } else {
-                DashPackager::default().package(media)?
+                DashPackager::default().package(&media)?
             };
             // DASH SegmentTemplate references init/chunk files per representation,
             // and each Representation's Segments must carry only that
@@ -613,7 +651,10 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
     let mut media = decryptor.demux()?;
     decryptor.decrypt(&mut media, &key_map)?;
     // Re-package the now-cleartext samples as fMP4 so autodetect + demux run on a
-    // clean container.
+    // clean container. Filter first (media plane step-2 fix wave 1): CmafMux
+    // now rejects a non-carriable track (e.g. an encrypted subtitle track)
+    // instead of silently dropping it.
+    let media = filter_for_bmff_mux(&media)?;
     Ok(CmafMux::new(1).package(&media)?)
 }
 

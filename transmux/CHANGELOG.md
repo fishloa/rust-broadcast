@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
+(0.20.0) found 11 blocking defects; this wave fixes the five worst.
+
+### Fixed
+
+- **BREAKING — one strictness policy everywhere: DEMUX = lenient but loud,
+  MUX = strict but filterable** (B1-B4).
+  - `Fmp4Demux` no longer fails the whole file on one track it cannot
+    reconstruct (a QuickTime hint/chapter track, `c608`/`c708`, GoPro
+    `gpmd`, ...) — it skips that track and records it, named, in the new
+    `Media::skipped: Vec<SkippedTrack>`, matching `ProgressiveDemux`'s
+    existing per-track leniency (the two used to diverge on identical
+    input).
+  - `CodecConfig::is_muxable_in_bmff()` (new, `pub`) now covers both the
+    opaque `CodecConfig::Data` carriage and `CodecConfig::Subtitle` — B1:
+    `CmafMux` (and every other fMP4/CMAF mux entry point) previously had no
+    predicate covering `Subtitle`, so a subtitle-bearing CMAF asset that used
+    to repackage fine now failed. A caller must pre-filter with
+    `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())` before
+    muxing a `Media` that mixes carriable and non-carriable tracks.
+  - `Error::UnmuxableSubtitleTrack { track_id, format }` (new): the named
+    rejection for a `Subtitle` track, mirroring `UnmuxableDataTrack`.
+  - The strict-but-filterable check is now centralized in
+    `build_init_segment` itself, so `CmafMux`, `ProgressiveMux`,
+    `Segmenter`, `LlSegmenter`, and `LlHlsSegmenter` all reject a
+    non-muxable track the same way (previously only `CmafMux` did; the
+    other four silently dropped it).
+  - The `transmux` CLI (`cli` feature) now filters non-muxable tracks (with
+    a stderr warning naming them) before every fMP4/CMAF-based output
+    format, so it no longer fails on an ordinary real-world DVB multiplex
+    (DVB subtitle/teletext/ANC/SCTE-35 tracks are routine).
+- **Audio DTS is frame-exact again (B5)**: `TsDemux` no longer re-derives an
+  audio track's dts/pts from the lossy 90 kHz PES clock on every access
+  unit (which injected up to ±1 track tick of jitter at every PES boundary,
+  since 90000 does not evenly divide a typical sample rate) — it anchors
+  once from the first access unit, then advances by the intrinsic per-frame
+  duration, and only re-anchors (emitting `DemuxEvent::Discontinuity`) on a
+  genuine gap. The same re-anchor-on-every-stamp bug, found via the new
+  invariant test below, is fixed identically in `PsDemux`'s AC-3 track
+  recovery.
+- Added a per-timed-track invariant, checked on real fixtures across every
+  demuxer in the crate (`tests/demux_timing_invariant.rs`): a track's
+  `start_decode_time` must equal its first sample's `dts`, and
+  `sum(sample.duration)` must equal the span from the first to the last
+  sample's `dts` plus the last sample's `duration` — the standing guard
+  against the whole re-derive-from-a-lossy-clock class of bug.
+
 ## [0.20.0] - 2026-07-26
 
 **Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).

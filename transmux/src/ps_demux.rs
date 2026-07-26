@@ -609,12 +609,19 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
 
     // Absolute dts/pts (media plane step 2c). The PES-level stamps are 90 kHz
     // (ISO/IEC 13818-1 §2.4.3.7) while this track's timescale is
-    // `sample_rate`, so each stamp is rescaled into the track clock. A
-    // syncframe that begins inside an already-stamped PES fragment carries no
-    // stamp of its own; it is placed at the previous frame's time plus the
-    // **intrinsic** AC-3 syncframe duration (1536 samples — ETSI TS 102 366
-    // §4.1, `AC3_SAMPLES_PER_SYNCFRAME`), which is exactly the value
-    // `ts_demux` uses for the same split. That intrinsic duration is also the
+    // `sample_rate`, so a stamp needs rescaling into the track clock — but
+    // (issue B5 sibling, found via the FIX C invariant test, media plane
+    // step-2 fix wave 1) 90000 does not evenly divide a typical sample rate,
+    // so re-deriving the dts from EVERY stamped frame's own rescale (as this
+    // used to) injects up to ±1 track tick of jitter wherever a stamp
+    // happens to be present — exactly the bug `ts_demux::emit_audio_au` was
+    // fixed for. The anchor is established once (or re-established on a
+    // genuine gap — a stamp drifting from the frame-exact accumulator's
+    // predicted position by more than
+    // [`crate::ts_demux::audio_discontinuity_threshold_90k`]) and otherwise
+    // simply advances by the **intrinsic** AC-3 syncframe duration (1536
+    // samples — ETSI TS 102 366 §4.1, `AC3_SAMPLES_PER_SYNCFRAME`), which is
+    // exactly the value `ts_demux` uses for the same split and also the
     // per-sample `duration` (previously left at `0`, which made the AC-3
     // timeline uninterpretable).
     let rescale_90k = |t90: u64| -> i64 {
@@ -623,12 +630,37 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     let stamped = assign_stamps(&frames, &es.stamps);
     let mut samples: Vec<Sample> = Vec::with_capacity(frames.len());
     let mut next_dts: Option<i64> = None;
+    // The unwrapped 90 kHz stamp the anchor was last (re-)established from,
+    // and how many track ticks have elapsed since — used only to predict the
+    // expected wire position for drift detection, never to derive a dts.
+    let mut anchor_wire90: i128 = 0;
+    let mut ticks_since_anchor: i64 = 0;
     for (i, &(s, e)) in frames.iter().enumerate() {
         // Prefer this frame's own stamp (DTS, else PTS — AC-3 is never
-        // reordered, so they coincide); else continue the running clock.
+        // reordered, so they coincide) ONLY to (re-)anchor; otherwise
+        // continue the running, frame-exact clock.
         let stamp90 = stamped[i].1.or(stamped[i].0);
         let dts = match (stamp90, next_dts) {
-            (Some(t90), _) => rescale_90k(t90),
+            (Some(t90), Some(running)) => {
+                let expected_wire90 = anchor_wire90
+                    + (ticks_since_anchor as i128 * VIDEO_TIMESCALE as i128)
+                        / sample_rate.max(1) as i128;
+                let drift = (t90 as i128 - expected_wire90).abs();
+                if drift > crate::ts_demux::audio_discontinuity_threshold_90k(sample_rate) {
+                    // A genuine gap: re-anchor from the wire stamp.
+                    anchor_wire90 = t90 as i128;
+                    ticks_since_anchor = 0;
+                    rescale_90k(t90)
+                } else {
+                    running
+                }
+            }
+            (Some(t90), None) => {
+                // First stamped frame: establish the anchor.
+                anchor_wire90 = t90 as i128;
+                ticks_since_anchor = 0;
+                rescale_90k(t90)
+            }
             (None, Some(running)) => running,
             // No stamp has been seen yet at all: this leading frame precedes
             // the stream's first PES timestamp, so its absolute time is
@@ -644,6 +676,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
             }
         };
         next_dts = Some(dts + AC3_SAMPLES_PER_SYNCFRAME as i64);
+        ticks_since_anchor += AC3_SAMPLES_PER_SYNCFRAME as i64;
         samples.push(Sample::from_raw(
             es.es_bytes[s..e].to_vec(),
             Some(dts),

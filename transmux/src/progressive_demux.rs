@@ -32,6 +32,7 @@
 //! decode-order sample timing, matching every other demuxer in this crate — a
 //! presentation-timeline edit remains a mux/consumer-side concern.
 
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -42,7 +43,10 @@ use crate::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, MovieBox, SampleSizeBox, SampleToChunkBox, StblChild,
     SyncSampleBox, TrackBox,
 };
-use crate::media::{Media, Track, find_top_box, refine_legacy_config, track_spec_from_trak};
+use crate::media::{
+    Media, SkippedTrack, Track, find_top_box, refine_legacy_config, skipped_track,
+    track_spec_from_trak,
+};
 use crate::pipeline::Sample;
 use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
 
@@ -107,21 +111,39 @@ fn demux_progressive(input: &[u8]) -> Result<Media> {
     let moov = MovieBox::parse(moov_bytes)?;
     let movie_timescale = moov.mvhd.timescale;
 
-    // A track whose codec the crate cannot reconstruct, or whose sample
-    // tables are incomplete, is skipped rather than failing the whole
-    // file — mirrors Fmp4Demux's forgiving per-track handling.
+    // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
+    // track whose codec the crate cannot reconstruct, or whose sample tables
+    // are incomplete, is skipped rather than failing the whole file —
+    // mirrors [`crate::media::Fmp4Demux`]'s per-track handling exactly (the
+    // two used to diverge: this demuxer was already lenient, `Fmp4Demux` was
+    // fatal on the same input). The caller still learns about it via
+    // [`Media::skipped`], never silently.
     let mut tracks = Vec::with_capacity(moov.tracks.len());
+    let mut skipped: Vec<SkippedTrack> = Vec::new();
     for trak in &moov.tracks {
-        let Ok(mut spec) = track_spec_from_trak(trak) else {
-            continue;
+        let mut spec = match track_spec_from_trak(trak) {
+            Ok(spec) => spec,
+            Err(err) => {
+                skipped.push(skipped_track(err));
+                continue;
+            }
         };
-        let Ok(samples) = samples_from_stbl(input, trak) else {
-            continue;
+        let samples = match samples_from_stbl(input, trak) {
+            Ok(samples) => samples,
+            Err(err) => {
+                skipped.push(SkippedTrack {
+                    fourcc: String::from("unknown"),
+                    reason: err.to_string(),
+                });
+                continue;
+            }
         };
         refine_legacy_config(&mut spec.config, &samples);
         tracks.push(Track::new(spec, samples));
     }
-    Ok(Media::new(tracks, movie_timescale))
+    let mut media = Media::new(tracks, movie_timescale);
+    media.skipped = skipped;
+    Ok(media)
 }
 
 /// [`Stage`] adoption (media plane step 2e). `Out = Media` rather than the

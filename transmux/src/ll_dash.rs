@@ -201,18 +201,16 @@ impl LlSegmenter {
             }
         }
 
-        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576) — omit them entirely rather than
-        // erroring on the first chunk.
-        let tracks: Vec<TrackSpec> = tracks
-            .into_iter()
-            .filter(|t| !t.config.is_opaque_data())
-            .collect();
-        if tracks.is_empty() {
-            return Err(Error::InvalidInput(
-                "ll segmenter needs at least one carriable (non-Data) track",
-            ));
-        }
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B2-B4): a track `build_init_segment` cannot place into an ISOBMFF
+        // `trak` (opaque `CodecConfig::Data` or `CodecConfig::Subtitle`) is
+        // no longer silently omitted here — it surfaces the same named
+        // error every other mux entry point does, the first time
+        // `init_segment`/a chunk build actually needs the `trak` (this
+        // constructor does not itself need to build one). The caller must
+        // pre-filter first (e.g. with
+        // `tracks.retain(|t| t.config.is_muxable_in_bmff())`) if it wants
+        // to drop such tracks rather than fail.
 
         let anchor = tracks
             .iter()

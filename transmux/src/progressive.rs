@@ -254,18 +254,13 @@ impl Package for ProgressiveMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576) — omit them from the progressive-MP4
-        // mux entirely rather than erroring. Filtering the whole `Media` up
-        // front (rather than per-field below) keeps every subsequent
-        // `media.tracks`-indexed computation in this function consistent.
-        let filtered;
-        let media: &Media = if media.tracks.iter().any(|t| t.spec.config.is_opaque_data()) {
-            filtered = media.select_tracks_by(|t| !t.spec.config.is_opaque_data())?;
-            &filtered
-        } else {
-            media
-        };
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B2-B4): a track `build_init_segment` (below) cannot place into an
+        // ISOBMFF `trak` (opaque `CodecConfig::Data` or
+        // `CodecConfig::Subtitle`) is no longer silently omitted here — it
+        // surfaces the same named error every other mux entry point does.
+        // The caller must pre-filter first, e.g. with
+        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
         let movie_timescale = if media.movie_timescale == 0 {
             DEFAULT_MOVIE_TIMESCALE
         } else {

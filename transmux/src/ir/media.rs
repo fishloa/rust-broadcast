@@ -3,6 +3,7 @@
 //! Moved out of `transmux/src/media.rs` (media plane step 2a, no-op): same
 //! types, same fields, same impls.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use super::Track;
@@ -18,6 +19,27 @@ pub struct PcrSample {
     pub packet_index: u64,
     /// The adaptation field's `discontinuity_indicator` (§2.4.3.5).
     pub discontinuity: bool,
+}
+
+/// One track present in the source container that a demuxer could not model
+/// into a [`Track`] — an unrecognised sample entry/codec (a QuickTime hint
+/// track, a chapter/text track, `c608`/`c708`, GoPro `gpmd`, or any other
+/// FourCC this crate has no [`crate::pipeline::CodecConfig`] reconstruction
+/// for), or a structurally malformed `trak`.
+///
+/// DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): such a
+/// track is skipped rather than failing the whole file, but it is never
+/// silent — [`Fmp4Demux`](crate::media::Fmp4Demux) and
+/// [`ProgressiveDemux`](crate::progressive_demux::ProgressiveDemux) both
+/// record one of these per skipped track in [`Media::skipped`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedTrack {
+    /// Best-effort sample-entry FourCC, decoded lossily as text. A
+    /// placeholder (`"unknown"`) when the `trak` was too malformed to even
+    /// reach its `stsd` entry.
+    pub fourcc: String,
+    /// Human-readable reason (the underlying `Error`'s `Display` text).
+    pub reason: String,
 }
 
 /// The media intermediate representation: a set of elementary [`Track`]s.
@@ -37,16 +59,21 @@ pub struct Media {
     /// ([`PcrSample`], ISO/IEC 13818-1 §2.4.3.4). Empty for every demuxer that
     /// does not read a TS adaptation field (i.e. every non-[`TsDemux`](crate::ts_demux::TsDemux) source).
     pub pcr: Vec<PcrSample>,
+    /// Tracks the demuxer found in the source container but could not model
+    /// (media plane step-2 fix wave 1, B2/B3) — always empty unless the
+    /// producing demuxer actually skipped something; see [`SkippedTrack`].
+    pub skipped: Vec<SkippedTrack>,
 }
 
 impl Media {
     /// Create a `Media` from tracks and a movie timescale, with an empty PCR
-    /// timeline.
+    /// timeline and no skipped tracks.
     pub fn new(tracks: Vec<Track>, movie_timescale: u32) -> Self {
         Self {
             tracks,
             movie_timescale,
             pcr: Vec::new(),
+            skipped: Vec::new(),
         }
     }
 

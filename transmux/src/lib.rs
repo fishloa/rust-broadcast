@@ -247,7 +247,9 @@ pub use klv::{
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, Track, TrackEncryption};
+pub use media::{
+    CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
+};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,

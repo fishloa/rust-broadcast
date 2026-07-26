@@ -18,6 +18,12 @@
 //!    box), so a mux that ignored the format flag fails.
 //! 5. **clap parsing**: `Args::try_parse_from` accepts representative argv and
 //!    the command builds (`--help`/`--version` wire up) without panic.
+//! 6. **Real DVB multiplex bites (media plane step-2 fix wave 1)**: a real
+//!    multi-program DVB capture (`m6-single.ts`, carrying DVB subtitle/DSM-CC
+//!    `CodecConfig::Data` tracks alongside real audio/video) through
+//!    `run_bytes` to CMAF must succeed, not error on the opaque tracks — the
+//!    CLI filters them (with a stderr warning) rather than failing on
+//!    ordinary real-world input.
 
 #![cfg(feature = "cli")]
 
@@ -215,6 +221,44 @@ fn format_selection_changes_output_shape() {
     assert_ne!(
         cmaf[0], ts_out[0],
         "the two formats must differ at the leading byte"
+    );
+}
+
+// --------------------------------------------------------------------------
+// 6. Real DVB multiplex bites (media plane step-2 fix wave 1)
+// --------------------------------------------------------------------------
+
+#[test]
+fn real_dvb_multiplex_to_cmaf_does_not_fail_on_opaque_data_tracks() {
+    // `m6-single.ts` is a real broadcast excerpt (see `dvb-si`'s fixture
+    // provenance) carrying DVB subtitle/DSM-CC/private-section PIDs that
+    // classify as opaque `CodecConfig::Data`, alongside real audio/video —
+    // exactly what CmafMux rejected unfiltered before this fix, which made
+    // the shipped CLI fail on every such real multiplex. `run_bytes` must
+    // filter and succeed, not propagate `Error::UnmuxableDataTrack`.
+    let ts = read("ts/m6-single.ts");
+    let opts = Opts {
+        format: OutputFormat::Cmaf,
+        ..Opts::default()
+    };
+    let out = run_bytes(&ts, &opts)
+        .expect("CLI must not fail on a real DVB multiplex with opaque Data tracks");
+    let cmaf = match out {
+        Output::Bytes(b) => b,
+        _ => panic!("CMAF output must be Bytes"),
+    };
+    assert_eq!(&cmaf[4..8], b"ftyp", "CMAF must open with an ftyp box");
+
+    let (init, media) = split_cmaf(&cmaf);
+    let init_errs = errors(&validate_init_segment(init));
+    let media_errs = errors(&validate_media_segment(media));
+    assert!(
+        init_errs.is_empty(),
+        "init segment has validator errors: {init_errs:?}"
+    );
+    assert!(
+        media_errs.is_empty(),
+        "media segment has validator errors: {media_errs:?}"
     );
 }
 

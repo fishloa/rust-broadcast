@@ -135,12 +135,18 @@ pub enum Error {
         fourcc: String,
     },
 
-    /// [`CmafMux`](crate::media::CmafMux) was given a
+    /// A fMP4/CMAF mux entry point ([`build_init_segment`](crate::pipeline::build_init_segment)
+    /// and every packager built on it — [`CmafMux`](crate::media::CmafMux),
+    /// [`ProgressiveMux`](crate::progressive::ProgressiveMux),
+    /// [`Segmenter`](crate::segmenter::Segmenter),
+    /// [`LlSegmenter`](crate::ll_dash::LlSegmenter),
+    /// [`LlHlsSegmenter`](crate::ll_hls::LlHlsSegmenter)) was given a
     /// [`CodecConfig::Data`](crate::pipeline::CodecConfig::Data) track
     /// (issue #557/#576: an opaque PMT-carried elementary stream with no
     /// ISOBMFF sample entry in this crate) — CMAF/fMP4 output cannot carry
-    /// it. Names the offending track (media plane step 2d) so the caller can
-    /// pre-filter it out (e.g. with
+    /// it. Names the offending track (media plane step 2d; applied uniformly
+    /// to every mux entry point in media plane step-2 fix wave 1, B2-B4) so
+    /// the caller can pre-filter it out (e.g. with
     /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by))
     /// rather than have it silently vanish from the output.
     #[error(
@@ -152,6 +158,26 @@ pub enum Error {
         track_id: u32,
         /// The track's preserved PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
         stream_type: u8,
+    },
+
+    /// A fMP4/CMAF mux entry point (see [`Error::UnmuxableDataTrack`] for the
+    /// full list) was given a
+    /// [`CodecConfig::Subtitle`](crate::pipeline::CodecConfig::Subtitle)
+    /// track (B1, media plane step-2 fix wave 1): reconstructing the `stpp`/
+    /// `wvtt` sample entry needs more than the format tag this crate carries
+    /// (`TODO(#753)`), so CMAF/fMP4 output cannot carry it yet. Names the
+    /// offending track so the caller can pre-filter it out (e.g. with
+    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by))
+    /// rather than have the whole package call fail opaquely.
+    #[error(
+        "cannot CMAF-mux track {track_id} (subtitle format {format}): \
+         CodecConfig::Subtitle has no ISOBMFF re-mux sample entry in this crate yet"
+    )]
+    UnmuxableSubtitleTrack {
+        /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
+        track_id: u32,
+        /// The subtitle wire format the track carries.
+        format: crate::pipeline::SubtitleFormat,
     },
 
     /// A streaming reassembly buffer (e.g.

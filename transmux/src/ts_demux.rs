@@ -485,20 +485,6 @@ fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
     scaled.min(i64::MAX as u128) as i64
 }
 
-/// Absolute timestamp, **in the track's own media timescale**, for an audio
-/// sample `elapsed_samples` into a source access unit anchored at the
-/// unwrapped 90 kHz `anchor_uw` PTS/DTS (ISO/IEC 13818-1 §2.4.3.7).
-///
-/// The anchor is rescaled into the track clock (see [`rescale_to_track`]) and
-/// `elapsed_samples` — already a count of audio samples, i.e. track ticks — is
-/// added directly, so consecutive frames advance by exactly their intrinsic
-/// `duration`. `elapsed_samples == 0` returns the rescaled anchor exactly: a
-/// PES-boundary sample's timestamp is never touched by interpolation
-/// (issue #556).
-fn interpolate_ts(anchor_uw: i128, elapsed_samples: u64, sample_rate: u32) -> i64 {
-    rescale_to_track(anchor_uw, sample_rate).saturating_add(elapsed_samples as i64)
-}
-
 /// Whether an MPEG-2 video access unit is a random-access point: it carries a
 /// `sequence_header()` (0x000001B3) or its `picture_header()` codes an I-frame
 /// (`picture_coding_type == 1`) — ISO/IEC 13818-2 §6.2.2.1 / §6.3.9.
@@ -802,6 +788,60 @@ enum AudioKind {
     MpegAudio { samples_per_frame: u32 },
 }
 
+/// Frame-exact dts/pts accumulator for a live [`LiveKind::Audio`] track
+/// (issue B5, media plane step-2 fix wave 1).
+///
+/// An AAC/AC-3/E-AC-3/DTS/MPEG-audio frame's duration is *exact* in the
+/// track's own timescale (e.g. always 1024 samples for an AAC frame), but the
+/// 90 kHz PES clock every access unit is stamped with (ISO/IEC 13818-1
+/// §2.4.3.7) is a lossy representation of that same instant — 90000 does not
+/// evenly divide a typical audio sample rate — so re-deriving the track-tick
+/// anchor from the wire clock on *every* access unit (via
+/// [`rescale_to_track`]) injects up to ±1 track tick of jitter at every PES
+/// boundary, even though the intrinsic per-frame durations within one access
+/// unit are exact. The fix: anchor once from the first access unit, then
+/// advance the running cursor purely by the accumulated intrinsic durations;
+/// only re-anchor — and only then, signal a [`DemuxEvent::Discontinuity`] —
+/// when the wire clock drifts from the predicted position by more than
+/// [`audio_discontinuity_threshold_90k`], a genuine gap (splice, encoder
+/// restart), never the sub-tick rounding noise the old per-AU rescale
+/// mistook for one.
+#[derive(Default)]
+struct AudioAnchor {
+    seed: Option<AudioAnchorSeed>,
+}
+
+struct AudioAnchorSeed {
+    /// Track-tick cursor for the *next* frame's dts.
+    next_dts: i64,
+    /// Track-tick cursor for the *next* frame's pts.
+    next_pts: i64,
+    /// The unwrapped 90 kHz dts this anchor was last (re-)established from —
+    /// used only to predict where the wire clock should land next (drift
+    /// detection), never to re-derive a per-frame dts/pts.
+    anchor_dts_uw: i128,
+    /// The unwrapped 90 kHz pts this anchor was last (re-)established from.
+    anchor_pts_uw: i128,
+    /// Track ticks advanced since `anchor_dts_uw`/`anchor_pts_uw` were set.
+    ticks_since_anchor: i64,
+}
+
+/// Discontinuity threshold for the audio dts/pts anchor (issue B5): more than
+/// one intrinsic sample period's worth of 90 kHz ticks between the wire PES
+/// timestamp and where the frame-exact accumulator predicts it should be is
+/// treated as a genuine gap, not the sub-tick rounding noise inherent in the
+/// 90 kHz <-> sample-rate conversion (floored to at least 2 ticks so even a
+/// sample rate above 45 kHz gets a non-degenerate threshold).
+///
+/// `pub(crate)`: also used by [`crate::ps_demux::build_ac3_track`], which has
+/// the identical 90 kHz-PES-stamp-vs-sample_rate-track-clock re-anchoring
+/// problem (found via the FIX C invariant test, media plane step-2 fix
+/// wave 1).
+pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: u32) -> i128 {
+    let sample_rate = sample_rate.max(1) as i128;
+    ((VIDEO_TIMESCALE as i128 + sample_rate - 1) / sample_rate).max(2)
+}
+
 /// A completed-but-not-yet-durationed sample, held until the *next* access
 /// unit resolves its duration (video: DTS delta; data: PTS delta — mirrors
 /// the old batch demuxer's "duration = delta to the next access unit, last
@@ -845,7 +885,13 @@ enum LiveKind {
         codec: VideoCodec,
     },
     /// AAC/AC-3/E-AC-3/MPEG audio: zero-lookahead, intrinsic-duration frames.
-    Audio { sample_rate: u32, kind: AudioKind },
+    Audio {
+        sample_rate: u32,
+        kind: AudioKind,
+        /// Frame-exact dts/pts accumulator (issue B5, media plane step-2 fix
+        /// wave 1) — see [`AudioAnchor`].
+        anchor: AudioAnchor,
+    },
     /// Opaque PES data (#557): one `Sample` per access unit.
     Data {
         pending: Option<PendingOneBehind>,
@@ -1096,29 +1142,77 @@ fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
 
 /// Split one access unit into its coded frames and emit each immediately
 /// (audio needs no lookahead: duration is intrinsic per split-frame family).
+///
+/// `anchor` carries the frame-exact running dts/pts cursor across access
+/// units (issue B5, media plane step-2 fix wave 1): this access unit's base
+/// track-tick position (`dts0`/`pts0`) is either that running cursor (the
+/// steady state — no dependency on the lossy 90 kHz wire stamp at all) or a
+/// fresh rescale of `dts_uw`/`pts_uw` on the very first access unit or a
+/// genuine discontinuity (see [`AudioAnchor`]); every frame split out of
+/// this AU then advances from that base by its own `elapsed` intrinsic
+/// samples, exactly as before.
+#[allow(clippy::too_many_arguments)]
 fn emit_audio_au(
     kind: &AudioKind,
     sample_rate: u32,
+    anchor: &mut AudioAnchor,
     au_data: &[u8],
     pts_uw: i128,
     dts_uw: i128,
     track_id: u32,
     events: &mut VecDeque<DemuxEvent>,
 ) {
+    // Resolve this AU's track-tick base: reuse the running frame-exact
+    // cursor in the steady state, or (re-)anchor from the wire clock when
+    // there is no cursor yet or it has drifted beyond the discontinuity
+    // threshold — a genuine gap, not the ±1-tick rounding noise the old
+    // per-AU rescale mistook for one.
+    let fresh_anchor = match &anchor.seed {
+        None => true,
+        Some(seed) => {
+            let expected_dts_uw = seed.anchor_dts_uw
+                + (seed.ticks_since_anchor as i128 * VIDEO_TIMESCALE as i128)
+                    / sample_rate.max(1) as i128;
+            (dts_uw - expected_dts_uw).abs() > audio_discontinuity_threshold_90k(sample_rate)
+        }
+    };
+    // Only signal a discontinuity when re-anchoring an ALREADY-seeded track
+    // (the very first access unit establishes the anchor, it doesn't
+    // "discontinue" from anything).
+    if fresh_anchor && anchor.seed.is_some() {
+        events.push_back(DemuxEvent::Discontinuity {
+            track: Some(track_id),
+            provenance: EventProvenance::default(),
+        });
+    }
+    let (dts0, pts0) = if fresh_anchor {
+        (
+            rescale_to_track(dts_uw, sample_rate),
+            rescale_to_track(pts_uw, sample_rate),
+        )
+    } else {
+        let seed = anchor
+            .seed
+            .as_ref()
+            .expect("fresh_anchor is false only when seed is Some");
+        (seed.next_dts, seed.next_pts)
+    };
+
     let mut elapsed = 0u64;
     // Every frame split out of this access unit came from the same PES packet,
     // so they share that PES header's raw 90 kHz wire stamps — that, not the
     // rescaled per-frame value, is what `Provenance` means (media plane step
     // 2c: the source container's original stamps, pre-unwrap).
     let au_provenance = ts_provenance(to_ticks(dts_uw), to_ticks(pts_uw));
-    // Build one audio Sample at `elapsed` samples into this access unit: the
-    // per-frame interpolated absolute dts/pts, in the TRACK timescale
-    // (issue #556 semantics preserved exactly — media plane step 2c stores
-    // them directly instead of discarding them into a write-only
-    // `SourceTiming`).
+    // Build one audio Sample at `elapsed` samples into this access unit:
+    // `dts0`/`pts0` (the AU's resolved track-tick base) plus the per-frame
+    // `elapsed` intrinsic samples (issue #556 semantics preserved exactly —
+    // media plane step 2c stores them directly instead of discarding them
+    // into a write-only `SourceTiming`; issue B5: `dts0`/`pts0` are now
+    // frame-exact rather than re-derived from the lossy wire clock per AU).
     let audio_sample = |data: Vec<u8>, duration: u32, elapsed: u64| -> Sample {
-        let dts = interpolate_ts(dts_uw, elapsed, sample_rate);
-        let pts = interpolate_ts(pts_uw, elapsed, sample_rate);
+        let dts = dts0 + elapsed as i64;
+        let pts = pts0 + elapsed as i64;
         Sample::from_raw(data, Some(dts), Some(pts), Some(duration)).with_provenance(au_provenance)
     };
     match kind {
@@ -1175,6 +1269,34 @@ fn emit_audio_au(
             }
         }
     }
+
+    // Advance the persistent anchor by this AU's total intrinsic duration so
+    // the *next* AU continues the frame-exact cursor instead of re-deriving
+    // it from the wire clock (issue B5). `anchor_dts_uw`/`anchor_pts_uw`/
+    // `ticks_since_anchor` stay fixed at the point they were last
+    // (re-)established (this AU's own values, on a fresh anchor; carried
+    // forward otherwise) — they exist purely to predict the *next* AU's
+    // expected wire position for drift detection, never to derive a dts/pts.
+    let (anchor_dts_uw, anchor_pts_uw, ticks_since_anchor) = if fresh_anchor {
+        (dts_uw, pts_uw, 0i64)
+    } else {
+        let seed = anchor
+            .seed
+            .as_ref()
+            .expect("fresh_anchor is false only when seed is Some");
+        (
+            seed.anchor_dts_uw,
+            seed.anchor_pts_uw,
+            seed.ticks_since_anchor,
+        )
+    };
+    anchor.seed = Some(AudioAnchorSeed {
+        next_dts: dts0 + elapsed as i64,
+        next_pts: pts0 + elapsed as i64,
+        anchor_dts_uw,
+        anchor_pts_uw,
+        ticks_since_anchor: ticks_since_anchor + elapsed as i64,
+    });
 }
 
 /// Apply one access unit to an already-live track, emitting whatever
@@ -1222,8 +1344,21 @@ fn push_live_au(
                 events,
             );
         }
-        LiveKind::Audio { sample_rate, kind } => {
-            emit_audio_au(kind, *sample_rate, data, pts_uw, dts_uw, track_id, events);
+        LiveKind::Audio {
+            sample_rate,
+            kind,
+            anchor,
+        } => {
+            emit_audio_au(
+                kind,
+                *sample_rate,
+                anchor,
+                data,
+                pts_uw,
+                dts_uw,
+                track_id,
+                events,
+            );
         }
         LiveKind::MpegH {
             pending,
@@ -1515,6 +1650,7 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::MpegAudio { samples_per_frame },
+                    anchor: AudioAnchor::default(),
                 },
             ))
         }
@@ -1562,6 +1698,7 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::Aac,
+                    anchor: AudioAnchor::default(),
                 },
             ))
         }
@@ -1583,6 +1720,7 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::Ac3,
+                    anchor: AudioAnchor::default(),
                 },
             ))
         }
@@ -1604,6 +1742,7 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::Eac3,
+                    anchor: AudioAnchor::default(),
                 },
             ))
         }
@@ -1626,6 +1765,7 @@ fn finalize_probe(
                 LiveKind::Audio {
                     sample_rate,
                     kind: AudioKind::Dts,
+                    anchor: AudioAnchor::default(),
                 },
             ))
         }

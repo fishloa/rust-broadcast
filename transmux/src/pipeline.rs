@@ -99,13 +99,18 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     let mut trak_boxes = Vec::with_capacity(tracks.len());
     let mut trex = Vec::with_capacity(tracks.len());
     for t in tracks {
-        // Opaque data tracks have no ISOBMFF sample entry in this crate
-        // (issue #557/#576) — omit them from the fMP4/CMAF mux path entirely
-        // rather than erroring, so a Media containing e.g. a DVB
-        // subtitle/DSM-CC/SCTE-35 track still produces a valid init segment
-        // for its carriable (video/audio) tracks.
-        if t.config.is_opaque_data() {
-            continue;
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B1-B4): a track this crate cannot place into an ISOBMFF `trak`
+        // (opaque `CodecConfig::Data` — issue #557/#576 — or
+        // `CodecConfig::Subtitle`, `TODO(#753)`) is rejected, naming it,
+        // rather than silently omitted — every mux entry point built on this
+        // function (`CmafMux`, `ProgressiveMux`, `Segmenter`,
+        // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
+        // Media containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
+        // the same way everywhere; the caller must pre-filter first (e.g.
+        // with `Media::select_tracks_by`).
+        if !t.config.is_muxable_in_bmff() {
+            return Err(unmuxable_track_error(t));
         }
         trak_boxes.push(build_trak(t)?);
         trex.push(TrackExtendsBox {
@@ -134,6 +139,24 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     let n2 = moov.serialize_into(&mut out[n1..])?;
     out.truncate(n1 + n2);
     Ok(out)
+}
+
+/// Build the named, typed rejection for a track [`CodecConfig::is_muxable_in_bmff`]
+/// says `build_init_segment` cannot carry — [`Error::UnmuxableDataTrack`] for
+/// the opaque PES carriage, [`Error::UnmuxableSubtitleTrack`] for a subtitle
+/// track (B1, media plane step-2 fix wave 1).
+fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
+    match &t.config {
+        CodecConfig::Data { stream_type, .. } => crate::error::Error::UnmuxableDataTrack {
+            track_id: t.track_id,
+            stream_type: *stream_type,
+        },
+        CodecConfig::Subtitle { format } => crate::error::Error::UnmuxableSubtitleTrack {
+            track_id: t.track_id,
+            format: *format,
+        },
+        _ => unreachable!("is_muxable_in_bmff() is only false for Data/Subtitle"),
+    }
 }
 
 /// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the

@@ -55,6 +55,6 @@ mod track;
 
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
 pub use event::{DemuxEvent, EventProvenance};
-pub use media::{Media, PcrSample};
+pub use media::{Media, PcrSample, SkippedTrack};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
 pub use track::{Track, TrackEncryption, TrackSpec};

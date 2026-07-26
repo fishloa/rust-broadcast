@@ -310,11 +310,13 @@ pub enum CodecConfig {
     ///
     /// There is currently no re-mux path: reconstructing the sample entry
     /// (the TTML namespace/`stpp` config, or the WebVTT header block/`vttC`)
-    /// needs more than the format tag alone, so
-    /// [`crate::pipeline::build_init_segment`]/`CmafMux` reject a `Subtitle`
-    /// track with [`Error::UnsupportedCodec`](crate::error::Error::UnsupportedCodec)
-    /// rather than silently dropping or mis-emitting it — see `TODO(#753)` on
-    /// `build_trak`.
+    /// needs more than the format tag alone, so every fMP4/CMAF mux entry
+    /// point rejects a `Subtitle` track — naming it with
+    /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack)
+    /// (media plane step-2 fix wave 1, B1) — rather than silently dropping or
+    /// mis-emitting it; a caller must pre-filter with
+    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by) —
+    /// see `TODO(#753)` on `build_trak`.
     Subtitle {
         /// Which subtitle wire format this track carries.
         format: SubtitleFormat,
@@ -332,8 +334,12 @@ pub enum CodecConfig {
     /// Carried in the IR for `{TS} → IR → {TS}` / inspection; there is no
     /// ISOBMFF sample entry for an opaque stream in this crate (out of
     /// scope), so it does not participate in the fMP4 mux path (mirrors
-    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]) — the fMP4/CMAF mux
-    /// omits such tracks entirely rather than erroring (issue #576).
+    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]) — every fMP4/CMAF mux
+    /// entry point (media plane step-2 fix wave 1) rejects such a track,
+    /// naming it, rather than silently omitting it (issue #576/#557); a
+    /// caller mixing carriable and opaque tracks must pre-filter with
+    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by) —
+    /// see [`CodecConfig::is_muxable_in_bmff`].
     Data {
         /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
         stream_type: u8,
@@ -365,11 +371,44 @@ impl CodecConfig {
 
     /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
     /// PMT-carried elementary stream with no ISOBMFF sample entry in this
-    /// crate. The fMP4/CMAF mux path (init segment + every packager built on
-    /// it) omits such tracks entirely rather than erroring — mirrors how the
-    /// TS mux path, unlike this one, *can* carry them verbatim.
+    /// crate. Every fMP4/CMAF mux entry point (init segment + every packager
+    /// built on it) rejects such a track, naming it, rather than silently
+    /// omitting it — mirrors how the TS mux path, unlike this one, *can*
+    /// carry them verbatim. See [`CodecConfig::is_muxable_in_bmff`], which
+    /// also covers [`CodecConfig::Subtitle`] (B1).
     pub(crate) fn is_opaque_data(&self) -> bool {
         matches!(self, CodecConfig::Data { .. })
+    }
+
+    /// True for [`CodecConfig::Subtitle`]: this crate has no re-mux sample
+    /// entry for it yet (`TODO(#753)`, see that variant's doc comment).
+    pub(crate) fn is_subtitle(&self) -> bool {
+        matches!(self, CodecConfig::Subtitle { .. })
+    }
+
+    /// True when `self` can be placed into an ISOBMFF `trak` by this crate —
+    /// i.e. neither the opaque [`CodecConfig::Data`] carriage nor
+    /// [`CodecConfig::Subtitle`] (media plane step-2 fix wave 1, B1-B4: the
+    /// single predicate every fMP4/CMAF mux entry point
+    /// ([`build_init_segment`](crate::pipeline::build_init_segment) and
+    /// every packager built on it — `CmafMux`, `ProgressiveMux`, `Segmenter`,
+    /// `LlSegmenter`, `LlHlsSegmenter`) checks before building a `trak`:
+    /// a track failing this predicate is rejected, naming the track, rather
+    /// than silently dropped — a caller mixing carriable and non-carriable
+    /// tracks must pre-filter first (e.g. with
+    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by)).
+    ///
+    /// Does NOT cover the WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`]
+    /// (genuinely unimplemented fMP4 carriage, not a filterable policy choice
+    /// — those still fail with the generic
+    /// [`Error::UnsupportedCodec`](crate::error::Error::UnsupportedCodec)
+    /// regardless of filtering).
+    ///
+    /// `pub` (unlike the crate's other `CodecConfig` predicates): this is the
+    /// caller-facing filter predicate the `Unmuxable*Track` errors point to,
+    /// e.g. `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
+    pub fn is_muxable_in_bmff(&self) -> bool {
+        !(self.is_opaque_data() || self.is_subtitle())
     }
 
     /// True if `self` is a video codec (issue #628) — codec-family-complete
