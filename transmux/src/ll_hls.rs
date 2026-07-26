@@ -142,15 +142,16 @@ pub struct LlHlsSegmenter {
     current_segment: u32,
     /// 0-based index of the next part within the current segment.
     next_part_index: u32,
-    /// Parts finished but not yet taken by the caller.
-    ready_parts: Vec<PartInfo>,
-    /// Full segments finished but not yet taken by the caller.
-    ready_segments: Vec<SegmentInfo>,
-    /// [`Stage`] adoption staging queue: parts/segments moved out of
-    /// `ready_parts`/`ready_segments` as they are cut, so [`Stage::poll`] can
-    /// hand them back one at a time without disturbing the inherent
-    /// `take_ready_parts`/`take_ready_segments` API.
-    stage_ready: VecDeque<LlHlsStageOutput>,
+    /// Parts and full segments finished but not yet taken by the caller, in
+    /// the exact order they were cut. The single source of truth for the
+    /// inherent [`take_ready_parts`](Self::take_ready_parts)/
+    /// [`take_ready_segments`](Self::take_ready_segments) drains *and*
+    /// [`Stage::poll`] — there is no separate staging copy. The inherent
+    /// drains filter this queue by variant (each leaving the other kind's
+    /// relative order undisturbed); `poll` pops the raw item. Whichever API
+    /// (or mix of both) the caller uses, every part and segment is delivered
+    /// exactly once.
+    ready: VecDeque<LlHlsStageOutput>,
 }
 
 impl LlHlsSegmenter {
@@ -234,9 +235,7 @@ impl LlHlsSegmenter {
             next_seq: 1,
             current_segment: 1,
             next_part_index: 0,
-            ready_parts: Vec::new(),
-            ready_segments: Vec::new(),
-            stage_ready: VecDeque::new(),
+            ready: VecDeque::new(),
         })
     }
 
@@ -312,14 +311,37 @@ impl LlHlsSegmenter {
     }
 
     /// Remove and return every part finished since the last call, in order.
+    /// Any not-yet-taken segments remain queued (retrievable via
+    /// [`take_ready_segments`](Self::take_ready_segments) or `Stage::poll`),
+    /// in their original relative order.
     pub fn take_ready_parts(&mut self) -> Vec<PartInfo> {
-        core::mem::take(&mut self.ready_parts)
+        let mut parts = Vec::new();
+        let mut remaining = VecDeque::with_capacity(self.ready.len());
+        for item in self.ready.drain(..) {
+            match item {
+                LlHlsStageOutput::Part(p) => parts.push(p),
+                other => remaining.push_back(other),
+            }
+        }
+        self.ready = remaining;
+        parts
     }
 
     /// Remove and return every full segment finished since the last call, in
-    /// order — distinct from the parts.
+    /// order — distinct from the parts. Any not-yet-taken parts remain
+    /// queued (retrievable via [`take_ready_parts`](Self::take_ready_parts)
+    /// or `Stage::poll`), in their original relative order.
     pub fn take_ready_segments(&mut self) -> Vec<SegmentInfo> {
-        core::mem::take(&mut self.ready_segments)
+        let mut segments = Vec::new();
+        let mut remaining = VecDeque::with_capacity(self.ready.len());
+        for item in self.ready.drain(..) {
+            match item {
+                LlHlsStageOutput::Segment(s) => segments.push(s),
+                other => remaining.push_back(other),
+            }
+        }
+        self.ready = remaining;
+        segments
     }
 
     /// Finalize the current segment: flush its remaining un-parted samples as a
@@ -352,12 +374,12 @@ impl LlHlsSegmenter {
 
         let seg_duration =
             self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale as f64;
-        self.ready_segments.push(SegmentInfo {
+        self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
             segment_seq: self.current_segment,
             part_count: self.next_part_index,
-        });
+        }));
 
         // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
@@ -451,13 +473,13 @@ impl LlHlsSegmenter {
         self.next_part_index += 1;
         self.anchor_part_dur = 0;
 
-        self.ready_parts.push(PartInfo {
+        self.ready.push_back(LlHlsStageOutput::Part(PartInfo {
             bytes: part_bytes,
             duration: part_secs,
             independent,
             segment_seq: self.current_segment,
             part_index,
-        });
+        }));
         Ok(())
     }
 }
@@ -485,29 +507,30 @@ pub enum LlHlsStageOutput {
 ///
 /// Every inherent method — [`push`](Self::push), [`take_ready_parts`
 /// ](Self::take_ready_parts), [`take_ready_segments`](Self::take_ready_segments),
-/// [`flush`](Self::flush) — keeps working unchanged; this impl drains both
-/// ready queues (parts first, then segments — mirroring the order a part's
-/// parent segment can only close after that part) into its own staging queue
-/// so `poll` can hand them back one at a time in that order.
+/// [`flush`](Self::flush) — keeps working unchanged; this impl is an
+/// additional, uniform way to drive the same engine. [`Stage::poll`] and the
+/// inherent `take_ready_parts`/`take_ready_segments` drains all read from the
+/// *same* `ready` queue (there is no separate staging copy) — `poll` pops the
+/// raw part-or-segment item in exact production order, while each inherent
+/// drain filters out its own variant and leaves the other kind queued. So a
+/// part or segment is delivered exactly once no matter which API — inherent,
+/// `Stage`, or a mix of both on the same instance — the caller uses to
+/// retrieve it.
 impl Stage for LlHlsSegmenter {
     type In<'a> = (u32, Sample);
     type Out = LlHlsStageOutput;
     type Error = Error;
 
     fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)?;
-        self.drain_into_stage_queue();
-        Ok(())
+        self.push(track_id, sample)
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
-        self.stage_ready.pop_front()
+        self.ready.pop_front()
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.flush()?;
-        self.drain_into_stage_queue();
-        Ok(())
+        self.flush()
     }
 
     fn next_deadline(&self) -> Option<Timestamp> {
@@ -522,19 +545,5 @@ impl Stage for LlHlsSegmenter {
     /// honest "no preference" default rather than a fabricated bound.
     fn demand(&self) -> Demand {
         Demand::default()
-    }
-}
-
-impl LlHlsSegmenter {
-    /// Move everything currently sitting in `ready_parts`/`ready_segments`
-    /// into the `Stage`-only `stage_ready` queue, parts first.
-    fn drain_into_stage_queue(&mut self) {
-        for part in self.take_ready_parts() {
-            self.stage_ready.push_back(LlHlsStageOutput::Part(part));
-        }
-        for segment in self.take_ready_segments() {
-            self.stage_ready
-                .push_back(LlHlsStageOutput::Segment(segment));
-        }
     }
 }

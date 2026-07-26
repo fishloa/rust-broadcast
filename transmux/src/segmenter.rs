@@ -108,19 +108,17 @@ pub struct Segmenter {
     /// `sequence_number` of the next media segment (`moof` `mfhd`), 1-based.
     next_seq: u32,
     /// Media segments finished but not yet taken by the caller (bytes + meta).
-    ready: Vec<(Vec<u8>, SegmentMeta)>,
+    /// The single source of truth for both the inherent `take_ready`/
+    /// `take_ready_with_meta` drains and [`Stage::poll`] — whichever API the
+    /// caller uses pops from this same queue, so output is delivered exactly
+    /// once no matter which (or both) APIs drive this segmenter.
+    ready: VecDeque<(Vec<u8>, SegmentMeta)>,
     /// Explicit discontinuity: when `true` the *next* cut is marked discontinuous.
     /// Reset to `false` after each cut.
     pending_discontinuity: bool,
     /// The init-segment bytes from the last cut (or the initial build), used to
     /// auto-detect init changes.  `None` before the first segment is cut.
     last_init: Option<Vec<u8>>,
-    /// [`Stage`] adoption staging queue: segments moved out of `ready` (via
-    /// [`take_ready_with_meta`](Self::take_ready_with_meta)) as they are cut,
-    /// so [`Stage::poll`] can hand them back one at a time, in order, without
-    /// disturbing the inherent `take_ready`/`take_ready_with_meta` API (which
-    /// still drains straight from `ready`).
-    stage_ready: VecDeque<(Vec<u8>, SegmentMeta)>,
 }
 
 impl Segmenter {
@@ -187,10 +185,9 @@ impl Segmenter {
             target_ticks,
             anchor_pending_dur: 0,
             next_seq: 1,
-            ready: Vec::new(),
+            ready: VecDeque::new(),
             pending_discontinuity: false,
             last_init: None,
-            stage_ready: VecDeque::new(),
         })
     }
 
@@ -270,7 +267,7 @@ impl Segmenter {
     /// The [`SegmentMeta::discontinuous`] flag indicates whether
     /// `#EXT-X-DISCONTINUITY` should precede this segment's `#EXTINF` line.
     pub fn take_ready_with_meta(&mut self) -> Vec<(Vec<u8>, SegmentMeta)> {
-        core::mem::take(&mut self.ready)
+        self.ready.drain(..).collect()
     }
 
     /// Cut the buffered samples across all tracks into one media segment, advance
@@ -324,7 +321,7 @@ impl Segmenter {
             t.pending.clear();
         }
         self.anchor_pending_dur = 0;
-        self.ready.push((seg, SegmentMeta { discontinuous }));
+        self.ready.push_back((seg, SegmentMeta { discontinuous }));
         Ok(())
     }
 }
@@ -340,30 +337,26 @@ impl Segmenter {
 /// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
 /// [`take_ready_with_meta`](Self::take_ready_with_meta), [`flush`](Self::flush),
 /// [`mark_discontinuity`](Self::mark_discontinuity) — keeps working unchanged;
-/// this impl is an additional, uniform way to drive the same engine, draining
-/// `take_ready_with_meta` into its own staging queue so `poll` can hand
-/// segments back one at a time.
+/// this impl is an additional, uniform way to drive the same engine.
+/// [`Stage::poll`] and the inherent drains all read from the *same* `ready`
+/// queue (there is no separate staging copy), so a segment is delivered
+/// exactly once no matter which API — inherent, `Stage`, or a mix of both on
+/// the same instance — the caller uses to retrieve it.
 impl Stage for Segmenter {
     type In<'a> = (u32, Sample);
     type Out = (Vec<u8>, SegmentMeta);
     type Error = Error;
 
     fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)?;
-        let ready = self.take_ready_with_meta();
-        self.stage_ready.extend(ready);
-        Ok(())
+        self.push(track_id, sample)
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
-        self.stage_ready.pop_front()
+        self.ready.pop_front()
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.flush()?;
-        let ready = self.take_ready_with_meta();
-        self.stage_ready.extend(ready);
-        Ok(())
+        self.flush()
     }
 
     fn next_deadline(&self) -> Option<Timestamp> {

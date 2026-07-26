@@ -157,13 +157,12 @@ pub struct LlSegmenter {
     current_segment: u64,
     /// `true` until the first chunk of the current segment has been emitted.
     segment_open: bool,
-    /// Chunks finished but not yet taken by the caller.
-    ready: Vec<Chunk>,
-    /// [`Stage`] adoption staging queue: chunks moved out of `ready` (via
-    /// [`take_ready`](Self::take_ready)) as they are cut, so [`Stage::poll`]
-    /// can hand them back one at a time without disturbing the inherent
-    /// `take_ready` API.
-    stage_ready: VecDeque<Chunk>,
+    /// Chunks finished but not yet taken by the caller. The single source of
+    /// truth for both the inherent [`take_ready`](Self::take_ready) drain and
+    /// [`Stage::poll`] — whichever API the caller uses pops from this same
+    /// queue, so a chunk is delivered exactly once no matter which (or both)
+    /// APIs drive this segmenter.
+    ready: VecDeque<Chunk>,
 }
 
 impl LlSegmenter {
@@ -239,8 +238,7 @@ impl LlSegmenter {
             next_seq: 1,
             current_segment: 1,
             segment_open: false,
-            ready: Vec::new(),
-            stage_ready: VecDeque::new(),
+            ready: VecDeque::new(),
         })
     }
 
@@ -308,7 +306,7 @@ impl LlSegmenter {
 
     /// Remove and return every chunk finished since the last call, in order.
     pub fn take_ready(&mut self) -> Vec<Chunk> {
-        core::mem::take(&mut self.ready)
+        self.ready.drain(..).collect()
     }
 
     /// Flush the whole current segment: emit all remaining buffered anchor
@@ -386,7 +384,7 @@ impl LlSegmenter {
 
         self.next_seq += 1;
         self.segment_open = true;
-        self.ready.push(Chunk {
+        self.ready.push_back(Chunk {
             data: chunk_bytes,
             segment_number: self.current_segment,
             is_segment_start: is_start,
@@ -402,30 +400,27 @@ impl LlSegmenter {
 /// other segmenter's `Out`.
 ///
 /// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
-/// [`flush`](Self::flush) — keeps working unchanged; this impl drains
-/// `take_ready` into its own staging queue so `poll` can hand chunks back one
-/// at a time.
+/// [`flush`](Self::flush) — keeps working unchanged; this impl is an
+/// additional, uniform way to drive the same engine. [`Stage::poll`] and the
+/// inherent [`take_ready`](Self::take_ready) drain both read from the *same*
+/// `ready` queue (there is no separate staging copy), so a chunk is
+/// delivered exactly once no matter which API — inherent, `Stage`, or a mix
+/// of both on the same instance — the caller uses to retrieve it.
 impl Stage for LlSegmenter {
     type In<'a> = (u32, Sample);
     type Out = Chunk;
     type Error = Error;
 
     fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)?;
-        let ready = self.take_ready();
-        self.stage_ready.extend(ready);
-        Ok(())
+        self.push(track_id, sample)
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
-        self.stage_ready.pop_front()
+        self.ready.pop_front()
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.flush()?;
-        let ready = self.take_ready();
-        self.stage_ready.extend(ready);
-        Ok(())
+        self.flush()
     }
 
     fn next_deadline(&self) -> Option<Timestamp> {
