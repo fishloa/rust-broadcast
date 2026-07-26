@@ -7,8 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-26
+
 ### Added
 
+- `StreamingFlvDemux` (issue #738): incremental (event-driven) FLV → samples
+  demux for live RTMP ingest, the FLV analogue of `StreamingTsDemux`. Feed
+  bytes of any size/alignment via `feed` (down to one byte at a time; feed's
+  fallible over a hard structural error — bad signature, an implausible
+  header `DataOffset`, or a corrupt codec config), drain `DemuxEvent`s
+  (`TrackAdded`/`Sample`) one at a time via `poll_event`, and call `finish` to
+  flush each track's trailing pending sample — the exact `feed`/`poll_event`/
+  `finish` pull idiom `StreamingTsDemux` uses, so a caller can drive both
+  demuxers with one uniform drain loop. Reuses `FlvDemux`'s tag-header and
+  codec-config (AVC/AAC) parsing verbatim rather than duplicating it.
+  Memory-bounded regardless of stream length: the internal buffer never holds
+  more than one in-progress tag, plus one pending sample per track; a header
+  `DataOffset` above a sane bound is rejected before buffering rather than
+  grown toward, closing a remote OOM/DoS a malicious `DataOffset` could
+  otherwise trigger. `AVCDecoderConfigurationRecord::parse` (`avc_config.rs`)
+  now also rejects an avcC declaring 0 SPS, closing a remote-crash (index
+  panic) hole on this same untrusted-ingest path.
+- `dash_parse` (issue #758 T1): a hand-rolled MPD parser (`Mpd::parse`), the
+  structural inverse of `dash`'s `DashPackager` writer — `no_std`+`alloc`, no
+  external XML dependency. Parses `MPD`/`Period`/`AdaptationSet`/
+  `Representation`/`SegmentTemplate`/`SegmentTimeline` (ISO/IEC 23009-1
+  §5.3/§5.3.9), resolves `SegmentTemplate` inheritance from `AdaptationSet`
+  down to `Representation`, and tolerates unmodeled elements
+  (`SegmentList`/`SegmentBase`/`ContentProtection`/…) without choking.
+  `SegmentTemplate::resolve` substitutes `$RepresentationID$`/`$Number$`/
+  `$Time$`/`$Bandwidth$` (with `%0Nd` width and `$$` escaping) into a
+  template; `SegmentTimeline::enumerate` expands `<S t= d= r=>` runs into the
+  `(number, time)` sequence for `$Time$` addressing, and
+  `SegmentTemplate::number_sequence` does the equivalent for constant-
+  `@duration` `$Number$` addressing. Also exposes `parse_iso8601_duration`
+  for `xs:duration` attributes. Malformed/truncated XML never panics —
+  every failure path returns `DashParseError`.
 - `smooth_parse` (issue #759 T1): a hand-rolled MS-SSTR **client manifest**
   parser (`SmoothManifest::parse`), the structural inverse of `smooth`'s
   `SmoothPackager` writer — reuses the shared `xml_parse` tokenizer (no
@@ -32,21 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`avc_config_from_sps_pps`/`aac_config_from_asc_bytes`) that a non-SDP
   caller (this module) can reuse directly, rather than duplicating the SPS
   classification / `avcC`/`esds` construction logic.
-- `dash_parse` (issue #758 T1): a hand-rolled MPD parser (`Mpd::parse`), the
-  structural inverse of `dash`'s `DashPackager` writer — `no_std`+`alloc`, no
-  external XML dependency. Parses `MPD`/`Period`/`AdaptationSet`/
-  `Representation`/`SegmentTemplate`/`SegmentTimeline` (ISO/IEC 23009-1
-  §5.3/§5.3.9), resolves `SegmentTemplate` inheritance from `AdaptationSet`
-  down to `Representation`, and tolerates unmodeled elements
-  (`SegmentList`/`SegmentBase`/`ContentProtection`/…) without choking.
-  `SegmentTemplate::resolve` substitutes `$RepresentationID$`/`$Number$`/
-  `$Time$`/`$Bandwidth$` (with `%0Nd` width and `$$` escaping) into a
-  template; `SegmentTimeline::enumerate` expands `<S t= d= r=>` runs into the
-  `(number, time)` sequence for `$Time$` addressing, and
-  `SegmentTemplate::number_sequence` does the equivalent for constant-
-  `@duration` `$Number$` addressing. Also exposes `parse_iso8601_duration`
-  for `xs:duration` attributes. Malformed/truncated XML never panics —
-  every failure path returns `DashParseError`.
+- **Shared `xml_parse` tokenizer** (issue #758 T1 + #759 T1): both `dash_parse`
+  and `smooth_parse` modules extract and reuse a hand-rolled, no_std-capable
+  XML token stream parser (`xml_parse::XmlTokenizer`) that neither depends on
+  an external XML library nor allocates during parsing — the tokenizer walks
+  wire bytes and yields tokens on demand.
 
 ### Fixed
 
@@ -61,28 +85,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   3. All element parsing functions now validate closing-tag names — a stray
      `</Period>` no longer silently truncates the Period list. `Mpd::parse` +
      callers now return `DashParseError::MismatchedEndTag` on nesting errors.
-
-## [0.19.0] - 2026-07-26
-
-### Added
-
-- `StreamingFlvDemux` (issue #738): incremental (event-driven) FLV → samples
-  demux for live RTMP ingest, the FLV analogue of `StreamingTsDemux`. Feed
-  bytes of any size/alignment via `feed` (down to one byte at a time; feed's
-  fallible over a hard structural error — bad signature, an implausible
-  header `DataOffset`, or a corrupt codec config), drain `DemuxEvent`s
-  (`TrackAdded`/`Sample`) one at a time via `poll_event`, and call `finish` to
-  flush each track's trailing pending sample — the exact `feed`/`poll_event`/
-  `finish` pull idiom `StreamingTsDemux` uses, so a caller can drive both
-  demuxers with one uniform drain loop. Reuses `FlvDemux`'s tag-header and
-  codec-config (AVC/AAC) parsing verbatim rather than duplicating it.
-  Memory-bounded regardless of stream length: the internal buffer never holds
-  more than one in-progress tag, plus one pending sample per track; a header
-  `DataOffset` above a sane bound is rejected before buffering rather than
-  grown toward, closing a remote OOM/DoS a malicious `DataOffset` could
-  otherwise trigger. `AVCDecoderConfigurationRecord::parse` (`avc_config.rs`)
-  now also rejects an avcC declaring 0 SPS, closing a remote-crash (index
-  panic) hole on this same untrusted-ingest path.
 
 ## [0.18.1] - 2026-07-21
 

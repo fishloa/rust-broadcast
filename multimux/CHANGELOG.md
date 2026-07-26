@@ -2,47 +2,6 @@
 
 ## [Unreleased]
 
-### Added
-- **Smooth-pull ingest input `InputSpec::SmoothPull`** (issue #759, via
-  `transmux`'s hand-rolled MS-SSTR client-Manifest parser,
-  `transmux::smooth_parse`): a route can now pull a remote Microsoft Smooth
-  Streaming presentation — fetch + parse the client Manifest, resolve each
-  `StreamIndex`'s fragment-URL template, and demux the fetched fragments via
-  `transmux::Fmp4Demux`. Smooth carries no bootstrapping init segment, so
-  `SmoothPullSource` synthesizes one per stream from
-  `QualityLevel@CodecPrivateData` (`track_spec_from_quality_level` +
-  `build_init_segment`), discovering and matching each stream's wire
-  `track_id` from its first fragment's `tfhd` (no `moov` to read one from,
-  unlike DASH) and remapping it to a session-wide unique id. Supports
-  static and dynamic (live, manifest-refresh) presentations. Every network
-  step is bounded by `IngestTimeouts`, every expected track is resolved
-  before the route starts, and a PlayReady/PIFF sample-encrypted source
-  (`<Protection>` manifest element, or CENC/PIFF sample-encryption boxes in
-  a fragment) fails with a clear typed `MultimuxError::Encrypted` instead of
-  silently demuxing garbage — decrypting Smooth-protected content is out of
-  scope.
-- **DASH-pull ingest input `InputSpec::DashPull`** (issue #758, via
-  `transmux`'s hand-rolled MPD parser, `transmux::dash_parse`): a route can
-  now pull a remote MPEG-DASH presentation — fetch + parse the MPD, resolve
-  each selected Representation's `SegmentTemplate`/`SegmentTimeline`
-  init+media segment URLs, and demux the fetched fMP4/CMAF bytes via
-  `transmux::Fmp4Demux` (each media segment concatenated onto its
-  Representation's cached init bytes, matching `ll-hls-runtime`'s own
-  CMAF-part demux pattern), remapping each Representation's local track_id
-  to a session-wide unique id. Supports `$Number$`/`$Time$` addressing, fMP4,
-  and both static and dynamic (live, MPD-refresh) presentations;
-  `SegmentList`/`SegmentBase` addressing is deferred. Every network step is
-  bounded by `IngestTimeouts`, so a stalled/unreachable DASH origin cannot
-  wedge the route.
-- **SRT ingest input `InputSpec::Srt`** (issue #739, via `srt-runtime`'s
-  real-socket `SrtListener`/`SrtSocket` adapter): a route can now ingest an
-  SRT-carried MPEG-2 Transport Stream in either listener mode (binds once
-  and accepts inbound Callers, reused across reconnects — like
-  `InputSpec::Rtmp`'s push pattern) or caller mode (dials out fresh on every
-  reconnect). The track set comes from the stream's own in-band PMT via
-  `transmux::StreamingTsDemux`, exactly like `InputSpec::TsUdp`. Encrypted
-  SRT is out of scope (no passphrase field).
-
 ## [0.4.0] - 2026-07-26
 
 ### Added
@@ -61,6 +20,45 @@
   recovers real `TrackSpec`s from the client's synthesized `Output::Init`
   and `next_samples()` yields every real access unit, with no TS-specific
   code needed in this crate at all.
+- **DASH-pull ingest input `InputSpec::DashPull`** (issue #758, via
+  `transmux`'s hand-rolled MPD parser, `transmux::dash_parse`): a route can
+  now pull a remote MPEG-DASH presentation — fetch + parse the MPD, resolve
+  each selected Representation's `SegmentTemplate`/`SegmentTimeline`
+  init+media segment URLs, and demux the fetched fMP4/CMAF bytes via
+  `transmux::Fmp4Demux` (each media segment concatenated onto its
+  Representation's cached init bytes, matching `ll-hls-runtime`'s own
+  CMAF-part demux pattern), remapping each Representation's local track_id
+  to a session-wide unique id. Supports `$Number$`/`$Time$` addressing, fMP4,
+  and both static and dynamic (live, MPD-refresh) presentations;
+  `SegmentList`/`SegmentBase` addressing is deferred. Every network step is
+  bounded by `IngestTimeouts`, so a stalled/unreachable DASH origin cannot
+  wedge the route.
+- **Smooth-pull ingest input `InputSpec::SmoothPull`** (issue #759, via
+  `transmux`'s hand-rolled MS-SSTR client-Manifest parser,
+  `transmux::smooth_parse`): a route can now pull a remote Microsoft Smooth
+  Streaming presentation — fetch + parse the client Manifest, resolve each
+  `StreamIndex`'s fragment-URL template, and demux the fetched fragments via
+  `transmux::Fmp4Demux`. Smooth carries no bootstrapping init segment, so
+  `SmoothPullSource` synthesizes one per stream from
+  `QualityLevel@CodecPrivateData` (`track_spec_from_quality_level` +
+  `build_init_segment`), discovering and matching each stream's wire
+  `track_id` from its first fragment's `tfhd` (no `moov` to read one from,
+  unlike DASH) and remapping it to a session-wide unique id. Supports
+  static and dynamic (live, manifest-refresh) presentations. Every network
+  step is bounded by `IngestTimeouts`, every expected track is resolved
+  before the route starts, and a PlayReady/PIFF sample-encrypted source
+  (`<Protection>` manifest element, or CENC/PIFF sample-encryption boxes in
+  a fragment) fails with a clear typed `MultimuxError::Encrypted` instead of
+  silently demuxing garbage — decrypting Smooth-protected content is out of
+  scope.
+- **SRT ingest input `InputSpec::Srt`** (issue #739, via `srt-runtime`'s
+  real-socket `SrtListener`/`SrtSocket` adapter): a route can now ingest an
+  SRT-carried MPEG-2 Transport Stream in either listener mode (binds once
+  and accepts inbound Callers, reused across reconnects — like
+  `InputSpec::Rtmp`'s push pattern) or caller mode (dials out fresh on every
+  reconnect). The track set comes from the stream's own in-band PMT via
+  `transmux::StreamingTsDemux`, exactly like `InputSpec::TsUdp`. Encrypted
+  SRT is out of scope (no passphrase field).
 
 ## [0.3.1] - 2026-07-21
 
