@@ -53,9 +53,12 @@
 //!     height: 1080,
 //! });
 //!
-//! // 8 samples: sync at indices 0 and 4, all with duration 100.
+//! // 8 samples, 100 ticks apart: sync at indices 0 and 4, all with duration 100.
 //! let samples: Vec<Sample> = (0u8..8)
-//!     .map(|i| Sample::new(vec![i], 100, i == 0 || i == 4, 0))
+//!     .map(|i| {
+//!         let dts = i as i64 * 100;
+//!         Sample::new(vec![i], Some(dts), Some(dts), Some(100), i == 0 || i == 4)
+//!     })
 //!     .collect();
 //!
 //! let src = Track::new(spec, samples);
@@ -63,8 +66,8 @@
 //!
 //! // Two keyframes kept; durations folded to span the gaps.
 //! assert_eq!(trick.samples.len(), 2);
-//! assert_eq!(trick.samples[0].duration, 400);
-//! assert_eq!(trick.samples[1].duration, 400);
+//! assert_eq!(trick.samples[0].duration, Some(400));
+//! assert_eq!(trick.samples[1].duration, Some(400));
 //! ```
 
 use alloc::vec::Vec;

@@ -112,7 +112,12 @@ struct TrackState {
 /// use transmux::{CodecConfig, Sample, TrackSpec};
 /// use transmux::ll_hls::LlHlsSegmenter;
 /// # fn spec() -> TrackSpec { unimplemented!() }
-/// # fn au(sync: bool) -> Sample { Sample::from_raw(vec![0u8; 4], 3000) }
+/// # fn au(sync: bool) -> Sample {
+/// #     use std::sync::atomic::{AtomicI64, Ordering};
+/// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
+/// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
+/// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// # }
 /// # if false {
 /// // 1 s target segments, ~334 ms parts.
 /// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], 1000, 1.0, 334).unwrap();
