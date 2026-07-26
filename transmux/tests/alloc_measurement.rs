@@ -16,35 +16,61 @@
 //! — the BEFORE numbers in the media-plane-step-2b report were captured by
 //! running this exact file (via `git stash`) against the pre-refactor tree.
 //! Run with `--nocapture` to see the numbers on stderr.
+//!
+//! ## Thread isolation (why the counters are `thread_local!`, not global statics)
+//!
+//! Under plain `cargo test` (what CI's `cargo test --workspace --all-features
+//! --locked` runs), the `#[test]` fns in one binary run **concurrently on a
+//! thread pool**. A process-global allocation counter would count every
+//! allocation on every thread, so one test's `reset_counters()` .. `encrypt()`
+//! .. `snapshot_counters()` window would pick up unrelated allocations from a
+//! sibling test's `clear_video_media()` (which demuxes a whole TS file —
+//! thousands of allocations) running in parallel — flaking the `assert_eq!`
+//! tests below for a reason that has nothing to do with the code under test.
+//! Under `cargo nextest run`, each test is its own **process**, so this failure
+//! mode is invisible there; a harness that only proves itself under one runner
+//! and silently flakes under the other is worse than one that just fails, so
+//! don't remove this and re-derive the flake later.
+//!
+//! Thread-local counters make cross-thread noise structurally impossible: each
+//! test only ever sees allocations made by its own thread. `Cell<usize>` has no
+//! `Drop` impl, and the `const { .. }` initializer means no lazy first-access
+//! allocation, so accessing the `thread_local!` from inside `GlobalAlloc::alloc`
+//! itself cannot re-entrantly allocate (verified below by running the gate
+//! twice and diffing the printed counts — see the module's test-running notes
+//! in the PR description).
 
 #![cfg(feature = "cenc")]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, Media, SubsamplePolicy, TsDemux,
 };
 
-/// Counts every allocation/deallocation the process makes, globally. Isolated
-/// to one call by resetting the counters immediately before it.
+/// Counts every allocation/deallocation made **by the calling thread**.
+/// Thread-local (see the module doc for why) so parallel `#[test]` fns under
+/// plain `cargo test` cannot pollute each other's measurement window.
 struct CountingAlloc;
 
-static ALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-static ALLOC_BYTES: AtomicUsize = AtomicUsize::new(0);
-static DEALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+    static ALLOC_BYTES: Cell<usize> = const { Cell::new(0) };
+    static DEALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
-        ALLOC_BYTES.fetch_add(layout.size(), Ordering::Relaxed);
+        ALLOC_COUNT.with(|c| c.set(c.get() + 1));
+        ALLOC_BYTES.with(|c| c.set(c.get() + layout.size()));
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        DEALLOC_COUNT.fetch_add(1, Ordering::Relaxed);
+        DEALLOC_COUNT.with(|c| c.set(c.get() + 1));
         unsafe { System.dealloc(ptr, layout) }
     }
 }
@@ -53,16 +79,16 @@ unsafe impl GlobalAlloc for CountingAlloc {
 static GLOBAL: CountingAlloc = CountingAlloc;
 
 fn reset_counters() {
-    ALLOC_COUNT.store(0, Ordering::Relaxed);
-    ALLOC_BYTES.store(0, Ordering::Relaxed);
-    DEALLOC_COUNT.store(0, Ordering::Relaxed);
+    ALLOC_COUNT.with(|c| c.set(0));
+    ALLOC_BYTES.with(|c| c.set(0));
+    DEALLOC_COUNT.with(|c| c.set(0));
 }
 
 fn snapshot_counters() -> (usize, usize, usize) {
     (
-        ALLOC_COUNT.load(Ordering::Relaxed),
-        ALLOC_BYTES.load(Ordering::Relaxed),
-        DEALLOC_COUNT.load(Ordering::Relaxed),
+        ALLOC_COUNT.with(Cell::get),
+        ALLOC_BYTES.with(Cell::get),
+        DEALLOC_COUNT.with(Cell::get),
     )
 }
 
@@ -96,13 +122,26 @@ const KEY: [u8; 16] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
 ];
 
+/// Measured 2026-07-26 against `fixtures/ts/h264/main.ts` (post-refactor,
+/// `Sample.data: Bytes`), via `cargo test -p transmux --all-features --locked
+/// --test alloc_measurement -- --nocapture`, run twice with identical results
+/// both times (thread-local counters, see module doc). If a legitimate change
+/// moves these, re-run the gate, update the consts + this comment's date, and
+/// paste the new numbers into the PR/report — don't just widen the tolerance.
+const CENC_MEASURED_ALLOCS: usize = 48;
+const CENC_MEASURED_ALLOC_BYTES: usize = 2_216;
+const CENC_MEASURED_DEALLOCS: usize = 31;
+/// Small multiple over the pinned count: legitimate moves (e.g. one more Vec
+/// per sample from an unrelated change) are a few percent; a regression that
+/// reintroduces a per-subsample or per-sample copy is many multiples of this.
+const ALLOC_COUNT_TOLERANCE_MULTIPLE: usize = 2;
+
 /// The measurement: allocation count/bytes/deallocs for one `CencEncryptor::encrypt`
 /// pass (`cenc` scheme, NAL-aware subsample map — the common real-world config)
 /// over every sample of the real fixture's video track, counted in isolation
-/// from fixture load/demux. Printed to stderr (`--nocapture`) rather than
-/// asserted exactly — the point of this file is the number, not a pass/fail
-/// gate — but a sanity ceiling catches a wild blow-up (e.g. an accidental
-/// per-subsample copy).
+/// from fixture load/demux. Printed to stderr (`--nocapture`); asserted against
+/// the pinned measurement above (a small tolerance, not a 10x ceiling) so a
+/// regression is actually caught rather than merely reported.
 #[test]
 fn cenc_encrypt_allocation_count_over_real_fixture() {
     let Some(mut media) = clear_video_media() else {
@@ -110,6 +149,13 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     };
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
+    // Total cleartext payload size across every sample of the track, captured
+    // BEFORE reset_counters() so it costs nothing in the measurement window.
+    // This is the number a per-sample/per-subsample full-payload-copy
+    // regression would show up against in alloc_bytes below — a copy-based
+    // regression allocates on the order of this many bytes; genuine in-place
+    // rewrite overhead (subsample-map Vecs, IV buffers) does not.
+    let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
     let cfg = EncryptConfig {
         scheme: CencScheme::Cenc,
@@ -126,22 +172,50 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 
     eprintln!(
         "MEASUREMENT cenc_encrypt: samples={sample_count} allocs={allocs} \
-         alloc_bytes={alloc_bytes} deallocs={deallocs} \
+         alloc_bytes={alloc_bytes} deallocs={deallocs} total_payload={total_payload} \
          allocs_per_sample={:.2}",
         allocs as f64 / sample_count as f64
     );
 
-    // Sanity ceiling: encrypting must not allocate wildly more than a small
-    // constant number of allocations per sample (subsample-map Vec + IV Vec +
-    // whatever the in-place rewrite needs) — catches a per-subsample-entry
-    // copy regression without hardcoding the exact count (which is legitimately
-    // allowed to move — that's what this file measures and reports).
+    // The metric that actually detects a copy: encrypting in place must
+    // allocate far less than the payload it encrypts. A per-sample full
+    // payload copy would allocate ~total_payload bytes (~100%); the measured
+    // in-place rewrite bookkeeping (subsample-map Vecs, IV Vecs) on this
+    // fixture is 2216/22927 ≈ 9.7% — a quarter of the payload gives ~2.5x
+    // headroom over that measured ratio (tolerating platform/measurement
+    // jitter) while still catching a copy regression by a wide margin (which
+    // would land at or above 100%, not 25%).
     assert!(
-        allocs < sample_count * 10,
+        alloc_bytes < total_payload / 4,
+        "encrypt allocated {alloc_bytes} bytes over a {total_payload}-byte payload \
+         (>25%) — looks like a per-sample or per-subsample payload copy regression"
+    );
+    assert!(
+        alloc_bytes <= CENC_MEASURED_ALLOC_BYTES * ALLOC_COUNT_TOLERANCE_MULTIPLE,
+        "encrypt allocated {alloc_bytes} bytes — more than \
+         {ALLOC_COUNT_TOLERANCE_MULTIPLE}x the pinned measurement of \
+         {CENC_MEASURED_ALLOC_BYTES}; re-measure and update the const if this is a \
+         legitimate change, otherwise this is a regression"
+    );
+    assert!(
+        allocs <= CENC_MEASURED_ALLOCS * ALLOC_COUNT_TOLERANCE_MULTIPLE,
         "encrypt allocated {allocs} times over {sample_count} samples — \
-         far more than expected; likely a per-subsample or per-NAL copy regression"
+         more than {ALLOC_COUNT_TOLERANCE_MULTIPLE}x the pinned measurement of \
+         {CENC_MEASURED_ALLOCS}; likely a per-subsample or per-NAL copy regression"
+    );
+    assert!(
+        deallocs <= CENC_MEASURED_DEALLOCS * ALLOC_COUNT_TOLERANCE_MULTIPLE,
+        "dealloc count {deallocs} drifted more than {ALLOC_COUNT_TOLERANCE_MULTIPLE}x above \
+         the pinned measurement of {CENC_MEASURED_DEALLOCS} — re-measure and update the const \
+         if this is a legitimate change"
     );
 }
+
+/// Measured 2026-07-26 against `fixtures/ts/h264/main.ts` (post-refactor,
+/// `Sample.data: Bytes`) the same way as the `cenc` consts above.
+const CBCS_MEASURED_ALLOCS: usize = 48;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 2_216;
+const CBCS_MEASURED_DEALLOCS: usize = 31;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
@@ -151,6 +225,7 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
         return;
     };
     let sample_count = media.tracks[0].samples.len();
+    let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
     let cfg = EncryptConfig {
         scheme: CencScheme::Cbcs,
@@ -167,31 +242,67 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
 
     eprintln!(
         "MEASUREMENT cbcs_encrypt: samples={sample_count} allocs={allocs} \
-         alloc_bytes={alloc_bytes} deallocs={deallocs} \
+         alloc_bytes={alloc_bytes} deallocs={deallocs} total_payload={total_payload} \
          allocs_per_sample={:.2}",
         allocs as f64 / sample_count as f64
     );
 
+    // See the `cenc` test above for the rationale on each assertion (same
+    // fixture/measured ratio: 2216/22927 ≈ 9.7%, so a quarter of the payload
+    // gives the same ~2.5x headroom).
     assert!(
-        allocs < sample_count * 10,
+        alloc_bytes < total_payload / 4,
+        "cbcs encrypt allocated {alloc_bytes} bytes over a {total_payload}-byte payload \
+         (>25%) — looks like a per-sample or per-subsample payload copy regression"
+    );
+    assert!(
+        alloc_bytes <= CBCS_MEASURED_ALLOC_BYTES * ALLOC_COUNT_TOLERANCE_MULTIPLE,
+        "cbcs encrypt allocated {alloc_bytes} bytes — more than \
+         {ALLOC_COUNT_TOLERANCE_MULTIPLE}x the pinned measurement of \
+         {CBCS_MEASURED_ALLOC_BYTES}; re-measure and update the const if this is a \
+         legitimate change, otherwise this is a regression"
+    );
+    assert!(
+        allocs <= CBCS_MEASURED_ALLOCS * ALLOC_COUNT_TOLERANCE_MULTIPLE,
         "cbcs encrypt allocated {allocs} times over {sample_count} samples — \
-         far more than expected"
+         more than {ALLOC_COUNT_TOLERANCE_MULTIPLE}x the pinned measurement of \
+         {CBCS_MEASURED_ALLOCS}; likely a per-subsample or per-NAL copy regression"
+    );
+    assert!(
+        deallocs <= CBCS_MEASURED_DEALLOCS * ALLOC_COUNT_TOLERANCE_MULTIPLE,
+        "cbcs dealloc count {deallocs} drifted more than {ALLOC_COUNT_TOLERANCE_MULTIPLE}x \
+         above the pinned measurement of {CBCS_MEASURED_DEALLOCS} — re-measure and update the \
+         const if this is a legitimate change"
     );
 }
 
 // ---------------------------------------------------------------------------
-// The WIN side (media plane step 2b): fan-out is a refcount bump, and RTP
-// packetisation can slice a sample without copying it. These are the reasons
-// `Sample.data` moved off `Vec<u8>` in the first place — confirmed here by
-// `Bytes::as_ptr()` identity (same buffer, not merely equal content) and the
-// same counting allocator the encrypt-path regression numbers above use.
+// The `Bytes` capability side (media plane step 2b): `Bytes::clone` is a
+// refcount bump and `Bytes::slice` shares the buffer without copying. These
+// are the capabilities `Sample.data` moved off `Vec<u8>` to gain — confirmed
+// here by `Bytes::as_ptr()` identity (same buffer, not merely equal content)
+// and the same counting allocator the encrypt-path regression numbers above
+// use.
+//
+// IMPORTANT — this proves the capability, not that transmux exploits it yet:
+// - No production fan-out path exists yet (the Trunk isn't built).
+// - The production RTP packetiser does NOT use it: `rtp.rs:323`
+//   (`packetise_video`) returns `Vec<Vec<u8>>`, built by copying
+//   (`pkt.extend_from_slice(nal)` at `rtp.rs:365,488-489,540` and
+//   `payload[off..end].to_vec()` at `rtp.rs:905,996`), and `rtp_stream.rs:365`
+//   does `rtp_packet.to_vec()`. `grep -rn "\.slice(" transmux/src/` currently
+//   returns zero matches — every production copy point above is real.
+//   Issue #777 tracks converting the packetiser to `Bytes::slice` for a
+//   genuinely zero-copy egress path.
 // ---------------------------------------------------------------------------
 
 /// Cloning a sample's `Bytes` to fan it out to N consumers (WHEP, RTMP-out,
 /// SRT-out, loudness, DVR, catch-up — media plane §1) allocates zero payload
-/// bytes and every clone shares the identical underlying buffer.
+/// bytes and every clone shares the identical underlying buffer. This
+/// measures a capability `Bytes` provides; no production fan-out path
+/// consumes it yet (the Trunk isn't built) — see the section header above.
 #[test]
-fn fan_out_clone_allocates_no_payload_and_shares_the_buffer() {
+fn bytes_clone_shares_buffer_enabling_zero_copy_fan_out() {
     let Some(media) = clear_video_media() else {
         return;
     };
@@ -227,11 +338,16 @@ fn fan_out_clone_allocates_no_payload_and_shares_the_buffer() {
     );
 }
 
-/// An RTP packetiser slicing a sample into fixed-size packets (`Bytes::slice`)
-/// must allocate nothing — a `Vec<u8>` slice can't be independently owned
-/// without copying, which is the whole reason `Sample.data` is `Bytes`.
+/// Slicing a sample into fixed-size, RTP-payload-sized subranges via
+/// `Bytes::slice` allocates nothing — a `Vec<u8>` slice can't be
+/// independently owned without copying, which is the capability `Sample.data`
+/// moved to `Bytes` to gain. This measures that capability of the `bytes`
+/// crate, NOT the production RTP packetiser: `transmux::rtp::RtpPacketiser::
+/// packetise_video` (`rtp.rs:323`) returns `Vec<Vec<u8>>` and copies every
+/// packet (see the section header above) — issue #777 tracks converting it
+/// to `Bytes::slice` for a genuinely zero-copy egress path.
 #[test]
-fn rtp_sized_subrange_slicing_allocates_nothing() {
+fn bytes_subrange_slicing_allocates_nothing() {
     let Some(media) = clear_video_media() else {
         return;
     };
