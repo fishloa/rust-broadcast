@@ -31,7 +31,46 @@ carrying the Smooth-specific `tfxd` (and optionally `tfrf`) `uuid` boxes.
 
 **`c` (StreamFragmentElement, §2.2.2.6):** `n` = fragment number (ordinal),
 `d` = duration (TimeScale ticks), `t` = absolute time (optional; derivable by
-summing `d`), `r` = repeat count (optional).
+summing `d`), `r` = repeat count (optional, "repeat the previous chunk `r`
+more times" — `r+1` total chunks of duration `d`, `t` accumulating across the
+run — same shape as a DASH `SegmentTimeline` `<S t= d= r=>` run, §5.3.9.6).
+
+**Live manifest attributes (§2.2.2.1, `SmoothStreamingMedia` root element)** —
+present on a live/DVR presentation, absent on VOD:
+- `IsLive` — `"TRUE"`/`"FALSE"` (default `"FALSE"`); the presentation is still
+  being appended to.
+- `LookAheadFragmentCount` — the number of fragments ahead of the live edge
+  the server signals via `tfrf` (§2.2.4.5) look-ahead.
+- `DVRWindowLength` — the sliding DVR window length, in the manifest
+  `TimeScale` ticks; `0`/absent means an unbounded (full) DVR window.
+
+**Client-manifest (`.ism/Manifest`) parsing/consumption** — added for the
+Smooth-pull ingest client (issue #759, T1): [`crate::smooth_parse::SmoothManifest`]
+parses this document (the inverse of [`crate::smooth::SmoothPackager`]'s
+writer); [`crate::smooth_parse::StreamIndex::enumerate_chunks`] expands a
+`StreamIndex`'s `c` timeline (bounded, see below); a `StreamIndex@Url`
+fragment-URL template is resolved by literal substitution of the `{bitrate}`
+and `{start time}` tokens (§2.2.4.1 fragment addressing) via
+[`crate::smooth_parse::StreamIndex::resolve_fragment_url`].
+
+Because a client manifest is fetched from an untrusted remote server, the
+parser bounds both of the two places a hostile manifest could otherwise drive
+unbounded allocation: a `c@r` repeat count (mirrors the DASH `SegmentTimeline`
+`<S r="...">` cap, `MAX_CHUNK_RUN` = 100,000) and a `QualityLevel`'s
+`CodecPrivateData` hex length (`MAX_CODEC_PRIVATE_DATA_HEX_LEN`) before it is
+hex-decoded.
+
+**Init-segment synthesis (no Smooth init segment)** — unlike DASH/CMAF/HLS,
+Smooth has no bootstrapping init segment: a `QualityLevel`'s
+`CodecPrivateData` (§2.2.2.5) IS the codec config, and the client must
+synthesise an ISOBMFF init segment (`moov`) from it before
+[`crate::media::Fmp4Demux`] (which hard-requires a `moov`) can absorb the
+fragment stream. [`crate::smooth_parse::track_spec_from_quality_level`] builds
+the `TrackSpec` transmux's `build_init_segment` needs: for `FourCC="H264"` it
+splits the Annex-B `CodecPrivateData` into SPS/PPS NAL units (start-code
+delimited, per the Video `CodecPrivateData` shape documented above) and builds
+an `avcC`; for `FourCC="AACL"` the `CodecPrivateData` bytes ARE the
+`AudioSpecificConfig` and are carried straight into an `esds`.
 
 **FourCC / CodecPrivateData (§2.2.2.5 TrackElement):**
 - Video `FourCC="H264"` (a.k.a. AVC1): `CodecPrivateData` = the hex of the

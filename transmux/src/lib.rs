@@ -158,6 +158,7 @@ pub mod sample_groups;
 pub mod segmenter;
 pub mod segments;
 pub mod smooth;
+pub mod smooth_parse;
 pub mod splice;
 pub mod sps;
 pub mod subtitle_entries;
@@ -293,8 +294,8 @@ pub use rtp::{
     RtpPacketiser, RtpStream, VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_sdp::{
-    aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp, avc_config_from_sprop,
-    fmtp_param, rtpmap_clock_rate,
+    aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
+    avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,
 };
 pub use rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
 #[cfg(feature = "sample-aes")]
@@ -315,6 +316,13 @@ pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
     SmoothStreamType, TFXD_UUID, TfxdBox,
+};
+// Note: `smooth_parse::StreamType` is not re-exported at the crate root — it
+// would collide with `mp4esds::StreamType` (an unrelated ES descriptor
+// field); reach it via `transmux::smooth_parse::StreamType`.
+pub use smooth_parse::{
+    C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
+    SmoothParseError, StreamIndex, hex_decode as smooth_hex_decode, track_spec_from_quality_level,
 };
 pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
 pub use sps::{

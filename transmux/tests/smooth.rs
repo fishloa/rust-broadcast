@@ -1,17 +1,23 @@
-//! Microsoft Smooth Streaming ([MS-SSTR]) output gate (issue #473).
+//! Microsoft Smooth Streaming ([MS-SSTR]) output gate (issue #473) + the
+//! client-manifest parser / codec glue that inverts it (issue #759, T1).
 //!
 //! Input IR: `TsDemux`-of-`fixtures/ts/h264_aac.ts` (75 video + 131 audio
 //! samples). Each test bites by parsing the produced outputs (manifest XML +
 //! fragment boxes) and asserting against what the crate itself demuxes — never
-//! a bare substring or a hardcoded offset.
+//! a bare substring or a hardcoded offset. The manifest XML is walked with the
+//! crate's own [`transmux::smooth_parse::SmoothManifest::parse`] — not a
+//! second hand-rolled test parser — so these tests double as the parser's
+//! strongest bite: round-tripping the real writer's output.
 
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Unpackage};
 use transmux::aac_asc::AudioSpecificConfig;
+use transmux::box_types::parse_box;
 use transmux::media::{Fmp4Demux, Media};
-use transmux::pipeline::CodecConfig;
+use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, TFXD_UUID};
+use transmux::smooth_parse::{SmoothManifest, StreamType, track_spec_from_quality_level};
 use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------
@@ -34,199 +40,6 @@ fn build_smooth() -> (Media, SmoothOutput) {
     let mut pkg = SmoothPackager::default();
     let out = pkg.package(&media).expect("package Smooth");
     (media, out)
-}
-
-// ---------------------------------------------------------------------------
-// Minimal XML walker (hand-rolled; no external dependency).
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone)]
-struct Element {
-    name: String,
-    attrs: Vec<(String, String)>,
-    children: Vec<Element>,
-}
-
-impl Element {
-    fn attr(&self, key: &str) -> Option<&str> {
-        self.attrs
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    }
-    fn has_attr(&self, key: &str) -> bool {
-        self.attrs.iter().any(|(k, _)| k == key)
-    }
-    fn find_all<'a>(&'a self, name: &str) -> Vec<&'a Element> {
-        self.children.iter().filter(|c| c.name == name).collect()
-    }
-    fn find<'a>(&'a self, name: &str) -> Option<&'a Element> {
-        self.children.iter().find(|c| c.name == name)
-    }
-}
-
-struct XmlParser<'a> {
-    s: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> XmlParser<'a> {
-    fn new(s: &'a str) -> Self {
-        Self {
-            s: s.as_bytes(),
-            pos: 0,
-        }
-    }
-
-    fn parse_document(&mut self) -> Element {
-        self.skip_ws();
-        if self.starts_with("<?") {
-            while self.pos < self.s.len() && !self.starts_with("?>") {
-                self.pos += 1;
-            }
-            self.pos += 2;
-        }
-        self.skip_ws();
-        self.parse_element().expect("root element")
-    }
-
-    fn parse_element(&mut self) -> Option<Element> {
-        self.skip_ws();
-        while self.starts_with("<!") || self.starts_with("<?") {
-            while self.pos < self.s.len() && self.cur() != b'>' {
-                self.pos += 1;
-            }
-            self.pos += 1;
-            self.skip_ws();
-        }
-        if !self.starts_with("<") || self.starts_with("</") {
-            return None;
-        }
-        self.pos += 1;
-        let name = self.read_name();
-        let mut attrs = Vec::new();
-        loop {
-            self.skip_ws();
-            match self.cur() {
-                b'/' => {
-                    self.pos += 1;
-                    self.expect(b'>');
-                    return Some(Element {
-                        name,
-                        attrs,
-                        children: Vec::new(),
-                    });
-                }
-                b'>' => {
-                    self.pos += 1;
-                    break;
-                }
-                _ => {
-                    let key = self.read_name();
-                    self.skip_ws();
-                    self.expect(b'=');
-                    self.skip_ws();
-                    let value = self.read_quoted();
-                    attrs.push((key, value));
-                }
-            }
-        }
-        let mut children = Vec::new();
-        loop {
-            self.skip_ws();
-            self.skip_text();
-            self.skip_ws();
-            if self.starts_with("</") {
-                self.pos += 2;
-                let _close = self.read_name();
-                self.skip_ws();
-                self.expect(b'>');
-                break;
-            }
-            match self.parse_element() {
-                Some(c) => children.push(c),
-                None => {
-                    if self.pos >= self.s.len() {
-                        break;
-                    }
-                }
-            }
-        }
-        Some(Element {
-            name,
-            attrs,
-            children,
-        })
-    }
-
-    fn skip_text(&mut self) {
-        while self.pos < self.s.len() && self.cur() != b'<' {
-            self.pos += 1;
-        }
-    }
-    fn cur(&self) -> u8 {
-        if self.pos < self.s.len() {
-            self.s[self.pos]
-        } else {
-            0
-        }
-    }
-    fn starts_with(&self, tok: &str) -> bool {
-        self.s[self.pos.min(self.s.len())..].starts_with(tok.as_bytes())
-    }
-    fn skip_ws(&mut self) {
-        while self.pos < self.s.len() && self.s[self.pos].is_ascii_whitespace() {
-            self.pos += 1;
-        }
-    }
-    fn expect(&mut self, b: u8) {
-        assert_eq!(self.cur(), b, "expected '{}' at {}", b as char, self.pos);
-        self.pos += 1;
-    }
-    fn read_name(&mut self) -> String {
-        let start = self.pos;
-        while self.pos < self.s.len() {
-            let c = self.s[self.pos];
-            if c.is_ascii_whitespace() || c == b'=' || c == b'>' || c == b'/' {
-                break;
-            }
-            self.pos += 1;
-        }
-        String::from_utf8_lossy(&self.s[start..self.pos]).into_owned()
-    }
-    fn read_quoted(&mut self) -> String {
-        let q = self.cur();
-        assert!(q == b'"' || q == b'\'', "attribute value must be quoted");
-        self.pos += 1;
-        let start = self.pos;
-        while self.pos < self.s.len() && self.cur() != q {
-            self.pos += 1;
-        }
-        let raw = String::from_utf8_lossy(&self.s[start..self.pos]).into_owned();
-        self.pos += 1;
-        raw
-    }
-}
-
-fn parse_xml(s: &str) -> Element {
-    XmlParser::new(s).parse_document()
-}
-
-/// Decode an uppercase-hex `CodecPrivateData` string to bytes.
-fn hex_decode(s: &str) -> Vec<u8> {
-    assert!(s.len() % 2 == 0, "hex must be even length");
-    let val = |c: u8| -> u8 {
-        match c {
-            b'0'..=b'9' => c - b'0',
-            b'A'..=b'F' => c - b'A' + 10,
-            b'a'..=b'f' => c - b'a' + 10,
-            _ => panic!("bad hex digit {}", c as char),
-        }
-    };
-    s.as_bytes()
-        .chunks(2)
-        .map(|p| (val(p[0]) << 4) | val(p[1]))
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -272,34 +85,36 @@ fn demuxed_asc(media: &Media) -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Test 1 — Manifest shape.
+// Test 1 — Manifest shape (parsed via the real client-manifest parser).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn manifest_shape() {
     let (_media, out) = build_smooth();
-    let root = parse_xml(&out.manifest);
+    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
-    assert_eq!(root.name, "SmoothStreamingMedia", "root element");
+    assert_eq!(manifest.major_version, 2, "MajorVersion must be 2");
+    assert!(manifest.duration.is_some(), "must carry a Duration");
     assert_eq!(
-        root.attr("MajorVersion"),
-        Some("2"),
-        "MajorVersion must be 2"
+        manifest.streams.len(),
+        2,
+        "exactly two StreamIndex (video + audio)"
     );
-    assert!(root.has_attr("TimeScale"), "must carry a TimeScale");
-    assert!(root.has_attr("Duration"), "must carry a Duration");
 
-    let sis = root.find_all("StreamIndex");
-    assert_eq!(sis.len(), 2, "exactly two StreamIndex (video + audio)");
+    let has_video = manifest
+        .streams
+        .iter()
+        .any(|s| s.stream_type == StreamType::Video);
+    let has_audio = manifest
+        .streams
+        .iter()
+        .any(|s| s.stream_type == StreamType::Audio);
+    assert!(has_video, "a video StreamIndex");
+    assert!(has_audio, "an audio StreamIndex");
 
-    let types: std::collections::BTreeSet<&str> =
-        sis.iter().filter_map(|s| s.attr("Type")).collect();
-    assert!(types.contains("video"), "a video StreamIndex");
-    assert!(types.contains("audio"), "an audio StreamIndex");
-
-    for si in &sis {
+    for si in &manifest.streams {
         assert_eq!(
-            si.find_all("QualityLevel").len(),
+            si.qualities.len(),
             1,
             "each StreamIndex has exactly one QualityLevel"
         );
@@ -307,35 +122,34 @@ fn manifest_shape() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 2 — Codec signalling correct (against demuxed config).
+// Test 2 — Codec signalling correct (parsed model vs the packager's INPUTS).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn codec_signalling_correct() {
     let (media, out) = build_smooth();
-    let root = parse_xml(&out.manifest);
-    let sis = root.find_all("StreamIndex");
+    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
-    let video_si = sis
+    let video_si = manifest
+        .streams
         .iter()
-        .find(|s| s.attr("Type") == Some("video"))
+        .find(|s| s.stream_type == StreamType::Video)
         .expect("video StreamIndex");
-    let audio_si = sis
+    let audio_si = manifest
+        .streams
         .iter()
-        .find(|s| s.attr("Type") == Some("audio"))
+        .find(|s| s.stream_type == StreamType::Audio)
         .expect("audio StreamIndex");
 
-    let video_ql = video_si.find("QualityLevel").unwrap();
-    let audio_ql = audio_si.find("QualityLevel").unwrap();
+    let video_ql = &video_si.qualities[0];
+    let audio_ql = &audio_si.qualities[0];
 
-    // Video: FourCC H264 + CodecPrivateData = start-code SPS+PPS whose SPS matches.
-    assert_eq!(video_ql.attr("FourCC"), Some(FOURCC_H264));
-    let cpd = hex_decode(
-        video_ql
-            .attr("CodecPrivateData")
-            .expect("video CodecPrivateData"),
-    );
-    // Must begin with a start code, then the demuxed SPS bytes.
+    // Video: FourCC H264 + CodecPrivateData (already hex-decoded by the
+    // parser) = start-code SPS+PPS whose SPS matches the demuxed track, and
+    // whose bitrate matches what the packager computed.
+    assert_eq!(video_ql.four_cc, FOURCC_H264);
+    assert!(video_ql.bitrate > 0, "video bitrate must be positive");
+    let cpd = &video_ql.codec_private_data;
     assert_eq!(
         &cpd[0..4],
         &[0x00, 0x00, 0x00, 0x01],
@@ -347,7 +161,6 @@ fn codec_signalling_correct() {
         &sps[..],
         "CodecPrivateData SPS must equal the demuxed SPS bytes"
     );
-    // A PPS start code must appear after the SPS.
     let rest = &cpd[4 + sps.len()..];
     assert_eq!(
         &rest[0..4],
@@ -355,16 +168,12 @@ fn codec_signalling_correct() {
         "a PPS start code must follow the SPS"
     );
 
-    // Audio: FourCC AACL + CodecPrivateData = ASC == demuxed ASC.
-    assert_eq!(audio_ql.attr("FourCC"), Some(FOURCC_AACL));
-    let asc_bytes = hex_decode(
-        audio_ql
-            .attr("CodecPrivateData")
-            .expect("audio CodecPrivateData"),
-    );
+    // Audio: FourCC AACL + CodecPrivateData == demuxed ASC bytes, bitrate positive.
+    assert_eq!(audio_ql.four_cc, FOURCC_AACL);
+    assert!(audio_ql.bitrate > 0, "audio bitrate must be positive");
     let want_asc = demuxed_asc(&media);
     assert_eq!(
-        asc_bytes, want_asc,
+        audio_ql.codec_private_data, want_asc,
         "audio CodecPrivateData must equal the demuxed ASC bytes"
     );
 
@@ -376,73 +185,70 @@ fn codec_signalling_correct() {
         ];
         RATES[asc.sampling_frequency_index.raw() as usize]
     });
-    let manifest_rate: u32 = audio_ql
-        .attr("SamplingRate")
-        .expect("SamplingRate")
-        .parse()
-        .unwrap();
-    assert_eq!(manifest_rate, want_rate, "SamplingRate must match ASC");
-    let manifest_ch: u16 = audio_ql
-        .attr("Channels")
-        .expect("Channels")
-        .parse()
-        .unwrap();
     assert_eq!(
-        manifest_ch,
-        asc.channel_configuration.raw() as u16,
+        audio_ql.sampling_rate,
+        Some(want_rate),
+        "SamplingRate must match ASC"
+    );
+    assert_eq!(
+        audio_ql.channels,
+        Some(asc.channel_configuration.raw() as u16),
         "Channels must match ASC channel configuration"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Test 3 — Fragment `c` timeline.
+// Test 3 — Fragment `c` timeline (parsed + expanded via `enumerate_chunks`).
 // ---------------------------------------------------------------------------
 
 #[test]
 fn fragment_c_timeline() {
     let (media, out) = build_smooth();
-    let root = parse_xml(&out.manifest);
+    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
-    for si in root.find_all("StreamIndex") {
-        let ty = si.attr("Type").unwrap();
-        let track = match ty {
-            "video" => video_track(&media),
-            "audio" => audio_track(&media),
-            _ => panic!("unexpected type"),
+    for si in &manifest.streams {
+        let track = match si.stream_type {
+            StreamType::Video => video_track(&media),
+            StreamType::Audio => audio_track(&media),
+            StreamType::Text => panic!("unexpected text stream"),
         };
 
         // Number of `c` == number of emitted fragments for this track.
-        let cs = si.find_all("c");
         let emitted = out
             .fragments
             .iter()
             .filter(|f| f.track_id == track.spec.track_id)
             .count();
         assert_eq!(
-            cs.len(),
+            si.chunks_list.len(),
             emitted,
-            "`c` count must equal emitted fragments for {ty}"
+            "`c` count must equal emitted fragments for {}",
+            si.stream_type
         );
-        assert!(emitted > 0, "at least one fragment for {ty}");
+        assert!(emitted > 0, "at least one fragment for {}", si.stream_type);
 
-        // Sum of c@d == the track total duration in TimeScale ticks.
-        let sum_d: u64 = cs
-            .iter()
-            .map(|c| c.attr("d").expect("c@d").parse::<u64>().unwrap())
-            .sum();
+        // Expand the timeline (also exercises the bounded `r`-run expansion
+        // path against real, non-adversarial input) and check the sum of
+        // durations against the track total duration in TimeScale ticks.
+        let expanded = si.enumerate_chunks().expect("enumerate_chunks");
+        assert_eq!(expanded.len(), emitted);
+        let sum_d: u64 = expanded.iter().map(|(_, d)| *d).sum();
         let media_ticks: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
-        // Expected total in smooth ticks (same round-trip the packager does).
         let ts = track.spec.timescale.max(1) as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
         assert_eq!(
             sum_d, expected,
-            "sum of c@d must equal the track total duration ({ty})"
+            "sum of c@d must equal the track total duration ({})",
+            si.stream_type
         );
 
-        // Only the first `c` carries @t; all carry @d.
-        assert!(cs[0].has_attr("t"), "first c must carry @t");
-        for c in &cs {
-            assert!(c.has_attr("d"), "every c must carry @d");
+        // Only the first `c` carries an explicit @t; every entry has a `d`.
+        assert!(
+            si.chunks_list[0].t.is_some(),
+            "first c must carry an explicit @t"
+        );
+        for c in &si.chunks_list {
+            assert!(c.d.is_some(), "every c must carry @d");
         }
     }
 }
@@ -514,7 +320,6 @@ fn fragment_box_structure_and_tfxd() {
     let mut last_seq = 0u32;
     for (idx, frag) in video_frags.iter().enumerate() {
         // Parses as moof + mdat.
-        use transmux::box_types::parse_box;
         let (bx0, c0) = parse_box(&frag.data).expect("parse first box");
         // First box is styp; then moof, then mdat.
         assert_eq!(&bx0.header.box_type.0, b"styp");
@@ -544,7 +349,9 @@ fn fragment_box_structure_and_tfxd() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — Lossless round-trip (Smooth fragmentation is lossless).
+// Test 5 — Lossless round-trip (Smooth fragmentation is lossless), driven off
+// the demuxed track spec directly (no init-segment synthesis needed here —
+// see the parsed-manifest variant below for that).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -556,10 +363,8 @@ fn lossless_round_trip_video() {
     // Build a fragmented-MP4 file: the CMAF init segment + every video
     // fragment's moof+mdat concatenated (drop the per-fragment styp so
     // Fmp4Demux sees a clean moov + moof/mdat stream).
-    use transmux::box_types::parse_box;
     let specs = vec![vid.spec.clone()];
-    let mut file = transmux::pipeline::build_init_segment(&specs, media.movie_timescale)
-        .expect("init segment");
+    let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
     for frag in out.fragments.iter().filter(|f| f.track_id == vid_id) {
         // Strip the leading styp; append moof + mdat.
@@ -590,6 +395,120 @@ fn lossless_round_trip_video() {
         assert_eq!(a.duration, b.duration, "duration preserved at sample {i}");
         assert_eq!(a.is_sync, b.is_sync, "sync flag preserved at sample {i}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 — Codec glue: parsed CodecPrivateData → synthesized init segment
+// that Fmp4Demux accepts (the Smooth-pull puller's exact need, issue #759 T1).
+// No init segment ever comes over the wire in Smooth — this proves the
+// manifest-only codec config is enough to reconstruct one.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parsed_manifest_codec_glue_builds_working_init_segment() {
+    let (media, out) = build_smooth();
+    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
+
+    let vid = video_track(&media);
+    let aud = audio_track(&media);
+
+    let video_si = manifest
+        .streams
+        .iter()
+        .find(|s| s.stream_type == StreamType::Video)
+        .expect("video StreamIndex");
+    let audio_si = manifest
+        .streams
+        .iter()
+        .find(|s| s.stream_type == StreamType::Audio)
+        .expect("audio StreamIndex");
+
+    let video_spec = track_spec_from_quality_level(
+        vid.spec.track_id,
+        vid.spec.timescale,
+        StreamType::Video,
+        &video_si.qualities[0],
+    )
+    .expect("synthesize video TrackSpec from CodecPrivateData");
+    let audio_spec = track_spec_from_quality_level(
+        aud.spec.track_id,
+        aud.spec.timescale,
+        StreamType::Audio,
+        &audio_si.qualities[0],
+    )
+    .expect("synthesize audio TrackSpec from CodecPrivateData");
+
+    // The synthesized config must match the TS source's actual codec/geometry.
+    match &video_spec.config {
+        CodecConfig::Avc {
+            config,
+            width,
+            height,
+        } => {
+            let sps = demuxed_sps(&media);
+            assert_eq!(config.config.sps.first().unwrap().0, sps);
+            let info = transmux::sps::decode_avc_sps(&sps).expect("decode real SPS");
+            assert_eq!(*width, info.width as u16, "width must match the TS source");
+            assert_eq!(
+                *height, info.height as u16,
+                "height must match the TS source"
+            );
+        }
+        _ => panic!("expected CodecConfig::Avc"),
+    }
+    match &audio_spec.config {
+        CodecConfig::Aac {
+            sample_rate,
+            channel_count,
+            ..
+        } => {
+            let want_asc = demuxed_asc(&media);
+            let asc = AudioSpecificConfig::parse(&want_asc).unwrap();
+            let want_rate = asc.sampling_frequency.unwrap_or(44100);
+            assert_eq!(
+                *sample_rate, want_rate,
+                "sample_rate must match the TS source"
+            );
+            assert_eq!(
+                *channel_count,
+                asc.channel_configuration.raw() as u16,
+                "channel_count must match the TS source"
+            );
+        }
+        _ => panic!("expected CodecConfig::Aac"),
+    }
+
+    // Build the init segment purely from the manifest-derived specs — no
+    // Smooth init segment exists on the wire, so this IS the bootstrap.
+    let specs = vec![video_spec, audio_spec];
+    let mut file = build_init_segment(&specs, media.movie_timescale)
+        .expect("build init segment from synthesized TrackSpecs");
+
+    // Feed it the video fragments (styp stripped) exactly like a real puller
+    // would append fetched fragment responses.
+    for frag in out
+        .fragments
+        .iter()
+        .filter(|f| f.track_id == vid.spec.track_id)
+    {
+        let (styp, sc) = parse_box(&frag.data).unwrap();
+        assert_eq!(&styp.header.box_type.0, b"styp");
+        file.extend_from_slice(&frag.data[sc..]);
+    }
+
+    let media2 = Fmp4Demux::new()
+        .unpackage(&file[..])
+        .expect("Fmp4Demux must accept the synthesized init segment + fragments");
+    let vid2 = media2
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == vid.spec.track_id)
+        .expect("video track in re-demux");
+    assert_eq!(
+        vid2.samples.len(),
+        vid.samples.len(),
+        "every video sample survives through the synthesized init segment"
+    );
 }
 
 // ---------------------------------------------------------------------------

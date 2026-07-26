@@ -81,9 +81,20 @@ fn asc_sample_rate(asc: &AudioSpecificConfig) -> Result<u32> {
 /// channel count from the ASC and carrying the ASC bytes in the `esds`.
 ///
 /// Takes the raw hex VALUE of the `config` parameter (not the full `a=fmtp`
-/// line) — for the full-line entry point see [`aac_config_from_fmtp`].
+/// line) — for the full-line entry point see [`aac_config_from_fmtp`]. Hex
+/// decoding delegates to [`aac_config_from_asc_bytes`], the byte-level
+/// building block a non-hex caller (e.g. `smooth_parse`'s Smooth
+/// `CodecPrivateData`, already decoded to bytes) can use directly.
 pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
     let asc_bytes = hex_decode(config_hex)?;
+    aac_config_from_asc_bytes(asc_bytes)
+}
+
+/// Build `CodecConfig::Aac` from an already-decoded `AudioSpecificConfig`
+/// byte buffer (the value-level building block behind
+/// [`aac_config_from_asc_hex`]), recovering sample rate and channel count
+/// from the ASC and carrying the ASC bytes verbatim in the `esds`.
+pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
     let asc = AudioSpecificConfig::parse(&asc_bytes)?;
     let sample_rate = asc_sample_rate(&asc)?;
     let channel_count = u16::from(asc.channel_configuration.raw());
@@ -124,7 +135,10 @@ pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
 ///
 /// SPS units (nal_unit_type 7) supply `profile_indication` /
 /// `profile_compatibility` / `level_indication` (SPS bytes `[1..4]` after the
-/// NAL header). At least one SPS is required.
+/// NAL header). At least one SPS is required. Base64-decodes and classifies
+/// each token, then delegates to [`avc_config_from_sps_pps`], the byte-level
+/// building block a non-base64 caller (e.g. `smooth_parse`'s Annex B
+/// `CodecPrivateData`) can use directly.
 pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurationBox> {
     let mut sps: Vec<AvcSps> = Vec::new();
     let mut pps: Vec<AvcPps> = Vec::new();
@@ -143,9 +157,19 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
             _ => return Err(Error::InvalidInput("sprop NAL is neither SPS nor PPS")),
         }
     }
+    avc_config_from_sps_pps(sps, pps)
+}
+
+/// Build an `avcC` configuration box from already-classified SPS/PPS NAL
+/// units (the value-level building block behind [`avc_config_from_sprop`]).
+///
+/// `profile_indication`/`profile_compatibility`/`level_indication` are taken
+/// from the first SPS's bytes `[1..4]` (after the NAL header) — at least one
+/// SPS is required.
+pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVCConfigurationBox> {
     let first_sps = sps
         .first()
-        .ok_or(Error::InvalidInput("sprop-parameter-sets contained no SPS"))?;
+        .ok_or(Error::InvalidInput("no SPS NAL unit supplied"))?;
     if first_sps.0.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -331,6 +355,58 @@ mod tests {
         let sprop = base64_encode(&sei);
         let result = avc_config_from_sprop(&sprop);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn avc_config_from_sps_pps_matches_sprop_path() {
+        // The byte-level building block must produce the same box as the
+        // base64/sprop entry point for the same underlying NAL bytes.
+        let sps = alloc::vec![0x67u8, 0x42, 0xC0, 0x1E, 0xAB];
+        let pps = alloc::vec![0x68u8, 0xCE, 0x3C, 0x80];
+        let via_sprop = avc_config_from_sprop(&alloc::format!(
+            "{},{}",
+            base64_encode(&sps),
+            base64_encode(&pps)
+        ))
+        .unwrap();
+        let via_bytes =
+            avc_config_from_sps_pps(alloc::vec![AvcSps(sps)], alloc::vec![AvcPps(pps)]).unwrap();
+        assert_eq!(via_sprop.config.sps, via_bytes.config.sps);
+        assert_eq!(via_sprop.config.pps, via_bytes.config.pps);
+        assert_eq!(
+            via_sprop.config.profile_indication,
+            via_bytes.config.profile_indication
+        );
+    }
+
+    #[test]
+    fn avc_config_from_sps_pps_rejects_no_sps() {
+        assert!(avc_config_from_sps_pps(Vec::new(), Vec::new()).is_err());
+    }
+
+    #[test]
+    fn aac_config_from_asc_bytes_matches_hex_path() {
+        let asc_bytes = alloc::vec![0x12u8, 0x10];
+        let via_hex = aac_config_from_asc_hex("1210").unwrap();
+        let via_bytes = aac_config_from_asc_bytes(asc_bytes).unwrap();
+        match (via_hex, via_bytes) {
+            (
+                crate::pipeline::CodecConfig::Aac {
+                    sample_rate: sr1,
+                    channel_count: ch1,
+                    ..
+                },
+                crate::pipeline::CodecConfig::Aac {
+                    sample_rate: sr2,
+                    channel_count: ch2,
+                    ..
+                },
+            ) => {
+                assert_eq!(sr1, sr2);
+                assert_eq!(ch1, ch2);
+            }
+            _ => panic!("expected CodecConfig::Aac from both paths"),
+        }
     }
 
     #[test]
