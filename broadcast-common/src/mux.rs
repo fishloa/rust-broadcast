@@ -23,6 +23,16 @@
 //! Each trait picks its own error type via `type Error`, mirroring the
 //! [`Parse`](crate::Parse) / [`Serialize`](crate::Serialize) style, so
 //! domain-specific error variants stay visible to the caller.
+//!
+//! These four traits are the **batch / whole-file** container-mux contract:
+//! each call takes (or produces) a complete packaged container or media value
+//! in one shot. They are deliberately distinct from
+//! [`crate::stage::Stage`], the **incremental** contract for stages that are
+//! fed bytes over time, poll output as it becomes ready, and may act on a
+//! clock/deadline with no new input at all (streaming demuxers, segmenters,
+//! conformance monitors, …). A single concrete type may implement both where
+//! it makes sense (e.g. a demuxer with both a one-shot `unpackage` and a
+//! streaming `Stage` front end), but neither contract implies the other.
 
 /// Demux a packaged container into an in-memory media representation.
 ///

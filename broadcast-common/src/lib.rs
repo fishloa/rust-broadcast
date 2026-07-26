@@ -18,6 +18,18 @@
 //! `Package` and `Decrypt` ⇄ `Encrypt` are inverse pairs. Concrete
 //! implementations live in the container crates (e.g. `transmux`).
 //!
+//! These are the *batch* container-mux contract, operating on a whole packaged
+//! container at once. For the complementary *incremental* contract — feed
+//! bytes in, poll typed output out, drive on a clock — see [`stage`].
+//!
+//! # Incremental staging ([`stage`])
+//!
+//! The [`stage`] module defines [`Stage`](stage::Stage), the drive shape every
+//! streaming stage in the workspace (TS/FLV demuxers, HLS/LL-HLS segmenters,
+//! conformance monitors, …) is converging on: `feed`/`poll`/`finish` plus a
+//! [`Timestamp`](stage::Timestamp) clock parameter and deadline hooks for
+//! purely time-driven work, and a [`Demand`](stage::Demand) backpressure hint.
+//!
 //! # Quick start
 //! ```
 //! use broadcast_common::{bcd, crc32_mpeg2};
@@ -51,10 +63,12 @@ pub mod bcd;
 pub mod bits;
 pub mod crc32_mpeg2;
 pub mod mux;
+pub mod stage;
 pub mod time;
 pub mod traits;
 
 pub use mux::{Decrypt, Encrypt, Package, Unpackage};
+pub use stage::{Demand, Stage, Timestamp};
 pub use traits::{Parse, Serialize};
 
 /// Generate a [`core::fmt::Display`] impl for a spec/field enum that delegates
