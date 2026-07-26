@@ -19,6 +19,10 @@ rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.3", features = ["t
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
 rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.1", features = ["tokio"] }
+# SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
+# pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
+# over the sans-IO ARQ/TSBPD/handshake engines.
+srt-runtime       = { path = "../srt-runtime",   version = "0.2", features = ["tokio"] }
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over

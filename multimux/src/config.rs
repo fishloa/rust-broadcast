@@ -35,9 +35,13 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::ts_http`].
 /// - [`InputSpec::HlsPull`] pulls a remote (LL-)HLS Media Playlist — see
 ///   [`crate::source::hls_pull`].
-/// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (the one
-///   *push* input in this list — every other variant dials out) — see
-///   [`crate::source::rtmp`].
+/// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (a *push*
+///   input — see [`crate::source::rtmp`].
+/// - [`InputSpec::Srt`] receives an SRT-carried MPEG-2 Transport Stream, in
+///   either listener mode (a *push* input, exactly like [`InputSpec::Rtmp`])
+///   or caller mode (dials out, like every other variant) — see
+///   [`crate::source::srt`]. Encrypted SRT is out of scope: no passphrase
+///   field is exposed.
 ///
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
 /// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
@@ -130,6 +134,35 @@ pub enum InputSpec {
         /// this crate as a `Publish`/`Media` event).
         #[serde(default)]
         stream_key: Option<String>,
+    },
+    /// Receive an SRT-carried MPEG-2 Transport Stream (issue #739), in
+    /// either listener mode (`listen` set — binds and accepts inbound
+    /// Callers, a push input) or caller mode (`remote` set — dials out);
+    /// exactly one of `listen`/`remote` must be set, enforced at config
+    /// validation time. The track set comes from the stream's own in-band
+    /// PMT, exactly like [`InputSpec::TsUdp`].
+    ///
+    /// Encrypted SRT (`draft-sharabayko-srt-01` §6) is **out of scope**:
+    /// [`srt_runtime::io`] does not yet apply the SEK to decrypt DATA
+    /// payloads, so no passphrase field is exposed here — see
+    /// [`crate::source::srt`]'s module doc.
+    Srt {
+        /// Listener bind address (e.g. `"0.0.0.0:9000"`) — mutually
+        /// exclusive with `remote`.
+        #[serde(default)]
+        listen: Option<String>,
+        /// Caller dial-out address (e.g. `"remote-host:9000"`) — mutually
+        /// exclusive with `listen`.
+        #[serde(default)]
+        remote: Option<String>,
+        /// Stream ID to advertise (caller mode only — `draft-sharabayko-srt-01`
+        /// §3.2.1.3).
+        #[serde(default)]
+        stream_id: Option<String>,
+        /// Overrides the negotiated TSBPD latency (milliseconds); `None`
+        /// keeps the handshake's default.
+        #[serde(default)]
+        latency_ms: Option<u16>,
     },
     /// External input scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
@@ -481,6 +514,18 @@ impl std::fmt::Debug for InputSpec {
                 .field("app", app)
                 .field("stream_key", &stream_key.as_ref().map(|_| "***"))
                 .finish(),
+            InputSpec::Srt {
+                listen,
+                remote,
+                stream_id,
+                latency_ms,
+            } => f
+                .debug_struct("Srt")
+                .field("listen", listen)
+                .field("remote", remote)
+                .field("stream_id", stream_id)
+                .field("latency_ms", latency_ms)
+                .finish(),
             InputSpec::Custom { type_tag, .. } => f
                 .debug_struct("Custom")
                 .field("type_tag", type_tag)
@@ -536,6 +581,18 @@ impl InputSpec {
                 validate_auth(auth)
             }
             InputSpec::Rtmp { listen, .. } => validate_listen_addr(listen),
+            InputSpec::Srt { listen, remote, .. } => match (listen, remote) {
+                (Some(_), Some(_)) => Err(MultimuxError::ConfigInvalid {
+                    field: "routes.input.listen",
+                    reason: "exactly one of listen/remote must be set, got both".into(),
+                }),
+                (None, None) => Err(MultimuxError::ConfigInvalid {
+                    field: "routes.input.listen",
+                    reason: "exactly one of listen/remote must be set, got neither".into(),
+                }),
+                (Some(listen), None) => validate_listen_addr(listen),
+                (None, Some(remote)) => validate_host_port(remote),
+            },
             // Always structurally valid: the registered factory (resolved at
             // `crate::origin::serve_with_registry` time, not here) validates
             // `params` itself.
@@ -652,6 +709,34 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
         .map_err(|e| MultimuxError::ConfigInvalid {
             field: "routes.input.listen",
             reason: format!("bad listen address {addr:?}: {e}"),
+        })
+}
+
+/// A caller-mode SRT `remote` may be a hostname (`SrtSocket::connect` resolves
+/// it via `ToSocketAddrs`, doing its own DNS lookup — unlike a bind address,
+/// which must always be a literal socket address), so it gets a looser
+/// `host:port` shape check here rather than [`validate_listen_addr`]'s strict
+/// [`SocketAddr`] parse: a non-empty host part and a numeric port after the
+/// last `:`. See [`InputSpec::Srt`]'s `remote` doc (`"remote-host:9000"`) and
+/// `crate::source::srt`'s module doc.
+fn validate_host_port(addr: &str) -> Result<()> {
+    let (host, port) = addr
+        .rsplit_once(':')
+        .ok_or_else(|| MultimuxError::ConfigInvalid {
+            field: "routes.input.remote",
+            reason: format!("bad host:port {addr:?}: missing \":port\""),
+        })?;
+    if host.is_empty() {
+        return Err(MultimuxError::ConfigInvalid {
+            field: "routes.input.remote",
+            reason: format!("bad host:port {addr:?}: empty host"),
+        });
+    }
+    port.parse::<u16>()
+        .map(|_| ())
+        .map_err(|e| MultimuxError::ConfigInvalid {
+            field: "routes.input.remote",
+            reason: format!("bad host:port {addr:?}: invalid port: {e}"),
         })
 }
 
@@ -2329,5 +2414,106 @@ mod tests {
             params: serde_json::Value::Null,
         };
         let _ = spec.build_verifier("realm");
+    }
+
+    // --- issue #739 review: caller `remote` accepts a hostname ---
+
+    fn srt_input(listen: Option<&str>, remote: Option<&str>) -> InputSpec {
+        InputSpec::Srt {
+            listen: listen.map(str::to_string),
+            remote: remote.map(str::to_string),
+            stream_id: None,
+            latency_ms: None,
+        }
+    }
+
+    /// A caller-mode `remote` naming a hostname (not a literal `SocketAddr`)
+    /// must pass `validate()` — `SrtSocket::connect` resolves it via
+    /// `ToSocketAddrs`/DNS, exactly like the `InputSpec::Srt` doc's own
+    /// `"remote-host:9000"` example, so rejecting it here would make that
+    /// documented example itself invalid.
+    #[test]
+    fn srt_caller_remote_accepts_a_hostname() {
+        let input = srt_input(None, Some("example.com:9000"));
+        input.validate().expect("hostname remote must validate");
+    }
+
+    /// A literal `SocketAddr` `remote` (the strict shape) must also still
+    /// validate — the looser host:port check must not regress the existing
+    /// IP:port case.
+    #[test]
+    fn srt_caller_remote_accepts_a_literal_socket_addr() {
+        let input = srt_input(None, Some("127.0.0.1:9000"));
+        input
+            .validate()
+            .expect("literal socket addr remote must validate");
+    }
+
+    /// A `remote` with no `:port` at all must fail `validate()`, and the
+    /// error's `field` must name `remote` (issue #739 review: the field was
+    /// previously hardcoded to `"...listen"` even when `remote` is the
+    /// branch that actually failed).
+    #[test]
+    fn srt_caller_remote_without_port_fails_with_remote_field() {
+        let input = srt_input(None, Some("nonsense"));
+        let err = input.validate().expect_err("remote with no port must fail");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(
+                    field, "routes.input.remote",
+                    "field must name remote, got {err:?}"
+                );
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    /// A `remote` with an empty host (`":9000"`) must also fail, still
+    /// against the `remote` field.
+    #[test]
+    fn srt_caller_remote_with_empty_host_fails_with_remote_field() {
+        let input = srt_input(None, Some(":9000"));
+        let err = input
+            .validate()
+            .expect_err("remote with empty host must fail");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, "routes.input.remote");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    /// A `remote` with a non-numeric port must fail against the `remote`
+    /// field too.
+    #[test]
+    fn srt_caller_remote_with_non_numeric_port_fails_with_remote_field() {
+        let input = srt_input(None, Some("example.com:notaport"));
+        let err = input
+            .validate()
+            .expect_err("remote with a non-numeric port must fail");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, "routes.input.remote");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
+
+    /// Listener-mode `listen` keeps the strict `SocketAddr` validator — a
+    /// bind address is never resolved via DNS, so a hostname there must
+    /// still be rejected (unlike `remote`), against the `listen` field.
+    #[test]
+    fn srt_listener_listen_rejects_a_hostname() {
+        let input = srt_input(Some("example.com:9000"), None);
+        let err = input
+            .validate()
+            .expect_err("hostname listen address must fail");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, "routes.input.listen");
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
     }
 }

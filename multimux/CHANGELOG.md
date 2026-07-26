@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+- **SRT ingest input `InputSpec::Srt`** (issue #739, via `srt-runtime`'s
+  real-socket `SrtListener`/`SrtSocket` adapter): a route can now ingest an
+  SRT-carried MPEG-2 Transport Stream in either listener mode (binds once
+  and accepts inbound Callers, reused across reconnects — like
+  `InputSpec::Rtmp`'s push pattern) or caller mode (dials out fresh on every
+  reconnect). The track set comes from the stream's own in-band PMT via
+  `transmux::StreamingTsDemux`, exactly like `InputSpec::TsUdp`. Encrypted
+  SRT is out of scope (no passphrase field).
+
 ## [0.4.0] - 2026-07-26
 
 ### Added
