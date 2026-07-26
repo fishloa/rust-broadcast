@@ -35,6 +35,8 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::ts_http`].
 /// - [`InputSpec::HlsPull`] pulls a remote (LL-)HLS Media Playlist — see
 ///   [`crate::source::hls_pull`].
+/// - [`InputSpec::DashPull`] pulls a remote MPEG-DASH presentation (issue
+///   #758) — see [`crate::source::dash_pull`].
 /// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (a *push*
 ///   input — see [`crate::source::rtmp`].
 /// - [`InputSpec::Srt`] receives an SRT-carried MPEG-2 Transport Stream, in
@@ -43,17 +45,19 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::srt`]. Encrypted SRT is out of scope: no passphrase
 ///   field is exposed.
 ///
-/// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
-/// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
-/// the same way [`InputSpec::Rtsp`]'s URL is.
+/// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`]/[`InputSpec::DashPull`] all
+/// may carry `user:pass@` URL userinfo (Basic/Digest — see
+/// [`crate::source::http_auth`]), redacted the same way [`InputSpec::Rtsp`]'s
+/// URL is.
 ///
-/// [`InputSpec::Rtsp`]/[`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] each also
-/// take an optional config-supplied `auth` ([`AuthSpec`]) — the only way to
-/// supply a Bearer token (RFC 6750 has no URL-userinfo form) and, when
-/// present, taking precedence over any URL userinfo (see
-/// `crate::source::http_auth::resolve_credentials`). [`InputSpec::Rtp`]/
-/// [`InputSpec::TsUdp`] are raw UDP transports with no HTTP/RTSP request line
-/// to attach credentials to, so they carry no `auth` field.
+/// [`InputSpec::Rtsp`]/[`InputSpec::TsHttp`]/[`InputSpec::HlsPull`]/
+/// [`InputSpec::DashPull`] each also take an optional config-supplied `auth`
+/// ([`AuthSpec`]) — the only way to supply a Bearer token (RFC 6750 has no
+/// URL-userinfo form) and, when present, taking precedence over any URL
+/// userinfo (see `crate::source::http_auth::resolve_credentials`).
+/// [`InputSpec::Rtp`]/[`InputSpec::TsUdp`] are raw UDP transports with no
+/// HTTP/RTSP request line to attach credentials to, so they carry no `auth`
+/// field.
 ///
 /// - [`InputSpec::Custom`] (issue #663 external scheme plugin registry) names
 ///   an external input scheme by an opaque `type_tag`, resolved at
@@ -114,6 +118,17 @@ pub enum InputSpec {
         /// `http://` or `https://` Media Playlist URL to pull. May carry
         /// `user:pass@` userinfo — see [`InputSpec`]'s `Debug` impl, which
         /// redacts it.
+        url: String,
+        /// Config-supplied credentials, overriding any URL userinfo. See
+        /// [`AuthSpec`].
+        #[serde(default)]
+        auth: Option<AuthSpec>,
+    },
+    /// Pull a remote MPEG-DASH presentation (issue #758) — see
+    /// [`crate::source::dash_pull`].
+    DashPull {
+        /// `http://` or `https://` MPD URL to pull. May carry `user:pass@`
+        /// userinfo — see [`InputSpec`]'s `Debug` impl, which redacts it.
         url: String,
         /// Config-supplied credentials, overriding any URL userinfo. See
         /// [`AuthSpec`].
@@ -504,6 +519,11 @@ impl std::fmt::Debug for InputSpec {
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
                 .finish(),
+            InputSpec::DashPull { url, auth } => f
+                .debug_struct("DashPull")
+                .field("url", &crate::redact::redact_url(url))
+                .field("auth", auth)
+                .finish(),
             InputSpec::Rtmp {
                 listen,
                 app,
@@ -577,6 +597,10 @@ impl InputSpec {
                 validate_auth(auth)
             }
             InputSpec::HlsPull { url, auth } => {
+                validate_http_url(url)?;
+                validate_auth(auth)
+            }
+            InputSpec::DashPull { url, auth } => {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `dash_parse` (issue #758 T1): a hand-rolled MPD parser (`Mpd::parse`), the
+  structural inverse of `dash`'s `DashPackager` writer — `no_std`+`alloc`, no
+  external XML dependency. Parses `MPD`/`Period`/`AdaptationSet`/
+  `Representation`/`SegmentTemplate`/`SegmentTimeline` (ISO/IEC 23009-1
+  §5.3/§5.3.9), resolves `SegmentTemplate` inheritance from `AdaptationSet`
+  down to `Representation`, and tolerates unmodeled elements
+  (`SegmentList`/`SegmentBase`/`ContentProtection`/…) without choking.
+  `SegmentTemplate::resolve` substitutes `$RepresentationID$`/`$Number$`/
+  `$Time$`/`$Bandwidth$` (with `%0Nd` width and `$$` escaping) into a
+  template; `SegmentTimeline::enumerate` expands `<S t= d= r=>` runs into the
+  `(number, time)` sequence for `$Time$` addressing, and
+  `SegmentTemplate::number_sequence` does the equivalent for constant-
+  `@duration` `$Number$` addressing. Also exposes `parse_iso8601_duration`
+  for `xs:duration` attributes. Malformed/truncated XML never panics —
+  every failure path returns `DashParseError`.
+
+### Fixed
+
+- `dash_parse` (issue #758 T1): two critical remote alloc-DoS vectors in the
+  MPD parser capped + end-tag name matching to prevent silent truncation:
+  1. `SegmentTimeline::enumerate` now returns `Result` and caps total segment
+     enumeration at `MAX_TIMELINE_SEGMENTS` (100k), rejecting hostile MPDs with
+     unbounded `<S r="...">` repeats instead of allocating/looping unboundedly.
+  2. `SegmentTemplate::resolve` clamps `%0Nd` format width to `MAX_FORMAT_WIDTH`
+     (20 digits, the max for u64), defending against a hostile `$Number%9999999999d$`
+     template allocating/looping unboundedly.
+  3. All element parsing functions now validate closing-tag names — a stray
+     `</Period>` no longer silently truncates the Period list. `Mpd::parse` +
+     callers now return `DashParseError::MismatchedEndTag` on nesting errors.
+
 ## [0.19.0] - 2026-07-26
 
 ### Added
