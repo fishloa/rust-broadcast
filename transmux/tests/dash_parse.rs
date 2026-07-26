@@ -107,7 +107,7 @@ fn parses_real_fixture_structure() {
         "one S run, t=2070 d=90000 r=2"
     );
     assert_eq!(
-        v_timeline.enumerate(v_st.start_number),
+        v_timeline.enumerate(v_st.start_number).expect("enumerate"),
         vec![(1, 2070), (2, 92070), (3, 182070)],
         "r=2 expands to 3 segments of duration 90000 each"
     );
@@ -155,7 +155,7 @@ fn parses_real_fixture_structure() {
         "four unequal-duration S runs, only the first carrying @t"
     );
     assert_eq!(
-        a_timeline.enumerate(a_st.start_number),
+        a_timeline.enumerate(a_st.start_number).expect("enumerate"),
         vec![(1, 0), (2, 41984), (3, 86016), (4, 131072)],
         "accumulated start times across S runs with no explicit @t"
     );
@@ -332,9 +332,103 @@ fn round_trip_against_writer_timeline_addressing() {
 
             // Enumeration must reproduce the exact original per-segment
             // duration list and cumulative start times.
-            let pairs = timeline.enumerate(st.start_number);
+            let pairs = timeline.enumerate(st.start_number).expect("enumerate");
             assert_eq!(pairs, vec![(1, 0), (2, 1000), (3, 2000)]);
         }
     }
     assert!(any_checked, "at least one Representation must be present");
+}
+
+// ---------------------------------------------------------------------------
+// Remote alloc-DoS cap tests (issue #758 T1)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn timeline_enumerate_caps_unbounded_repeats() {
+    // CRITICAL: a hostile MPD specifying a huge repeat count must be rejected
+    // instantly, not allocated/looped. This test ensures the cap bites.
+    let timeline = transmux::SegmentTimeline {
+        segments: vec![transmux::S {
+            t: Some(0),
+            d: 1,
+            r: 9_223_372_036_854_775_806, // i64::MAX - 1 → (as u64) + 1 = unbounded
+        }],
+    };
+    let err = timeline
+        .enumerate(1)
+        .expect_err("must reject oversized repeat");
+    assert!(
+        matches!(err, transmux::DashParseError::TimelineTooLong { .. }),
+        "error must be TimelineTooLong: {err:?}"
+    );
+}
+
+#[test]
+fn timeline_enumerate_accepts_under_cap() {
+    // Valid timelines under the cap must still succeed.
+    // E.g., 50k segments is well under the 100k cap.
+    let timeline = transmux::SegmentTimeline {
+        segments: vec![transmux::S {
+            t: Some(0),
+            d: 1,
+            r: 49_999, // exactly 50k segments
+        }],
+    };
+    let pairs = timeline
+        .enumerate(1)
+        .expect("timeline under cap must succeed");
+    assert_eq!(
+        pairs.len(),
+        50_000,
+        "50k segments must be enumerated when under cap"
+    );
+}
+
+#[test]
+fn segment_template_resolve_clamps_format_width() {
+    // CRITICAL: a hostile @media template with $Number%9999999999d$ must not
+    // allocate/loop unboundedly. The width is clamped to MAX_FORMAT_WIDTH.
+    // Result is a sanely-sized zero-padded string, not OOM.
+    let resolved = transmux::SegmentTemplate::resolve(
+        "chunk-$Number%9999999999d$.m4s",
+        "r0",
+        Some(42),
+        None,
+        None,
+    );
+    assert!(
+        resolved.starts_with("chunk-"),
+        "template must resolve (not panic/OOM)"
+    );
+    // The number 42 padded to at most 20 digits is "00000000000000000042"
+    // (20 chars). The resolved string should be reasonable in size.
+    assert!(
+        resolved.len() < 100,
+        "resolved string must be small (clamped width): {resolved}"
+    );
+    assert!(
+        resolved.contains("42"),
+        "number must appear in resolved string: {resolved}"
+    );
+}
+
+#[test]
+fn mismatched_end_tag_causes_error() {
+    // CRITICAL: a stray closing tag (malformed nesting) must error, not
+    // silently truncate the structure. Example: <Period></Period></Period>
+    // would previously accept the first </Period> and drop the second, now
+    // it must error.
+    let xml = r#"<MPD profiles="p">
+        <Period id="0">
+            <AdaptationSet contentType="video">
+                <Representation id="0" bandwidth="1" />
+            </AdaptationSet>
+        </Period>
+        </Period>
+    </MPD>"#;
+    let err = transmux::Mpd::parse(xml).expect_err("must reject stray </Period>");
+    assert!(
+        matches!(err, transmux::DashParseError::MismatchedEndTag { .. }),
+        "error must be MismatchedEndTag: {err:?}"
+    );
 }

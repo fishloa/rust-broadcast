@@ -113,6 +113,20 @@ pub enum DashParseError {
         /// The raw (unparsable) value.
         value: String,
     },
+    /// A `SegmentTimeline` would exceed the cap on total segments (remote
+    /// alloc-DoS defense — an untrusted MPD specifying unbounded `<S r="...">`.
+    TimelineTooLong {
+        /// The segment count (or a hint of it) that breached the cap.
+        count_hint: u64,
+    },
+    /// An end tag's name does not match the element currently open — a
+    /// malformed nesting that would silently truncate the structure.
+    MismatchedEndTag {
+        /// The element name expected to close.
+        expected: &'static str,
+        /// The element name actually found in the closing tag.
+        found: String,
+    },
 }
 
 impl fmt::Display for DashParseError {
@@ -148,6 +162,20 @@ impl fmt::Display for DashParseError {
             DashParseError::InvalidDuration { value } => {
                 write!(f, "invalid xs:duration {value:?}")
             }
+            DashParseError::TimelineTooLong { count_hint } => {
+                write!(
+                    f,
+                    "SegmentTimeline exceeded max segment count ({count_hint} > {})",
+                    MAX_TIMELINE_SEGMENTS
+                )
+            }
+            DashParseError::MismatchedEndTag { expected, found } => {
+                if found.is_empty() {
+                    write!(f, "expected closing tag </{expected}>, found none")
+                } else {
+                    write!(f, "expected closing tag </{expected}>, found </{found}>")
+                }
+            }
         }
     }
 }
@@ -172,6 +200,23 @@ const DEFAULT_START_NUMBER: u64 = 1;
 const DEFAULT_PRESENTATION_TIME_OFFSET: u64 = 0;
 /// `S@r` default (§5.3.9.6.2) — a run of exactly one segment (no repeats).
 const DEFAULT_REPEAT: i64 = 0;
+
+// ---------------------------------------------------------------------------
+// Unbounded-input caps (remote alloc-DoS defense)
+// ---------------------------------------------------------------------------
+
+/// Cap on total segments in a `SegmentTimeline` enumeration. A hostile MPD
+/// specifying a huge `<S r="...">` repeat count would allocate unboundedly
+/// otherwise. 100,000 segments is generous (a 2-second segment window spanning
+/// ~55 hours of live content), while still protecting against allocation DoS.
+pub const MAX_TIMELINE_SEGMENTS: usize = 100_000;
+
+/// Cap on the `%0Nd` zero-padding width in a `$Number$` / `$Time$` /
+/// `$Bandwidth$` substitution. A u64 in decimal has at most 20 digits; any
+/// wider padding is meaningless and a hostile `$Number%9999999999d$` in the
+/// `@media` template would allocate / loop unboundedly. This cap prevents that
+/// alloc-DoS while preserving all valid use.
+pub const MAX_FORMAT_WIDTH: usize = 20;
 
 // ---------------------------------------------------------------------------
 // Model
@@ -397,8 +442,11 @@ fn push_numeric(out: &mut String, value: Option<u64>, width: Option<usize>, iden
     }
 }
 
-/// Format `n` zero-padded to at least `width` decimal digits.
+/// Format `n` zero-padded to at least `width` decimal digits. The width is
+/// clamped to [`MAX_FORMAT_WIDTH`] to defend against unbounded allocation from
+/// maliciously large `%0Nd` directives in the MPD's template strings.
 fn format_width(n: u64, width: usize) -> String {
+    let width = width.min(MAX_FORMAT_WIDTH);
     let digits = n.to_string();
     if digits.len() >= width {
         digits
@@ -434,10 +482,16 @@ impl SegmentTimeline {
     /// or the end of the Period", §5.3.9.6.2) cannot be resolved without that
     /// external context; it is tolerated as a single occurrence (not a
     /// panic/error) rather than looping unboundedly.
-    pub fn enumerate(&self, start_number: u64) -> Vec<(u64, u64)> {
+    ///
+    /// Returns an error if the total segment count (summed across all `S`
+    /// entries, counting each `r+1` repetition) would exceed
+    /// [`MAX_TIMELINE_SEGMENTS`], defending against remote alloc-DoS attacks
+    /// via hostile MPDs with unbounded `<S r="...">` values.
+    pub fn enumerate(&self, start_number: u64) -> Result<Vec<(u64, u64)>> {
         let mut out = Vec::new();
         let mut number = start_number;
         let mut time: u64 = 0;
+        let mut total_segments: u64 = 0;
         for s in &self.segments {
             if let Some(t) = s.t {
                 time = t;
@@ -447,13 +501,26 @@ impl SegmentTimeline {
             } else {
                 (s.r as u64).saturating_add(1)
             };
+            // Guard the accumulation: if this S's repeats would exceed the cap
+            // on its own, or the accumulated total would, return an error.
+            if repeats > MAX_TIMELINE_SEGMENTS as u64 {
+                return Err(DashParseError::TimelineTooLong {
+                    count_hint: repeats,
+                });
+            }
+            total_segments = total_segments.saturating_add(repeats);
+            if total_segments as usize > MAX_TIMELINE_SEGMENTS {
+                return Err(DashParseError::TimelineTooLong {
+                    count_hint: total_segments,
+                });
+            }
             for _ in 0..repeats {
                 out.push((number, time));
                 number = number.saturating_add(1);
                 time = time.saturating_add(s.d);
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -951,7 +1018,15 @@ impl Mpd {
                             skip_element(&mut tok)?;
                         }
                     }
-                    Some(XmlEvent::End { .. }) => break,
+                    Some(XmlEvent::End { name }) => {
+                        if name != EL {
+                            return Err(DashParseError::MismatchedEndTag {
+                                expected: EL,
+                                found: name.to_string(),
+                            });
+                        }
+                        break;
+                    }
                     None => return Err(DashParseError::UnexpectedEof),
                 }
             }
@@ -974,6 +1049,7 @@ fn parse_period(
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<Period> {
+    const EL: &str = "Period";
     let id = attr_owned(&attrs, "id");
     let start = parse_duration_attr(&attrs, "start")?;
     let duration = parse_duration_attr(&attrs, "duration")?;
@@ -992,7 +1068,15 @@ fn parse_period(
                         skip_element(tok)?;
                     }
                 }
-                Some(XmlEvent::End { .. }) => break,
+                Some(XmlEvent::End { name }) => {
+                    if name != EL {
+                        return Err(DashParseError::MismatchedEndTag {
+                            expected: EL,
+                            found: name.to_string(),
+                        });
+                    }
+                    break;
+                }
                 None => return Err(DashParseError::UnexpectedEof),
             }
         }
@@ -1011,6 +1095,7 @@ fn parse_adaptation_set(
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<AdaptationSet> {
+    const EL: &str = "AdaptationSet";
     let mime_type = attr_owned(&attrs, "mimeType");
     let content_type = attr_owned(&attrs, "contentType");
 
@@ -1034,7 +1119,15 @@ fn parse_adaptation_set(
                         skip_element(tok)?;
                     }
                 }
-                Some(XmlEvent::End { .. }) => break,
+                Some(XmlEvent::End { name }) => {
+                    if name != EL {
+                        return Err(DashParseError::MismatchedEndTag {
+                            expected: EL,
+                            found: name.to_string(),
+                        });
+                    }
+                    break;
+                }
                 None => return Err(DashParseError::UnexpectedEof),
             }
         }
@@ -1087,7 +1180,15 @@ fn parse_representation(
                         skip_element(tok)?;
                     }
                 }
-                Some(XmlEvent::End { .. }) => break,
+                Some(XmlEvent::End { name }) => {
+                    if name != EL {
+                        return Err(DashParseError::MismatchedEndTag {
+                            expected: EL,
+                            found: name.to_string(),
+                        });
+                    }
+                    break;
+                }
                 None => return Err(DashParseError::UnexpectedEof),
             }
         }
@@ -1134,7 +1235,15 @@ fn parse_segment_template(
                         skip_element(tok)?;
                     }
                 }
-                Some(XmlEvent::End { .. }) => break,
+                Some(XmlEvent::End { name }) => {
+                    if name != EL {
+                        return Err(DashParseError::MismatchedEndTag {
+                            expected: EL,
+                            found: name.to_string(),
+                        });
+                    }
+                    break;
+                }
                 None => return Err(DashParseError::UnexpectedEof),
             }
         }
@@ -1155,7 +1264,7 @@ fn parse_segment_timeline(
     tok: &mut XmlTokenizer<'_>,
     self_closing: bool,
 ) -> Result<SegmentTimeline> {
-    const EL: &str = "S";
+    const EL: &str = "SegmentTimeline";
     let mut segments = Vec::new();
     if !self_closing {
         loop {
@@ -1165,9 +1274,9 @@ fn parse_segment_timeline(
                     attrs,
                     self_closing,
                 }) => {
-                    let t: Option<u64> = parse_attr(&attrs, "t", EL)?;
-                    let d: u64 = required_attr_parse(&attrs, "d", EL)?;
-                    let r: i64 = parse_attr(&attrs, "r", EL)?.unwrap_or(DEFAULT_REPEAT);
+                    let t: Option<u64> = parse_attr(&attrs, "t", "S")?;
+                    let d: u64 = required_attr_parse(&attrs, "d", "S")?;
+                    let r: i64 = parse_attr(&attrs, "r", "S")?.unwrap_or(DEFAULT_REPEAT);
                     segments.push(S { t, d, r });
                     if !self_closing {
                         skip_element(tok)?;
@@ -1178,7 +1287,15 @@ fn parse_segment_timeline(
                         skip_element(tok)?;
                     }
                 }
-                Some(XmlEvent::End { .. }) => break,
+                Some(XmlEvent::End { name }) => {
+                    if name != EL {
+                        return Err(DashParseError::MismatchedEndTag {
+                            expected: EL,
+                            found: name.to_string(),
+                        });
+                    }
+                    break;
+                }
                 None => return Err(DashParseError::UnexpectedEof),
             }
         }
@@ -1554,7 +1671,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            timeline.enumerate(1),
+            timeline.enumerate(1).expect("enumerate"),
             vec![(1, 2070), (2, 92070), (3, 182070)]
         );
     }
@@ -1588,7 +1705,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            timeline.enumerate(1),
+            timeline.enumerate(1).expect("enumerate"),
             vec![(1, 0), (2, 41984), (3, 86016), (4, 131072)]
         );
     }
@@ -1602,6 +1719,6 @@ mod tests {
                 r: -1,
             }],
         };
-        assert_eq!(timeline.enumerate(1), vec![(1, 0)]);
+        assert_eq!(timeline.enumerate(1).expect("enumerate"), vec![(1, 0)]);
     }
 }
