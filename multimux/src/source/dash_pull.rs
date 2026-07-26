@@ -759,6 +759,74 @@ mod tests {
         server.abort();
     }
 
+    /// Gap 2 regression test (#738): both DASH init segments in the fixture
+    /// carry the same local `tkhd@track_ID=1`. The remap must assign each a
+    /// distinct session-global id and preserve codec kind. Disabling the
+    /// remap or the translate-back in `next_samples` must fail this test.
+    #[tokio::test]
+    async fn dash_pull_remaps_colliding_track_ids_to_unique_globals() {
+        let (url, server) = start_fixture_server(None, None).await;
+
+        let source = DashPullSource::new("dash-remap", url);
+        let mut session = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect("connect timed out")
+            .expect("connect");
+
+        let specs = session.track_specs();
+        assert_eq!(specs.len(), 2, "fixture must have 2 tracks");
+
+        // Collect all track ids seen across all samples to verify they map
+        // correctly: one for video, one for audio.
+        let mut video_ids = std::collections::HashSet::new();
+        let mut audio_ids = std::collections::HashSet::new();
+        let mut total = 0usize;
+
+        while let Some(batch) = tokio::time::timeout(Duration::from_secs(5), session.next_samples())
+            .await
+            .expect("next_samples timed out")
+            .expect("next_samples must not error")
+        {
+            if batch.is_empty() && total > 0 {
+                break;
+            }
+            for (track_id, _sample) in batch {
+                total += 1;
+                // Find the spec to determine codec kind
+                if let Some(spec) = specs.iter().find(|s| s.track_id == track_id) {
+                    match spec.config {
+                        CodecConfig::Avc { .. } => {
+                            video_ids.insert(track_id);
+                        }
+                        CodecConfig::Aac { .. } => {
+                            audio_ids.insert(track_id);
+                        }
+                        _ => unreachable!("fixture has only AVC + AAC"),
+                    }
+                }
+            }
+        }
+
+        assert!(total > 0, "fixture must yield real samples");
+        assert_eq!(
+            video_ids.len(),
+            1,
+            "must see exactly one distinct video track id across all samples"
+        );
+        assert_eq!(
+            audio_ids.len(),
+            1,
+            "must see exactly one distinct audio track id across all samples"
+        );
+        assert_ne!(
+            video_ids.iter().next().unwrap(),
+            audio_ids.iter().next().unwrap(),
+            "video and audio track ids must be distinct (no collision)"
+        );
+
+        server.abort();
+    }
+
     /// Mutation-check counterpart (documented, not a separate `#[test]`):
     /// dropping the `Fmp4Demux::unpackage` feed in `next_samples`, or never
     /// advancing `RepState::plan`, makes `got_total` stay `0`/loop forever —

@@ -1042,6 +1042,55 @@ mod tests {
         );
     }
 
+    /// Gap 3 regression test (#738): connect with a command object present
+    /// but missing the `app` key must be rejected.
+    #[test]
+    fn connect_with_object_missing_app_key_is_malformed() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+
+        // Object is present but has no `app` key.
+        let args = vec![Amf0Value::Object(vec![(
+            "type".to_string(),
+            Amf0Value::String("nonprivate".to_string()),
+        )])];
+        let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
+        let bytes = ChunkWriter::new().write(&msg);
+
+        let err = session.handle_data(&bytes).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "connect with object missing 'app' key must error"
+        );
+    }
+
+    /// Gap 3 regression test (#738): connect with a command object present
+    /// but `app` value is not a String must be rejected.
+    #[test]
+    fn connect_with_app_as_number_is_malformed() {
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+
+        // Object has `app` key but value is a Number, not a String.
+        let args = vec![Amf0Value::Object(vec![
+            ("app".to_string(), Amf0Value::Number(123.0)),
+            (
+                "type".to_string(),
+                Amf0Value::String("nonprivate".to_string()),
+            ),
+        ])];
+        let msg = command_message(CLIENT_CSID, 0, "connect", 1.0, args);
+        let bytes = ChunkWriter::new().write(&msg);
+
+        let err = session.handle_data(&bytes).unwrap_err();
+        assert!(
+            matches!(err, RtmpError::Malformed { .. }),
+            "connect with app as Number must error, not accept numeric value"
+        );
+    }
+
     // ── createStream ──────────────────────────────────────────────────────
 
     #[test]

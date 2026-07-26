@@ -203,3 +203,21 @@ name = "rtmp_chunk_amf0"
 path = "fuzz_targets/rtmp_chunk_amf0.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "transmux_mpd_parse"
+path = "fuzz_targets/transmux_mpd_parse.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_smooth_manifest"
+path = "fuzz_targets/transmux_smooth_manifest.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_flv_stream"
+path = "fuzz_targets/transmux_flv_stream.rs"
+test = false
+doc  = false

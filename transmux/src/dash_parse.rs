@@ -1496,4 +1496,32 @@ mod tests {
         };
         assert_eq!(timeline.enumerate(1).expect("enumerate"), vec![(1, 0)]);
     }
+
+    /// Gap 4 fast unit test (#738): format_width must clamp to MAX_FORMAT_WIDTH
+    /// instantly, not attempt huge allocations. Test via the public
+    /// SegmentTemplate::resolve API with a hostile width and verify the result
+    /// is small.
+    #[test]
+    fn segment_template_resolve_clamps_format_width_instantly() {
+        // A hostile template with an impossibly large format width. The
+        // resolve must clamp to MAX_FORMAT_WIDTH (20) and return immediately
+        // without allocation or looping.
+        let resolved =
+            SegmentTemplate::resolve("chunk-$Number%9999999999d$.m4s", "r0", Some(42), None, None);
+
+        // The number 42 zero-padded to at most 20 digits is "00000000000000000042".
+        // The full resolved string should be small.
+        assert!(
+            resolved.len() < 100,
+            "resolved string must be small (clamped width): {resolved}"
+        );
+        assert!(
+            resolved.contains("42"),
+            "number must appear in resolved string: {resolved}"
+        );
+        assert_eq!(
+            resolved, "chunk-00000000000000000042.m4s",
+            "exact padding to 20 digits (MAX_FORMAT_WIDTH)"
+        );
+    }
 }
