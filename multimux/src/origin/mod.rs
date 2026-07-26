@@ -585,7 +585,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// that route's [`crate::config::InputSpec`], it connects
 /// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
 /// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// [`crate::source::hls_pull::HlsPullSource`], [`crate::source::rtmp::RtmpSource`],
+/// [`crate::source::hls_pull::HlsPullSource`], [`crate::source::dash_pull::DashPullSource`],
+/// [`crate::source::smooth_pull::SmoothPullSource`], [`crate::source::rtmp::RtmpSource`],
 /// or [`crate::source::srt::SrtSource`]
 /// — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
@@ -731,6 +732,20 @@ pub async fn serve_with_registry(
             crate::config::InputSpec::DashPull { url, auth } => {
                 let connector =
                     crate::source::dash_pull::DashPullSource::new(name.clone(), url.clone())
+                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::SmoothPull { url, auth } => {
+                let connector =
+                    crate::source::smooth_pull::SmoothPullSource::new(name.clone(), url.clone())
                         .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
                 tokio::spawn(supervise(
                     connector,

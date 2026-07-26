@@ -3,13 +3,14 @@
 //! (MPEG-2 TS over UDP, uni/multicast), `ts_http::TsHttpSource` (MPEG-2 TS
 //! over HTTP), `hls_pull::HlsPullSource` (pull a remote (LL-)HLS origin),
 //! `dash_pull::DashPullSource` (pull a remote MPEG-DASH origin, issue #758),
-//! `rtmp::RtmpSource` (RTMP push ingest, issue #738 — a *push* source; every
-//! non-SRT source above dials out), and `srt::SrtSource` (SRT-carried
-//! MPEG-2 TS ingest, issue #739 — listener *or* caller mode) all implement
-//! the `Source` marker trait plus the `pipeline::SampleSource` contract (see
-//! `crate::pipeline`), keeping ingest swappable (and letting tests drive a
-//! mock). `http_auth` is shared auth glue for the HTTP-based sources (issue
-//! #663 P3c).
+//! `smooth_pull::SmoothPullSource` (pull a remote Microsoft Smooth Streaming
+//! origin, issue #759), `rtmp::RtmpSource` (RTMP push ingest, issue #738 — a
+//! *push* source; every non-SRT source above dials out), and `srt::SrtSource`
+//! (SRT-carried MPEG-2 TS ingest, issue #739 — listener *or* caller mode) all
+//! implement the `Source` marker trait plus the `pipeline::SampleSource`
+//! contract (see `crate::pipeline`), keeping ingest swappable (and letting
+//! tests drive a mock). `http_auth` is shared auth glue for the HTTP-based
+//! sources (issue #663 P3c).
 
 pub mod dash_pull;
 pub mod hls_pull;
@@ -18,6 +19,7 @@ pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;
+pub mod smooth_pull;
 pub mod srt;
 pub mod ts_http;
 pub mod ts_udp;

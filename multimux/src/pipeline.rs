@@ -97,6 +97,16 @@ impl SampleSource for crate::source::dash_pull::DashPullSession {
     }
 }
 
+impl SampleSource for crate::source::smooth_pull::SmoothPullSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::smooth_pull::SmoothPullSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::smooth_pull::SmoothPullSession::next_samples(self).await
+    }
+}
+
 impl SampleSource for crate::source::rtmp::RtmpSession {
     fn track_specs(&self) -> Vec<TrackSpec> {
         crate::source::rtmp::RtmpSession::track_specs(self)

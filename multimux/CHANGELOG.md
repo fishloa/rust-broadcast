@@ -3,6 +3,24 @@
 ## [Unreleased]
 
 ### Added
+- **Smooth-pull ingest input `InputSpec::SmoothPull`** (issue #759, via
+  `transmux`'s hand-rolled MS-SSTR client-Manifest parser,
+  `transmux::smooth_parse`): a route can now pull a remote Microsoft Smooth
+  Streaming presentation — fetch + parse the client Manifest, resolve each
+  `StreamIndex`'s fragment-URL template, and demux the fetched fragments via
+  `transmux::Fmp4Demux`. Smooth carries no bootstrapping init segment, so
+  `SmoothPullSource` synthesizes one per stream from
+  `QualityLevel@CodecPrivateData` (`track_spec_from_quality_level` +
+  `build_init_segment`), discovering and matching each stream's wire
+  `track_id` from its first fragment's `tfhd` (no `moov` to read one from,
+  unlike DASH) and remapping it to a session-wide unique id. Supports
+  static and dynamic (live, manifest-refresh) presentations. Every network
+  step is bounded by `IngestTimeouts`, every expected track is resolved
+  before the route starts, and a PlayReady/PIFF sample-encrypted source
+  (`<Protection>` manifest element, or CENC/PIFF sample-encryption boxes in
+  a fragment) fails with a clear typed `MultimuxError::Encrypted` instead of
+  silently demuxing garbage — decrypting Smooth-protected content is out of
+  scope.
 - **DASH-pull ingest input `InputSpec::DashPull`** (issue #758, via
   `transmux`'s hand-rolled MPD parser, `transmux::dash_parse`): a route can
   now pull a remote MPEG-DASH presentation — fetch + parse the MPD, resolve

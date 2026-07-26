@@ -103,6 +103,14 @@ impl SourceConnector for crate::source::dash_pull::DashPullSource {
     }
 }
 
+impl SourceConnector for crate::source::smooth_pull::SmoothPullSource {
+    type Source = crate::source::smooth_pull::SmoothPullSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::smooth_pull::SmoothPullSource::connect(self).await
+    }
+}
+
 impl SourceConnector for crate::source::rtmp::RtmpSource {
     type Source = crate::source::rtmp::RtmpSession;
 

@@ -99,6 +99,19 @@ pub enum MultimuxError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
 
+    /// A Smooth-pull source (issue #759) declared or exhibited PlayReady/
+    /// PIFF sample encryption, which this crate does not decrypt — see
+    /// `crate::source::smooth_pull`'s module doc for the detection
+    /// heuristics (a manifest `<Protection>` element, or a fragment
+    /// carrying CENC/PIFF sample-encryption boxes) and rationale. Returned
+    /// instead of silently demuxing garbage (encrypted) sample bytes into
+    /// the pipeline.
+    #[error("{reason}")]
+    Encrypted {
+        /// Names the specific limitation/signal that triggered this error.
+        reason: String,
+    },
+
     /// A config's `Custom { type_tag, .. }` variant (`InputSpec`/
     /// `OutputKind`/`OutputAuthSpec`, issue #663 external scheme plugin
     /// registry) named a `type_tag` with no matching factory registered in

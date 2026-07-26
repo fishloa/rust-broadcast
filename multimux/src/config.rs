@@ -37,6 +37,12 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::hls_pull`].
 /// - [`InputSpec::DashPull`] pulls a remote MPEG-DASH presentation (issue
 ///   #758) — see [`crate::source::dash_pull`].
+/// - [`InputSpec::SmoothPull`] pulls a remote Microsoft Smooth Streaming
+///   (MS-SSTR) presentation (issue #759) — see
+///   [`crate::source::smooth_pull`]. PlayReady/PIFF sample-encrypted sources
+///   are rejected with [`crate::MultimuxError::Encrypted`] rather than
+///   silently emitting garbage samples — see that module's doc for the
+///   detection heuristic.
 /// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (a *push*
 ///   input — see [`crate::source::rtmp`].
 /// - [`InputSpec::Srt`] receives an SRT-carried MPEG-2 Transport Stream, in
@@ -129,6 +135,18 @@ pub enum InputSpec {
     DashPull {
         /// `http://` or `https://` MPD URL to pull. May carry `user:pass@`
         /// userinfo — see [`InputSpec`]'s `Debug` impl, which redacts it.
+        url: String,
+        /// Config-supplied credentials, overriding any URL userinfo. See
+        /// [`AuthSpec`].
+        #[serde(default)]
+        auth: Option<AuthSpec>,
+    },
+    /// Pull a remote Microsoft Smooth Streaming (MS-SSTR) client Manifest
+    /// (issue #759) — see [`crate::source::smooth_pull`].
+    SmoothPull {
+        /// `http://` or `https://` client Manifest URL to pull. May carry
+        /// `user:pass@` userinfo — see [`InputSpec`]'s `Debug` impl, which
+        /// redacts it.
         url: String,
         /// Config-supplied credentials, overriding any URL userinfo. See
         /// [`AuthSpec`].
@@ -524,6 +542,11 @@ impl std::fmt::Debug for InputSpec {
                 .field("url", &crate::redact::redact_url(url))
                 .field("auth", auth)
                 .finish(),
+            InputSpec::SmoothPull { url, auth } => f
+                .debug_struct("SmoothPull")
+                .field("url", &crate::redact::redact_url(url))
+                .field("auth", auth)
+                .finish(),
             InputSpec::Rtmp {
                 listen,
                 app,
@@ -601,6 +624,10 @@ impl InputSpec {
                 validate_auth(auth)
             }
             InputSpec::DashPull { url, auth } => {
+                validate_http_url(url)?;
+                validate_auth(auth)
+            }
+            InputSpec::SmoothPull { url, auth } => {
                 validate_http_url(url)?;
                 validate_auth(auth)
             }
@@ -1411,6 +1438,27 @@ mod tests {
         match &cfg.routes[0].input {
             InputSpec::HlsPull { url, .. } => assert_eq!(url, "https://origin/live/media.m3u8"),
             other => panic!("expected InputSpec::HlsPull, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_json_config_with_smooth_pull_input() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-smooth-pull",
+                    "input": { "type": "smooth_pull", "url": "https://origin/live.ism/Manifest" }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.routes.len(), 1);
+        match &cfg.routes[0].input {
+            InputSpec::SmoothPull { url, .. } => {
+                assert_eq!(url, "https://origin/live.ism/Manifest")
+            }
+            other => panic!("expected InputSpec::SmoothPull, got {other:?}"),
         }
         cfg.validate().unwrap();
     }
