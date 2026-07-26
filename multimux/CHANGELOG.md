@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-26
+
 ### Added
 - **RTMP push ingest input `InputSpec::Rtmp`** (issue #738, via
   `rtmp-runtime`'s sans-IO ingest server + `transmux::StreamingFlvDemux`):

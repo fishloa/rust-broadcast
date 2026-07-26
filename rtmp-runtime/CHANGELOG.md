@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-26
+
 ### Added
 - `examples/capture_publish.rs` (feature `tokio`): a real-socket RTMP publish
   recorder driving `ServerSession` over a live TCP connection, used to

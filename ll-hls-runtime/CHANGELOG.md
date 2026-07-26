@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-26
+
 ### Added
 - **`client::LlHlsClient` now ingests classic MPEG-TS-segment HLS** (issue
   #760): a Media Playlist that never advertises an `EXT-X-MAP` (HLS v3, RFC
