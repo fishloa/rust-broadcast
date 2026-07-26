@@ -103,6 +103,14 @@ impl SourceConnector for crate::source::rtmp::RtmpSource {
     }
 }
 
+impl SourceConnector for crate::source::srt::SrtSource {
+    type Source = crate::source::srt::SrtSession;
+
+    async fn connect(&self) -> crate::Result<Self::Source> {
+        crate::source::srt::SrtSource::connect(self).await
+    }
+}
+
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
 /// it to `min` after a successful (re)connect so a long outage doesn't

@@ -97,6 +97,16 @@ impl SampleSource for crate::source::rtmp::RtmpSession {
     }
 }
 
+impl SampleSource for crate::source::srt::SrtSession {
+    fn track_specs(&self) -> Vec<TrackSpec> {
+        crate::source::srt::SrtSession::track_specs(self)
+    }
+
+    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
+        crate::source::srt::SrtSession::next_samples(self).await
+    }
+}
+
 /// Drive `source` into an [`LlHlsSegmenter`], publishing every init segment,
 /// ready part, and ready segment into `store`, until the source reports
 /// end-of-stream.

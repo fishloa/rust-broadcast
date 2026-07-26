@@ -35,9 +35,13 @@ fn default_outputs() -> Vec<OutputKind> {
 ///   [`crate::source::ts_http`].
 /// - [`InputSpec::HlsPull`] pulls a remote (LL-)HLS Media Playlist — see
 ///   [`crate::source::hls_pull`].
-/// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (the one
-///   *push* input in this list — every other variant dials out) — see
-///   [`crate::source::rtmp`].
+/// - [`InputSpec::Rtmp`] accepts an inbound RTMP push publisher (a *push*
+///   input — see [`crate::source::rtmp`].
+/// - [`InputSpec::Srt`] receives an SRT-carried MPEG-2 Transport Stream, in
+///   either listener mode (a *push* input, exactly like [`InputSpec::Rtmp`])
+///   or caller mode (dials out, like every other variant) — see
+///   [`crate::source::srt`]. Encrypted SRT is out of scope: no passphrase
+///   field is exposed.
 ///
 /// [`InputSpec::TsHttp`]/[`InputSpec::HlsPull`] both may carry `user:pass@`
 /// URL userinfo (Basic/Digest — see [`crate::source::http_auth`]), redacted
@@ -130,6 +134,35 @@ pub enum InputSpec {
         /// this crate as a `Publish`/`Media` event).
         #[serde(default)]
         stream_key: Option<String>,
+    },
+    /// Receive an SRT-carried MPEG-2 Transport Stream (issue #739), in
+    /// either listener mode (`listen` set — binds and accepts inbound
+    /// Callers, a push input) or caller mode (`remote` set — dials out);
+    /// exactly one of `listen`/`remote` must be set, enforced at config
+    /// validation time. The track set comes from the stream's own in-band
+    /// PMT, exactly like [`InputSpec::TsUdp`].
+    ///
+    /// Encrypted SRT (`draft-sharabayko-srt-01` §6) is **out of scope**:
+    /// [`srt_runtime::io`] does not yet apply the SEK to decrypt DATA
+    /// payloads, so no passphrase field is exposed here — see
+    /// [`crate::source::srt`]'s module doc.
+    Srt {
+        /// Listener bind address (e.g. `"0.0.0.0:9000"`) — mutually
+        /// exclusive with `remote`.
+        #[serde(default)]
+        listen: Option<String>,
+        /// Caller dial-out address (e.g. `"remote-host:9000"`) — mutually
+        /// exclusive with `listen`.
+        #[serde(default)]
+        remote: Option<String>,
+        /// Stream ID to advertise (caller mode only — `draft-sharabayko-srt-01`
+        /// §3.2.1.3).
+        #[serde(default)]
+        stream_id: Option<String>,
+        /// Overrides the negotiated TSBPD latency (milliseconds); `None`
+        /// keeps the handshake's default.
+        #[serde(default)]
+        latency_ms: Option<u16>,
     },
     /// External input scheme resolved at runtime via
     /// [`crate::registry::SchemeRegistry`]. `type_tag` selects the registered
@@ -481,6 +514,18 @@ impl std::fmt::Debug for InputSpec {
                 .field("app", app)
                 .field("stream_key", &stream_key.as_ref().map(|_| "***"))
                 .finish(),
+            InputSpec::Srt {
+                listen,
+                remote,
+                stream_id,
+                latency_ms,
+            } => f
+                .debug_struct("Srt")
+                .field("listen", listen)
+                .field("remote", remote)
+                .field("stream_id", stream_id)
+                .field("latency_ms", latency_ms)
+                .finish(),
             InputSpec::Custom { type_tag, .. } => f
                 .debug_struct("Custom")
                 .field("type_tag", type_tag)
@@ -536,6 +581,18 @@ impl InputSpec {
                 validate_auth(auth)
             }
             InputSpec::Rtmp { listen, .. } => validate_listen_addr(listen),
+            InputSpec::Srt { listen, remote, .. } => match (listen, remote) {
+                (Some(_), Some(_)) => Err(MultimuxError::ConfigInvalid {
+                    field: "routes.input.listen",
+                    reason: "exactly one of listen/remote must be set, got both".into(),
+                }),
+                (None, None) => Err(MultimuxError::ConfigInvalid {
+                    field: "routes.input.listen",
+                    reason: "exactly one of listen/remote must be set, got neither".into(),
+                }),
+                (Some(listen), None) => validate_listen_addr(listen),
+                (None, Some(remote)) => validate_listen_addr(remote),
+            },
             // Always structurally valid: the registered factory (resolved at
             // `crate::origin::serve_with_registry` time, not here) validates
             // `params` itself.

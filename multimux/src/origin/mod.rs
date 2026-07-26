@@ -585,7 +585,8 @@ pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
 /// that route's [`crate::config::InputSpec`], it connects
 /// [`crate::source::rtsp::RtspSource`], [`crate::source::rtp_udp::RtpUdpSource`],
 /// [`crate::source::ts_udp::TsUdpSource`], [`crate::source::ts_http::TsHttpSource`],
-/// [`crate::source::hls_pull::HlsPullSource`], or [`crate::source::rtmp::RtmpSource`]
+/// [`crate::source::hls_pull::HlsPullSource`], [`crate::source::rtmp::RtmpSource`],
+/// or [`crate::source::srt::SrtSource`]
 /// — one `match` arm per variant,
 /// each instantiating the generic `supervise::<ThatConnector>` (the
 /// connectors have different `Source` associated types, so this dispatch
@@ -735,6 +736,34 @@ pub async fn serve_with_registry(
                 let connector = crate::source::rtmp::RtmpSource::new(name.clone(), listen.clone())
                     .with_app(app.clone())
                     .with_stream_key(stream_key.clone());
+                tokio::spawn(supervise(
+                    connector,
+                    store,
+                    target_duration_secs,
+                    part_target_ms,
+                    Backoff::production_default(),
+                    name.clone(),
+                    shutdown_rx,
+                ))
+            }
+            crate::config::InputSpec::Srt {
+                listen,
+                remote,
+                stream_id,
+                latency_ms,
+            } => {
+                // `config.validate()` (called above) already guarantees
+                // exactly one of listen/remote is `Some`.
+                let connector = if let Some(listen) = listen {
+                    crate::source::srt::SrtSource::new_listener(name.clone(), listen.clone())
+                } else {
+                    crate::source::srt::SrtSource::new_caller(
+                        name.clone(),
+                        remote.clone().expect("validated: listen or remote is Some"),
+                    )
+                }
+                .with_stream_id(stream_id.clone())
+                .with_latency_ms(*latency_ms);
                 tokio::spawn(supervise(
                     connector,
                     store,
