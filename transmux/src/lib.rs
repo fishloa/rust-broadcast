@@ -171,6 +171,7 @@ pub mod visual_ext;
 pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
+pub(crate) mod xml_parse;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacSignaling,
