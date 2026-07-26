@@ -129,6 +129,7 @@ pub mod flv_stream;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
+pub mod ir;
 pub mod klv;
 pub mod ll_dash;
 pub mod ll_hls;
