@@ -55,8 +55,9 @@ use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use broadcast_common::Parse;
+use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
 /// Number of fractional-second units in the 32.32 fixed-point NTP timestamp
 /// format an RTCP Sender Report's `ntp_msw`/`ntp_lsw` carry (RFC 3550 §6.4.1,
@@ -172,6 +173,11 @@ struct PendingAu {
 /// Stateful, timing- and config-aware RTP depayloader (see module docs).
 pub struct RtpStreamDepacketiser {
     tracks: Vec<(u32, TrackState)>,
+    /// Output buffered for the [`Stage`] adapter (media plane step 2e), which
+    /// — unlike [`push`](Self::push)/[`flush`](Self::flush) — cannot return
+    /// samples directly (drained via [`Stage::poll`] instead). Unused by the
+    /// inherent API.
+    stage_ready: VecDeque<Sample>,
 }
 
 /// Unwrap a 32-bit wire RTP timestamp against the last unwrapped value.
@@ -237,7 +243,10 @@ impl RtpStreamDepacketiser {
                 )
             })
             .collect();
-        Self { tracks }
+        Self {
+            tracks,
+            stage_ready: VecDeque::new(),
+        }
     }
 
     /// Build the [`TrackSpec`]s (timescale = `clock_rate`) for init-segment
@@ -446,6 +455,77 @@ impl RtpStreamDepacketiser {
     }
 }
 
+/// [`Stage`] adoption (media plane step 2e) — with a real restriction, stated
+/// plainly rather than papered over: `Stage::feed` carries no track key, but
+/// every [`push`](Self::push)/[`flush`](Self::flush) call on this type
+/// requires an explicit `track_id`, because `RtpStreamDepacketiser` is
+/// inherently multi-track (the whole point of
+/// [`sync_start_decode_times`](Self::sync_start_decode_times) is correlating
+/// *several* tracks' RTCP Sender Reports against one shared wallclock — that
+/// needs their state alive together in one instance, not one instance per
+/// track). So this impl only works for a depacketiser constructed with
+/// **exactly one** track: `feed`/`finish` target that track directly, and
+/// return [`Error::InvalidInput`] otherwise. Multi-track depacketisation
+/// keeps driving [`push`](Self::push)/[`flush`](Self::flush) with an explicit
+/// `track_id` directly — that inherent API is unchanged and still the right
+/// tool for that case.
+impl Stage for RtpStreamDepacketiser {
+    type Out = Sample;
+    type Error = Error;
+
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
+        let [(track_id, _)] = self.tracks.as_slice() else {
+            return Err(Error::InvalidInput(
+                "Stage::feed requires RtpStreamDepacketiser to be constructed with exactly one track",
+            ));
+        };
+        let track_id = *track_id;
+        let samples = self.push(track_id, input)?;
+        self.stage_ready.extend(samples);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Sample> {
+        self.stage_ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        let [(track_id, _)] = self.tracks.as_slice() else {
+            return Err(Error::InvalidInput(
+                "Stage::finish requires RtpStreamDepacketiser to be constructed with exactly one track",
+            ));
+        };
+        let track_id = *track_id;
+        let samples = self.flush(track_id)?;
+        self.stage_ready.extend(samples);
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // RTP packets only produce output in reaction to feed/finish; no
+        // rate-scheduled or timeout work needs a deadline.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// Honest against the one real bound this type enforces:
+    /// `MAX_AU_BUFFER_BYTES`, the in-progress access-unit buffer a runaway
+    /// (never-terminated) AU would otherwise grow without limit.
+    fn demand(&self) -> Demand {
+        let saturated = self
+            .tracks
+            .first()
+            .map(|(_, st)| st.cur_bytes >= MAX_AU_BUFFER_BYTES)
+            .unwrap_or(false);
+        if saturated {
+            Demand::saturated()
+        } else {
+            Demand::default()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +589,78 @@ mod tests {
         let s2 = d.flush(1).unwrap();
         assert_eq!(s2.len(), 1);
         assert_eq!(s2[0].duration, Some(3000));
+    }
+
+    /// [`Stage::feed`]/[`Stage::poll`]/[`Stage::finish`] on a single-track
+    /// depacketiser must reproduce exactly what
+    /// [`RtpStreamDepacketiser::push`]/[`RtpStreamDepacketiser::flush`]
+    /// already return — the trait impl is a delegation, not a second
+    /// implementation that could drift from the first.
+    #[test]
+    fn stage_feed_poll_finish_matches_push_flush() {
+        let idr = [0x65u8, 0xAA];
+        let non = [0x41u8, 0xBB];
+        let packets = [
+            vpkt(1, 1000, true, &idr),
+            vpkt(2, 4000, true, &non),
+            vpkt(3, 7000, true, &non),
+        ];
+
+        // Oracle: drive the inherent push/flush API directly.
+        let mut oracle = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
+            1,
+            RtpMediaKind::H264,
+            dummy_avc(),
+            90_000,
+        )]);
+        let mut oracle_samples: Vec<Sample> = Vec::new();
+        for pkt in &packets {
+            oracle_samples.extend(oracle.push(1, pkt).unwrap());
+        }
+        oracle_samples.extend(oracle.flush(1).unwrap());
+
+        // Same input, driven through Stage instead.
+        let mut staged = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
+            1,
+            RtpMediaKind::H264,
+            dummy_avc(),
+            90_000,
+        )]);
+        let mut staged_samples: Vec<Sample> = Vec::new();
+        for pkt in &packets {
+            Stage::feed(&mut staged, pkt, Timestamp::ZERO).unwrap();
+            while let Some(s) = Stage::poll(&mut staged) {
+                staged_samples.push(s);
+            }
+        }
+        Stage::finish(&mut staged).unwrap();
+        while let Some(s) = Stage::poll(&mut staged) {
+            staged_samples.push(s);
+        }
+
+        assert_eq!(staged_samples.len(), oracle_samples.len());
+        for (s, o) in staged_samples.iter().zip(oracle_samples.iter()) {
+            assert_eq!(s.dts, o.dts);
+            assert_eq!(s.pts, o.pts);
+            assert_eq!(s.duration, o.duration);
+            assert_eq!(s.flags.is_sync, o.flags.is_sync);
+            assert_eq!(s.data, o.data);
+        }
+    }
+
+    /// `Stage::feed`/`Stage::finish` on a depacketiser constructed with more
+    /// than one track must error cleanly (no track key to target), not
+    /// silently pick one — see the `Stage` impl's own doc comment.
+    #[test]
+    fn stage_feed_errors_on_multi_track_construction() {
+        let mut d = RtpStreamDepacketiser::new(alloc::vec![
+            RtpStreamTrack::new(1, RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(2, RtpMediaKind::H264, dummy_avc(), 90_000),
+        ]);
+        let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+        let err2 = Stage::finish(&mut d).unwrap_err();
+        assert!(matches!(err2, Error::InvalidInput(_)));
     }
 
     /// Builds one FU-A (RFC 6184 §5.8) fragment payload: `fu_indicator` +

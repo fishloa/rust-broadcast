@@ -68,19 +68,22 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                 index_by_id.insert(track.spec.track_id, tracks.len());
                 tracks.push(track);
             }
-            DemuxEvent::TrackUpdated(track) => {
-                if let Some(&i) = index_by_id.get(&track.spec.track_id) {
-                    let samples = std::mem::take(&mut tracks[i].samples);
-                    tracks[i] = track;
-                    tracks[i].samples = samples;
-                }
-            }
             DemuxEvent::Sample { track_id, sample } => {
                 if let Some(&i) = index_by_id.get(&track_id) {
                     tracks[i].samples.push(sample);
                 }
             }
-            DemuxEvent::Pcr(sample) => pcr.push(sample),
+            DemuxEvent::ClockReference {
+                ticks,
+                discontinuous,
+                provenance,
+                ..
+            } => pcr.push(PcrSample {
+                pcr_27mhz: ticks,
+                pid: provenance.pid.unwrap_or(0),
+                packet_index: provenance.packet_index.unwrap_or(0),
+                discontinuity: discontinuous,
+            }),
             DemuxEvent::Discontinuity { .. } => {}
             _ => {}
         }
@@ -229,7 +232,7 @@ fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
     demux.finish();
     let mut pcr_events = 0usize;
     while let Some(event) = demux.poll_event() {
-        if matches!(event, DemuxEvent::Pcr(_)) {
+        if matches!(event, DemuxEvent::ClockReference { .. }) {
             pcr_events += 1;
         }
     }

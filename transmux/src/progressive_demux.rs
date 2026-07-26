@@ -35,7 +35,7 @@
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::{Demand, Parse, Stage, Timestamp, Unpackage};
 
 use crate::error::{Error, Result};
 use crate::init_segment::{
@@ -57,9 +57,20 @@ use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
 /// The `'a` parameter ties the demuxer to the byte-slice lifetime it consumes
 /// via [`Unpackage::Input`]; construct one per call with
 /// [`ProgressiveDemux::new`].
+///
+/// `buf`/`media`/`finished` exist only for the [`Stage`] adapter below (media
+/// plane step 2e): this demuxer's parse is inherently whole-file (it walks
+/// `moov` over the complete input to resolve `stbl`-driven, file-absolute
+/// sample offsets), so unlike [`crate::ts_demux::StreamingTsDemux`] there is
+/// no incremental parse to drive — `Stage::feed` just accumulates bytes, and
+/// `Stage::finish` runs the same `demux_progressive` the inherent
+/// [`Unpackage::unpackage`] uses, once, over the accumulated buffer.
 #[derive(Debug, Default, Clone)]
 pub struct ProgressiveDemux<'a> {
     _marker: PhantomData<&'a [u8]>,
+    buf: Vec<u8>,
+    media: Option<Media>,
+    finished: bool,
 }
 
 impl ProgressiveDemux<'_> {
@@ -67,6 +78,9 @@ impl ProgressiveDemux<'_> {
     pub fn new() -> Self {
         Self {
             _marker: PhantomData,
+            buf: Vec::new(),
+            media: None,
+            finished: false,
         }
     }
 }
@@ -77,26 +91,87 @@ impl<'a> Unpackage for ProgressiveDemux<'a> {
     type Error = Error;
 
     fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        let moov_bytes =
-            find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
-        let moov = MovieBox::parse(moov_bytes)?;
-        let movie_timescale = moov.mvhd.timescale;
+        demux_progressive(input)
+    }
+}
 
-        // A track whose codec the crate cannot reconstruct, or whose sample
-        // tables are incomplete, is skipped rather than failing the whole
-        // file — mirrors Fmp4Demux's forgiving per-track handling.
-        let mut tracks = Vec::with_capacity(moov.tracks.len());
-        for trak in &moov.tracks {
-            let Ok(mut spec) = track_spec_from_trak(trak) else {
-                continue;
-            };
-            let Ok(samples) = samples_from_stbl(input, trak) else {
-                continue;
-            };
-            refine_legacy_config(&mut spec.config, &samples);
-            tracks.push(Track::new(spec, samples));
+/// Demux a whole non-fragmented ISOBMFF/MP4 byte stream into a [`Media`] —
+/// the shared implementation behind both [`Unpackage::unpackage`] (borrowing
+/// the caller's buffer directly) and the [`Stage`] adapter (borrowing this
+/// type's own accumulated `buf`). Nothing in the returned [`Media`] borrows
+/// `input` (every [`Sample`]'s bytes are copied out), so this needs no
+/// lifetime tied to the caller's input at all.
+fn demux_progressive(input: &[u8]) -> Result<Media> {
+    let moov_bytes =
+        find_top_box(input, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
+    let moov = MovieBox::parse(moov_bytes)?;
+    let movie_timescale = moov.mvhd.timescale;
+
+    // A track whose codec the crate cannot reconstruct, or whose sample
+    // tables are incomplete, is skipped rather than failing the whole
+    // file — mirrors Fmp4Demux's forgiving per-track handling.
+    let mut tracks = Vec::with_capacity(moov.tracks.len());
+    for trak in &moov.tracks {
+        let Ok(mut spec) = track_spec_from_trak(trak) else {
+            continue;
+        };
+        let Ok(samples) = samples_from_stbl(input, trak) else {
+            continue;
+        };
+        refine_legacy_config(&mut spec.config, &samples);
+        tracks.push(Track::new(spec, samples));
+    }
+    Ok(Media::new(tracks, movie_timescale))
+}
+
+/// [`Stage`] adoption (media plane step 2e). `Out = Media` rather than the
+/// demux family's [`crate::ir::DemuxEvent`]: this demuxer has no incremental
+/// per-track/per-sample discovery to report (see the struct docs) — it always
+/// produces the whole parsed [`Media`] atomically at `finish()`, so naming
+/// that as the `Out` type is the honest shape, not a manufactured event
+/// stream this demuxer doesn't actually have.
+impl Stage for ProgressiveDemux<'_> {
+    type Out = Media;
+    type Error = Error;
+
+    /// Accumulates `input` — this demuxer cannot parse anything until the
+    /// whole file has arrived (see the struct docs), so `feed` never unlocks
+    /// output; drain the parsed [`Media`] via [`poll`](Self::poll) after
+    /// [`finish`](Self::finish).
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
+        self.buf.extend_from_slice(input);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Media> {
+        self.media.take()
+    }
+
+    /// Runs the whole-file parse once, over every byte accumulated by
+    /// [`feed`](Self::feed) so far. Idempotent: a second call does not
+    /// re-parse or emit a second [`Media`].
+    fn finish(&mut self) -> Result<()> {
+        if self.finished {
+            return Ok(());
         }
-        Ok(Media::new(tracks, movie_timescale))
+        self.finished = true;
+        self.media = Some(demux_progressive(&self.buf)?);
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// Whole-file parse: there is no meaningful per-chunk preference or
+    /// bounded buffer to report — this demuxer already requires the entire
+    /// input before it can produce anything, so `feed` accumulates without a
+    /// cap (same as [`Unpackage::unpackage`], which also requires the whole
+    /// file up front).
+    fn demand(&self) -> Demand {
+        Demand::default()
     }
 }
 

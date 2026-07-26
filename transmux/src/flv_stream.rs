@@ -72,7 +72,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -81,9 +81,9 @@ use crate::flv::{
     FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN,
     aac_packet_type, asc_rate_hz, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
+use crate::ir::DemuxEvent;
 use crate::media::Track;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-use crate::ts_demux::DemuxEvent;
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
 /// next same-kind tag's timestamp makes its forward-delta duration knowable,
@@ -466,6 +466,50 @@ impl StreamingFlvDemux {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// [`Stage`] adoption (media plane step 2e): delegates straight to the
+/// inherent [`feed`](StreamingFlvDemux::feed)/[`poll_event`
+/// ](StreamingFlvDemux::poll_event)/[`finish`](StreamingFlvDemux::finish) —
+/// which keep working unchanged — so a caller can drive both
+/// `StreamingFlvDemux` and [`crate::ts_demux::StreamingTsDemux`] through the
+/// exact same generic loop despite the two disagreeing on `feed`'s return
+/// type (`Result` vs infallible) before this trait.
+impl Stage for StreamingFlvDemux {
+    type Out = DemuxEvent;
+    type Error = FlvError;
+
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<(), FlvError> {
+        self.feed(input)
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.poll_event()
+    }
+
+    fn finish(&mut self) -> Result<(), FlvError> {
+        self.finish();
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Only ever reacts to feed/finish — no rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// This demuxer enforces exactly one hard cap end-to-end — the pre-header
+    /// prefix (`MAX_FLV_HEADER_LEN`, guarding a malicious `DataOffset`, see
+    /// [`feed`](Self::feed)'s docs) — and a malicious/oversized header is
+    /// already surfaced as an `Err`, not a steady buffered state a driver
+    /// would see via `demand()`. Post-header, `pending` holds at most one
+    /// in-progress tag with no separate configured cap, so `saturated` is
+    /// honestly always `false` here; a future hard per-tag cap should update
+    /// this alongside it rather than fabricate saturation now.
+    fn demand(&self) -> Demand {
+        Demand::new(TAG_HEADER_LEN)
     }
 }
 

@@ -18,6 +18,11 @@
 //!   streams this crate does not decode — see [`DataCarriage`]).
 //! - [`FragmentTrackData`] — one track's samples for a single media segment,
 //!   the input shape [`crate::pipeline::build_media_segment`] consumes.
+//! - [`DemuxEvent`] — the streaming-demux event vocabulary (media plane step
+//!   2e), drained from [`crate::ts_demux::StreamingTsDemux`] /
+//!   [`crate::flv_stream::StreamingFlvDemux`]; [`EventProvenance`] carries the
+//!   container-native identity (e.g. a TS PID) a neutral event needs to omit
+//!   from its primary fields.
 //!
 //! # Invariants
 //!
@@ -43,11 +48,13 @@
 //! only the data types moved.
 
 mod codec;
+mod event;
 mod media;
 mod sample;
 mod track;
 
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
+pub use event::{DemuxEvent, EventProvenance};
 pub use media::{Media, PcrSample};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
 pub use track::{Track, TrackEncryption, TrackSpec};

@@ -2,8 +2,9 @@
 //!
 //! [`StreamingTsDemux`] (issue #555) is the **one** demux core: an
 //! event-driven, incremental engine that consumes TS bytes of any size or
-//! alignment and emits [`DemuxEvent`]s (`TrackAdded`/`TrackUpdated`/`Sample`/
-//! `Pcr`/`Discontinuity`/`TracksResolved`) as soon as they are known.
+//! alignment and emits [`DemuxEvent`]s (`TrackAdded`/`Sample`/
+//! `ClockReference`/`Discontinuity`/`TracksResolved`) as soon as they are
+//! known.
 //! `TracksResolved` (issue #624) additionally tells a consumer when every
 //! currently-known PMT-declared PID has resolved — the "safe to build a
 //! multi-track segmenter now" signal. [`TsDemux`] — the
@@ -85,7 +86,7 @@
 //! [`CodecConfig::Data`]'s `carriage` field ([`DataCarriage`]) records which
 //! family a track uses. The demuxer also collects every PCR observation from
 //! the TS adaptation fields, both into [`Media`]'s `pcr` field (batch) and as
-//! [`DemuxEvent::Pcr`] (streaming).
+//! [`DemuxEvent::ClockReference`] (streaming).
 //!
 //! [`CodecConfig`]: crate::pipeline::CodecConfig
 //! [`DataCarriage`]: crate::pipeline::DataCarriage
@@ -109,7 +110,7 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::{Serialize, Unpackage};
+use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
@@ -170,6 +171,12 @@ const NULL_PACKET_PID: u16 = 0x1FFF;
 /// lead-in (a PID's PMT entry resolves within the first PES cycle), so a
 /// legitimately-claimed PID's buffered payloads are never evicted in practice.
 const MAX_UNATTRIBUTED_BYTES: usize = 4 * 1024 * 1024;
+/// Largest possible TS payload (no adaptation field at all, ISO/IEC
+/// 13818-1 §2.4.3.2): [`TS_PACKET_SIZE`] minus the 4-byte fixed header.
+/// [`Stage::demand`](broadcast_common::Stage::demand)'s saturation check uses
+/// this as the "one more worst-case packet" margin against
+/// [`MAX_UNATTRIBUTED_BYTES`] (see that impl's doc comment).
+const TS_MAX_PAYLOAD_BYTES: usize = TS_PACKET_SIZE - 4;
 /// Hard cap on one PID's in-progress PES buffer (issue #663 P5.2,
 /// audit-ingest's "bounded reassembly" recommendation applied to TS). A PES
 /// runs from one `payload_unit_start_indicator` to the next
@@ -1756,7 +1763,17 @@ fn feed_pes_bounded(
     if stream.pes_bytes > MAX_PES_BUFFER_BYTES {
         let _ = assembler.flush();
         stream.pes_bytes = 0;
-        events.push_back(DemuxEvent::Discontinuity { pid });
+        let track = match stream.track.as_ref() {
+            Some(TrackState::Live(live)) => Some(live.track_id),
+            _ => None,
+        };
+        events.push_back(DemuxEvent::Discontinuity {
+            track,
+            provenance: EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+            },
+        });
     }
     completed
 }
@@ -1811,60 +1828,16 @@ fn on_completed_section(
     advance_track(stream, section.to_vec(), 0, 0, events);
 }
 
-/// One incremental demux event from [`StreamingTsDemux`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum DemuxEvent {
-    /// New track discovered (PAT/PMT parsed, or a PMT version change added a
-    /// PID). The codec config is fully recovered by the time this fires,
-    /// mirroring the old batch demuxer's per-track "skip until recoverable"
-    /// gate (issue #467) — an opaque [`CodecConfig::Data`] track (issue #557)
-    /// fires on its very first access unit, since its config needs no
-    /// in-band header at all.
-    TrackAdded(Track),
-    /// Track's codec config changed after having already been added. Config
-    /// recovery in this engine is single-shot and permanent (first-found
-    /// wins, exactly mirroring the old batch builders), so this variant is
-    /// never emitted today; it is part of the event API for a future
-    /// incremental config upgrade (e.g. a mid-stream SPS change).
-    TrackUpdated(Track),
-    /// A completed access unit / audio frame, with absolute per-sample
-    /// `dts`/`pts` (issue #556 semantics preserved exactly; media plane step
-    /// 2c: absolute rather than carried in a separate `SourceTiming`).
-    Sample {
-        /// The owning track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
-        track_id: u32,
-        /// The coded sample.
-        sample: Sample,
-    },
-    /// PCR observed in an adaptation field (27 MHz) — the same data collected
-    /// into [`Media::pcr`](crate::media::Media::pcr) by the batch wrapper.
-    Pcr(PcrSample),
-    /// Discontinuity indicator seen on a PID's adaptation field
-    /// (ISO/IEC 13818-1 §2.4.3.5), independent of whether that packet also
-    /// carried a PCR.
-    Discontinuity {
-        /// The PID the discontinuity was observed on.
-        pid: u16,
-    },
-    /// Every currently-known PMT-declared PID has resolved: none is still
-    /// `Probing` (issue #624). By the time this fires, [`DemuxEvent::TrackAdded`]
-    /// has already been (or is about to be, in the same event batch) emitted
-    /// for every track known so far — the signal a consumer building a
-    /// [`crate::ts_hls::StreamingTsHlsSegmenter`] needs to know it is safe to
-    /// construct (or has learned) the full track set, rather than building
-    /// video-only at the first video keyframe and silently missing a
-    /// later-resolving audio track.
-    ///
-    /// Fires once per **stable-state transition**, not once per PMT section:
-    /// [`StreamingTsDemux`] tracks the PID count it last fired at and only
-    /// re-fires when that count changes and the (possibly larger) new set
-    /// fully resolves again — so a live PMT version bump that adds a PID
-    /// re-arms the signal (fires again once the new PID also resolves)
-    /// without spamming one event per packet while the state is already
-    /// stable. Never fires with zero known tracks.
-    TracksResolved,
-}
+/// [`DemuxEvent`] moved to `crate::ir::event` (media plane step 2e: it is
+/// not TS-only — [`crate::flv_stream::StreamingFlvDemux`] emits it too).
+/// Re-exported from this path so `transmux::ts_demux::DemuxEvent` keeps
+/// resolving unchanged.
+pub use crate::ir::{DemuxEvent, EventProvenance};
+
+/// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
+/// the `clock_hz` [`DemuxEvent::ClockReference`] carries for every PCR this
+/// demuxer emits.
+const PCR_CLOCK_HZ: u32 = 27_000_000;
 
 /// Event-driven, incremental MPEG-2 Transport Stream demuxer (issue #555) —
 /// the one demux core [`TsDemux`] is a thin batch wrapper over.
@@ -1989,6 +1962,19 @@ impl StreamingTsDemux {
         }
     }
 
+    /// Best-effort resolved track ID for `pid`, when it has already been
+    /// promoted to [`TrackState::Live`] — used to populate
+    /// [`DemuxEvent::Discontinuity`]'s `track` field. `None` (never
+    /// fabricated) when the PID is not yet known, still `Probing`/`Parked`,
+    /// or has no [`StreamState`] at all (e.g. a discontinuity observed before
+    /// this PID's PMT entry has been seen).
+    fn live_track_id(&self, pid: u16) -> Option<u32> {
+        match self.streams.get(&pid)?.track.as_ref()? {
+            TrackState::Live(live) => Some(live.track_id),
+            _ => None,
+        }
+    }
+
     fn process_packet(&mut self, raw: &[u8; TS_PACKET_SIZE]) {
         let idx = self.packet_index;
         self.packet_index += 1;
@@ -1999,18 +1985,23 @@ impl StreamingTsDemux {
         // PCR / discontinuity — independent of PID classification, matches
         // every packet's adaptation field regardless of payload routing.
         if let Some(Ok(af)) = pkt.adaptation_field() {
+            let provenance = EventProvenance {
+                pid: Some(pkt.header.pid),
+                packet_index: Some(idx),
+            };
             if af.discontinuity_indicator {
                 self.events.push_back(DemuxEvent::Discontinuity {
-                    pid: pkt.header.pid,
+                    track: self.live_track_id(pkt.header.pid),
+                    provenance,
                 });
             }
             if let Some(pcr) = af.pcr {
-                self.events.push_back(DemuxEvent::Pcr(PcrSample {
-                    pcr_27mhz: pcr.as_27mhz(),
-                    pid: pkt.header.pid,
-                    packet_index: idx,
-                    discontinuity: af.discontinuity_indicator,
-                }));
+                self.events.push_back(DemuxEvent::ClockReference {
+                    ticks: pcr.as_27mhz(),
+                    clock_hz: PCR_CLOCK_HZ,
+                    discontinuous: af.discontinuity_indicator,
+                    provenance,
+                });
             }
         }
 
@@ -2307,6 +2298,64 @@ impl StreamingTsDemux {
     }
 }
 
+/// [`Stage`] adoption (media plane step 2e): a thin, honest delegation to the
+/// inherent [`feed`](StreamingTsDemux::feed)/[`poll_event`
+/// ](StreamingTsDemux::poll_event)/[`finish`](StreamingTsDemux::finish) —
+/// every existing inherent method keeps working unchanged; this trait impl is
+/// an additional, uniform way to drive the same engine, not a replacement.
+///
+/// `StreamingTsDemux` never needs deadline-driven work: it only ever produces
+/// output in reaction to `feed`/`finish`, so `next_deadline` is always `None`
+/// and `on_deadline` is a no-op.
+impl Stage for StreamingTsDemux {
+    type Out = DemuxEvent;
+    /// `feed`/`finish` are infallible here — TS resynchronises on `0x47`
+    /// rather than erroring on malformed input (see the type's own docs).
+    type Error = core::convert::Infallible;
+
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> core::result::Result<(), Self::Error> {
+        self.feed(input);
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.poll_event()
+    }
+
+    fn finish(&mut self) -> core::result::Result<(), Self::Error> {
+        self.finish();
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// Honest against the one bound this demuxer actually enforces
+    /// end-to-end: `MAX_UNATTRIBUTED_BYTES` (the never-claimed-PID replay
+    /// buffer). Both this buffer and the per-PID PES overflow
+    /// (`MAX_PES_BUFFER_BYTES`, see `feed_pes_bounded`) self-correct
+    /// (evict/reset) *within* the same `feed` call that trips them, so
+    /// `unattributed_bytes` is never observed sitting exactly at or over the
+    /// cap once `feed` returns — only, in the flooding steady state, within
+    /// one TS packet's payload of it. Reporting `saturated` only once that
+    /// exact byte count is reached would therefore be true in name only
+    /// (unreachable in practice — see this step's report); this instead
+    /// predicts it one packet ahead: `saturated` once the worst case (another
+    /// full-size payload) would push the buffer past the cap, which the
+    /// eviction dynamics above make an always-reachable, real signal in
+    /// sustained-flood conditions, not a fabricated one.
+    fn demand(&self) -> Demand {
+        if self.unattributed_bytes.saturating_add(TS_MAX_PAYLOAD_BYTES) > MAX_UNATTRIBUTED_BYTES {
+            Demand::saturated()
+        } else {
+            Demand::new(TS_PACKET_SIZE)
+        }
+    }
+}
+
 // ── Batch wrapper ────────────────────────────────────────────────────────────
 
 /// Demux an MPEG-2 Transport Stream byte slice into a [`Media`].
@@ -2352,19 +2401,26 @@ impl<'a> TsDemux<'a> {
                     index_by_id.insert(track.spec.track_id, tracks.len());
                     tracks.push(track);
                 }
-                DemuxEvent::TrackUpdated(track) => {
-                    if let Some(&i) = index_by_id.get(&track.spec.track_id) {
-                        let samples = core::mem::take(&mut tracks[i].samples);
-                        tracks[i] = track;
-                        tracks[i].samples = samples;
-                    }
-                }
                 DemuxEvent::Sample { track_id, sample } => {
                     if let Some(&i) = index_by_id.get(&track_id) {
                         tracks[i].samples.push(sample);
                     }
                 }
-                DemuxEvent::Pcr(sample) => pcr.push(sample),
+                DemuxEvent::ClockReference {
+                    ticks,
+                    discontinuous,
+                    provenance,
+                    ..
+                } => pcr.push(PcrSample {
+                    pcr_27mhz: ticks,
+                    // This batch wrapper only ever demuxes TS, whose
+                    // ClockReference always carries a PID/packet_index — the
+                    // fallbacks are unreachable in practice, not a silent
+                    // downgrade.
+                    pid: provenance.pid.unwrap_or(0),
+                    packet_index: provenance.packet_index.unwrap_or(0),
+                    discontinuity: discontinuous,
+                }),
                 DemuxEvent::Discontinuity { .. } => {}
                 DemuxEvent::TracksResolved => {}
             }
@@ -2556,7 +2612,7 @@ mod tests {
             demux.feed(&pkt);
             if matches!(
                 demux.poll_event(),
-                Some(DemuxEvent::Discontinuity { pid }) if pid == ES_PID
+                Some(DemuxEvent::Discontinuity { provenance, .. }) if provenance.pid == Some(ES_PID)
             ) {
                 hit_cap = true;
                 break;
