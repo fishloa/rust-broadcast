@@ -150,14 +150,30 @@ impl SrtSource {
 
     /// Binds (listener mode, once) or dials (caller mode, fresh) the SRT
     /// socket, then reads payloads into a [`StreamingTsDemux`] until every
-    /// currently PMT-declared track has resolved (or
-    /// [`IngestTimeouts::connect`] elapses) — the SRT/TS analogue of
+    /// currently PMT-declared track has resolved — the SRT/TS analogue of
     /// `TsUdpSource::connect`'s PMT wait, so [`SrtSession::track_specs`] is
     /// always populated before the pipeline builds its segmenter.
+    ///
+    /// In **caller** mode the entire dial-plus-track-wait is bounded by a
+    /// single [`IngestTimeouts::connect`], mirroring
+    /// [`crate::source::rtsp::RtspSource::connect`]'s whole-handshake wrap
+    /// (issue #739 review): a dead/blackholed remote must be bounded by the
+    /// *configured* connect timeout, not left to srt-runtime's own internal
+    /// handshake-retry budget, which the [`tokio::time::timeout`] would
+    /// otherwise never get a chance to interrupt (the dial future runs to
+    /// its own completion before the subsequent track-wait future is even
+    /// polled).
+    ///
+    /// In **listener** mode only the track-wait is bounded: the prior
+    /// `bind`+`accept()` waits for an inbound Caller to show up, which is
+    /// idle (nothing wrong is happening) rather than stalled, so it stays
+    /// unbounded — exactly like `RtmpSource::connect` accepting inbound
+    /// publishers.
     pub async fn connect(&self) -> Result<SrtSession> {
         let cfg = self.handshake_config();
+        let connect_timeout = self.timeouts.connect;
 
-        let mut sock = if let Some(listen) = &self.listen {
+        let (sock, demux, specs) = if let Some(listen) = &self.listen {
             let listener = self
                 .listener
                 .get_or_try_init(|| async {
@@ -177,10 +193,32 @@ impl SrtSource {
             // listener (there is only one per `SrtSource`, but a wedged lock
             // is a bug class worth avoiding on principle, mirroring the
             // module doc's bind-once-reuse-forever contract).
-            let mut l = listener.lock().await;
-            l.accept().await.map_err(|e| MultimuxError::Connect {
-                reason: format!("srt: accept: {e}"),
-            })?
+            let mut sock = {
+                let mut l = listener.lock().await;
+                l.accept().await.map_err(|e| MultimuxError::Connect {
+                    reason: format!("srt: accept: {e}"),
+                })?
+            };
+
+            let mut demux = StreamingTsDemux::new();
+            let mut specs: Vec<TrackSpec> = Vec::new();
+            match tokio::time::timeout(
+                connect_timeout,
+                wait_for_tracks(&mut sock, &mut demux, &mut specs),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
+                    return Err(MultimuxError::Connect {
+                        reason: format!(
+                            "srt: no PMT-declared track resolved within {connect_timeout:?}"
+                        ),
+                    });
+                }
+            }
+            (sock, demux, specs)
         } else {
             let remote = self.remote.as_ref().unwrap_or_else(|| {
                 unreachable!(
@@ -188,53 +226,32 @@ impl SrtSource {
                      exactly one of listen/remote is always Some"
                 )
             });
-            SrtSocket::connect(remote.as_str(), cfg)
-                .await
-                .map_err(|e| MultimuxError::Connect {
-                    reason: format!("srt: connect {remote}: {e}"),
-                })?
-        };
 
-        let mut demux = StreamingTsDemux::new();
-        let mut specs: Vec<TrackSpec> = Vec::new();
-
-        let wait_for_tracks = async {
-            loop {
-                let payload = sock.recv().await.map_err(|e| MultimuxError::Connect {
-                    reason: format!("srt recv: {e}"),
-                })?;
-                let Some(bytes) = payload else {
+            match tokio::time::timeout(connect_timeout, async {
+                let mut sock = SrtSocket::connect(remote.as_str(), cfg)
+                    .await
+                    .map_err(|e| MultimuxError::Connect {
+                        reason: format!("srt: connect {remote}: {e}"),
+                    })?;
+                let mut demux = StreamingTsDemux::new();
+                let mut specs: Vec<TrackSpec> = Vec::new();
+                wait_for_tracks(&mut sock, &mut demux, &mut specs).await?;
+                Ok::<_, MultimuxError>((sock, demux, specs))
+            })
+            .await
+            {
+                Ok(Ok(triple)) => triple,
+                Ok(Err(e)) => return Err(e),
+                Err(_) => {
                     return Err(MultimuxError::Connect {
-                        reason: "srt: connection ended before any track resolved".into(),
+                        reason: format!(
+                            "srt: connect {remote}: no connection/PMT-declared track \
+                             resolved within {connect_timeout:?}"
+                        ),
                     });
-                };
-                demux.feed(&bytes);
-                let mut resolved = false;
-                while let Some(event) = demux.poll_event() {
-                    match event {
-                        DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
-                        DemuxEvent::TracksResolved => resolved = true,
-                        _ => {}
-                    }
-                }
-                if resolved && !specs.is_empty() {
-                    return Ok::<(), MultimuxError>(());
                 }
             }
         };
-
-        let connect_timeout = self.timeouts.connect;
-        match tokio::time::timeout(connect_timeout, wait_for_tracks).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(e),
-            Err(_) => {
-                return Err(MultimuxError::Connect {
-                    reason: format!(
-                        "srt: no PMT-declared track resolved within {connect_timeout:?}"
-                    ),
-                });
-            }
-        }
 
         let known_track_ids: BTreeSet<u32> = specs.iter().map(|s| s.track_id).collect();
         Ok(SrtSession {
@@ -244,6 +261,40 @@ impl SrtSource {
             known_track_ids,
             read_timeout: self.timeouts.read,
         })
+    }
+}
+
+/// Reads payloads from `sock` into `demux` until every currently
+/// PMT-declared track has resolved (`specs` non-empty and
+/// [`DemuxEvent::TracksResolved`] observed) — shared by both
+/// [`SrtSource::connect`] branches (listener and caller), which differ only
+/// in how the bound is applied around this loop (see that method's doc).
+async fn wait_for_tracks(
+    sock: &mut SrtSocket,
+    demux: &mut StreamingTsDemux,
+    specs: &mut Vec<TrackSpec>,
+) -> Result<()> {
+    loop {
+        let payload = sock.recv().await.map_err(|e| MultimuxError::Connect {
+            reason: format!("srt recv: {e}"),
+        })?;
+        let Some(bytes) = payload else {
+            return Err(MultimuxError::Connect {
+                reason: "srt: connection ended before any track resolved".into(),
+            });
+        };
+        demux.feed(&bytes);
+        let mut resolved = false;
+        while let Some(event) = demux.poll_event() {
+            match event {
+                DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
+                DemuxEvent::TracksResolved => resolved = true,
+                _ => {}
+            }
+        }
+        if resolved && !specs.is_empty() {
+            return Ok(());
+        }
     }
 }
 
@@ -600,5 +651,130 @@ mod tests {
         );
 
         server.abort();
+    }
+
+    /// Biting test (issue #739 review, Important finding): a caller-mode
+    /// `connect()` dialing a dead/blackholed remote must honor the
+    /// *configured* [`IngestTimeouts::connect`], not srt-runtime's own
+    /// internal handshake-retry budget. Uses a bound-but-otherwise-idle UDP
+    /// socket (never reads, never replies) as the "remote" — loopback-only,
+    /// so this needs no external network access and is deterministic in CI —
+    /// with a short configured connect timeout. Mutation check: wrapping
+    /// only `wait_for_tracks` (not the dial) in the timeout, as the
+    /// pre-fix code did, makes `connect()` take as long as srt-runtime's own
+    /// handshake retries (several seconds), blowing the outer bound this test
+    /// asserts against.
+    #[tokio::test]
+    async fn caller_connect_times_out_against_an_unreachable_remote() {
+        // A real bound UDP socket that never reads/replies to anything sent
+        // to it — from the caller's perspective this is indistinguishable
+        // from a blackholed remote: every handshake induction packet lands
+        // on a live port but nothing ever answers it.
+        let dead = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind dead socket");
+        let dead_addr = dead.local_addr().expect("dead socket addr");
+
+        const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
+        let source = SrtSource::new_caller("cam-srt-dead", dead_addr.to_string()).with_timeouts(
+            IngestTimeouts {
+                connect: CONNECT_TIMEOUT,
+                read: Duration::from_secs(30),
+            },
+        );
+
+        let started = tokio::time::Instant::now();
+        // A generous *outer* bound: if the fix regresses, `connect()` falls
+        // back to srt-runtime's own handshake-retry budget (~5s x retries)
+        // rather than hanging forever, so this still resolves — just far
+        // outside the tight bound asserted below — without wedging the test
+        // suite.
+        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect(
+                "connect() must itself return well within a small multiple of the configured \
+                 connect timeout, not rely on this test's own outer bound",
+            );
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_err(),
+            "connect() against a dead/blackholed remote must fail, not hang or succeed"
+        );
+        assert!(
+            elapsed < CONNECT_TIMEOUT * 4,
+            "connect() took {elapsed:?} against a configured connect timeout of \
+             {CONNECT_TIMEOUT:?} — the caller-mode dial must be bounded by the configured \
+             timeout, not srt-runtime's own internal handshake-retry budget"
+        );
+
+        drop(dead);
+    }
+
+    /// Listener-mode analogue of the caller-mode "dead remote" test above
+    /// (issue #739 review, Minor finding): a real caller completes the SRT
+    /// handshake (`SrtListener::accept` returns) but then sends nothing at
+    /// all — `connect()`'s subsequent track-resolution wait must still
+    /// return within [`IngestTimeouts::connect`], not hang forever waiting
+    /// for a PMT that never arrives. (The listener-mode code path already
+    /// bounds `wait_for_tracks` correctly pre-#739-review; this closes the
+    /// test-coverage gap the review flagged, mirroring
+    /// `next_samples_times_out_when_source_goes_silent`'s coverage of the
+    /// post-connect read path.)
+    #[tokio::test]
+    async fn listener_connect_times_out_when_caller_accepts_but_stays_silent() {
+        let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("reserve port");
+        let addr = reserved.local_addr().expect("local addr");
+        drop(reserved);
+
+        const CONNECT_TIMEOUT: Duration = Duration::from_millis(300);
+        let source = SrtSource::new_listener("cam-srt-listener-silent", addr.to_string())
+            .with_timeouts(IngestTimeouts {
+                connect: CONNECT_TIMEOUT,
+                read: Duration::from_secs(30),
+            });
+
+        let client = tokio::spawn(async move {
+            let cfg = HandshakeConfig::default();
+            let mut sock = None;
+            for _ in 0..200 {
+                match SrtSocket::connect(addr, cfg.clone()).await {
+                    Ok(s) => {
+                        sock = Some(s);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+            let sock = sock.expect("connect to SrtSource's listener");
+            // Hold the connected socket open and idle, sending nothing — a
+            // caller whose handshake completes but never actually publishes
+            // any TS payload.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            drop(sock);
+        });
+
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(Duration::from_secs(5), source.connect())
+            .await
+            .expect(
+                "connect() must return within a small multiple of the connect timeout, not hang",
+            );
+        let elapsed = started.elapsed();
+
+        assert!(
+            result.is_err(),
+            "connect() against a silent-after-accept caller must fail, not hang waiting for a \
+             PMT that never arrives"
+        );
+        assert!(
+            elapsed < CONNECT_TIMEOUT * 4,
+            "connect() took {elapsed:?} against a configured connect timeout of \
+             {CONNECT_TIMEOUT:?}"
+        );
+
+        client.abort();
     }
 }
