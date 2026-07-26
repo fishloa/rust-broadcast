@@ -47,7 +47,7 @@
 //! `AACPacketType` == 0) to precede that track's media tags. Unlike the
 //! one-shot [`FlvDemux`](crate::flv::FlvDemux) — which can freely accumulate
 //! all of a track's samples before its config is known, because it only
-//! builds the final [`Track`] after the whole buffer is
+//! builds the final [`Track`](crate::media::Track) after the whole buffer is
 //! consumed — a streaming demuxer with
 //! *bounded* memory cannot hold an unbounded pre-config backlog waiting for
 //! a config that might arrive arbitrarily late (or never). A media tag for a
@@ -91,7 +91,6 @@ use crate::flv::{
     aac_packet_type, asc_rate_hz, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
 use crate::ir::DemuxEvent;
-use crate::media::Track;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
@@ -381,7 +380,7 @@ impl StreamingFlvDemux {
                             height,
                         },
                     );
-                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(spec));
                 }
             }
             avc_packet_type::NALU => {
@@ -452,7 +451,7 @@ impl StreamingFlvDemux {
                             sample_size: AUDIO_SAMPLE_SIZE_BITS,
                         },
                     );
-                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(spec));
                 }
             }
             aac_packet_type::RAW => {

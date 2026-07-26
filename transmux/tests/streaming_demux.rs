@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use broadcast_common::Unpackage;
 use transmux::TsDemux;
 use transmux::media::{Media, PcrSample, Track};
-use transmux::pipeline::CodecConfig;
+use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -64,13 +64,29 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
     let mut pcr: Vec<PcrSample> = Vec::new();
     while let Some(event) = demux.poll_event() {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                index_by_id.insert(track.spec.track_id, tracks.len());
-                tracks.push(track);
+            DemuxEvent::TrackAdded(spec) => {
+                index_by_id.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&i) = index_by_id.get(&spec.track_id) {
+                    tracks[i].spec = spec;
+                }
             }
             DemuxEvent::Sample { track_id, sample } => {
                 if let Some(&i) = index_by_id.get(&track_id) {
-                    tracks[i].samples.push(sample);
+                    let track = &mut tracks[i];
+                    // `Track::start_decode_time` is no longer carried by
+                    // `TrackAdded` (issue #774 reshape) — it is exactly the
+                    // first sample's own `dts` (media plane step 2c
+                    // invariant), so derive it here instead, matching
+                    // `TsDemux::demux`'s own oracle derivation.
+                    if track.samples.is_empty() {
+                        if let Some(dts) = sample.dts {
+                            track.start_decode_time = dts as u64;
+                        }
+                    }
+                    track.samples.push(sample);
                 }
             }
             DemuxEvent::ClockReference {
@@ -170,10 +186,10 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
     let mut demux = StreamingTsDemux::new();
     demux.feed(&data);
     demux.finish();
-    let mut added: Vec<Track> = Vec::new();
+    let mut added: Vec<TrackSpec> = Vec::new();
     while let Some(event) = demux.poll_event() {
-        if let DemuxEvent::TrackAdded(track) = event {
-            added.push(track);
+        if let DemuxEvent::TrackAdded(spec) = event {
+            added.push(spec);
         }
     }
 
@@ -184,7 +200,7 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
     assert!(
         added
             .iter()
-            .any(|t| matches!(t.spec.config, CodecConfig::Data { .. })),
+            .any(|t| matches!(t.config, CodecConfig::Data { .. })),
         "TrackAdded must cover at least one opaque Data (stream_type 0x06) track"
     );
 

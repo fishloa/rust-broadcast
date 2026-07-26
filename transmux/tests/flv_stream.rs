@@ -131,11 +131,11 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
 
     for event in events {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                let (width, height) = track_dims(&track.spec.config);
-                index_by_id.insert(track.spec.track_id, tracks.len());
+            DemuxEvent::TrackAdded(spec) => {
+                let (width, height) = track_dims(&spec.config);
+                index_by_id.insert(spec.track_id, tracks.len());
                 tracks.push(FullTrack {
-                    codec_kind: codec_kind(&track.spec.config),
+                    codec_kind: codec_kind(&spec.config),
                     width,
                     height,
                     samples: Vec::new(),
@@ -222,11 +222,11 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
 
     for event in events {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                let (width, height) = track_dims(&track.spec.config);
-                index_by_id.insert(track.spec.track_id, summaries.len());
+            DemuxEvent::TrackAdded(spec) => {
+                let (width, height) = track_dims(&spec.config);
+                index_by_id.insert(spec.track_id, summaries.len());
                 summaries.push(TrackSummary {
-                    codec_kind: codec_kind(&track.spec.config),
+                    codec_kind: codec_kind(&spec.config),
                     width,
                     height,
                     sample_count: 0,

@@ -342,7 +342,9 @@ pub use timing::{
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 pub use trickplay::{append_iframe_track, derive_iframe_track};
-pub use ts_demux::{DemuxEvent, EventProvenance, StreamingTsDemux, TsDemux};
+pub use ts_demux::{
+    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, StreamingTsDemux, TsDemux,
+};
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::TsMux;
 pub use validate::{

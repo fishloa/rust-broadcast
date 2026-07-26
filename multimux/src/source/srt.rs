@@ -287,8 +287,8 @@ async fn wait_for_tracks(
         let mut resolved = false;
         while let Some(event) = demux.poll_event() {
             match event {
-                DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
-                DemuxEvent::TracksResolved => resolved = true,
+                DemuxEvent::TrackAdded(spec) => specs.push(spec),
+                DemuxEvent::TracksResolved { .. } => resolved = true,
                 _ => {}
             }
         }

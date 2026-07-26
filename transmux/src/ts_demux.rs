@@ -148,6 +148,14 @@ const TABLE_ID_PMT: u8 = 0x02;
 /// flags/`section_length`(2) + `table_id_extension`(2) + version/cni(1) +
 /// `section_number`(1) + `last_section_number`(1) = 8 (§2.4.4.1).
 const SECTION_HEADER_LEN: usize = 8;
+/// Mask for the 5-bit `version_number` within a long-form section's byte 5
+/// (§2.4.4.1: `reserved`(2) + `version_number`(5) + `current_next_indicator`(1)),
+/// after shifting right by 1 to drop the `current_next_indicator` bit.
+const VERSION_NUMBER_MASK: u8 = 0x1F;
+/// Bit for `current_next_indicator` within a long-form section's byte 5
+/// (§2.4.4.1) — `1` means the table is applicable now, `0` means it is a
+/// not-yet-applicable "next" table (parsed, never acted on).
+const CURRENT_NEXT_INDICATOR_BIT: u8 = 0x01;
 /// Trailing `CRC_32` on every long-form PSI section (§2.4.4.1).
 const CRC32_LEN: usize = 4;
 /// Mask for the 12-bit `section_length` high nibble (byte 1 of a section).
@@ -629,24 +637,73 @@ fn sfi_to_hz(sfi: u8) -> Option<u32> {
     })
 }
 
-/// Parse a PAT section, returning every `program_map_PID` it lists (network
-/// entries — `program_number == 0` — are skipped). ISO/IEC 13818-1 §2.4.4.3.
-fn parse_pat(section: &[u8]) -> Result<Vec<u16>> {
+/// Parse a PAT section, returning every `(program_number, program_map_PID)`
+/// pair it lists (network entries — `program_number == 0` — are skipped).
+/// ISO/IEC 13818-1 §2.4.4.3. The `program_number` is kept (not just the PID)
+/// so a PMT section can be cross-checked against the program it was learned
+/// under (issue #774).
+fn parse_pat(section: &[u8]) -> Result<Vec<(u16, u16)>> {
     if section.first().copied() != Some(TABLE_ID_PAT) {
         return Ok(Vec::new());
     }
     let body = section_body(section, "PAT")?;
-    let mut pids = Vec::new();
+    let mut programs = Vec::new();
     let mut off = 0usize;
     while off + PAT_ENTRY_LEN <= body.len() {
         let program_number = u16::from_be_bytes([body[off], body[off + 1]]);
         let pid = (((body[off + 2] & PID_HI_MASK) as u16) << 8) | body[off + 3] as u16;
         if program_number != NETWORK_PROGRAM_NUMBER {
-            pids.push(pid);
+            programs.push((program_number, pid));
         }
         off += PAT_ENTRY_LEN;
     }
-    Ok(pids)
+    Ok(programs)
+}
+
+/// A PMT section's header fields beyond `table_id` (ISO/IEC 13818-1 §2.4.4.8 /
+/// Table 2-33), read directly from `section[]` (the whole section including
+/// its 8-byte header) — the version-diffing prerequisite for issue #774.
+struct PmtSectionHeader {
+    /// `table_id_extension`, which for a PMT is `program_number` (`section[3..5]`).
+    program_number: u16,
+    /// `version_number` (`section[5]`, bits `[5:1]`).
+    version: u8,
+    /// `current_next_indicator` (`section[5]`, bit 0). `false` means this
+    /// table is not yet applicable — parsed, never diffed/acted on.
+    current_next: bool,
+    /// `section_number` (`section[6]`).
+    section_number: u8,
+    /// `last_section_number` (`section[7]`). A PMT is always single-section,
+    /// so a genuine PMT always has `section_number == last_section_number == 0`.
+    last_section_number: u8,
+}
+
+/// Parse a PMT section's header fields (§2.4.4.8) — everything needed to
+/// decide whether a newly-reassembled section should be *applied*
+/// (`current_next_indicator == 1` and `version_number` differs from the last
+/// **applied** version), before paying for the ES-loop walk in [`parse_pmt`].
+fn parse_pmt_section_header(section: &[u8]) -> Result<PmtSectionHeader> {
+    if section.first().copied() != Some(TABLE_ID_PMT) {
+        return Err(Error::InvalidValue {
+            field: "table_id",
+            value: section.first().copied().unwrap_or(0) as u64,
+            reason: "not a PMT section",
+        });
+    }
+    if section.len() < SECTION_HEADER_LEN {
+        return Err(Error::BufferTooShort {
+            need: SECTION_HEADER_LEN,
+            have: section.len(),
+            what: "PMT section header",
+        });
+    }
+    Ok(PmtSectionHeader {
+        program_number: u16::from_be_bytes([section[3], section[4]]),
+        version: (section[5] >> 1) & VERSION_NUMBER_MASK,
+        current_next: section[5] & CURRENT_NEXT_INDICATOR_BIT != 0,
+        section_number: section[6],
+        last_section_number: section[7],
+    })
 }
 
 /// Parse a PMT section, returning `(elementary_PID, codec, ES_info
@@ -935,6 +992,15 @@ enum LiveKind {
 struct LiveTrack {
     track_id: u32,
     kind: LiveKind,
+    /// This track's already-recovered codec config, retained so a later PMT
+    /// metadata change (issue #774) can rebuild a full [`TrackSpec`] for
+    /// [`DemuxEvent::TrackUpdated`] without re-deriving it — codec config
+    /// recovery itself stays single-shot and permanent, this field is only
+    /// ever read, never re-probed.
+    config: CodecConfig,
+    /// This track's media timescale, for the same [`DemuxEvent::TrackUpdated`]
+    /// reconstruction.
+    timescale: u32,
 }
 
 /// A [`StreamState`]'s codec-config **and** PMT-declaration-order lifecycle.
@@ -1061,10 +1127,6 @@ struct StreamState {
     fallback: (u64, u64),
     has_any: bool,
     wrap: WrapState,
-    /// The very first access unit's unwrapped DTS — every track kind anchors
-    /// its `Track::start_decode_time` here (verified equivalent to every old
-    /// batch anchor formula: video/data/audio all reduce to "first AU's DTS").
-    first_dts_uw: Option<i128>,
     /// Always `Some` except transiently inside [`advance_track`].
     track: Option<TrackState>,
     /// Running total of bytes held in `track`'s `Probing`/`Parked` backlog —
@@ -1214,6 +1276,7 @@ fn emit_audio_au(
     if fresh_anchor && anchor.seed.is_some() {
         events.push_back(DemuxEvent::Discontinuity {
             track: Some(track_id),
+            kind: DiscontinuityKind::TimelineReanchored,
             provenance: EventProvenance::default(),
         });
     }
@@ -1840,15 +1903,21 @@ fn finalize_probe(
 /// backlog, signal the loss, and permanently abandon this PID's probe —
 /// [`StreamingTsDemux::try_promote_ready`] treats [`TrackState::Abandoned`]
 /// as resolved-without-promotion on its next pass, exactly like
-/// [`StreamingTsDemux::finish`]'s own end-of-input conclusion.
+/// [`StreamingTsDemux::finish`]'s own end-of-input conclusion. Emits
+/// [`DemuxEvent::TrackAbandoned`] with [`AbandonReason::BudgetExceeded`]
+/// (issue #774) — this PID never reached `Live`, so no `track_id` exists to
+/// report; this replaces the mis-typed [`DemuxEvent::Discontinuity`] this
+/// path used to emit (a budget overflow is an abandonment, not a
+/// discontinuity — no track survives it to "continue" from).
 fn abandon_backlog(
     stream: &mut StreamState,
     pid: u16,
     events: &mut VecDeque<DemuxEvent>,
 ) -> TrackState {
     stream.backlog_bytes = 0;
-    events.push_back(DemuxEvent::Discontinuity {
-        track: None,
+    events.push_back(DemuxEvent::TrackAbandoned {
+        track_id: None,
+        reason: AbandonReason::BudgetExceeded,
         provenance: EventProvenance {
             pid: Some(pid),
             packet_index: None,
@@ -1970,6 +2039,7 @@ fn feed_pes_bounded(
     }
     let completed = assembler.feed(pusi, payload);
     if stream.pes_bytes > MAX_PES_BUFFER_BYTES {
+        let dropped_bytes = stream.pes_bytes as u64;
         let _ = assembler.flush();
         stream.pes_bytes = 0;
         let track = match stream.track.as_ref() {
@@ -1978,6 +2048,9 @@ fn feed_pes_bounded(
         };
         events.push_back(DemuxEvent::Discontinuity {
             track,
+            kind: DiscontinuityKind::BudgetExceeded {
+                bytes: dropped_bytes,
+            },
             provenance: EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
@@ -2022,9 +2095,6 @@ fn on_completed_pes(
     stream.fallback = (pts, dts);
     stream.has_any = true;
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts);
-    if stream.first_dts_uw.is_none() {
-        stream.first_dts_uw = Some(dts_uw);
-    }
     advance_track(stream, pid, pes.payload.to_vec(), pts_uw, dts_uw, events);
 }
 
@@ -2047,7 +2117,7 @@ fn on_completed_section(
 /// not TS-only — [`crate::flv_stream::StreamingFlvDemux`] emits it too).
 /// Re-exported from this path so `transmux::ts_demux::DemuxEvent` keeps
 /// resolving unchanged.
-pub use crate::ir::{DemuxEvent, EventProvenance};
+pub use crate::ir::{AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance};
 
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
 /// the `clock_hz` [`DemuxEvent::ClockReference`] carries for every PCR this
@@ -2099,7 +2169,7 @@ pub struct StreamingTsDemux {
     resync: TsResync,
     packet_index: u64,
     pat_reasm: SectionReassembler,
-    pmt_reasm: BTreeMap<u16, SectionReassembler>,
+    pmt_reasm: BTreeMap<u16, PmtState>,
     es_seen: BTreeSet<u16>,
     streams: BTreeMap<u16, StreamState>,
     /// Payloads for a PID not yet classified as PAT/PMT/a known ES — a real
@@ -2129,13 +2199,33 @@ pub struct StreamingTsDemux {
     resolved: BTreeSet<u16>,
     next_track_id: u32,
     events: VecDeque<DemuxEvent>,
-    /// The known-PID count ([`codec_order`](Self::codec_order) +
-    /// [`data_order`](Self::data_order) lengths) at which
-    /// [`DemuxEvent::TracksResolved`] last fired, if ever — the de-dup key
-    /// that keeps the event from spamming once per PMT section /packet while
-    /// the fully-resolved state is unchanged (issue #624). Re-arms whenever a
-    /// new PID is discovered (the known count grows past this value).
-    tracks_resolved_signalled_at: Option<usize>,
+    /// Monotonic track-set generation (issue #774): bumped exactly once per
+    /// *applied* PMT diff (add/update/remove), never per PID count. This is
+    /// the [`DemuxEvent::TracksResolved`] de-dup key — a PID count is not
+    /// reliable (a removal immediately followed by an addition can return the
+    /// count to a previously-seen value, which a count-keyed de-dup would
+    /// wrongly treat as "already signalled").
+    generation: u32,
+    /// The [`generation`](Self::generation) value at which
+    /// [`DemuxEvent::TracksResolved`] last fired, if ever — re-arms whenever
+    /// `generation` advances past this value (issue #624 original mechanism;
+    /// re-keyed off `generation` instead of a PID count by issue #774).
+    tracks_resolved_signalled_at: Option<u32>,
+}
+
+/// Per-PMT-PID reassembly + version-diffing state (issue #774): the
+/// `program_number` this PID was learned under from the PAT (a defensive
+/// cross-check against the PMT section's own `program_number`), the last
+/// **applied** `version_number` (so a carousel-repeated identical-version
+/// section — PMTs repeat several times a second on a real broadcast — is
+/// parsed but never re-diffed), and the ES PID set this PMT last applied (the
+/// diff baseline: only PIDs *this* PMT declared can be removed by it, never
+/// another program's).
+struct PmtState {
+    reasm: SectionReassembler,
+    program_number: u16,
+    last_applied_version: Option<u8>,
+    applied_es: BTreeSet<u16>,
 }
 
 impl Default for StreamingTsDemux {
@@ -2162,6 +2252,7 @@ impl StreamingTsDemux {
             resolved: BTreeSet::new(),
             next_track_id: 1,
             events: VecDeque::new(),
+            generation: 0,
             tracks_resolved_signalled_at: None,
         }
     }
@@ -2207,6 +2298,7 @@ impl StreamingTsDemux {
             if af.discontinuity_indicator {
                 self.events.push_back(DemuxEvent::Discontinuity {
                     track: self.live_track_id(pkt.header.pid),
+                    kind: DiscontinuityKind::Signalled,
                     provenance,
                 });
             }
@@ -2229,78 +2321,64 @@ impl StreamingTsDemux {
         if pid == PAT_PID {
             self.pat_reasm.feed(payload, pusi);
             while let Some(section) = self.pat_reasm.pop_section() {
-                if let Ok(pmt_pids) = parse_pat(&section) {
-                    for pmt_pid in pmt_pids {
-                        self.pmt_reasm.entry(pmt_pid).or_default();
+                if let Ok(programs) = parse_pat(&section) {
+                    for (program_number, pmt_pid) in programs {
+                        self.pmt_reasm.entry(pmt_pid).or_insert_with(|| PmtState {
+                            reasm: SectionReassembler::default(),
+                            program_number,
+                            last_applied_version: None,
+                            applied_es: BTreeSet::new(),
+                        });
                     }
                 }
             }
             return;
         }
 
-        if let Some(reasm) = self.pmt_reasm.get_mut(&pid) {
-            reasm.feed(payload, pusi);
-            let mut newly = Vec::new();
-            while let Some(section) = reasm.pop_section() {
-                if let Ok(es_list) = parse_pmt(&section) {
-                    newly.extend(es_list);
+        if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+            pmt_state.reasm.feed(payload, pusi);
+            let mut sections: Vec<Vec<u8>> = Vec::new();
+            while let Some(section) = pmt_state.reasm.pop_section() {
+                sections.push(section.to_vec());
+            }
+            let program_number = pmt_state.program_number;
+            let mut to_apply: Option<Vec<(u16, Codec, Vec<u8>)>> = None;
+            for section in &sections {
+                let Ok(header) = parse_pmt_section_header(section) else {
+                    continue;
+                };
+                if header.program_number != program_number {
+                    // Defensive cross-check (issue #774): a PMT PID's
+                    // program_number must match the PAT entry it was learned
+                    // under. A mismatch is stream corruption or a PAT/PMT
+                    // race — never act on it.
+                    continue;
+                }
+                if header.section_number != 0 || header.last_section_number != 0 {
+                    // A PMT is always single-section (§2.4.4.8) — a
+                    // multi-section claim is malformed, ignore it.
+                    continue;
+                }
+                if !header.current_next {
+                    // A "next" table: parsed, never applied.
+                    continue;
+                }
+                if pmt_state.last_applied_version == Some(header.version) {
+                    // Carousel repeat (identical applied version) — dropped
+                    // before the diff, never re-processed.
+                    continue;
+                }
+                pmt_state.last_applied_version = Some(header.version);
+                if let Ok(es_list) = parse_pmt(section) {
+                    to_apply = Some(es_list);
                 }
             }
-            for (es_pid, codec, descriptors) in newly {
-                if self.es_seen.insert(es_pid) {
-                    if matches!(codec, Codec::Data(_)) {
-                        self.data_order.push(es_pid);
-                    } else {
-                        self.codec_order.push(es_pid);
-                    }
-                    let mut stream = StreamState {
-                        codec,
-                        descriptors,
-                        carrier: initial_carrier(codec),
-                        pes_bytes: 0,
-                        fallback: (0, 0),
-                        has_any: false,
-                        wrap: WrapState::default(),
-                        first_dts_uw: None,
-                        track: Some(TrackState::Probing {
-                            probe: initial_probe(codec),
-                            backlog: Vec::new(),
-                        }),
-                        backlog_bytes: 0,
-                    };
-                    // Replay any payloads that arrived on this PID before its
-                    // PMT registration completed (see `unattributed`'s doc).
-                    if let Some(buffered) = self.unattributed.remove(&es_pid) {
-                        for (buf_pusi, buf_payload) in buffered {
-                            self.unattributed_bytes =
-                                self.unattributed_bytes.saturating_sub(buf_payload.len());
-                            let mut sections: Vec<Vec<u8>> = Vec::new();
-                            let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
-                                feed_pes_bounded(
-                                    &mut stream,
-                                    es_pid,
-                                    buf_pusi,
-                                    &buf_payload,
-                                    &mut self.events,
-                                )
-                            } else if let Carrier::Section(reasm) = &mut stream.carrier {
-                                reasm.feed(&buf_payload, buf_pusi);
-                                while let Some(s) = reasm.pop_section() {
-                                    sections.push(s.to_vec());
-                                }
-                                None
-                            } else {
-                                None
-                            };
-                            if let Some(completed) = completed_pes {
-                                on_completed_pes(&mut stream, es_pid, &completed, &mut self.events);
-                            }
-                            for s in sections {
-                                on_completed_section(&mut stream, es_pid, &s, &mut self.events);
-                            }
-                        }
-                    }
-                    self.streams.insert(es_pid, stream);
+            if let Some(es_list) = to_apply {
+                let old_applied_es = pmt_state.applied_es.clone();
+                let new_applied_es: BTreeSet<u16> = es_list.iter().map(|(p, _, _)| *p).collect();
+                self.apply_pmt_diff(&old_applied_es, es_list);
+                if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+                    pmt_state.applied_es = new_applied_es;
                 }
             }
             self.try_promote_ready();
@@ -2358,6 +2436,141 @@ impl StreamingTsDemux {
         }
     }
 
+    /// Register a genuinely new elementary-stream PID discovered from an
+    /// applied PMT (first ever registration, or a version diff's "added"
+    /// side — issue #774): rank it into `codec_order`/`data_order`, build its
+    /// fresh [`StreamState`] (`Probing` from scratch), and replay any
+    /// `unattributed` payloads that arrived on this PID before its PMT
+    /// registration completed. Never emits an event itself — `TrackAdded`
+    /// fires once this PID reaches its PMT-declaration-order turn in
+    /// [`Self::try_promote_ready`].
+    fn register_new_es(&mut self, es_pid: u16, codec: Codec, descriptors: Vec<u8>) {
+        if matches!(codec, Codec::Data(_)) {
+            self.data_order.push(es_pid);
+        } else {
+            self.codec_order.push(es_pid);
+        }
+        let mut stream = StreamState {
+            codec,
+            descriptors,
+            carrier: initial_carrier(codec),
+            pes_bytes: 0,
+            fallback: (0, 0),
+            has_any: false,
+            wrap: WrapState::default(),
+            track: Some(TrackState::Probing {
+                probe: initial_probe(codec),
+                backlog: Vec::new(),
+            }),
+            backlog_bytes: 0,
+        };
+        // Replay any payloads that arrived on this PID before its PMT
+        // registration completed (see `unattributed`'s doc).
+        if let Some(buffered) = self.unattributed.remove(&es_pid) {
+            for (buf_pusi, buf_payload) in buffered {
+                self.unattributed_bytes = self.unattributed_bytes.saturating_sub(buf_payload.len());
+                let mut sections: Vec<Vec<u8>> = Vec::new();
+                let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
+                    feed_pes_bounded(
+                        &mut stream,
+                        es_pid,
+                        buf_pusi,
+                        &buf_payload,
+                        &mut self.events,
+                    )
+                } else if let Carrier::Section(reasm) = &mut stream.carrier {
+                    reasm.feed(&buf_payload, buf_pusi);
+                    while let Some(s) = reasm.pop_section() {
+                        sections.push(s.to_vec());
+                    }
+                    None
+                } else {
+                    None
+                };
+                if let Some(completed) = completed_pes {
+                    on_completed_pes(&mut stream, es_pid, &completed, &mut self.events);
+                }
+                for s in sections {
+                    on_completed_section(&mut stream, es_pid, &s, &mut self.events);
+                }
+            }
+        }
+        self.streams.insert(es_pid, stream);
+    }
+
+    /// Drop a PID that a PMT no longer declares (issue #774): remove it from
+    /// every bookkeeping set (`es_seen`/`codec_order`/`data_order`/`resolved`)
+    /// and drop its [`StreamState`] entirely — any in-flight PES/backlog for
+    /// it goes with it, so no [`DemuxEvent::Sample`] can ever follow the
+    /// [`DemuxEvent::TrackRemoved`] this emits below. Only emits
+    /// `TrackRemoved` when the PID had actually reached `Live` (a real
+    /// `track_id` a consumer has seen via `TrackAdded`) — a PID removed while
+    /// still `Probing`/`Parked`/`Abandoned` was never surfaced to a consumer
+    /// in the first place, so there is nothing to report removing.
+    fn remove_track(&mut self, pid: u16) {
+        self.es_seen.remove(&pid);
+        self.codec_order.retain(|&p| p != pid);
+        self.data_order.retain(|&p| p != pid);
+        self.resolved.remove(&pid);
+        if let Some(stream) = self.streams.remove(&pid) {
+            if let Some(TrackState::Live(live)) = stream.track {
+                self.events.push_back(DemuxEvent::TrackRemoved {
+                    track_id: live.track_id,
+                    provenance: EventProvenance {
+                        pid: Some(pid),
+                        packet_index: None,
+                    },
+                });
+            }
+        }
+    }
+
+    /// Apply one PMT's newly-parsed, version-changed ES list against
+    /// `old_applied_es` (that same PMT's previous applied ES set — issue
+    /// #774): diff removed/added/kept-but-changed PIDs, then bump
+    /// [`Self::generation`] once so [`Self::maybe_signal_tracks_resolved`]
+    /// re-evaluates `TracksResolved`. Called only for a section that has
+    /// already been confirmed `current_next_indicator == 1` with a
+    /// genuinely new `version_number` — a carousel repeat never reaches here.
+    fn apply_pmt_diff(
+        &mut self,
+        old_applied_es: &BTreeSet<u16>,
+        es_list: Vec<(u16, Codec, Vec<u8>)>,
+    ) {
+        let new_pids: BTreeSet<u16> = es_list.iter().map(|(p, _, _)| *p).collect();
+
+        let removed: Vec<u16> = old_applied_es
+            .iter()
+            .copied()
+            .filter(|p| !new_pids.contains(p))
+            .collect();
+        for pid in removed {
+            self.remove_track(pid);
+        }
+
+        for (es_pid, codec, descriptors) in es_list {
+            if self.es_seen.insert(es_pid) {
+                self.register_new_es(es_pid, codec, descriptors);
+                continue;
+            }
+            let Some(stream) = self.streams.get_mut(&es_pid) else {
+                continue;
+            };
+            if stream.codec == codec && stream.descriptors == descriptors {
+                continue;
+            }
+            stream.codec = codec;
+            stream.descriptors = descriptors.clone();
+            if let Some(TrackState::Live(live)) = stream.track.as_ref() {
+                let spec = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
+                    .with_source(es_pid, descriptors);
+                self.events.push_back(DemuxEvent::TrackUpdated(spec));
+            }
+        }
+
+        self.generation = self.generation.wrapping_add(1);
+    }
+
     /// Promote every `Parked` PID that has reached its PMT-declaration-order
     /// turn to `Live`: assign the next sequential track ID, emit
     /// `DemuxEvent::TrackAdded`, and replay its accumulated backlog as a
@@ -2390,21 +2603,22 @@ impl StreamingTsDemux {
                 } => {
                     let track_id = self.next_track_id;
                     self.next_track_id += 1;
-                    // `first_dts_uw` is the PES clock (90 kHz); the anchor must
-                    // be in this track's OWN timescale so it stays in lockstep
-                    // with `samples[0].dts` (media plane step 2c invariant) —
-                    // identity for a 90 kHz video/Data track, a real rescale
-                    // for an audio track whose timescale is its sample rate.
-                    let anchor =
-                        rescale_to_track(stream.first_dts_uw.unwrap_or(0), timescale) as u64;
-                    let spec = TrackSpec::new(track_id, timescale, config)
+                    // `Track::start_decode_time` is no longer carried by this
+                    // event (issue #774 reshape dropped it along with
+                    // `samples`/`encryption` when `TrackAdded` became
+                    // `TrackSpec`-only) — every consumer that builds a `Track`
+                    // derives it from `samples[0].dts` instead (media plane
+                    // step 2c invariant: the two are always equal), so no
+                    // anchor value needs computing here at all.
+                    let spec = TrackSpec::new(track_id, timescale, config.clone())
                         .with_source(next_pid, stream.descriptors.clone());
-                    self.events.push_back(DemuxEvent::TrackAdded(Track::new_at(
-                        spec,
-                        Vec::new(),
-                        anchor,
-                    )));
-                    let mut live = LiveTrack { track_id, kind };
+                    self.events.push_back(DemuxEvent::TrackAdded(spec));
+                    let mut live = LiveTrack {
+                        track_id,
+                        kind,
+                        config,
+                        timescale,
+                    };
                     for au in backlog {
                         push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);
                     }
@@ -2442,18 +2656,29 @@ impl StreamingTsDemux {
     /// Emit [`DemuxEvent::TracksResolved`] (issue #624) when every currently
     /// known PID (`codec_order` + `data_order`) has resolved to `Live` — i.e.
     /// [`try_promote_ready`](Self::try_promote_ready) just ran to a fixed
-    /// point with no PID left `Probing` — and the known-PID count differs
-    /// from the count the signal last fired at (de-dup: a PMT re-processed
-    /// with no new PIDs, or plain sample traffic on an already-fully-resolved
-    /// stream, must not re-fire the event every time this is called).
+    /// point with no PID left `Probing` — and [`Self::generation`] differs
+    /// from the generation the signal last fired at (de-dup: a PMT
+    /// re-processed with no applied change, or plain sample traffic on an
+    /// already-fully-resolved stream, must not re-fire the event every time
+    /// this is called).
+    ///
+    /// De-duping on `generation` rather than the known-PID count (issue
+    /// #774) fixes a real bug the count-keyed version had: once a track is
+    /// removable, the count can return to a previously-seen value (a removal
+    /// immediately followed by an addition), which a count-keyed de-dup would
+    /// wrongly treat as "already signalled" and never re-fire for.
     fn maybe_signal_tracks_resolved(&mut self) {
         let known = self.codec_order.len() + self.data_order.len();
         if known == 0 {
             return;
         }
-        if self.resolved.len() == known && self.tracks_resolved_signalled_at != Some(known) {
-            self.tracks_resolved_signalled_at = Some(known);
-            self.events.push_back(DemuxEvent::TracksResolved);
+        if self.resolved.len() == known
+            && self.tracks_resolved_signalled_at != Some(self.generation)
+        {
+            self.tracks_resolved_signalled_at = Some(self.generation);
+            self.events.push_back(DemuxEvent::TracksResolved {
+                generation: self.generation,
+            });
         }
     }
 
@@ -2492,6 +2717,17 @@ impl StreamingTsDemux {
             match self.streams.get(&next_pid).and_then(|s| s.track.as_ref()) {
                 Some(TrackState::Probing { .. }) => {
                     self.resolved.insert(next_pid);
+                    // This PID's codec config never became recoverable before
+                    // end of input — `TrackAdded` never fired for it, so no
+                    // `track_id` exists to report (issue #774).
+                    self.events.push_back(DemuxEvent::TrackAbandoned {
+                        track_id: None,
+                        reason: AbandonReason::ConfigUnrecoverable,
+                        provenance: EventProvenance {
+                            pid: Some(next_pid),
+                            packet_index: None,
+                        },
+                    });
                     self.try_promote_ready();
                 }
                 _ => break,
@@ -2626,13 +2862,39 @@ impl<'a> TsDemux<'a> {
         let mut pcr: Vec<PcrSample> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
-                DemuxEvent::TrackAdded(track) => {
-                    index_by_id.insert(track.spec.track_id, tracks.len());
-                    tracks.push(track);
+                DemuxEvent::TrackAdded(spec) => {
+                    index_by_id.insert(spec.track_id, tracks.len());
+                    tracks.push(Track::new(spec, Vec::new()));
                 }
+                DemuxEvent::TrackUpdated(spec) => {
+                    // Whole-buffer batch demux: reflect the final PMT-derived
+                    // metadata (issue #774) — samples already collected under
+                    // the earlier spec are untouched, only the spec itself
+                    // (e.g. corrected descriptors) is refreshed.
+                    if let Some(&i) = index_by_id.get(&spec.track_id) {
+                        tracks[i].spec = spec;
+                    }
+                }
+                // A one-shot whole-buffer `Media` has no removal/abandonment
+                // shape (its `tracks` is a flat, final list) — a track that
+                // was removed or abandoned mid-file simply keeps whatever it
+                // had already collected, exactly like `Discontinuity` below.
+                DemuxEvent::TrackRemoved { .. } => {}
+                DemuxEvent::TrackAbandoned { .. } => {}
                 DemuxEvent::Sample { track_id, sample } => {
                     if let Some(&i) = index_by_id.get(&track_id) {
-                        tracks[i].samples.push(sample);
+                        let track = &mut tracks[i];
+                        // `Track::start_decode_time` is no longer carried by
+                        // `TrackAdded` (issue #774 reshape) — it is exactly
+                        // the first sample's own `dts` (media plane step 2c
+                        // invariant, unconditionally true for every track
+                        // kind), so derive it here instead.
+                        if track.samples.is_empty() {
+                            if let Some(dts) = sample.dts {
+                                track.start_decode_time = dts as u64;
+                            }
+                        }
+                        track.samples.push(sample);
                     }
                 }
                 DemuxEvent::ClockReference {
@@ -2651,7 +2913,7 @@ impl<'a> TsDemux<'a> {
                     discontinuity: discontinuous,
                 }),
                 DemuxEvent::Discontinuity { .. } => {}
-                DemuxEvent::TracksResolved => {}
+                DemuxEvent::TracksResolved { .. } => {}
             }
         }
         Ok(Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr))
@@ -2953,17 +3215,35 @@ mod tests {
 
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts_bytes);
-        let mut discontinuity_pids: Vec<u16> = Vec::new();
+        let mut abandoned_pids: Vec<u16> = Vec::new();
         while let Some(ev) = demux.poll_event() {
-            if let DemuxEvent::Discontinuity { provenance, .. } = ev {
+            if let DemuxEvent::TrackAbandoned {
+                reason: AbandonReason::BudgetExceeded,
+                provenance,
+                ..
+            } = ev
+            {
                 if let Some(pid) = provenance.pid {
-                    discontinuity_pids.push(pid);
+                    abandoned_pids.push(pid);
                 }
             }
         }
         assert!(
-            !discontinuity_pids.is_empty(),
-            "expected at least one Discontinuity from an abandoned probe backlog"
+            !abandoned_pids.is_empty(),
+            "expected at least one TrackAbandoned{{BudgetExceeded}} from an abandoned probe backlog \
+             (issue #774: this replaced the mis-typed Discontinuity this path used to emit)"
+        );
+
+        // issue #774: this path used to emit a mis-typed `Discontinuity` for
+        // exactly this condition — re-feed and confirm none appears anymore.
+        let mut demux2 = StreamingTsDemux::new();
+        demux2.feed(&ts_bytes);
+        let saw_discontinuity_for_abandoned_pid = std::iter::from_fn(|| demux2.poll_event())
+            .any(|ev| matches!(ev, DemuxEvent::Discontinuity { provenance, .. } if provenance.pid == Some(PID_A)));
+        assert!(
+            !saw_discontinuity_for_abandoned_pid,
+            "a probe-backlog-budget abandonment (issue #774) must be a TrackAbandoned, \
+             never a Discontinuity"
         );
 
         // The invariant this fix establishes: neither PID's own tracked
@@ -2997,6 +3277,87 @@ mod tests {
         assert!(
             pid_b_resolved,
             "PID B must reach a final disposition (Live or Abandoned), not stay wedged"
+        );
+    }
+
+    /// `TrackAbandoned { reason: AbandonReason::ConfigUnrecoverable, .. }`
+    /// (issue #774): a PMT-listed H.264 PID whose SPS/PPS never arrive stays
+    /// `Probing` for the life of the input — well under
+    /// `MAX_PROBE_BACKLOG_BYTES` here (the B8 byte-cap path is a *different*
+    /// abandonment reason, covered above), so it only reaches a final
+    /// disposition once `finish()` concludes end-of-input that the config
+    /// will never resolve. No `track_id` was ever assigned (`TrackAdded`
+    /// never fired), so `track_id` must be `None`.
+    #[test]
+    fn track_abandoned_config_unrecoverable_fires_at_finish() {
+        use crate::TsMux;
+        use crate::media::{Media, Track};
+        use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        const PID_A: u16 = 0x0100; // ES_PID_BASE in `ts_mux.rs`
+        let frame_dur = VIDEO_TIMESCALE / 30;
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let video_spec = TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        // A handful of small, deliberately non-sync access units — never
+        // enough to trip MAX_PROBE_BACKLOG_BYTES, so the only way this PID
+        // ever reaches a final disposition is `finish()`'s end-of-input
+        // conclusion.
+        let video_samples: Vec<Sample> = (0..5u32)
+            .map(|i| {
+                let nal = alloc::vec![0x41u8, 0xAA, 0xBB]; // non-IDR slice, no SPS/PPS
+                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                data.extend_from_slice(&nal);
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
+            })
+            .collect();
+        let video_track = Track::new(video_spec, video_samples);
+        let media = Media::new(vec![video_track], VIDEO_TIMESCALE);
+        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts_bytes);
+        assert!(
+            !matches!(
+                demux.streams.get(&PID_A).and_then(|s| s.track.as_ref()),
+                Some(TrackState::Abandoned)
+            ),
+            "sanity: PID A must still be Probing before finish() — the byte cap must not \
+             have tripped (this test is about the end-of-input path, not the budget one)"
+        );
+        while demux.poll_event().is_some() {}
+
+        demux.finish();
+        let mut saw_config_unrecoverable = false;
+        while let Some(ev) = demux.poll_event() {
+            if let DemuxEvent::TrackAbandoned {
+                track_id,
+                reason: AbandonReason::ConfigUnrecoverable,
+                provenance,
+            } = ev
+            {
+                assert_eq!(
+                    track_id, None,
+                    "a track abandoned before ever resolving has no track_id to report"
+                );
+                assert_eq!(provenance.pid, Some(PID_A));
+                saw_config_unrecoverable = true;
+            }
+        }
+        assert!(
+            saw_config_unrecoverable,
+            "expected TrackAbandoned{{ConfigUnrecoverable}} once finish() concludes PID A's \
+             config will never resolve"
         );
     }
 

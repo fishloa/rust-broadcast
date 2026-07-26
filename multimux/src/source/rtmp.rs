@@ -207,7 +207,7 @@ impl RtmpSource {
                 let mut saw_sample = false;
                 while let Some(ev) = demux.poll_event() {
                     match ev {
-                        DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
+                        DemuxEvent::TrackAdded(spec) => specs.push(spec),
                         DemuxEvent::Sample { track_id, sample } => {
                             pending_samples.push_back((track_id, sample));
                             saw_sample = true;

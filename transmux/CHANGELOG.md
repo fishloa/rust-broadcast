@@ -10,6 +10,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
 (0.20.0) found 11 blocking defects; this wave fixes the five worst.
 
+### Added
+
+- **`DemuxEvent::TrackUpdated`/`TrackRemoved`/`TrackAbandoned`, PMT version
+  diffing** (issue #774, unblocks rust-skyfire#96): `StreamingTsDemux` now
+  diffs a PMT's `version_number`/`current_next_indicator` (ISO/IEC 13818-1
+  §2.4.4.8) instead of only ever inserting newly-seen PIDs.
+  - A version change that no longer lists a previously-declared PID emits
+    `TrackRemoved { track_id, provenance }` (only for a PID that had already
+    reached `Live` — a real `track_id` a consumer has seen).
+  - A version change that alters an existing PID's `es_info_descriptors` or
+    reclassifies its `stream_type` emits `TrackUpdated(TrackSpec)` (codec
+    config recovery itself stays single-shot and permanent).
+  - A track whose codec config never becomes recoverable by end of input, or
+    whose probe/parked backlog exceeds its byte budget, emits
+    `TrackAbandoned { track_id: Option<u32>, reason: AbandonReason,
+    provenance }` (`AbandonReason::ConfigUnrecoverable` /
+    `AbandonReason::BudgetExceeded`).
+  - A carousel-repeated identical-version PMT section (several times a second
+    on a real broadcast) is parsed but never re-diffed — no spurious events on
+    an unchanged track set.
+
+### Changed
+
+- **BREAKING — `DemuxEvent` reshaped** (mid-flight in the still-open 0.20.0
+  breaking release, so this is folded in rather than deferred to a later major
+  bump):
+  - `TrackAdded(Track)` → `TrackAdded(TrackSpec)` — drops the always-empty
+    `samples` and never-set `encryption` fields that came along with the full
+    `Track`; every existing consumer already only read `track.spec`.
+  - `Discontinuity { track, provenance }` → `Discontinuity { track, kind:
+    DiscontinuityKind, provenance }`, and the variant is now `#[non_exhaustive]`
+    with a `DemuxEvent::discontinuity(...)` constructor. `DiscontinuityKind` is
+    `Signalled` (an MPEG-2 TS adaptation-field `discontinuity_indicator`),
+    `TimelineReanchored` (a live audio track's frame-exact anchor drifted from
+    the wire PES clock), or `BudgetExceeded { bytes }` (a per-PID buffer cap
+    dropped in-flight data). `abandon_backlog`'s probe/parked-backlog budget
+    cap now emits `TrackAbandoned` instead of a `Discontinuity` — it was
+    mis-typed before (a budget overflow abandons the track; nothing survives
+    to "continue" from).
+  - `TracksResolved` → `TracksResolved { generation: u32 }` — fixes a live bug
+    where the de-dup key was the known-PID *count*: a removal immediately
+    followed by an addition could return the count to a previously-seen
+    value, silently suppressing the re-fire a consumer needs. `generation` is
+    a monotonic counter bumped once per applied PMT diff (add/update/remove).
+  - `ClockReference` is now `#[non_exhaustive]` too, with a matching
+    `DemuxEvent::clock_reference(...)` constructor — both non-exhaustive
+    variants can grow a field later (e.g. a wall-clock/UTC anchor) without a
+    further breaking change.
+  - Documented `DemuxEvent`'s event-order guarantee (observation order per
+    emission class, not wire order across classes) and its removal semantics
+    (no `Sample` for a removed `track_id` ever follows its `TrackRemoved`;
+    removal tracks only the PMT-declared set, never a silence timeout).
+
 ### Fixed
 
 - **BREAKING — one strictness policy everywhere: DEMUX = lenient but loud,
