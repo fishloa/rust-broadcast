@@ -49,7 +49,14 @@ pub struct SkippedTrack {
 /// [`Package`](broadcast_common::Package) impls (e.g.
 /// [`CmafMux`](crate::media::CmafMux), [`HlsPackager`](crate::media::HlsPackager))
 /// consume one.
+///
+/// `#[non_exhaustive]`: this is the hub's central type and its field set is
+/// still growing — `pcr` and `skipped` were each added after the initial
+/// release, and each addition was a breaking change that need not have been
+/// one. Construct with [`Media::new`] and set further fields by assignment;
+/// destructuring or matching from another crate needs a trailing `..`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Media {
     /// Elementary tracks, in the order they appear in the source movie.
     pub tracks: Vec<Track>,

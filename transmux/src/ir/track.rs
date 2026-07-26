@@ -53,7 +53,15 @@ impl TrackSpec {
 ///
 /// A thin wrapper pairing the existing [`TrackSpec`] (track_id + timescale +
 /// [`CodecConfig`]) with the track's decode-ordered [`Sample`]s.
+///
+/// `#[non_exhaustive]`: matches [`TrackSpec`], [`Sample`] and
+/// [`Media`](super::Media), and
+/// leaves room for per-track state the pipeline has already wanted twice
+/// (`start_decode_time`, `encryption`). Construct with [`Track::new`] or
+/// [`Track::new_at`]; destructuring or matching from another crate needs a
+/// trailing `..`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Track {
     /// Track identity + codec configuration (used to build the init segment).
     pub spec: TrackSpec,

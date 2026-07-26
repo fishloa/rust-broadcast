@@ -438,10 +438,7 @@ fn minimal_video_media() -> transmux::media::Media {
         })
         .collect();
     let track = Track::new(spec, samples);
-    Media {
-        tracks: vec![track],
-        movie_timescale: 90000,
-        pcr: vec![],
-        skipped: vec![],
-    }
+    // `Media::new` sets an empty `pcr`/`skipped` — exactly what the struct
+    // literal here spelled out before `Media` became `#[non_exhaustive]`.
+    Media::new(vec![track], 90000)
 }
