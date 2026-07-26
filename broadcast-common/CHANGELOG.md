@@ -4,10 +4,12 @@
 ### Added
 - `stage` module: the `Stage` incremental-drive trait (`feed`/`poll`/`finish`/
   `next_deadline`/`on_deadline`/`demand`) unifying the drive shape of every
-  streaming stage in the workspace, plus its two supporting types —
+  streaming stage in the workspace, plus its supporting types —
   `Timestamp` (a `no_std`-safe monotonic-nanosecond newtype standing in for
   `std::time::Instant`, with saturating arithmetic and a `std`-only
-  `from_instant` convenience) and `Demand` (an advisory backpressure hint).
+  `from_instant` convenience), `Demand` (an advisory backpressure hint), and
+  `type In<'a>` (the associated input type, added in step 2 to support borrowed
+  packet arrays without lifetime explosion across demux variants).
   Media-plane migration step 1 (additive, zero cascade to the ~30 workspace
   dependents pinned on `version = "8"`).
 

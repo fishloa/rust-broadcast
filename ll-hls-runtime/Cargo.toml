@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
-transmux          = { path = "../transmux", version = "0.19", default-features = false }
+transmux          = { path = "../transmux", version = "0.20", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::store::MediaStore` needs
