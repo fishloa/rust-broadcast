@@ -54,6 +54,8 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
+use crate::xml_parse::{XmlError, XmlEvent, XmlTokenizer, skip_element};
+
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------
@@ -182,6 +184,19 @@ impl fmt::Display for DashParseError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for DashParseError {}
+
+impl From<XmlError> for DashParseError {
+    fn from(err: XmlError) -> Self {
+        match err {
+            XmlError::UnexpectedEof => DashParseError::UnexpectedEof,
+            XmlError::UnterminatedTag { pos } => DashParseError::UnterminatedTag { pos },
+            XmlError::MalformedAttribute { pos } => DashParseError::MalformedAttribute { pos },
+            XmlError::MismatchedEndTag { expected, found } => {
+                DashParseError::MismatchedEndTag { expected, found }
+            }
+        }
+    }
+}
 
 /// Crate-local result alias for this module.
 type Result<T> = core::result::Result<T, DashParseError>;
@@ -643,227 +658,7 @@ fn parse_fraction_nanos(frac: &str) -> core::result::Result<u32, ()> {
 }
 
 // ---------------------------------------------------------------------------
-// Tiny XML tokenizer — no external dependency (dep-free like `dash`'s writer).
-// ---------------------------------------------------------------------------
-
-/// One tokenizer event. Text content, comments, processing instructions, and
-/// markup declarations are consumed internally by [`XmlTokenizer::next_event`]
-/// and never surfaced — this parser's grammar has no element with text
-/// content it needs.
-enum XmlEvent<'a> {
-    /// A start tag, e.g. `<Period id="0">` or the self-closing `<S d="4" />`.
-    Start {
-        /// The element's local name (namespace prefix, if any, stripped).
-        name: &'a str,
-        /// Attribute name/value pairs, in document order (values unescaped).
-        attrs: Vec<(String, String)>,
-        /// Whether the tag was self-closing (`<Name .../>`).
-        self_closing: bool,
-    },
-    /// An end tag, e.g. `</Period>`.
-    End {
-        /// The element's local name (namespace prefix, if any, stripped).
-        #[allow(dead_code)] // retained for future strict-nesting validation
-        name: &'a str,
-    },
-}
-
-/// A minimal, bounded, panic-free XML tokenizer sufficient for the MPD
-/// grammar this module parses. Not a general-purpose XML parser: no DTD/CDATA
-/// support, and unknown namespace-prefixed names are accepted with the prefix
-/// simply stripped (`cenc:pssh` → `pssh`) rather than resolved.
-struct XmlTokenizer<'a> {
-    input: &'a str,
-    pos: usize,
-}
-
-impl<'a> XmlTokenizer<'a> {
-    fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
-    }
-
-    /// Return the next `Start`/`End` event, or `Ok(None)` at end of input.
-    /// Skips leading/trailing text, `<?...?>` declarations, `<!--...-->`
-    /// comments, and `<!...>` markup declarations internally.
-    fn next_event(&mut self) -> Result<Option<XmlEvent<'a>>> {
-        loop {
-            let Some(rel) = self.input[self.pos..].find('<') else {
-                return Ok(None);
-            };
-            self.pos += rel;
-            let rest = &self.input[self.pos..];
-
-            if let Some(after) = rest.strip_prefix("<?") {
-                let end = after
-                    .find("?>")
-                    .ok_or(DashParseError::UnterminatedTag { pos: self.pos })?;
-                self.pos += 2 + end + 2;
-                continue;
-            }
-            if let Some(after) = rest.strip_prefix("<!--") {
-                let end = after
-                    .find("-->")
-                    .ok_or(DashParseError::UnterminatedTag { pos: self.pos })?;
-                self.pos += 4 + end + 3;
-                continue;
-            }
-            if let Some(after) = rest.strip_prefix("<!") {
-                let end = after
-                    .find('>')
-                    .ok_or(DashParseError::UnterminatedTag { pos: self.pos })?;
-                self.pos += 2 + end + 1;
-                continue;
-            }
-            if let Some(after) = rest.strip_prefix("</") {
-                let end = after
-                    .find('>')
-                    .ok_or(DashParseError::UnterminatedTag { pos: self.pos })?;
-                let name = strip_ns_prefix(after[..end].trim());
-                self.pos += 2 + end + 1;
-                return Ok(Some(XmlEvent::End { name }));
-            }
-
-            let end = rest
-                .find('>')
-                .ok_or(DashParseError::UnterminatedTag { pos: self.pos })?;
-            let mut body = &rest[1..end];
-            let self_closing = body.trim_end().ends_with('/');
-            if self_closing {
-                body = body.trim_end();
-                body = &body[..body.len() - 1];
-            }
-            let (name_raw, attrs_str) = split_name_attrs(body);
-            let name = strip_ns_prefix(name_raw);
-            let attrs = parse_attrs(attrs_str.trim())?;
-            self.pos += end + 1;
-            return Ok(Some(XmlEvent::Start {
-                name,
-                attrs,
-                self_closing,
-            }));
-        }
-    }
-}
-
-/// Strip a namespace prefix (`cenc:pssh` → `pssh`); names with no `:` are
-/// returned unchanged.
-fn strip_ns_prefix(name: &str) -> &str {
-    match name.rfind(':') {
-        Some(idx) => &name[idx + 1..],
-        None => name,
-    }
-}
-
-/// Split a start-tag body (everything between `<` and `>`, self-closing `/`
-/// already stripped) into `(name, attrs_str)`.
-fn split_name_attrs(body: &str) -> (&str, &str) {
-    let trimmed = body.trim_start();
-    match trimmed.find(|c: char| c.is_whitespace()) {
-        Some(idx) => (&trimmed[..idx], trimmed[idx..].trim()),
-        None => (trimmed.trim_end(), ""),
-    }
-}
-
-fn is_ascii_ws(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
-}
-
-/// Parse `name="value" name='value' ...` into owned, unescaped pairs. Bounds
-/// every slice before taking it; returns [`DashParseError::MalformedAttribute`]
-/// rather than panicking on truncated/unquoted input.
-fn parse_attrs(s: &str) -> Result<Vec<(String, String)>> {
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    let mut i = 0usize;
-    let mut attrs = Vec::new();
-    while i < len {
-        while i < len && is_ascii_ws(bytes[i]) {
-            i += 1;
-        }
-        if i >= len {
-            break;
-        }
-        let name_start = i;
-        while i < len && bytes[i] != b'=' && !is_ascii_ws(bytes[i]) {
-            i += 1;
-        }
-        let name_end = i;
-        if name_end == name_start {
-            return Err(DashParseError::MalformedAttribute { pos: name_start });
-        }
-        while i < len && is_ascii_ws(bytes[i]) {
-            i += 1;
-        }
-        if i >= len || bytes[i] != b'=' {
-            return Err(DashParseError::MalformedAttribute { pos: name_start });
-        }
-        i += 1;
-        while i < len && is_ascii_ws(bytes[i]) {
-            i += 1;
-        }
-        if i >= len || (bytes[i] != b'"' && bytes[i] != b'\'') {
-            return Err(DashParseError::MalformedAttribute { pos: name_start });
-        }
-        let quote = bytes[i];
-        i += 1;
-        let val_start = i;
-        while i < len && bytes[i] != quote {
-            i += 1;
-        }
-        if i >= len {
-            return Err(DashParseError::MalformedAttribute { pos: val_start });
-        }
-        let val_end = i;
-        i += 1;
-        let name = s[name_start..name_end].to_string();
-        let value = unescape(&s[val_start..val_end]);
-        attrs.push((name, value));
-    }
-    Ok(attrs)
-}
-
-/// Reverse [`crate::dash`]'s writer-side `escape_into` (XML 1.0 §2.4):
-/// `&amp;`/`&lt;`/`&gt;`/`&quot;`/`&apos;` → their literal characters.
-/// Unknown/malformed entities (no known name, or a missing `;`) are passed
-/// through byte-for-byte rather than rejected.
-fn unescape(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let tail = &rest[amp..];
-        match tail.find(';') {
-            Some(semi) => {
-                let entity = &tail[1..semi];
-                match entity {
-                    "amp" => out.push('&'),
-                    "lt" => out.push('<'),
-                    "gt" => out.push('>'),
-                    "quot" => out.push('"'),
-                    "apos" => out.push('\''),
-                    _ => {
-                        out.push('&');
-                        rest = &tail[1..];
-                        continue;
-                    }
-                }
-                rest = &tail[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &tail[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-// ---------------------------------------------------------------------------
-// Attribute helpers
+// DASH-specific attribute helpers (XML parsing is in xml_parse module)
 // ---------------------------------------------------------------------------
 
 fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -927,26 +722,6 @@ fn parse_duration_attr(attrs: &[(String, String)], key: &str) -> Result<Option<D
         Some(v) => Ok(Some(parse_iso8601_duration(v)?)),
         None => Ok(None),
     }
-}
-
-/// Skip an already-open element's subtree, up to and including its matching
-/// end tag. Depth-counted (not name-matched) — well-formed nesting is assumed,
-/// which is enough to tolerate any element this parser doesn't model without
-/// choking on it.
-fn skip_element(tok: &mut XmlTokenizer<'_>) -> Result<()> {
-    let mut depth: usize = 1;
-    while depth > 0 {
-        match tok.next_event()? {
-            Some(XmlEvent::Start { self_closing, .. }) => {
-                if !self_closing {
-                    depth += 1;
-                }
-            }
-            Some(XmlEvent::End { .. }) => depth -= 1,
-            None => return Err(DashParseError::UnexpectedEof),
-        }
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `smooth_parse` (issue #759 T1): a hand-rolled MS-SSTR **client manifest**
+  parser (`SmoothManifest::parse`), the structural inverse of `smooth`'s
+  `SmoothPackager` writer — reuses the shared `xml_parse` tokenizer (no
+  second XML parser), `no_std`+`alloc`. Parses `SmoothStreamingMedia`/
+  `StreamIndex`/`QualityLevel`/`c` (§2.2.2.x), including the live-only
+  `IsLive`/`LookAheadFragmentCount`/`DVRWindowLength` attributes (§2.2.2.1).
+  `StreamIndex::enumerate_chunks` expands a `c@r` repeat run into the
+  `(t, d)` sequence, capped at `MAX_CHUNK_RUN` (100k, mirroring
+  `dash_parse::MAX_TIMELINE_SEGMENTS`) against a hostile Manifest's unbounded
+  `<c r="...">`; `hex_decode`-ing a `QualityLevel@CodecPrivateData` value is
+  likewise capped at `MAX_CODEC_PRIVATE_DATA_HEX_LEN` before any decode
+  allocation. `StreamIndex::resolve_fragment_url` substitutes the
+  `{bitrate}`/`{start time}` tokens (§2.2.4.1) into the fragment-URL
+  template. Because Smooth has no bootstrapping init segment,
+  `track_spec_from_quality_level` synthesizes a `pipeline::TrackSpec` from a
+  `QualityLevel`'s `CodecPrivateData` (Annex-B SPS/PPS → `avcC` for
+  `FourCC="H264"`, raw `AudioSpecificConfig` → `esds` for `FourCC="AACL"`) —
+  feed the result to `pipeline::build_init_segment` so `media::Fmp4Demux` can
+  absorb the Smooth fragment stream. Also splits `rtp_sdp::avc_config_from_sprop`/
+  `aac_config_from_asc_hex` into byte-level building blocks
+  (`avc_config_from_sps_pps`/`aac_config_from_asc_bytes`) that a non-SDP
+  caller (this module) can reuse directly, rather than duplicating the SPS
+  classification / `avcC`/`esds` construction logic.
 - `dash_parse` (issue #758 T1): a hand-rolled MPD parser (`Mpd::parse`), the
   structural inverse of `dash`'s `DashPackager` writer — `no_std`+`alloc`, no
   external XML dependency. Parses `MPD`/`Period`/`AdaptationSet`/
