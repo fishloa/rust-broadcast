@@ -117,6 +117,7 @@ fn codec_kind(config: &CodecConfig) -> &'static str {
         CodecConfig::MpegAudio { .. } => "mpegaudio",
         CodecConfig::Vorbis { .. } => "vorbis",
         CodecConfig::Data { .. } => "data",
+        CodecConfig::Subtitle { .. } => "subtitle",
     }
 }
 

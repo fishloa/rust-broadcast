@@ -507,6 +507,10 @@ impl DashPackager {
             // Opaque PES data track: no RFC 6381 codec string can be derived
             // without decoding the payload (mirrors the fMP4 mux rejection).
             CodecConfig::Data { .. } => Err(Error::UnsupportedCodec { codec: "Data" }),
+            // Subtitle track (media plane step 2d): no fMP4 mux path yet
+            // (see `CodecConfig::Subtitle`'s doc comment / `TODO(#753)` on
+            // `build_trak`), so no RFC 6381 string either.
+            CodecConfig::Subtitle { .. } => Err(Error::UnsupportedCodec { codec: "Subtitle" }),
         }
     }
 
@@ -676,6 +680,8 @@ impl DashPackager {
             // resolve (unreachable in practice — `codec_string` above already
             // errors for `Data`, short-circuiting this function via `?`).
             CodecConfig::Data { .. } => {}
+            // Subtitle track: same short-circuit via `codec_string` above.
+            CodecConfig::Subtitle { .. } => {}
         }
 
         Ok(info)

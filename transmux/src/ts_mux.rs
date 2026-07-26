@@ -307,9 +307,12 @@ impl EsKind {
     /// Not TS-carriable today: [`CodecConfig::Vvc`]/[`CodecConfig::Av1`]/
     /// [`CodecConfig::Vp9`] (no allocated/implemented TS `stream_type` mapping
     /// in this crate yet), [`CodecConfig::Opus`]/[`CodecConfig::Flac`]/
-    /// [`CodecConfig::Ac4`] (no ES framing implemented for TS), and the
-    /// WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`] (out of scope
-    /// for any ISOBMFF/TS mux path — see their doc comments).
+    /// [`CodecConfig::Ac4`] (no ES framing implemented for TS),
+    /// [`CodecConfig::Subtitle`] (an fMP4/CMAF-sourced `stpp`/`wvtt` track has
+    /// no TS `stream_type` mapping in this crate; a DVB-subtitle/teletext PES
+    /// stream is still recovered as [`CodecConfig::Data`] on the TS demux
+    /// path), and the WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`]
+    /// (out of scope for any ISOBMFF/TS mux path — see their doc comments).
     fn from_config(config: &CodecConfig) -> Option<Self> {
         match config {
             CodecConfig::Avc { .. } => Some(EsKind::Avc),

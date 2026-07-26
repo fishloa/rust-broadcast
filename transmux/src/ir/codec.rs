@@ -51,6 +51,43 @@ impl DataCarriage {
 
 broadcast_common::impl_spec_display!(DataCarriage);
 
+/// The wire format of a [`CodecConfig::Subtitle`] track (media plane step 2d).
+///
+/// `Ttml`/`WebVtt` are ISOBMFF sample entries this crate demuxes
+/// ([`crate::media::Fmp4Demux`]); `DvbBitmap`/`Teletext` name the PES-carried
+/// broadcast subtitle formats a TS demuxer can identify from their PMT
+/// descriptors (ETSI EN 300 468) but does not yet classify as
+/// `CodecConfig::Subtitle` itself (still `CodecConfig::Data` on that path
+/// today) — the variant exists so a future TS-side classifier has a home
+/// without another breaking enum change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SubtitleFormat {
+    /// TTML/IMSC XML subtitles (ISO BMFF `stpp` sample entry, ISO/IEC
+    /// 14496-30 §7.2).
+    Ttml,
+    /// WebVTT subtitles (ISO BMFF `wvtt` sample entry, ISO/IEC 14496-30 §9.2).
+    WebVtt,
+    /// DVB (bitmap) subtitling, carried as a PES stream (ETSI EN 300 743).
+    DvbBitmap,
+    /// Teletext, carried as a PES stream (ETSI EN 300 706 / EN 300 472).
+    Teletext,
+}
+
+impl SubtitleFormat {
+    /// A short label for this subtitle format.
+    pub fn name(&self) -> &'static str {
+        match self {
+            SubtitleFormat::Ttml => "TTML (stpp)",
+            SubtitleFormat::WebVtt => "WebVTT (wvtt)",
+            SubtitleFormat::DvbBitmap => "DVB bitmap subtitle",
+            SubtitleFormat::Teletext => "Teletext",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SubtitleFormat);
+
 /// Per-track codec configuration for the initialization segment.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -263,6 +300,24 @@ pub enum CodecConfig {
         channels: u16,
         /// Sampling rate in Hz (`audio_sample_rate`, Vorbis I §4.2.2).
         sample_rate: u32,
+    },
+    /// Subtitle track (media plane step 2d): a TTML/WebVTT ISOBMFF sample
+    /// entry (`stpp`/`wvtt`, ISO/IEC 14496-30) demuxed by
+    /// [`crate::media::Fmp4Demux`], carried losslessly rather than dropped.
+    /// Samples are opaque payloads (TTML XML documents / WebVTT `vttc`/`vtte`
+    /// boxes) — this crate never parses cue contents, only the sample
+    /// entry's format tag.
+    ///
+    /// There is currently no re-mux path: reconstructing the sample entry
+    /// (the TTML namespace/`stpp` config, or the WebVTT header block/`vttC`)
+    /// needs more than the format tag alone, so
+    /// [`crate::pipeline::build_init_segment`]/`CmafMux` reject a `Subtitle`
+    /// track with [`Error::UnsupportedCodec`](crate::error::Error::UnsupportedCodec)
+    /// rather than silently dropping or mis-emitting it — see `TODO(#753)` on
+    /// `build_trak`.
+    Subtitle {
+        /// Which subtitle wire format this track carries.
+        format: SubtitleFormat,
     },
     /// Opaque data track (issue #557/#576): a PMT-listed elementary stream
     /// whose `stream_type` is not a codec this crate decodes (DVB subtitles

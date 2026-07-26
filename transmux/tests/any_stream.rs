@@ -1,6 +1,7 @@
 //! Gate for issue #576: lossless carriage of **any** MPEG-2 TS elementary
 //! stream through demux → IR → mux — TS, classic TS-HLS, and the fMP4/CMAF
-//! mux's graceful skip of what it cannot carry.
+//! mux's named rejection (media plane step 2d) of what it cannot carry,
+//! rather than a silent skip.
 //!
 //! Fixture: the real DVB capture `fixtures/ts/m6-single.ts` (PMT PID
 //! `0x0064`). Its PMT lists (across the several distinct PMT section
@@ -553,10 +554,11 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
     }
 }
 
-// ── Test 4 — TS -> fMP4 succeeds, skipping Data, keeping real A/V ──────────
+// ── Test 4 — TS -> fMP4: CmafMux names+errors on a Data track; an explicit
+//    caller filter still succeeds, keeping the real A/V ──────────────────
 
 #[test]
-fn ts_to_fmp4_skips_data_tracks_and_keeps_video_audio() {
+fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     // `m6-single.ts` alone carries no video in this excerpt (see module
     // docs), so it cannot demonstrate "video survives" on its own. Combine
     // it with a second real, committed fixture (`h264_aac.ts`, a genuine
@@ -586,7 +588,12 @@ fn ts_to_fmp4_skips_data_tracks_and_keeps_video_audio() {
     let mut data_track = find_data_track(&data_media, section_es).clone();
 
     let mut tracks = av_media.tracks.clone();
-    data_track.spec.track_id = tracks.iter().map(|t| t.spec.track_id).max().unwrap_or(0) + 1;
+    let data_track_id = tracks.iter().map(|t| t.spec.track_id).max().unwrap_or(0) + 1;
+    data_track.spec.track_id = data_track_id;
+    let data_stream_type = match &data_track.spec.config {
+        CodecConfig::Data { stream_type, .. } => *stream_type,
+        other => panic!("expected CodecConfig::Data, got {other:?}"),
+    };
     tracks.push(data_track);
     let mixed = Media::new(tracks, av_media.movie_timescale);
     assert_eq!(
@@ -595,11 +602,38 @@ fn ts_to_fmp4_skips_data_tracks_and_keeps_video_audio() {
         "video + audio + one opaque Data track"
     );
 
-    // The headline assertion: this must SUCCEED (no `UnsupportedCodec`),
-    // silently omitting the Data track.
-    let out = CmafMux::default()
+    // Media plane step 2d: `CmafMux` no longer silently drops the opaque
+    // Data track — it names the offending track and errors, so a caller
+    // mixing carriable and opaque streams learns about the gap instead of
+    // getting a CMAF output missing a track it never asked to lose.
+    let err = CmafMux::default()
         .package(&mixed)
-        .expect("CmafMux must skip the opaque Data track rather than erroring");
+        .expect_err("CmafMux must reject a Media containing a CodecConfig::Data track");
+    match err {
+        transmux::Error::UnmuxableDataTrack {
+            track_id,
+            stream_type,
+        } => {
+            assert_eq!(track_id, data_track_id, "error must name the Data track");
+            assert_eq!(
+                stream_type, data_stream_type,
+                "error must carry the Data track's stream_type"
+            );
+        }
+        other => panic!("expected UnmuxableDataTrack, got {other:?}"),
+    }
+
+    // The caller opts in to dropping the opaque track explicitly, rather
+    // than it vanishing implicitly; the video/audio tracks still carry
+    // through once filtered.
+    let av_only = mixed
+        .select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))
+        .expect("select_tracks_by must keep the 2 carriable tracks");
+    assert_eq!(av_only.tracks.len(), 2, "video + audio only, once filtered");
+
+    let out = CmafMux::default()
+        .package(&av_only)
+        .expect("CmafMux must succeed once the Data track is explicitly filtered out");
 
     let reparsed: Media = Fmp4Demux::new()
         .unpackage(&out)
@@ -607,7 +641,7 @@ fn ts_to_fmp4_skips_data_tracks_and_keeps_video_audio() {
     assert_eq!(
         reparsed.tracks.len(),
         2,
-        "the Data track must be omitted; only video+audio survive, got {:?}",
+        "only video+audio survive, got {:?}",
         reparsed
             .tracks
             .iter()

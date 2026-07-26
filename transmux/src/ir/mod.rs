@@ -47,7 +47,7 @@ mod media;
 mod sample;
 mod track;
 
-pub use codec::{CodecConfig, DataCarriage};
+pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
 pub use media::{Media, PcrSample};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
 pub use track::{Track, TrackEncryption, TrackSpec};

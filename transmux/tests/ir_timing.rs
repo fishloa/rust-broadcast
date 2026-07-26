@@ -607,12 +607,13 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
 }
 
 #[test]
-fn data_track_skipped_by_cmaf_unlike_vp8() {
-    // Issue #576: a `CodecConfig::Data` track has no ISOBMFF sample entry in
-    // this crate, but — unlike the genuinely-unsupported WebM-native VP8 —
-    // the fMP4/CMAF mux SKIPS it gracefully rather than erroring, so a TS
-    // multiplex mixing carriable and opaque streams still produces a valid
-    // CMAF init segment for its carriable tracks.
+fn data_track_errors_named_by_cmaf_unlike_vp8() {
+    // Media plane step 2d: a `CodecConfig::Data` track has no ISOBMFF sample
+    // entry in this crate; `CmafMux` used to skip it gracefully (issue #576)
+    // but now names the offending track and errors instead (so it can no
+    // longer vanish from the output without the caller knowing) — the same
+    // outcome (rejection) as the genuinely-unsupported WebM-native VP8, but
+    // with a different, more specific error naming the track.
     let data_only = Media::new(
         vec![Track::new(
             TrackSpec::new(
@@ -643,14 +644,19 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
         90_000,
     );
 
-    // A Media of ONLY a Data track has nothing left to mux once it is
-    // skipped — still an error, but no longer "Data is unsupported"; the
-    // skip logic itself never returns `UnsupportedCodec { codec: "Data" }`.
+    // A Media of a Data track must now fail with the specific, named
+    // `UnmuxableDataTrack` error — not the generic `UnsupportedCodec`.
     let data_err = CmafMux::default().package(&data_only).unwrap_err();
     assert!(
-        !matches!(data_err, Error::UnsupportedCodec { codec: "Data" }),
-        "a Data-only Media must no longer fail with UnsupportedCodec(\"Data\") \
-         — Data is skipped, not rejected: {data_err:?}"
+        matches!(
+            data_err,
+            Error::UnmuxableDataTrack {
+                track_id: 1,
+                stream_type: 0x06
+            }
+        ),
+        "a Data track must fail with UnmuxableDataTrack naming track_id + \
+         stream_type, got {data_err:?}"
     );
 
     // VP8 is unrelated to this issue (a genuinely out-of-scope WebM-native
@@ -661,13 +667,13 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
         "VP8 must still fail exactly as before, got {vp8_err:?}"
     );
 
-    // Confirm the skip (not a hard error) on the real demuxed m6-single.ts
-    // Data tracks too. Since issue #641, this excerpt's 3 audio PIDs
-    // (0x82/0x83/0x84) classify as real, CMAF-carriable `CodecConfig::Eac3`
-    // tracks rather than opaque Data (see `tests/any_stream.rs`), so this is
-    // no longer an all-Data Media: CmafMux now succeeds, muxing the 3
-    // E-AC-3 tracks and silently skipping the remaining Data tracks
-    // (0x8C subtitle, 0xAA/0xAB sections).
+    // Confirm the named error (not a silent skip) on the real demuxed
+    // m6-single.ts Data tracks too. Since issue #641, this excerpt's 3 audio
+    // PIDs (0x82/0x83/0x84) classify as real, CMAF-carriable
+    // `CodecConfig::Eac3` tracks rather than opaque Data (see
+    // `tests/any_stream.rs`), so this Media mixes carriable and opaque
+    // tracks: `CmafMux` must reject it naming one of the Data tracks, and
+    // only succeed once the caller explicitly filters them out.
     let ts = read_fixture("m6-single.ts");
     let media = demux(&ts);
     assert!(
@@ -684,9 +690,18 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
             .any(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. })),
         "m6-single.ts must produce at least one E-AC-3 track (issue #641)"
     );
+    let mixed_err = CmafMux::default().package(&media).unwrap_err();
+    assert!(
+        matches!(mixed_err, Error::UnmuxableDataTrack { .. }),
+        "a mixed Media with a Data track must be rejected naming it, got {mixed_err:?}"
+    );
+
+    let carriable = media
+        .select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))
+        .expect("at least the E-AC-3 tracks remain carriable");
     let out = CmafMux::default()
-        .package(&media)
-        .expect("CmafMux must succeed: the E-AC-3 tracks are carriable, Data tracks are skipped");
+        .package(&carriable)
+        .expect("CmafMux must succeed once the Data tracks are explicitly filtered out");
     assert!(
         out.windows(4).any(|w| w == b"moov"),
         "CmafMux output must contain a moov box for the carriable E-AC-3 tracks"

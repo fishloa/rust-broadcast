@@ -7,8 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`CodecConfig::Subtitle { format: SubtitleFormat }`** (media plane step 2d):
+  `Fmp4Demux` now demuxes `stpp` (TTML/IMSC, ISO/IEC 14496-30 §7.2) and `wvtt`
+  (WebVTT, §9.2) ISOBMFF sample entries into this variant instead of silently
+  dropping the track — samples stay opaque (never cue-parsed).
+  `SubtitleFormat` (`#[non_exhaustive]`, `name()`/`Display` per the #204
+  convention) also carries `DvbBitmap`/`Teletext` tokens for the PES-carried
+  broadcast subtitle formats (still `CodecConfig::Data` on the TS demux path
+  today). There is no re-mux path yet for a `Subtitle` track — `build_trak`
+  rejects it with `Error::UnsupportedCodec` (`TODO(#753)`).
+- The `ac-4` ISOBMFF sample entry now demuxes to the existing
+  `CodecConfig::Ac4` (the mux direction already worked; only the demux arm was
+  missing) — a full mux ↔ demux round trip.
+
 ### Changed
 
+- **BREAKING — two silent drops are now typed errors** (media plane step 2d,
+  landed only after the coverage above, so `stpp`/`wvtt`/`ac-4` — which used
+  to hit these paths — no longer do):
+  - `Fmp4Demux` no longer silently skips a track whose sample entry it cannot
+    reconstruct into a `CodecConfig`; it now returns
+    `Error::UnsupportedSampleEntry { fourcc }`, naming the offending sample
+    entry.
+  - `CmafMux` no longer silently filters `CodecConfig::Data` tracks out of the
+    init/media segments; it now returns
+    `Error::UnmuxableDataTrack { track_id, stream_type }`. A caller that wants
+    the old best-effort behaviour must pre-filter explicitly, e.g.
+    `media.select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))`.
 - **BREAKING — `Sample` timing is now absolute and optional** (media plane step
   2c, `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
   `Sample` is now `{ data, dts: Option<i64>, pts: Option<i64>, duration:

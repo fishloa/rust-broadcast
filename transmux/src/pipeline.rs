@@ -68,7 +68,8 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
 pub use crate::ir::{
-    CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, TrackSpec,
+    CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, SubtitleFormat,
+    TrackSpec,
 };
 
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
@@ -626,6 +627,16 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         // fMP4 mux path is out of scope (mirrors Vp8/Vorbis above).
         CodecConfig::Data { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Data" });
+        }
+        // Subtitle track (media plane step 2d): `Fmp4Demux` now demuxes
+        // `stpp`/`wvtt` into this variant (issue: media plane step 2d), but
+        // only the format tag is carried — reconstructing the sample entry
+        // needs the TTML namespace / WebVTT header block the tag alone
+        // doesn't retain. TODO(#753): thread those through `CodecConfig` (or
+        // a side-channel) so a `Subtitle` track can round-trip through the
+        // fMP4 mux path instead of erroring here.
+        CodecConfig::Subtitle { .. } => {
+            return Err(crate::error::Error::UnsupportedCodec { codec: "Subtitle" });
         }
     };
 

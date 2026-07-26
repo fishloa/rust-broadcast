@@ -37,13 +37,14 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use crate::ac4::Ac4SpecificBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, TrackBox};
-use crate::ir::{CodecConfig, FragmentTrackData, Sample, TrackSpec};
+use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
@@ -129,18 +130,19 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let movie_timescale = moov.mvhd.timescale;
 
         // A track whose sample entry the crate cannot reconstruct into a
-        // `CodecConfig` (an unknown/unsupported codec) is skipped, never fatal:
-        // its samples are simply not collected in step 2.
+        // `CodecConfig` is a hard error (media plane step 2d), not a silent
+        // skip: codec coverage (`stpp`/`wvtt`/`ac-4`) landed first, so what
+        // remains unreconstructable is a genuine gap the caller should learn
+        // about — see `Error::UnsupportedSampleEntry`.
         let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
         for trak in &moov.tracks {
-            if let Ok(spec) = track_spec_from_trak(trak) {
-                builders.push(TrackBuilder {
-                    spec,
-                    samples: Vec::new(),
-                    start_decode_time: None,
-                    next_dts: 0,
-                });
-            }
+            let spec = track_spec_from_trak(trak)?;
+            builders.push(TrackBuilder {
+                spec,
+                samples: Vec::new(),
+                start_decode_time: None,
+                next_dts: 0,
+            });
         }
 
         // 2. Walk every top-level box; each `moof` pairs with the next `mdat`.
@@ -322,18 +324,23 @@ impl Package for CmafMux {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
         // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576) — omit them from the fMP4/CMAF mux
-        // path entirely (init segment AND media segment) rather than
-        // erroring, so a TS multiplex mixing carriable and opaque streams
-        // still produces a valid CMAF output for its carriable tracks.
-        // `select_tracks_by` itself errors if nothing carriable remains.
-        let filtered;
-        let media: &Media = if media.tracks.iter().any(|t| t.spec.config.is_opaque_data()) {
-            filtered = media.select_tracks_by(|t| !t.spec.config.is_opaque_data())?;
-            &filtered
-        } else {
-            media
-        };
+        // this crate (issue #557/#576). Media plane step 2d: this used to be
+        // silently filtered out of both the init and media segments; it now
+        // names the offending track and errors instead, so a caller mixing
+        // carriable and opaque streams must explicitly opt in to dropping
+        // the opaque one — e.g. with
+        // `media.select_tracks_by(|t| !t.spec.config.is_opaque_data())`
+        // before calling `package`.
+        if let Some(t) = media.tracks.iter().find(|t| t.spec.config.is_opaque_data()) {
+            let stream_type = match &t.spec.config {
+                CodecConfig::Data { stream_type, .. } => *stream_type,
+                _ => unreachable!("is_opaque_data() only true for CodecConfig::Data"),
+            };
+            return Err(Error::UnmuxableDataTrack {
+                track_id: t.spec.track_id,
+                stream_type,
+            });
+        }
 
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = if media.movie_timescale == 0 {
@@ -520,11 +527,19 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
 /// config record out of the sample entry: video codecs carry a typed config
 /// box on the sample entry (`avcC`/`hvcC`/`av1C`/`vpcC`); audio codecs carry
 /// the config box as an [`OpaqueBox`] body (`esds`/`dac3`/`dec3`/`dOps`/
-/// `dfLa`/`ddts`/`mhaC`) which is re-parsed here. Sample entries the crate does
-/// not mux (e.g. `stpp`/`wvtt`/`ac-4`, and `SampleEntryVariant::Unknown`)
-/// yield [`Error::UnexpectedBox`] so [`Fmp4Demux`] can skip the track
-/// (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15 §5.4/§8.4 for AVC/HEVC;
-/// ISO/IEC 23008-3 §20 for MPEG-H `mha*`).
+/// `dfLa`/`ddts`/`dac4`/`mhaC`) which is re-parsed here; `stpp`/`wvtt`
+/// subtitle entries carry no per-track config this crate needs to decode —
+/// only their format tag — and become [`CodecConfig::Subtitle`] (media plane
+/// step 2d; samples stay opaque TTML/WebVTT payloads, never parsed).
+///
+/// Only `SampleEntryVariant::Unknown` — a sample entry naming a codec this
+/// crate genuinely does not implement — yields
+/// [`Error::UnsupportedSampleEntry`], propagated by [`Fmp4Demux`] rather than
+/// silently skipping the track (media plane step 2d: codec coverage lands
+/// *before* this strictness, so `stpp`/`wvtt`/`ac-4` — which used to hit this
+/// path — no longer do) (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15
+/// §5.4/§8.4 for AVC/HEVC; ISO/IEC 23008-3 §20 for MPEG-H `mha*`; ISO/IEC
+/// 14496-30 §7.2/§9.2 for `stpp`/`wvtt`; ETSI TS 103 190-2 Annex E for `ac-4`).
 fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
     match entry {
         SampleEntryVariant::Avc1(avc) => Ok(CodecConfig::Avc {
@@ -663,12 +678,33 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 sample_size: mha.samplesize,
             })
         }
-        // Sample entries transmux does not (re)mux to an elementary track.
-        SampleEntryVariant::Ac4(_)
-        | SampleEntryVariant::Stpp(_)
-        | SampleEntryVariant::Wvtt(_)
-        | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
-            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/vvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*/mha*)",
+        SampleEntryVariant::Ac4(ac4) => {
+            let config = Ac4SpecificBox::parse(config_box_body(
+                &ac4.config_boxes,
+                &crate::ac4::DAC4_FOURCC,
+            )?)?;
+            Ok(CodecConfig::Ac4 {
+                config,
+                channel_count: ac4.channelcount,
+                sample_rate: ac4.samplerate >> 16,
+                sample_size: ac4.samplesize,
+            })
+        }
+        // Subtitle sample entries (media plane step 2d): only the format tag
+        // is reconstructed — the TTML namespace / WebVTT header block lives
+        // in the sample entry but this crate has no field to carry it back
+        // out to yet (see `CodecConfig::Subtitle`'s doc comment). Samples
+        // stay opaque (TTML XML / WebVTT `vttc`/`vtte` boxes), never parsed.
+        SampleEntryVariant::Stpp(_) => Ok(CodecConfig::Subtitle {
+            format: SubtitleFormat::Ttml,
+        }),
+        SampleEntryVariant::Wvtt(_) => Ok(CodecConfig::Subtitle {
+            format: SubtitleFormat::WebVtt,
+        }),
+        // Genuinely unimplemented sample entry: name it so the caller learns
+        // which track was rejected, rather than a generic message.
+        SampleEntryVariant::Unknown(entry) => Err(Error::UnsupportedSampleEntry {
+            fourcc: String::from_utf8_lossy(&entry.box_type).into_owned(),
         }),
     }
 }
@@ -719,4 +755,46 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [
         .ok_or(Error::UnexpectedBox {
             expected: "config box in audio sample entry",
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subtitle_entries::WvttSampleEntry;
+
+    /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
+    /// `stpp`/TTML — see `tests/fixtures/mp4/cmaf/PROVENANCE.md`), so WebVTT
+    /// demux coverage is exercised directly here: synthesise a real `wvtt`
+    /// sample entry with the crate's own builder (already covered by
+    /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it
+    /// through the same reconstruction path the `stpp` fixture exercises.
+    #[test]
+    fn wvtt_sample_entry_demuxes_to_subtitle_webvtt() {
+        let wvtt = WvttSampleEntry::new("WEBVTT\n");
+        let entry = SampleEntryVariant::Wvtt(alloc::boxed::Box::new(wvtt));
+        let config = codec_config_from_entry(&entry).expect("wvtt must now demux");
+        assert!(
+            matches!(
+                config,
+                CodecConfig::Subtitle {
+                    format: SubtitleFormat::WebVtt
+                }
+            ),
+            "wvtt must map to CodecConfig::Subtitle{{format: SubtitleFormat::WebVtt}}, got {config:?}"
+        );
+    }
+
+    /// A genuinely unrecognised sample entry must be named in the error
+    /// (media plane step 2d Phase 2), not just a generic "unsupported"
+    /// message.
+    #[test]
+    fn unknown_sample_entry_errors_naming_the_fourcc() {
+        let unknown = OpaqueBox::new(*b"xyz9", vec![1, 2, 3]);
+        let entry = SampleEntryVariant::Unknown(unknown);
+        let err = codec_config_from_entry(&entry).unwrap_err();
+        match err {
+            Error::UnsupportedSampleEntry { fourcc } => assert_eq!(fourcc, "xyz9"),
+            other => panic!("expected UnsupportedSampleEntry, got {other:?}"),
+        }
+    }
 }

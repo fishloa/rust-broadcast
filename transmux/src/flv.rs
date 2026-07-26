@@ -917,6 +917,7 @@ fn codec_name(c: &CodecConfig) -> &'static str {
         CodecConfig::Vp8 { .. } => "VP8",
         CodecConfig::Vorbis { .. } => "Vorbis",
         CodecConfig::Data { .. } => "Data",
+        CodecConfig::Subtitle { .. } => "Subtitle",
     }
 }
 
