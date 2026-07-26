@@ -1552,7 +1552,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "broadcast-common",
  "clap",
