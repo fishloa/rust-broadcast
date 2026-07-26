@@ -190,6 +190,15 @@ pub enum Error {
     /// state, so the caller may simply continue feeding new input (it will
     /// resync at the next natural boundary) or treat this as a recoverable
     /// per-connection error, at its discretion.
+    ///
+    /// Also returned by
+    /// [`ProgressiveDemux`](crate::progressive_demux::ProgressiveDemux)'s
+    /// [`Stage`](broadcast_common::Stage) adapter (issue B7, media plane step
+    /// 2 fix wave 3) when `feed` would grow its whole-file buffer past the
+    /// `max_bytes` bound supplied at construction — there this buffer has no
+    /// partial-unit resync point to drop and continue from, so the caller
+    /// should treat it as fatal for that `Stage` instance rather than keep
+    /// feeding.
     #[error("{what} buffer exceeded its {cap}-byte cap and was dropped")]
     BufferCapExceeded {
         /// Human-readable name of the buffer that overflowed.

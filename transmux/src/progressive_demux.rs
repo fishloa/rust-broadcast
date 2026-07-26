@@ -66,25 +66,39 @@ use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
 /// plane step 2e): this demuxer's parse is inherently whole-file (it walks
 /// `moov` over the complete input to resolve `stbl`-driven, file-absolute
 /// sample offsets), so unlike [`crate::ts_demux::StreamingTsDemux`] there is
-/// no incremental parse to drive — `Stage::feed` just accumulates bytes, and
-/// `Stage::finish` runs the same `demux_progressive` the inherent
-/// [`Unpackage::unpackage`] uses, once, over the accumulated buffer.
-#[derive(Debug, Default, Clone)]
+/// no incremental parse to drive — `Stage::feed` accumulates bytes up to
+/// `max_bytes`, and `Stage::finish` runs the same `demux_progressive` the
+/// inherent [`Unpackage::unpackage`] uses, once, over the accumulated buffer.
+#[derive(Debug, Clone)]
 pub struct ProgressiveDemux<'a> {
     _marker: PhantomData<&'a [u8]>,
     buf: Vec<u8>,
     media: Option<Media>,
     finished: bool,
+    /// Hard cap on `buf` (issue B7, media plane step 2 fix wave 3): under the
+    /// old [`Unpackage`] API the *caller* owned the input buffer, but under
+    /// [`Stage`] this type owns it, so the bound is this constructor's
+    /// responsibility — there is no `Default`/no-argument constructor that
+    /// lets it be omitted (this crate's "no unbounded buffer anywhere" rule).
+    /// Unused by the inherent [`Unpackage::unpackage`] path, which borrows
+    /// the caller's slice directly and never touches `buf`.
+    max_bytes: usize,
 }
 
 impl ProgressiveDemux<'_> {
-    /// Create a new demuxer.
-    pub fn new() -> Self {
+    /// Create a new demuxer whose [`Stage::feed`] buffer is capped at
+    /// `max_bytes`: a [`Stage`] driver shovelling network bytes into this
+    /// type (Step 3's whole premise) must not be able to grow `buf` without
+    /// bound while waiting for the rest of the file to arrive. Exceeding the
+    /// cap returns [`Error::BufferCapExceeded`] from [`Stage::feed`] rather
+    /// than silently accumulating past it.
+    pub fn new(max_bytes: usize) -> Self {
         Self {
             _marker: PhantomData,
             buf: Vec::new(),
             media: None,
             finished: false,
+            max_bytes,
         }
     }
 }
@@ -161,7 +175,21 @@ impl Stage for ProgressiveDemux<'_> {
     /// whole file has arrived (see the struct docs), so `feed` never unlocks
     /// output; drain the parsed [`Media`] via [`poll`](Self::poll) after
     /// [`finish`](Self::finish).
+    ///
+    /// Returns [`Error::BufferCapExceeded`] (issue B7) rather than growing
+    /// `buf` past `max_bytes` — a legitimate progressive MP4 the caller
+    /// expects to accept must fit under the bound supplied to
+    /// [`new`](Self::new); a larger one is rejected outright (this demuxer
+    /// has no partial-unit resync point to drop and continue from, unlike
+    /// the PES/backlog caps elsewhere in this crate).
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
+        let new_len = self.buf.len().saturating_add(input.len());
+        if new_len > self.max_bytes {
+            return Err(Error::BufferCapExceeded {
+                what: "ProgressiveDemux Stage buffer",
+                cap: self.max_bytes,
+            });
+        }
         self.buf.extend_from_slice(input);
         Ok(())
     }
@@ -188,13 +216,19 @@ impl Stage for ProgressiveDemux<'_> {
 
     fn on_deadline(&mut self, _now: Timestamp) {}
 
-    /// Whole-file parse: there is no meaningful per-chunk preference or
-    /// bounded buffer to report — this demuxer already requires the entire
-    /// input before it can produce anything, so `feed` accumulates without a
-    /// cap (same as [`Unpackage::unpackage`], which also requires the whole
-    /// file up front).
+    /// Reports the remaining headroom under `max_bytes` (issue B7): `want_bytes`
+    /// is however much of the cap is not yet used, and `saturated` becomes
+    /// `true` the moment `buf` reaches `max_bytes` — at which point any
+    /// further [`feed`](Self::feed) call returns [`Error::BufferCapExceeded`]
+    /// rather than growing the buffer, so a cooperative driver should stop
+    /// feeding once this flips.
     fn demand(&self) -> Demand {
-        Demand::default()
+        let remaining = self.max_bytes.saturating_sub(self.buf.len());
+        if remaining == 0 {
+            Demand::saturated()
+        } else {
+            Demand::new(remaining)
+        }
     }
 }
 

@@ -55,7 +55,7 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
 #[test]
 fn demux_h264_aac_prog_track_counts_and_codec() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new().unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
 
     assert_eq!(media.tracks.len(), 2, "exactly one video + one audio track");
 
@@ -97,7 +97,7 @@ fn demux_h264_aac_prog_track_counts_and_codec() {
 #[test]
 fn demux_h264_aac_prog_video_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new().unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
     let video = media
         .tracks
         .iter()
@@ -146,7 +146,7 @@ fn demux_h264_aac_prog_video_sample_timing_and_sync() {
 #[test]
 fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new().unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
     let audio = media
         .tracks
         .iter()
@@ -193,7 +193,7 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
 #[test]
 fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
     let data = prog_fixture();
-    let original = ProgressiveDemux::new().unpackage(&data).unwrap();
+    let original = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
 
     let cmaf = CmafMux::new(1)
         .package(&original)

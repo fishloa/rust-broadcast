@@ -162,12 +162,12 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // Whole-file parse (see the type's own docs): `Out = Media`, one value
     // popped from `poll()` once, after `finish()` — proving `drive()` handles
     // an `Out` type that isn't `DemuxEvent` at all just as well.
-    let oracle_prog: Media = ProgressiveDemux::new()
+    let oracle_prog: Media = ProgressiveDemux::new(1024 * 1024)
         .unpackage(PROGRESSIVE_MP4)
         .expect("batch progressive demux");
 
     let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.chunks(4096).collect();
-    let mut prog_stage = ProgressiveDemux::new();
+    let mut prog_stage = ProgressiveDemux::new(1024 * 1024);
     let mut prog_media = drive(&mut prog_stage, prog_chunks);
     assert_eq!(
         prog_media.len(),
@@ -227,6 +227,45 @@ fn demand_saturated_flips_true_at_the_unattributed_bytes_bound() {
         saw_saturated,
         "demand().saturated must flip true once the unattributed replay buffer hits its cap"
     );
+}
+
+/// [`ProgressiveDemux::feed`]'s [`Stage`] adapter is a documented unbounded
+/// buffer before its B7 fix (media plane step 2 fix wave 3): feeding more
+/// than the `max_bytes` bound supplied at construction, in small chunks, must
+/// be rejected with a typed [`Error::BufferCapExceeded`] rather than growing
+/// `buf` past the cap — and `demand().saturated` must flip `true` before that
+/// point, so a cooperative driver never has to hit the error at all.
+#[test]
+fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
+    const MAX_BYTES: usize = 4096;
+    const CHUNK: usize = 64;
+
+    let mut demux = ProgressiveDemux::new(MAX_BYTES);
+    let chunk = vec![0xABu8; CHUNK];
+    let mut saw_saturated = false;
+    let mut err = None;
+    for _ in 0..(MAX_BYTES / CHUNK + 4) {
+        if Stage::demand(&demux).saturated {
+            saw_saturated = true;
+        }
+        match Stage::feed(&mut demux, &chunk, Timestamp::ZERO) {
+            Ok(()) => {}
+            Err(e) => {
+                err = Some(e);
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_saturated,
+        "demand().saturated must flip true before the cap is actually exceeded"
+    );
+    match err.expect("feed must eventually reject input past max_bytes") {
+        transmux::Error::BufferCapExceeded { cap, .. } => {
+            assert_eq!(cap, MAX_BYTES, "the error must name the configured bound");
+        }
+        other => panic!("expected Error::BufferCapExceeded, got {other:?}"),
+    }
 }
 
 // ── Segmenter-family Stage fixtures ─────────────────────────────────────────

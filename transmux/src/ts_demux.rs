@@ -193,6 +193,25 @@ const TS_MAX_PAYLOAD_BYTES: usize = TS_PACKET_SIZE - 4;
 /// cap — [`mpeg_ts::ts::SectionReassembler`] is already inherently bounded by
 /// `section_length`'s 12-bit field (`MAX_SECTION_SIZE`, 4098 bytes).
 const MAX_PES_BUFFER_BYTES: usize = 4 * 1024 * 1024;
+/// Hard cap on one PID's accumulated [`TrackState::Probing`]/
+/// [`TrackState::Parked`] backlog (issue B8, media plane step 2 fix wave 3).
+/// A PMT-listed codec PID whose parameter sets never arrive (a broken
+/// encoder, not malice — e.g. an H.264 ES that never carries SPS/PPS) leaves
+/// that PID `Probing` forever, growing `backlog` without bound; worse,
+/// [`StreamingTsDemux::try_promote_ready`] `break`s at the first `Probing`
+/// PID it finds, so a later-ranked PID that *has* resolved (`Parked`)
+/// accumulates its own backlog as collateral for as long as the earlier PID
+/// never resolves. Tracked incrementally in
+/// [`StreamState::backlog_bytes`] (never re-walked per push, matching
+/// [`MAX_UNATTRIBUTED_BYTES`]'s own running-total convention). On overflow —
+/// whether `Probing` or `Parked` — [`advance_track`] abandons the PID
+/// ([`TrackState::Abandoned`]: permanently resolved without ever promoting to
+/// `Live`, backlog dropped to free the memory), the same conclusion
+/// [`StreamingTsDemux::finish`] already reaches for a probe that never
+/// resolves, just reached early via the byte cap instead of end-of-input; a
+/// [`DemuxEvent::Discontinuity`] is raised so the loss is visible, and
+/// `try_promote_ready` continues past it, unblocking any later-ranked PID.
+const MAX_PROBE_BACKLOG_BYTES: usize = 4 * 1024 * 1024;
 
 // ── stream_type → codec (ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154) ──────
 
@@ -947,6 +966,13 @@ enum TrackState {
     /// Config resolved and this PID's turn has come: `TrackAdded` has fired
     /// and samples stream directly.
     Live(LiveTrack),
+    /// [`MAX_PROBE_BACKLOG_BYTES`] overflowed while `Probing` or `Parked`
+    /// (issue B8): permanently resolved without ever promoting to `Live` —
+    /// every further access unit for this PID is silently discarded (no
+    /// further growth). Matches [`StreamingTsDemux::finish`]'s own
+    /// "never recoverable, skip" conclusion for a probe that never resolves,
+    /// just reached early via the byte cap instead of end-of-input.
+    Abandoned,
 }
 
 /// Incremental 33-bit PTS/DTS wrap-unroll, one access unit at a time —
@@ -1041,6 +1067,12 @@ struct StreamState {
     first_dts_uw: Option<i128>,
     /// Always `Some` except transiently inside [`advance_track`].
     track: Option<TrackState>,
+    /// Running total of bytes held in `track`'s `Probing`/`Parked` backlog —
+    /// enforces [`MAX_PROBE_BACKLOG_BYTES`] (issue B8). Kept in sync on every
+    /// [`advance_track`] push (never re-walked from the `Vec`), and reset to
+    /// `0` when the backlog is abandoned (see [`abandon_backlog`]); `0` and
+    /// unused once `track` is `Live` or `Abandoned`.
+    backlog_bytes: usize,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -1804,6 +1836,27 @@ fn finalize_probe(
     }
 }
 
+/// [`MAX_PROBE_BACKLOG_BYTES`] tripped for `pid` (issue B8): free the
+/// backlog, signal the loss, and permanently abandon this PID's probe —
+/// [`StreamingTsDemux::try_promote_ready`] treats [`TrackState::Abandoned`]
+/// as resolved-without-promotion on its next pass, exactly like
+/// [`StreamingTsDemux::finish`]'s own end-of-input conclusion.
+fn abandon_backlog(
+    stream: &mut StreamState,
+    pid: u16,
+    events: &mut VecDeque<DemuxEvent>,
+) -> TrackState {
+    stream.backlog_bytes = 0;
+    events.push_back(DemuxEvent::Discontinuity {
+        track: None,
+        provenance: EventProvenance {
+            pid: Some(pid),
+            packet_index: None,
+        },
+    });
+    TrackState::Abandoned
+}
+
 /// Advance a [`StreamState`]'s track lifecycle by one access unit: apply it
 /// directly if already live, append it to the backlog if parked, or feed the
 /// probe (transitioning `Probing` → `Parked` the moment config becomes
@@ -1811,8 +1864,14 @@ fn finalize_probe(
 /// [`DemuxEvent::TrackAdded`] itself — that is
 /// [`StreamingTsDemux::try_promote_ready`]'s job, since a `Parked` track must
 /// still wait for its PMT-declaration-order turn.
+///
+/// Every push to a `Probing`/`Parked` backlog counts against
+/// [`MAX_PROBE_BACKLOG_BYTES`] (issue B8); an access unit for an already
+/// [`TrackState::Abandoned`] PID is silently discarded (no further growth,
+/// no re-abandonment).
 fn advance_track(
     stream: &mut StreamState,
+    pid: u16,
     data: Vec<u8>,
     pts_uw: i128,
     dts_uw: i128,
@@ -1827,28 +1886,35 @@ fn advance_track(
             push_live_au(&mut live, &data, pts_uw, dts_uw, events);
             TrackState::Live(live)
         }
+        TrackState::Abandoned => TrackState::Abandoned,
         TrackState::Parked {
             config,
             timescale,
             kind,
             mut backlog,
         } => {
+            stream.backlog_bytes = stream.backlog_bytes.saturating_add(data.len());
             backlog.push(BufferedAu {
                 data,
                 pts_uw,
                 dts_uw,
             });
-            TrackState::Parked {
-                config,
-                timescale,
-                kind,
-                backlog,
+            if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES {
+                abandon_backlog(stream, pid, events)
+            } else {
+                TrackState::Parked {
+                    config,
+                    timescale,
+                    kind,
+                    backlog,
+                }
             }
         }
         TrackState::Probing {
             mut probe,
             mut backlog,
         } => {
+            stream.backlog_bytes = stream.backlog_bytes.saturating_add(data.len());
             backlog.push(BufferedAu {
                 data,
                 pts_uw,
@@ -1861,6 +1927,9 @@ fn advance_track(
                     kind,
                     backlog,
                 },
+                None if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES => {
+                    abandon_backlog(stream, pid, events)
+                }
                 None => TrackState::Probing { probe, backlog },
             }
         }
@@ -1921,7 +1990,12 @@ fn feed_pes_bounded(
 /// Resolve a completed PES packet's `(pts, dts)` (mirrors the old
 /// `push_access_unit` fallback rule) and drive it through [`advance_track`]
 /// (parked/probing) or [`push_live_au`] (already live).
-fn on_completed_pes(stream: &mut StreamState, pes_bytes: &[u8], events: &mut VecDeque<DemuxEvent>) {
+fn on_completed_pes(
+    stream: &mut StreamState,
+    pid: u16,
+    pes_bytes: &[u8],
+    events: &mut VecDeque<DemuxEvent>,
+) {
     let Ok(pes) = PesPacket::parse(pes_bytes) else {
         return;
     };
@@ -1951,7 +2025,7 @@ fn on_completed_pes(stream: &mut StreamState, pes_bytes: &[u8], events: &mut Vec
     if stream.first_dts_uw.is_none() {
         stream.first_dts_uw = Some(dts_uw);
     }
-    advance_track(stream, pes.payload.to_vec(), pts_uw, dts_uw, events);
+    advance_track(stream, pid, pes.payload.to_vec(), pts_uw, dts_uw, events);
 }
 
 /// Drive one reassembled PSI/private section through [`advance_track`]
@@ -1959,13 +2033,14 @@ fn on_completed_pes(stream: &mut StreamState, pes_bytes: &[u8], events: &mut Vec
 /// dummy zeros (never read by [`LiveKind::Section`]'s immediate-emit push).
 fn on_completed_section(
     stream: &mut StreamState,
+    pid: u16,
     section: &[u8],
     events: &mut VecDeque<DemuxEvent>,
 ) {
     if section.is_empty() {
         return;
     }
-    advance_track(stream, section.to_vec(), 0, 0, events);
+    advance_track(stream, pid, section.to_vec(), 0, 0, events);
 }
 
 /// [`DemuxEvent`] moved to `crate::ir::event` (media plane step 2e: it is
@@ -2191,6 +2266,7 @@ impl StreamingTsDemux {
                             probe: initial_probe(codec),
                             backlog: Vec::new(),
                         }),
+                        backlog_bytes: 0,
                     };
                     // Replay any payloads that arrived on this PID before its
                     // PMT registration completed (see `unattributed`'s doc).
@@ -2217,10 +2293,10 @@ impl StreamingTsDemux {
                                 None
                             };
                             if let Some(completed) = completed_pes {
-                                on_completed_pes(&mut stream, &completed, &mut self.events);
+                                on_completed_pes(&mut stream, es_pid, &completed, &mut self.events);
                             }
                             for s in sections {
-                                on_completed_section(&mut stream, &s, &mut self.events);
+                                on_completed_section(&mut stream, es_pid, &s, &mut self.events);
                             }
                         }
                     }
@@ -2245,10 +2321,10 @@ impl StreamingTsDemux {
                 None
             };
             if let Some(completed) = completed_pes {
-                on_completed_pes(stream, &completed, &mut self.events);
+                on_completed_pes(stream, pid, &completed, &mut self.events);
             }
             for s in sections {
-                on_completed_section(stream, &s, &mut self.events);
+                on_completed_section(stream, pid, &s, &mut self.events);
             }
         } else if pid != NULL_PACKET_PID {
             self.unattributed
@@ -2333,6 +2409,7 @@ impl StreamingTsDemux {
                         push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);
                     }
                     stream.track = Some(TrackState::Live(live));
+                    stream.backlog_bytes = 0;
                     self.resolved.insert(next_pid);
                     // loop again: the next-ranked PID may also already be parked
                 }
@@ -2344,6 +2421,17 @@ impl StreamingTsDemux {
                     // Already resolved; `resolved` should already contain it,
                     // but stay consistent defensively and keep scanning.
                     stream.track = Some(other);
+                    self.resolved.insert(next_pid);
+                }
+                TrackState::Abandoned => {
+                    // [`MAX_PROBE_BACKLOG_BYTES`] overflowed for this PID
+                    // (issue B8): permanently resolved without ever
+                    // promoting — the same conclusion `finish()` reaches for
+                    // a probe that never resolves at end-of-input, just
+                    // reached early. Marking it resolved here is what lets a
+                    // later-ranked `Parked` PID (blocked behind this one)
+                    // proceed on the next loop iteration.
+                    stream.track = Some(TrackState::Abandoned);
                     self.resolved.insert(next_pid);
                 }
             }
@@ -2381,7 +2469,7 @@ impl StreamingTsDemux {
     /// conclusion, which likewise needed the whole file), and emits the
     /// final one-behind pending sample for every live video/data track.
     pub fn finish(&mut self) {
-        for stream in self.streams.values_mut() {
+        for (&pid, stream) in self.streams.iter_mut() {
             // Only a PES assembler has a trailing partial payload to flush; a
             // trailing partial (incomplete) section is genuinely undecodable
             // and is simply dropped by `SectionReassembler` itself.
@@ -2390,7 +2478,7 @@ impl StreamingTsDemux {
                 Carrier::Section(_) => None,
             };
             if let Some(completed) = completed {
-                on_completed_pes(stream, &completed, &mut self.events);
+                on_completed_pes(stream, pid, &completed, &mut self.events);
             }
         }
         self.try_promote_ready();
@@ -2784,6 +2872,131 @@ mod tests {
             demux.streams.get(&ES_PID).unwrap().pes_bytes,
             PACKET_PAYLOAD_LEN,
             "a fresh payload_unit_start must be accepted and start a new count"
+        );
+    }
+
+    /// The B8 attack (media plane step 2 fix wave 3): a PMT declares two
+    /// PIDs — PID A (rank 0, H.264) whose parameter sets never arrive (a
+    /// broken encoder, not malice: every sample here is deliberately
+    /// non-sync so `TsMux` never injects SPS/PPS in-band), and PID B (rank
+    /// 1, opaque data) whose config resolves on its very first access unit.
+    /// PID A's `ConfigProbe` never resolves, so it stays `Probing` forever;
+    /// before this fix its `backlog` grew without bound, and — because
+    /// `try_promote_ready` `break`s at the first still-`Probing` PID — PID
+    /// B's `Parked` backlog grew as collateral for exactly as long. Both
+    /// PIDs' own `backlog_bytes` must stay capped at
+    /// `MAX_PROBE_BACKLOG_BYTES` regardless of which path (its own overflow,
+    /// or being unblocked once the other is abandoned) it actually takes.
+    #[test]
+    fn probe_backlog_is_bounded_for_both_the_never_resolving_pid_and_its_collateral_pid() {
+        use crate::TsMux;
+        use crate::media::{Media, Track};
+        use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        // Comfortably more than MAX_PROBE_BACKLOG_BYTES per track (~4.9 MiB).
+        const SAMPLE_BYTES: usize = 4096;
+        const SAMPLE_COUNT: u32 = 1200;
+        let frame_dur = VIDEO_TIMESCALE / 30;
+
+        // PID A (rank 0, ES_PID_BASE = 0x0100 in `ts_mux.rs`): H.264, never
+        // carries SPS/PPS — every sample is deliberately non-sync, so
+        // `build_annexb_au` never injects the parameter sets it otherwise
+        // would on a keyframe. This probe can never resolve.
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let video_spec = TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        let video_samples: Vec<Sample> = (0..SAMPLE_COUNT)
+            .map(|i| {
+                let mut nal = alloc::vec![0x41u8]; // nal_unit_type = 1 (non-IDR slice)
+                nal.resize(SAMPLE_BYTES, 0xAA);
+                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                data.extend_from_slice(&nal);
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
+            })
+            .collect();
+        let video_track = Track::new(video_spec, video_samples);
+
+        // PID B (rank 1): opaque data — `ConfigProbe::Data` resolves on its
+        // very first access unit (already fully known from the PMT alone),
+        // so it goes straight to `Parked` and stays there for as long as PID
+        // A blocks it.
+        let data_spec = TrackSpec::new(
+            2,
+            VIDEO_TIMESCALE,
+            CodecConfig::Data {
+                stream_type: 0x7F,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
+        );
+        let data_samples: Vec<Sample> = (0..SAMPLE_COUNT)
+            .map(|i| {
+                let payload = alloc::vec![0xBBu8; SAMPLE_BYTES];
+                let dts = i64::from(i) * i64::from(frame_dur);
+                Sample::new(payload, Some(dts), Some(dts), Some(frame_dur), true)
+            })
+            .collect();
+        let data_track = Track::new(data_spec, data_samples);
+
+        let media = Media::new(vec![video_track, data_track], VIDEO_TIMESCALE);
+        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts_bytes);
+        let mut discontinuity_pids: Vec<u16> = Vec::new();
+        while let Some(ev) = demux.poll_event() {
+            if let DemuxEvent::Discontinuity { provenance, .. } = ev {
+                if let Some(pid) = provenance.pid {
+                    discontinuity_pids.push(pid);
+                }
+            }
+        }
+        assert!(
+            !discontinuity_pids.is_empty(),
+            "expected at least one Discontinuity from an abandoned probe backlog"
+        );
+
+        // The invariant this fix establishes: neither PID's own tracked
+        // backlog byte total ever exceeded the cap.
+        for (&pid, stream) in demux.streams.iter() {
+            assert!(
+                stream.backlog_bytes <= MAX_PROBE_BACKLOG_BYTES,
+                "PID {pid:#06X} backlog_bytes {} exceeded cap {MAX_PROBE_BACKLOG_BYTES}",
+                stream.backlog_bytes
+            );
+        }
+
+        // PID A specifically must never have resolved — its parameter sets
+        // never arrived, so it must be Abandoned, not Live.
+        const PID_A: u16 = 0x0100; // ES_PID_BASE in `ts_mux.rs`
+        let abandoned = matches!(
+            demux.streams.get(&PID_A).and_then(|s| s.track.as_ref()),
+            Some(TrackState::Abandoned)
+        );
+        assert!(abandoned, "PID A must be Abandoned, never Live");
+
+        // PID B (rank 1, ES_PID_BASE + 1) must have made progress — either
+        // promoted to Live once PID A was abandoned, or itself abandoned —
+        // never left permanently wedged in Probing/Parked with an
+        // ever-growing backlog.
+        const PID_B: u16 = 0x0101;
+        let pid_b_resolved = matches!(
+            demux.streams.get(&PID_B).and_then(|s| s.track.as_ref()),
+            Some(TrackState::Live(_)) | Some(TrackState::Abandoned)
+        );
+        assert!(
+            pid_b_resolved,
+            "PID B must reach a final disposition (Live or Abandoned), not stay wedged"
         );
     }
 

@@ -52,10 +52,19 @@
 //! *bounded* memory cannot hold an unbounded pre-config backlog waiting for
 //! a config that might arrive arbitrarily late (or never). A media tag for a
 //! track whose sequence header has not yet been seen is therefore dropped,
-//! not buffered; this never affects a conformant encoder's real output (the
-//! committed fixture `fixtures/flv/av.flv` included), and is the same
-//! trade-off [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux)
-//! documents for a PMT-listed PID whose config never becomes recoverable.
+//! not buffered — the simplest bounded response, since this demuxer has no
+//! byte-capped backlog to fall back on the way
+//! [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) does. This never
+//! affects a conformant encoder's real output (the committed fixture
+//! `fixtures/flv/av.flv` included).
+//!
+//! [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) faces the same
+//! never-resolves risk for a PMT-listed PID, but chooses differently: it
+//! *does* buffer, up to `MAX_PROBE_BACKLOG_BYTES`, and only then abandons the
+//! PID (dropping its backlog and raising a `Discontinuity`) — not dropped on
+//! arrival like this module's media tag, because a real broadcast capture's
+//! parameter sets are expected within the first access unit or two, so the
+//! backlog is small in the common case.
 //!
 //! # No `TracksResolved`
 //!

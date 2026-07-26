@@ -124,7 +124,7 @@ fn fmp4_demux_timing_invariant_holds() {
 #[test]
 fn progressive_demux_timing_invariant_holds() {
     let file = workspace_fixture("transmux/h264_aac_prog.mp4");
-    let media = ProgressiveDemux::new()
+    let media = ProgressiveDemux::new(1024 * 1024)
         .unpackage(&file)
         .expect("progressive MP4 demux");
     let checked = assert_timing_invariant(&media, "ProgressiveDemux");
