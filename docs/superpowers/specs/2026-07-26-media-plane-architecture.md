@@ -70,11 +70,34 @@ layer only. That is cheaper than pretending the topology is a line.
 /// including bytes the demuxer will reject (bad CRC, TEI set, unaligned).
 pub enum TapPoint { Wire, PostTransform }
 pub struct ByteTap { /* bounded ring, own Lagged */ }
-impl ByteTap { pub fn poll(&mut self) -> Option<(Bytes, Instant)>; }
+impl ByteTap { pub fn poll(&mut self) -> Option<(Bytes, Timestamp)>; }
 ```
 `dvb-conformance`, `media-doctor watch`, and `ts-fix` verification are `ByteTap` consumers, not
 `PushEgress`. This is what makes TR 101 290 (all 19 indicators) and #737 (T-STD, which needs
 arrival timing) possible at all.
+
+(`Timestamp`, not `std::time::Instant` — the plane is `no_std`-capable; see §4's
+`broadcast_common::Timestamp(u64 nanos)`.)
+
+**Verified 2026-07-26 — the existing consumer already fits this shape with no adaptation.**
+`dvb_conformance::ConformanceMonitor::feed(&mut self, ts_packet: &[u8], t: Duration) -> &[ConformanceEvent]`
+(`dvb-conformance/src/lib.rs:649`) is *already* a per-packet streaming API returning the events
+raised by that packet, and `media-doctor`'s `watch.rs:217` already drives it live off a UDP
+ingest. It emits `Continuity_count_error` (TR 101 290 indicator 1.4), `SyncByteError`, and
+`TransportError` (from `header.tei`). `dvb-conformance` is `no_std`-capable
+(`#![cfg_attr(not(feature = "std"), no_std)]`), so the tap can carry it. `ByteTap`'s
+`(Bytes, Timestamp)` maps onto `feed`'s two arguments directly — `Timestamp` → `Duration`.
+
+**Consequence: loss/degradation detection is NOT a `DemuxEvent` concern** (issue #778 rescoped
+accordingly). `transmux::StreamingTsDemux` reads only `pid` and `pusi` of the seven `TsHeader`
+fields and discards `tei`/`continuity_counter`/`scrambling` — that is *correct layering*, not a
+defect: a container demuxer's job is framing, and TR 101 290 conformance is a tap's job on the
+same bytes. Adding an `InputDegraded` variant to `DemuxEvent` would have duplicated subtle
+already-shipped logic (legal CC duplicates, `discontinuity_indicator` exclusion, non-payload
+packets not advancing CC — `media-doctor/src/diagnostics/cc_anomaly.rs:83-95`) *and* coupled
+independently-versioned `transmux` to the lockstep `dvb-conformance` (8.6.0). The tap avoids
+both. `DemuxEvent` keeps only what the demuxer itself observes as a framing fact
+(sender-signalled `discontinuity_indicator`, PCR, track lifecycle).
 
 ### 1.2 Trunk, cursors, and the event log
 
