@@ -237,19 +237,22 @@ impl CencDecryptor {
     /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt` — the CBC chain
     /// instead *resets* to the sample's seed IV at the start of every
     /// subsample's protected range (see `cenc_crypto`'s module docs).
+    ///
+    /// Returns whether [`cenc_crypto::rewrite_in_place`]'s zero-copy fast path
+    /// was taken (media plane step 2b, G12) — see that function's docs.
     fn decrypt_sample(
         scheme: CencScheme,
         tenc: &TrackEncryptionBox,
         entry: &SampleEncryptionEntry,
         key: &[u8; KEY_LEN],
-        data: &mut [u8],
-    ) -> Result<()> {
-        match scheme {
+        data: &mut bytes::Bytes,
+    ) -> Result<bool> {
+        cenc_crypto::rewrite_in_place(data, |buf| match scheme {
             CencScheme::Cenc => {
-                cenc_crypto::apply_ctr(&entry.initialization_vector, key, &entry.subsamples, data)
+                cenc_crypto::apply_ctr(&entry.initialization_vector, key, &entry.subsamples, buf)
             }
-            CencScheme::Cbcs => cenc_crypto::cbcs_sample(tenc, entry, key, data, CbcsOp::Decrypt),
-        }
+            CencScheme::Cbcs => cenc_crypto::cbcs_sample(tenc, entry, key, buf, CbcsOp::Decrypt),
+        })
     }
 }
 
@@ -569,7 +572,7 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
                     });
                 }
                 samples.push(Sample {
-                    data: file[offset..end].to_vec(),
+                    data: file[offset..end].to_vec().into(),
                     duration: 0,
                     is_sync: true,
                     composition_offset: 0,
@@ -693,7 +696,7 @@ fn absorb_protected_fragment(
                     });
                 }
                 out.push(Sample {
-                    data: file[start..end].to_vec(),
+                    data: file[start..end].to_vec().into(),
                     duration,
                     is_sync,
                     composition_offset,

@@ -415,7 +415,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             video_samples.push(Sample {
                                 // FLV NALU data is already 4-byte length-prefixed,
                                 // matching the IR (crate::annexb) — pass through.
-                                data: data.to_vec(),
+                                data: data.to_vec().into(),
                                 duration,
                                 is_sync: frame_type == FRAME_TYPE_KEYFRAME,
                                 composition_offset: composition_time,
@@ -456,7 +456,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let dts = tag.timestamp;
                             let duration = delta_duration(&mut last_audio_dts, dts);
                             audio_samples.push(Sample {
-                                data: data.to_vec(),
+                                data: data.to_vec().into(),
                                 duration,
                                 is_sync: true,
                                 composition_offset: 0,

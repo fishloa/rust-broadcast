@@ -197,20 +197,18 @@ impl Encrypt for CencEncryptor {
                 };
 
                 match cfg.scheme {
-                    CencScheme::Cenc => cenc_crypto::apply_ctr(
-                        &entry.initialization_vector,
-                        &cfg.key,
-                        &entry.subsamples,
-                        &mut sample.data,
-                    )?,
-                    CencScheme::Cbcs => cenc_crypto::cbcs_sample(
-                        &tenc,
-                        &entry,
-                        &cfg.key,
-                        &mut sample.data,
-                        CbcsOp::Encrypt,
-                    )?,
-                }
+                    CencScheme::Cenc => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+                        cenc_crypto::apply_ctr(
+                            &entry.initialization_vector,
+                            &cfg.key,
+                            &entry.subsamples,
+                            buf,
+                        )
+                    })?,
+                    CencScheme::Cbcs => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+                        cenc_crypto::cbcs_sample(&tenc, &entry, &cfg.key, buf, CbcsOp::Encrypt)
+                    })?,
+                };
 
                 entries.push(entry);
             }
@@ -358,6 +356,7 @@ mod tests {
 
     use super::*;
     use broadcast_common::Unpackage;
+    use bytes::Bytes;
 
     use crate::ts_demux::TsDemux;
 
@@ -393,7 +392,7 @@ mod tests {
             .expect("AVC video track present")
     }
 
-    fn snapshot(media: &Media) -> Vec<Vec<u8>> {
+    fn snapshot(media: &Media) -> Vec<Bytes> {
         media.tracks[0]
             .samples
             .iter()
@@ -429,20 +428,17 @@ mod tests {
                 .samples
                 .iter()
                 .zip(original.iter())
-                .any(|(s, o)| &s.data != o),
+                .any(|(s, o)| s.data != *o),
             "encrypt must change protected bytes"
         );
 
         for (sample, entry) in track.samples.iter_mut().zip(enc.samples.iter()) {
-            cenc_crypto::apply_ctr(
-                &entry.initialization_vector,
-                &KEY,
-                &entry.subsamples,
-                &mut sample.data,
-            )
+            cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+                cenc_crypto::apply_ctr(&entry.initialization_vector, &KEY, &entry.subsamples, buf)
+            })
             .expect("reverse apply_ctr");
         }
-        let reversed: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.clone()).collect();
+        let reversed: Vec<Bytes> = track.samples.iter().map(|s| s.data.clone()).collect();
         assert_eq!(reversed, original, "cenc round trip must be byte-identical");
     }
 
@@ -473,15 +469,17 @@ mod tests {
                 .samples
                 .iter()
                 .zip(original.iter())
-                .any(|(s, o)| &s.data != o),
+                .any(|(s, o)| s.data != *o),
             "encrypt must change protected bytes"
         );
 
         for (sample, entry) in track.samples.iter_mut().zip(enc.samples.iter()) {
-            cenc_crypto::cbcs_sample(&enc.tenc, entry, &KEY, &mut sample.data, CbcsOp::Decrypt)
-                .expect("reverse cbcs_sample");
+            cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+                cenc_crypto::cbcs_sample(&enc.tenc, entry, &KEY, buf, CbcsOp::Decrypt)
+            })
+            .expect("reverse cbcs_sample");
         }
-        let reversed: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.clone()).collect();
+        let reversed: Vec<Bytes> = track.samples.iter().map(|s| s.data.clone()).collect();
         assert_eq!(reversed, original, "cbcs round trip must be byte-identical");
     }
 
@@ -639,5 +637,53 @@ mod tests {
         };
         let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// **The provably-taken fast path (media plane step 2b, G12)**: every
+    /// sample straight out of [`clear_media`]'s fresh `TsDemux` — the shape
+    /// `CencEncryptor::encrypt` actually sees in real use, before any sample
+    /// has been fanned out to another consumer — is uniquely owned, so
+    /// [`cenc_crypto::rewrite_in_place`] must take the zero-copy
+    /// `try_into_mut` branch for every one of them. Complements the
+    /// mechanism-level proof in `cenc_crypto`'s own tests (which also proves
+    /// the shared/fallback branch) and the whole-pipeline allocation count in
+    /// `tests/alloc_measurement.rs`.
+    #[test]
+    fn real_fixture_samples_take_the_zero_copy_fast_path() {
+        let mut media = clear_media();
+        let track = &mut media.tracks[0];
+        assert!(track.samples.len() > 1, "fixture must carry samples");
+        for sample in &mut track.samples {
+            let took_fast_path =
+                cenc_crypto::rewrite_in_place(&mut sample.data, |_buf| Ok(())).expect("no-op ok");
+            assert!(
+                took_fast_path,
+                "a freshly-demuxed, not-yet-fanned-out sample must take the zero-copy path"
+            );
+        }
+    }
+
+    /// The inverse: once a sample has been fanned out (cloned to a second
+    /// consumer — a refcount bump, per the whole point of switching to
+    /// `Bytes`), a subsequent in-place rewrite of the ORIGINAL must fall back
+    /// to a copy rather than mutate bytes the other consumer still holds.
+    #[test]
+    fn fanned_out_sample_forces_the_copy_fallback() {
+        let mut media = clear_media();
+        let sample = &mut media.tracks[0].samples[0];
+        let fanned_out_consumer = sample.data.clone(); // refcount 2
+        let took_fast_path = cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+            buf[0] ^= 0xFF;
+            Ok(())
+        })
+        .expect("rewrite ok");
+        assert!(
+            !took_fast_path,
+            "a sample already fanned out to another consumer must not take the fast path"
+        );
+        assert_ne!(
+            sample.data[0], fanned_out_consumer[0],
+            "the rewritten handle's first byte must differ from the untouched consumer's"
+        );
     }
 }

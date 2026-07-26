@@ -246,7 +246,7 @@ fn absorb_fragment(
                     });
                 }
                 builder.samples.push(Sample {
-                    data: file[start..end].to_vec(),
+                    data: file[start..end].to_vec().into(),
                     duration,
                     is_sync,
                     composition_offset,

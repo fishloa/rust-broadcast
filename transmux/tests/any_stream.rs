@@ -482,7 +482,7 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
     let out_pmt_pid = find_pmt_pid(&ts2);
     let out_es = collect_pmt_es(&ts2, out_pmt_pid);
     for track in &media.tracks {
-        let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_slice()).collect();
+        let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_ref()).collect();
         match &track.spec.config {
             CodecConfig::Data {
                 stream_type,
@@ -503,7 +503,7 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
                 );
                 let round = find_data_track_exact(&media2, *stream_type, descriptors);
                 let round_payloads: Vec<&[u8]> =
-                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                    round.samples.iter().map(|s| s.data.as_ref()).collect();
                 assert_eq!(
                     orig_payloads, round_payloads,
                     "stream_type {stream_type:#04X}: sample payloads must round-trip byte-for-byte"
@@ -524,11 +524,11 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
                     .iter()
                     .find(|t| {
                         matches!(t.spec.config, CodecConfig::Eac3 { .. })
-                            && t.samples.first().map(|s| s.data.as_slice()) == Some(*first)
+                            && t.samples.first().map(|s| s.data.as_ref()) == Some(*first)
                     })
                     .unwrap_or_else(|| panic!("no re-demuxed E-AC-3 track matching first sample"));
                 let round_payloads: Vec<&[u8]> =
-                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                    round.samples.iter().map(|s| s.data.as_ref()).collect();
                 assert_eq!(
                     orig_payloads, round_payloads,
                     "E-AC-3 track: sample payloads must round-trip byte-for-byte"
@@ -707,7 +707,7 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
     let media2 = demux(&concat);
 
     for track in &media.tracks {
-        let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_slice()).collect();
+        let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_ref()).collect();
         match &track.spec.config {
             CodecConfig::Data {
                 stream_type,
@@ -716,7 +716,7 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
             } => {
                 let round = find_data_track_exact(&media2, *stream_type, descriptors);
                 let round_payloads: Vec<&[u8]> =
-                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                    round.samples.iter().map(|s| s.data.as_ref()).collect();
                 assert_eq!(
                     orig_payloads, round_payloads,
                     "stream_type {stream_type:#04X}: payload-lossless through TS-HLS segmentation"
@@ -731,11 +731,11 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
                     .iter()
                     .find(|t| {
                         matches!(t.spec.config, CodecConfig::Eac3 { .. })
-                            && t.samples.first().map(|s| s.data.as_slice()) == Some(*first)
+                            && t.samples.first().map(|s| s.data.as_ref()) == Some(*first)
                     })
                     .unwrap_or_else(|| panic!("no re-demuxed E-AC-3 track matching first sample"));
                 let round_payloads: Vec<&[u8]> =
-                    round.samples.iter().map(|s| s.data.as_slice()).collect();
+                    round.samples.iter().map(|s| s.data.as_ref()).collect();
                 assert_eq!(
                     orig_payloads, round_payloads,
                     "E-AC-3 track: payload-lossless through TS-HLS segmentation"

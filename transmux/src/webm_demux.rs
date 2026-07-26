@@ -509,7 +509,7 @@ fn build_media(
                 default_dur_ir as u32
             };
             samples.push(Sample {
-                data: core::mem::take(&mut payloads[i]),
+                data: core::mem::take(&mut payloads[i]).into(),
                 duration,
                 is_sync: sync[i],
                 composition_offset: 0,

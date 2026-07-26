@@ -624,7 +624,7 @@ pub(crate) fn mux_tracks_at(
             let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale);
 
             if plan.kind.is_section_carried() {
-                for pkt in section_packetiser.packetise(&[sample.data.as_slice()]) {
+                for pkt in section_packetiser.packetise(&[&sample.data[..]]) {
                     tagged.push(TaggedPacket {
                         sort_key,
                         packet: pkt,
@@ -738,7 +738,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
         | EsKind::Eac3
         | EsKind::Dts
         | EsKind::MpegH
-        | EsKind::Data { .. } => Ok(sample.data.clone()),
+        | EsKind::Data { .. } => Ok(sample.data.to_vec()),
     }
 }
 

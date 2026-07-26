@@ -63,9 +63,35 @@
 
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
+use bytes::{Bytes, BytesMut};
 
 use crate::cenc::{SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::error::{Error, Result};
+
+/// Rewrite one sample's [`Bytes`] in place (media plane step 2b, G12 —
+/// `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
+///
+/// `Bytes` is immutable/shared, so an in-place cipher pass needs a mutable
+/// buffer. Takes the zero-copy [`Bytes::try_into_mut`] fast path when the
+/// caller holds the only reference to the sample's storage — the common case
+/// for a sample encrypted/decrypted before it is fanned out to any other
+/// consumer — and falls back to exactly one defensive copy only when the
+/// buffer is genuinely shared. Returns whether the fast path was taken, so
+/// callers can assert it rather than trust it (never guess-and-hope: see
+/// `cenc_encrypt.rs`'s/`cenc_decrypt.rs`'s tests).
+pub(crate) fn rewrite_in_place(
+    data: &mut Bytes,
+    f: impl FnOnce(&mut [u8]) -> Result<()>,
+) -> Result<bool> {
+    let owned = core::mem::take(data);
+    let (mut buf, fast_path) = match owned.try_into_mut() {
+        Ok(buf) => (buf, true),
+        Err(shared) => (BytesMut::from(&shared[..]), false),
+    };
+    let result = f(&mut buf);
+    *data = buf.freeze();
+    result.map(|()| fast_path)
+}
 
 /// AES-128 in big-endian counter mode (CENC `cenc` cipher, ISO/IEC 23001-7
 /// §10.1). Symmetric: the same keystream apply-in-place both encrypts and
@@ -444,5 +470,60 @@ mod tests {
         let mut data: Vec<u8> = (0u8..64).collect();
         let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    // -----------------------------------------------------------------
+    // `rewrite_in_place` (media plane step 2b, G12) — the try_into_mut
+    // fast-path mechanism itself. Proved directly here (not trusted): the
+    // MANDATORY MEASUREMENT in `tests/alloc_measurement.rs` covers the
+    // whole-pipeline allocation count; these two prove the *mechanism*
+    // picks the right branch and never corrupts a genuinely shared buffer.
+    // -----------------------------------------------------------------
+
+    /// A uniquely-owned `Bytes` (refcount 1, the common case — a sample that
+    /// hasn't been fanned out to any other consumer yet) must take the
+    /// zero-copy `try_into_mut` fast path.
+    #[test]
+    fn rewrite_in_place_takes_fast_path_when_unique() {
+        let mut data = Bytes::from(alloc::vec![1u8, 2, 3, 4]);
+        let took_fast_path = rewrite_in_place(&mut data, |buf| {
+            buf[0] = 0xFF;
+            Ok(())
+        })
+        .expect("rewrite ok");
+        assert!(
+            took_fast_path,
+            "uniquely-owned Bytes must take the zero-copy try_into_mut fast path"
+        );
+        assert_eq!(&data[..], &[0xFF, 2, 3, 4]);
+    }
+
+    /// A shared `Bytes` (another handle holds a clone — refcount > 1) must
+    /// NOT take the fast path, and the fallback copy must not corrupt the
+    /// other holder's view (proving the copy-on-write branch is genuinely
+    /// safe, not just "doesn't panic").
+    #[test]
+    fn rewrite_in_place_copies_and_leaves_other_holder_untouched_when_shared() {
+        let original = Bytes::from(alloc::vec![9u8, 9, 9, 9]);
+        let mut shared_handle = original.clone(); // refcount 2: original + shared_handle
+        let took_fast_path = rewrite_in_place(&mut shared_handle, |buf| {
+            buf[0] = 0x00;
+            Ok(())
+        })
+        .expect("rewrite ok");
+        assert!(
+            !took_fast_path,
+            "shared Bytes must not take the fast path — that would alias/corrupt the other holder"
+        );
+        assert_eq!(
+            &original[..],
+            &[9, 9, 9, 9],
+            "the other holder's bytes must be untouched by shared_handle's rewrite"
+        );
+        assert_eq!(
+            &shared_handle[..],
+            &[0x00, 9, 9, 9],
+            "the rewriting handle's own view must reflect the mutation"
+        );
     }
 }

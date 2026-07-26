@@ -40,6 +40,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
+use bytes::Bytes;
 use transmux::init_segment::protect_init_segment;
 use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
 use transmux::{
@@ -92,7 +93,7 @@ fn clear_video_media() -> Option<Media> {
 }
 
 /// Snapshot every sample's bytes for the (single) track, in decode order.
-fn snapshot(media: &Media) -> Vec<Vec<u8>> {
+fn snapshot(media: &Media) -> Vec<Bytes> {
     media.tracks[0]
         .samples
         .iter()
@@ -237,7 +238,7 @@ fn run_e2e(
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("reference output must carry a video (AVC) track");
-    let ref_samples: Vec<Vec<u8>> = ref_video.samples.iter().map(|s| s.data.clone()).collect();
+    let ref_samples: Vec<Bytes> = ref_video.samples.iter().map(|s| s.data.clone()).collect();
 
     assert_eq!(
         ref_samples, original,

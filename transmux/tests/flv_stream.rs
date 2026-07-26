@@ -21,6 +21,7 @@
 //! [`transmux::StreamingTsDemux`].
 
 use broadcast_common::Unpackage;
+use bytes::Bytes;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
 
 const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
@@ -65,7 +66,7 @@ fn codec_kind(c: &CodecConfig) -> &'static str {
 
 #[derive(Debug, Clone, PartialEq)]
 struct FullSample {
-    data: Vec<u8>,
+    data: Bytes,
     duration: u32,
     is_sync: bool,
     composition_offset: i32,

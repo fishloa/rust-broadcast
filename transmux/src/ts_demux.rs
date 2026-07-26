@@ -965,7 +965,7 @@ fn advance_one_behind(
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
-                data: prev.data,
+                data: prev.data.into(),
                 duration,
                 is_sync: prev.is_sync,
                 composition_offset: prev.composition_offset,
@@ -998,7 +998,7 @@ fn flush_one_behind(
         events.push_back(DemuxEvent::Sample {
             track_id,
             sample: Sample {
-                data: p.data,
+                data: p.data.into(),
                 duration: last_duration,
                 is_sync: p.is_sync,
                 composition_offset: p.composition_offset,

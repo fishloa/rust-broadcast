@@ -37,6 +37,7 @@
 use std::path::PathBuf;
 
 use broadcast_common::{Encrypt, Unpackage};
+use bytes::Bytes;
 use transmux::{CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy};
 use transmux::{Media, TsDemux};
 
@@ -77,7 +78,7 @@ fn clear_video_media() -> Option<Media> {
     )
 }
 
-fn snapshot(media: &Media) -> Vec<Vec<u8>> {
+fn snapshot(media: &Media) -> Vec<Bytes> {
     media.tracks[0]
         .samples
         .iter()

@@ -209,8 +209,8 @@ fn sample_bytes_round_trip_byte_identical() {
         "sample count must survive the demux → mux → demux round-trip"
     );
 
-    let bytes1: Vec<&[u8]> = track1.samples.iter().map(|s| s.data.as_slice()).collect();
-    let bytes2: Vec<&[u8]> = track2.samples.iter().map(|s| s.data.as_slice()).collect();
+    let bytes1: Vec<&[u8]> = track1.samples.iter().map(|s| s.data.as_ref()).collect();
+    let bytes2: Vec<&[u8]> = track2.samples.iter().map(|s| s.data.as_ref()).collect();
     assert_eq!(
         bytes1, bytes2,
         "coded MPEG-H sample bytes must be byte-identical after the round-trip"

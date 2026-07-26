@@ -12,6 +12,7 @@
 //! 5. Cross-hub: FLV → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use bytes::Bytes;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CmafMux, CodecConfig, FlvDemux, FlvMux};
 
@@ -298,7 +299,7 @@ fn flv_round_trip_preserves_samples_and_timing() {
 fn cross_hub_flv_to_cmaf() {
     let mut demux = FlvDemux::new();
     let media = demux.unpackage(FLV).expect("demux av.flv");
-    let flv_nals: Vec<Vec<u8>> = media.tracks[0]
+    let flv_nals: Vec<Bytes> = media.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())

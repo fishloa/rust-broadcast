@@ -888,7 +888,7 @@ mod tests {
     fn segment_samples_keyframe_aligned() {
         // 4 samples, timescale 1 tick/sample, target 2s: sync at 0 and 2.
         let mk = |sync: bool| Sample {
-            data: alloc::vec![0u8; 4],
+            data: alloc::vec![0u8; 4].into(),
             duration: 1,
             is_sync: sync,
             composition_offset: 0,

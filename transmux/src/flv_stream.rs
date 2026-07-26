@@ -381,7 +381,7 @@ impl StreamingFlvDemux {
                 // assumption` note.
                 if video.track_id.is_some() {
                     let sample = Sample {
-                        data: data.to_vec(),
+                        data: data.to_vec().into(),
                         duration: 0, // filled in by `TrackState::advance`/`flush`
                         is_sync: frame_type == FRAME_TYPE_KEYFRAME,
                         composition_offset: composition_time,
@@ -445,7 +445,7 @@ impl StreamingFlvDemux {
                 // assumption` note.
                 if audio.track_id.is_some() {
                     let sample = Sample {
-                        data: data.to_vec(),
+                        data: data.to_vec().into(),
                         duration: 0, // filled in by `TrackState::advance`/`flush`
                         is_sync: true,
                         composition_offset: 0,
@@ -464,6 +464,7 @@ impl StreamingFlvDemux {
 mod tests {
     use super::*;
     use alloc::vec;
+    use bytes::Bytes;
 
     // --- Synthetic FLV fixture builder (small + deterministic) --------------
     //
@@ -576,7 +577,7 @@ mod tests {
 
     /// Collect every `Sample` for the (single) video track across all
     /// events, in emission order.
-    fn video_samples(events: &[DemuxEvent]) -> Vec<(u32, Vec<u8>)> {
+    fn video_samples(events: &[DemuxEvent]) -> Vec<(u32, Bytes)> {
         events
             .iter()
             .filter_map(|e| match e {

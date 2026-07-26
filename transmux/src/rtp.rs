@@ -685,7 +685,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Media {
                 .samples
                 .into_iter()
                 .map(|data| Sample {
-                    data,
+                    data: data.into(),
                     duration: 0,
                     is_sync: true,
                     composition_offset: 0,

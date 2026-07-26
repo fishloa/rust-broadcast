@@ -856,7 +856,7 @@ mod tests {
 
     fn sample(dur: u32, sync: bool) -> Sample {
         Sample {
-            data: vec![0u8; 4],
+            data: vec![0u8; 4].into(),
             duration: dur,
             is_sync: sync,
             composition_offset: 0,

@@ -3,7 +3,7 @@
 //! Moved out of `pipeline.rs` (media plane step 2a, no-op): same types, same
 //! fields, same impls.
 
-use alloc::vec::Vec;
+use bytes::Bytes;
 
 use crate::annexb::annexb_to_length_prefixed;
 
@@ -25,7 +25,15 @@ pub struct SourceTiming {
 pub struct Sample {
     /// Coded bytes: **length-prefixed** NAL data for AVC/HEVC, or the raw frame
     /// for AAC. Use [`Sample::from_annexb`] to convert an Annex B access unit.
-    pub data: Vec<u8>,
+    ///
+    /// `Bytes` (not `Vec<u8>`, media plane step 2b, issue #564-adjacent /
+    /// `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4):
+    /// fan-out to N consumers is a refcount bump, not a payload copy, and an
+    /// RTP packetiser can slice a frame into packets without copying each
+    /// one. A shared, immutable buffer costs something back on the in-place
+    /// rewrite paths (`cenc_encrypt`/`cenc_decrypt`) — see those modules'
+    /// `Bytes::try_into_mut` fast path.
+    pub data: Bytes,
     /// Sample duration in the track's media timescale.
     pub duration: u32,
     /// Whether this is a sync sample (random-access point / keyframe).
@@ -46,9 +54,14 @@ impl Sample {
     /// this crate). `data` must already be in this crate's wire form
     /// (length-prefixed for AVC/HEVC) — use [`Sample::from_annexb`] to
     /// convert an Annex B access unit instead.
-    pub fn new(data: Vec<u8>, duration: u32, is_sync: bool, composition_offset: i32) -> Self {
+    pub fn new(
+        data: impl Into<Bytes>,
+        duration: u32,
+        is_sync: bool,
+        composition_offset: i32,
+    ) -> Self {
         Self {
-            data,
+            data: data.into(),
             duration,
             is_sync,
             composition_offset,
@@ -65,7 +78,7 @@ impl Sample {
         composition_offset: i32,
     ) -> Self {
         Self {
-            data: annexb_to_length_prefixed(annexb),
+            data: annexb_to_length_prefixed(annexb).into(),
             duration,
             is_sync,
             composition_offset,
@@ -74,9 +87,9 @@ impl Sample {
     }
 
     /// Build an audio sample from a raw coded frame (e.g. an AAC access unit).
-    pub fn from_raw(data: Vec<u8>, duration: u32) -> Self {
+    pub fn from_raw(data: impl Into<Bytes>, duration: u32) -> Self {
         Self {
-            data,
+            data: data.into(),
             duration,
             is_sync: true,
             composition_offset: 0,

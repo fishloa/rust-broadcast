@@ -2970,6 +2970,7 @@ version = "0.19.0"
 dependencies = [
  "aes",
  "broadcast-common",
+ "bytes",
  "cbc",
  "clap",
  "ctr",
