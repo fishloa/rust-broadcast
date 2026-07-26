@@ -2,7 +2,17 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-26
+
 ### Added
+- **RTMP push ingest input `InputSpec::Rtmp`** (issue #738, via
+  `rtmp-runtime`'s sans-IO ingest server + `transmux::StreamingFlvDemux`):
+  a route can now accept an inbound RTMP publisher (`ffmpeg`/OBS-class
+  encoders) instead of only pulling from a source — `RtmpSource` binds its
+  `listen` address once and reuses it across reconnects, accepts a
+  publisher, and drives its FLV byte stream through the same
+  segmenter/`MediaStore` pipeline every other input uses. Optional `app`/
+  `stream_key` gate which publishers are accepted.
 - **`HlsPullSource` now ingests classic MPEG-TS-segment HLS** (issue #760,
   via `ll-hls-runtime` 0.1.x's new `LlHlsClient` TS routing): pulling a
   legacy/IPTV origin whose Media Playlist carries no `EXT-X-MAP` (whole

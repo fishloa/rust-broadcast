@@ -1,14 +1,17 @@
 //! Ingest sources feeding the segmentation pipeline. `RtspSource` (RTSP
 //! pull), `RtpUdpSource` (raw RTP over UDP, uni/multicast), `TsUdpSource`
 //! (MPEG-2 TS over UDP, uni/multicast), `ts_http::TsHttpSource` (MPEG-2 TS
-//! over HTTP), and `hls_pull::HlsPullSource` (pull a remote (LL-)HLS origin)
-//! all implement the `Source` marker trait plus the `pipeline::SampleSource`
-//! contract (see `crate::pipeline`), keeping ingest swappable (and letting
-//! tests drive a mock). `http_auth` is shared auth glue for the two HTTP-
-//! based sources (issue #663 P3c).
+//! over HTTP), `hls_pull::HlsPullSource` (pull a remote (LL-)HLS origin), and
+//! `rtmp::RtmpSource` (RTMP push ingest, issue #738 — the one *push* source
+//! in this list; every other source dials out) all implement the `Source`
+//! marker trait plus the `pipeline::SampleSource` contract (see
+//! `crate::pipeline`), keeping ingest swappable (and letting tests drive a
+//! mock). `http_auth` is shared auth glue for the two HTTP-based sources
+//! (issue #663 P3c).
 
 pub mod hls_pull;
 pub mod http_auth;
+pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;
 pub mod sdp;

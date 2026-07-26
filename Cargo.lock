@@ -1476,7 +1476,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "ll-hls-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "broadcast-auth",
@@ -1693,7 +1693,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "axum",
  "base64",
@@ -1706,6 +1706,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "percent-encoding",
  "reqwest",
+ "rtmp-runtime",
  "rtsp-runtime",
  "sdp-types",
  "serde",
@@ -1722,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "multimux",
@@ -2259,6 +2260,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
+]
+
+[[package]]
+name = "rtmp-runtime"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "transmux",
 ]
 
 [[package]]
@@ -2951,7 +2965,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.18.1"
+version = "0.19.0"
 dependencies = [
  "aes",
  "broadcast-common",

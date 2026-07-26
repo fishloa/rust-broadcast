@@ -1,6 +1,6 @@
 [package]
 name         = "ll-hls-runtime"
-version      = "0.1.0"
+version      = "0.1.1"
 edition      = "2024"
 description  = "Sans-IO Low-Latency HLS (RFC 8216bis) client + server engines in one crate (blocking reload, part prefetch, rolling-window origin), with an optional tokio+reqwest IO adapter."
 license      = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
-transmux          = { path = "../transmux", version = "0.18", default-features = false }
+transmux          = { path = "../transmux", version = "0.19", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::store::MediaStore` needs

@@ -124,6 +124,7 @@ pub mod dts;
 pub mod error;
 pub mod flac;
 pub mod flv;
+pub mod flv_stream;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
@@ -213,6 +214,7 @@ pub use flac::{
     BLOCK_TYPE_STREAMINFO, DFLA_FOURCC, FLAC_FOURCC, FlacMetadataBlock, FlacSpecificBox,
 };
 pub use flv::{FlvDemux, FlvError, FlvMux};
+pub use flv_stream::StreamingFlvDemux;
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 pub use hls::{
     CENC_KEYFORMAT, CENC_KEYFORMATVERSIONS, IFrameVariant, LowLatencyConfig, MasterPlaylist,
