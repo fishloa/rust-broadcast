@@ -27,6 +27,11 @@ const SKIP: &[&str] = &[
     "FlvError",
     "RtmpError",
     "CliError",
+    // `dash_parse::DashParseError` (issue #758 T1): a structured parse error,
+    // labelled via a hand-written `Display` impl (matching `FlvError`), not
+    // the spec-token convention — already satisfied by that `Display` impl,
+    // listed here for the same documentation reason `FlvError`/`RtmpError` are.
+    "DashParseError",
     // clap CLI argument enum (labels are the `--format` strings, owned by
     // `clap::ValueEnum`, not this convention)
     "FormatArg",

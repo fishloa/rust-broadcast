@@ -119,6 +119,7 @@ pub mod cenc_encrypt;
 #[cfg(feature = "cli")]
 pub mod cli;
 pub mod dash;
+pub mod dash_parse;
 pub mod drm;
 pub mod dts;
 pub mod error;
@@ -199,6 +200,10 @@ pub use dash::{
     Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
     MP4_PROTECTION_SCHEME_URI, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
+};
+pub use dash_parse::{
+    AdaptationSet, DashParseError, Mpd, MpdType, Period, Representation, S, SegmentTemplate,
+    SegmentTimeline, parse_iso8601_duration,
 };
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
