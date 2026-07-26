@@ -261,15 +261,31 @@ impl Decrypt for CencDecryptor {
     type Keys = KeyMap;
     type Error = Error;
 
+    /// Decrypt every protected track of `media` in place.
+    ///
+    /// Each media track is paired with its recovered crypto record **by
+    /// `track_id`** ([`crate::pipeline::TrackSpec::track_id`] against the
+    /// `tkhd.track_id` harvested from the protected source) — never by
+    /// position. Positional pairing silently
+    /// mis-decrypts whenever the `Media`'s track order or membership differs
+    /// from the source's `moov` order: a [`Media::select_tracks_by`]-narrowed
+    /// `Media` holding only the audio track would be decrypted with the
+    /// *video* track's IVs, and if the two tracks' sample counts happened to
+    /// coincide the count check below would not catch it either — it would
+    /// just return `Ok` over garbage.
+    ///
+    /// A media track with no matching record is an error (the caller asked for
+    /// a track this decryptor has no crypto metadata for); unmatched *records*
+    /// are fine — that is exactly the narrowed-`Media` case.
     fn decrypt(&self, media: &mut Media, keys: &KeyMap) -> Result<()> {
-        // Pair each media track with a recovered crypto record by position
-        // (both are in decode/`moov` track order).
-        if media.tracks.len() > self.tracks.len() {
-            return Err(Error::InvalidInput(
-                "media has more tracks than the protected source",
-            ));
-        }
-        for (track, crypto) in media.tracks.iter_mut().zip(self.tracks.iter()) {
+        for track in media.tracks.iter_mut() {
+            let crypto = self
+                .tracks
+                .iter()
+                .find(|c| c.track_id == track.spec.track_id)
+                .ok_or(Error::InvalidInput(
+                    "no protected-source track matches this media track's track_id",
+                ))?;
             if crypto.tenc.default_is_protected == 0 {
                 // Track is not protected — nothing to do.
                 continue;
@@ -1017,4 +1033,174 @@ fn sample_file_offsets(stbl: &[u8], sizes: &[usize]) -> Result<Vec<usize>> {
         ));
     }
     Ok(offsets)
+}
+
+#[cfg(test)]
+mod tests {
+    //! Track-pairing tests for [`Decrypt::decrypt`].
+    //!
+    //! [`CencDecryptor`]'s fields are private, so only an in-crate test can
+    //! build one with hand-made [`TrackCrypto`] records — which is what it takes
+    //! to construct the mis-pairing case deterministically (two protected
+    //! tracks with *equal* sample counts and different IVs, so a positional
+    //! zip both mis-decrypts and slips past the sample-count check).
+
+    use super::*;
+    use crate::cenc_crypto;
+    use crate::media::Track;
+    use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+
+    const VIDEO_TRACK_ID: u32 = 1;
+    const AUDIO_TRACK_ID: u32 = 2;
+    const KID: [u8; KEY_LEN] = [0xAA; KEY_LEN];
+    const KEY: [u8; KEY_LEN] = [
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
+        0x10,
+    ];
+    /// The two tracks' per-sample IVs, deliberately different — the whole
+    /// point of the `Media` being narrowed is that the surviving track must
+    /// still get *its own* IV.
+    const VIDEO_IV: [u8; 8] = [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11];
+    const AUDIO_IV: [u8; 8] = [0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22];
+    /// Equal on both tracks, so a positional mis-pairing is NOT caught by the
+    /// "sample count mismatch between media and senc" check.
+    const SAMPLES_PER_TRACK: usize = 2;
+
+    fn tenc() -> TrackEncryptionBox {
+        TrackEncryptionBox {
+            version: 0,
+            default_crypt_byte_block: 0,
+            default_skip_byte_block: 0,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: KID,
+            default_constant_iv: None,
+        }
+    }
+
+    fn crypto(track_id: u32, iv: &[u8; 8]) -> TrackCrypto {
+        TrackCrypto {
+            track_id,
+            tenc: tenc(),
+            original_format: *b"avc1",
+            scheme: CencScheme::Cenc,
+            samples: (0..SAMPLES_PER_TRACK)
+                .map(|_| SampleEncryptionEntry {
+                    initialization_vector: iv.to_vec(),
+                    subsamples: Vec::new(),
+                })
+                .collect(),
+        }
+    }
+
+    /// A decryptor over a two-track protected source: video (`track_id` 1) then
+    /// audio (`track_id` 2), in `moov` order.
+    fn decryptor() -> CencDecryptor {
+        CencDecryptor {
+            file: Vec::new(),
+            tracks: alloc::vec![
+                crypto(VIDEO_TRACK_ID, &VIDEO_IV),
+                crypto(AUDIO_TRACK_ID, &AUDIO_IV),
+            ],
+        }
+    }
+
+    /// A codec config for the synthetic tracks. Irrelevant to track pairing
+    /// (the property under test) — Opus is simply the cheapest `CodecConfig` to
+    /// build by hand, needing no parsed configuration record.
+    fn test_codec_config() -> CodecConfig {
+        CodecConfig::Opus {
+            config: crate::opus::OpusSpecificBox {
+                version: 0,
+                output_channel_count: 2,
+                pre_skip: 0,
+                input_sample_rate: 48_000,
+                output_gain: 0,
+                channel_mapping_family: 0,
+                channel_mapping: None,
+            },
+            channel_count: 2,
+            sample_rate: 48_000,
+            sample_size: 16,
+        }
+    }
+
+    /// Distinct plaintext per sample, so a wrong-IV "decryption" cannot
+    /// coincidentally match.
+    fn plaintext(i: usize) -> Vec<u8> {
+        (0u8..64).map(|b| b.wrapping_add(i as u8 * 7)).collect()
+    }
+
+    /// One track's `Media`, its samples already encrypted with `iv`.
+    fn encrypted_media(track_id: u32, iv: &[u8; 8]) -> Media {
+        let samples = (0..SAMPLES_PER_TRACK)
+            .map(|i| {
+                let mut buf = plaintext(i);
+                cenc_crypto::apply_ctr(iv, &KEY, &[], &mut buf).expect("encrypt");
+                Sample {
+                    data: buf.into(),
+                    dts: None,
+                    pts: None,
+                    duration: None,
+                    flags: crate::ir::SampleFlags::SYNC,
+                    provenance: None,
+                }
+            })
+            .collect();
+        Media::new(
+            alloc::vec![Track::new(
+                TrackSpec::new(track_id, 90_000, test_codec_config()),
+                samples,
+            )],
+            90_000,
+        )
+    }
+
+    /// **The mis-pairing regression test.** A `Media` narrowed to the *second*
+    /// protected track (`select_tracks_by`, e.g. audio-only) must be decrypted
+    /// with that track's own IVs. A positional zip pairs it with the *first*
+    /// crypto record instead — and because both tracks carry the same number of
+    /// samples, the sample-count check does not notice, so the old code
+    /// returned `Ok` over garbage.
+    #[test]
+    fn narrowed_media_decrypts_with_its_own_tracks_ivs() {
+        let dec = decryptor();
+        let keys = KeyMap::new().with_key(KID, KEY);
+        let mut media = encrypted_media(AUDIO_TRACK_ID, &AUDIO_IV);
+
+        dec.decrypt(&mut media, &keys).expect("decrypt");
+
+        for (i, sample) in media.tracks[0].samples.iter().enumerate() {
+            assert_eq!(
+                &sample.data[..],
+                &plaintext(i)[..],
+                "sample {i} must be decrypted with track {AUDIO_TRACK_ID}'s IV, not \
+                 whichever record happens to sit at the same position"
+            );
+        }
+    }
+
+    /// The first track still decrypts correctly (the pairing change must not
+    /// merely swap which track is wrong).
+    #[test]
+    fn first_track_still_decrypts_with_its_own_ivs() {
+        let dec = decryptor();
+        let keys = KeyMap::new().with_key(KID, KEY);
+        let mut media = encrypted_media(VIDEO_TRACK_ID, &VIDEO_IV);
+        dec.decrypt(&mut media, &keys).expect("decrypt");
+        for (i, sample) in media.tracks[0].samples.iter().enumerate() {
+            assert_eq!(&sample.data[..], &plaintext(i)[..]);
+        }
+    }
+
+    /// A media track the decryptor has no crypto record for is an error, not a
+    /// silent pass-through of still-encrypted samples.
+    #[test]
+    fn unknown_track_id_errors() {
+        let dec = decryptor();
+        let keys = KeyMap::new().with_key(KID, KEY);
+        let mut media = encrypted_media(99, &AUDIO_IV);
+        let err = dec.decrypt(&mut media, &keys).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+    }
 }

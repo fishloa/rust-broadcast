@@ -113,7 +113,15 @@ pub fn iter_length_prefixed_nals(lp: &[u8]) -> Result<Vec<&[u8]>> {
         }
         let len = u32::from_be_bytes([lp[off], lp[off + 1], lp[off + 2], lp[off + 3]]) as usize;
         let start = off + NAL_LENGTH_SIZE;
-        let end = start + len;
+        // `len` is a 32-bit field read from caller-supplied sample data, so on a
+        // 32-bit target `start + len` can wrap — which would make the `end >
+        // lp.len()` guard below pass and then panic (or worse, slice wrongly) at
+        // `&lp[start..end]`. Check the addition, don't assume 64-bit `usize`.
+        let end = start.checked_add(len).ok_or(Error::BufferTooShort {
+            need: usize::MAX,
+            have: lp.len(),
+            what: "NAL length prefix overflows the buffer offset",
+        })?;
         if end > lp.len() {
             return Err(Error::BufferTooShort {
                 need: end,
@@ -181,6 +189,33 @@ mod tests {
     fn length_prefixed_rejects_overrun() {
         // Declares a 99-byte NAL in a 6-byte buffer.
         let lp = [0x00, 0x00, 0x00, 0x63, 0xAA, 0xBB];
+        assert!(iter_length_prefixed_nals(&lp).is_err());
+    }
+
+    /// A maximal (`0xFFFFFFFF`) declared NAL length must be rejected cleanly,
+    /// never panic. This is the input that wraps `start + len` on a 32-bit
+    /// `usize` — where the wrapped `end` slips under the `end > lp.len()` guard
+    /// and panics on `&lp[start..end]` — hence the `checked_add` in
+    /// [`iter_length_prefixed_nals`]. Reached from
+    /// `cenc_encrypt::nal_subsamples` on caller-supplied sample data, so the
+    /// input is untrusted. On a 64-bit target the addition cannot wrap and this
+    /// exercises the plain overrun guard; the behaviour asserted (an error, no
+    /// panic) is the same on both.
+    #[test]
+    fn length_prefixed_rejects_maximal_declared_length() {
+        let lp = [0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0xBB];
+        let err = iter_length_prefixed_nals(&lp).expect_err("must not be accepted");
+        assert!(matches!(err, Error::BufferTooShort { .. }), "{err:?}");
+    }
+
+    /// The same maximal length at a nonzero offset (after one well-formed NAL),
+    /// so `start` is not 0 when the addition is checked.
+    #[test]
+    fn length_prefixed_rejects_maximal_declared_length_mid_buffer() {
+        let lp = [
+            0x00, 0x00, 0x00, 0x01, 0x67, // one 1-byte NAL
+            0xFF, 0xFF, 0xFF, 0xFF, 0xAA, // then a maximal length prefix
+        ];
         assert!(iter_length_prefixed_nals(&lp).is_err());
     }
 }

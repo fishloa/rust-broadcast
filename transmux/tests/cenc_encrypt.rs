@@ -55,11 +55,106 @@ fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264/main.ts")
 }
 
-/// The cleartext fixture, narrowed to its single AVC video track (main.ts may
-/// also carry an audio track with a *different* sample count, and
-/// `IvGen::Explicit` supplies one IV list shared across every track — see
-/// `EncryptConfig`'s docs — so a single-track `Media` keeps every test in
-/// this file unambiguous).
+/// A real **two-track** (H.264 video + AAC audio) MPEG-2 TS capture, with
+/// *both* tracks kept — the shape a real caller encrypts, and the only shape
+/// that can catch cross-track IV reuse (see
+/// [`counter_ivs_are_unique_across_every_track`]).
+fn multi_track_fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts")
+}
+
+/// The two-track cleartext fixture, demuxed with **every** track kept.
+fn clear_multi_track_media() -> Option<Media> {
+    let path = multi_track_fixture_path();
+    if !path.exists() {
+        eprintln!(
+            "cenc_encrypt tests: SKIPPED — {path:?} not found (expected committed public fixture)."
+        );
+        return None;
+    }
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let mut demux = TsDemux::new();
+    Some(
+        demux
+            .unpackage(bytes.as_slice())
+            .expect("demux h264_aac.ts"),
+    )
+}
+
+/// Every per-sample IV recorded across every track of `media`, in (track,
+/// sample) order.
+fn all_recorded_ivs(media: &Media) -> Vec<Vec<u8>> {
+    media
+        .tracks
+        .iter()
+        .flat_map(|t| {
+            t.encryption
+                .as_ref()
+                .expect("every track must record encryption metadata")
+                .samples
+                .iter()
+                .map(|e| e.initialization_vector.clone())
+        })
+        .collect()
+}
+
+/// **The two-time-pad regression test (the centrepiece).**
+///
+/// ISO/IEC 23001-7 §9.2 requires a sample's IV to be unique **per key**, not
+/// per track. `EncryptConfig` applies one key to every track, so the
+/// per-sample IV counter must run across the whole [`Media`] — if it restarts
+/// at `base` for each track, video sample *i* and audio sample *i* are
+/// encrypted with the same AES-CTR key **and** the same counter block, and
+/// `ciphertext_video XOR ciphertext_audio == plaintext_video XOR
+/// plaintext_audio`: a classic two-time pad that discloses both plaintexts
+/// without the key.
+///
+/// A single-track fixture cannot catch this class of bug — which is exactly
+/// why every other test in this file narrows the fixture to one track, and
+/// exactly why the defect shipped with a green suite.
+#[test]
+fn counter_ivs_are_unique_across_every_track() {
+    let Some(mut media) = clear_multi_track_media() else {
+        return;
+    };
+    assert!(
+        media.tracks.len() > 1,
+        "this test is meaningless on a single-track Media: the fixture must \
+         carry at least two tracks (got {})",
+        media.tracks.len()
+    );
+    let total_samples: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
+
+    CencEncryptor
+        .encrypt(&mut media, &cenc_cfg())
+        .expect("encrypt a multi-track Media");
+
+    let ivs = all_recorded_ivs(&media);
+    assert_eq!(
+        ivs.len(),
+        total_samples,
+        "one recorded IV per sample, across every track"
+    );
+    let unique: std::collections::BTreeSet<&Vec<u8>> = ivs.iter().collect();
+    assert_eq!(
+        unique.len(),
+        ivs.len(),
+        "AES-CTR keystream reuse: {} of {} per-sample IVs are duplicates across \
+         the Media's tracks — under one shared key that is a two-time pad",
+        ivs.len() - unique.len(),
+        ivs.len()
+    );
+}
+
+/// The cleartext fixture, narrowed to its single AVC video track — a
+/// deterministic single-track `Media` for the per-scheme cipher/metadata tests
+/// below, whose subject is one track's own behaviour.
+///
+/// Nothing about IV *uniqueness* can be tested here: that property spans tracks
+/// (`IvGen`'s counter and IV list are both indexed across the whole `Media`), so
+/// it is covered by [`clear_multi_track_media`]'s tests — chiefly
+/// [`counter_ivs_are_unique_across_every_track`]. Narrowing every test to one
+/// track is precisely how the cross-track keystream-reuse defect shipped green.
 fn clear_video_media() -> Option<Media> {
     let path = fixture_path();
     if !path.exists() {
@@ -298,6 +393,19 @@ fn explicit_iv_wrong_uniform_length_errors() {
     );
 }
 
+/// `n` distinct IVs of `len` bytes each (the last byte counts up) — a valid
+/// `IvGen::Explicit` list, since an IV must be unique per content key.
+fn distinct_ivs(n: usize, len: usize) -> Vec<Vec<u8>> {
+    (0..n)
+        .map(|i| {
+            let mut iv = vec![0xABu8; len];
+            iv[len - 1] = i as u8;
+            iv[len - 2] = (i >> 8) as u8;
+            iv
+        })
+        .collect()
+}
+
 /// `IvGen::Explicit` with valid 8-byte and 16-byte per-sample IVs is accepted.
 #[test]
 fn explicit_iv_valid_lengths_are_ok() {
@@ -307,13 +415,146 @@ fn explicit_iv_valid_lengths_are_ok() {
         };
         let n = media.tracks[0].samples.len();
         let cfg = EncryptConfig {
-            iv: IvGen::Explicit(vec![vec![0xABu8; len]; n]),
+            iv: IvGen::Explicit(distinct_ivs(n, len)),
             ..cenc_cfg()
         };
         CencEncryptor
             .encrypt(&mut media, &cfg)
             .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
     }
+}
+
+/// `IvGen::Explicit` must reject a list that repeats an IV, even if every
+/// length is valid: an IV is unique **per content key** (ISO/IEC 23001-7
+/// §9.2), and under `cenc` (AES-CTR) two samples sharing one IV share one
+/// keystream (a two-time pad). This is the guard that makes the whole
+/// keystream-reuse class unreachable rather than fixing one instance of it.
+#[test]
+fn explicit_duplicate_ivs_error() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let n = media.tracks[0].samples.len();
+    assert!(n > 1, "fixture must have more than one sample to bite");
+    let mut ivs = distinct_ivs(n, 8);
+    ivs[n - 1] = ivs[0].clone(); // one repeat, everything else distinct
+    let cfg = EncryptConfig {
+        iv: IvGen::Explicit(ivs),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+}
+
+/// `IvGen::Explicit`'s count is measured against the **whole `Media`**, not
+/// one track: a list sized to the *first* track's sample count (the old,
+/// unsafe per-track meaning, which replayed the same IVs for every track) must
+/// now be rejected on a multi-track `Media`.
+#[test]
+fn explicit_iv_count_is_per_media_not_per_track() {
+    let Some(mut media) = clear_multi_track_media() else {
+        return;
+    };
+    assert!(media.tracks.len() > 1, "fixture must be multi-track");
+    let first_track_n = media.tracks[0].samples.len();
+    let total: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
+    assert!(
+        first_track_n < total,
+        "the per-track and per-Media counts must differ for this test to bite"
+    );
+
+    // Old (per-track) meaning: rejected.
+    let cfg = EncryptConfig {
+        iv: IvGen::Explicit(distinct_ivs(first_track_n, 8)),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput for a per-track-sized IV list, got {err:?}"
+    );
+
+    // New (per-Media) meaning: accepted, and every recorded IV is the one
+    // supplied for that (track, sample) position, in order.
+    let ivs = distinct_ivs(total, 8);
+    let cfg = EncryptConfig {
+        iv: IvGen::Explicit(ivs.clone()),
+        ..cenc_cfg()
+    };
+    CencEncryptor
+        .encrypt(&mut media, &cfg)
+        .expect("a Media-wide IV list must be accepted");
+    assert_eq!(
+        all_recorded_ivs(&media),
+        ivs,
+        "explicit IVs must be consumed in (track, sample) order across the whole Media"
+    );
+}
+
+/// `IvGen::Constant` is `cbcs`-only: under `cenc` (AES-CTR) a constant IV
+/// derives one counter block for every sample, so the same keystream protects
+/// the whole track (and the previous behaviour was worse still — the `cenc`
+/// path never saw `tenc.default_constant_IV`, so it encrypted with an
+/// all-zero counter and produced output no conformant decryptor could read).
+#[test]
+fn constant_iv_under_cenc_errors() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = EncryptConfig {
+        iv: IvGen::Constant([0x5Au8; 16]),
+        ..cenc_cfg()
+    };
+    let err = CencEncryptor.encrypt(&mut media, &cfg).unwrap_err();
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert!(
+        media.tracks[0].encryption.is_none(),
+        "a rejected config must leave the Media untouched, not half-encrypted"
+    );
+}
+
+/// The companion to [`constant_iv_under_cenc_errors`]: `IvGen::Constant` under
+/// `cbcs` is unchanged and still works (it is the standard `cbcs` convention),
+/// recording the constant IV in `tenc.default_constant_IV` with
+/// `default_per_sample_iv_size == 0` and no per-sample `senc` IV.
+#[test]
+fn constant_iv_under_cbcs_still_works() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    const CONSTANT_IV: [u8; 16] = [
+        0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe,
+        0xff,
+    ];
+    let original = snapshot(&media);
+    let cfg = EncryptConfig {
+        scheme: CencScheme::Cbcs,
+        iv: IvGen::Constant(CONSTANT_IV),
+        pattern: Some((1, 9)),
+        ..cenc_cfg()
+    };
+    CencEncryptor
+        .encrypt(&mut media, &cfg)
+        .expect("cbcs + constant IV is the standard convention and must be accepted");
+    let enc = media.tracks[0].encryption.as_ref().expect("Some");
+    assert_eq!(enc.tenc.default_per_sample_iv_size, 0);
+    assert_eq!(
+        enc.tenc.default_constant_iv.as_deref(),
+        Some(&CONSTANT_IV[..])
+    );
+    assert!(
+        enc.samples
+            .iter()
+            .all(|e| e.initialization_vector.is_empty()),
+        "a constant-IV track carries no per-sample senc IV"
+    );
+    assert_ne!(snapshot(&media), original, "cbcs must change bytes");
 }
 
 /// A `cbcs` pattern with `crypt_byte_block == 0` and a nonzero

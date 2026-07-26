@@ -107,6 +107,94 @@ Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
   sample's `dts` plus the last sample's `duration` — the standing guard
   against the whole re-derive-from-a-lossy-clock class of bug.
 
+### Security
+
+Four CENC (ISO/IEC 23001-7) defects, two of them a **total loss of
+confidentiality** for content encrypted by this crate. Anything encrypted by
+`CencEncryptor` with the affected configurations must be re-encrypted with a
+fresh content key — the exposure is in the ciphertext already published, not
+only in the code.
+
+- **CRITICAL — BREAKING: AES-CTR keystream reuse across tracks (a two-time
+  pad).** `CencEncryptor::encrypt` restarted its per-sample IV counter at
+  `base` for *every* track while applying one shared content key, so under
+  `cenc` (AES-CTR) video sample *i* and audio sample *i* were encrypted with
+  the same key **and** the same counter block. XOR-ing the two ciphertexts
+  cancels the keystream and yields the XOR of the two plaintexts — both
+  disclosed without the key. ISO/IEC 23001-7 §9.2 requires the IV to be unique
+  per *key*; "unique per track" is not sufficient when one key covers every
+  track. Measured on the two-track `fixtures/ts/h264_aac.ts`: 75 of 206
+  per-sample IVs collided. Every pre-existing test narrowed its fixture to a
+  single track, which is why a green suite shipped it.
+  - `IvGen::Counter { base }`'s sample index now runs continuously across the
+    whole `Media` in (track, sample) order, and never resets per track.
+  - **BREAKING** — `IvGen::Explicit(ivs)` now requires exactly
+    `media.tracks.iter().map(|t| t.samples.len()).sum()` IVs, consumed in
+    (track, sample) order. Previously it was validated against *each track's*
+    count, so one list was replayed verbatim for every track — the same defect
+    by a different route. A caller passing a per-track-sized list now gets
+    `Error::InvalidInput` instead of silent keystream reuse.
+  - `IvGen::Explicit` also rejects a list containing any **duplicate** IV, and
+    `encrypt` re-checks every *recorded* per-sample IV for duplicates across
+    the whole `Media` before returning. The second check is a deliberate
+    backstop: it makes the entire keystream-reuse class fail loudly rather than
+    fixing one instance of it.
+  - All IV validation now happens before the first sample is ciphered, so a
+    rejected configuration leaves the `Media` untouched instead of
+    half-encrypted.
+- **CRITICAL — BREAKING: `IvGen::Constant` + `CencScheme::Cenc` produced
+  unreadable output encrypted under an all-zero counter.** The `cenc` cipher is
+  never handed the track's `tenc`, so `IvGen::Constant`'s 16-byte seed (which
+  lives only in `tenc.default_constant_IV`) never reached it: every sample was
+  encrypted with an all-zero counter block — one keystream for the entire
+  track, and output no conformant decryptor can read. The combination is now
+  rejected with `Error::InvalidInput`; a constant IV is fundamentally
+  incompatible with CTR mode. `IvGen::Constant` is documented as `cbcs`-only
+  (where it is the standard convention) and is unchanged under `cbcs`.
+- **`cenc` decrypt no longer "succeeds" over garbage.** A conformant file whose
+  `tenc` declares `default_per_sample_iv_size == 0` with a
+  `default_constant_IV` yields empty `senc` IVs; the `cenc` path decrypted
+  those against an all-zero counter and returned `Ok(())` over rubbish. An
+  empty per-sample IV under `cenc` is now a typed error in both directions.
+- **`senc` no longer sizes an allocation from an unbounded wire field (remote
+  DoS).** `SampleEncryptionBox::parse_body` sized
+  `Vec::with_capacity(sample_count)` from the untrusted 32-bit `sample_count`
+  before any bounds check: a 20-byte box carrying `FF FF FF FF` requested a
+  single **206 GB** allocation (measured). `sample_count` is now bounded
+  against the box body's own length via each entry's minimum on-wire size, and
+  a `senc` whose entries would carry no bytes at all (no per-sample IV *and* no
+  subsample map — a shape whose count the wire cannot corroborate at any
+  length) is rejected. `saio`'s `entry_count * offset_size` is likewise
+  `checked_mul`'d so it cannot wrap past its length check on a 32-bit target.
+
+### Fixed (CENC, lower severity)
+
+- **A failed cipher pass no longer commits a half-encrypted payload.**
+  `cenc_crypto`'s in-place rewrite committed the buffer even when the cipher
+  returned `Err`, so a malformed `senc` that overran on its *second* subsample
+  left the first subsample keystreamed and stored that back into
+  `Sample::data`. Both cipher entry points now validate the entire subsample
+  map up front, after which their block loops cannot fail — so an error leaves
+  the sample byte-identical, and never leaves it empty.
+- **Subsample maps must now cover the whole sample on decrypt too** (ISO/IEC
+  23001-7 §9.3, matching the encrypt side): a map declaring 100 bytes of a
+  1000-byte sample used to return `Ok(())`, leaving 900 bytes of ciphertext
+  presented as plaintext.
+- **BREAKING — `CencDecryptor`'s `Decrypt::decrypt` pairs tracks by `track_id`,
+  not by position.** It zipped `Media` tracks to crypto records positionally
+  while storing the `track_id` for exactly that purpose, so a
+  `select_tracks_by`-narrowed `Media` decrypted (say) audio with the *video*
+  track's IVs — and when the two tracks' sample counts coincided, the existing
+  count check did not catch it either. A media track with no matching record is
+  now `Error::InvalidInput`; unmatched *records* remain fine (the narrowed
+  case).
+- **`iter_length_prefixed_nals` checks its NAL-length addition.** A 4-byte NAL
+  length of `0xFFFFFFFF` wrapped `start + len` on a 32-bit `usize`, defeating
+  the overrun guard and panicking on the subsequent slice. Reachable from
+  `CencEncryptor`'s subsample-map construction on caller-supplied sample data.
+- Added a `transmux_cenc_boxes` fuzz target covering the `senc`/`saiz`/`saio`
+  parsers (untrusted third-party media; 7.1 M executions clean).
+
 ## [0.20.0] - 2026-07-26
 
 **Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).
