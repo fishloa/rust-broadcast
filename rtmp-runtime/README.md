@@ -63,7 +63,20 @@ round-trips, verified against a real ffmpeg RTMP publish capture
 ## Spec
 
 Adobe *Real-Time Messaging Protocol (RTMP) specification* — transcribed for this
-crate in [`docs/rtmp.md`](docs/rtmp.md).
+crate in [`docs/rtmp.md`](docs/rtmp.md). (`docs/rtmp.md` uses its own §-numbering
+for navigation, not the Adobe spec's own §5.x/§7.x numbering cited throughout
+this README and the source doc comments.)
+
+## Features
+
+| Feature | Default | Adds |
+|---|---|---|
+| `serde` | off | `Serialize`/`Deserialize` on the owned public wire/event types: `ServerEvent`, `ServerConfig`, `Amf0Value`, `Command`. |
+| `tokio` | off | The real-socket adapter (`io::AsyncRtmpServer` / `RtmpConnection`); the sans-IO core itself needs no runtime. |
+
+## MSRV
+
+Rust **1.86**.
 
 ## License
 

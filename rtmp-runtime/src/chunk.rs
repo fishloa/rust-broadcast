@@ -25,6 +25,36 @@ type Result<T> = core::result::Result<T, RtmpError>;
 /// Set Chunk Size protocol control message changes it.
 pub const DEFAULT_CHUNK_SIZE: u32 = 128;
 
+/// Largest chunk size [`ChunkAssembler::set_chunk_size`]/[`ChunkWriter::set_chunk_size`]
+/// will adopt from a Set Chunk Size protocol control message (§5.4.1): 16
+/// MiB. The wire field is a 31-bit value (up to ~2 GiB), but no real
+/// publisher/player needs a chunk size anywhere near that — a single chunk
+/// this large would already hold many seconds of encoded audio/video — so
+/// this is a defensive ceiling, not a spec limit: values above it are
+/// clamped down rather than rejected, matching the existing floor-of-1
+/// behaviour for values below it.
+pub const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Largest total `message_length` (§5.3.1.2) [`ChunkAssembler`] will begin
+/// buffering for a single reassembled message: 8 MiB. `message_length` is a
+/// fully attacker-controlled 24-bit wire field (max ~16 MiB); real RTMP
+/// audio/video/command messages are always far smaller than this (a single
+/// compressed video frame, even a keyframe, is normally well under 1 MiB),
+/// so this is a generous ceiling that still bounds worst-case allocation
+/// per in-progress message. A Type 0/1 header declaring a larger
+/// `message_length` is rejected by [`ChunkAssembler`] before any buffer for
+/// it is allocated.
+pub const MAX_MESSAGE_LEN: u32 = 8 * 1024 * 1024;
+
+/// Largest number of distinct chunk stream ids [`ChunkAssembler`] will track
+/// reassembly state for concurrently. A well-behaved publisher uses only a
+/// handful of chunk streams (2/3 for control/command traffic, plus a few
+/// more for audio/video) — this bound is generous headroom above that, not
+/// a spec limit — so a flood of chunks opening many distinct (and mostly
+/// bogus) csids is rejected rather than growing the per-csid state map
+/// without bound.
+pub const MAX_CSIDS: usize = 64;
+
 /// The 24-bit sentinel value that, in a Type 0/1/2 message header's
 /// `timestamp`/`timestamp delta` field, signals that the field does not carry
 /// the real value: the full 32-bit value instead follows in a 4-byte
@@ -687,10 +717,11 @@ impl ChunkAssembler {
 
     /// Update the chunk size in effect for subsequent chunks (called on
     /// receipt of a Set Chunk Size protocol control message, §5.4.1). Floored
-    /// at 1 (a chunk size of 0 would never make progress splitting payload),
-    /// matching [`ChunkWriter::set_chunk_size`]'s floor.
+    /// at 1 (a chunk size of 0 would never make progress splitting payload)
+    /// and capped at [`MAX_CHUNK_SIZE`], matching
+    /// [`ChunkWriter::set_chunk_size`]'s floor/cap.
     pub fn set_chunk_size(&mut self, n: u32) {
-        self.chunk_size = n.max(1);
+        self.chunk_size = n.clamp(1, MAX_CHUNK_SIZE);
     }
 
     /// Feed inbound bytes; returns each complete [`Message`] decoded from
@@ -810,6 +841,16 @@ impl ChunkAssembler {
         };
 
         let existing = states.get(&bh.chunk_stream_id);
+
+        // Remote-DoS guard: a flood of chunks opening distinct, previously
+        // unseen csids would otherwise grow `states` without bound (one
+        // `CsidState`, each with its own payload buffer, per bogus csid).
+        // Reject before the caller ever inserts a new entry for this csid.
+        if existing.is_none() && states.len() >= MAX_CSIDS {
+            return Err(RtmpError::Malformed {
+                what: "too many concurrent chunk stream ids (csid flood)",
+            });
+        }
 
         let rest = &buf[header_len..];
         let (mh, mh_consumed) = match MessageHeader::parse(bh.fmt, rest) {
@@ -945,6 +986,17 @@ impl ChunkAssembler {
             _ => unreachable!("MessageHeader::parse always returns the variant for its Fmt"),
         };
 
+        // Remote-DoS guard: `message_length` is a fully attacker-controlled
+        // 24-bit wire field (Type 0/1 headers set it directly; Type 2/3
+        // inherit an already-checked value). Reject before any payload
+        // buffer for this message is allocated — see `MAX_MESSAGE_LEN`'s
+        // doc for why this bound is safe for real RTMP traffic.
+        if resolved.message_length > MAX_MESSAGE_LEN {
+            return Err(RtmpError::Malformed {
+                what: "message length exceeds the maximum accepted message size",
+            });
+        }
+
         let already_accumulated = if starts_new {
             0
         } else {
@@ -958,8 +1010,15 @@ impl ChunkAssembler {
             return Ok(None);
         }
 
+        // No `Vec::with_capacity(resolved.message_length)` here: that would
+        // pre-reserve up to `MAX_MESSAGE_LEN` bytes off a single attacker-
+        // supplied header field, before a single payload byte has actually
+        // arrived. The payload instead grows incrementally via
+        // `extend_from_slice` below, chunk by chunk, as real bytes show up —
+        // pre-reserving the claimed length buys almost nothing since the
+        // data arrives in `chunk_size` pieces anyway.
         let mut payload = if starts_new {
-            Vec::with_capacity(resolved.message_length as usize)
+            Vec::new()
         } else {
             existing.map(|s| s.payload.clone()).unwrap_or_default()
         };
@@ -1037,9 +1096,10 @@ impl ChunkWriter {
 
     /// Update the chunk size used for subsequent [`ChunkWriter::write`]
     /// calls (called on sending a Set Chunk Size protocol control message,
-    /// §5.4.1).
+    /// §5.4.1). Capped at [`MAX_CHUNK_SIZE`] (the floor-of-1 is applied in
+    /// [`ChunkWriter::write`] itself).
     pub fn set_chunk_size(&mut self, n: u32) {
-        self.chunk_size = n;
+        self.chunk_size = n.min(MAX_CHUNK_SIZE);
     }
 
     /// Serialize `msg` into chunk bytes at the current chunk size: a Type 0
@@ -2126,5 +2186,150 @@ mod tests {
         let out = assembler.push(&input).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].payload, vec![0xAA, 0xBB, 0xCC]);
+    }
+
+    // ── Remote-DoS caps (excessive-allocation guard) ────────────────────
+
+    /// A complete, well-formed one-chunk message on `csid`: a Type 0 header
+    /// declaring `message_length == payload.len()`, immediately followed by
+    /// `payload` (so it fits in the default 128-byte chunk size and
+    /// completes in a single chunk).
+    fn single_chunk(csid: u32, payload: &[u8]) -> Vec<u8> {
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: csid,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: payload.len() as u32,
+                message_type_id: 9,
+                message_stream_id: 1,
+            },
+        );
+        input.extend_from_slice(payload);
+        input
+    }
+
+    #[test]
+    fn oversized_message_length_header_is_rejected_without_allocating() {
+        // Mutation check: a Type 0 header claims a ~16 MiB message_length
+        // (the max a 24-bit field can encode) but only ever supplies a
+        // single default-chunk-size (128-byte) slice of payload after it —
+        // exactly the shape of the excessive-allocation DoS (attacker never
+        // has to send anywhere near the claimed length). Without the
+        // MAX_MESSAGE_LEN cap this used to `Vec::with_capacity(message_length)`
+        // (~16 MiB) right here and return `Ok(vec![])` (message merely
+        // in-progress, no error) — this test would then fail, since it
+        // asserts an `Err` instead.
+        let mut assembler = ChunkAssembler::new();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: 4,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: 0x00FF_FFFF, // ~16 MiB: the largest 24-bit value.
+                message_type_id: 9,
+                message_stream_id: 1,
+            },
+        );
+        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+
+        let err = assembler.push(&input).expect_err(
+            "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
+             message_length-sized buffer is allocated",
+        );
+        assert!(matches!(err, RtmpError::Malformed { .. }));
+    }
+
+    #[test]
+    fn message_length_at_the_cap_is_accepted() {
+        // Boundary check: exactly MAX_MESSAGE_LEN must still be accepted
+        // (only values strictly above the cap are rejected).
+        let mut assembler = ChunkAssembler::new();
+        let mut input = Vec::new();
+        write_serialized(
+            &mut input,
+            &BasicHeader {
+                fmt: Fmt::Type0,
+                chunk_stream_id: 4,
+            },
+        );
+        write_serialized(
+            &mut input,
+            &MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: MAX_MESSAGE_LEN,
+                message_type_id: 9,
+                message_stream_id: 1,
+            },
+        );
+        input.extend(std::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+
+        // Not yet complete (only one chunk of a much larger message has
+        // arrived) but must not be rejected outright.
+        assert!(assembler.push(&input).is_ok());
+    }
+
+    #[test]
+    fn csid_flood_beyond_max_csids_is_rejected() {
+        // Mutation check: fill the bound with MAX_CSIDS distinct,
+        // well-formed chunk streams first (none of these may error — the
+        // cap must not reject legitimate, moderate csid usage), then assert
+        // that one more previously-unseen csid is rejected rather than
+        // silently growing the per-csid state map without bound. Without
+        // the MAX_CSIDS cap this last `push` would also return `Ok(_)`,
+        // failing this test's `Err` assertion.
+        let mut assembler = ChunkAssembler::new();
+        for i in 0..MAX_CSIDS {
+            let csid = BASIC_HEADER_1BYTE_MIN_CSID + i as u32;
+            let out = assembler
+                .push(&single_chunk(csid, &[0xAB]))
+                .unwrap_or_else(|e| panic!("csid {csid} (#{i}, within the bound) rejected: {e}"));
+            assert_eq!(out.len(), 1);
+        }
+
+        let flood_csid = BASIC_HEADER_1BYTE_MIN_CSID + MAX_CSIDS as u32;
+        let err = assembler
+            .push(&single_chunk(flood_csid, &[0xCD]))
+            .expect_err("a new csid beyond MAX_CSIDS must be rejected, not silently accepted");
+        assert!(matches!(err, RtmpError::Malformed { .. }));
+    }
+
+    #[test]
+    fn csid_flood_cap_does_not_count_repeats_of_the_same_csid() {
+        // A single csid reused for many messages must never itself trip the
+        // MAX_CSIDS cap (the bound is on distinct concurrent csids, not on
+        // total message count).
+        let mut assembler = ChunkAssembler::new();
+        for i in 0..(MAX_CSIDS * 4) {
+            let out = assembler
+                .push(&single_chunk(BASIC_HEADER_1BYTE_MIN_CSID, &[i as u8]))
+                .expect("repeated use of a single already-known csid must never be rejected");
+            assert_eq!(out.len(), 1);
+        }
+    }
+
+    #[test]
+    fn set_chunk_size_is_capped_at_max_chunk_size() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(u32::MAX);
+        assert_eq!(assembler.chunk_size, MAX_CHUNK_SIZE);
+
+        let mut writer = ChunkWriter::new();
+        writer.set_chunk_size(u32::MAX);
+        assert_eq!(writer.chunk_size, MAX_CHUNK_SIZE);
     }
 }

@@ -149,10 +149,8 @@ impl RtmpSource {
         let server = self
             .server
             .get_or_try_init(|| async {
-                let config = ServerConfig {
-                    expected_stream_key: self.stream_key.clone(),
-                    ..ServerConfig::default()
-                };
+                let config =
+                    ServerConfig::default().with_expected_stream_key(self.stream_key.clone());
                 AsyncRtmpServer::bind(self.listen.as_str(), config)
                     .await
                     .map(Arc::new)

@@ -24,8 +24,8 @@
 //! [`rtsp_runtime`](https://docs.rs/rtsp-runtime) sans-IO client/server split
 //! in this same workspace.
 //!
-//! An optional `tokio` socket adapter (feature `tokio`) will drive real
-//! connections over this same core once the engine lands.
+//! An optional `tokio` socket adapter (feature `tokio`) drives real
+//! connections over this same core.
 //!
 //! # Module map
 //!

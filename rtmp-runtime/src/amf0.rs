@@ -92,7 +92,15 @@ const OBJECT_END_LEN: usize = 3;
 /// AMF3 (`avmplus-object-marker`, `0x11`) and the reserved/legacy markers
 /// (`movieclip`, `reference`, `unsupported`, `recordset`, `xml-document`,
 /// `typed-object`) are out of scope — see the module doc.
+///
+/// `#[non_exhaustive]`: this models a documented subset of `[AMF0]` §2's
+/// value types (see the module doc's Scope section); a future release may
+/// add a variant for one of the currently-`Unsupported` markers (e.g. a
+/// typed AMF3 bridge) without that being a breaking change for existing
+/// `match` callers.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Amf0Value {
     /// Number (§2.2).
     Number(f64),
@@ -131,7 +139,14 @@ fn read_utf8_short(bytes: &[u8], what: &'static str) -> Result<(String, usize)> 
         return Err(buffer_too_short(U16_LEN, bytes.len(), what));
     }
     let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
-    let total = U16_LEN + len;
+    // `len` is at most `u16::MAX`, so `U16_LEN + len` cannot actually
+    // overflow `usize` on any real target, but guard it anyway (rather than
+    // a bare `+`) so this stays correct even on a hypothetical narrow
+    // `usize` platform, and matches the same guard on `read_utf8_long`
+    // below where the addend genuinely can overflow.
+    let total = U16_LEN
+        .checked_add(len)
+        .ok_or(RtmpError::Malformed { what })?;
     if bytes.len() < total {
         return Err(buffer_too_short(total, bytes.len(), what));
     }
@@ -146,7 +161,14 @@ fn read_utf8_long(bytes: &[u8], what: &'static str) -> Result<(String, usize)> {
         return Err(buffer_too_short(U32_LEN, bytes.len(), what));
     }
     let len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-    let total = U32_LEN + len;
+    // `len` can be up to `u32::MAX`: on a 32-bit target, `U32_LEN + len`
+    // wraps `usize` (e.g. `len == usize::MAX - 1`), which would make
+    // `bytes.len() < total` compare against a garbage-small wrapped value
+    // and misparse a length claim that should instead be rejected as too
+    // short. `checked_add` catches that instead of wrapping.
+    let total = U32_LEN
+        .checked_add(len)
+        .ok_or(RtmpError::Malformed { what })?;
     if bytes.len() < total {
         return Err(buffer_too_short(total, bytes.len(), what));
     }
@@ -434,6 +456,7 @@ impl Serialize for Amf0Value {
 /// itself a single AMF0 `value-type`, so it uses inherent `parse`/`to_body`
 /// methods rather than the [`Parse`]/[`Serialize`] traits.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Command {
     /// The command name, e.g. `"connect"`, `"createStream"`, `"publish"`,
     /// `"_result"`.
@@ -779,5 +802,47 @@ mod tests {
             Command::parse(&bytes),
             Err(RtmpError::Malformed { .. })
         ));
+    }
+
+    // ── 32-bit overflow guards (mutation checks) ─────────────────────────
+
+    #[test]
+    fn long_string_length_overflowing_usize_is_rejected_not_wrapped() {
+        // Mutation check: a Long String claiming `usize::MAX - 1` bytes must
+        // be rejected as too-short/malformed, not silently wrap `U32_LEN +
+        // len` into a small `total` that then compares as if the string
+        // were actually present.
+        let mut bytes = vec![marker::LONG_STRING];
+        bytes.extend_from_slice(&(u32::MAX - 1).to_be_bytes());
+        bytes.extend_from_slice(b"short");
+        let err = Amf0Value::parse(&bytes).unwrap_err();
+        assert!(matches!(
+            err,
+            RtmpError::Malformed { .. } | RtmpError::BufferTooShort { .. }
+        ));
+    }
+
+    // ── serde (feature "serde") ───────────────────────────────────────────
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn amf0_value_and_command_serde_round_trip() {
+        let value = Amf0Value::Object(vec![
+            ("app".to_string(), Amf0Value::String("live".to_string())),
+            ("live".to_string(), Amf0Value::Boolean(true)),
+            ("duration".to_string(), Amf0Value::Number(0.0)),
+            (
+                "items".to_string(),
+                Amf0Value::StrictArray(vec![Amf0Value::Null, Amf0Value::Undefined]),
+            ),
+        ]);
+        let json = serde_json::to_string(&value).expect("serialize Amf0Value");
+        let back: Amf0Value = serde_json::from_str(&json).expect("deserialize Amf0Value");
+        assert_eq!(back, value);
+
+        let cmd = publish_command();
+        let json = serde_json::to_string(&cmd).expect("serialize Command");
+        let back: Command = serde_json::from_str(&json).expect("deserialize Command");
+        assert_eq!(back, cmd);
     }
 }

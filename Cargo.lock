@@ -2269,6 +2269,7 @@ dependencies = [
  "broadcast-common",
  "log",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "transmux",

@@ -16,8 +16,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `ServerSession::handle_data` (single-call and small-chunk reassembly) and
   feeds the emitted FLV to `transmux::FlvDemux`, asserting a decoded
   H.264+AAC `Media` — the real-fixture end-to-end ingest test.
+- `serde` feature now actually derives `Serialize`/`Deserialize` on the owned
+  public wire/event types (`ServerEvent`, `ServerConfig`, `Amf0Value`,
+  `Command`), with a round-trip test gated on the feature.
+- `ServerConfig::with_expected_stream_key`/`with_chunk_size`/
+  `with_window_ack_size`/`with_peer_bandwidth` builder methods, needed now
+  that `ServerConfig` is `#[non_exhaustive]`.
 
 ### Fixed
+- **Remote excessive-allocation DoS**: `ChunkAssembler` no longer
+  `Vec::with_capacity`s an inbound `message_length` (a fully
+  attacker-controlled 24-bit wire field, up to ~16 MiB) before a single
+  payload byte has arrived for it — the buffer instead grows incrementally
+  as real chunk payload shows up. Added `MAX_MESSAGE_LEN` (8 MiB): a
+  Type 0/1 header declaring a larger `message_length` is rejected before
+  any buffer is allocated. Added `MAX_CSIDS` (64): a flood of chunks opening
+  more than this many distinct, previously-unseen chunk stream ids is
+  rejected rather than growing the per-csid state map without bound.
 - `ServerSession::handle_data` now dispatches each reassembled message as
   soon as it is parsed, instead of collecting a whole `ChunkAssembler::push`
   batch before dispatching any of them. A client Set Chunk Size (§5.4.1)
@@ -28,3 +43,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `ChunkAssembler` gained crate-internal `feed`/`next_message` (incremental,
   one-message-at-a-time parsing) alongside the existing `push`, which
   `ServerSession` now uses for this reason.
+- `ChunkAssembler`/`ChunkWriter::set_chunk_size` now also cap the negotiated
+  chunk size at `MAX_CHUNK_SIZE` (16 MiB), in addition to the existing
+  floor-of-1.
+- `Amf0Value`, `ProtocolControl`, and `UserControl` are now `#[non_exhaustive]`
+  (each models a documented subset of its spec catalogue).
+- `read_utf8_short`/`read_utf8_long` (AMF0 String/Long String length
+  prefixes) now use `checked_add` instead of a bare `+` when computing the
+  total consumed length, guarding against `usize` overflow on 32-bit
+  targets.
+- `ServerSession`'s `next_stream_id` counter now uses `saturating_add`
+  instead of a bare `+= 1`.

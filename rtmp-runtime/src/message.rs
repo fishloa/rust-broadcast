@@ -147,6 +147,11 @@ broadcast_common::impl_spec_display!(LimitType);
 /// message type ids `1`, `2`, `3`, `5`, `6`. MUST use message stream id 0
 /// and chunk stream id 2 ([`CONTROL_MESSAGE_STREAM_ID`] /
 /// [`CONTROL_CHUNK_STREAM_ID`]); effective immediately on receipt.
+///
+/// `#[non_exhaustive]`: `§4`'s protocol control catalogue is closed today,
+/// but this mirrors [`UserControl`]/[`crate::amf0::Amf0Value`] so a future
+/// addition never breaks an existing `match`.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolControl {
     /// Set Chunk Size (§5.4.1): the new maximum chunk size (`1..=0x7FFF_FFFF`).
@@ -361,6 +366,11 @@ mod event_type {
 /// formats per §6.7, spec §7.1.7). SHOULD use message stream id 0 and,
 /// over the chunk stream, csid 2. Effective on receipt; timestamps
 /// ignored.
+///
+/// `#[non_exhaustive]`: §6.7's event-type catalogue (event value 5 is
+/// already an unassigned gap) can grow; a new event type must not be a
+/// breaking change for existing `match` callers.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserControl {
     /// Stream Begin (event 0, server→client): the stream is now

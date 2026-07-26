@@ -124,7 +124,13 @@ const FLV_PREV_TAG_SIZE_LEN: usize = 4;
 const FLV_MAX_DATA_SIZE: usize = 0x00FF_FFFF;
 
 /// Configuration for a [`ServerSession`].
+///
+/// `#[non_exhaustive]`: fields may grow (e.g. a future `app` gate alongside
+/// `expected_stream_key`). Construct via [`ServerConfig::default`] plus the
+/// `with_*` builder methods rather than a struct literal.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ServerConfig {
     /// Outbound chunk size advertised (and adopted) on `connect` (§5.4.1).
     pub chunk_size: u32,
@@ -152,9 +158,43 @@ impl Default for ServerConfig {
     }
 }
 
+impl ServerConfig {
+    /// Set [`ServerConfig::expected_stream_key`]. `#[non_exhaustive]` forbids
+    /// struct-literal construction of this type from outside the crate, so
+    /// this (plus the other `with_*` builders below) is how a caller
+    /// customises a field starting from [`ServerConfig::default`].
+    #[must_use]
+    pub fn with_expected_stream_key(mut self, expected_stream_key: Option<String>) -> Self {
+        self.expected_stream_key = expected_stream_key;
+        self
+    }
+
+    /// Set [`ServerConfig::chunk_size`].
+    #[must_use]
+    pub fn with_chunk_size(mut self, chunk_size: u32) -> Self {
+        self.chunk_size = chunk_size;
+        self
+    }
+
+    /// Set [`ServerConfig::window_ack_size`].
+    #[must_use]
+    pub fn with_window_ack_size(mut self, window_ack_size: u32) -> Self {
+        self.window_ack_size = window_ack_size;
+        self
+    }
+
+    /// Set [`ServerConfig::peer_bandwidth`].
+    #[must_use]
+    pub fn with_peer_bandwidth(mut self, peer_bandwidth: u32) -> Self {
+        self.peer_bandwidth = peer_bandwidth;
+        self
+    }
+}
+
 /// Typed events [`ServerSession::handle_data`] surfaces to the caller.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ServerEvent {
     /// `connect` completed: the publisher's requested `app` name (§7.2.1).
     Connected {
@@ -542,7 +582,7 @@ impl ServerSession {
         }
 
         let stream_id = self.next_stream_id;
-        self.next_stream_id += 1;
+        self.next_stream_id = self.next_stream_id.saturating_add(1);
         self.created_stream_id = Some(stream_id);
 
         let result = Command {
@@ -1516,5 +1556,61 @@ mod tests {
         // Sanity: our reply csid choice for command messages must not
         // collide with the reserved control/user-control csid.
         assert_ne!(COMMAND_CHUNK_STREAM_ID, CTRL_CSID);
+    }
+
+    #[test]
+    fn next_stream_id_saturates_instead_of_overflowing() {
+        // Mutation check: with `next_stream_id` already at `u32::MAX`, a
+        // bare `+= 1` panics (debug-mode overflow check) or wraps to 0
+        // (release mode) — either way, the wrong behaviour. `saturating_add`
+        // must instead keep it pinned at `u32::MAX`.
+        let mut session = ServerSession::with_defaults();
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        session.handle_data(&connect_bytes("live")).unwrap();
+
+        session.next_stream_id = u32::MAX;
+        let (out, _events) = session
+            .handle_data(&create_stream_bytes())
+            .expect("createStream must not panic when next_stream_id is already u32::MAX");
+
+        let commands = decode_commands(&out);
+        let result = commands
+            .iter()
+            .find(|c| c.name == "_result")
+            .expect("createStream _result reply");
+        assert_eq!(
+            result.arguments.get(1),
+            Some(&Amf0Value::Number(f64::from(u32::MAX))),
+            "the stream id allocated at the u32::MAX boundary must still be u32::MAX"
+        );
+        assert_eq!(
+            session.next_stream_id,
+            u32::MAX,
+            "next_stream_id must saturate at u32::MAX, not wrap to 0"
+        );
+    }
+
+    // ── serde (feature "serde") ────────────────────────────────────────────
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn server_config_and_server_event_serde_round_trip() {
+        let config = ServerConfig::default()
+            .with_chunk_size(8192)
+            .with_expected_stream_key(Some("k".to_string()));
+        let json = serde_json::to_string(&config).expect("serialize ServerConfig");
+        let back: ServerConfig = serde_json::from_str(&json).expect("deserialize ServerConfig");
+        assert_eq!(back.chunk_size, config.chunk_size);
+        assert_eq!(back.expected_stream_key, config.expected_stream_key);
+
+        let event = ServerEvent::Publish {
+            app: "live".to_string(),
+            stream_key: "testkey".to_string(),
+            stream_id: 1,
+        };
+        let json = serde_json::to_string(&event).expect("serialize ServerEvent");
+        let back: ServerEvent = serde_json::from_str(&json).expect("deserialize ServerEvent");
+        assert_eq!(back, event);
     }
 }
