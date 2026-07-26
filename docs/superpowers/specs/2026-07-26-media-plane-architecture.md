@@ -176,6 +176,20 @@ FDT XML, no object reassembly, no FEC, no scheduler.)
 Partition and Index Tables after the essence. These stay `Package`-over-a-bounded-`Media`, stated
 explicitly so #754 isn't shoehorned into a runtime trait.
 
+### 3.1 Per-viewer cursors do NOT scale — high-fan-out egress needs a relay
+
+Rev 1 claimed "the viewer *is* a cursor, so N viewers at N positions falls out for free". The
+benchmark refutes it: writer cost is O(N) in cursor count, so one cursor per WHEP viewer puts
+hundreds of readers on the trunk lock (~100 readers extrapolates to ~60 us mean publish, over
+budget for a high-rate route).
+
+**Rule:** a cursor is for a *distinct consumer of the stream* (segmenter, DVR writer, analysis tap,
+one push relay) — **not** for each peer of a one-to-many protocol. `PushEgress` implementations that
+serve many peers (WHEP, and any future RTP multicast/SSM egress) take **one** cursor and fan out to
+their peers themselves, where per-peer state (SRTP context, congestion window, pacing epoch) already
+has to live anyway. Supported trunk reader count is therefore **single-digit by design**; peers are
+unbounded but live behind a relay.
+
 **Rev-1 claim corrected (G7):** removing the three `String` manifest renderers does **not** collapse
 `Package::Output` to `Vec<u8>`. Four composite outputs remain — `Vec<Chunk>`, `RtpOutput`,
 `SmoothOutput`, `TsHlsOutput` — and their per-unit metadata is exactly what `SegmentRef` must model.
@@ -274,8 +288,14 @@ a datagram plane, like `st2110`.
 - **Two planes (main + `st2110`) will drift.** Unchanged from rev 1; still true.
 - **`ByteMerge` admits a graph.** Bounded to the byte layer with three named policies. If a third
   multi-input shape appears at the IR layer, this design is wrong and a real DAG is the answer.
-- **`Trunk` at rate is still unbenchmarked** — a 200-track MPTS fanned to 6 readers. Benchmark
-  before step 3 lands. If a single shared log can't sustain it, the answer is per-reader rings over
-  a shared arena — a different design, not a tweak.
+- **`Trunk` at rate is MEASURED (`spikes/trunk-bench`, 2026-07-26): PASS at the specced scale, with
+  one claim corrected.** 200-track MPTS x 6 readers, ~1 Gbit/s aggregate: 999.97/1000 Mbit/s
+  sustained, publish mean 5.6 us / p99 44.3 us / max 144 us against a ~111 us inter-arrival budget,
+  no reader starvation, `Bytes` no-copy fan-out confirmed by pointer identity + allocator counts.
+  **But writer cost is cheap O(N) in reader count, NOT O(1)** (956 ns -> 9.98 us across 1 -> 16
+  readers): writer and readers contend on one shared `Mutex`. It reads as flat at N=6 only because
+  the per-op cost is small against the budget. Consequence in SS3.1. Mitigation if reader counts
+  grow: shard the lock per track, or serve reads from an `ArcSwap` snapshot. Re-measure before
+  raising the supported reader count.
 - **`st377-1` uses `Package`/`Track`/`Sequence` MXF vocabulary** — naming collision with the IR,
   worth one disambiguating sentence.
