@@ -1,11 +1,22 @@
 name: GitHub Pages — WASM demo
 
-# Deploy the dvb-si browser demo on every push to main.
-# This workflow is independent of CI and non-gating — it does not run on PRs
-# and is not a required status check.
+# Build and deploy the dvb-si browser demo.
+#
+# The BUILD runs on pull requests as well as pushes, deliberately. This
+# workflow used to be push-only, so it could not fail until after a merge: a
+# stale `mpeg-ts = "0.2"` pin in demo/Cargo.toml slipped through, broke
+# `cargo metadata`, and left this red on main for six consecutive merges
+# without blocking anything — which trains everyone to ignore a red mark
+# (issue #785; the same rot hit the clippy canary, #770).
+#
+# The DEPLOY still runs only on push to main. That split is the point: a broken
+# demo build is our bug and should block a PR, whereas a GitHub Pages
+# deployment hiccup is not and should not.
 on:
   push:
     branches: [main]
+
+  pull_request:
 
   # Allow manual re-deploy from the Actions tab.
   workflow_dispatch:
@@ -61,6 +72,10 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    # Main-line pushes only. A pull request builds the demo (so a break blocks
+    # the PR) but must not publish it, and would in any case lack the Pages
+    # permissions on a fork.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
