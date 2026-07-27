@@ -92,13 +92,28 @@ release `media-doctor`. Move `timed-metadata`'s SEI-caption fixture test out of 
 transmux `"0.18"` and `bindings/transmux-py` pins `"0.15"` — **both unaffected.** Fold in the already-open
 #720 binding ripple.
 
-## Step 3 — `media-plane` 0.1.0 (NEW) — **GATED ON THE BENCHMARK**
+## Step 3 — `media-plane` 0.1.0 (NEW) — **GATE CLEARED**
 
-Only start when `spikes/trunk-bench` reports PASS or PASS-WITH-CHANGES; adopt any named fix from that
-report before writing `Trunk`.
+> **Benchmark reported: PASS-WITH-CHANGES** (`spikes/trunk-bench`, commit `acdbf3d0`; spec rev 2 §3.1).
+> It passes at specced scale — 200-track MPTS × 6 readers sustained 999.97/1000 Mbit/s, publish mean
+> 5.6 µs / p99 44.3 µs against a ~111 µs budget. But it **refuted rev 1's O(1) claim**: writer cost is
+> **O(N) in cursor count** (956 ns → 9.98 µs from 1 → 16 readers).
+>
+> **The named fix to adopt before writing `Trunk`:** a cursor is for a *distinct consumer of the
+> stream*, **never** one per peer of a one-to-many protocol. Supported trunk reader count is
+> **single-digit by design** — document that on `subscribe()` and do not build for fan-out breadth.
+> A protocol serving many peers (LL-HLS, DASH, WHEP) takes **one** cursor and fans out beyond it.
+>
+> Steps 1–2 landed (PRs #784/#786/#787/#788): `Stage`, the `transmux::ir` migration, absolute
+> `Option<i64>` timestamps, `Sample.data: Bytes`, the `DemuxEvent` track-lifecycle vocabulary, and
+> `#[non_exhaustive]` throughout — all prerequisites for this step.
 
-**3a — byte layer.** `ByteStage`, `ByteTap { TapPoint::{Wire, PostTransform} }` yielding `(Bytes, Instant)`
-including bytes the demuxer rejects, and `ByteMerge { Hitless2022_7 | FirstArrival | Failover }`. This is
+**3a — byte layer.** `ByteStage`, `ByteTap { TapPoint::{Wire, PostTransform} }` yielding
+`(Bytes, Timestamp)` — **`broadcast_common::Timestamp` (u64 nanos), NOT `std::time::Instant`**: this
+crate is `no_std`-capable and `Instant` is unavailable there. It maps directly onto
+`ConformanceMonitor::feed(pkt, t: Duration)`, which is already a per-packet streaming API.
+Yields bytes **as received**, including bytes the demuxer will reject, plus
+`ByteMerge { Hitless2022_7 | FirstArrival | Failover }`. This is
 the layer that unblocks conformance/T-STD, CAM descramble, `ts-fix`, T2-MI inner-TS recovery, and
 ST 2022-7/RIST. Build it first — five of the audit's six blockers resolve here.
 
