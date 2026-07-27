@@ -136,22 +136,43 @@ struct TrackState {
 ///
 /// ```
 /// use transmux::{CodecConfig, LlSegmenter, Sample, TrackSpec};
-/// # fn spec() -> TrackSpec { unimplemented!() }
+/// # use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+/// # fn spec() -> TrackSpec {
+/// #     let record = AVCDecoderConfigurationRecord {
+/// #         configuration_version: 1,
+/// #         profile_indication: 66,
+/// #         profile_compatibility: 0,
+/// #         level_indication: 30,
+/// #         length_size_minus_one: 3,
+/// #         sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24])],
+/// #         pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+/// #         chroma_format: None,
+/// #         bit_depth_luma_minus8: None,
+/// #         bit_depth_chroma_minus8: None,
+/// #         sps_ext: vec![],
+/// #     };
+/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #         config: AVCConfigurationBox::new(record),
+/// #         width: 16,
+/// #         height: 16,
+/// #     })
+/// # }
 /// # fn au(sync: bool) -> Sample {
 /// #     use std::sync::atomic::{AtomicI64, Ordering};
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
-/// # if false {
 /// // 2 s target segments, one video frame per chunk (per-frame LL).
 /// let mut seg = LlSegmenter::new(vec![spec()], 1000, 2.0, 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
+/// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(1, au(true)).unwrap();               // keyframe
 /// seg.push(1, au(false)).unwrap();
-/// for chunk in seg.take_ready() { /* write chunk.data over HTTP */ }
-/// seg.flush().unwrap();                         // trailing chunks
-/// # }
+/// let chunks = seg.take_ready();                // write chunk.data over HTTP
+/// assert_eq!(chunks.len(), 2);                  // one chunk per pushed frame
+/// assert!(chunks[0].is_segment_start);
+/// seg.flush().unwrap();                         // trailing chunks (none pending here)
 /// ```
 pub struct LlSegmenter {
     tracks: Vec<TrackState>,

@@ -531,23 +531,44 @@ struct StreamTrackState {
 /// playlist over the configured window.
 ///
 /// ```
-/// use transmux::{Sample, TrackSpec};
+/// use transmux::{CodecConfig, Sample, TrackSpec};
 /// use transmux::ts_hls::StreamingTsHlsSegmenter;
-/// # fn spec() -> TrackSpec { unimplemented!() }
+/// # use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+/// # fn spec() -> TrackSpec {
+/// #     let record = AVCDecoderConfigurationRecord {
+/// #         configuration_version: 1,
+/// #         profile_indication: 66,
+/// #         profile_compatibility: 0,
+/// #         level_indication: 30,
+/// #         length_size_minus_one: 3,
+/// #         sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24])],
+/// #         pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+/// #         chroma_format: None,
+/// #         bit_depth_luma_minus8: None,
+/// #         bit_depth_chroma_minus8: None,
+/// #         sps_ext: vec![],
+/// #     };
+/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #         config: AVCConfigurationBox::new(record),
+/// #         width: 16,
+/// #         height: 16,
+/// #     })
+/// # }
 /// # fn au(sync: bool) -> Sample {
 /// #     use std::sync::atomic::{AtomicI64, Ordering};
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
-/// # if false {
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
 /// seg.push(1, au(true)).unwrap();
 /// seg.finish().unwrap();
-/// for s in seg.take_ready() { /* write s.bytes */ }
+/// let segments = seg.take_ready();          // write s.bytes for each
+/// assert_eq!(segments.len(), 1);
+/// assert_eq!(segments[0].bytes[0], 0x47);   // MPEG-TS sync byte
 /// let playlist = seg.playlist(); // rolling window, #EXT-X-ENDLIST after finish
-/// # }
+/// assert!(playlist.contains("#EXT-X-ENDLIST"));
 /// ```
 pub struct StreamingTsHlsSegmenter {
     tracks: Vec<StreamTrackState>,
