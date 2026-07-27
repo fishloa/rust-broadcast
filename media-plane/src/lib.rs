@@ -26,20 +26,38 @@
 //! ([`broadcast_common::Stage`]) and clock/backpressure types
 //! ([`broadcast_common::Timestamp`], [`broadcast_common::Demand`]).
 //!
-//! **This release (plan steps 3a-ii through 3b-iii) completes the byte
-//! layer and the whole `Trunk`**: [`ByteStage`], [`ByteTap`] (a
-//! non-blocking observer), [`ByteMerge`] (the one bounded multi-input
-//! primitive), [`Trunk`]/[`TrunkWriter`]/[`SampleCursor`] (the bounded,
-//! dual-retention sample ring), the segment log with [`SegmentCursor`] and
-//! [`ArchiveOverrun`] (lossless-by-retention pinning for a DVR/archive
-//! consumer, without the writer ever blocking by default), and now the
-//! 90 kHz event log with [`EventCursor`] and [`EventAnchor`] — the piece
-//! that resolves architecture-audit finding B1 (rev 1's false claim of one
-//! time model for every event; see the [`trunk`] module docs' event-log
-//! section). `Dialer`/`Listener`/`IngestSession` and the three egress
-//! traits are later steps of the same plan
-//! (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md`
-//! Step 3c onward) and are deliberately absent here.
+//! This crate is now functionally complete end to end (plan steps 3a
+//! through 3e): the byte layer, the whole [`Trunk`] (samples, segments, the
+//! 90 kHz event log, live parts, reader wake), [`ingress`] (`Dialer`/
+//! `Listener`/`IngestSession`/[`IngestDriver`]), [`egress`] ([`PushEgress`]/
+//! [`SegmentEgress`]/[`ServedEgress`]), and [`retention`] (hot/cold tiering
+//! over a caller-supplied [`SegmentSink`]). Step 3f added the acceptance
+//! furniture this doc describes (fuzz targets, examples, the release lane)
+//! without changing any of that behaviour.
+//!
+//! # `no_std` note — the byte layer only, not the whole crate
+//!
+//! **Only [`byte_stage`]/[`byte_tap`]/[`byte_merge`] are `no_std` + `alloc`.**
+//! [`Trunk`] and everything built on it ([`ingress`], [`egress`],
+//! [`retention`]) are gated behind, and require, the `std` feature —
+//! [`Trunk`] itself needs `std::sync::Mutex`/`Arc`/`Condvar` for cross-thread
+//! sharing (see the [`trunk`] module docs for why that beats a `no_std`
+//! spinlock crate here). Saying just "the plane is `no_std`-capable" without
+//! this qualifier would be true of a third of the crate and false of the
+//! rest, so it is stated plainly here rather than implied by the crate-level
+//! `no_std` attribute alone. `std` is a default feature; `--no-default-features`
+//! builds only the byte layer.
+//!
+//! # Recorded deviations (not defects — read before filing one)
+//!
+//! - [`byte_merge::MergePolicy`] deliberately has **no** `Hitless2022_7`
+//!   variant yet — SMPTE ST 2022-7 seamless switching needs an RTP
+//!   sequence-number parse this layer does not have; see the
+//!   [`byte_merge`] module docs. Tracked as #752.
+//! - Pull sources (HLS/DASH/Smooth) are request-driven, not stream-driven,
+//!   and [`IngestSession::poll_transmit`] has no way to express "issue a GET
+//!   for this URL" yet — a recorded seam, not solved here; see the
+//!   [`ingress`] module docs' "Known seam" section.
 //!
 //! # The byte layer ([`byte_stage`], [`byte_tap`], [`byte_merge`])
 //!
@@ -103,6 +121,7 @@
 //! against an evicted-from-hot segment (issue #746, DVR/catch-up).
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 #![doc(html_root_url = "https://docs.rs/media-plane")]
 
 extern crate alloc;
@@ -111,31 +130,39 @@ pub mod byte_merge;
 pub mod byte_stage;
 pub mod byte_tap;
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod egress;
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod ingress;
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod retention;
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod trunk;
 
 pub use byte_merge::{ByteMerge, MergeError, MergePolicy, SourceId};
 pub use byte_stage::ByteStage;
 pub use byte_tap::{ByteTap, TapItem, TapPoint};
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use egress::{
     AwaitPolicy, CachePolicy, EgressResponse, NegotiationOutcome, PushEgress, SegmentEgress,
     ServedEgress, TrackSelection,
 };
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use ingress::{
     AcceptOutcome, DialAttempt, DialSupervisor, Dialer, HandshakePolicy, HealthState, IngestDriver,
     IngestSession, ListenDriver, Listener, ProgramId, ReconnectPolicy, SessionEvent, SessionId,
     run_dial, run_listen,
 };
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use retention::{Retention, RetentionDriver, SegmentLocation, SegmentSink, SinkOutcome};
 #[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub use trunk::{
     ArchiveOverrun, EventAnchor, EventCursor, EventCursorItem, EventEntry, RetentionClass,
     SampleCursor, SampleCursorItem, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk,
