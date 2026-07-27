@@ -42,7 +42,10 @@ use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::ll_dash::build_chunk;
-use crate::pipeline::{CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::segmenter::{
+    MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
+};
 
 /// One finished LL-HLS **partial segment** ("part") — RFC 8216bis §4.4.4.9.
 ///
@@ -141,6 +144,10 @@ pub struct LlHlsSegmenter {
     anchor_seg_dur: u64,
     /// Buffered duration since the last part flush on the anchor (ticks).
     anchor_part_dur: u64,
+    /// Anchor-progress clock: advances *both* accumulators above from each
+    /// anchor sample's `duration`, or from its `dts` delta when `duration` is
+    /// absent or zero (see [`MediaClock`]).
+    anchor_clock: MediaClock,
     /// `mfhd.sequence_number` of the next part/segment `moof`, 1-based, contiguous.
     next_seq: u32,
     /// 1-based number of the segment currently being built.
@@ -165,13 +172,16 @@ impl LlHlsSegmenter {
     /// part whenever the anchor buffers `part_target_ms` milliseconds since the
     /// last part.
     ///
-    /// The anchor is the first video track (falling back to the first track for
-    /// audio-only), exactly as [`crate::segmenter::Segmenter`]. `movie_timescale`
-    /// matches [`build_init_segment`].
+    /// The anchor is chosen by the shared
+    /// [`choose_anchor`](crate::segmenter::choose_anchor) — the first **video**
+    /// track (any codec, not just AVC), falling back to the first
+    /// anchor-capable track — exactly as [`crate::segmenter::Segmenter`].
+    /// `movie_timescale` matches [`build_init_segment`].
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate `track_id`s,
-    /// `target_duration_secs` is not positive and finite, or `part_target_ms` is 0.
+    /// `target_duration_secs` is not positive and finite, `part_target_ms` is 0,
+    /// or no track is anchor-capable (every track is section-carried).
     pub fn with_part_target(
         tracks: Vec<TrackSpec>,
         movie_timescale: u32,
@@ -207,10 +217,14 @@ impl LlHlsSegmenter {
         // `tracks.retain(|t| t.config.is_muxable_in_bmff())`) if it wants
         // to drop such tracks rather than fail.
 
-        let anchor = tracks
-            .iter()
-            .position(|t| matches!(t.config, CodecConfig::Avc { .. }))
-            .unwrap_or(0);
+        // Anchor = first **video** track (any `CodecConfig::is_video` codec),
+        // else the first anchor-capable track — the shared rule
+        // `Segmenter`/`ts_hls` use. This used to match only
+        // `CodecConfig::Avc`, so an HEVC+AAC media with audio first anchored on
+        // the *audio* track: segments did not begin on an IRAP and every part
+        // was reported `independent` (audio is all sync samples), advertising
+        // `INDEPENDENT=YES` on parts that actually start mid-GOP.
+        let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
         let anchor_timescale = tracks[anchor].timescale as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
@@ -237,6 +251,7 @@ impl LlHlsSegmenter {
             part_target_ticks,
             anchor_seg_dur: 0,
             anchor_part_dur: 0,
+            anchor_clock: MediaClock::new(),
             next_seq: 1,
             current_segment: 1,
             next_part_index: 0,
@@ -266,9 +281,18 @@ impl LlHlsSegmenter {
     /// Otherwise, once the anchor buffers a part-target's worth of samples since
     /// the last part, a part is flushed.
     ///
+    /// Both accumulators advance via [`MediaClock`]: each anchor sample's own
+    /// `duration` when that is a real, non-zero span, else the `dts` delta from
+    /// the previous anchor sample — `duration` alone stalls on the `Some(0)`
+    /// durations live input legitimately produces (no part *and* no segment
+    /// would ever be emitted).
+    ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, or a part/segment
-    /// build fails.
+    /// [`Error::InvalidInput`] if `track_id` matches no track, a part/segment
+    /// build fails, or this track already holds
+    /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
+    /// to cut on — call [`flush`](Self::flush) to close a trailing partial
+    /// segment).
     pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
@@ -285,9 +309,14 @@ impl LlHlsSegmenter {
             self.finish_segment()?;
         }
 
+        if self.tracks[idx].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
+            return Err(no_sync_sample_error());
+        }
+
         if idx == self.anchor {
-            self.anchor_seg_dur += sample.duration.unwrap_or(0) as u64;
-            self.anchor_part_dur += sample.duration.unwrap_or(0) as u64;
+            let elapsed = self.anchor_clock.tick(&sample);
+            self.anchor_seg_dur += elapsed;
+            self.anchor_part_dur += elapsed;
         }
         self.tracks[idx].pending.push(sample);
 

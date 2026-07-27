@@ -158,6 +158,12 @@ const VERSION_NUMBER_MASK: u8 = 0x1F;
 const CURRENT_NEXT_INDICATOR_BIT: u8 = 0x01;
 /// Trailing `CRC_32` on every long-form PSI section (§2.4.4.1).
 const CRC32_LEN: usize = 4;
+/// `section_syntax_indicator` bit within a section's byte 1 (§2.4.4.1). `1`
+/// marks the long form — a `table_id_extension`/`version_number` header **and**
+/// a trailing [`CRC32_LEN`]-byte `CRC_32`. A PAT (§2.4.4.5 Table 2-30) and a
+/// PMT (§2.4.4.9 Table 2-33) both fix it at `1`, so a PAT/PMT section that
+/// clears it is malformed and carries no CRC to check.
+const SECTION_SYNTAX_INDICATOR_BIT: u8 = 0x80;
 /// Mask for the 12-bit `section_length` high nibble (byte 1 of a section).
 const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 /// Mask for the 13-bit PID low byte's high 5 bits.

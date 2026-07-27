@@ -69,7 +69,8 @@ use crate::movie_fragment::{
     TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
 };
-use crate::pipeline::{CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::segmenter::{MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
 use broadcast_common::{Package, Serialize};
 
@@ -156,6 +157,10 @@ pub struct LlSegmenter {
     chunk_samples: usize,
     /// Buffered duration of the anchor's `pending` samples (media-timescale ticks).
     anchor_pending_dur: u64,
+    /// Anchor-progress clock: advances `anchor_pending_dur` from each anchor
+    /// sample's `duration`, or from its `dts` delta when `duration` is absent
+    /// or zero (see [`MediaClock`]).
+    anchor_clock: MediaClock,
     /// `mfhd.sequence_number` of the next chunk, 1-based and contiguous.
     next_seq: u32,
     /// 1-based number of the segment currently being built.
@@ -175,13 +180,16 @@ impl LlSegmenter {
     /// `target_duration_secs` on the anchor track's keyframes, and subdividing
     /// each segment into chunks of `chunk_samples` anchor-track samples.
     ///
-    /// The anchor is the first video track (falling back to the first track for
-    /// audio-only), exactly as [`crate::segmenter::Segmenter`]. `movie_timescale`
-    /// matches [`build_init_segment`].
+    /// The anchor is chosen by the shared
+    /// [`choose_anchor`](crate::segmenter::choose_anchor) — the first **video**
+    /// track (any codec, not just AVC), falling back to the first
+    /// anchor-capable track — exactly as [`crate::segmenter::Segmenter`].
+    /// `movie_timescale` matches [`build_init_segment`].
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate `track_id`s,
-    /// `target_duration_secs` is not positive and finite, or `chunk_samples == 0`.
+    /// `target_duration_secs` is not positive and finite, `chunk_samples == 0`,
+    /// or no track is anchor-capable (every track is section-carried).
     pub fn new(
         tracks: Vec<TrackSpec>,
         movie_timescale: u32,
@@ -216,10 +224,12 @@ impl LlSegmenter {
         // `tracks.retain(|t| t.config.is_muxable_in_bmff())`) if it wants
         // to drop such tracks rather than fail.
 
-        let anchor = tracks
-            .iter()
-            .position(|t| matches!(t.config, CodecConfig::Avc { .. }))
-            .unwrap_or(0);
+        // Anchor = first **video** track (any `CodecConfig::is_video` codec),
+        // else the first anchor-capable track — the shared rule
+        // `Segmenter`/`ts_hls` use. This used to match only
+        // `CodecConfig::Avc`, so an HEVC+AAC media with audio first anchored on
+        // the *audio* track and its segments did not begin on an IRAP.
+        let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
         let anchor_timescale = tracks[anchor].timescale as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
@@ -240,6 +250,7 @@ impl LlSegmenter {
             target_ticks,
             chunk_samples,
             anchor_pending_dur: 0,
+            anchor_clock: MediaClock::new(),
             next_seq: 1,
             current_segment: 1,
             segment_open: false,
@@ -261,9 +272,16 @@ impl LlSegmenter {
     /// as a final chunk) *before* this sample is buffered, so the new keyframe
     /// opens the next segment's first chunk on a random-access point.
     ///
+    /// Anchor progress comes from [`MediaClock`]: each anchor sample's own
+    /// `duration` when that is a real, non-zero span, else the `dts` delta from
+    /// the previous anchor sample — `duration` alone stalls on the `Some(0)`
+    /// durations live input legitimately produces.
+    ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, or a chunk build
-    /// fails.
+    /// [`Error::InvalidInput`] if `track_id` matches no track, a chunk build
+    /// fails, or this track already holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
+    /// un-cut samples (no anchor sync sample to cut on — call
+    /// [`flush`](Self::flush) to close a trailing partial segment).
     pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
@@ -280,8 +298,12 @@ impl LlSegmenter {
             self.finish_segment()?;
         }
 
+        if self.tracks[idx].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
+            return Err(crate::segmenter::no_sync_sample_error());
+        }
+
         if idx == self.anchor {
-            self.anchor_pending_dur += sample.duration.unwrap_or(0) as u64;
+            self.anchor_pending_dur += self.anchor_clock.tick(&sample);
         }
         self.tracks[idx].pending.push(sample);
 
@@ -436,10 +458,21 @@ impl Stage for LlSegmenter {
 
     fn on_deadline(&mut self, _now: Timestamp) {}
 
-    /// No hard cap on buffered samples end-to-end (same as `Segmenter`) — the
-    /// honest "no preference" default rather than a fabricated bound.
+    /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
+    /// un-cut samples — the same bound (and reasoning) as
+    /// [`Segmenter`](crate::segmenter::Segmenter)'s: past it
+    /// [`feed`](Stage::feed) errors rather than buffering a stream that never
+    /// produces the sync sample a segment must open on.
     fn demand(&self) -> Demand {
-        Demand::default()
+        if self
+            .tracks
+            .iter()
+            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
+        {
+            Demand::saturated()
+        } else {
+            Demand::default()
+        }
     }
 }
 
@@ -476,6 +509,10 @@ impl Package for LlSegmenter {
             samples: &'a [Sample],
             idx: usize,
             dts_ticks: u64,
+            /// Same duration-then-dts-delta rule the push path uses, so the
+            /// merge order does not collapse for samples carrying
+            /// `duration: Some(0)`.
+            clock: MediaClock,
             is_anchor: bool,
         }
         let mut cursors: Vec<Cursor<'_>> = media
@@ -487,6 +524,7 @@ impl Package for LlSegmenter {
                 samples: &t.samples,
                 idx: 0,
                 dts_ticks: 0,
+                clock: MediaClock::new(),
                 is_anchor: t.spec.track_id == anchor_id,
             })
             .collect();
@@ -519,7 +557,7 @@ impl Package for LlSegmenter {
             let (track_id, sample) = {
                 let c = &mut cursors[i];
                 let s = c.samples[c.idx].clone();
-                c.dts_ticks += s.duration.unwrap_or(0) as u64;
+                c.dts_ticks += c.clock.tick(&s);
                 c.idx += 1;
                 (c.track_id, s)
             };
