@@ -98,6 +98,8 @@ pub mod byte_merge;
 pub mod byte_stage;
 pub mod byte_tap;
 #[cfg(feature = "std")]
+pub mod egress;
+#[cfg(feature = "std")]
 pub mod ingress;
 #[cfg(feature = "std")]
 pub mod trunk;
@@ -105,6 +107,11 @@ pub mod trunk;
 pub use byte_merge::{ByteMerge, MergeError, MergePolicy, SourceId};
 pub use byte_stage::ByteStage;
 pub use byte_tap::{ByteTap, TapItem, TapPoint};
+#[cfg(feature = "std")]
+pub use egress::{
+    AwaitPolicy, CachePolicy, EgressResponse, NegotiationOutcome, PushEgress, SegmentEgress,
+    ServedEgress, TrackSelection,
+};
 #[cfg(feature = "std")]
 pub use ingress::{
     AcceptOutcome, DialAttempt, DialSupervisor, Dialer, HandshakePolicy, HealthState, IngestDriver,
