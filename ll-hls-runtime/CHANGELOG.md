@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Cleared this crate's share of the latest-stable clippy canary** (issue
+  #770 — the non-blocking `clippy (latest stable)` CI job, which had been
+  failing on `main` unnoticed across many merges): the `golden_gate`
+  integration test builds its single-track init segment with
+  `std::slice::from_ref(&spec)` instead of `&[spec.clone()]`
+  (`clippy::cloned_ref_to_slice_refs`). Test-only, behaviour-preserving.
+
 ## [0.1.1] - 2026-07-26
 
 ### Added

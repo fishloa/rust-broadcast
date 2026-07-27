@@ -403,8 +403,8 @@ fn dropped_sample_changes_the_decoded_frame_count() {
         "fixture must have more than one sample to drop one meaningfully"
     );
 
-    let init =
-        transmux::build_init_segment(&[spec.clone()], spec.timescale).expect("build init segment");
+    let init = transmux::build_init_segment(std::slice::from_ref(&spec), spec.timescale)
+        .expect("build init segment");
 
     let dir = scratch_dir("ll-hls-golden-gate-mutation");
 

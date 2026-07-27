@@ -26,9 +26,10 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
         reason: format!("parse: {e}"),
     })?;
     let mut tracks = Vec::new();
-    let mut track_id = 1u32;
     let mut channel = 0u8;
-    for media in &session.medias {
+    // Track IDs are 1-based media order; `channel` is stepped separately (and
+    // saturatingly) below because it advances by `CHANNEL_STEP`, not by 1.
+    for (track_id, media) in (1u32..).zip(session.medias.iter()) {
         let fmtp = media.get_first_attribute_value("fmtp").ok().flatten();
         let rtpmap = media.get_first_attribute_value("rtpmap").ok().flatten();
         let control = media
@@ -95,7 +96,6 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
             channel,
             payload_type,
         });
-        track_id += 1;
         channel = channel.saturating_add(CHANNEL_STEP);
     }
     if tracks.is_empty() {

@@ -160,7 +160,7 @@ fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32)
             // show up as a persistent, larger-than-1-tick disagreement at
             // ANY boundary, checked independently here), while accepting the
             // legitimate sub-tick 90kHz<->track-timescale quantization.
-            let diff = (sample_pts as i64 - oracle as i64).abs();
+            let diff = (sample_pts - oracle as i64).abs();
             assert!(
                 diff <= 1,
                 "PES-boundary sample PTS must be within 1 tick of the independently \
@@ -316,7 +316,7 @@ fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
             // evenly divide 90 kHz either) can legitimately disagree by 1
             // tick without indicating drift.
             let oracle = pes_ts_in_track_ticks(pts, audio_track.timescale());
-            let diff = (sample_pts as i64 - oracle as i64).abs();
+            let diff = (sample_pts - oracle as i64).abs();
             assert!(
                 diff <= 1,
                 "PES-boundary AAC sample PTS must be within 1 tick of the independently \

@@ -490,12 +490,22 @@ below.
   segmenter, then reverted).
 - **Cleared the non-blocking latest-stable clippy canary** (issue #770),
   failing on `main` unnoticed for many merges because it doesn't gate CI.
-  `StreamingTsDemux::try_promote_ready`'s `loop { let Some(..) = .. else {
-  break }; .. }` is now a `while let` (`clippy::while_let_loop`), and
-  `FlvStreamDemux::process_audio_tag`'s nested `if audio.track_id.is_some()`
-  inside the `aac_packet_type::RAW` match arm is now a match guard
-  (`clippy::collapsible_match`) — both are behaviour-preserving rewrites, no
-  `#[allow]`.
+  Every change is a behaviour-preserving rewrite; no `#[allow]` was added.
+  - `StreamingTsDemux::try_promote_ready`'s `loop { let Some(..) = .. else {
+    break }; .. }` is now a `while let` (`clippy::while_let_loop`).
+  - `FlvStreamDemux::process_audio_tag`'s nested `if
+    audio.track_id.is_some()` inside the `aac_packet_type::RAW` match arm is
+    now a match guard (`clippy::collapsible_match`); a guard-fail falls
+    through to the pre-existing `_ => {}` no-op, exactly as before.
+  - `tests/ir_timing.rs` drops two no-op `i64 as i64` casts
+    (`clippy::unnecessary_cast`).
+
+  The canary was red workspace-wide, not only here: `cargo` stops at the
+  first crate that fails to compile, so clearing transmux's errors unmasked
+  four more latest-stable-only lints in `multimux` and `ll-hls-runtime`,
+  fixed in the same change (see those crates' changelogs). The full
+  `cargo +stable clippy --workspace --all-features --all-targets -- -D warnings`
+  now exits 0.
 
 ### Security
 
