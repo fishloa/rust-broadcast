@@ -329,18 +329,14 @@ fn c1_zero_duration_anchor_still_cuts_parts_and_segments_in_ll_hls() {
 fn c1_zero_duration_anchor_still_cuts_segments_in_streaming_ts_hls() {
     let mut seg = StreamingTsHlsSegmenter::new(vec![avc_track(1)], 1, usize::MAX)
         .expect("construct: video is anchor-capable");
-    let mut cuts: Vec<TsSegment> = Vec::new();
     for s in zero_duration_stream(C1_FRAMES) {
         // Pre-fix this call *errored* on the first sample: the streaming
         // TS-HLS path rejected `duration: None` outright and only tolerated
         // Some(0) by never advancing.
-        if let Some(cut) = seg.push(1, s).expect("push") {
-            cuts.push(cut);
-        }
+        seg.push(1, s).expect("push");
     }
-    if let Some(tail) = seg.finish().expect("finish") {
-        cuts.push(tail);
-    }
+    seg.finish().expect("finish");
+    let cuts: Vec<TsSegment> = seg.take_ready();
     assert_eq!(
         cuts.len(),
         C1_CUTS_BEFORE_FLUSH + 1,
@@ -481,7 +477,7 @@ fn c2_infinite_gop_is_bounded_in_streaming_ts_hls() {
     let mut seg =
         StreamingTsHlsSegmenter::new(vec![avc_track(1)], 1, usize::MAX).expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(1, samples[i].clone()).map(|_| ())
+        s.push(1, samples[i].clone())
     });
     assert_eq!(accepted, MAX_PENDING_SAMPLES_PER_TRACK);
     assert!(saw_saturated, "demand() must flip before push errors");
@@ -647,21 +643,21 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     .expect("construct");
     let mut streamed: Vec<Vec<u8>> = Vec::new();
     let mut pushed_cue = false;
+    // `take_ready` drains, so it is called after *every* push: that keeps each
+    // cut attributed to the push that produced it, and `streamed` in cut order
+    // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
         if !pushed_cue && s.dts.unwrap_or(0) >= CUE_DTS {
-            if let Some(cut) = seg.push(SCTE_ID, section.clone()).expect("push cue") {
-                streamed.push(cut.bytes);
-            }
+            seg.push(SCTE_ID, section.clone()).expect("push cue");
+            streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
             pushed_cue = true;
         }
-        if let Some(cut) = seg.push(VIDEO_ID, s.clone()).expect("push video") {
-            streamed.push(cut.bytes);
-        }
+        seg.push(VIDEO_ID, s.clone()).expect("push video");
+        streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
     }
     assert!(pushed_cue, "the test stream must reach the cue's timestamp");
-    if let Some(tail) = seg.finish().expect("finish") {
-        streamed.push(tail.bytes);
-    }
+    seg.finish().expect("finish");
+    streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
     let stream_idx =
         section_segment_index(&streamed, &CUE).expect("streaming output must carry the cue");
 

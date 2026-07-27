@@ -580,13 +580,11 @@ fn ts_hls_segmenter_stage_matches_inline_push() {
     let mut inline_seg = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
     let mut inline_out = Vec::new();
     for (track_id, sample) in samples.clone() {
-        if let Some(seg) = inline_seg.push(track_id, sample).unwrap() {
-            inline_out.push(seg);
-        }
+        inline_seg.push(track_id, sample).unwrap();
+        inline_out.extend(inline_seg.take_ready());
     }
-    if let Some(seg) = inline_seg.finish().unwrap() {
-        inline_out.push(seg);
-    }
+    inline_seg.finish().unwrap();
+    inline_out.extend(inline_seg.take_ready());
     assert!(
         !inline_out.is_empty(),
         "fixture must actually exercise at least one segment cut"

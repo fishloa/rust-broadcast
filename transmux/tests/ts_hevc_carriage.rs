@@ -566,9 +566,8 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     ];
     let mut cuts = 0usize;
     for s in video_samples {
-        if seg.push(2, s).expect("push video").is_some() {
-            cuts += 1;
-        }
+        seg.push(2, s).expect("push video");
+        cuts += seg.take_ready().len();
     }
     for i in 0..5i64 {
         let dts = i * 1_024;
@@ -577,10 +576,14 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
             Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true),
         )
         .expect("push audio");
+        // Drain and discard: under the pre-`take_ready` API a cut produced by
+        // an audio push was returned here and dropped, never counted. Draining
+        // per push keeps `cuts` counting exactly the video-push cuts it did
+        // before, instead of sweeping an audio-push cut into the `finish` drain.
+        let _ = seg.take_ready();
     }
-    if seg.finish().expect("finish").is_some() {
-        cuts += 1;
-    }
+    seg.finish().expect("finish");
+    cuts += seg.take_ready().len();
 
     assert_eq!(
         cuts, 2,

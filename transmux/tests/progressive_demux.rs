@@ -55,7 +55,10 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
 #[test]
 fn demux_h264_aac_prog_track_counts_and_codec() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024)
+        .unwrap()
+        .unpackage(&data)
+        .unwrap();
 
     assert_eq!(media.tracks.len(), 2, "exactly one video + one audio track");
 
@@ -97,7 +100,10 @@ fn demux_h264_aac_prog_track_counts_and_codec() {
 #[test]
 fn demux_h264_aac_prog_video_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024)
+        .unwrap()
+        .unpackage(&data)
+        .unwrap();
     let video = media
         .tracks
         .iter()
@@ -146,7 +152,10 @@ fn demux_h264_aac_prog_video_sample_timing_and_sync() {
 #[test]
 fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
     let data = prog_fixture();
-    let media = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
+    let media = ProgressiveDemux::new(1024 * 1024)
+        .unwrap()
+        .unpackage(&data)
+        .unwrap();
     let audio = media
         .tracks
         .iter()
@@ -193,7 +202,10 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
 #[test]
 fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
     let data = prog_fixture();
-    let original = ProgressiveDemux::new(1024 * 1024).unpackage(&data).unwrap();
+    let original = ProgressiveDemux::new(1024 * 1024)
+        .unwrap()
+        .unpackage(&data)
+        .unwrap();
 
     let cmaf = CmafMux::new(1)
         .package(&original)
@@ -353,7 +365,7 @@ fn progressive_demux_stays_poisoned_after_a_cap_rejection() {
     use broadcast_common::{Demand, Stage, Timestamp};
 
     const MAX_BYTES: usize = 4096;
-    let mut demux = ProgressiveDemux::new(MAX_BYTES);
+    let mut demux = ProgressiveDemux::new(MAX_BYTES).expect("non-zero cap");
 
     // A real prefix of a real file, so `finish()` could plausibly parse
     // something if the poison were missing.
@@ -400,7 +412,7 @@ fn progressive_demux_refuses_feed_after_finish() {
     use broadcast_common::{Stage, Timestamp};
 
     let file = prog_fixture();
-    let mut demux = ProgressiveDemux::new(file.len());
+    let mut demux = ProgressiveDemux::new(file.len()).expect("non-zero cap");
     Stage::feed(&mut demux, &file, Timestamp::ZERO).expect("whole file fits");
     Stage::finish(&mut demux).expect("parse");
     assert!(
@@ -421,26 +433,15 @@ fn progressive_demux_refuses_feed_after_finish() {
 }
 
 /// `ProgressiveDemux::new(0)` is a useless `Stage` configuration. It must fail
-/// loudly and terminally on the first byte rather than wedge: every `feed`
-/// errors, `demand()` is saturated from the start, and `finish()` reports the
-/// cap error instead of parsing an empty buffer.
+/// loudly at construction rather than wedge: a zero cap can never accept a
+/// single byte, so `new` itself now rejects it instead of handing back a
+/// `Stage` that would be saturated and poisoned before it ever saw data.
 #[test]
 fn progressive_demux_new_zero_fails_loudly_instead_of_wedging() {
-    use broadcast_common::{Stage, Timestamp};
-
-    let mut demux = ProgressiveDemux::new(0);
+    let err = ProgressiveDemux::new(0)
+        .expect_err("a zero cap must be rejected at construction, not accepted and left to wedge");
     assert!(
-        Stage::demand(&demux).saturated,
-        "a zero cap has no headroom to advertise"
-    );
-    let err = Stage::feed(&mut demux, &[0u8; 1], Timestamp::ZERO)
-        .expect_err("a zero cap must reject the very first byte");
-    assert!(
-        matches!(err, transmux::Error::BufferCapExceeded { cap: 0, .. }),
-        "expected BufferCapExceeded naming the zero bound, got {err:?}"
-    );
-    assert!(
-        Stage::finish(&mut demux).is_err(),
-        "finish must surface the poison, not parse an empty buffer"
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected a named InvalidInput, got {err:?}"
     );
 }
