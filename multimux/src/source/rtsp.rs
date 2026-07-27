@@ -593,7 +593,14 @@ pub async fn run_rtsp(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let mut driver = IngestDriver::new(session, trunk_config, handshake);
+    let mut driver = IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        // Bound the Trunks one session may mint (media-plane #803). Routes here
+        // carry a single programme today; the default ceiling covers an MPTS.
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
     let (mut rd, mut wr) = stream.into_split();
     let start = std::time::Instant::now();
     let mut buf = vec![0u8; 64 * 1024];

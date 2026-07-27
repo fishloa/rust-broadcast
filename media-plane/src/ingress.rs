@@ -332,9 +332,19 @@ pub struct ProgramId(pub u32);
 /// for the justification. Not applied automatically (there is no default
 /// constructor for `max_programs`, matching [`TrunkConfig::new`]'s and
 /// [`HandshakePolicy::establish_by`]'s own all-explicit-arguments shape) —
-/// a caller wraps it in a [`NonZeroUsize`] and passes it like any other
-/// driver parameter.
-pub const DEFAULT_MAX_PROGRAMS: usize = 64;
+/// a caller passes it like any other driver parameter.
+///
+/// Typed [`NonZeroUsize`], not `usize`: every consumer of this constant feeds
+/// it to a `max_programs: NonZeroUsize` parameter, so handing back a plain
+/// `usize` made every call site re-wrap it and made a forgotten wrap a
+/// compile error at the *call*, not here. The default for a `NonZeroUsize`
+/// parameter should already be one.
+pub const DEFAULT_MAX_PROGRAMS: NonZeroUsize = match NonZeroUsize::new(64) {
+    Some(n) => n,
+    // Unreachable: 64 is a non-zero literal. `match` rather than `expect`
+    // keeps this a `const` on the 1.86 MSRV.
+    None => panic!("64 is non-zero"),
+};
 
 /// What an [`IngestSession`]'s [`Stage::poll`] hands back to a driver.
 ///

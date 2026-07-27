@@ -334,7 +334,14 @@ pub async fn run_ts_udp(
     let session = dialer
         .dial()
         .unwrap_or_else(|never: Infallible| match never {});
-    let mut driver = media_plane::ingress::IngestDriver::new(session, trunk_config, handshake);
+    let mut driver = media_plane::ingress::IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        // Bound the Trunks one session may mint (media-plane #803). Routes here
+        // carry a single programme today; the default ceiling covers an MPTS.
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
     let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
     let read_timeout = route.timeouts.read;
     let start = std::time::Instant::now();

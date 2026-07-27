@@ -132,7 +132,7 @@ fn main() {
     // `max_programs` bounds how many `Trunk`s one session may mint (the fifth
     // unbounded-allocation vector this workspace has had). A single capture
     // announces one program, so the default ceiling is ample here.
-    let mut driver = IngestDriver::new(session, trunk_config, handshake, nz(DEFAULT_MAX_PROGRAMS));
+    let mut driver = IngestDriver::new(session, trunk_config, handshake, DEFAULT_MAX_PROGRAMS);
 
     // Feed the capture in bounded chunks, subscribing a `SampleCursor` the
     // moment the program is announced (right after the first chunk that
