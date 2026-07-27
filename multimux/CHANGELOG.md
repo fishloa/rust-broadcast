@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Cleared this crate's share of the latest-stable clippy canary** (issue
+  #770 — the non-blocking `clippy (latest stable)` CI job, which had been
+  failing on `main` unnoticed across many merges). Both changes are
+  behaviour-preserving; no `#[allow]` was added.
+  - `source::rtsp::RtspClient` (a private enum) now boxes **both** its
+    `Plain` and `Tls` variants (`clippy::large_enum_variant`). The unboxed
+    TLS variant carried rustls connection state at ~1472 bytes against the
+    plain client's ~408, so every `RtspClient` — and the `RtspSession`
+    embedding it — was sized for TLS even on a plain `rtsp://` connect.
+    Boxing only the larger variant merely flips the lint onto the other one,
+    so both are boxed and the enum is now pointer-sized. The single
+    allocation happens once per connect, never on the per-packet
+    `recv_interleaved` path.
+  - `source::sdp::parse_sdp_tracks` derives its 1-based `track_id` from the
+    media-order iterator instead of a hand-rolled counter
+    (`clippy::explicit_counter_loop`). The interleaved `channel` keeps its
+    own explicit `saturating_add(CHANNEL_STEP)` stepping — it advances by 2,
+    not 1, and the saturating behaviour at the `u8` ceiling is deliberate.
+
 ## [0.4.0] - 2026-07-26
 
 ### Added

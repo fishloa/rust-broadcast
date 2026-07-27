@@ -57,7 +57,7 @@ fn header_round_trip_byte_identical() {
             eprintln!(
                 "packet {i}: original={:02X?} serialized={:02X?}",
                 &chunk[..4],
-                &serialized
+                serialized
             );
             mismatches += 1;
         }

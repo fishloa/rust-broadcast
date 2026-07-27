@@ -496,22 +496,19 @@ impl StreamingFlvDemux {
                     events.push_back(DemuxEvent::TrackAdded(spec));
                 }
             }
-            aac_packet_type::RAW => {
-                // Dropped (not buffered) if the sequence header hasn't
-                // resolved the track yet — see the module `# Ordering
-                // assumption` note.
-                if audio.track_id.is_some() {
-                    let dts_abs = timestamp as i64;
-                    let sample = Sample {
-                        data: data.to_vec().into(),
-                        dts: Some(dts_abs),
-                        pts: Some(dts_abs),
-                        duration: None, // filled in by `TrackState::advance`/`flush`
-                        flags: crate::ir::SampleFlags::SYNC,
-                        provenance: None,
-                    };
-                    audio.advance(sample, timestamp, events);
-                }
+            // Dropped (not buffered) if the sequence header hasn't resolved
+            // the track yet — see the module `# Ordering assumption` note.
+            aac_packet_type::RAW if audio.track_id.is_some() => {
+                let dts_abs = timestamp as i64;
+                let sample = Sample {
+                    data: data.to_vec().into(),
+                    dts: Some(dts_abs),
+                    pts: Some(dts_abs),
+                    duration: None, // filled in by `TrackState::advance`/`flush`
+                    flags: crate::ir::SampleFlags::SYNC,
+                    provenance: None,
+                };
+                audio.advance(sample, timestamp, events);
             }
             _ => {}
         }

@@ -397,10 +397,10 @@ impl SeqState {
     /// `out` — the mechanism that reassembles a reordered run into the
     /// original wire order once the hole it was waiting on fills.
     fn drain_contiguous(&mut self, out: &mut Vec<Vec<u8>>) {
-        loop {
-            let Some(expected) = self.expected else {
-                break;
-            };
+        // `self.expected` is re-read on every iteration because the body
+        // advances it, so `while let` is equivalent to the previous
+        // `loop { let … else break }` and satisfies `clippy::while_let_loop`.
+        while let Some(expected) = self.expected {
             let Some(pos) = self.held.iter().position(|(s, _)| *s == expected) else {
                 break;
             };

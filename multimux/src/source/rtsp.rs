@@ -501,10 +501,18 @@ fn sni_server_name(url: &Url) -> Result<String> {
 /// different concrete `AsyncRtspClient<S>` instantiations (the socket types
 /// don't unify), so `RtspSession` holds this enum and forwards the handful of
 /// calls it needs to whichever inner client is live.
+///
+/// Both variants are boxed. The inner clients are large (~408 bytes plain,
+/// ~1472 with rustls connection state), and an unboxed enum would be sized by
+/// its largest variant — inflating every `RtspClient`, and the [`RtspSession`]
+/// embedding it, to the TLS size even on a plain `rtsp://` connect
+/// (`clippy::large_enum_variant`, which fires on either variant left unboxed).
+/// The one allocation happens once per connect, never on the per-packet
+/// `recv_interleaved` path, which only follows the pointer.
 enum RtspClient {
-    Plain(AsyncRtspClient<TcpStream>),
+    Plain(Box<AsyncRtspClient<TcpStream>>),
     #[cfg(feature = "tls")]
-    Tls(AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>>),
+    Tls(Box<AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>>>),
 }
 
 impl RtspClient {
@@ -561,7 +569,7 @@ async fn connect_plain_client(addr: &str, credentials: Option<Credentials>) -> R
     let client = AsyncRtspClient::<TcpStream>::connect_with(addr, session)
         .await
         .map_err(connect_err)?;
-    Ok(RtspClient::Plain(client))
+    Ok(RtspClient::Plain(Box::new(client)))
 }
 
 /// Builds a fresh [`ClientSession`], attaching `credentials` via
@@ -597,7 +605,7 @@ async fn connect_tls_client(
     )
     .await
     .map_err(connect_err)?;
-    Ok(RtspClient::Tls(client))
+    Ok(RtspClient::Tls(Box::new(client)))
 }
 
 #[cfg(not(feature = "tls"))]
