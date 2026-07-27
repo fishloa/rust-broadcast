@@ -37,35 +37,14 @@ pub trait SampleSource {
     async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>>;
 }
 
-impl SampleSource for crate::source::rtsp::RtspSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::rtsp::RtspSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::rtsp::RtspSession::next_samples(self).await
-    }
-}
-
-impl SampleSource for crate::source::rtp_udp::RtpUdpSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::rtp_udp::RtpUdpSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::rtp_udp::RtpUdpSession::next_samples(self).await
-    }
-}
-
-impl SampleSource for crate::source::ts_udp::TsUdpSession {
-    fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::source::ts_udp::TsUdpSession::track_specs(self)
-    }
-
-    async fn next_samples(&mut self) -> Result<Option<Vec<(u32, Sample)>>> {
-        crate::source::ts_udp::TsUdpSession::next_samples(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp` no longer implement `SampleSource` — they were
+// ported onto `media_plane::ingress::{Dialer, IngestSession}` at plan step
+// 5a (see their own modules' `run_rtsp`/`run_rtp_udp`/`run_ts_udp`), which
+// publish straight into a `media_plane::Trunk` rather than through this
+// trait. `crate::origin::supervisor`/`crate::origin::mod::serve_with_registry`
+// still reference the old `SourceConnector`/`run_pipeline` shape for these
+// three (and for every not-yet-ported source below) pending step 5b's
+// `MediaStore` replacement — see this crate's CHANGELOG.
 
 impl SampleSource for crate::source::ts_http::TsHttpSession {
     fn track_specs(&self) -> Vec<TrackSpec> {

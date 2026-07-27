@@ -55,29 +55,13 @@ pub trait SourceConnector: Send + Sync + 'static {
     fn connect(&self) -> impl Future<Output = crate::Result<Self::Source>> + Send;
 }
 
-impl SourceConnector for crate::source::rtsp::RtspSource {
-    type Source = crate::source::rtsp::RtspSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::rtsp::RtspSource::connect(self).await
-    }
-}
-
-impl SourceConnector for crate::source::rtp_udp::RtpUdpSource {
-    type Source = crate::source::rtp_udp::RtpUdpSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::rtp_udp::RtpUdpSource::connect(self).await
-    }
-}
-
-impl SourceConnector for crate::source::ts_udp::TsUdpSource {
-    type Source = crate::source::ts_udp::TsUdpSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::ts_udp::TsUdpSource::connect(self).await
-    }
-}
+// `rtsp`, `rtp_udp`, `ts_udp` no longer have a `SourceConnector` impl — see
+// `crate::pipeline`'s equivalent note. Their new production entry points are
+// `crate::source::{rtsp::run_rtsp, rtp_udp::run_rtp_udp, ts_udp::run_ts_udp}`,
+// which drive `media_plane::ingress::IngestDriver` directly and are not yet
+// wired into this supervisor loop (step 5b: needs a `Trunk`-backed
+// replacement for `MediaStore`/`HealthState` here, not just a `Source`
+// rename).
 
 impl SourceConnector for crate::source::ts_http::TsHttpSource {
     type Source = crate::source::ts_http::TsHttpSession;
@@ -226,7 +210,7 @@ fn record_reconnect(name: &str) {
 ///
 /// `name` is used only in log lines (never the source URL/credentials —
 /// callers must pass a connector that never surfaces those, which
-/// [`crate::source::rtsp::RtspSource`] already ensures by stripping userinfo
+/// [`crate::source::ts_http::TsHttpSource`] already ensures by stripping userinfo
 /// before it ever reaches an error message).
 ///
 /// This never gives up permanently: a source going away (camera reboot,
