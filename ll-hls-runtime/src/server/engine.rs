@@ -1,23 +1,84 @@
-//! Blocking-reload/part-availability *decision* logic and playlist rendering
-//! for the LL-HLS origin — moved out of `multimux::output::llhls` (issue
-//! #663/#717 Stage 2). Sans-IO: every function here is a synchronous poll
-//! returning an outcome enum, never a `Future` — the caller (an async
-//! adapter, e.g. `multimux`) turns `WouldBlock` into an actual wait using
-//! [`super::MediaStore::listen`] (see this module's parent doc for the wait
-//! loop shape).
+//! [`LlHlsOrigin`] — the LL-HLS origin [`ServedEgress`] (plan step 4):
+//! blocking-reload/part-availability *decision* logic and playlist rendering,
+//! rendered directly from a shared [`Trunk`] instead of the deleted
+//! `MediaStore` push-fed rolling window.
 //!
 //! Master/media playlist tags are RFC 8216 §4.3.4 (`#EXT-X-STREAM-INF`) and
-//! §4.3.3 (`#EXTM3U`/`#EXT-X-VERSION`, rendered by [`media_playlist_m3u8`]);
+//! §4.3.3 (`#EXTM3U`/`#EXT-X-VERSION`, rendered by [`MediaPlaylist::to_m3u8`]);
 //! the blocking reload query parameters (`_HLS_msn`/`_HLS_part`) are the
 //! Blocking Playlist Reload mechanism of RFC 8216bis §6.2.5.2 — the client
 //! asks the origin to hold the response open until the requested Media
-//! Sequence Number/part is available, bounded so the origin never hangs
-//! indefinitely (the bound itself — a wall-clock timeout — is the adapter's
-//! job, not this module's: sans-IO code has no clock).
+//! Sequence Number/part is available, bounded by the caller's own
+//! [`AwaitPolicy`] so the origin never hangs indefinitely.
+//!
+//! # What comes straight from the `Trunk`, with no cache at all
+//!
+//! Every part-availability and blocking-reload decision reads the `Trunk`
+//! directly, `&self`-shaped, every call:
+//!
+//! - **Live parts of the open segment** — [`Trunk::part_bytes`]/
+//!   [`Trunk::parts_in_segment`] (step 3b-iv's live-part log). This is the
+//!   whole reason step 3b-iv exists: before it, nothing in `Trunk` could
+//!   answer "does part 3 of the segment currently being written exist",
+//!   which is exactly what forced `MediaStore` to keep its own
+//!   `live_parts`/`recent_parts` buffers in the first place.
+//! - **Whether a segment has closed** — [`Trunk::last_closed_segment`].
+//! - **The "in-progress-or-last-active segment" `MediaStore::latest_progress`
+//!   used to track as a push-fed field** — [`LlHlsOrigin::live_edge`] derives
+//!   it from the two queries above alone (`last_closed_segment() + 1`, probed
+//!   via `parts_in_segment`), needing no field of its own. See that method's
+//!   doc for the derivation and why it is exact, not a heuristic.
+//! - **A just-closed segment's final part still resolving** — falls out of
+//!   [`Trunk::part_bytes`] for free: [`TrunkWriter::publish_segment`]
+//!   deliberately never touches the live-part log (see `trunk`'s own module
+//!   doc, "The live-part log"), so this crate no longer needs `MediaStore`'s
+//!   separate `recent_parts` buffer at all — that buffer existed *only* to
+//!   simulate exactly the guarantee the `Trunk` now gives natively.
+//!
+//! # The one thing that genuinely cannot come from the `Trunk` alone
+//!
+//! [`Trunk::subscribe_segments`] hands back a moving, single-consumer
+//! [`SegmentCursor`] — there is no snapshot query over the segment log the
+//! way [`Trunk::events_between`] gives the event log (see
+//! `media_plane::egress`'s own module doc, "`ServedEgress::resolve` does not
+//! take `&Trunk`", which anticipated exactly this). Rendering a Media
+//! Playlist needs the **window** of currently-advertised closed segments
+//! (their bytes, durations, and discontinuity bits), plus two numbers that
+//! must survive eviction from that window: the lifetime-max segment
+//! duration (RFC 8216bis §4.4.3.1's `TARGETDURATION` MUST) and the
+//! cumulative discontinuity count that has rolled off the front
+//! (`#EXT-X-DISCONTINUITY-SEQUENCE`, RFC 8216 §4.3.3.3). None of that is
+//! answerable by a fresh `&self` call on `Trunk` — it has to be assembled by
+//! draining a cursor over time.
+//!
+//! `Window` is that assembly, and it is **not** a second `MediaStore`: it
+//! holds only bytes/duration/discontinuity-bit for the segments currently in
+//! the advertised window, fed by exactly **one** [`SegmentCursor`] this
+//! `LlHlsOrigin` owns — precisely the shape `media_plane::egress`'s module
+//! doc prescribes ("a `ServedEgress` implementation... keeps its own
+//! resolvable window in sync by draining [cursors]... `resolve` only ever
+//! reads that already-synced state"). It carries none of `MediaStore`'s
+//! other fields (`health`, `track_specs`, `created_at`, `window_segments()`
+//! diagnostics) — those served `multimux`'s DASH/ll-DASH outputs, not
+//! LL-HLS rendering, and are out of this step's scope (Step 5's problem, if
+//! still needed once `multimux` is rewritten).
+//!
+//! The fMP4 **init segment** bytes are the other thing this module holds
+//! outside the `Trunk`: an init segment is neither a sample, a finished
+//! segment, an event, nor a live part — it is produced once by the
+//! segmenter and never changes, so it was never in scope for any of
+//! `Trunk`'s four rings. [`LlHlsOrigin::set_init`] is the (small, honest) side
+//! channel for it — not a duplicate of anything `Trunk` holds.
 
+use std::collections::VecDeque;
+use std::num::NonZeroUsize;
+use std::sync::{Arc, Mutex};
+
+use broadcast_common::Timestamp;
+use bytes::Bytes;
+use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
+use media_plane::trunk::{PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 use transmux::hls::{LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec};
-
-use super::store::MediaStore;
 
 /// Track id for the single rendition served per stream (no multi-track/
 /// multi-rendition support yet).
@@ -45,112 +106,11 @@ const LL_HLS_VERSION: u8 = 9;
 /// (`#EXT-X-PART-INF`'s `PART-TARGET`).
 const PART_HOLD_BACK_MULTIPLIER: f64 = 3.0;
 
-/// Render the LL-HLS media playlist for `track_id` from `store`'s current
-/// segments/live parts.
-///
-/// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
-/// be advertised with an `#EXTINF`/URI pair — that segment has no fetchable
-/// resource yet — it may only appear as trailing `#EXT-X-PART` lines.
-/// `transmux::hls::MediaPlaylist::open_segment` is exactly this
-/// representation: its parts render as trailing `#EXT-X-PART` lines with
-/// no `#EXTINF`/URI, so the in-progress segment's parts and the
-/// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
-/// rendered by `to_m3u8()` itself — this function only supplies the URI
-/// scheme (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
-pub fn media_playlist_m3u8(store: &MediaStore, track_id: u32) -> String {
-    // Read these *before* taking `with_segments_and_parts`'s lock below —
-    // `MediaStore::max_segment_duration` takes the same `inner` mutex
-    // itself, and `std::sync::Mutex` is not reentrant, so calling it from
-    // inside the `with_segments_and_parts` closure (as a previous version of
-    // this function did) self-deadlocks the calling thread the first time
-    // this function is ever invoked with any segment present. Caught by a
-    // real network round trip against a live `MediaStore` (issue #717 slice
-    // 5's acceptance test) — the existing test suite only ever called this
-    // function directly (never over HTTP with two concurrently-scheduled
-    // tasks), which happened to never trip the deadlock detector but hung
-    // just the same once actually exercised end-to-end. **Preserve this
-    // ordering** — see `docs/superpowers/specs/2026-07-18-multimux-hub-design.md`
-    // and issue #663/#717.
-    let target_duration_secs = store.target_duration_secs();
-    let max_segment_duration = store.max_segment_duration();
-    store.with_segments_and_parts(|store_segments, live_parts| {
-        let media_sequence = store_segments
-            .front()
-            .map(|s| u64::from(s.segment_seq))
-            .or_else(|| live_parts.first().map(|p| u64::from(p.segment_seq)))
-            .unwrap_or(1);
-        let segments: Vec<MediaSegment> = store_segments
-            .iter()
-            .map(|s| MediaSegment {
-                uri: format!("seg-{track_id}-{}.m4s", s.segment_seq),
-                duration: s.duration,
-                discontinuous: false,
-                parts: Vec::new(),
-                ..Default::default()
-            })
-            .collect();
-        let part_target = f64::from(store.part_target_ms()) / 1000.0;
-        // The in-progress segment's live parts + the next (not yet available)
-        // part's preload-hint URI.
-        let open_seq = live_parts.first().map(|p| p.segment_seq);
-        let open_segment = open_seq.map(|seq| {
-            OpenSegment::new(
-                live_parts
-                    .iter()
-                    .filter(|p| p.segment_seq == seq)
-                    .map(|p| PartSpec {
-                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_seq, p.part_index),
-                        duration: p.duration,
-                        independent: p.independent,
-                        ..Default::default()
-                    })
-                    .collect(),
-            )
-        });
-        let next_part_hint = open_seq.map(|seq| {
-            let next_idx = live_parts
-                .iter()
-                .filter(|p| p.segment_seq == seq)
-                .map(|p| p.part_index)
-                .max()
-                .map(|idx| idx + 1)
-                .unwrap_or(0);
-            format!("part-{track_id}-{seq}.{next_idx}.m4s")
-        });
-        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
-        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
-        // segmenter cuts on the next keyframe *after* the configured target,
-        // so a real segment routinely exceeds it — advertising the
-        // configured target alone can under-declare. Use whichever is
-        // larger, rounded (not the configured value's `ceil()` alone).
-        let target_duration = target_duration_secs.max(max_segment_duration).round() as u32;
-        let playlist = MediaPlaylist {
-            version: LL_HLS_VERSION,
-            target_duration,
-            media_sequence,
-            discontinuity_sequence: 0,
-            segments,
-            open_segment,
-            endlist: false,
-            extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
-            low_latency: Some(LowLatencyConfig {
-                part_target,
-                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
-                preload_hint_part: next_part_hint,
-                ..Default::default()
-            }),
-            iframes_only: false,
-            ..Default::default()
-        };
-        playlist.to_m3u8()
-    })
-}
-
 /// A minimal single-variant master playlist pointing at `media_playlist_name`
 /// (the caller's configured media-playlist filename — e.g. multimux's
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
-/// regardless of `MediaStore` state (no multi-rendition support yet), so this
-/// takes no store argument.
+/// regardless of any stream state (no multi-rendition support yet), so this
+/// takes no `Trunk`/origin argument.
 pub fn master_playlist_m3u8(media_playlist_name: &str) -> String {
     format!(
         "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={PLACEHOLDER_BANDWIDTH_BPS}\n{media_playlist_name}\n"
@@ -169,161 +129,116 @@ pub struct BlockingQuery {
     pub hls_part: Option<u32>,
 }
 
-/// The result of [`MediaStore::resolve_playlist`]: either the rendered
-/// playlist is ready now, the request is malformed/abusive (RFC 8216bis
-/// §6.2.5.2 abuse prevention — reject immediately, no wait), or the awaited
-/// segment/part isn't available *yet* (the caller should wait for the next
-/// change notification and re-resolve).
+/// [`ServedEgress::Request`] for [`LlHlsOrigin`]: which wire resource is
+/// being asked for. A data-carrying dispatch ADT (matches this crate's
+/// `client::action::Action`/`ResourceId` convention) — see
+/// `tests/label_coverage.rs`'s SKIP list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum PlaylistOutcome {
-    /// The rendered media playlist body.
-    Ready(String),
-    /// The awaited condition (`hls_msn`/`hls_part`) isn't satisfied yet —
-    /// wait for [`super::MediaStore::listen`] and re-resolve.
-    WouldBlock,
-    /// The request is malformed (`hls_part` without `hls_msn`) or abusive
-    /// (`hls_msn` unreasonably far beyond the live edge) — reject now, don't
-    /// wait.
-    BadRequest,
-}
-
-/// `Cache-Control` policy an adapter applies to a resolved resource —
-/// playlists are always re-fetched for liveness (not modeled here since
-/// [`PlaylistOutcome::Ready`] is playlist-only), while a produced init/
-/// segment/part byte range never changes once produced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum CachePolicy {
-    /// Safe to cache indefinitely — a given URI's bytes never change once
-    /// produced (each segment/part is generated exactly once under a unique
-    /// filename).
-    Immutable,
-    /// Must always be re-fetched (liveness-sensitive).
-    NoCache,
-}
-
-impl CachePolicy {
-    /// The spec/field-enum label (workspace #204 convention): a stable,
-    /// lowercase token per policy, suitable for logs/metrics/`Cache-Control`
-    /// diagnostics.
-    pub fn name(&self) -> &'static str {
-        match self {
-            CachePolicy::Immutable => "immutable",
-            CachePolicy::NoCache => "no-cache",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(CachePolicy);
-
-/// The result of [`MediaStore::resolve_resource`]: the resource's bytes are
-/// ready, the request should wait (a preload-hinted part not yet produced),
-/// or the resource does not (and, for a part whose segment already closed
-/// without it, will never) exist.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum ResourceOutcome {
-    /// The resource's bytes, plus the cache policy an adapter should apply.
-    Ready {
-        /// The resolved bytes.
-        bytes: Vec<u8>,
-        /// `Cache-Control` policy for these bytes.
-        cache: CachePolicy,
+pub enum LlHlsRequest {
+    /// `GET <media playlist>`, optionally carrying a blocking-reload query.
+    Playlist {
+        /// The track id to render the playlist for (a naming parameter only —
+        /// see [`DEFAULT_TRACK_ID`]).
+        track_id: u32,
+        /// The blocking-reload query parameters, if any.
+        query: BlockingQuery,
     },
-    /// A preload-hinted part that hasn't been produced yet — wait for
-    /// [`super::MediaStore::listen`] and re-resolve.
-    WouldBlock,
-    /// The named resource does not exist and never will (unknown filename
-    /// shape, or a part whose segment closed without ever producing it).
-    NotFound,
+    /// `GET` a dynamic origin resource by its wire filename (`init-{track}.mp4`,
+    /// `seg-{track}-{seq}.m4s`, `part-{track}-{seq}.{idx}.m4s`).
+    Resource {
+        /// The requested filename, exactly as it appeared in the request path.
+        name: String,
+    },
 }
 
-impl MediaStore {
-    /// Resolve a `GET media.m3u8` request against `_HLS_msn`/`_HLS_part`
-    /// blocking-reload semantics (RFC 8216bis §6.2.5.2), rendering
-    /// [`media_playlist_m3u8`] for `track_id` once the awaited condition is
-    /// satisfied (or immediately, if `query` carries no blocking
-    /// parameters).
-    ///
-    /// `_HLS_msn` alone waits for segment `msn` to **close**; `_HLS_msn`+
-    /// `_HLS_part` waits only for that part of the (possibly still open)
-    /// segment — these are genuinely different conditions (treating a bare
-    /// `_HLS_msn` as `_HLS_part=0` would resolve as soon as the segment
-    /// merely opens with one live part, before it has an `#EXTINF`/URI at
-    /// all). `_HLS_part` without `_HLS_msn` is meaningless (a part is only
-    /// addressable relative to a segment) and a `_HLS_msn` unreasonably far
-    /// beyond the live edge is either a broken client or abuse — both
-    /// [`PlaylistOutcome::BadRequest`] immediately rather than
-    /// [`PlaylistOutcome::WouldBlock`]ing.
-    pub fn resolve_playlist(&self, track_id: u32, query: BlockingQuery) -> PlaylistOutcome {
-        if query.hls_part.is_some() && query.hls_msn.is_none() {
-            return PlaylistOutcome::BadRequest;
+/// [`ServedEgress::Body`] for [`LlHlsOrigin`]: the resolved body, typed by
+/// which [`LlHlsRequest`] produced it. A data-carrying ADT — see
+/// `tests/label_coverage.rs`'s SKIP list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlHlsBody {
+    /// A rendered Media Playlist (`#EXTM3U` text).
+    Playlist(String),
+    /// Resolved resource bytes (init/segment/part).
+    Resource(Bytes),
+}
+
+/// One playlist-window-resident **closed** segment's identity/bytes —
+/// `Window`'s per-entry shape. Deliberately narrower than the old
+/// `MediaStore`'s `SegmentInfo`-derived window entries: this crate only ever
+/// needs bytes + duration + the discontinuity bit to render a Media
+/// Playlist, so that is all this holds.
+struct WindowSegment {
+    sequence_number: u32,
+    bytes: Bytes,
+    duration_secs: f64,
+    discontinuous: bool,
+}
+
+/// The small per-[`LlHlsOrigin`] synced window this module's own doc
+/// ("The one thing that genuinely cannot come from the `Trunk` alone")
+/// explains the need for — fed by draining exactly one [`SegmentCursor`],
+/// never pushed into directly.
+struct Window {
+    segments: VecDeque<WindowSegment>,
+    capacity: usize,
+    /// Largest segment duration ever drained, surviving window eviction —
+    /// RFC 8216bis §4.4.3.1's `TARGETDURATION` MUST holds for *every*
+    /// segment this origin has ever advertised, not just the ones still in
+    /// the window (mirrors the deleted `MediaStore::max_segment_duration`).
+    max_segment_duration_secs: f64,
+    /// Cumulative count of discontinuities that have rolled off the front of
+    /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
+    /// Incremented exactly once per **evicted** entry whose
+    /// [`WindowSegment::discontinuous`] was `true`; a discontinuity still
+    /// inside the window is rendered as a per-segment `#EXT-X-DISCONTINUITY`
+    /// tag instead (see [`MediaPlaylist::to_m3u8`]), never double-counted
+    /// here.
+    discontinuity_sequence: u64,
+}
+
+impl Window {
+    fn new(capacity: NonZeroUsize) -> Self {
+        Window {
+            segments: VecDeque::new(),
+            capacity: capacity.get(),
+            max_segment_duration_secs: 0.0,
+            discontinuity_sequence: 0,
         }
-        if let Some(msn) = query.hls_msn {
-            let (current_max_msn, _) = self.latest_progress();
-            if msn > u64::from(current_max_msn) + ABUSE_MSN_FUTURE_BOUND {
-                return PlaylistOutcome::BadRequest;
-            }
-            let satisfied = match query.hls_part {
-                Some(part) => {
-                    let (in_progress_seg_seq, part_count) = self.latest_progress();
-                    u64::from(in_progress_seg_seq) > msn
-                        || (u64::from(in_progress_seg_seq) == msn && part_count > part)
-                }
-                None => u64::from(self.last_closed_segment_seq()) >= msn,
-            };
-            if !satisfied {
-                return PlaylistOutcome::WouldBlock;
-            }
-        }
-        PlaylistOutcome::Ready(media_playlist_m3u8(self, track_id))
     }
 
-    /// Resolve a dynamic origin filename (`init-{track}.mp4`, `seg-{track}-
-    /// {seq}.m4s`, `part-{track}-{seq}.{idx}.m4s`) to its bytes.
-    ///
-    /// A part request is the preload-hinted Partial Segment a client fetches
-    /// ahead of time (RFC 8216bis §6.2.2, §6.3.1). If the origin promised it
-    /// via `#EXT-X-PRELOAD-HINT` but hasn't produced it yet,
-    /// [`ResourceOutcome::WouldBlock`] — the caller should hold the request
-    /// open (not 404 immediately, which spams errors and defeats low
-    /// latency). [`ResourceOutcome::NotFound`] is returned **promptly**
-    /// (without the caller needing to wait out its own timeout) once the
-    /// part can no longer appear: its segment has closed (now only
-    /// addressable as a whole segment via `seg-…`), or the in-progress
-    /// segment has advanced past it — a legitimate 404 the client answers by
-    /// fetching the next segment/part.
-    pub fn resolve_resource(&self, name: &str) -> ResourceOutcome {
-        if let Some((seq, idx)) = parse_part(name) {
-            return match self.part_bytes(seq, idx) {
-                Some(bytes) => ResourceOutcome::Ready {
-                    bytes,
-                    cache: CachePolicy::Immutable,
-                },
-                None => {
-                    let (in_progress_seg_seq, _) = self.latest_progress();
-                    if in_progress_seg_seq > seq || self.segment_bytes(seq).is_some() {
-                        ResourceOutcome::NotFound
-                    } else {
-                        ResourceOutcome::WouldBlock
-                    }
+    /// Absorb one drained [`SegmentEntry`], evicting the oldest window entry
+    /// first if already at `capacity` — same evict-then-push shape as every
+    /// ring in `trunk.rs` itself.
+    fn push(&mut self, entry: SegmentEntry) {
+        let duration_secs = entry.duration.as_secs_f64();
+        self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
+        if self.segments.len() == self.capacity {
+            if let Some(evicted) = self.segments.pop_front() {
+                if evicted.discontinuous {
+                    self.discontinuity_sequence += 1;
                 }
-            };
+            }
         }
-        match resolve_file(self, name) {
-            Some(bytes) => ResourceOutcome::Ready {
-                bytes,
-                cache: CachePolicy::Immutable,
-            },
-            None => ResourceOutcome::NotFound,
-        }
+        self.segments.push_back(WindowSegment {
+            sequence_number: entry.sequence_number,
+            bytes: entry.bytes,
+            duration_secs,
+            discontinuous: entry.meta.discontinuous,
+        });
+    }
+
+    fn bytes_of(&self, sequence_number: u32) -> Option<Bytes> {
+        self.segments
+            .iter()
+            .find(|s| s.sequence_number == sequence_number)
+            .map(|s| s.bytes.clone())
     }
 }
 
 /// Parse a `part-{track}-{seq}.{idx}.m4s` dynamic filename into `(seq, idx)`,
 /// or `None` if it isn't a part filename (or its numeric fields don't parse).
-/// `{track}` is validated but unused (see [`resolve_file`]).
+/// `{track}` is validated but unused (matches every other dynamic-filename
+/// resource in this module).
 fn parse_part(file: &str) -> Option<(u32, u32)> {
     let rest = file.strip_prefix("part-")?.strip_suffix(".m4s")?;
     let (track_seq, idx) = rest.rsplit_once('.')?;
@@ -332,77 +247,390 @@ fn parse_part(file: &str) -> Option<(u32, u32)> {
     Some((seq.parse().ok()?, idx.parse().ok()?))
 }
 
-/// Parse a dynamic origin filename and fetch its bytes from `store`:
-/// - `init-{track}.mp4` -> [`MediaStore::init_bytes`]
-/// - `seg-{track}-{seq}.m4s` -> [`MediaStore::segment_bytes`]
-///
-/// Part filenames (`part-{track}-{seq}.{idx}.m4s`) are handled separately in
-/// [`MediaStore::resolve_resource`] (they can block until available — see
-/// [`parse_part`]), not here. `{track}` is validated as a number but
-/// otherwise unused: `store` holds a single track's data (see
-/// [`DEFAULT_TRACK_ID`]). Returns `None` (-> 404) for any filename that
-/// doesn't match one of these shapes, or whose numeric fields don't parse.
-fn resolve_file(store: &MediaStore, file: &str) -> Option<Vec<u8>> {
+/// Parse a `init-{track}.mp4`/`seg-{track}-{seq}.m4s` dynamic filename;
+/// `part-…` filenames are handled separately by [`parse_part`] (they can
+/// block until available). `{track}` is validated as a number but otherwise
+/// unused: an [`LlHlsOrigin`] holds a single track's data (see
+/// [`DEFAULT_TRACK_ID`]).
+enum ImmediateResource {
+    Init,
+    Segment(u32),
+}
+
+fn parse_immediate(file: &str) -> Option<ImmediateResource> {
     if let Some(rest) = file.strip_prefix("init-") {
         let track = rest.strip_suffix(".mp4")?;
         track.parse::<u32>().ok()?;
-        return store.init_bytes();
+        return Some(ImmediateResource::Init);
     }
     if let Some(rest) = file.strip_prefix("seg-") {
         let rest = rest.strip_suffix(".m4s")?;
         let (track, seq) = rest.split_once('-')?;
         track.parse::<u32>().ok()?;
-        let seq: u32 = seq.parse().ok()?;
-        return store.segment_bytes(seq);
+        return Some(ImmediateResource::Segment(seq.parse().ok()?));
     }
     None
+}
+
+/// The LL-HLS origin [`ServedEgress`]: renders playlists and resolves
+/// blocking-reload/part-availability requests for one stream, backed by a
+/// shared [`Trunk`]. See this module's own doc for exactly what comes
+/// straight from the `Trunk` and what needs the small synced `Window`.
+pub struct LlHlsOrigin {
+    trunk: Arc<Trunk>,
+    /// This origin's **one** [`SegmentCursor`] — see [`Trunk::subscribe_segments`]'s
+    /// own docs (and this crate's `media_plane::egress` module doc) for why a
+    /// `ServedEgress` must never take one per request/peer.
+    cursor: Mutex<SegmentCursor>,
+    window: Mutex<Window>,
+    /// The fMP4 init segment — see this module's doc for why this, alone, is
+    /// not answerable by any `Trunk` ring.
+    init: Mutex<Option<Bytes>>,
+    target_duration_secs: f64,
+    part_target_ms: u32,
+}
+
+impl LlHlsOrigin {
+    /// Build a fresh origin over `trunk`, subscribing its one [`SegmentCursor`]
+    /// immediately (so the window starts empty but never misses a segment
+    /// published from this point on).
+    ///
+    /// `window_segments` bounds how many closed segments this origin
+    /// advertises in a rendered Media Playlist — independent of
+    /// [`media_plane::trunk::TrunkConfig::segment_capacity`] (the `Trunk`'s own
+    /// retention bound): a caller may legitimately want a shorter advertised
+    /// window than the `Trunk` retains for other consumers (e.g. a DVR
+    /// `SegmentEgress` reading the same `Trunk`).
+    pub fn new(
+        trunk: Arc<Trunk>,
+        target_duration_secs: f64,
+        part_target_ms: u32,
+        window_segments: NonZeroUsize,
+    ) -> Self {
+        let cursor = trunk.subscribe_segments();
+        LlHlsOrigin {
+            trunk,
+            cursor: Mutex::new(cursor),
+            window: Mutex::new(Window::new(window_segments)),
+            init: Mutex::new(None),
+            target_duration_secs,
+            part_target_ms,
+        }
+    }
+
+    /// Store the fMP4 init segment bytes — see this module's doc for why an
+    /// init segment is not something any `Trunk` ring holds.
+    pub fn set_init(&self, bytes: impl Into<Bytes>) {
+        *self.init.lock().unwrap() = Some(bytes.into());
+    }
+
+    /// The fMP4 init segment bytes, if set.
+    pub fn init_bytes(&self) -> Option<Bytes> {
+        self.init.lock().unwrap().clone()
+    }
+
+    /// Drain this origin's [`SegmentCursor`] into `Window` — called at the
+    /// top of every [`ServedEgress::resolve`] so a render always reflects
+    /// whatever has published since the last call. Non-blocking, bounded by
+    /// however many segments actually published since the last drain.
+    ///
+    /// A [`SegmentCursorItem::Lagged`] report (this origin's `window_segments`/
+    /// polling cadence fell behind the `Trunk`'s own
+    /// `segment_capacity` eviction) is accepted, not treated as an error:
+    /// exactly like every other lossy cursor in this workspace, the honest
+    /// response is to resume from the next segment, not to fabricate the
+    /// lost entries' duration/discontinuity data.
+    fn drain(&self) {
+        let mut cursor = self.cursor.lock().unwrap();
+        let mut window = self.window.lock().unwrap();
+        while let Some(item) = cursor.poll() {
+            if let SegmentCursorItem::Segment(entry) = item {
+                window.push(entry);
+            }
+        }
+    }
+
+    /// `(in-progress-or-last-active segment sequence number, its currently
+    /// resident live parts)` — the `Trunk`-only replacement for the deleted
+    /// `MediaStore::latest_progress`.
+    ///
+    /// Derivation: the only segment that can possibly have live, not-yet-
+    /// closed parts is the one immediately after
+    /// [`Trunk::last_closed_segment`] (a segmenter never opens segment N+2's
+    /// parts before N+1 closes) — so probing exactly that one candidate via
+    /// [`Trunk::parts_in_segment`] is exact, not a heuristic. If that probe
+    /// is empty (nothing has started for the next segment yet — e.g. the
+    /// instant after a close, before its successor's first part lands), the
+    /// answer falls back to `last_closed_segment` itself, with an empty part
+    /// list — exactly the degenerate state `MediaStore::latest_progress`
+    /// also returned right after `add_segment` cleared `live_parts`.
+    fn live_edge(&self) -> (u32, Vec<PartEntry>) {
+        let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
+        let candidate = last_closed + 1;
+        let parts = self.trunk.parts_in_segment(candidate);
+        if parts.is_empty() {
+            (last_closed, Vec::new())
+        } else {
+            (candidate, parts)
+        }
+    }
+
+    /// Render the LL-HLS media playlist for `track_id` from this origin's
+    /// current `Window` (closed segments) and the `Trunk`'s live edge (open
+    /// segment's parts + preload hint).
+    ///
+    /// RFC 8216bis §4.4.4.9: an in-progress (not yet closed) segment MUST NOT
+    /// be advertised with an `#EXTINF`/URI pair — that segment has no
+    /// fetchable resource yet — it may only appear as trailing `#EXT-X-PART`
+    /// lines. `transmux::hls::MediaPlaylist::open_segment` is exactly this
+    /// representation: its parts render as trailing `#EXT-X-PART` lines with
+    /// no `#EXTINF`/URI, so the in-progress segment's parts and the
+    /// `#EXT-X-PRELOAD-HINT` for the next, not-yet-available part are both
+    /// rendered by `to_m3u8()` itself — this method only supplies the URI
+    /// scheme (`part-<track>-<seq>.<idx>.m4s`) and the part metadata.
+    fn render_playlist(&self, track_id: u32) -> String {
+        self.drain();
+        let window = self.window.lock().unwrap();
+        let (open_seq, open_parts) = self.live_edge();
+        // Only render an open segment/preload-hint once the live edge is
+        // genuinely a not-yet-closed segment with at least one live part —
+        // never re-render an already-closed segment's lingering parts (the
+        // `Trunk`'s live-part log deliberately does not evict them on close;
+        // see `trunk`'s own module doc) as if they were still open.
+        let has_open_parts = !open_parts.is_empty();
+
+        let media_sequence = window
+            .segments
+            .front()
+            .map(|s| u64::from(s.sequence_number))
+            .or_else(|| has_open_parts.then_some(u64::from(open_seq)))
+            .unwrap_or(1);
+        let segments: Vec<MediaSegment> = window
+            .segments
+            .iter()
+            .map(|s| MediaSegment {
+                uri: format!("seg-{track_id}-{}.m4s", s.sequence_number),
+                duration: s.duration_secs,
+                discontinuous: s.discontinuous,
+                parts: Vec::new(),
+                ..Default::default()
+            })
+            .collect();
+        let part_target = f64::from(self.part_target_ms) / 1000.0;
+        let open_segment = has_open_parts.then(|| {
+            OpenSegment::new(
+                open_parts
+                    .iter()
+                    .map(|p| PartSpec {
+                        uri: format!("part-{track_id}-{}.{}.m4s", p.segment_number, p.part_index),
+                        duration: p.duration.as_secs_f64(),
+                        independent: p.independent,
+                        ..Default::default()
+                    })
+                    .collect(),
+            )
+        });
+        let next_part_hint = has_open_parts.then(|| {
+            let next_idx = open_parts
+                .iter()
+                .map(|p| p.part_index)
+                .max()
+                .map(|idx| idx + 1)
+                .unwrap_or(0);
+            format!("part-{track_id}-{open_seq}.{next_idx}.m4s")
+        });
+        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
+        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
+        // segmenter cuts on the next keyframe *after* the configured target,
+        // so a real segment routinely exceeds it — advertising the
+        // configured target alone can under-declare. Use whichever is
+        // larger, rounded (not the configured value's `ceil()` alone).
+        let target_duration = self
+            .target_duration_secs
+            .max(window.max_segment_duration_secs)
+            .round() as u32;
+        let playlist = MediaPlaylist {
+            version: LL_HLS_VERSION,
+            target_duration,
+            media_sequence,
+            discontinuity_sequence: window.discontinuity_sequence,
+            segments,
+            open_segment,
+            endlist: false,
+            extra_tags: vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
+            low_latency: Some(LowLatencyConfig {
+                part_target,
+                part_hold_back: part_target * PART_HOLD_BACK_MULTIPLIER,
+                preload_hint_part: next_part_hint,
+                ..Default::default()
+            }),
+            iframes_only: false,
+            ..Default::default()
+        };
+        playlist.to_m3u8()
+    }
+
+    fn resolve_playlist(
+        &self,
+        track_id: u32,
+        query: BlockingQuery,
+        now: Timestamp,
+        await_policy: AwaitPolicy,
+    ) -> EgressResponse<LlHlsBody> {
+        if query.hls_part.is_some() && query.hls_msn.is_none() {
+            return EgressResponse::BadRequest {
+                reason: "_HLS_part without _HLS_msn is meaningless",
+            };
+        }
+        if let Some(msn) = query.hls_msn {
+            let (in_progress_seg, live_parts) = self.live_edge();
+            if msn > u64::from(in_progress_seg) + ABUSE_MSN_FUTURE_BOUND {
+                return EgressResponse::BadRequest {
+                    reason: "_HLS_msn unreasonably far beyond the live edge",
+                };
+            }
+            let satisfied = match query.hls_part {
+                Some(part) => {
+                    u64::from(in_progress_seg) > msn
+                        || (u64::from(in_progress_seg) == msn
+                            && live_parts.len() as u64 > u64::from(part))
+                }
+                None => self.trunk.last_closed_segment().unwrap_or(0) as u64 >= msn,
+            };
+            if !satisfied {
+                return EgressResponse::pending(await_policy, now, now);
+            }
+        }
+        EgressResponse::Ready {
+            body: LlHlsBody::Playlist(self.render_playlist(track_id)),
+            cache: CachePolicy::NoCache,
+        }
+    }
+
+    /// A part request is the preload-hinted Partial Segment a client fetches
+    /// ahead of time (RFC 8216bis §6.2.2, §6.3.1). If the origin promised it
+    /// via `#EXT-X-PRELOAD-HINT` but hasn't produced it yet,
+    /// [`EgressResponse::Await`] — the caller should hold the request open
+    /// (not 404 immediately, which spams errors and defeats low latency).
+    /// [`EgressResponse::NotFound`] is returned **promptly** (without the
+    /// caller needing to wait out its own [`AwaitPolicy`]) once the part can
+    /// no longer appear: its segment has closed (now only addressable as a
+    /// whole segment via `seg-…`) — a legitimate 404 the client answers by
+    /// fetching the next segment/part.
+    fn resolve_resource(
+        &self,
+        name: &str,
+        now: Timestamp,
+        await_policy: AwaitPolicy,
+    ) -> EgressResponse<LlHlsBody> {
+        if let Some((seq, idx)) = parse_part(name) {
+            if let Some(bytes) = self.trunk.part_bytes(seq, idx) {
+                return EgressResponse::Ready {
+                    body: LlHlsBody::Resource(bytes),
+                    cache: CachePolicy::Immutable,
+                };
+            }
+            // The requested part's segment has already closed (whether or
+            // not this origin's own `Window` still retains its bytes) -> it
+            // will never be produced. `Trunk::last_closed_segment` answers
+            // this exactly, with no dependence on `Window`'s retention.
+            let never_will = self.trunk.last_closed_segment().is_some_and(|c| c >= seq);
+            return if never_will {
+                EgressResponse::NotFound
+            } else {
+                EgressResponse::pending(await_policy, now, now)
+            };
+        }
+        self.drain();
+        let bytes = match parse_immediate(name) {
+            Some(ImmediateResource::Init) => self.init_bytes(),
+            Some(ImmediateResource::Segment(seq)) => self.window.lock().unwrap().bytes_of(seq),
+            None => None,
+        };
+        match bytes {
+            Some(bytes) => EgressResponse::Ready {
+                body: LlHlsBody::Resource(bytes),
+                cache: CachePolicy::Immutable,
+            },
+            None => EgressResponse::NotFound,
+        }
+    }
+}
+
+impl ServedEgress for LlHlsOrigin {
+    type Request = LlHlsRequest;
+    type Body = LlHlsBody;
+
+    fn resolve(
+        &self,
+        request: LlHlsRequest,
+        now: Timestamp,
+        await_policy: AwaitPolicy,
+    ) -> EgressResponse<LlHlsBody> {
+        match request {
+            LlHlsRequest::Playlist { track_id, query } => {
+                self.resolve_playlist(track_id, query, now, await_policy)
+            }
+            LlHlsRequest::Resource { name } => self.resolve_resource(&name, now, await_policy),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transmux::ll_hls::{PartInfo, SegmentInfo};
+    use media_plane::trunk::TrunkConfig;
+    use std::time::{Duration, Instant};
+    use transmux::SegmentMeta;
 
-    fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![0x10 + idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("test capacity must be non-zero")
     }
 
-    fn seg(seq: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![0x20 + seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 2,
-        }
+    /// A fresh `Trunk` sized generously for these tests, plus the one
+    /// `LlHlsOrigin` under test.
+    fn make_origin() -> (Arc<Trunk>, LlHlsOrigin, media_plane::trunk::TrunkWriter) {
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let writer = trunk.writer().expect("first writer");
+        let origin = LlHlsOrigin::new(Arc::clone(&trunk), 4.0, 500, nz(4));
+        origin.set_init(vec![0xAAu8; 8]);
+        (trunk, origin, writer)
     }
 
-    /// A populated store: a closed segment 1, plus two live parts of
-    /// in-progress segment 2 -- so `latest_progress()` is `(2, 2)`.
-    fn make_store() -> MediaStore {
-        let store = MediaStore::new(4.0, 500, 4);
-        store.set_init(vec![0xAA; 8]);
-        store.add_segment(seg(1));
-        store.add_part(part(2, 0));
-        store.add_part(part(2, 1));
-        store
+    fn seg(
+        writer: &media_plane::trunk::TrunkWriter,
+        seq: u32,
+        duration_secs: f64,
+        discontinuous: bool,
+    ) {
+        writer.publish_segment(SegmentEntry::new(
+            Bytes::from(vec![seq as u8; 8]),
+            seq,
+            Duration::from_secs_f64(duration_secs),
+            Timestamp::from_nanos(0),
+            SegmentMeta { discontinuous },
+        ));
     }
 
-    #[test]
-    fn cache_policy_name_and_display_agree() {
-        for (policy, label) in [
-            (CachePolicy::Immutable, "immutable"),
-            (CachePolicy::NoCache, "no-cache"),
-        ] {
-            assert_eq!(policy.name(), label);
-            assert_eq!(policy.to_string(), label);
-        }
+    fn part(writer: &media_plane::trunk::TrunkWriter, seg_no: u32, idx: u32, independent: bool) {
+        writer.publish_part(PartEntry::new(
+            Bytes::from(vec![idx as u8; 4]),
+            seg_no,
+            idx,
+            Duration::from_millis(500),
+            independent,
+        ));
     }
+
+    fn resolve_now(origin: &LlHlsOrigin, request: LlHlsRequest) -> EgressResponse<LlHlsBody> {
+        origin.resolve(
+            request,
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(0)),
+        )
+    }
+
+    // --- master playlist (unaffected by the Trunk migration) -------------
 
     #[test]
     fn master_playlist_has_stream_inf() {
@@ -419,145 +647,409 @@ mod tests {
         assert!(!m.contains("media.m3u8"));
     }
 
+    // --- 1. playlist rendered from a populated Trunk matches the expected
+    //        shape ---------------------------------------------------------
+
+    /// MUTATION VERIFIED: changing `render_playlist`'s
+    /// `low_latency: Some(...)` to `None` makes this test's
+    /// `assert!(m.contains("#EXT-X-PART-INF"))` (and every other
+    /// LL-HLS-tag assertion) fail — `to_m3u8()` omits the entire
+    /// low-latency header block when `low_latency` is `None`, so none of
+    /// `#EXT-X-PART-INF`/`#EXT-X-SERVER-CONTROL`/`#EXT-X-PART` appear in the
+    /// rendered body. Recompiled and re-run to confirm the failure, then
+    /// reverted.
     #[test]
-    fn resolve_playlist_no_query_is_ready_now() {
-        let store = make_store();
-        let outcome = store.resolve_playlist(DEFAULT_TRACK_ID, BlockingQuery::default());
-        match outcome {
-            PlaylistOutcome::Ready(body) => assert!(body.contains("#EXT-X-PART"), "body: {body}"),
-            other => panic!("expected Ready, got {other:?}"),
+    fn playlist_rendered_from_populated_trunk_matches_expected_shape() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        part(&writer, 2, 0, true);
+        part(&writer, 2, 1, false);
+
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                cache,
+            } => {
+                assert_eq!(cache, CachePolicy::NoCache);
+                m
+            }
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+
+        assert!(body.contains("#EXT-X-VERSION:9"), "body: {body}");
+        assert!(body.contains("#EXT-X-TARGETDURATION:4"), "body: {body}");
+        assert!(
+            body.contains("#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5"),
+            "body: {body}"
+        );
+        assert!(
+            body.contains("#EXT-X-PART-INF:PART-TARGET=0.5"),
+            "body: {body}"
+        );
+        assert!(
+            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            "body: {body}"
+        );
+        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
+        assert!(
+            body.contains("#EXT-X-PART:DURATION=0.5") && body.contains("INDEPENDENT=YES"),
+            "body: {body}"
+        );
+        assert!(body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
+        assert!(
+            body.contains("part-1-2.2.m4s"),
+            "preload hint for the next part: {body}"
+        );
+    }
+
+    // --- 2. a preload-hinted part BLOCKS until produced, then serves -----
+
+    /// MUTATION VERIFIED: changing `resolve_resource`'s `never_will` check
+    /// (whether the requested part's segment has already closed, via
+    /// `last_closed_segment`) to always `true` ("never will produce this
+    /// part") makes this test's first assertion fail: the not-yet-produced
+    /// part resolves `NotFound` immediately instead of `Await`, so
+    /// `assert!(matches!(first, EgressResponse::Await { .. }))` sees
+    /// `NotFound` and fails. Recompiled and re-run to confirm the failure,
+    /// then reverted. This is the RFC 8216bis section 6.2.2 behaviour that
+    /// shipped as multimux 0.2.1's bug fix — regressing it would break the
+    /// live camera route.
+    #[test]
+    fn preload_hinted_part_blocks_until_produced_then_serves() {
+        let (trunk, origin, writer) = make_origin();
+        let origin = Arc::new(origin);
+
+        // Not produced yet: must Await, not NotFound.
+        let deadline = Timestamp::from_nanos(5_000_000_000);
+        let policy = AwaitPolicy::new(deadline);
+        let first = origin.resolve(
+            LlHlsRequest::Resource {
+                name: "part-1-1.0.m4s".to_string(),
+            },
+            Timestamp::from_nanos(0),
+            policy,
+        );
+        assert!(
+            matches!(first, EgressResponse::Await { .. }),
+            "expected Await before the part exists, got {first:?}"
+        );
+
+        // Register a real Trunk::listen() wake-up and block a worker thread
+        // on it -- the actual mechanism a real adapter (Step 5) uses, not a
+        // poll loop -- to prove the part genuinely blocks rather than
+        // merely returning Await once and never resolving.
+        let listener = trunk.listen().expect("listener slot available");
+        let woken = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let woken2 = std::sync::Arc::clone(&woken);
+        let waiter = std::thread::spawn(move || {
+            let ok = listener.wait_deadline(Instant::now() + Duration::from_secs(2));
+            woken2.store(ok, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        // Produce the part the request was waiting on.
+        part(&writer, 1, 0, true);
+
+        waiter.join().expect("waiter thread must not panic");
+        assert!(
+            woken.load(std::sync::atomic::Ordering::SeqCst),
+            "Trunk::listen() must wake once publish_part lands"
+        );
+
+        // Re-resolving now must serve it -- not 404.
+        match origin.resolve(
+            LlHlsRequest::Resource {
+                name: "part-1-1.0.m4s".to_string(),
+            },
+            Timestamp::from_nanos(1),
+            policy,
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Resource(bytes),
+                cache,
+            } => {
+                assert_eq!(bytes, Bytes::from(vec![0u8; 4]));
+                assert_eq!(cache, CachePolicy::Immutable);
+            }
+            other => panic!("expected Ready once produced, got {other:?}"),
         }
     }
 
+    /// MUTATION VERIFIED: removing `EgressResponse::pending`'s expiry check
+    /// (i.e. always returning `Await`) would make a client wait forever for
+    /// a part that will never exist -- this test proves the OTHER half of
+    /// the bound: once `now` reaches the caller's own `AwaitPolicy::deadline`,
+    /// resolve must stop Awaiting. Changing the deadline comparison in
+    /// `resolve_resource`'s `EgressResponse::pending(await_policy, now, now)`
+    /// call to ignore `now` (always pass `Timestamp::from_nanos(0)`) makes
+    /// this test's final assertion fail: `resolve` at `now == deadline`
+    /// keeps returning `Await` instead of `NotFound`. Recompiled and re-run
+    /// to confirm the failure, then reverted.
     #[test]
-    fn resolve_playlist_already_satisfied_earlier_msn_is_ready() {
-        // latest_progress() for the store is (2, 2): asking for msn=1 (an
-        // earlier segment) is already satisfied and must not WouldBlock.
-        let store = make_store();
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(1),
-                hls_part: Some(0),
+    fn awaiting_part_is_bounded_by_await_policy_deadline() {
+        let (_trunk, origin, _writer) = make_origin();
+        let deadline = Timestamp::from_nanos(1_000_000_000);
+        let policy = AwaitPolicy::new(deadline);
+
+        let still_waiting = origin.resolve(
+            LlHlsRequest::Resource {
+                name: "part-1-9.0.m4s".to_string(),
             },
+            Timestamp::from_nanos(999_999_999),
+            policy,
         );
-        assert!(matches!(outcome, PlaylistOutcome::Ready(_)));
+        assert!(matches!(still_waiting, EgressResponse::Await { .. }));
+
+        let expired = origin.resolve(
+            LlHlsRequest::Resource {
+                name: "part-1-9.0.m4s".to_string(),
+            },
+            deadline,
+            policy,
+        );
+        assert!(
+            matches!(expired, EgressResponse::NotFound),
+            "expected NotFound once the deadline passed, got {expired:?}"
+        );
     }
 
-    #[test]
-    fn resolve_playlist_already_satisfied_same_msn_lower_part_is_ready() {
-        // in_progress_seg_seq == msn and part_count(2) > part(1): satisfied.
-        let store = make_store();
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(2),
-                hls_part: Some(1),
-            },
-        );
-        assert!(matches!(outcome, PlaylistOutcome::Ready(_)));
-    }
+    // --- 3. a just-closed segment's final part still serves ---------------
 
+    /// MUTATION VERIFIED: this behaviour depends entirely on
+    /// `TrunkWriter::publish_segment` (`media-plane/src/trunk.rs`) never
+    /// touching the live-part log. Simulating the old `MediaStore` bug here
+    /// by having `resolve_resource` check `last_closed_segment() >= seq`
+    /// ("this segment already closed -> NotFound") **before** checking
+    /// `Trunk::part_bytes` (i.e. swapping the two checks' order) makes this
+    /// test's first assertion fail: the just-closed segment's final part
+    /// resolves `NotFound` instead of `Ready` (`panicked at ...: the
+    /// just-closed segment's final part must still serve, got NotFound`),
+    /// because the eager closed-check now shadows the still-valid
+    /// `part_bytes` hit. Recompiled and re-run to confirm the failure, then
+    /// reverted. This is the RFC 8216bis boundary behaviour that shipped as
+    /// multimux 0.2.2's bug fix — regressing it would break the live camera
+    /// route (its own `#EXT-X-PRELOAD-HINT` part races exactly this
+    /// boundary every segment).
     #[test]
-    fn resolve_playlist_msn_only_waits_for_closed_segment_not_just_open_parts() {
-        // make_store()'s segment 2 is OPEN with 2 live parts
-        // (latest_progress() == (2, 2)) but not yet CLOSED. RFC 8216bis
-        // §6.2.5.2: a bare `_HLS_msn=2` (no `_HLS_part`) must WouldBlock, not
-        // resolve merely because it has live parts — treating this as
-        // `_HLS_part=0` (satisfied by part_count(2) > 0) would wrongly return
-        // Ready here.
-        let store = make_store();
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(2),
-                hls_part: None,
-            },
-        );
-        assert_eq!(outcome, PlaylistOutcome::WouldBlock);
+    fn just_closed_segment_final_part_still_serves() {
+        let (_trunk, origin, writer) = make_origin();
+        part(&writer, 1, 0, true);
+        part(&writer, 1, 1, false); // segment 1's final part
+        seg(&writer, 1, 4.0, false); // close segment 1
 
-        // Once segment 2 actually closes, the same query resolves.
-        store.add_segment(seg(2));
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(2),
-                hls_part: None,
+        match resolve_now(
+            &origin,
+            LlHlsRequest::Resource {
+                name: "part-1-1.1.m4s".to_string(),
             },
-        );
-        match outcome {
-            PlaylistOutcome::Ready(body) => assert!(
-                body.contains("seg-1-2.m4s"),
-                "resolved playlist must show segment 2 as closed: {body}"
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Resource(bytes),
+                ..
+            } => assert_eq!(bytes, Bytes::from(vec![1u8; 4])),
+            other => panic!("the just-closed segment's final part must still serve, got {other:?}"),
+        }
+
+        // A genuinely-nonexistent part of the closed segment is NotFound.
+        assert_eq!(
+            resolve_now(
+                &origin,
+                LlHlsRequest::Resource {
+                    name: "part-1-1.9.m4s".to_string(),
+                }
             ),
-            other => panic!("expected Ready after close, got {other:?}"),
-        }
+            EgressResponse::NotFound
+        );
+
+        // The playlist must not resurrect the closed segment's parts as
+        // "open" -- it is rendered whole.
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+        assert!(
+            body.contains("seg-1-1.m4s"),
+            "closed segment rendered whole: {body}"
+        );
+        assert!(
+            !body.contains("part-1-1."),
+            "closed parts not rendered as open: {body}"
+        );
+    }
+
+    // --- 4. MEDIA-SEQUENCE / DISCONTINUITY-SEQUENCE advance as the window
+    //        rolls -----------------------------------------------------
+
+    /// MUTATION VERIFIED: changing `Window::push`'s eviction guard from
+    /// `if evicted.discontinuous` to `if false` (never counting an evicted
+    /// discontinuity) makes this test's
+    /// `assert!(body.contains("#EXT-X-DISCONTINUITY-SEQUENCE:1"))` fail --
+    /// the tag is omitted entirely (the renderer only emits it when
+    /// `discontinuity_sequence > 0`), because the counter never advances
+    /// past `0`. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn media_sequence_and_discontinuity_sequence_advance_as_window_rolls() {
+        let (_trunk, origin, writer) = make_origin(); // window_segments = 4
+
+        seg(&writer, 1, 4.0, false);
+        seg(&writer, 2, 4.0, true); // discontinuous
+        seg(&writer, 3, 4.0, false);
+        seg(&writer, 4, 4.0, false);
+
+        // Window (capacity 4) holds exactly 1..=4 -- MEDIA-SEQUENCE=1, and
+        // segment 2's own #EXT-X-DISCONTINUITY renders in-window (no
+        // DISCONTINUITY-SEQUENCE yet, nothing has rolled off).
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+        assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:1"), "body: {body}");
+        assert!(
+            !body.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
+            "nothing has rolled off the window yet: {body}"
+        );
+        assert!(body.contains("#EXT-X-DISCONTINUITY\n"), "body: {body}");
+
+        // Roll the window: segment 5 evicts segment 1 (not discontinuous;
+        // DISCONTINUITY-SEQUENCE stays 0), segment 6 evicts segment 2
+        // (discontinuous -- DISCONTINUITY-SEQUENCE becomes 1).
+        seg(&writer, 5, 4.0, false);
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+        assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:2"), "body: {body}");
+        assert!(
+            !body.contains("#EXT-X-DISCONTINUITY-SEQUENCE"),
+            "evicted segment 1 was not discontinuous: {body}"
+        );
+
+        seg(&writer, 6, 4.0, false);
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+        assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:3"), "body: {body}");
+        assert!(
+            body.contains("#EXT-X-DISCONTINUITY-SEQUENCE:1"),
+            "segment 2 (discontinuous) has now rolled off the window: {body}"
+        );
+    }
+
+    // --- misc: target-duration MUST, abuse bound, bad request -------------
+
+    #[test]
+    fn target_duration_is_max_of_configured_and_actual_segment_duration() {
+        let (_trunk, origin, writer) = make_origin(); // configured target 4.0
+        seg(&writer, 1, 7.5, false);
+        let body = match resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Playlist(m),
+                ..
+            } => m,
+            other => panic!("expected Ready(Playlist), got {other:?}"),
+        };
+        assert!(
+            body.contains("#EXT-X-TARGETDURATION:8"),
+            "TARGETDURATION must be round(7.5)=8, not the configured target: {body}"
+        );
     }
 
     #[test]
-    fn resolve_playlist_msn_within_bound_would_block_until_part_lands() {
-        // Sanity check for the abuse-bound logic: a legitimate
-        // just-ahead-of-live-edge msn/part WouldBlocks (not BadRequest), then
-        // resolves once the part lands.
-        let store = make_store(); // latest_progress() == (2, 2)
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(2),
-                hls_part: Some(2),
+    fn far_future_msn_rejected() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        let outcome = resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery {
+                    hls_msn: Some(1002),
+                    hls_part: None,
+                },
             },
         );
-        assert_eq!(outcome, PlaylistOutcome::WouldBlock);
-
-        store.add_part(part(2, 2));
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(2),
-                hls_part: Some(2),
-            },
-        );
-        assert!(matches!(outcome, PlaylistOutcome::Ready(_)));
+        assert!(matches!(outcome, EgressResponse::BadRequest { .. }));
     }
 
     #[test]
-    fn resolve_playlist_far_future_msn_rejected() {
-        // latest_progress() for make_store() is (2, 2). A `_HLS_msn` 1000
-        // ahead of the live edge is not a legitimate blocking-reload request
-        // (RFC 8216bis §6.2.5.2 abuse prevention) — BadRequest immediately.
-        let store = make_store();
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: Some(1002),
-                hls_part: None,
+    fn part_without_msn_rejected() {
+        let (_trunk, origin, _writer) = make_origin();
+        let outcome = resolve_now(
+            &origin,
+            LlHlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery {
+                    hls_msn: None,
+                    hls_part: Some(0),
+                },
             },
         );
-        assert_eq!(outcome, PlaylistOutcome::BadRequest);
-    }
-
-    #[test]
-    fn resolve_playlist_part_without_msn_rejected() {
-        // RFC 8216bis §6.2.5.2: `_HLS_part` without `_HLS_msn` is
-        // meaningless (a part is only addressable relative to a segment).
-        let store = make_store();
-        let outcome = store.resolve_playlist(
-            DEFAULT_TRACK_ID,
-            BlockingQuery {
-                hls_msn: None,
-                hls_part: Some(0),
-            },
-        );
-        assert_eq!(outcome, PlaylistOutcome::BadRequest);
+        assert!(matches!(outcome, EgressResponse::BadRequest { .. }));
     }
 
     #[test]
     fn resolve_resource_init_present() {
-        let store = make_store();
-        let outcome = store.resolve_resource("init-1.mp4");
-        match outcome {
-            ResourceOutcome::Ready { bytes, cache } => {
-                assert_eq!(bytes, vec![0xAA; 8]);
+        let (_trunk, origin, _writer) = make_origin();
+        match resolve_now(
+            &origin,
+            LlHlsRequest::Resource {
+                name: "init-1.mp4".to_string(),
+            },
+        ) {
+            EgressResponse::Ready {
+                body: LlHlsBody::Resource(bytes),
+                cache,
+            } => {
+                assert_eq!(bytes, Bytes::from(vec![0xAAu8; 8]));
                 assert_eq!(cache, CachePolicy::Immutable);
             }
             other => panic!("expected Ready, got {other:?}"),
@@ -565,275 +1057,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_resource_segment_present_and_absent() {
-        let store = make_store();
-        match store.resolve_resource("seg-1-1.m4s") {
-            ResourceOutcome::Ready { bytes, .. } => assert_eq!(bytes, vec![0x21; 8]),
-            other => panic!("expected Ready, got {other:?}"),
-        }
-        assert_eq!(
-            store.resolve_resource("seg-1-99.m4s"),
-            ResourceOutcome::NotFound
-        );
-    }
-
-    #[test]
-    fn resolve_resource_part_present() {
-        let store = make_store();
-        match store.resolve_resource("part-1-2.0.m4s") {
-            ResourceOutcome::Ready { bytes, .. } => assert_eq!(bytes, vec![0x10; 4]),
-            other => panic!("expected Ready, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resolve_resource_part_not_yet_produced_would_block() {
-        // part-1-2.2 is the preload-hinted next part of in-progress segment 2
-        // (which currently has parts .0 and .1). Not yet produced -> WouldBlock,
-        // not NotFound (the caller waits, doesn't 404 immediately).
-        let store = make_store();
-        assert_eq!(
-            store.resolve_resource("part-1-2.2.m4s"),
-            ResourceOutcome::WouldBlock
-        );
-        store.add_part(part(2, 2));
-        match store.resolve_resource("part-1-2.2.m4s") {
-            ResourceOutcome::Ready { bytes, .. } => assert_eq!(bytes, vec![0x12; 4]),
-            other => panic!("expected Ready once produced, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resolve_resource_part_not_found_once_segment_closes_without_it() {
-        // part-1-2.9 will never be produced. Once segment 2 closes (advancing
-        // the in-progress segment), the part must resolve NotFound promptly —
-        // not WouldBlock forever.
-        let store = make_store();
-        assert_eq!(
-            store.resolve_resource("part-1-2.9.m4s"),
-            ResourceOutcome::WouldBlock,
-            "not yet decidable while segment 2 is still open"
-        );
-        store.add_segment(seg(2));
-        assert_eq!(
-            store.resolve_resource("part-1-2.9.m4s"),
-            ResourceOutcome::NotFound,
-            "must resolve NotFound once segment 2 has closed without producing it"
-        );
-    }
-
-    #[test]
-    fn resolve_resource_part_served_from_recent_after_close() {
-        // Segment 2 has live parts .0 and .1; close it. Its final part must
-        // still resolve Ready (from recent_parts) — an in-flight
-        // preload-hint request racing the segment close must not NotFound.
-        let store = make_store();
-        store.add_segment(seg(2)); // close segment 2, moving its parts to recent_parts
-        match store.resolve_resource("part-1-2.1.m4s") {
-            ResourceOutcome::Ready { bytes, .. } => assert_eq!(bytes, vec![0x11; 4]),
-            other => panic!("a just-closed segment's part must still resolve Ready, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn resolve_resource_part_of_old_segment_not_found() {
-        // Segment 1 closed in make_store() with no parts recorded and is old
-        // enough to be past the recent-parts retention window, so its parts
-        // resolve NotFound without ever WouldBlocking (they will never be
-        // produced and aren't individually addressable anymore).
-        let store = make_store();
-        assert_eq!(
-            store.resolve_resource("part-1-1.0.m4s"),
-            ResourceOutcome::NotFound
-        );
-    }
-
-    #[test]
     fn resolve_resource_unmatched_filename_not_found() {
-        let store = make_store();
+        let (_trunk, origin, _writer) = make_origin();
         assert_eq!(
-            store.resolve_resource("not-a-thing.txt"),
-            ResourceOutcome::NotFound
-        );
-    }
-
-    // --- Playlist-rendering content tests (moved from
-    // `multimux::output::llhls`, which now delegates rendering here) ---
-
-    fn plain_seg(seq: u32, parts: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: parts,
-        }
-    }
-    fn plain_part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
-    }
-
-    #[test]
-    fn playlist_has_llhls_tags_and_parts() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1));
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(m.contains("#EXT-X-PART-INF"), "PART-INF present");
-        assert!(
-            m.contains("#EXT-X-SERVER-CONTROL"),
-            "SERVER-CONTROL present"
-        );
-        assert!(m.contains("#EXT-X-PART"), "at least one PART");
-        assert!(
-            m.contains("part-1-1.0.m4s") || m.contains("part-1-1.1.m4s"),
-            "part URI"
-        );
-    }
-
-    #[test]
-    fn open_segment_has_parts_but_no_extinf() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1));
-        let m = media_playlist_m3u8(&s, 1);
-        // The in-progress segment's parts are advertised...
-        assert!(m.contains("#EXT-X-PART"), "at least one PART line");
-        assert!(m.contains("part-1-1.0.m4s"), "part 0 URI present");
-        assert!(m.contains("part-1-1.1.m4s"), "part 1 URI present");
-        // ...but RFC 8216bis §4.4.4.9: no premature #EXTINF/URI for the
-        // not-yet-closed segment itself — "seg-1-1.m4s" must not appear
-        // anywhere (it isn't fetchable; that segment hasn't been closed).
-        assert!(
-            !m.contains("seg-1-1.m4s"),
-            "no full-segment URI for the open segment: {m}"
-        );
-        assert!(
-            !m.contains("#EXTINF"),
-            "no EXTINF for the open segment: {m}"
-        );
-    }
-
-    #[test]
-    fn final_part_fetchable_after_its_segment_closes() {
-        // The segmenter emits a segment's final part and then closes the
-        // segment in the same step. A preload-hint request for that final part
-        // is typically in flight when the close happens, so it must remain
-        // fetchable afterwards (from recent_parts) rather than 404 — the LL-HLS
-        // preload-hint boundary bug.
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_part(plain_part(1, 0));
-        s.add_part(plain_part(1, 1)); // .1 is this segment's final part
-        s.add_segment(plain_seg(1, 2)); // close segment 1 (moves its parts to recent_parts)
-        assert_eq!(
-            s.resolve_resource("part-1-1.1.m4s"),
-            ResourceOutcome::Ready {
-                bytes: vec![1; 4],
-                cache: CachePolicy::Immutable
-            },
-            "final part of a just-closed segment must still be individually fetchable"
-        );
-        assert_eq!(
-            s.resolve_resource("part-1-1.0.m4s"),
-            ResourceOutcome::Ready {
-                bytes: vec![0; 4],
-                cache: CachePolicy::Immutable
-            },
-            "earlier parts too"
-        );
-        // A genuinely-nonexistent part of the closed segment is NotFound.
-        assert_eq!(
-            s.resolve_resource("part-1-1.9.m4s"),
-            ResourceOutcome::NotFound
-        );
-        // Closing does not resurrect parts into the rendered open segment: the
-        // playlist advertises the whole segment, not its parts.
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("seg-1-1.m4s"),
-            "closed segment rendered whole: {m}"
-        );
-        assert!(
-            !m.contains("part-1-1."),
-            "closed parts not rendered as open: {m}"
-        );
-    }
-
-    #[test]
-    fn live_parts_capped_when_segment_never_closes() {
-        // target_duration_secs=4.0, part_target_ms=500 -> cap =
-        // ceil(4.0 / 0.5) + 4 margin = 12 (see
-        // `super::super::store::compute_max_live_parts`).
-        let s = MediaStore::new(4.0, 500, 4);
-        let cap = super::super::store::compute_max_live_parts(4.0, 500);
-        assert_eq!(cap, 12, "sanity-check the expected cap for these params");
-        s.set_init(vec![0; 4]);
-
-        // Push far more parts than the cap into a single never-closed
-        // segment (no add_segment call) — RAM must stay bounded.
-        for i in 0..(cap as u32 * 5) {
-            s.add_part(plain_part(1, i));
-        }
-        assert_eq!(
-            s.live_part_count(),
-            cap,
-            "live_parts must stay capped even though the segment never closed"
-        );
-
-        // The playlist must still render correctly from the capped parts:
-        // only the most recent (highest-index) parts survive.
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(m.contains("#EXT-X-PART"), "still has PART lines: {m}");
-        let last_idx = cap as u32 * 5 - 1;
-        assert!(
-            m.contains(&format!("part-1-1.{last_idx}.m4s")),
-            "most recent part must survive the cap: {m}"
-        );
-        let first_idx = cap as u32 * 5 - cap as u32;
-        assert!(
-            !m.contains(&format!("part-1-1.{}.m4s", first_idx - 1)),
-            "an older part beyond the cap must have been dropped: {m}"
-        );
-    }
-
-    // --- P2 LL-HLS spec-conformance fixes (audit-llhls #1/#2/#3/#4) ---
-
-    #[test]
-    fn target_duration_is_max_of_configured_and_actual_segment_duration() {
-        // Configured target is 4.0s, but the segmenter cuts on the next
-        // keyframe after the target so a real segment can run long (7.5s
-        // here) — RFC 8216bis §4.4.3.1 (MUST) requires TARGETDURATION to be
-        // >= every EXTINF, rounded. The old hardcoded
-        // `ceil(target_duration_secs)` would render `4`, violating the MUST.
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        let mut long_seg = plain_seg(1, 2);
-        long_seg.duration = 7.5;
-        s.add_segment(long_seg);
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("#EXT-X-TARGETDURATION:8"),
-            "TARGETDURATION must be round(7.5)=8, not the configured target (4): {m}"
-        );
-    }
-
-    #[test]
-    fn target_duration_falls_back_to_configured_when_segments_are_short() {
-        let s = MediaStore::new(4.0, 500, 4);
-        s.set_init(vec![0; 4]);
-        s.add_segment(plain_seg(1, 2)); // plain_seg's fixed duration is 4.0
-        let m = media_playlist_m3u8(&s, 1);
-        assert!(
-            m.contains("#EXT-X-TARGETDURATION:4"),
-            "unchanged behaviour when no segment exceeds the configured target: {m}"
+            resolve_now(
+                &origin,
+                LlHlsRequest::Resource {
+                    name: "not-a-thing.txt".to_string(),
+                }
+            ),
+            EgressResponse::NotFound
         );
     }
 }

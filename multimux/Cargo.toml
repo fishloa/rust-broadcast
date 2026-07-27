@@ -30,7 +30,7 @@ srt-runtime       = { path = "../srt-runtime",   version = "0.2", features = ["t
 # pulls in `ll_hls_runtime::client::tokio_client::TokioClient` — the
 # HLS-pull input (`source::hls_pull`, issue #663 P3c) wraps it rather than
 # re-implementing LL-HLS playback.
-ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.1", features = ["std", "tokio"] }
+ll-hls-runtime    = { path = "../ll-hls-runtime", version = "0.2", features = ["std", "tokio"] }
 # Needed directly (not just via ll-hls-runtime/transmux) by `source::hls_pull`
 # to recover `TrackSpec`s from a pulled stream's init segment via
 # `Fmp4Demux::unpackage` (the `Unpackage` trait) — issue #663 P3c.
