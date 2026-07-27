@@ -15,10 +15,18 @@ broadcast-common = { path = "../broadcast-common", version = "8.7", default-feat
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
 transmux         = { path = "../transmux", version = "0.20", default-features = false, optional = true }
+timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false, optional = true }
+
+[dev-dependencies]
+# Builds real, valid (Parse/Serialize round-tripping) SCTE-35 splice_insert()
+# fixtures in-test, to drive `timed_metadata::Timeline`'s 33-bit PTS
+# wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
+# `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
+scte35-splice = { path = "../scte35-splice", version = "1", default-features = false }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata"]
 
 [package.metadata.docs.rs]
 all-features = true
