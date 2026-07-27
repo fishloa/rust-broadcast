@@ -1094,6 +1094,7 @@ impl Stage for StreamingTsHlsSegmenter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::{CodecConfig, DataCarriage};
 
     fn sample(dur: u32, sync: bool) -> Sample {
         Sample {
@@ -1112,7 +1113,7 @@ mod tests {
     fn boundaries_cut_on_keyframe_past_target() {
         // Durations 1 each, sync at 0,2,4,6; target 2 ticks.
         let s: Vec<Sample> = (0..8).map(|i| sample(1, i % 2 == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 2).expect("all samples have a duration");
+        let b = anchor_segment_boundaries(&s, 2);
         // Segment 0: [0,2) (buffered reaches 2 at idx2 sync). Then [2,4), [4,6), [6,8).
         assert_eq!(b, vec![0, 2, 4, 6]);
     }
@@ -1120,7 +1121,7 @@ mod tests {
     #[test]
     fn boundaries_single_when_target_exceeds_stream() {
         let s: Vec<Sample> = (0..4).map(|i| sample(1, i == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 1000).expect("all samples have a duration");
+        let b = anchor_segment_boundaries(&s, 1000);
         assert_eq!(b, vec![0], "one segment when target dwarfs the stream");
     }
 
