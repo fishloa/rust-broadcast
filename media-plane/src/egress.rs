@@ -540,9 +540,16 @@ pub trait SegmentEgress: Send {
 mod tests {
     use super::*;
     use crate::trunk::{ArchiveOverrun, SegmentEntry, Trunk, TrunkConfig};
+    use std::num::NonZeroUsize;
     use std::sync::Mutex;
     use std::time::Duration;
     use transmux::{CodecConfig, Sample};
+
+    /// `NonZeroUsize` from a literal capacity — see `trunk`'s identical test
+    /// helper.
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
 
     fn sample(byte: u8) -> Sample {
         Sample::new(
@@ -639,7 +646,7 @@ mod tests {
     /// and re-run to confirm the failure, then reverted.
     #[test]
     fn served_egress_resolves_once_populated_and_awaits_bounded_before_that() {
-        let trunk = Trunk::new(TrunkConfig::new(10, 10, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_segments();
         let egress = FakeServedEgress::new();
@@ -729,7 +736,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn push_egress_streams_every_sample_in_order() {
-        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(10), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe();
         let mut egress = RecordingPushEgress {
@@ -886,7 +893,7 @@ mod tests {
     fn segment_egress_receives_every_pinned_segment_and_archive_overrun_still_governs() {
         // Capacity 2: publishing 3 segments while pinned overflows by
         // exactly 1, forcing `ArchiveOverrun::Gap` (the default) to fire.
-        let trunk = Trunk::new(TrunkConfig::new(10, 10, 2, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(2), nz(8), nz(8)));
         let writer_handle = trunk.writer().unwrap();
         let mut cursor = trunk.pin_segments(ArchiveOverrun::Gap);
 
@@ -926,7 +933,7 @@ mod tests {
         // `ServedEgress`/`PushEgress`/`SegmentEgress`'s methods required an
         // executor, this whole module would fail to compile as a plain
         // `#[test]` fn (no `async fn` bodies, no `.await` anywhere above).
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 4));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(4), nz(8)));
         assert!(trunk.writer().is_some());
     }
 }

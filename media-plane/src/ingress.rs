@@ -983,10 +983,16 @@ mod tests {
     use std::collections::VecDeque;
     use transmux::pipeline::{CodecConfig, DataCarriage};
 
+    /// `NonZeroUsize` from a literal capacity — see `trunk`'s identical test
+    /// helper.
+    fn nz(n: usize) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
     /// Minimal config every test's `Trunk`s share — capacities are irrelevant
     /// to these tests beyond "large enough that nothing evicts mid-test".
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(64, 16, 8, 8)
+        TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
     }
 
     /// A handshake deadline far enough out that it never fires — for the

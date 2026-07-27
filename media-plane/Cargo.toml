@@ -16,6 +16,14 @@ bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
 transmux         = { path = "../transmux", version = "0.20", default-features = false, optional = true }
 timed-metadata   = { path = "../timed-metadata", version = "0.4", default-features = false, optional = true }
+# Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
+# (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on
+# without busy-polling — NOT `tokio::sync::watch`, so it works under any
+# executor (or none, via its blocking `.wait_deadline()`). Same crate,
+# same version, same feature set `ll-hls-runtime::server::MediaStore`
+# already depends on (see its Cargo.toml) — reusing the primitive the
+# consumer already uses, not hand-rolling a parallel one.
+event-listener   = { version = "5", default-features = false, features = ["std"], optional = true }
 
 [dev-dependencies]
 # Builds real, valid (Parse/Serialize round-tripping) SCTE-35 splice_insert()
@@ -26,7 +34,7 @@ scte35-splice = { path = "../scte35-splice", version = "1", default-features = f
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener"]
 
 [package.metadata.docs.rs]
 all-features = true
