@@ -239,3 +239,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     architecture spec's sketched `on_manifest(&ManifestSnapshot)` is
     deliberately not included — no concrete DVR/MABR/ROUTE/Smooth producer
     exists yet to shape a single `ManifestSnapshot` type honestly.
+- `Trunk` live-part log and reader-wake primitive (plan step 3b-iv,
+  `std`-only): the two gaps step 3d found while reading
+  `ll-hls-runtime/src/server/` before finishing the egress traits, closed so
+  Step 4 can actually render blocking-reload decisions from `&Trunk` instead
+  of keeping `MediaStore` as a parallel store.
+  - **`PartEntry`/`TrunkWriter::publish_part`**: a fourth bounded ring
+    (`TrunkConfig::part_capacity`) holding parts of the segment currently
+    being written — RFC 8216bis §4.4.4.9's independently-fetchable CMAF
+    chunks — addressed directly by `(segment_number, part_index)` via
+    `Trunk::part_bytes`/`Trunk::parts_in_segment` (the live-part
+    counterparts of `Trunk::events_between`/`events_in_segment`), not a
+    moving cursor: a `ServedEgress` resolves *random* part requests, it does
+    not stream every part ever produced. `Trunk::last_closed_segment` closes
+    the companion gap (distinguishing "segment N is closed" from "segment N
+    merely has live parts", RFC 8216bis's bare-`_HLS_msn` condition).
+  - **Segment close does not touch the part log** — a deliberate choice,
+    not an oversight: `TrunkWriter::publish_segment` never evicts or
+    transforms that segment's parts, so a client requesting a just-rolled
+    part gets exactly the same `Some(bytes)` answer as before the close,
+    closing the exact preload-hint race `ll_hls_runtime::server::MediaStore`'s
+    `recent_parts` buffer exists to patch — without `MediaStore`'s
+    second, independently-tuned "recently closed" bound chained after the
+    first. A part is reclaimed only by `part_capacity`'s ordinary
+    evict-oldest bound, whether its segment is open or closed.
+  - **`Trunk::listen`/`ProgressListener`**: a bounded reader-wake primitive
+    wrapping `event_listener::EventListener` — the same runtime-agnostic
+    primitive `ll_hls_runtime::server::MediaStore::listen` already returns,
+    reused rather than hand-rolled, so a `ServedEgress` adapter ports
+    mechanically (`.await` under any executor, or
+    `ProgressListener::wait_deadline` with none). `publish_part`/
+    `publish_segment` wake registered listeners via `Event::notify`, which
+    never waits for a listener to actually resume — the writer-never-blocks
+    invariant holds for the wake channel exactly as it does for every data
+    ring in this module. `Trunk::listen` refuses (`None`) once
+    `part_capacity` concurrent registrations are outstanding — reusing that
+    bound rather than adding a sixth, independent one — deliberately sized
+    for "one registration per distinct consumer" (mirroring
+    `Trunk::subscribe`'s fan-out rule), not one per remote peer; an adapter
+    serving many viewers takes one registration and fans the wake-up out to
+    its own peers itself.
+  - `TrunkConfig::new` now takes a fifth `part_capacity` argument
+    (**breaking**, pre-1.0).

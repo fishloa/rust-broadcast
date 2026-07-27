@@ -1,12 +1,19 @@
 //! [`Trunk`] — the sample ring, [`TrunkWriter`], and [`SampleCursor`] (plan
 //! step 3b-i); the segment log, [`SegmentCursor`], and the
-//! lossless-by-retention pinning mechanism (plan step 3b-ii); and now the
-//! 90 kHz event log, [`EventCursor`], and [`EventAnchor`] (plan step
-//! 3b-iii), which completes the `Trunk` per
+//! lossless-by-retention pinning mechanism (plan step 3b-ii); the 90 kHz
+//! event log, [`EventCursor`], and [`EventAnchor`] (plan step 3b-iii); and
+//! now the live-part log and the [`Trunk::listen`] reader-wake primitive
+//! (plan step 3b-iv), closing the two gaps step 3d found while reading
+//! `ll-hls-runtime/src/server/` before writing the egress traits — see
+//! [The live-part log](#the-live-part-log-parts-before-their-segment-closes)
+//! and
+//! [The reader-wake primitive](#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
+//! below — per
 //! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §1.2.
 //!
-//! This is three bounded rings behind the one writer, and the cursors that
-//! read them: the sample path, the segment log, and now the event log. See
+//! This is four bounded rings behind the one writer, and the cursors/queries
+//! that read them: the sample path, the segment log, the event log, and now
+//! the live-part log. See
 //! [The event log: 90 kHz absolute, and the B1 crux](#the-event-log-90-khz-absolute-and-the-b1-crux)
 //! below for why the event log needed a third, genuinely different shape —
 //! not just a third copy of `ClassLog`/`SegmentLog` (this module's internal
@@ -314,14 +321,147 @@
 //! (`SegmentEgress`/`Retention` are named here only to document the
 //! attachment point per this step's brief — neither type exists in this
 //! crate yet.)
+//!
+//! # The live-part log: parts before their segment closes
+//!
+//! Step 3d built `ServedEgress`/`EgressResponse::Await` and, per its own
+//! brief, read `ll-hls-runtime/src/server/` before finishing to report what
+//! did **not** fit. It found the segment log alone cannot serve LL-HLS at
+//! all: RFC 8216bis's entire low-latency mechanism is **part-level**
+//! availability ("does part 3 of the segment currently being written
+//! exist"), and before this step there was nowhere in this `Trunk` to ask
+//! that — the segment log holds only *finished* segments. This step adds a
+//! fourth ring, the live-part log (`TrunkState::parts: PartLog`), storing
+//! [`PartEntry`] exactly the way this module's internal `SegmentLog` stores [`SegmentEntry`] —
+//! same evict-then-push shape, same zero-copy-fan-out claim (see
+//! [Zero-copy fan-out](self#zero-copy-fan-out-honestly)) — bounded by the
+//! new [`TrunkConfig::part_capacity`].
+//!
+//! **Addressed the way a client actually asks**: not a moving cursor
+//! position, but a direct `(segment_number, part_index)` key —
+//! [`Trunk::part_bytes`] and [`Trunk::parts_in_segment`], the live-part
+//! counterparts of [`Trunk::events_between`]/[`Trunk::events_in_segment`].
+//! This is deliberate, not an oversight of "should there also be a
+//! `PartCursor`": a `ServedEgress` implementing LL-HLS resolves *random*
+//! requests ("is part 3.2 ready") against whatever is currently true, not a
+//! sequential stream of every part ever produced — exactly the same
+//! resolve-a-request-against-shared-state shape
+//! [`crate::egress::ServedEgress::resolve`]'s own module doc already argues
+//! for the event log's snapshot queries. No `PartCursor` is added because no
+//! test in this step (or in `crate::egress`) needs one; streaming every part
+//! as it is produced (a hypothetical future low-latency `PushEgress`) is
+//! additive later, not a gap today.
+//!
+//! **What happens when the parent segment closes — decided, not left
+//! implicit**: [`TrunkWriter::publish_segment`] does **not** touch the
+//! live-part log at all. A part stays addressable via [`Trunk::part_bytes`]
+//! for exactly as long as [`TrunkConfig::part_capacity`]'s ordinary
+//! evict-oldest bound has not yet reclaimed it — whether its parent segment
+//! is still open or has already closed makes no difference to this ring.
+//! Three alternatives were considered and rejected:
+//!
+//! - *Roll a closed segment's parts into its [`SegmentEntry`]* — rejected:
+//!   `SegmentEntry::bytes` is already the whole muxed segment; attaching its
+//!   parts too would store the same encoded media twice (once whole, once
+//!   split), the opposite of this crate's zero-copy-fan-out discipline, for
+//!   a property ([`Trunk::part_bytes`] already answers "is this part ready")
+//!   nothing needs.
+//! - *Evict a segment's parts the instant it closes* — rejected: this is
+//!   the exact bug `ll_hls_runtime::server::MediaStore`'s own `recent_parts`
+//!   buffer exists to prevent (documented there as "the segmenter emits a
+//!   segment's final part and closes the segment in the same pipeline
+//!   step... without this the part is evicted microseconds after it
+//!   appears — before the blocked part request can wake"). A `ServedEgress`
+//!   built on this `Trunk` needs the same guarantee, and immediate eviction
+//!   on close would remove it.
+//! - *A second, shorter-lived "recently closed" bound, chained after the
+//!   live bound* — this is what `MediaStore` actually does
+//!   (`live_parts` + a separately-capped `recent_parts`, doubling worst-case
+//!   retention) — rejected here as the "second knob" this file's precedent
+//!   argues against: one bound, applied uniformly regardless of open/closed
+//!   status, gives the same client-visible guarantee (a just-closed part
+//!   stays fetchable) without a second, independently-tunable lifetime that
+//!   can disagree with the first.
+//!
+//! **What a client requesting a just-rolled part receives**: the same
+//! answer as the instant before the segment closed — `Some(bytes)` from
+//! [`Trunk::part_bytes`] — because closing did not touch this ring. It
+//! becomes `None` only once ordinary `part_capacity` eviction reclaims it,
+//! at which point this ring cannot distinguish "evicted" from "never
+//! existed"; a `ServedEgress` wanting RFC 8216bis's sharper "will never
+//! exist, stop waiting" signal for a part of an *already-closed* segment
+//! (`ll_hls_runtime::server::MediaStore::resolve_resource`'s
+//! `ResourceOutcome::NotFound` case) gets that distinction the same way
+//! `MediaStore` itself does: by also consulting [`Trunk::last_closed_segment`]
+//! — if the requested part's `segment_number` is at or before that value
+//! and [`Trunk::part_bytes`] answers `None`, the part will never arrive; if
+//! it is beyond it, the segment (and the part) may still be produced.
+//!
+//! # The reader-wake primitive: `listen`, not one registration per remote peer
+//!
+//! The second gap step 3d found, recorded rather than solved: every `Trunk`
+//! reader was a synchronous, non-blocking `poll()`, so a `ServedEgress`
+//! implementing RFC 8216bis §6.2.5.2 blocking reload had nothing to wait
+//! *on* — only a poll-with-backoff loop. [`Trunk::listen`] closes that gap
+//! by handing back a [`ProgressListener`] wrapping
+//! [`event_listener::EventListener`] — the exact runtime-agnostic primitive
+//! `ll_hls_runtime::server::MediaStore::listen` already returns (an already
+//! std+`event-listener`-feature dependency of this crate's sibling, and now
+//! of this one), not a hand-rolled parallel mechanism, so a caller ports
+//! mechanically: `.await` it under any executor, or call
+//! [`ProgressListener::wait_deadline`] with no executor at all — precisely
+//! `MediaStore::listen`'s own two documented ways to wait.
+//!
+//! **The writer never blocks on this.** [`TrunkWriter::publish_part`]/
+//! [`TrunkWriter::publish_segment`] call `Event::notify(usize::MAX)`, which
+//! wakes every currently-registered listener without waiting for any of
+//! them to actually resume running — the same non-blocking-producer
+//! guarantee this module makes everywhere else
+//! ([`TrunkWriter::publish`]'s doc), extended to a wake channel instead of a
+//! data ring. A registered [`ProgressListener`] that nobody ever polls or
+//! waits on again (a vanished HTTP peer, a wedged executor) costs the
+//! writer nothing beyond that one `notify` call's O(waiter-count) fan-out —
+//! it never becomes a wait.
+//!
+//! **Bounded, and reusing [`TrunkConfig::part_capacity`] rather than a sixth
+//! knob.** [`Trunk::listen`] refuses (`None`) once `part_capacity`
+//! concurrent [`ProgressListener`]s are outstanding. This is deliberately
+//! **not** sized "one registration per remote viewer": that would repeat
+//! exactly the O(N)-in-cursor-count mistake [`Trunk::subscribe`]'s own docs
+//! warn against for data cursors, now for wake registrations instead of
+//! poll positions. The intended shape mirrors `subscribe`'s "one cursor per
+//! distinct consumer, never one per peer" rule: a `ServedEgress` adapter
+//! serving a thousand LL-HLS viewers takes **one** (or a small, fixed
+//! number of) [`Trunk::listen`] registration(s) for the route and fans the
+//! single wake-up out to its own thousand blocked HTTP handlers itself,
+//! using its own broadcast mechanism — exactly the same layering
+//! [`crate::egress::PushEgress`] already requires for sample fan-out. Under
+//! that shape, `part_capacity`-many concurrent *distinct-consumer*
+//! registrations is generous headroom, not a production ceiling; if a
+//! caller instead wires one HTTP request directly to one `Trunk::listen`
+//! call each (mirroring how `MediaStore`'s single, uncapped `Event` is used
+//! today), the cap is exactly the backstop this step exists to add — a
+//! caller hitting `None` must treat it the same way it treats an already-
+//! expired [`crate::egress::AwaitPolicy`]: answer the request as
+//! unavailable now rather than waiting with no slot to wait in. Composing
+//! with [`crate::egress::AwaitPolicy`]'s deadline is the caller's
+//! conversion of `AwaitPolicy::deadline` (a [`Timestamp`]) to the
+//! `std::time::Instant` it already anchors that `Timestamp` to, passed to
+//! [`ProgressListener::wait_deadline`] (or wrapped in the caller's own
+//! executor timeout around the `Future` impl) — see
+//! [`ProgressListener::wait_deadline`]'s own doc.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
+use event_listener::{Event, EventListener, Listener};
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
 use transmux::{Sample, SegmentMeta};
 
@@ -395,10 +535,21 @@ pub struct TrunkConfig {
     /// exactly [`TrunkConfig::segment_capacity`]'s "no second capacity
     /// knob" precedent for pinning.
     pub event_capacity: usize,
+    /// Bound, in entry count, on the live-part log (step 3b-iv) — **and**
+    /// on how many concurrent [`Trunk::listen`] registrations this trunk
+    /// will honor at once. See
+    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
+    /// for why a part-of-the-open-segment shares this one knob for both
+    /// jobs, rather than getting a second, independently-tuned "how many
+    /// waiters" setting — the third instance of this file's "no second
+    /// capacity knob" precedent (after [`TrunkConfig::segment_capacity`]'s
+    /// pin reuse and [`TrunkConfig::event_capacity`]'s `segment_starts`
+    /// reuse).
+    pub part_capacity: usize,
 }
 
 impl TrunkConfig {
-    /// Build a config with all four ring capacities. None is validated
+    /// Build a config with all five ring capacities. None is validated
     /// here — [`Trunk::new`] panics on a zero capacity, matching this
     /// crate's [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]
     /// precedent of panicking at the point a ring is actually allocated.
@@ -407,12 +558,14 @@ impl TrunkConfig {
         sparse_capacity: usize,
         segment_capacity: usize,
         event_capacity: usize,
+        part_capacity: usize,
     ) -> Self {
         TrunkConfig {
             timed_capacity,
             sparse_capacity,
             segment_capacity,
             event_capacity,
+            part_capacity,
         }
     }
 }
@@ -806,16 +959,112 @@ fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> MediaTime {
     MediaTime(media.clamp(0, i128::from(u64::MAX)) as u64)
 }
 
+/// One LL-HLS **partial segment** ("part") of the segment currently being
+/// written — RFC 8216bis §4.4.4.9's independently-fetchable CMAF chunk,
+/// addressable by `(segment_number, part_index)` the way a client actually
+/// asks for one (`_HLS_msn`/`_HLS_part`, or a `part-<seq>.<idx>.m4s` URI). See
+/// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes).
+///
+/// Does **not** reuse `transmux::ll_hls::PartInfo` whole, for the same reason
+/// [`SegmentEntry`] does not reuse `transmux::ll_hls::SegmentInfo` whole:
+/// `PartInfo::bytes` is `Vec<u8>`, and copying it into a `Bytes` here to get
+/// zero-copy fan-out ([Zero-copy fan-out](self#zero-copy-fan-out-honestly))
+/// would be exactly one copy per part, on the one path this module exists to
+/// keep copy-free; a caller publishing a part therefore builds a
+/// `bytes::Bytes` directly (e.g. from the encoder's own output buffer)
+/// instead of routing through `Vec<u8>` first.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PartEntry {
+    /// The part's encoded bytes: a bare `moof`+`mdat` CMAF fragment (no
+    /// `styp`). `Bytes`, not `Vec<u8>` — fan-out to every reader of this
+    /// entry is a refcount bump, not a copy; see
+    /// [Zero-copy fan-out](self#zero-copy-fan-out-honestly).
+    pub bytes: Bytes,
+    /// The parent segment's sequence number — matches
+    /// [`SegmentEntry::sequence_number`] once that segment closes.
+    pub segment_number: u32,
+    /// 0-based index of this part within its parent segment.
+    pub part_index: u32,
+    /// This part's duration, wall-clock.
+    pub duration: Duration,
+    /// `true` when this part's first sample is a sync sample, so it begins
+    /// with an independently decodable frame (RFC 8216bis's
+    /// `INDEPENDENT=YES`).
+    pub independent: bool,
+}
+
+impl PartEntry {
+    /// Build one part log entry.
+    pub fn new(
+        bytes: impl Into<Bytes>,
+        segment_number: u32,
+        part_index: u32,
+        duration: Duration,
+        independent: bool,
+    ) -> Self {
+        PartEntry {
+            bytes: bytes.into(),
+            segment_number,
+            part_index,
+            duration,
+            independent,
+        }
+    }
+}
+
+/// The live-part log: a bounded, append-ordered log of [`PartEntry`] values.
+///
+/// Evict-then-push shape identical to [`ClassLog`]/[`SegmentLog`]/[`EventLog`]
+/// — `base`/`published` mean exactly the same thing here as there. Unlike the
+/// segment log, publishing a segment ([`TrunkWriter::publish_segment`]) does
+/// **not** touch this ring at all — see
+/// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
+/// for why a part's addressability deliberately does not change the instant
+/// its parent segment closes.
+struct PartLog {
+    entries: VecDeque<PartEntry>,
+    base: u64,
+    published: u64,
+    capacity: usize,
+}
+
+impl PartLog {
+    fn new(capacity: usize) -> Self {
+        PartLog {
+            entries: VecDeque::with_capacity(capacity),
+            base: 0,
+            published: 0,
+            capacity,
+        }
+    }
+
+    /// Push one part, evicting the oldest if the log is already at
+    /// `capacity`. Never rejects, never blocks — exactly [`ClassLog::push`]/
+    /// [`SegmentLog::push`]/[`EventLog::push`]'s contract.
+    fn push(&mut self, entry: PartEntry) {
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
+            self.base += 1;
+        }
+        self.entries.push_back(entry);
+        self.published += 1;
+    }
+}
+
 /// The shared state behind one [`Trunk`]: the two sample [`ClassLog`]s, the
-/// [`SegmentLog`], and the [`EventLog`]. See
+/// [`SegmentLog`], the [`EventLog`], and the [`PartLog`]. See
 /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux) for
 /// why the event log needed its own shape rather than being a third copy of
-/// the other two.
+/// the other two, and
+/// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
+/// for the fourth.
 struct TrunkState {
     timed: ClassLog,
     sparse: ClassLog,
     segments: SegmentLog,
     events: EventLog,
+    parts: PartLog,
 }
 
 /// The sample ring: bounded, dual-retention-class, single-writer,
@@ -839,16 +1088,37 @@ pub struct Trunk {
     /// [The DVR contradiction](self#the-dvr-contradiction-losslessness-from-retention-not-back-pressure).
     segment_pin_released: Condvar,
     writer_taken: AtomicBool,
+    /// Broad "a part or a segment close was just published, go re-check
+    /// your condition" notification — see
+    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
+    /// Bumped by exactly [`TrunkWriter::publish_part`]/
+    /// [`TrunkWriter::publish_segment`] (never by a sample/event publish —
+    /// nothing today waits on those through this channel, and adding scope
+    /// later is additive, not this step's job to speculate).
+    progress: Event,
+    /// Count of currently-registered, not-yet-dropped [`ProgressListener`]s —
+    /// what bounds [`Trunk::listen`] against `part_waiter_cap`. A plain
+    /// `AtomicUsize`, not part of `state`'s `Mutex`, so registering/releasing
+    /// a listener never contends the same lock `publish`/`poll` do.
+    waiter_count: AtomicUsize,
+    /// Copy of [`TrunkConfig::part_capacity`], read without locking `state` —
+    /// the cap [`Trunk::listen`] enforces against `waiter_count`. See
+    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
+    /// for why this reuses `part_capacity` rather than adding a sixth,
+    /// independent knob.
+    part_waiter_cap: usize,
 }
 
 impl Trunk {
     /// Construct a fresh, empty `Trunk`.
     ///
     /// Panics if `config.timed_capacity`, `config.sparse_capacity`,
-    /// `config.segment_capacity`, or `config.event_capacity` is zero — a
-    /// construction mistake (every entry would be evicted the instant it
-    /// was pushed), not remote input, so it panics rather than returning a
-    /// `Result` a caller could ignore (matching
+    /// `config.segment_capacity`, `config.event_capacity`, or
+    /// `config.part_capacity` is zero — a construction mistake (every entry
+    /// would be evicted the instant it was pushed, or [`Trunk::listen`]
+    /// could never register a single waiter), not remote input, so it
+    /// panics rather than returning a `Result` a caller could ignore
+    /// (matching
     /// [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]).
     pub fn new(config: TrunkConfig) -> Arc<Trunk> {
         assert!(
@@ -867,15 +1137,20 @@ impl Trunk {
             config.event_capacity > 0,
             "Trunk event_capacity must be > 0"
         );
+        assert!(config.part_capacity > 0, "Trunk part_capacity must be > 0");
         Arc::new(Trunk {
             state: Mutex::new(TrunkState {
                 timed: ClassLog::new(config.timed_capacity),
                 sparse: ClassLog::new(config.sparse_capacity),
                 segments: SegmentLog::new(config.segment_capacity),
                 events: EventLog::new(config.event_capacity),
+                parts: PartLog::new(config.part_capacity),
             }),
             segment_pin_released: Condvar::new(),
             writer_taken: AtomicBool::new(false),
+            progress: Event::new(),
+            waiter_count: AtomicUsize::new(0),
+            part_waiter_cap: config.part_capacity,
         })
     }
 
@@ -1089,6 +1364,182 @@ impl Trunk {
     pub fn event_len(&self) -> usize {
         self.state.lock().unwrap().events.entries.len()
     }
+
+    /// A live part's bytes by `(segment_number, part_index)` — the direct,
+    /// `&self`-shaped query a [`ServedEgress`](crate::egress::ServedEgress)
+    /// implementation needs to answer "does this part exist right now",
+    /// exactly the shape [`Trunk::events_between`]/[`Trunk::events_in_segment`]
+    /// already give the event log rather than forcing a caller to drain a
+    /// cursor into a self-maintained cache. See
+    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
+    /// for why a part answers `Some` here for as long as it has not been
+    /// evicted by [`TrunkConfig::part_capacity`]'s ordinary bound —
+    /// including after its parent segment has closed.
+    pub fn part_bytes(&self, segment_number: u32, part_index: u32) -> Option<Bytes> {
+        let state = self.state.lock().unwrap();
+        state
+            .parts
+            .entries
+            .iter()
+            .find(|p| p.segment_number == segment_number && p.part_index == part_index)
+            .map(|p| p.bytes.clone())
+    }
+
+    /// Every currently-resident part of segment `segment_number`, in publish
+    /// order — the part-log counterpart of [`Trunk::events_in_segment`],
+    /// letting a caller derive "how many parts does the open segment have so
+    /// far" (RFC 8216bis's `_HLS_part` blocking-reload condition) without a
+    /// cursor.
+    pub fn parts_in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
+        let state = self.state.lock().unwrap();
+        state
+            .parts
+            .entries
+            .iter()
+            .filter(|p| p.segment_number == segment_number)
+            .cloned()
+            .collect()
+    }
+
+    /// Diagnostic: entries currently resident in the live-part log. Never
+    /// exceeds [`TrunkConfig::part_capacity`].
+    pub fn part_len(&self) -> usize {
+        self.state.lock().unwrap().parts.entries.len()
+    }
+
+    /// Diagnostic: currently-outstanding [`ProgressListener`] registrations
+    /// (from [`Trunk::listen`], not yet dropped). Never exceeds
+    /// [`TrunkConfig::part_capacity`] — see
+    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
+    pub fn waiter_count(&self) -> usize {
+        self.waiter_count.load(Ordering::Acquire)
+    }
+
+    /// The sequence number of the most-recently-**closed** segment (the
+    /// newest [`TrunkWriter::publish_segment`] call), or `None` if no
+    /// segment has closed yet. Distinguishes "closed" (a whole, fetchable
+    /// [`SegmentEntry`]) from merely "has live parts" — RFC 8216bis
+    /// §6.2.5.2's bare-`_HLS_msn` blocking-reload condition needs exactly
+    /// this distinction (mirrors
+    /// `ll_hls_runtime::server::MediaStore::last_closed_segment_seq`, which
+    /// this method lets a `ServedEgress` stop duplicating).
+    pub fn last_closed_segment(&self) -> Option<u32> {
+        self.state
+            .lock()
+            .unwrap()
+            .segments
+            .entries
+            .back()
+            .map(|e| e.sequence_number)
+    }
+
+    /// Register for the next part/segment-close notification — see
+    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
+    ///
+    /// Returns `None` once [`TrunkConfig::part_capacity`] concurrent
+    /// registrations are already outstanding — the caller must not wait in
+    /// that case (there is no slot to wait *in*); it should fall back to an
+    /// immediate re-poll or answer its request as unavailable now, exactly
+    /// as a caller must once [`crate::egress::AwaitPolicy`] itself has
+    /// expired. **Register before re-checking the condition you are waiting
+    /// on** — `event_listener`'s standard idiom, and the same ordering
+    /// `ll_hls_runtime::server::MediaStore::listen`'s own docs require —
+    /// otherwise a `notify` racing your check can be missed.
+    pub fn listen(self: &Arc<Self>) -> Option<ProgressListener> {
+        loop {
+            let current = self.waiter_count.load(Ordering::Acquire);
+            if current >= self.part_waiter_cap {
+                return None;
+            }
+            if self
+                .waiter_count
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
+        }
+        Some(ProgressListener {
+            _slot: WaiterSlot(Arc::clone(self)),
+            listener: self.progress.listen(),
+        })
+    }
+}
+
+/// RAII release of one [`Trunk`] waiter slot — split out from
+/// [`ProgressListener`] itself (rather than a `Drop` impl directly on
+/// `ProgressListener`) specifically so [`ProgressListener::wait_deadline`]
+/// can destructure `self` and move its `listener` field into
+/// [`event_listener::Listener::wait_deadline`] by value: Rust forbids moving
+/// a field out of a type that implements `Drop` itself, but does not forbid
+/// it for a type that merely *contains* a field whose type implements
+/// `Drop` — each field is then dropped independently, in this case when the
+/// destructured local bindings go out of scope at the end of that method.
+struct WaiterSlot(Arc<Trunk>);
+
+impl Drop for WaiterSlot {
+    /// Release this `Trunk`'s bounded waiter slot — see
+    /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
+    /// for why this cap exists at all (an unbounded waiter set is a remote
+    /// resource-exhaustion vector). Fires whether the owning
+    /// [`ProgressListener`] was ever polled/waited on, woken, or simply
+    /// dropped un-awaited — a caller that gives up on its own request must
+    /// not leak a slot.
+    fn drop(&mut self) {
+        self.0.waiter_count.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+/// A registered wake-up from [`Trunk::listen`] — the
+/// [`event_listener::EventListener`] a [`ServedEgress`](crate::egress::ServedEgress)
+/// adapter waits on, so a blocked request need not busy-poll. See
+/// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer).
+///
+/// Releases this `Trunk`'s bounded waiter slot when dropped (via the
+/// `_slot` field's own `Drop`, see this module's internal `WaiterSlot`) — whether this listener
+/// was woken, timed out, or is simply discarded — so a caller that gives up
+/// does not leak a slot forever.
+pub struct ProgressListener {
+    _slot: WaiterSlot,
+    listener: EventListener,
+}
+
+impl ProgressListener {
+    /// Block the calling thread until woken or `deadline` passes, whichever
+    /// comes first — `true` if woken, `false` on timeout. Composes with
+    /// [`crate::egress::AwaitPolicy`]'s deadline: convert
+    /// `AwaitPolicy::deadline` (a [`Timestamp`]) to the `std::time::Instant`
+    /// your caller already anchors its `Timestamp`s to (see
+    /// [`Timestamp::from_instant`]'s inverse — the caller holds the base
+    /// `Instant` it built its `Timestamp`s from) and pass that here, so this
+    /// call can never park past the caller's own bound.
+    ///
+    /// Deliberately no unbounded `wait()` is exposed here — only this
+    /// deadline-bound form and the `Future` impl below (whose bound is
+    /// whatever timeout the caller's own executor wraps it in, exactly the
+    /// `ll_hls_runtime::server` "caller-driven wait loop" shape) — matching
+    /// this crate's [`crate::egress::AwaitPolicy`] philosophy that a wait on
+    /// remote-triggerable input must never be able to park forever.
+    pub fn wait_deadline(self, deadline: std::time::Instant) -> bool {
+        // Destructuring here (not a method call on `self.listener` while
+        // `self` stays intact) is exactly what requires `ProgressListener`
+        // itself to carry no `Drop` impl — see `WaiterSlot`'s own doc.
+        let ProgressListener { _slot, listener } = self;
+        listener.wait_deadline(deadline).is_some()
+    }
+}
+
+impl Future for ProgressListener {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // `EventListener` is `Unpin` (event_listener's own guarantee), and so
+        // is `WaiterSlot` (an `Arc` newtype), so `ProgressListener` as a
+        // whole is `Unpin` too — safe to reach the inner listener through a
+        // plain `&mut` and poll it directly.
+        let this = self.get_mut();
+        Pin::new(&mut this.listener).poll(cx)
+    }
 }
 
 /// The one writer for a [`Trunk`]. Obtained via [`Trunk::writer`].
@@ -1135,6 +1586,15 @@ impl TrunkWriter {
     /// shared `Mutex` while parked, so [`TrunkWriter::publish`] and every
     /// cursor's `poll` on *other* data remain free to proceed even while
     /// this call is stalled.
+    ///
+    /// Does **not** touch the live-part log — see
+    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
+    /// for why a segment closing deliberately leaves that segment's parts
+    /// exactly as addressable as they were the instant before. Wakes any
+    /// [`Trunk::listen`] registration once this call is about to return
+    /// (bare-`_HLS_msn` blocking-reload's condition), even on the
+    /// `StallIngest` path — a waiter is woken only after the entry has
+    /// actually landed, never merely because a pin released.
     pub fn publish_segment(&self, entry: SegmentEntry) {
         let mut state = self.trunk.state.lock().unwrap();
         loop {
@@ -1173,6 +1633,24 @@ impl TrunkWriter {
             // pending.
         }
         state.segments.push(entry);
+        drop(state);
+        self.trunk.progress.notify(usize::MAX);
+    }
+
+    /// Publish one live part of the segment currently being written — see
+    /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes).
+    ///
+    /// Never blocks and never rejects: a full part log evicts its oldest
+    /// entry exactly like every other ring in this module — the same
+    /// non-blocking-producer principle as [`TrunkWriter::publish`]/
+    /// [`TrunkWriter::publish_segment`]'s ordinary (non-`StallIngest`) path.
+    /// Wakes any [`Trunk::listen`] registration once this part has actually
+    /// landed (RFC 8216bis blocking-reload's part-availability condition).
+    pub fn publish_part(&self, entry: PartEntry) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.parts.push(entry);
+        drop(state);
+        self.trunk.progress.notify(usize::MAX);
     }
 
     /// Publish one event. Never blocks and never rejects — a full event log
@@ -1603,7 +2081,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_cursors_see_every_sample_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4, 8, 8));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -1636,7 +2114,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn slow_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 10, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 10, 4, 8, 8));
         let mut slow = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1676,7 +2154,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn lag_is_reported_with_an_accurate_skipped_count() {
-        let trunk = Trunk::new(TrunkConfig::new(3, 10, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(3, 10, 4, 8, 8));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1711,7 +2189,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn sparse_reader_loses_data_reports_degraded_distinguishable_from_timed_lagged() {
-        let trunk = Trunk::new(TrunkConfig::new(2, 2, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(2, 2, 4, 8, 8));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1753,7 +2231,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn ring_is_bounded_under_flood_on_both_classes() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 3, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 3, 4, 8, 8));
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -1788,7 +2266,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn payload_is_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(8, 8, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(8, 8, 4, 8, 8));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -1822,37 +2300,43 @@ mod tests {
     #[test]
     #[should_panic(expected = "timed_capacity must be > 0")]
     fn zero_timed_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(0, 4, 4, 8));
+        let _ = Trunk::new(TrunkConfig::new(0, 4, 4, 8, 8));
     }
 
     #[test]
     #[should_panic(expected = "sparse_capacity must be > 0")]
     fn zero_sparse_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 0, 4, 8));
+        let _ = Trunk::new(TrunkConfig::new(4, 0, 4, 8, 8));
     }
 
     #[test]
     #[should_panic(expected = "segment_capacity must be > 0")]
     fn zero_segment_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 0, 8));
+        let _ = Trunk::new(TrunkConfig::new(4, 4, 0, 8, 8));
     }
 
     #[test]
     #[should_panic(expected = "event_capacity must be > 0")]
     fn zero_event_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 0));
+        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 0, 8));
+    }
+
+    #[test]
+    #[should_panic(expected = "part_capacity must be > 0")]
+    fn zero_part_capacity_panics() {
+        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 0));
     }
 
     #[test]
     fn second_writer_is_refused() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let _first = trunk.writer().unwrap();
         assert!(trunk.writer().is_none(), "a Trunk has exactly one writer");
     }
 
     #[test]
     fn subscribe_starts_from_now_not_from_history() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
         writer.publish(1, RetentionClass::Timed, sample(1, 4));
         writer.publish(1, RetentionClass::Timed, sample(2, 4));
@@ -1880,7 +2364,7 @@ mod tests {
     /// index 1. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_segment_cursors_see_every_segment_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 100, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 100, 8, 8));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -1912,7 +2396,7 @@ mod tests {
     /// `1020`). Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn non_pinning_slow_segment_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let mut slow = trunk.subscribe_segments();
         let writer = trunk.writer().unwrap();
 
@@ -1950,7 +2434,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_reader_receives_every_segment_while_non_pinning_reader_lags() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
         let mut slow = trunk.subscribe_segments(); // non-pinning: will lag
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest); // pinning: must lose nothing
         let writer = Arc::new(trunk.writer().unwrap());
@@ -2022,7 +2506,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_is_bounded_an_unacking_consumer_cannot_grow_memory_without_limit() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         // Default policy (`Gap`) pinning cursor that never polls at all —
         // the worst case for memory growth: a dead/wedged archive consumer.
         let _archive = trunk.pin_segments(ArchiveOverrun::default());
@@ -2048,7 +2532,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_gap_evicts_and_reports_gap() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Gap);
         let writer = trunk.writer().unwrap();
 
@@ -2086,7 +2570,7 @@ mod tests {
     /// reverted.
     #[test]
     fn archive_overrun_stall_ingest_actually_blocks_the_writer() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 1, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 1, 8, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let writer = Arc::new(trunk.writer().unwrap());
 
@@ -2123,7 +2607,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_terminate_drops_the_cursor() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Terminate);
         let writer = trunk.writer().unwrap();
 
@@ -2163,7 +2647,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segment_bytes_are_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 8, 8, 8));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -2254,7 +2738,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn events_between_returns_exactly_the_half_open_range() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
 
         for (id, ticks) in [(1u32, 1_000u64), (2, 2_000), (3, 3_000), (4, 4_000)] {
@@ -2281,7 +2765,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn segment_relative_event_resolves_at_publish_time_when_boundary_already_known() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
 
         writer.note_segment_start(3, MediaTime(300_000));
@@ -2318,7 +2802,7 @@ mod tests {
     /// reverted.
     #[test]
     fn segment_relative_event_resolves_to_the_named_segment_not_whichever_is_open() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
@@ -2390,7 +2874,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn utc_only_event_stays_unanchored_until_a_time_anchor_arrives() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
@@ -2465,7 +2949,7 @@ mod tests {
     fn a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering() {
         const PTS_WRAP: u64 = 1u64 << 33;
 
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
         let writer = trunk.writer().unwrap();
         let mut timeline = timed_metadata::Timeline::new();
 
@@ -2525,7 +3009,7 @@ mod tests {
     /// the failure, then reverted.
     #[test]
     fn event_log_is_bounded_under_flood() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3, 8));
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -2548,7 +3032,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn event_cursor_lag_is_reported_with_an_accurate_skipped_count_writer_never_blocks() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3, 8));
         let mut cursor = trunk.subscribe_events();
         let writer = trunk.writer().unwrap();
 
@@ -2785,6 +3269,281 @@ mod tests {
             anchor.utc_epoch_ms - 10_000,
             "clamped media time 0 maps back to the timeline origin (10 s \
              before the anchor), not to the requested instant"
+        );
+    }
+
+    // === Step 3b-iv: live-part log + reader-wake primitive =================
+
+    fn part_entry(byte: u8, segment_number: u32, part_index: u32) -> PartEntry {
+        PartEntry::new(
+            Bytes::from(vec![byte; 8]),
+            segment_number,
+            part_index,
+            Duration::from_millis(200),
+            part_index == 0,
+        )
+    }
+
+    /// The LL-HLS property this whole step exists for: a part must be
+    /// addressable and readable **before** its parent segment closes — if
+    /// this does not hold, nothing else in this step matters (blocking
+    /// reload has nothing to answer with).
+    ///
+    /// MUTATION VERIFIED: commenting out `state.parts.push(entry);` in
+    /// `TrunkWriter::publish_part` (simulating "the part never actually
+    /// lands in the log") makes `trunk.part_bytes(9, 0)` return `None`
+    /// instead of `Some(..)`, failing the `expect` below. Recompiled and
+    /// re-run to confirm the failure, then reverted.
+    #[test]
+    fn part_is_addressable_and_readable_before_its_parent_segment_closes() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let writer = trunk.writer().unwrap();
+
+        // Segment 9 has never been closed — no `publish_segment` call for it
+        // anywhere in this test.
+        assert!(
+            trunk.last_closed_segment().is_none(),
+            "sanity check: nothing has closed yet"
+        );
+
+        writer.publish_part(part_entry(0xAB, 9, 0));
+
+        let bytes = trunk
+            .part_bytes(9, 0)
+            .expect("a published part of an open segment must be addressable now");
+        assert_eq!(bytes, Bytes::from(vec![0xAB; 8]));
+
+        // Still true: segment 9 has still never closed.
+        assert!(
+            trunk.last_closed_segment().is_none(),
+            "the part landed without any segment ever closing"
+        );
+    }
+
+    /// A waiter blocked on a not-yet-existing part wakes once it is
+    /// published, and resolves to exactly that part — not merely "wakes",
+    /// which a mutation could satisfy vacuously if `part_bytes` mismatched
+    /// the wrong entry (this test publishes a decoy part first to make
+    /// "the right one" a real assertion).
+    ///
+    /// MUTATION VERIFIED (two independent mutations, each reverted after
+    /// confirming failure):
+    /// 1. Removing `self.trunk.progress.notify(usize::MAX);` from
+    ///    `TrunkWriter::publish_part` makes `listener.wait_deadline(..)`
+    ///    time out (`false`) instead of waking (`true`) within the 2 s bound
+    ///    used below — the first assertion fails.
+    /// 2. Changing `Trunk::part_bytes`'s filter from
+    ///    `p.segment_number == segment_number && p.part_index == part_index`
+    ///    to drop the `part_index` half (matching on `segment_number` alone)
+    ///    makes the final `assert_eq!` fail: with the decoy part (index 1)
+    ///    published first, `part_bytes(9, 0)` would resolve to the decoy's
+    ///    `0xCC` bytes instead of the awaited part's `0xAB` bytes.
+    #[test]
+    fn waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let writer = Arc::new(trunk.writer().unwrap());
+
+        // Register BEFORE re-checking/waiting — the documented no-missed-
+        // wakeup ordering.
+        let listener = trunk.listen().expect("first registration must succeed");
+        assert!(trunk.part_bytes(9, 0).is_none(), "not published yet");
+
+        let bg_writer = Arc::clone(&writer);
+        let handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(50));
+            // A decoy: a different part of the same segment, published
+            // first. If `part_bytes` ever matched on `segment_number` alone,
+            // this would be the value wrongly returned for a request for
+            // part 0.
+            bg_writer.publish_part(part_entry(0xCC, 9, 1));
+            bg_writer.publish_part(part_entry(0xAB, 9, 0));
+        });
+
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(2));
+        assert!(woken, "listener must wake within 2s of publish_part");
+        handle.join().unwrap();
+
+        let bytes = trunk
+            .part_bytes(9, 0)
+            .expect("the awaited part must now be readable");
+        assert_eq!(
+            bytes,
+            Bytes::from(vec![0xAB; 8]),
+            "must resolve to the awaited part (index 0), not the decoy (index 1)"
+        );
+    }
+
+    /// A waiter whose target never arrives is bounded by its own deadline —
+    /// it does not park forever. This composes with
+    /// `crate::egress::AwaitPolicy`'s deadline exactly the same way: the
+    /// caller converts its own bound to a `std::time::Instant` and passes it
+    /// here.
+    ///
+    /// MUTATION VERIFIED: changing `ProgressListener::wait_deadline`'s body
+    /// from `listener.wait_deadline(deadline).is_some()` to unconditionally
+    /// `true` makes this test's `assert!(!woken, ..)` fail — `woken` is
+    /// `true` even though nothing was ever published. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn waiter_whose_target_never_arrives_is_bounded_not_parked_forever() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let listener = trunk.listen().unwrap();
+
+        let start = std::time::Instant::now();
+        let woken = listener.wait_deadline(start + Duration::from_millis(150));
+        let elapsed = start.elapsed();
+
+        assert!(!woken, "must report timeout, not a fabricated wake-up");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "must actually return at the deadline, not hang: took {elapsed:?}"
+        );
+    }
+
+    /// The hard invariant this whole file exists to preserve, extended to
+    /// the wake channel: `publish_part`/`publish_segment` must still
+    /// complete even with a waiter registered and never serviced (no one
+    /// ever calls `wait`/`.await`/drops it) — a slow or vanished reader must
+    /// never stall the writer. Proven the same way this file's existing
+    /// `StallIngest`-blocks proof works, but for the opposite claim: a
+    /// background-thread `publish_*` call, and a bounded `recv_timeout`
+    /// proving it completed promptly.
+    ///
+    /// This specific guarantee is structural, not something a local
+    /// mutation of this crate's code can plausibly violate: `publish_part`/
+    /// `publish_segment` call `Event::notify(usize::MAX)`, which by
+    /// `event_listener`'s own documented contract wakes registered listeners
+    /// without waiting for any of them to resume — there is no "wait for
+    /// the listener to be serviced" code path in this module to remove.
+    /// Reaching a blocking wake-up would require swapping the whole
+    /// primitive for a different one (the architectural choice already
+    /// argued in this module's docs), not a one-line mutation, so no
+    /// mutation transcript is claimed for this test — see this crate's
+    /// convention that a structural property is reported as such rather
+    /// than backed by an invented mutation.
+    #[test]
+    fn writer_never_blocks_with_a_registered_never_serviced_waiter() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let writer = Arc::new(trunk.writer().unwrap());
+
+        // Registered, kept alive for the whole test, and never waited on or
+        // dropped before the assertions below run.
+        let _never_serviced = trunk.listen().unwrap();
+
+        let (done_tx, done_rx) = mpsc::channel();
+        let bg_writer = Arc::clone(&writer);
+        thread::spawn(move || {
+            bg_writer.publish_part(part_entry(1, 1, 0));
+            bg_writer.publish_segment(segment_entry(2, 1));
+            done_tx.send(()).unwrap();
+        });
+
+        done_rx.recv_timeout(Duration::from_secs(2)).expect(
+            "publish_part/publish_segment must complete promptly even with \
+                 a live, never-serviced waiter registered",
+        );
+    }
+
+    /// The waiter set itself is bounded — a flood of `listen()` calls cannot
+    /// grow memory without limit, and reuses `part_capacity` rather than a
+    /// sixth, independent knob.
+    ///
+    /// MUTATION VERIFIED: replacing `Trunk::listen`'s cap check (the
+    /// `if current >= self.part_waiter_cap { return None; }` loop) with a
+    /// version that always registers (never returns `None`) makes the
+    /// `assert!(trunk.listen().is_none(), ..)` below fail — the call
+    /// succeeds instead of being refused at the cap. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn waiter_set_is_bounded_a_flood_of_listen_calls_cannot_grow_without_limit() {
+        let cap = 4;
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, cap));
+
+        // Fill exactly to the cap, keeping every registration alive.
+        let mut held: Vec<ProgressListener> = Vec::new();
+        for _ in 0..cap {
+            held.push(trunk.listen().expect("must succeed up to the cap"));
+        }
+        assert_eq!(trunk.waiter_count(), cap);
+
+        // One more must be refused, not silently over-admitted.
+        assert!(
+            trunk.listen().is_none(),
+            "must refuse a registration beyond part_capacity"
+        );
+
+        // A flood of register-then-immediately-drop calls (no one keeping
+        // them alive) must never push the live count past the cap, however
+        // many times it runs.
+        for _ in 0..50_000 {
+            let l = trunk.listen();
+            assert!(
+                trunk.waiter_count() <= cap,
+                "waiter count exceeded part_capacity mid-flood"
+            );
+            drop(l);
+        }
+        assert_eq!(
+            trunk.waiter_count(),
+            cap,
+            "the held registrations are still exactly at the cap"
+        );
+
+        // Releasing one held slot frees exactly one registration.
+        held.pop();
+        assert_eq!(trunk.waiter_count(), cap - 1);
+        assert!(
+            trunk.listen().is_some(),
+            "a released slot must be re-usable"
+        );
+    }
+
+    /// The decided close-behaviour, asserted: a part remains addressable via
+    /// `part_bytes` after its parent segment closes (this trunk's `Trunk`
+    /// does not evict/transform parts on `publish_segment`), right up until
+    /// `part_capacity`'s ordinary eviction reclaims it — at which point a
+    /// client requesting that same part gets `None`, indistinguishable from
+    /// "never existed", exactly like every other ring's eviction in this
+    /// module.
+    ///
+    /// MUTATION VERIFIED: adding an eviction step to `publish_segment` that
+    /// removes every `PartLog` entry whose `segment_number` matches the
+    /// just-closed segment (simulating the rejected "evict a segment's
+    /// parts the instant it closes" alternative documented in this module's
+    /// docs) makes the first `part_bytes(1, 0)` assertion below fail
+    /// immediately after `publish_segment` — it returns `None` instead of
+    /// `Some(..)`. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn parts_remain_addressable_after_segment_close_until_ordinary_eviction_reclaims_them() {
+        let part_cap = 4;
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, part_cap));
+        let writer = trunk.writer().unwrap();
+
+        writer.publish_part(part_entry(0xAB, 1, 0));
+        writer.publish_segment(segment_entry(1, 1));
+
+        // The part a client just watched roll into a closed segment is
+        // still `Some` — the same answer as before the close.
+        assert_eq!(
+            trunk.part_bytes(1, 0),
+            Some(Bytes::from(vec![0xAB; 8])),
+            "a just-closed segment's part must still be individually fetchable"
+        );
+        assert_eq!(trunk.last_closed_segment(), Some(1));
+
+        // Flood the part ring with `part_cap` more entries for an unrelated
+        // segment — enough to evict the original part via ordinary
+        // capacity-based eviction, with no further segment closes involved.
+        for i in 0..part_cap as u32 {
+            writer.publish_part(part_entry(0xFF, 99, i));
+        }
+
+        assert!(
+            trunk.part_bytes(1, 0).is_none(),
+            "the part is gone once ordinary part_capacity eviction reclaims \
+             it — NOT because its segment closed, but because the ring's own \
+             bound was exceeded, exactly like every other ring in this module"
         );
     }
 }

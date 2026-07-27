@@ -986,7 +986,7 @@ mod tests {
     /// Minimal config every test's `Trunk`s share — capacities are irrelevant
     /// to these tests beyond "large enough that nothing evicts mid-test".
     fn trunk_config() -> TrunkConfig {
-        TrunkConfig::new(64, 16, 8, 8)
+        TrunkConfig::new(64, 16, 8, 8, 8)
     }
 
     /// A handshake deadline far enough out that it never fires — for the
