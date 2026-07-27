@@ -88,6 +88,19 @@
 //! wall-clock-only (SCTE-35 `splice_schedule`) until the boundary or
 //! [`timed_metadata::TimeAnchor`] it actually needs arrives. See the
 //! [`trunk`] module docs' event-log section for the full B1 story.
+//!
+//! # Retention and `SegmentSink` ([`retention`], `std`-only)
+//!
+//! [`Retention`] is the hot/cold archive policy layered on top of the
+//! segment log — [`Retention::HotOnly`] (the segment log alone) or
+//! [`Retention::Tiered`], where a [`RetentionDriver`] drains a pinning
+//! segment cursor into a caller-supplied, sans-IO [`SegmentSink`] (the
+//! actual disk/object-store adapter is Step 5 territory). See the
+//! [`retention`] module docs for why this reuses [`ArchiveOverrun`] verbatim
+//! rather than inventing a parallel policy, why the pending hand-off queue
+//! is bounded to exactly one in-flight segment, and the "cold, ask the
+//! sink" answer [`RetentionDriver::locate`] gives for a catch-up request
+//! against an evicted-from-hot segment (issue #746, DVR/catch-up).
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![doc(html_root_url = "https://docs.rs/media-plane")]
@@ -101,6 +114,8 @@ pub mod byte_tap;
 pub mod egress;
 #[cfg(feature = "std")]
 pub mod ingress;
+#[cfg(feature = "std")]
+pub mod retention;
 #[cfg(feature = "std")]
 pub mod trunk;
 
@@ -118,6 +133,8 @@ pub use ingress::{
     IngestSession, ListenDriver, Listener, ProgramId, ReconnectPolicy, SessionEvent, SessionId,
     run_dial, run_listen,
 };
+#[cfg(feature = "std")]
+pub use retention::{Retention, RetentionDriver, SegmentLocation, SegmentSink, SinkOutcome};
 #[cfg(feature = "std")]
 pub use trunk::{
     ArchiveOverrun, EventAnchor, EventCursor, EventCursorItem, EventEntry, RetentionClass,
