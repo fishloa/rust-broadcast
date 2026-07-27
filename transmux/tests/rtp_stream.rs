@@ -300,7 +300,7 @@ fn run_video(
     (out.into_iter().map(|s| s.data).collect(), had_loss)
 }
 
-/// 1. A committed-fixture-derived RTP stream with a dropped packet mid-FU-A
+/// Acceptance 1 — A committed-fixture-derived RTP stream with a dropped packet mid-FU-A
 /// must yield no corrupt sample (issue #779 acceptance #1) — pre-#779 code
 /// silently concatenates the fragments either side of the drop into a
 /// malformed NAL and hands it downstream with no diagnostic trail; this test
@@ -347,7 +347,7 @@ fn dropped_fu_a_fragment_yields_no_corrupt_sample() {
     );
 }
 
-/// 2. A reordered-within-window run reassembles byte-identically to the
+/// Acceptance 2 — A reordered-within-window run reassembles byte-identically to the
 /// in-order capture, and does so *silently* — no loss event, because
 /// nothing was actually lost (see test 4 for why a spurious event here would
 /// be its own bug).
@@ -380,7 +380,7 @@ fn reordered_within_window_matches_in_order_byte_for_byte() {
     );
 }
 
-/// 3. A duplicated packet changes nothing — RFC 3550 §A.1's "duplicate or
+/// Acceptance 3 — A duplicated packet changes nothing — RFC 3550 §A.1's "duplicate or
 /// reordered packet" fall-through, this project's contract (issue #779) is
 /// explicit: discard silently, no loss event, no change to the output.
 #[test]
@@ -401,7 +401,7 @@ fn duplicated_packets_change_nothing() {
     );
 }
 
-/// 4. **Load-bearing**: a clean capture (video AND audio, full push+flush)
+/// Acceptance 4 — **Load-bearing**: a clean capture (video AND audio, full push+flush)
 /// must emit ZERO loss signals end to end. A false-positive-prone detector
 /// is worse than none — this project has already shipped exactly that
 /// failure once (`PtsCheck`); a clean-stream negative would have caught it
@@ -485,7 +485,7 @@ fn wrap_vpkt(seq: u16, ts: u32, nal: &[u8]) -> Vec<u8> {
     p
 }
 
-/// 5. Sequence wrap 65535 → 0 must not be treated as a gap — PROVENANCE:
+/// Acceptance 5 — Sequence wrap 65535 → 0 must not be treated as a gap — PROVENANCE:
 /// hand-built, since no capture this short crosses the 16-bit wrap point.
 /// Wrapping arithmetic (never `>`) is exactly what issue #779 requires here.
 #[test]
@@ -520,7 +520,7 @@ fn sequence_wrap_is_not_treated_as_a_gap() {
     assert_eq!(recovered.len(), 5, "all 5 access units must be recovered");
 }
 
-/// 6. The reorder buffer is bounded: a flood of out-of-order packets cannot
+/// Acceptance 6 — The reorder buffer is bounded: a flood of out-of-order packets cannot
 /// grow it without limit. PROVENANCE: hand-built — proving a bound holds
 /// needs a flood far bigger than any short real fixture provides.
 ///
