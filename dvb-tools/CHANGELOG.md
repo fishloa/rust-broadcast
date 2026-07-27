@@ -1,5 +1,14 @@
 # Changelog
 
+## [9.0.0] - 2026-07-27
+### Changed (Breaking)
+- Lockstep major bump alongside `broadcast-common` 9.0.0, whose `Encrypt::encrypt`
+  now takes `&mut self` instead of `&self` (needed so a stateful implementor can
+  own a running per-key IV counter — see `broadcast-common`'s own CHANGELOG for
+  the full rationale and the migration note for external `impl Encrypt`s).
+  `dvb-tools` itself does not implement `Encrypt`/`Decrypt` and has no functional
+  or public API change of its own in this release.
+
 ## [8.5.0] - 2026-07-21
 ### Changed
 - Widen the internal `mpeg-ts` dependency to `0.3` (issue #663; private

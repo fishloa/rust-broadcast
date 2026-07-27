@@ -1,6 +1,21 @@
 # Changelog
 
-## [8.7.0] - 2026-07-26
+## [9.0.0] - 2026-07-27
+### Changed (Breaking)
+- **`Encrypt::encrypt` now takes `&mut self`, not `&self`.** Needed so a
+  stateful implementor (e.g. `transmux`'s `CencEncryptor`) can own a running
+  per-key IV counter and advance it across calls instead of restarting it
+  every time — the fix for a duplicate-IV/two-time-pad defect (see
+  `transmux` 0.20.0's CHANGELOG for the full incident). **Any external
+  `impl Encrypt` must change its `encrypt` method signature from
+  `fn encrypt(&self, …)` to `fn encrypt(&mut self, …)`; any caller holding
+  `&dyn Encrypt` (or generic `E: Encrypt`) must obtain/hold a mutable
+  reference/binding instead of a shared one.** This is why the lockstep six
+  move to 9.0.0 rather than the 8.7.0 this change first landed under
+  (never published — crates.io was still at 8.6.0 when this was corrected).
+  Retitled from the unpublished `[8.7.0]` entry below; its `Added` content
+  is preserved as-is.
+
 ### Added
 - `stage` module: the `Stage` incremental-drive trait (`feed`/`poll`/`finish`/
   `next_deadline`/`on_deadline`/`demand`) unifying the drive shape of every

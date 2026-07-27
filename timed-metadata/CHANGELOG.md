@@ -2,6 +2,19 @@
 
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.1] - 2026-07-27
+
+### Changed
+- Dev-only: the `ssai_ad_stitch` example + its integration test moved here
+  from `transmux` (part of the transmux<->timed-metadata circular dev-dep
+  fix), and `webvtt_sei_caption_fixture`'s test helper was adapted to read
+  `Sample::pts` directly instead of reconstructing presentation time from
+  `Track::start_decode_time` + a running duration sum + `composition_offset`
+  — following transmux's media-plane step 2c, where `Sample::dts`/`pts`
+  became absolute and optional. New `mpeg-ts` dev-dependency (for the moved
+  example's `SectionReassembler` use). No public API or behaviour change to
+  the library itself.
+
 ## [0.4.0] - 2026-07-13
 
 ### Added
