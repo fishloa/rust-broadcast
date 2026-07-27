@@ -37,4 +37,17 @@ default = ["std"]
 std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener"]
 
 [package.metadata.docs.rs]
+# `all-features = true` alone is not enough here: this crate's `std` feature
+# is not just additive API, it gates four of the seven top-level modules
+# (`egress`/`ingress`/`retention`/`trunk`, plus their re-exports) — see the
+# crate-root docs' "no_std note" for why `Trunk` needs `std::sync::Mutex`.
+# `rustdoc-args = ["--cfg", "docsrs"]` (+ `#![cfg_attr(docsrs, ...)]` in
+# `src/lib.rs`) turns those `#[cfg(feature = "std")]` items into visible
+# doc(cfg) pills instead of vanishing silently, matching `rtmp-runtime`'s
+# and `mpeg-pes`'s docs.rs setup for the same std-gated-module shape.
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "ingest_trunk_playback"
+required-features = ["std"]

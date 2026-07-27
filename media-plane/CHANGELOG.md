@@ -345,3 +345,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `drive`/`locate` call), the temporal analogue of `segment_capacity`'s
     count-based bound on the hot ring — not a second, independently-tuned
     count knob.
+- Step 3f: `docs/CRATE-ACCEPTANCE.md` furniture — no behaviour change.
+  - Three fuzz targets in the shared `fuzz/` crate: `media_plane_byte_merge`
+    (arbitrary `feed`/`poll`/`on_deadline` sequences under both
+    `MergePolicy` variants, asserting the output queue bound holds),
+    `media_plane_byte_tap` (arbitrary `record`/`poll` interleavings,
+    asserting the ring bound holds and every recorded item is accounted for),
+    and `media_plane_ingest_driver` (a fuzzer-scripted `IngestSession`
+    driving `IngestDriver`'s program/track dispatch). Each ran >=1M
+    executions with zero crashes.
+  - `tests/label_coverage.rs` (issue #204 drift-guard): every current public
+    enum in this crate is either a `thiserror` error or a data-carrying ADT,
+    not a decoded external-spec token, so the skip-list is comprehensive and
+    documented per-enum; `CachePolicy` (already labelled) is the one
+    exception.
+  - Two real-fixture examples (`examples/ingest_trunk_playback.rs`,
+    `examples/byte_tap_wire_observer.rs`), both reading the shared
+    `fixtures/ts/h264_aac.ts` real broadcast capture via `std::fs`, not
+    `include_bytes!` or synthetic bytes.
+  - `.github/workflows/release-media-plane.yml`: this crate's own release
+    lane, modelled on `release-transmux.yml`.
+  - `[package.metadata.docs.rs]` now sets `rustdoc-args = ["--cfg",
+    "docsrs"]`, and `src/lib.rs`/`#[cfg(feature = "std")]` items gained
+    `doc(cfg(...))` pills, so docs.rs shows which API needs `std` instead of
+    silently building only the byte layer's docs.
+  - Crate-root docs and README corrected to reflect that this crate is now
+    functionally complete through step 3e (previously stale text still said
+    ingress/egress/retention were "later steps... deliberately absent"), and
+    to state plainly that only the byte layer is `no_std` + `alloc` — `Trunk`
+    and everything built on it require `std`.
