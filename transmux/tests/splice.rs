@@ -11,17 +11,27 @@
 //! unlike the tests above (which check `dts_sequence`, a reconstruction from
 //! `start_decode_time + Σ duration` that literally cannot observe whether a
 //! spliced-in sample's own absolute `dts` was rebased), every `#782` test
-//! reads `Sample::dts`/`Sample::pts` directly. PROVENANCE: every fixture in
-//! this file — before and after `#782` — is synthetic, built procedurally
-//! (`video_track`/`data_track`/`media_of*`); no committed capture isolates
-//! two independently-anchored assets, mixed track timescales, or a
-//! section-carried track cleanly enough to exercise this in one place, so
-//! synthetic construction is this file's existing, established convention.
+//! reads `Sample::dts`/`Sample::pts` directly.
+//!
+//! PROVENANCE: the headline `#782` case is exercised **both** ways. The
+//! real-fixture test (`splice_insert_rebases_real_fixture_onto_the_join`)
+//! runs on the committed `fixtures/ts/h264_aac.ts` capture — real H.264 +
+//! AAC, real keyframes, and genuinely different track timescales (90 000
+//! video / 44 100 audio) — reusing the exact base/ad split that
+//! `examples/ssai_ad_stitch.rs` (issue #664) performs, so the mixed-timescale
+//! and SSAI-continuity claims rest on real demuxed data rather than on
+//! hand-chosen numbers. The remaining `#782` tests are synthetic
+//! (`video_track`/`data_track`/`media_of*`), because no committed capture
+//! isolates a *deliberately unrelated* pair of absolute anchors (Test 1's
+//! 10-hour offset), a controlled composition-offset pattern, a 4-deep splice
+//! chain with non-exact-dividing rescales, or an untimed section-carried
+//! track — each needs values chosen to make the property observable.
 
+use broadcast_common::Unpackage;
 use transmux::pipeline::DataCarriage;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
-    MovieFragmentBox, Sample, Segmenter, Track, TrackSpec, concat, parse_box,
+    MovieFragmentBox, Sample, Segmenter, Track, TrackSpec, TsDemux, concat, parse_box,
     snap_to_preceding_sync, splice_insert,
 };
 
@@ -883,5 +893,193 @@ fn concat_leaves_untimed_section_samples_as_none() {
             .iter()
             .all(|s| s.dts.is_none() && s.pts.is_none()),
         "section track stays untimed even though a reference track exists elsewhere"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 7 (REAL FIXTURE) — the same defect on real demuxed data, with
+// real mixed timescales. Reuses the base/ad split that
+// `examples/ssai_ad_stitch.rs` (issue #664) performs on the committed
+// `fixtures/ts/h264_aac.ts` capture: an `ad` Media whose tracks are anchored
+// `start_decode_time: 0` while their samples keep the capture's real absolute
+// `dts` — precisely the anchor/stamp disagreement #782 is about, and exactly
+// what a demuxed-from-its-own-file ad looks like. The #664 SSAI test asserts
+// only on manifest/cue structure and so never observed this; this test reads
+// the real sample stamps.
+//
+// Fails before the fix: the ad's samples kept their original 306 000-tick
+// (GOP-3) position instead of being rebased onto the 216 000-tick splice
+// boundary, and the resumed base was never pushed past the ad, so the two
+// contributions overlapped.
+// ---------------------------------------------------------------------------
+#[test]
+fn splice_insert_rebases_real_fixture_onto_the_join() {
+    let path =
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let source: Media = TsDemux::new().unpackage(&bytes[..]).expect("TS demux");
+
+    let vi = source
+        .tracks
+        .iter()
+        .position(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("fixture has an AVC track");
+    let ai = source
+        .tracks
+        .iter()
+        .position(|t| !matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("fixture has an audio track");
+    let video = &source.tracks[vi];
+    let audio = &source.tracks[ai];
+
+    // The timescales genuinely differ — this is what makes the rescale path
+    // real rather than an identity no-op.
+    assert_eq!(video.spec.timescale, 90_000, "real video timescale");
+    assert_eq!(audio.spec.timescale, 44_100, "real audio timescale");
+    assert_ne!(
+        video.spec.timescale, audio.spec.timescale,
+        "the mixed-timescale path must not degenerate to an identity rescale"
+    );
+
+    // The capture's own real keyframes.
+    let keyframes: Vec<usize> = video
+        .samples
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| s.flags.is_sync)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        keyframes.len() >= 3,
+        "fixture must carry >= 3 real keyframes, found {}",
+        keyframes.len()
+    );
+    let splice_idx = keyframes[1]; // splice here (inside the base clip)
+    let content_split = keyframes[2]; // base/ad content boundary
+
+    // Split the audio at the same wall-clock offset as the content split.
+    let content_split_ticks: u64 = video.samples[..content_split]
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
+    let content_split_secs = content_split_ticks as f64 / f64::from(video.spec.timescale);
+    let audio_target = (content_split_secs * f64::from(audio.spec.timescale)).round() as u64;
+    let mut acc = 0u64;
+    let mut audio_split = audio.samples.len();
+    for (i, s) in audio.samples.iter().enumerate() {
+        if acc >= audio_target {
+            audio_split = i;
+            break;
+        }
+        acc += s.duration.unwrap_or(0) as u64;
+    }
+
+    let splice_dts = video.samples[splice_idx].dts.unwrap() as u64;
+
+    let base = Media::new(
+        vec![
+            Track::new_at(
+                video.spec.clone(),
+                video.samples[..content_split].to_vec(),
+                video.start_decode_time,
+            ),
+            Track::new_at(
+                audio.spec.clone(),
+                audio.samples[..audio_split].to_vec(),
+                audio.start_decode_time,
+            ),
+        ],
+        source.movie_timescale,
+    );
+    // The ad: anchored at 0 while its samples keep the capture's real
+    // absolute dts — the #782 condition, as `examples/ssai_ad_stitch.rs`
+    // builds it.
+    let ad_video_first_dts = video.samples[content_split].dts.unwrap();
+    let ad = Media::new(
+        vec![
+            Track::new_at(
+                video.spec.clone(),
+                video.samples[content_split..].to_vec(),
+                0,
+            ),
+            Track::new_at(audio.spec.clone(), audio.samples[audio_split..].to_vec(), 0),
+        ],
+        source.movie_timescale,
+    );
+    assert_ne!(
+        ad_video_first_dts as u64, splice_dts,
+        "the ad's own real dts must differ from the splice point, or this test proves nothing"
+    );
+
+    let res = splice_insert(&base, &ad, splice_dts).expect("splice");
+
+    // Every track — both timescales — must be strictly monotonic on REAL
+    // per-sample stamps, and lose no samples.
+    let out_video = res
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == video.spec.track_id)
+        .unwrap();
+    let out_audio = res
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == audio.spec.track_id)
+        .unwrap();
+    assert_eq!(
+        out_video.samples.len(),
+        video.samples.len(),
+        "no video samples lost"
+    );
+    assert_eq!(
+        out_audio.samples.len(),
+        audio.samples.len(),
+        "no audio samples lost"
+    );
+
+    for t in [out_video, out_audio] {
+        let dts: Vec<i64> = t
+            .samples
+            .iter()
+            .map(|s| s.dts.expect("real fixture samples are all timed"))
+            .collect();
+        for (i, w) in dts.windows(2).enumerate() {
+            assert!(
+                w[1] >= w[0],
+                "track {} real dts must be monotonic; went backwards at sample {i}: {} -> {}",
+                t.spec.track_id,
+                w[0],
+                w[1]
+            );
+        }
+        // The anchor must agree with the first real sample stamp.
+        assert_eq!(
+            t.start_decode_time,
+            u64::try_from(dts[0]).unwrap(),
+            "track {} anchor must equal its first sample's dts",
+            t.spec.track_id
+        );
+    }
+
+    // The ad's first video sample now decodes exactly at the splice boundary,
+    // regardless of its own 306 000-tick position in the source capture.
+    let out_video_dts: Vec<i64> = out_video.samples.iter().map(|s| s.dts.unwrap()).collect();
+    assert_eq!(
+        out_video_dts[splice_idx], splice_dts as i64,
+        "the ad opens exactly at the real splice boundary"
+    );
+
+    // ...and the resumed base picks up exactly where the rebased ad ends —
+    // one continuous timeline, no gap and no overlap.
+    let ad_len = video.samples.len() - content_split;
+    let ad_span: u64 = video.samples[content_split..]
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum();
+    assert_eq!(
+        out_video_dts[splice_idx + ad_len],
+        (splice_dts + ad_span) as i64,
+        "the resumed base starts exactly where the rebased ad ends"
     );
 }
