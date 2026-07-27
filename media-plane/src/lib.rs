@@ -107,9 +107,9 @@ pub use byte_stage::ByteStage;
 pub use byte_tap::{ByteTap, TapItem, TapPoint};
 #[cfg(feature = "std")]
 pub use ingress::{
-    AcceptOutcome, DialAttempt, DialSupervisor, Dialer, HealthState, IngestDriver, IngestSession,
-    ListenDriver, Listener, ProgramId, ReconnectPolicy, SessionEvent, SessionId, run_dial,
-    run_listen,
+    AcceptOutcome, DialAttempt, DialSupervisor, Dialer, HandshakePolicy, HealthState, IngestDriver,
+    IngestSession, ListenDriver, Listener, ProgramId, ReconnectPolicy, SessionEvent, SessionId,
+    run_dial, run_listen,
 };
 #[cfg(feature = "std")]
 pub use trunk::{
