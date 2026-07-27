@@ -65,6 +65,35 @@ Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
 
 ### Fixed
 
+- **`TsMux` no longer drops a recognised codec's PMT `ES_info` descriptors**
+  (issue #775, closes #775; nullified a shipped rust-skyfire track-picker
+  feature). `plan_elementary_streams` only carried a track's inherited
+  `TrackSpec::es_info_descriptors` into the re-muxed PMT for an opaque
+  `CodecConfig::Data` track — a stale guard from issue #576, written when the
+  IR genuinely carried no descriptors for a decoded codec. Since issue #582
+  `TsDemux` populates `es_info_descriptors` for **every** track, so a
+  recognised codec's audio-language (`ISO_639_language_descriptor`) and DVB
+  `subtitling_descriptor` were silently lost on a TS re-mux — a track lost
+  information precisely *because* its codec was understood.
+  - The new policy (documented with its spec citations in the `ts_mux` module
+    doc) is a **deny-list, not an allow-list** — an allow-list would silently
+    drop an unknown-but-valid broadcaster-private or newly-registered
+    descriptor, which is the same class of bug.
+  - **`CA_descriptor` (tag `0x09`, ISO/IEC 13818-1 §2.6.16) is denied.** It
+    signals that the elementary stream is scrambled and names the `CA_PID`
+    carrying its ECMs; this muxer emits cleartext, so copying it forward would
+    falsely advertise the re-mux as encrypted and point at a `CA_PID` absent
+    from the new PMT.
+  - Inherited descriptors are **de-duplicated against the descriptors the
+    muxer synthesises itself** (e.g. the `MPEG-H_3dAudio_descriptor` built
+    from the typed `mpegh3daProfileLevelIndication`, issue #579), keeping the
+    synthesised copy — emitting both yields a malformed `ES_info` loop with
+    contradictory signalling under one tag.
+  - Surviving descriptors keep their **source order**.
+  - A merged loop over the 12-bit `ES_info_length` field's 4095-byte maximum
+    (§2.4.4.8) returns `Error::BufferCapExceeded { what: "PMT ES_info
+    descriptor loop", cap }` rather than being silently truncated into a
+    malformed PMT.
 - **BREAKING — one strictness policy everywhere: DEMUX = lenient but loud,
   MUX = strict but filterable** (B1-B4).
   - `Fmp4Demux` no longer fails the whole file on one track it cannot

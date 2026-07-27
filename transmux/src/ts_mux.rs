@@ -544,8 +544,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             }
             _ => Vec::new(),
         };
-        let descriptors =
-            merge_es_info_descriptors(&track.spec.es_info_descriptors, &synthesized)?;
+        let descriptors = merge_es_info_descriptors(&track.spec.es_info_descriptors, &synthesized)?;
         plans.push(EsPlan {
             pid: next_pid,
             stream_id,
@@ -587,7 +586,10 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
 /// cap (§2.4.4.8) — if the merged loop would overflow it, rather than
 /// silently truncating into a malformed PMT.
 fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Result<Vec<u8>> {
-    let synthesized_tags: Vec<u8> = synthesized.iter().filter_map(|d| d.first().copied()).collect();
+    let synthesized_tags: Vec<u8> = synthesized
+        .iter()
+        .filter_map(|d| d.first().copied())
+        .collect();
 
     let mut out = Vec::with_capacity(inherited.len() + total_param_len(synthesized));
     let mut off = 0usize;
@@ -1426,5 +1428,118 @@ mod tests {
         // Mutating the profile-level must change the descriptor bytes (not a
         // fixed/cached template).
         assert_ne!(bytes, mpegh_3daudio_descriptor(0x10));
+    }
+
+    // ── ES_info descriptor passthrough policy (issue #775) ──────────────────
+
+    #[test]
+    fn merge_es_info_descriptors_denies_ca_and_preserves_order() {
+        // ISO_639_language_descriptor (tag 0x0A), then a CA_descriptor (tag
+        // 0x09) sandwiched in the middle, then a private descriptor (tag
+        // 0x88) — proves the CA tag is excised out of the middle of the
+        // loop (not just truncated off the end) and the survivors keep
+        // their original relative order.
+        let lang = alloc::vec![
+            DESCRIPTOR_TAG_ISO_639_LANGUAGE_FOR_TEST,
+            0x04,
+            b'e',
+            b'n',
+            b'g',
+            0x00
+        ];
+        let ca = alloc::vec![DESCRIPTOR_TAG_CA, 0x04, 0x00, 0x01, 0x00, 0x82];
+        let private = alloc::vec![0x88u8, 0x02, 0xAA, 0xBB];
+        let mut inherited = lang.clone();
+        inherited.extend_from_slice(&ca);
+        inherited.extend_from_slice(&private);
+
+        let merged = merge_es_info_descriptors(&inherited, &[]).expect("no overflow");
+
+        let mut expected = lang;
+        expected.extend_from_slice(&private);
+        assert_eq!(
+            merged, expected,
+            "CA_descriptor must be dropped; siblings survive in source order"
+        );
+    }
+
+    /// Local alias so the test above doesn't depend on a demux-side constant
+    /// this module doesn't otherwise need — ISO_639_language_descriptor's
+    /// tag (ETSI EN 300 468 §6.2.28) is `0x0A`.
+    const DESCRIPTOR_TAG_ISO_639_LANGUAGE_FOR_TEST: u8 = 0x0A;
+
+    #[test]
+    fn merge_es_info_descriptors_dedups_synthesized_tag_favouring_synthesized_bytes() {
+        // A stale inherited MPEG-H_3dAudio_descriptor-shaped entry (tag 0x3F,
+        // same extension_descriptor_tag 0x08, but a different — wrong —
+        // profile-level byte), sandwiched between two unrelated survivors.
+        let before = alloc::vec![0x88u8, 0x01, 0x01];
+        let stale_mpegh = alloc::vec![
+            DESCRIPTOR_TAG_EXTENSION,
+            MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
+            MPEGH_3DAUDIO_EXTENSION_TAG,
+            0xFF, // stale/wrong profile-level
+        ];
+        let after = alloc::vec![0x89u8, 0x01, 0x02];
+        let mut inherited = before.clone();
+        inherited.extend_from_slice(&stale_mpegh);
+        inherited.extend_from_slice(&after);
+
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
+
+        // Exactly one occurrence of the extension tag, holding the
+        // synthesized (grounded-in-CodecConfig) bytes, not the stale
+        // inherited ones; the two unrelated siblings both survive in order,
+        // and the synthesized descriptor is appended after them.
+        let mut expected = before;
+        expected.extend_from_slice(&after);
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        assert_eq!(
+            merged, expected,
+            "inherited duplicate of a synthesized tag must be dropped, keeping only the \
+             synthesized copy, appended after the surviving unrelated siblings"
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .enumerate()
+                .filter(|&(i, &b)| b == DESCRIPTOR_TAG_EXTENSION && i + 1 < merged.len())
+                .count(),
+            1,
+            "extension_descriptor tag (0x3F) must appear exactly once in the merged loop"
+        );
+    }
+
+    #[test]
+    fn merge_es_info_descriptors_overflow_returns_typed_error_not_truncated() {
+        // 17 descriptors of 255 bytes each (tag + 0xFD length + 253-byte
+        // body) = 17 * 255 = 4335 bytes, comfortably over the 4095-byte
+        // ES_info_length cap — using a tag that is neither denied nor
+        // synthesized, so every one of them would otherwise pass through.
+        const BODY_LEN: u8 = 0xFD; // 253
+        const N: usize = 17;
+        let mut inherited = Vec::new();
+        for _ in 0..N {
+            inherited.push(0x80u8); // arbitrary private descriptor tag
+            inherited.push(BODY_LEN);
+            inherited.extend(core::iter::repeat_n(0xAAu8, BODY_LEN as usize));
+        }
+        assert!(
+            inherited.len() > MAX_ES_INFO_LENGTH,
+            "test setup must actually overflow"
+        );
+
+        let result = merge_es_info_descriptors(&inherited, &[]);
+        match result {
+            Err(Error::BufferCapExceeded { what, cap }) => {
+                assert_eq!(what, "PMT ES_info descriptor loop");
+                assert_eq!(cap, MAX_ES_INFO_LENGTH);
+            }
+            other => panic!(
+                "expected Err(Error::BufferCapExceeded {{ .. }}) for an over-cap ES_info loop, \
+                 got {other:?} — a truncated loop would be a malformed PMT"
+            ),
+        }
     }
 }
