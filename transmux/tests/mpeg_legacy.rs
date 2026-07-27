@@ -245,10 +245,14 @@ fn ts_demux_broadcast_pair() {
     assert_eq!(csv_audio.len(), 39);
 
     // Video timing: samples are decode-ordered (ascending DTS) — the CSV video
-    // rows are in the same order. Reconstruct absolute DTS from durations
-    // starting at the first CSV DTS, and PTS = DTS + composition_offset.
-    let dts0 = csv_video[0].dts;
-    let mut dts = dts0;
+    // rows are in the same order. Compare each sample's ACTUAL `s.dts`/`s.pts`
+    // (MPEG-2 video's track timescale is the 90 kHz PES clock, same units as
+    // the CSV, so this is a direct field comparison, not a rescale) against
+    // the CSV row. (Previously this reconstructed `dts` purely from
+    // `dts0 + sum(s.duration)` and never read `s.dts`/`s.pts` at all, so a bug
+    // that wrote the wrong absolute value into either field — a dts/pts swap,
+    // an anchor error — would not have been caught here; video's own dts !=
+    // pts under B-frame reordering, so a swap now changes the compared value.)
     for (i, s) in video.samples.iter().enumerate() {
         let row = csv_video[i];
         assert_eq!(
@@ -256,14 +260,14 @@ fn ts_demux_broadcast_pair() {
             Some(row.duration),
             "video[{i}] duration matches CSV"
         );
-        assert_eq!(dts, row.dts, "video[{i}] DTS matches CSV");
-        let pts = dts + s.composition_offset() as i128;
-        assert_eq!(pts, row.pts, "video[{i}] PTS matches CSV");
+        let dts = s.dts.unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
+        assert_eq!(dts, row.dts, "video[{i}] DTS (actual s.dts) matches CSV");
+        let pts = s.pts.unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
+        assert_eq!(pts, row.pts, "video[{i}] PTS (actual s.pts) matches CSV");
         assert_eq!(
             s.flags.is_sync, row.keyframe,
             "video[{i}] keyframe matches CSV"
         );
-        dts += s.duration.unwrap_or(0) as i128;
     }
 
     // Audio is contiguous: PTS == DTS, uniform duration. The audio track uses a
