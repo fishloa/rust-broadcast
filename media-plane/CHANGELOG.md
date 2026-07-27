@@ -374,3 +374,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ingress/egress/retention were "later steps... deliberately absent"), and
     to state plainly that only the byte layer is `no_std` + `alloc` — `Trunk`
     and everything built on it require `std`.
+### Fixed
+- **`max_programs`: bound the number of `Trunk`s `IngestDriver`/`ListenDriver`
+  will mint per session** — the fifth unbounded-allocation vector shipped
+  from this codebase. `SessionEvent::NewProgram` previously minted a fresh
+  `Trunk` (five bounded rings) for every distinct `ProgramId` a session
+  reported, with no cap on how many distinct ids one session could report;
+  every ring was bounded, but the *count of `Trunk`s* was not, so a malformed
+  or hostile multiplex announcing thousands of programs allocated thousands
+  of trunks. `IngestDriver::new`/`ListenDriver::new`/`run_dial`/`run_listen`/
+  `DialSupervisor::try_dial` now take a `max_programs: NonZeroUsize`,
+  enforced in exactly one place (`IngestDriver`'s internal `drain()`),
+  mirroring where `max_sessions` is already enforced — structural, not a
+  per-`IngestSession`-implementor discipline. The `(max_programs + 1)`th
+  program is **refused, not fatal**: it gets no `Trunk` (no `Trunk::new` call
+  happens for it at all) and its later `Sample`s are dropped via the
+  already-existing "sample for an unannounced program" path, while every
+  already-admitted program keeps flowing — refusing was chosen over failing
+  the whole session so a 200-program hostile/malformed multiplex cannot take
+  down ingest for the programs a real caller asked for. The refusal is
+  **reported**, via a new monotonic `IngestDriver::refused_program_count()` /
+  `ListenDriver::refused_program_count(id)` counter (never a stored list of
+  refused `ProgramId`s, which would just move the same unbounded-growth shape
+  from `Trunk`s to a `Vec`) — never a silent drop. `DEFAULT_MAX_PROGRAMS`
+  (`64`) is provided as a documented, justified default (real DVB MPTS run
+  single-digit to low-tens of programs; ATSC/cable can run higher) rather
+  than requiring every caller to invent their own bare literal.
