@@ -360,8 +360,8 @@ fn sample_counts_and_oracle_timing() {
     let mut running_dts: i64 = 0;
     let mut demuxed: Vec<(i64, i32, bool)> = Vec::new(); // (dts, co, is_sync)
     for s in &vtrack.samples {
-        demuxed.push((running_dts, s.composition_offset, s.is_sync));
-        running_dts += s.duration as i64;
+        demuxed.push((running_dts, s.composition_offset(), s.flags.is_sync));
+        running_dts += s.duration.unwrap_or(0) as i64;
     }
 
     // Every stamped oracle row carries both PTS and DTS here. Two independent,
@@ -410,7 +410,7 @@ fn sample_counts_and_oracle_timing() {
         .iter()
         .filter(|r| r.keyframe == Some(true))
         .count();
-    let syncs = vtrack.samples.iter().filter(|s| s.is_sync).count();
+    let syncs = vtrack.samples.iter().filter(|s| s.flags.is_sync).count();
     assert_eq!(
         syncs, oracle_keyframes,
         "demuxed video keyframe count must equal the oracle's"

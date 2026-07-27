@@ -369,7 +369,7 @@ fn video_sample_tables_consistent() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("ir video track");
-    let all_sync = vid.samples.iter().all(|s| s.is_sync);
+    let all_sync = vid.samples.iter().all(|s| s.flags.is_sync);
     let stss = parse_stss(&out, &sc);
     if all_sync {
         assert!(stss.is_none(), "stss must be omitted when all samples sync");
@@ -378,7 +378,13 @@ fn video_sample_tables_consistent() {
             .samples
             .iter()
             .enumerate()
-            .filter_map(|(i, s)| if s.is_sync { Some(i as u32 + 1) } else { None })
+            .filter_map(|(i, s)| {
+                if s.flags.is_sync {
+                    Some(i as u32 + 1)
+                } else {
+                    None
+                }
+            })
             .collect();
         assert_eq!(stss.expect("stss present"), expected, "stss keyframe list");
     }

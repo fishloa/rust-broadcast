@@ -18,15 +18,11 @@ use alloc::vec::Vec;
 
 use broadcast_common::Serialize;
 
-use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
-use crate::ac4::{Ac4SpecificBox, DAC4_FOURCC};
-use crate::annexb::annexb_to_length_prefixed;
-use crate::av1::{Av1ConfigurationBox, Av1SampleEntry};
-use crate::avc_config::AVCConfigurationBox;
-use crate::dts::{DDTS_FOURCC, DtsSpecificBox};
+use crate::ac4::DAC4_FOURCC;
+use crate::av1::Av1SampleEntry;
+use crate::dts::DDTS_FOURCC;
 use crate::error::Result;
-use crate::flac::{DFLA_FOURCC, FlacSpecificBox};
-use crate::hevc_config::HEVCConfigurationBox;
+use crate::flac::DFLA_FOURCC;
 use crate::init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, ChunkOffsetBox, DataEntryUrlBox, DataInformationBox,
     DataReferenceBox, DtsSampleEntry, Ec3SampleEntry, FlacSampleEntry, HandlerBox, MediaBox,
@@ -41,17 +37,15 @@ use crate::movie_fragment::{
     TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
 };
-use crate::mp4esds::EsdsBox;
 use crate::mpegh::MHAC_FOURCC;
-use crate::opus::{DOPS_FOURCC, OpusSpecificBox};
+use crate::opus::DOPS_FOURCC;
 use crate::sample_entries::{
     AVCSampleEntry, HEVCSampleEntry, Mp4vSampleEntry, VVCSampleEntry, VisualSampleEntryFields,
 };
 use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 
 use crate::timing::TimeToSampleBox;
-use crate::vp9::{Vp9ConfigurationBox, Vp9SampleEntry};
-use crate::vvc_config::VvcConfigurationBox;
+use crate::vp9::Vp9SampleEntry;
 pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 // --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
@@ -69,460 +63,14 @@ const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0
 /// `tkhd` flags: track_enabled | in_movie | in_preview.
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 
-/// Whether a [`CodecConfig::Data`] elementary stream carries PES packets or
-/// PSI/private sections on its PID.
-///
-/// ISO/IEC 13818-1 §2.4.4.8 / Table 2-34 splits `stream_type` into two
-/// carriage families: most types (subtitles, teletext, SMPTE 2038 ANC,
-/// metadata, and any unrecognised value) are PES-packetised (§2.4.3.6); a
-/// fixed set (`0x05` private_sections, `0x0A`-`0x0D` DSM-CC, `0x14` DSM-CC
-/// synchronized download, `0x86` SCTE-35/ANSI-scoped) are carried as raw
-/// PSI-style sections instead (§2.4.4), with no PES header at all.
-/// Reassembling a section stream with a PES parser (or vice versa) silently
-/// yields nothing, so a demuxer/muxer must dispatch on this before touching
-/// the payload — see `crate::ts_demux` / `crate::ts_mux` (issue #576).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum DataCarriage {
-    /// The elementary stream is PES-packetised (ISO/IEC 13818-1 §2.4.3.6).
-    Pes,
-    /// The elementary stream carries PSI/private sections directly on its
-    /// PID (ISO/IEC 13818-1 §2.4.4), with no PES header at all.
-    Sections,
-}
-
-impl DataCarriage {
-    /// A short label for this carriage kind.
-    pub fn name(&self) -> &'static str {
-        match self {
-            DataCarriage::Pes => "pes",
-            DataCarriage::Sections => "sections",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(DataCarriage);
-
-/// Per-track codec configuration for the initialization segment.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum CodecConfig {
-    /// H.264/AVC video (`avc1` sample entry with an `avcC` config box).
-    Avc {
-        /// The `avcC` decoder configuration record.
-        config: AVCConfigurationBox,
-        /// Coded width in pixels.
-        width: u16,
-        /// Coded height in pixels.
-        height: u16,
-    },
-    /// H.265/HEVC video (`hvc1`/`hev1` sample entry with an `hvcC` config box) —
-    /// ISO/IEC 14496-15:2017 §8.4.
-    Hevc {
-        /// The `hvcC` decoder configuration record box.
-        config: HEVCConfigurationBox,
-        /// Coded width in pixels.
-        width: u16,
-        /// Coded height in pixels.
-        height: u16,
-    },
-    /// H.266/VVC video (`vvc1`/`vvi1` sample entry with a `vvcC` config box) —
-    /// ISO/IEC 14496-15:2022 §11.3.3.
-    Vvc {
-        /// The `vvcC` decoder configuration record box.
-        config: VvcConfigurationBox,
-        /// Coded width in pixels.
-        width: u16,
-        /// Coded height in pixels.
-        height: u16,
-    },
-    /// AAC audio (`mp4a` sample entry with an `esds` box).
-    Aac {
-        /// The `esds` box carrying the AudioSpecificConfig.
-        esds: EsdsBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz (stored 16.16 in the sample entry).
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// AC-3 audio (`ac-3` sample entry with a `dac3` box).
-    Ac3 {
-        /// The `dac3` config box.
-        config: Ac3SpecificBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// E-AC-3 audio (`ec-3` sample entry with a `dec3` box).
-    Eac3 {
-        /// The `dec3` config box.
-        config: Ec3SpecificBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// AV1 video (`av01` sample entry with an `av1C` box).
-    Av1 {
-        /// The `av1C` configuration box.
-        config: Av1ConfigurationBox,
-        /// Coded width in pixels.
-        width: u16,
-        /// Coded height in pixels.
-        height: u16,
-    },
-    /// VP9 video (`vp09` sample entry with a `vpcC` box).
-    Vp9 {
-        /// The `vpcC` configuration box.
-        config: Vp9ConfigurationBox,
-        /// Coded width in pixels.
-        width: u16,
-        /// Coded height in pixels.
-        height: u16,
-    },
-    /// Opus audio (`Opus` sample entry with a `dOps` box).
-    Opus {
-        /// The `dOps` config box.
-        config: OpusSpecificBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz (stored 16.16; per spec always 48000).
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// FLAC audio (`fLaC` sample entry with a `dfLa` box).
-    Flac {
-        /// The `dfLa` config box.
-        config: FlacSpecificBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits.
-        sample_size: u16,
-    },
-    /// AC-4 audio (`ac-4` sample entry with a `dac4` box).
-    Ac4 {
-        /// The `dac4` config box (opaque `ac4_dsi_v1()`).
-        config: Ac4SpecificBox,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits (16 per spec).
-        sample_size: u16,
-    },
-    /// MPEG-H 3D Audio (`mha1` sample entry with an `mhaC` box) — ISO/IEC 23008-3 §20.
-    ///
-    /// Use `mha1` for raw MHAS frames (config in `mhaC`).  For in-band MHAS
-    /// (`mhm1`) the caller should convert the `codec_type` on the resulting
-    /// [`MhaSampleEntry`] if needed; `build_trak` always emits `mha1`.
-    MpegH {
-        /// The `MHADecoderConfigurationRecord` carried in the `mhaC` box.
-        config: crate::mpegh::MHADecoderConfigurationRecord,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// MPEG-2 video / H.262 (`mp4v` sample entry with an `esds` box) —
-    /// ISO/IEC 13818-2 (ITU-T H.262) carried per ISO/IEC 14496-1 §7.2.6.6
-    /// (ObjectTypeIndication 0x60–0x65, 0x61 = MPEG-2 Main Visual).
-    ///
-    /// The `esds` carries the ES/decoder descriptors (its DecoderSpecificInfo
-    /// optionally the `sequence_header()` bytes); the coded picture geometry is
-    /// decoded from the in-band `sequence_header()` (ISO/IEC 13818-2 §6.2.2.1).
-    Mpeg2Video {
-        /// The `esds` box (its body is re-embedded byte-identically).
-        esds: EsdsBox,
-        /// Coded width in pixels (from the `sequence_header()`).
-        width: u16,
-        /// Coded height in pixels (from the `sequence_header()`).
-        height: u16,
-    },
-    /// MPEG-1/2 audio, Layers I/II/III (`mp4a` sample entry with an `esds` box)
-    /// — ISO/IEC 11172-3 / ISO/IEC 13818-3, carried per ISO/IEC 14496-1
-    /// §7.2.6.6 (ObjectTypeIndication 0x69 = MPEG-2 audio, 0x6B = MPEG-1 audio).
-    MpegAudio {
-        /// The `esds` box (OTI 0x69/0x6B; DecoderSpecificInfo usually empty).
-        esds: EsdsBox,
-        /// Audio layer (1/2/3), from the first frame header.
-        layer: crate::mpeg_legacy::MpegAudioLayer,
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz.
-        sample_rate: u32,
-        /// Sample size in bits (typically 16).
-        sample_size: u16,
-    },
-    /// DTS audio (`dtsc`/`dtsh`/`dtsl`/`dtse` sample entry with a `ddts` box) —
-    /// ETSI TS 102 114 §E.2.
-    ///
-    /// `codec_fourcc` selects the sample-entry FourCC:
-    /// `dtsc` (core only), `dtsh` (core + extension / multi-asset),
-    /// `dtsl` (LBR only), or `dtse` (extension substream only).
-    /// Use [`crate::dts::DTSC_FOURCC`] etc. for the named constants.
-    Dts {
-        /// The `ddts` DTSSpecificBox.
-        config: DtsSpecificBox,
-        /// Sample-entry FourCC: one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
-        codec_fourcc: [u8; 4],
-        /// Channel count.
-        channel_count: u16,
-        /// Sampling rate in Hz (48000, 44100, or 32000 per §E.2.2.2).
-        sample_rate: u32,
-        /// Sample size in bits (always 16 per §E.2.2.2).
-        sample_size: u16,
-    },
-    /// VP8 video (WebM-native; RFC 6386).
-    ///
-    /// VP8 has **no** out-of-band configuration box — the coded dimensions are
-    /// carried in the key-frame header (RFC 6386 §9.1) and decoded from the first
-    /// key frame at demux time (see `transmux/docs/codec/vp8-vorbis-webm.md`).
-    /// Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there is no
-    /// ISOBMFF sample entry for VP8 in this crate (out of scope), so it does not
-    /// participate in the fMP4 mux path.
-    Vp8 {
-        /// Coded width in pixels (key-frame header, masked `& 0x3FFF`).
-        width: u16,
-        /// Coded height in pixels (key-frame header, masked `& 0x3FFF`).
-        height: u16,
-    },
-    /// Vorbis audio (WebM-native; Vorbis I specification, xiph.org).
-    ///
-    /// The three setup headers (Identification / Comment / Setup) are carried
-    /// verbatim in `codec_private` (Xiph-laced, exactly as WebM `CodecPrivate`
-    /// stores them — see `transmux/docs/codec/vp8-vorbis-webm.md`); `channels`
-    /// and `sample_rate` are decoded from the Identification header (Vorbis I
-    /// §4.2.2). Carried in the IR for `{WebM} → IR → {WebM}` / inspection; there
-    /// is no ISOBMFF sample entry for Vorbis in this crate (out of scope), so it
-    /// does not participate in the fMP4 mux path.
-    Vorbis {
-        /// The Xiph-laced 3-header `CodecPrivate`, verbatim.
-        codec_private: Vec<u8>,
-        /// Channel count (`audio_channels`, Vorbis I §4.2.2).
-        channels: u16,
-        /// Sampling rate in Hz (`audio_sample_rate`, Vorbis I §4.2.2).
-        sample_rate: u32,
-    },
-    /// Opaque data track (issue #557/#576): a PMT-listed elementary stream
-    /// whose `stream_type` is not a codec this crate decodes (DVB subtitles
-    /// EN 300 743, teletext EN 300 472, SMPTE 2038 ANC, ID3/KLV metadata,
-    /// SCTE-35, DSM-CC, private sections, and any other/unrecognised
-    /// `stream_type`) — carried losslessly rather than dropped. `stream_type`
-    /// per ISO/IEC 13818-1 Table 2-34; `descriptors` is the raw PMT ES_info
-    /// descriptor loop so consumers can classify it (e.g. with dvb-si's
-    /// parsers); `carriage` records whether the samples are PES payloads or
-    /// whole PSI/private sections — see [`DataCarriage`].
-    ///
-    /// Carried in the IR for `{TS} → IR → {TS}` / inspection; there is no
-    /// ISOBMFF sample entry for an opaque stream in this crate (out of
-    /// scope), so it does not participate in the fMP4 mux path (mirrors
-    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]) — the fMP4/CMAF mux
-    /// omits such tracks entirely rather than erroring (issue #576).
-    Data {
-        /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
-        stream_type: u8,
-        /// The raw PMT ES_info descriptor-loop bytes for this stream.
-        descriptors: Vec<u8>,
-        /// Whether this elementary stream carries PES packets or PSI/private
-        /// sections (ISO/IEC 13818-1 §2.4.4.8) — determines how a demuxer
-        /// reassembles it and how a muxer re-emits it.
-        carriage: DataCarriage,
-    },
-}
-
-impl CodecConfig {
-    fn is_audio(&self) -> bool {
-        matches!(
-            self,
-            CodecConfig::Aac { .. }
-                | CodecConfig::Ac3 { .. }
-                | CodecConfig::Eac3 { .. }
-                | CodecConfig::Opus { .. }
-                | CodecConfig::Flac { .. }
-                | CodecConfig::Ac4 { .. }
-                | CodecConfig::MpegH { .. }
-                | CodecConfig::Dts { .. }
-                | CodecConfig::MpegAudio { .. }
-                | CodecConfig::Vorbis { .. }
-        )
-    }
-
-    /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
-    /// PMT-carried elementary stream with no ISOBMFF sample entry in this
-    /// crate. The fMP4/CMAF mux path (init segment + every packager built on
-    /// it) omits such tracks entirely rather than erroring — mirrors how the
-    /// TS mux path, unlike this one, *can* carry them verbatim.
-    pub(crate) fn is_opaque_data(&self) -> bool {
-        matches!(self, CodecConfig::Data { .. })
-    }
-
-    /// True if `self` is a video codec (issue #628) — codec-family-complete
-    /// regardless of which output container actually carries it (e.g. the TS
-    /// mux path does not carry every variant matched here; see
-    /// `ts_mux::EsKind::from_config`). Mirrors [`CodecConfig::is_audio`]. Used
-    /// to pick the anchor/segmentation track (`ts_hls::choose_anchor`,
-    /// `Segmenter::new`).
-    pub(crate) fn is_video(&self) -> bool {
-        matches!(
-            self,
-            CodecConfig::Avc { .. }
-                | CodecConfig::Hevc { .. }
-                | CodecConfig::Vvc { .. }
-                | CodecConfig::Av1 { .. }
-                | CodecConfig::Vp9 { .. }
-                | CodecConfig::Vp8 { .. }
-                | CodecConfig::Mpeg2Video { .. }
-        )
-    }
-}
-
-/// A track's identity + codec config, used to build the init segment.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct TrackSpec {
-    /// Track ID (1-based, unique within the movie).
-    pub track_id: u32,
-    /// Media timescale (ticks per second, e.g. 90000 for video).
-    pub timescale: u32,
-    /// Codec configuration + dimensions.
-    pub config: CodecConfig,
-    /// Source elementary-stream PID for TS-demuxed tracks; `None` for non-TS
-    /// sources (fMP4/FLV/WebM/PS/RTP). (issue #582)
-    pub source_pid: Option<u16>,
-    /// Raw PMT ES_info descriptor-loop bytes for this elementary stream
-    /// (ISO/IEC 13818-1 §2.4.4.8), verbatim; empty for non-TS sources.
-    /// transmux does not parse these — consumers use dvb-si. (issue #582)
-    pub es_info_descriptors: Vec<u8>,
-}
-
-impl TrackSpec {
-    /// A track spec with no TS provenance (`source_pid = None`, no ES_info
-    /// descriptors) — the common case for every non-TS demuxer/transform.
-    pub fn new(track_id: u32, timescale: u32, config: CodecConfig) -> Self {
-        Self {
-            track_id,
-            timescale,
-            config,
-            source_pid: None,
-            es_info_descriptors: Vec::new(),
-        }
-    }
-
-    /// Attach TS provenance (issue #582): the source elementary-stream PID
-    /// and its verbatim PMT ES_info descriptor-loop bytes.
-    pub fn with_source(mut self, source_pid: u16, es_info_descriptors: Vec<u8>) -> Self {
-        self.source_pid = Some(source_pid);
-        self.es_info_descriptors = es_info_descriptors;
-        self
-    }
-}
-
-/// Explicit per-sample timestamps recovered from the source container, in the
-/// source's own clock — for TS/PES sources the 33-bit-unwrapped 90 kHz PES
-/// clock (ISO/IEC 13818-1 §2.4.3.7). `None` when the source carries no
-/// per-sample timestamps or the sample's time was synthesized.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SourceTiming {
-    /// Decode timestamp (90 kHz for TS sources), unwrapped.
-    pub dts: u64,
-    /// Presentation timestamp (90 kHz for TS sources), unwrapped.
-    pub pts: u64,
-}
-
-/// A single coded sample (access unit) fed to [`build_media_segment`].
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct Sample {
-    /// Coded bytes: **length-prefixed** NAL data for AVC/HEVC, or the raw frame
-    /// for AAC. Use [`Sample::from_annexb`] to convert an Annex B access unit.
-    pub data: Vec<u8>,
-    /// Sample duration in the track's media timescale.
-    pub duration: u32,
-    /// Whether this is a sync sample (random-access point / keyframe).
-    pub is_sync: bool,
-    /// Composition time offset (`pts − dts`) in media-timescale ticks.
-    pub composition_offset: i32,
-    /// Explicit source-container timestamps, when the source carries them
-    /// per-sample (see [`SourceTiming`]). All mux paths in this crate ignore
-    /// this field — fMP4 output timing stays duration-based
-    /// ([`FragmentTrackData::base_media_decode_time`] + running `duration` sum).
-    pub source_timing: Option<SourceTiming>,
-}
-
-impl Sample {
-    /// Build a sample from already-encoded bytes with every field explicit
-    /// (issue #580: the general-purpose constructor now that `Sample` is
-    /// `#[non_exhaustive]` and cannot be struct-literal-constructed outside
-    /// this crate). `data` must already be in this crate's wire form
-    /// (length-prefixed for AVC/HEVC) — use [`Sample::from_annexb`] to
-    /// convert an Annex B access unit instead.
-    pub fn new(data: Vec<u8>, duration: u32, is_sync: bool, composition_offset: i32) -> Self {
-        Self {
-            data,
-            duration,
-            is_sync,
-            composition_offset,
-            source_timing: None,
-        }
-    }
-
-    /// Build a video sample from an Annex B access unit, converting its NAL
-    /// units to the length-prefixed `mdat` form.
-    pub fn from_annexb(
-        annexb: &[u8],
-        duration: u32,
-        is_sync: bool,
-        composition_offset: i32,
-    ) -> Self {
-        Self {
-            data: annexb_to_length_prefixed(annexb),
-            duration,
-            is_sync,
-            composition_offset,
-            source_timing: None,
-        }
-    }
-
-    /// Build an audio sample from a raw coded frame (e.g. an AAC access unit).
-    pub fn from_raw(data: Vec<u8>, duration: u32) -> Self {
-        Self {
-            data,
-            duration,
-            is_sync: true,
-            composition_offset: 0,
-            source_timing: None,
-        }
-    }
-
-    /// Attach explicit [`SourceTiming`] recovered from the source container,
-    /// returning `self` (builder style).
-    pub fn with_source_timing(mut self, t: SourceTiming) -> Self {
-        self.source_timing = Some(t);
-        self
-    }
-}
-
-/// One track's samples for a single media segment.
-pub struct FragmentTrackData<'a> {
-    /// Track ID matching a [`TrackSpec`] from the init segment.
-    pub track_id: u32,
-    /// The decode time of the first sample, in media-timescale ticks.
-    pub base_media_decode_time: u64,
-    /// The samples for this fragment, in decode order.
-    pub samples: &'a [Sample],
-}
+/// [`CodecConfig`], [`DataCarriage`], [`TrackSpec`], [`Sample`],
+/// [`SampleFlags`], [`Provenance`], [`FragmentTrackData`] moved to
+/// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
+/// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
+pub use crate::ir::{
+    CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, SubtitleFormat,
+    TrackSpec,
+};
 
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
 /// given tracks. The `moov` carries empty sample tables (`stts`/`stsc`/`stsz`/
@@ -551,13 +99,18 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     let mut trak_boxes = Vec::with_capacity(tracks.len());
     let mut trex = Vec::with_capacity(tracks.len());
     for t in tracks {
-        // Opaque data tracks have no ISOBMFF sample entry in this crate
-        // (issue #557/#576) — omit them from the fMP4/CMAF mux path entirely
-        // rather than erroring, so a Media containing e.g. a DVB
-        // subtitle/DSM-CC/SCTE-35 track still produces a valid init segment
-        // for its carriable (video/audio) tracks.
-        if t.config.is_opaque_data() {
-            continue;
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B1-B4): a track this crate cannot place into an ISOBMFF `trak`
+        // (opaque `CodecConfig::Data` — issue #557/#576 — or
+        // `CodecConfig::Subtitle`, `TODO(#753)`) is rejected, naming it,
+        // rather than silently omitted — every mux entry point built on this
+        // function (`CmafMux`, `ProgressiveMux`, `Segmenter`,
+        // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
+        // Media containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
+        // the same way everywhere; the caller must pre-filter first (e.g.
+        // with `Media::select_tracks_by`).
+        if !t.config.is_muxable_in_bmff() {
+            return Err(unmuxable_track_error(t));
         }
         trak_boxes.push(build_trak(t)?);
         trex.push(TrackExtendsBox {
@@ -586,6 +139,24 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
     let n2 = moov.serialize_into(&mut out[n1..])?;
     out.truncate(n1 + n2);
     Ok(out)
+}
+
+/// Build the named, typed rejection for a track [`CodecConfig::is_muxable_in_bmff`]
+/// says `build_init_segment` cannot carry — [`Error::UnmuxableDataTrack`] for
+/// the opaque PES carriage, [`Error::UnmuxableSubtitleTrack`] for a subtitle
+/// track (B1, media plane step-2 fix wave 1).
+fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
+    match &t.config {
+        CodecConfig::Data { stream_type, .. } => crate::error::Error::UnmuxableDataTrack {
+            track_id: t.track_id,
+            stream_type: *stream_type,
+        },
+        CodecConfig::Subtitle { format } => crate::error::Error::UnmuxableSubtitleTrack {
+            track_id: t.track_id,
+            format: *format,
+        },
+        _ => unreachable!("is_muxable_in_bmff() is only false for Data/Subtitle"),
+    }
 }
 
 /// Serialize a typed config box body and wrap it as an [`OpaqueBox`] under the
@@ -1080,6 +651,16 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         CodecConfig::Data { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Data" });
         }
+        // Subtitle track (media plane step 2d): `Fmp4Demux` now demuxes
+        // `stpp`/`wvtt` into this variant (issue: media plane step 2d), but
+        // only the format tag is carried — reconstructing the sample entry
+        // needs the TTML namespace / WebVTT header block the tag alone
+        // doesn't retain. TODO(#753): thread those through `CodecConfig` (or
+        // a side-channel) so a `Subtitle` track can round-trip through the
+        // fMP4 mux path instead of erroring here.
+        CodecConfig::Subtitle { .. } => {
+            return Err(crate::error::Error::UnsupportedCodec { codec: "Subtitle" });
+        }
     };
 
     let stbl = SampleTableBox {
@@ -1235,20 +816,20 @@ pub fn build_media_segment_with_events(
     // independent, so the moof size is stable once structured).
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        let any_cts = ft.samples.iter().any(|s| s.composition_offset != 0);
+        let any_cts = ft.samples.iter().any(|s| s.composition_offset() != 0);
         let samples: Vec<TrunSample> = ft
             .samples
             .iter()
             .map(|s| TrunSample {
-                sample_duration: Some(s.duration),
+                sample_duration: Some(s.duration.unwrap_or(0)),
                 sample_size: Some(s.data.len() as u32),
-                sample_flags: Some(if s.is_sync {
+                sample_flags: Some(if s.flags.is_sync {
                     SAMPLE_FLAGS_SYNC
                 } else {
                     SAMPLE_FLAGS_NON_SYNC
                 }),
                 sample_composition_time_offset: if any_cts {
-                    Some(s.composition_offset)
+                    Some(s.composition_offset())
                 } else {
                     None
                 },

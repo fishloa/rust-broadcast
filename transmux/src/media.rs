@@ -1,10 +1,11 @@
-//! Media intermediate representation (IR) + the any-to-any hub impls.
+//! The any-to-any hub impls over the [`crate::ir`] media IR.
 //!
 //! This module is the transmux side of the `broadcast-common` container-mux
 //! vocabulary ([`broadcast_common::Unpackage`] / [`broadcast_common::Package`]).
-//! It defines a concrete [`Media`] IR — elementary [`Track`]s of coded
-//! [`Sample`]s — and the packagers/depackagers that convert between that IR and
-//! concrete container forms:
+//! The [`Media`] IR itself ([`Media`]/[`Track`]/[`TrackEncryption`]/[`PcrSample`],
+//! re-exported here from [`crate::ir`]) is elementary [`Track`]s of coded
+//! [`Sample`]s; this module holds the packagers/depackagers that convert
+//! between that IR and concrete container forms:
 //!
 //! - [`Fmp4Demux`] : [`Unpackage`] `<Input = &[u8]>` — parse a fragmented
 //!   ISOBMFF/CMAF file (init `moov` + one or more `moof`/`mdat` fragments) into
@@ -28,7 +29,7 @@
 //! crypto metadata onto [`Track::encryption`].
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -36,20 +37,25 @@ use core::marker::PhantomData;
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
+use crate::ac4::Ac4SpecificBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
 use crate::dts::DtsSpecificBox;
 use crate::error::{Error, Result};
 use crate::flac::FlacSpecificBox;
 use crate::hls::{MediaPlaylist, MediaSegment};
 use crate::init_segment::{MovieBox, OpaqueBox, SampleEntryVariant, StblChild, TrackBox};
+use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
 use crate::movie_fragment::MovieFragmentBox;
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use crate::opus::OpusSpecificBox;
-use crate::pipeline::{
-    CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
-};
+use crate::pipeline::{build_init_segment, build_media_segment};
+
+/// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
+/// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
+/// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
+pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 
 /// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
 /// (ISO/IEC 14496-12:2015 §8.8.3.1, bit `[16]`). Set = the sample is **not** a
@@ -64,157 +70,6 @@ const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 const OTI_MPEG2_AUDIO: u8 = 0x69;
 /// `esds` `objectTypeIndication` for MPEG-1 Audio (ISO/IEC 11172-3) — Table 5.
 const OTI_MPEG1_AUDIO: u8 = 0x6B;
-
-/// One elementary track: its identity/codec config plus its coded samples.
-///
-/// A thin wrapper pairing the existing [`TrackSpec`] (track_id + timescale +
-/// [`CodecConfig`]) with the track's decode-ordered [`Sample`]s.
-#[derive(Debug, Clone)]
-pub struct Track {
-    /// Track identity + codec configuration (used to build the init segment).
-    pub spec: TrackSpec,
-    /// The track's coded access units, in decode order.
-    pub samples: Vec<Sample>,
-    /// Absolute decode time of the track's **first** sample, in this track's
-    /// media timescale ([`TrackSpec::timescale`]) ticks.
-    ///
-    /// [`Sample`] timing is stored *relatively* (per-sample [`Sample::duration`];
-    /// a sample's DTS is the running sum of preceding durations, its PTS is
-    /// `DTS + composition_offset`). This field is the missing absolute anchor:
-    /// the DTS the first sample sits at on the presentation timeline. It maps
-    /// directly onto the fragment `tfdt` `baseMediaDecodeTime`
-    /// (ISO/IEC 14496-12:2015 §8.8.12) that [`CmafMux`] writes for the first
-    /// media segment.
-    ///
-    /// Demuxers that recover an absolute timeline populate it ([`Fmp4Demux`]
-    /// from the first movie fragment's `tfdt`; [`TsDemux`](crate::ts_demux::TsDemux)
-    /// from the first sample's DTS). Demuxers whose source carries no absolute anchor
-    /// (FLV, WebM, MPEG Program Stream, RTMP, RTP) leave it `0`. It is the
-    /// input to the timeline transforms in [`crate::rebase`] (rebase-to-zero,
-    /// offset, 33-bit MPEG wrap-unroll — ISO/IEC 13818-1 33-bit timestamps).
-    pub start_decode_time: u64,
-    /// CENC/CBCS crypto metadata for this track's samples, or `None` for
-    /// cleartext. Populated by [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)'s
-    /// [`Encrypt`](broadcast_common::Encrypt) impl (issue #564) or by a
-    /// demuxer of an already-protected source (e.g.
-    /// [`crate::cenc_decrypt::CencDecryptor::demux`]); read by the muxer's
-    /// crypto-box emission (`sinf`/`senc`/`saio`/`saiz`).
-    pub encryption: Option<TrackEncryption>,
-}
-
-impl Track {
-    /// Create a track from its spec and samples, anchored at decode time `0`.
-    pub fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
-        Self {
-            spec,
-            samples,
-            start_decode_time: 0,
-            encryption: None,
-        }
-    }
-
-    /// Create a track from its spec and samples, anchored at an absolute
-    /// `start_decode_time` (in the track's media timescale).
-    pub fn new_at(spec: TrackSpec, samples: Vec<Sample>, start_decode_time: u64) -> Self {
-        Self {
-            spec,
-            samples,
-            start_decode_time,
-            encryption: None,
-        }
-    }
-
-    /// Set the absolute [`start_decode_time`](Self::start_decode_time) anchor,
-    /// returning `self` (builder style).
-    pub fn with_start_decode_time(mut self, start_decode_time: u64) -> Self {
-        self.start_decode_time = start_decode_time;
-        self
-    }
-
-    /// Track ID (1-based, unique within the movie).
-    pub fn track_id(&self) -> u32 {
-        self.spec.track_id
-    }
-
-    /// Media timescale (ticks per second).
-    pub fn timescale(&self) -> u32 {
-        self.spec.timescale
-    }
-
-    /// Codec configuration.
-    pub fn config(&self) -> &CodecConfig {
-        &self.spec.config
-    }
-}
-
-/// Per-track CENC/CBCS crypto carrier attached to [`Track::encryption`].
-///
-/// The IR-side dual of the metadata [`crate::cenc_decrypt::CencDecryptor`]
-/// harvests from an already-protected file's `sinf`/`tenc`/`senc` boxes: this
-/// is exactly the shape [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)
-/// produces (issue #564), and it is what the muxer's crypto-box emission
-/// (`sinf`/`senc`/`saio`/`saiz`) reads back to (re)build the boxes without
-/// needing to know how the samples were protected.
-#[derive(Debug, Clone)]
-pub struct TrackEncryption {
-    /// The protection scheme (`cenc` AES-CTR or `cbcs` AES-CBC pattern).
-    pub scheme: crate::cenc::CencScheme,
-    /// Track-level crypto defaults — KID, per-sample IV size, and (for
-    /// `cbcs`) the pattern's `crypt`:`skip` block counts — ISO/IEC 23001-7
-    /// §12.2.
-    pub tenc: crate::cenc::TrackEncryptionBox,
-    /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
-    /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
-    pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
-}
-
-/// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PcrSample {
-    /// `program_clock_reference` as a 27 MHz value (`base * 300 + extension`).
-    pub pcr_27mhz: u64,
-    /// PID the PCR was carried on.
-    pub pid: u16,
-    /// 0-based index of the 188-byte packet in the demuxed input.
-    pub packet_index: u64,
-    /// The adaptation field's `discontinuity_indicator` (§2.4.3.5).
-    pub discontinuity: bool,
-}
-
-/// The media intermediate representation: a set of elementary [`Track`]s.
-///
-/// This is the hub's neutral form. [`Unpackage`] impls (e.g. [`Fmp4Demux`])
-/// produce a `Media`; [`Package`] impls (e.g. [`CmafMux`], [`HlsPackager`])
-/// consume one.
-#[derive(Debug, Clone)]
-pub struct Media {
-    /// Elementary tracks, in the order they appear in the source movie.
-    pub tracks: Vec<Track>,
-    /// Movie timescale (`mvhd.timescale`), preserved for lossless re-muxing.
-    pub movie_timescale: u32,
-    /// PCR timeline recovered from the source, in wire order
-    /// ([`PcrSample`], ISO/IEC 13818-1 §2.4.3.4). Empty for every demuxer that
-    /// does not read a TS adaptation field (i.e. every non-[`TsDemux`](crate::ts_demux::TsDemux) source).
-    pub pcr: Vec<PcrSample>,
-}
-
-impl Media {
-    /// Create a `Media` from tracks and a movie timescale, with an empty PCR
-    /// timeline.
-    pub fn new(tracks: Vec<Track>, movie_timescale: u32) -> Self {
-        Self {
-            tracks,
-            movie_timescale,
-            pcr: Vec::new(),
-        }
-    }
-
-    /// Attach a PCR timeline, returning `self` (builder style).
-    pub fn with_pcr(mut self, pcr: Vec<PcrSample>) -> Self {
-        self.pcr = pcr;
-        self
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Fmp4Demux — Unpackage<Input = &[u8]>
@@ -248,10 +103,20 @@ impl Fmp4Demux<'_> {
 struct TrackBuilder {
     spec: TrackSpec,
     samples: Vec<Sample>,
-    /// Absolute decode-time anchor, taken from the **first** movie fragment's
-    /// `tfdt` seen for this track (`None` until that fragment is absorbed; a
-    /// stream with no `tfdt` at all yields a `0` anchor).
+    /// Absolute decode-time anchor: the track's start time, taken from the
+    /// **first** movie fragment's `tfdt` seen for this track (`None` until that
+    /// fragment is absorbed; a stream with no `tfdt` at all yields a `0`
+    /// anchor). Distinct from `next_dts`, which every later `tfdt` re-seeds.
     start_decode_time: Option<u64>,
+    /// Running absolute decode time for the *next* sample to be pushed, in
+    /// this track's media timescale (media plane step 2c: `Sample::dts` is
+    /// now absolute, so this replaces the old "reconstruct via anchor + Σ
+    /// duration downstream" model with the equivalent running value carried
+    /// forward while demuxing). **Re-seeded from every fragment's own `tfdt`**
+    /// (falling back to the running sum for a fragment that carries none, and
+    /// to `0` if the stream never carries one), then advanced by each sample's
+    /// duration in decode order — see `absorb_fragment`.
+    next_dts: i64,
 }
 
 impl<'a> Unpackage for Fmp4Demux<'a> {
@@ -266,17 +131,27 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         let moov = MovieBox::parse(moov_bytes)?;
         let movie_timescale = moov.mvhd.timescale;
 
-        // A track whose sample entry the crate cannot reconstruct into a
-        // `CodecConfig` (an unknown/unsupported codec) is skipped, never fatal:
-        // its samples are simply not collected in step 2.
+        // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
+        // track whose sample entry the crate cannot reconstruct into a
+        // `CodecConfig` (a QuickTime hint/chapter track, `c608`/`c708`,
+        // GoPro `gpmd`, or any other FourCC with no `CodecConfig`
+        // reconstruction — codec coverage (`stpp`/`wvtt`/`ac-4`) already
+        // landed, so what remains unreconstructable is a genuine gap) is
+        // skipped, not a whole-file failure — mirrors
+        // [`crate::progressive_demux::ProgressiveDemux`]'s per-track
+        // handling, which this used to diverge from. The caller still
+        // learns about it via [`Media::skipped`], never silently.
         let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
+        let mut skipped: Vec<SkippedTrack> = Vec::new();
         for trak in &moov.tracks {
-            if let Ok(spec) = track_spec_from_trak(trak) {
-                builders.push(TrackBuilder {
+            match track_spec_from_trak(trak) {
+                Ok(spec) => builders.push(TrackBuilder {
                     spec,
                     samples: Vec::new(),
                     start_decode_time: None,
-                });
+                    next_dts: 0,
+                }),
+                Err(err) => skipped.push(skipped_track(err)),
             }
         }
 
@@ -321,6 +196,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             tracks,
             movie_timescale,
             pcr: Vec::new(),
+            skipped,
         })
     }
 }
@@ -343,12 +219,29 @@ fn absorb_fragment(
             // skip it (well-formed CMAF declares every track in the init moov).
             continue;
         };
-        // The absolute decode-time anchor is the baseMediaDecodeTime of the
-        // FIRST fragment seen for this track (ISO/IEC 14496-12:2015 §8.8.12).
-        if builder.start_decode_time.is_none() {
-            if let Some(tfdt) = &traf.tfdt {
-                builder.start_decode_time = Some(tfdt.base_media_decode_time());
+        // `tfdt` is authoritative for **every** fragment that carries one, not
+        // just the first (ISO/IEC 14496-12:2015 §8.8.12: it *is* the absolute
+        // decode time of the fragment's first sample). Seeding once and then
+        // pure-summing `trun` durations silently assumes the source is gapless;
+        // for a discontinuous or gapped fMP4 (a DVR recording spliced across a
+        // dropout, a live capture that missed segments) every sample after the
+        // gap came out short by the gap, which then re-muxes to a wrong `tfdt`
+        // / PES stamp and permanently desyncs A/V.
+        //
+        // Re-seeding per fragment carries the gap through into the samples'
+        // absolute `dts` — which, for a batch `Media`, is what representing the
+        // discontinuity means: this IR has no event channel to raise it on, and
+        // the honest alternative to a preserved gap is a fabricated
+        // contiguity, not a report.
+        //
+        // `start_decode_time` still records the FIRST fragment's anchor: it is
+        // the track's start time, not a running cursor.
+        if let Some(tfdt) = &traf.tfdt {
+            let base = tfdt.base_media_decode_time();
+            if builder.start_decode_time.is_none() {
+                builder.start_decode_time = Some(base);
             }
+            builder.next_dts = base as i64;
         }
         for trun in &traf.trun {
             // data_offset is measured from the start of the moof box when
@@ -379,7 +272,7 @@ fn absorb_fragment(
                     .or(tfhd.default_sample_flags)
                     .unwrap_or(0);
                 let is_sync = flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0);
+                let composition_offset = ts.sample_composition_time_offset.unwrap_or(0) as i64;
 
                 let start = usize::try_from(cursor)
                     .map_err(|_| Error::InvalidInput("negative sample data offset"))?;
@@ -391,16 +284,25 @@ fn absorb_fragment(
                         what: "fragment sample data",
                     });
                 }
+                // Absolute dts/pts (media plane step 2c): `next_dts` is the
+                // running cursor seeded from this track's first `tfdt` (or 0
+                // if the stream never carried one); pts folds in the trun
+                // composition offset directly rather than storing it
+                // separately.
+                let dts = builder.next_dts;
+                let pts = dts + composition_offset;
                 builder.samples.push(Sample {
-                    data: file[start..end].to_vec(),
-                    duration,
-                    is_sync,
-                    composition_offset,
+                    data: file[start..end].to_vec().into(),
+                    dts: Some(dts),
+                    pts: Some(pts),
+                    duration: Some(duration),
+                    flags: crate::ir::SampleFlags::new(is_sync),
                     // fMP4 sources carry no per-sample source-container
                     // timestamps distinct from the fragment's own tfdt/trun
-                    // timing (see `Sample::source_timing`).
-                    source_timing: None,
+                    // timing (see `Sample::provenance`).
+                    provenance: None,
                 });
+                builder.next_dts += duration as i64;
                 cursor += size as i64;
             }
         }
@@ -446,20 +348,16 @@ impl Package for CmafMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576) — omit them from the fMP4/CMAF mux
-        // path entirely (init segment AND media segment) rather than
-        // erroring, so a TS multiplex mixing carriable and opaque streams
-        // still produces a valid CMAF output for its carriable tracks.
-        // `select_tracks_by` itself errors if nothing carriable remains.
-        let filtered;
-        let media: &Media = if media.tracks.iter().any(|t| t.spec.config.is_opaque_data()) {
-            filtered = media.select_tracks_by(|t| !t.spec.config.is_opaque_data())?;
-            &filtered
-        } else {
-            media
-        };
-
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B1-B4): `build_init_segment` below rejects (naming it) the first
+        // track it cannot place into an ISOBMFF `trak` — an opaque
+        // `CodecConfig::Data` track (issue #557/#576) or a
+        // `CodecConfig::Subtitle` track (B1) — rather than silently
+        // dropping it, so a caller mixing carriable and non-carriable
+        // streams must explicitly opt in to dropping the latter, e.g. with
+        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`
+        // before calling `package`. This is the single shared check every
+        // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = if media.movie_timescale == 0 {
             DEFAULT_MOVIE_TIMESCALE
@@ -530,7 +428,29 @@ impl Package for HlsPackager {
         // float intrinsic (`f64::ceil`) is needed in `no_std`.
         let mut target_secs = 0u32;
         for t in &media.tracks {
-            let ticks: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+            // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC,
+            // private sections) has no timestamps and no durations at all —
+            // `Sample::duration` is `None` for every sample, deliberately, and
+            // is never fabricated. Summing `unwrap_or(0)` over it rendered
+            // `#EXTINF:0.000`, a duration RFC 8216 §4.3.2.1 defines as this
+            // segment's real playback time — i.e. a knowingly-wrong value a
+            // player would honour.
+            //
+            // Decision: **omit the track from the playlist**. An HLS media
+            // playlist is a timeline of playable segments; a track with no
+            // timeline is not one, and this packager has nothing truthful to
+            // put in its `EXTINF`. Such a track still reaches an output via
+            // the paths built for it (an inband `emsg`, an
+            // `EXT-X-DATERANGE`) — see `timed-metadata` — never as a
+            // zero-length segment here.
+            if t.samples.iter().all(|s| s.duration.is_none()) {
+                continue;
+            }
+            let ticks: u64 = t
+                .samples
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             let ts = if t.spec.timescale == 0 {
                 1
             } else {
@@ -547,6 +467,13 @@ impl Package for HlsPackager {
                 parts: vec![],
                 ..Default::default()
             });
+        }
+        if segments.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot package a Media whose every track is timestamp-less \
+                 (section-carried): an HLS media playlist needs at least one \
+                 segment with a real EXTINF duration",
+            ));
         }
         let playlist = MediaPlaylist {
             version: self.version,
@@ -635,17 +562,49 @@ pub(crate) fn track_spec_from_trak(trak: &TrackBox) -> Result<TrackSpec> {
     Ok(TrackSpec::new(track_id, timescale, config))
 }
 
+/// Build a [`SkippedTrack`] record for a `trak` [`track_spec_from_trak`]
+/// rejected (media plane step-2 fix wave 1, B2/B3).
+///
+/// Prefers the [`Error::UnsupportedSampleEntry`] FourCC — the common
+/// real-world case: an unrecognised `stsd` entry (a QuickTime hint/chapter
+/// track, `c608`/`c708`, GoPro `gpmd`, ...) is the *only* way
+/// `track_spec_from_trak` can fail once it has reached a `stsd` entry at all
+/// ([`codec_config_from_entry`] only errors on
+/// [`SampleEntryVariant::Unknown`](crate::init_segment::SampleEntryVariant::Unknown)).
+/// Any other error means the `trak` was too structurally malformed to even
+/// reach an entry (missing `mdia`/`mdhd`/`minf`/`stbl`/`stsd`), so there is no
+/// FourCC to recover; `"unknown"` names that case honestly rather than
+/// guessing.
+pub(crate) fn skipped_track(err: Error) -> SkippedTrack {
+    let fourcc = match &err {
+        Error::UnsupportedSampleEntry { fourcc } => fourcc.clone(),
+        _ => String::from("unknown"),
+    };
+    SkippedTrack {
+        fourcc,
+        reason: err.to_string(),
+    }
+}
+
 /// Reconstruct a [`CodecConfig`] from an `stsd` sample entry.
 ///
 /// Every codec the crate can output reconstructs losslessly by re-parsing the
 /// config record out of the sample entry: video codecs carry a typed config
 /// box on the sample entry (`avcC`/`hvcC`/`av1C`/`vpcC`); audio codecs carry
 /// the config box as an [`OpaqueBox`] body (`esds`/`dac3`/`dec3`/`dOps`/
-/// `dfLa`/`ddts`/`mhaC`) which is re-parsed here. Sample entries the crate does
-/// not mux (e.g. `stpp`/`wvtt`/`ac-4`, and `SampleEntryVariant::Unknown`)
-/// yield [`Error::UnexpectedBox`] so [`Fmp4Demux`] can skip the track
-/// (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15 §5.4/§8.4 for AVC/HEVC;
-/// ISO/IEC 23008-3 §20 for MPEG-H `mha*`).
+/// `dfLa`/`ddts`/`dac4`/`mhaC`) which is re-parsed here; `stpp`/`wvtt`
+/// subtitle entries carry no per-track config this crate needs to decode —
+/// only their format tag — and become [`CodecConfig::Subtitle`] (media plane
+/// step 2d; samples stay opaque TTML/WebVTT payloads, never parsed).
+///
+/// Only `SampleEntryVariant::Unknown` — a sample entry naming a codec this
+/// crate genuinely does not implement — yields
+/// [`Error::UnsupportedSampleEntry`], propagated by [`Fmp4Demux`] rather than
+/// silently skipping the track (media plane step 2d: codec coverage lands
+/// *before* this strictness, so `stpp`/`wvtt`/`ac-4` — which used to hit this
+/// path — no longer do) (ISO/IEC 14496-12:2015 §8.5.2 sample entries; -15
+/// §5.4/§8.4 for AVC/HEVC; ISO/IEC 23008-3 §20 for MPEG-H `mha*`; ISO/IEC
+/// 14496-30 §7.2/§9.2 for `stpp`/`wvtt`; ETSI TS 103 190-2 Annex E for `ac-4`).
 fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
     match entry {
         SampleEntryVariant::Avc1(avc) => Ok(CodecConfig::Avc {
@@ -784,12 +743,33 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 sample_size: mha.samplesize,
             })
         }
-        // Sample entries transmux does not (re)mux to an elementary track.
-        SampleEntryVariant::Ac4(_)
-        | SampleEntryVariant::Stpp(_)
-        | SampleEntryVariant::Wvtt(_)
-        | SampleEntryVariant::Unknown(_) => Err(Error::UnexpectedBox {
-            expected: "a codec sample entry transmux can reconstruct (avc1/hvc1/vvc1/mp4v/av01/vp09/mp4a/ac-3/ec-3/Opus/fLaC/dts*/mha*)",
+        SampleEntryVariant::Ac4(ac4) => {
+            let config = Ac4SpecificBox::parse(config_box_body(
+                &ac4.config_boxes,
+                &crate::ac4::DAC4_FOURCC,
+            )?)?;
+            Ok(CodecConfig::Ac4 {
+                config,
+                channel_count: ac4.channelcount,
+                sample_rate: ac4.samplerate >> 16,
+                sample_size: ac4.samplesize,
+            })
+        }
+        // Subtitle sample entries (media plane step 2d): only the format tag
+        // is reconstructed — the TTML namespace / WebVTT header block lives
+        // in the sample entry but this crate has no field to carry it back
+        // out to yet (see `CodecConfig::Subtitle`'s doc comment). Samples
+        // stay opaque (TTML XML / WebVTT `vttc`/`vtte` boxes), never parsed.
+        SampleEntryVariant::Stpp(_) => Ok(CodecConfig::Subtitle {
+            format: SubtitleFormat::Ttml,
+        }),
+        SampleEntryVariant::Wvtt(_) => Ok(CodecConfig::Subtitle {
+            format: SubtitleFormat::WebVtt,
+        }),
+        // Genuinely unimplemented sample entry: name it so the caller learns
+        // which track was rejected, rather than a generic message.
+        SampleEntryVariant::Unknown(entry) => Err(Error::UnsupportedSampleEntry {
+            fourcc: String::from_utf8_lossy(&entry.box_type).into_owned(),
         }),
     }
 }
@@ -840,4 +820,312 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [
         .ok_or(Error::UnexpectedBox {
             expected: "config box in audio sample entry",
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::subtitle_entries::WvttSampleEntry;
+
+    /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
+    /// `stpp`/TTML — see `tests/fixtures/mp4/cmaf/PROVENANCE.md`), so WebVTT
+    /// demux coverage is exercised directly here: synthesise a real `wvtt`
+    /// sample entry with the crate's own builder (already covered by
+    /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it
+    /// through the same reconstruction path the `stpp` fixture exercises.
+    #[test]
+    fn wvtt_sample_entry_demuxes_to_subtitle_webvtt() {
+        let wvtt = WvttSampleEntry::new("WEBVTT\n");
+        let entry = SampleEntryVariant::Wvtt(alloc::boxed::Box::new(wvtt));
+        let config = codec_config_from_entry(&entry).expect("wvtt must now demux");
+        assert!(
+            matches!(
+                config,
+                CodecConfig::Subtitle {
+                    format: SubtitleFormat::WebVtt
+                }
+            ),
+            "wvtt must map to CodecConfig::Subtitle{{format: SubtitleFormat::WebVtt}}, got {config:?}"
+        );
+    }
+
+    /// A genuinely unrecognised sample entry must be named in the error
+    /// (media plane step 2d Phase 2), not just a generic "unsupported"
+    /// message.
+    #[test]
+    fn unknown_sample_entry_errors_naming_the_fourcc() {
+        let unknown = OpaqueBox::new(*b"xyz9", vec![1, 2, 3]);
+        let entry = SampleEntryVariant::Unknown(unknown);
+        let err = codec_config_from_entry(&entry).unwrap_err();
+        match err {
+            Error::UnsupportedSampleEntry { fourcc } => assert_eq!(fourcc, "xyz9"),
+            other => panic!("expected UnsupportedSampleEntry, got {other:?}"),
+        }
+    }
+
+    // ── Gapped / discontinuous fMP4 (per-fragment `tfdt` re-seed) ───────────
+
+    /// A minimal but real `avcC` — the same Baseline SPS/PPS pair
+    /// `avc_config::tests::make_minimal_avcc_body` builds, expressed
+    /// structurally so this test needs no fixture file.
+    fn minimal_avc_config() -> crate::avc_config::AVCConfigurationBox {
+        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use crate::nalu_types::{AvcPps, AvcSps};
+        AVCConfigurationBox {
+            config: AVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                profile_indication: 66,
+                profile_compatibility: 0,
+                level_indication: 0x1E,
+                length_size_minus_one: 3,
+                sps: vec![AvcSps(vec![0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40])],
+                pps: vec![AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+                chroma_format: None,
+                bit_depth_luma_minus8: None,
+                bit_depth_chroma_minus8: None,
+                sps_ext: Vec::new(),
+            },
+        }
+    }
+
+    /// PROVENANCE: synthesised, not a captured file. No committed fixture in
+    /// this workspace carries a *gapped* fMP4 (every CMAF capture here is
+    /// contiguous), so the two fragments are built with this crate's own
+    /// [`build_init_segment`] / [`build_media_segment`] — i.e. the exact
+    /// `moof`/`tfdt`/`trun` layout the muxer emits (ISO/IEC 14496-12 §8.8),
+    /// not hand-rolled bytes — with the second fragment's
+    /// `base_media_decode_time` deliberately advanced past the running sum of
+    /// the first fragment's `trun` durations.
+    ///
+    /// Seeding `next_dts` from only the FIRST `tfdt` and then pure-summing
+    /// durations makes every post-gap sample's absolute `dts` short by exactly
+    /// the gap, which re-muxes to a wrong `tfdt`/PES stamp and permanently
+    /// desyncs A/V. `tfdt` is per-fragment and authoritative (§8.8.12).
+    #[test]
+    fn gapped_fmp4_reseeds_absolute_dts_from_each_fragments_own_tfdt() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+        const FRAMES_PER_FRAGMENT: u32 = 4;
+        /// Decode time the second fragment declares — one whole extra frame
+        /// beyond where the first fragment's durations leave off.
+        const GAP_TICKS: u64 = FRAME_DUR as u64;
+
+        let spec = TrackSpec::new(
+            1,
+            TIMESCALE,
+            CodecConfig::Avc {
+                config: minimal_avc_config(),
+                width: 16,
+                height: 16,
+            },
+        );
+        let init = build_init_segment(core::slice::from_ref(&spec), TIMESCALE)
+            .expect("init segment builds");
+
+        let frames = |base: i64| -> Vec<Sample> {
+            (0..FRAMES_PER_FRAGMENT)
+                .map(|i| {
+                    // One length-prefixed non-IDR NAL; content is irrelevant
+                    // here (this test is about timing, not codec bytes).
+                    let nal = [0x41u8, 0xAA, 0xBB];
+                    let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                    data.extend_from_slice(&nal);
+                    let dts = base + i64::from(i) * i64::from(FRAME_DUR);
+                    Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
+                })
+                .collect()
+        };
+
+        let first_base = 0u64;
+        let contiguous_second_base = u64::from(FRAMES_PER_FRAGMENT * FRAME_DUR);
+        let gapped_second_base = contiguous_second_base + GAP_TICKS;
+
+        let f1 = frames(first_base as i64);
+        let f2 = frames(gapped_second_base as i64);
+        let seg1 = build_media_segment(1, &[FragmentTrackData::new(1, first_base, &f1)])
+            .expect("fragment 1 builds");
+        let seg2 = build_media_segment(2, &[FragmentTrackData::new(1, gapped_second_base, &f2)])
+            .expect("fragment 2 builds");
+
+        let mut file = init;
+        file.extend_from_slice(&seg1);
+        file.extend_from_slice(&seg2);
+
+        let media = Fmp4Demux::new()
+            .unpackage(&file)
+            .expect("demux gapped fMP4");
+        let track = &media.tracks[0];
+        assert_eq!(
+            track.samples.len(),
+            (FRAMES_PER_FRAGMENT * 2) as usize,
+            "both fragments' samples must be present"
+        );
+        assert_eq!(
+            track.start_decode_time, first_base,
+            "start_decode_time stays the FIRST fragment's anchor, not the last"
+        );
+
+        // The bite: the first post-gap sample must land on the second
+        // fragment's own declared tfdt, NOT on the running duration sum.
+        let first_post_gap = &track.samples[FRAMES_PER_FRAGMENT as usize];
+        assert_eq!(
+            first_post_gap.dts,
+            Some(gapped_second_base as i64),
+            "post-gap dts must come from the second fragment's tfdt \
+             ({gapped_second_base}), not the pure duration sum \
+             ({contiguous_second_base})"
+        );
+
+        // ...and so must every later sample in that fragment.
+        for (i, s) in track.samples[FRAMES_PER_FRAGMENT as usize..]
+            .iter()
+            .enumerate()
+        {
+            let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
+            assert_eq!(s.dts, Some(expected), "sample {i} after the gap");
+        }
+    }
+
+    /// Regression guard for the fix above: a **contiguous** two-fragment
+    /// stream (every `tfdt` exactly equal to the running duration sum) must
+    /// demux to exactly the same absolute dts sequence it always did —
+    /// re-seeding per fragment must be a no-op when there is no gap.
+    #[test]
+    fn contiguous_fmp4_dts_is_unchanged_by_the_per_fragment_tfdt_reseed() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+        const FRAMES: u32 = 3;
+
+        let spec = TrackSpec::new(
+            7,
+            TIMESCALE,
+            CodecConfig::Avc {
+                config: minimal_avc_config(),
+                width: 16,
+                height: 16,
+            },
+        );
+        let init = build_init_segment(core::slice::from_ref(&spec), TIMESCALE).unwrap();
+        let frames = |base: i64| -> Vec<Sample> {
+            (0..FRAMES)
+                .map(|i| {
+                    let nal = [0x41u8, 0xAA, 0xBB];
+                    let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                    data.extend_from_slice(&nal);
+                    let dts = base + i64::from(i) * i64::from(FRAME_DUR);
+                    Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
+                })
+                .collect()
+        };
+        let second_base = u64::from(FRAMES * FRAME_DUR);
+        let f1 = frames(0);
+        let f2 = frames(second_base as i64);
+        let mut file = init;
+        file.extend_from_slice(
+            &build_media_segment(1, &[FragmentTrackData::new(7, 0, &f1)]).unwrap(),
+        );
+        file.extend_from_slice(
+            &build_media_segment(2, &[FragmentTrackData::new(7, second_base, &f2)]).unwrap(),
+        );
+
+        let media = Fmp4Demux::new().unpackage(&file).unwrap();
+        let got: Vec<i64> = media.tracks[0]
+            .samples
+            .iter()
+            .filter_map(|s| s.dts)
+            .collect();
+        let want: Vec<i64> = (0..FRAMES * 2)
+            .map(|i| i64::from(i) * i64::from(FRAME_DUR))
+            .collect();
+        assert_eq!(got, want, "a gapless stream must be unaffected by the fix");
+    }
+
+    // ── HlsPackager: no knowingly-wrong #EXTINF:0.000 ──────────────────────
+
+    /// A timestamp-less (section-carried) track has `duration: None` on every
+    /// sample and therefore no truthful `EXTINF` — it is omitted from the
+    /// playlist rather than rendered as `#EXTINF:0.000`, which RFC 8216
+    /// §4.3.2.1 defines as a real playback duration a player would honour.
+    #[test]
+    fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+
+        let timed = Track::new(
+            TrackSpec::new(
+                1,
+                TIMESCALE,
+                CodecConfig::Avc {
+                    config: minimal_avc_config(),
+                    width: 16,
+                    height: 16,
+                },
+            ),
+            (0..3)
+                .map(|i| {
+                    Sample::new(
+                        vec![0u8; 4],
+                        Some(i64::from(i) * i64::from(FRAME_DUR)),
+                        Some(i64::from(i) * i64::from(FRAME_DUR)),
+                        Some(FRAME_DUR),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        // A section-carried data track: no dts, no pts, no duration — ever.
+        let sections = Track::new(
+            TrackSpec::new(
+                2,
+                TIMESCALE,
+                CodecConfig::Data {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: crate::ir::DataCarriage::Sections,
+                },
+            ),
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+        );
+
+        let playlist = HlsPackager::default()
+            .package(&Media::new(vec![timed, sections], TIMESCALE))
+            .expect("a Media with one timed track still packages");
+        let zero_extinf = playlist.lines().any(|l| {
+            l.strip_prefix("#EXTINF:")
+                .and_then(|rest| rest.trim_end_matches(',').parse::<f64>().ok())
+                .is_some_and(|secs| secs == 0.0)
+        });
+        assert!(
+            !zero_extinf,
+            "no zero-duration EXTINF may be emitted, got:\n{playlist}"
+        );
+        assert!(
+            !playlist.contains("seg2.m4s"),
+            "the timestamp-less track must be omitted entirely, got:\n{playlist}"
+        );
+        assert!(
+            playlist.contains("seg1.m4s"),
+            "the timed track must still be present, got:\n{playlist}"
+        );
+
+        // Every track timestamp-less => nothing truthful to render at all.
+        let only_sections = Track::new(
+            TrackSpec::new(
+                2,
+                TIMESCALE,
+                CodecConfig::Data {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: crate::ir::DataCarriage::Sections,
+                },
+            ),
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+        );
+        assert!(
+            HlsPackager::default()
+                .package(&Media::new(vec![only_sections], TIMESCALE))
+                .is_err(),
+            "an all-timestamp-less Media must error, not render an empty playlist"
+        );
+    }
 }

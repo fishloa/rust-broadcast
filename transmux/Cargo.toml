@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.19.0"
+version      = "0.20.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -11,7 +11,7 @@ categories   = ["multimedia::video", "parser-implementations", "no-std"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "8", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "8.7", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.2", default-features = false }
@@ -20,6 +20,7 @@ mpeg-pes   = { path = "../mpeg-pes", version = "0.2", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.2", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.2", default-features = false }
 rtcp-packet = { path = "../rtcp-packet", version = "0.1", default-features = false }
+bytes      = { version = "1", default-features = false }
 aes        = { version = "0.8", default-features = false, optional = true }
 ctr        = { version = "0.9", default-features = false, optional = true }
 cbc        = { version = "0.1", default-features = false, optional = true }
@@ -45,7 +46,12 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 cli    = ["dep:clap", "std"]
 
 [dev-dependencies]
-media-doctor = { path = "../media-doctor", default-features = false, features = ["std"] }
+# Pin media-doctor and timed-metadata to published versions to break the
+# publish-time dev-dep cycle: transmux 0.20 dev-deps media-doctor, which
+# normal-deps transmux; same with timed-metadata. By resolving these from the
+# registry rather than local paths, `cargo publish` won't require building
+# media-doctor/timed-metadata against 0.20 (which may not be published yet).
+media-doctor = { path = "../media-doctor", version = "0.4", default-features = false, features = ["std"] }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
@@ -57,7 +63,7 @@ serde_json   = "1.0"
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "1", default-features = false, features = ["std"] }
-timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
+timed-metadata = { path = "../timed-metadata", version = "0.4", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true

@@ -152,7 +152,23 @@ fn valid_rtp_headers_and_marker_semantics() {
         let (_v, _pt, marker, _seq, ts, _ssrc) = parse_hdr(pkt);
         assert!(marker, "audio marker set per packet");
         if let Some(p) = prev_a {
-            assert_eq!(ts - p, 1024, "audio TS advances by the AAC frame length");
+            // The RTP timestamp carries the real recovered decode time (media
+            // plane step 2c), in the track's own timescale (44.1 kHz for this
+            // AAC track) — the same unit an AAC frame's intrinsic duration
+            // (1024 samples) is exact in. Issue B5 (media plane step-2 fix
+            // wave 1): the demuxer used to re-derive each access unit's dts
+            // from the lossy 90 kHz PES clock (1024 * 90000 / 44100 =
+            // 2089.79... ticks, not an integer), injecting a spurious ±1 tick
+            // at every PES boundary; it now anchors once and advances by the
+            // intrinsic per-frame duration, so every delta is exactly 1024 —
+            // fixing the demuxer, not relaxing this assertion, is the fix.
+            let d = ts - p;
+            assert_eq!(
+                d, 1024,
+                "audio TS must advance by exactly the AAC frame length (1024 \
+                 samples) — a demuxer re-deriving dts from the lossy 90 kHz \
+                 PES clock per access unit would drift by ±1 tick here"
+            );
         }
         prev_a = Some(ts);
     }

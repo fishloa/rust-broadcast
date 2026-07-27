@@ -1,5 +1,23 @@
 # Changelog
 
+## [8.7.0] - 2026-07-26
+### Added
+- `stage` module: the `Stage` incremental-drive trait (`feed`/`poll`/`finish`/
+  `next_deadline`/`on_deadline`/`demand`) unifying the drive shape of every
+  streaming stage in the workspace, plus its supporting types —
+  `Timestamp` (a `no_std`-safe monotonic-nanosecond newtype standing in for
+  `std::time::Instant`, with saturating arithmetic and a `std`-only
+  `from_instant` convenience), `Demand` (an advisory backpressure hint), and
+  `type In<'a>` (the associated input type, added in step 2 to support borrowed
+  packet arrays without lifetime explosion across demux variants).
+  Media-plane migration step 1 (additive, zero cascade to the ~30 workspace
+  dependents pinned on `version = "8"`).
+
+### Changed
+- `mux` module docs: scope `Package`/`Unpackage`/`Encrypt`/`Decrypt` explicitly
+  as the *batch / whole-file* container-mux contract, distinct from `stage`'s
+  new *incremental* contract. Documentation only, no behaviour change.
+
 ## [8.5.0] - 2026-07-21
 ### Changed
 - Lockstep minor release riding the `mpeg-ts` 0.3.0 compatibility cycle

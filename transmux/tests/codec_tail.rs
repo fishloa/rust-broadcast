@@ -22,6 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use bytes::Bytes;
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
 
@@ -248,7 +249,7 @@ fn assert_sample_fidelity(name: &str) {
         .unpackage(&file)
         .unwrap_or_else(|e| panic!("{name} unpackage: {e:?}"));
     assert!(!media.tracks.is_empty(), "{name} has tracks");
-    let first: Vec<Vec<u8>> = media.tracks[0]
+    let first: Vec<Bytes> = media.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())
@@ -270,7 +271,7 @@ fn assert_sample_fidelity(name: &str) {
         media2.tracks.len(),
         "{name} track count preserved"
     );
-    let second: Vec<Vec<u8>> = media2.tracks[0]
+    let second: Vec<Bytes> = media2.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())

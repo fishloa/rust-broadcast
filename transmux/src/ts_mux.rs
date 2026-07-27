@@ -31,6 +31,39 @@
 //!   ([`broadcast_common::crc32_mpeg2`]).
 //! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
 //!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`TsDemux`](crate::TsDemux).
+//!
+//! # ES_info descriptor passthrough policy (issue #775)
+//!
+//! Every track's inherited PMT `ES_info` descriptor-loop bytes
+//! ([`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors))
+//! are carried into the re-muxed PMT, not only an opaque
+//! [`CodecConfig::Data`] track's — a track loses no information just because
+//! this crate understood its codec. The policy is a **deny-list, not an
+//! allow-list**: an allow-list would silently drop an unknown-but-valid
+//! descriptor (a broadcaster's private or newly-registered tag), which is
+//! exactly the bug this fixes.
+//!
+//! - **Denied: `CA_descriptor`** (ISO/IEC 13818-1 §2.6.16, tag `0x09`).
+//!   `CA_descriptor` signals that the elementary stream is scrambled and
+//!   names the `CA_PID`/`CA_system_ID` carrying its ECMs. This muxer never
+//!   encrypts its output; copying an inherited `CA_descriptor` forward would
+//!   falsely advertise the cleartext re-mux as scrambled, pointing at a
+//!   `CA_PID` that does not exist in the new PMT — a decoder or DVB
+//!   conformance probe reading it would wrongly conclude the stream needs a
+//!   CA module to decrypt.
+//! - **Everything else passes through**, preserving the inherited
+//!   descriptors' source order.
+//! - **De-duplicated against this muxer's own synthesised descriptors** (e.g.
+//!   the `MPEG-H_3dAudio_descriptor` built from the typed
+//!   `mpegh3daProfileLevelIndication`, issue #579): if an inherited
+//!   descriptor's tag matches one this muxer already synthesises, the
+//!   inherited copy is dropped and the synthesised one (grounded in the
+//!   current [`CodecConfig`]) is kept — emitting both would yield a
+//!   malformed `ES_info` loop with contradictory signalling under one tag.
+//! - The merged loop is rejected with a typed error
+//!   ([`Error::BufferCapExceeded`]) rather than silently truncated if it
+//!   would exceed the 12-bit `ES_info_length` field's 4095-byte maximum
+//!   (§2.4.4.8) — a truncated descriptor loop is a malformed PMT.
 
 use alloc::vec::Vec;
 
@@ -113,6 +146,13 @@ const OTI_MPEG2_AUDIO: u8 = 0x69;
 
 /// Maximum value of the 12-bit `ES_info_length` field (§2.4.4.8).
 const MAX_ES_INFO_LENGTH: usize = 0x0FFF;
+
+/// `CA_descriptor` tag (ISO/IEC 13818-1 §2.6.16) — denied from ES_info
+/// passthrough (issue #775, see the module doc's policy section): it names a
+/// `CA_PID` scrambling the elementary stream, which this cleartext-output
+/// muxer never has, so copying it forward would falsely signal the re-muxed
+/// stream as scrambled.
+const DESCRIPTOR_TAG_CA: u8 = 0x09;
 
 // ── MPEG-H_3dAudio_descriptor (ISO/IEC 13818-1 §2.6.106, ETSI TS 101 154
 // §4.1.8.31) ─────────────────────────────────────────────────────────────
@@ -307,9 +347,12 @@ impl EsKind {
     /// Not TS-carriable today: [`CodecConfig::Vvc`]/[`CodecConfig::Av1`]/
     /// [`CodecConfig::Vp9`] (no allocated/implemented TS `stream_type` mapping
     /// in this crate yet), [`CodecConfig::Opus`]/[`CodecConfig::Flac`]/
-    /// [`CodecConfig::Ac4`] (no ES framing implemented for TS), and the
-    /// WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`] (out of scope
-    /// for any ISOBMFF/TS mux path — see their doc comments).
+    /// [`CodecConfig::Ac4`] (no ES framing implemented for TS),
+    /// [`CodecConfig::Subtitle`] (an fMP4/CMAF-sourced `stpp`/`wvtt` track has
+    /// no TS `stream_type` mapping in this crate; a DVB-subtitle/teletext PES
+    /// stream is still recovered as [`CodecConfig::Data`] on the TS demux
+    /// path), and the WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`]
+    /// (out of scope for any ISOBMFF/TS mux path — see their doc comments).
     fn from_config(config: &CodecConfig) -> Option<Self> {
         match config {
             CodecConfig::Avc { .. } => Some(EsKind::Avc),
@@ -368,10 +411,14 @@ pub(crate) struct EsPlan {
     /// every TS video AU is independently decodable (issue #627). Empty for
     /// non-HEVC streams.
     hevc_vps_sps_pps: Vec<Vec<u8>>,
-    /// Preserved PMT ES_info descriptor-loop bytes for this stream (issue
-    /// #576) — non-empty only for an [`EsKind::Data`] track sourced from a
-    /// [`CodecConfig::Data`] (the IR carries no descriptors for decoded
-    /// codecs today, so their ES_info loop stays empty).
+    /// PMT ES_info descriptor-loop bytes to emit for this stream: the
+    /// track's inherited [`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors)
+    /// merged with this muxer's own synthesised descriptors (issue #576,
+    /// #579), per the module doc's ES_info passthrough policy (issue #775) —
+    /// `CA_descriptor` denied, everything else passed through de-duplicated
+    /// against the synthesised set, source order preserved. Populated for
+    /// every track kind, not only [`EsKind::Data`] — the IR carries
+    /// ES_info descriptors for a recognised codec's track too.
     descriptors: Vec<u8>,
 }
 
@@ -484,17 +531,20 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             CodecConfig::Hevc { config, .. } => hevc_parameter_sets(&config.config),
             _ => Vec::new(),
         };
-        let descriptors = match &track.spec.config {
-            CodecConfig::Data { descriptors, .. } => descriptors.clone(),
-            // MPEG-H's ES_info descriptor is synthesized fresh from the
-            // typed `mpegh3daProfileLevelIndication` field, rather than a
-            // raw byte loop preserved from demux (issue #579; ETSI
-            // TS 101 154 §4.1.8.31).
+        // MPEG-H's ES_info descriptor is synthesized fresh from the typed
+        // `mpegh3daProfileLevelIndication` field, rather than trusting a raw
+        // byte loop preserved from demux (issue #579; ETSI TS 101 154
+        // §4.1.8.31); [`merge_es_info_descriptors`] drops any inherited
+        // duplicate of the same tag in its favour (issue #775).
+        let synthesized: Vec<Vec<u8>> = match &track.spec.config {
             CodecConfig::MpegH { config, .. } => {
-                mpegh_3daudio_descriptor(config.mpegh3da_profile_level_indication)
+                alloc::vec![mpegh_3daudio_descriptor(
+                    config.mpegh3da_profile_level_indication
+                )]
             }
             _ => Vec::new(),
         };
+        let descriptors = merge_es_info_descriptors(&track.spec.es_info_descriptors, &synthesized)?;
         plans.push(EsPlan {
             pid: next_pid,
             stream_id,
@@ -514,6 +564,93 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         ));
     }
     Ok((plans, planned_idx))
+}
+
+/// Merge a track's inherited PMT `ES_info` descriptor-loop bytes with this
+/// muxer's own `synthesized` descriptors, per the module doc's ES_info
+/// passthrough policy (issue #775):
+///
+/// - `CA_descriptor` (tag [`DESCRIPTOR_TAG_CA`]) is denied — dropped
+///   unconditionally.
+/// - Any other inherited descriptor whose **dedup key** ([`descriptor_dedup_key`])
+///   matches one of `synthesized`'s is dropped too (dedup: the synthesized
+///   copy — grounded in the current [`CodecConfig`] — is kept instead, once,
+///   further down). For every tag except [`DESCRIPTOR_TAG_EXTENSION`] (`0x3F`)
+///   the key is the tag alone; for `0x3F` it is `(0x3F, extension_descriptor_tag)`
+///   (issue #775 follow-up, R4) — `extension_descriptor` is an umbrella tag
+///   under which unrelated post-2013 registrations (MPEG-H's own
+///   `MPEGH_3dAudio_descriptor` among them) each pick their own second-level
+///   `extension_descriptor_tag` (ISO/IEC 13818-1 Table 2-45), so two `0x3F`
+///   descriptors sharing only the outer tag are not duplicates and keying on
+///   `0x3F` alone would wrongly collapse a second, unrelated synthesized (or
+///   inherited) extension onto this one.
+/// - Every other inherited descriptor passes through, in source order.
+/// - `synthesized` is then appended.
+///
+/// A malformed inherited loop (a truncated trailing `tag`/`length` pair) is
+/// walked only up to its last complete descriptor, mirroring the demux
+/// side's own defensive TLV walk (`ts_demux::Codec::refine_with_descriptors`).
+///
+/// Returns [`Error::BufferCapExceeded`] — naming the 4095-byte `ES_info_length`
+/// cap (§2.4.4.8) — if the merged loop would overflow it, rather than
+/// silently truncating into a malformed PMT.
+fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Result<Vec<u8>> {
+    let synthesized_keys: Vec<(u8, Option<u8>)> = synthesized
+        .iter()
+        .filter_map(|d| {
+            let tag = *d.first()?;
+            // A descriptor's body starts after `tag`(1) + `length`(1).
+            Some(descriptor_dedup_key(tag, d.get(2..).unwrap_or(&[])))
+        })
+        .collect();
+
+    let mut out = Vec::with_capacity(inherited.len() + total_param_len(synthesized));
+    let mut off = 0usize;
+    while off + 2 <= inherited.len() {
+        let tag = inherited[off];
+        let len = inherited[off + 1] as usize;
+        let end = (off + 2 + len).min(inherited.len());
+        let body = &inherited[(off + 2).min(end)..end];
+        let key = descriptor_dedup_key(tag, body);
+        if tag != DESCRIPTOR_TAG_CA && !synthesized_keys.contains(&key) {
+            out.extend_from_slice(&inherited[off..end]);
+        }
+        off = end;
+    }
+    for d in synthesized {
+        out.extend_from_slice(d);
+    }
+
+    if out.len() > MAX_ES_INFO_LENGTH {
+        return Err(Error::BufferCapExceeded {
+            what: "PMT ES_info descriptor loop",
+            cap: MAX_ES_INFO_LENGTH,
+        });
+    }
+    Ok(out)
+}
+
+/// The dedup key [`merge_es_info_descriptors`] compares an inherited
+/// descriptor's tag against a synthesized one's (issue #775 follow-up, R4).
+///
+/// For every tag except [`DESCRIPTOR_TAG_EXTENSION`] (`extension_descriptor`,
+/// `0x3F`, ISO/IEC 13818-1 Table 2-45) the tag alone identifies what the
+/// descriptor is, so the key is `(tag, None)`. `0x3F` is different: it is an
+/// umbrella under which independent post-2013 registrations each choose their
+/// own second-level `extension_descriptor_tag` — the first body byte — so two
+/// `0x3F` descriptors are the same registration only if that second-level tag
+/// also matches; the key is `(0x3F, Some(extension_descriptor_tag))`. A `0x3F`
+/// descriptor with an empty body (malformed: no `extension_descriptor_tag` on
+/// the wire) keys as `(0x3F, None)`, matching only another equally-malformed
+/// `0x3F` entry, never a well-formed one — this dedup is a same-registration
+/// check, not a byte-for-byte one, and an absent tag cannot be shown to be the
+/// same registration as a present one.
+fn descriptor_dedup_key(tag: u8, body: &[u8]) -> (u8, Option<u8>) {
+    if tag == DESCRIPTOR_TAG_EXTENSION {
+        (tag, body.first().copied())
+    } else {
+        (tag, None)
+    }
 }
 
 /// Collect a HEVC `hvcC` record's parameter-set NALs in AU order — VPS, then
@@ -624,14 +761,19 @@ pub(crate) fn mux_tracks_at(
             let sort_key = rescale_for_ordering(dts_ticks_local, ts_scale);
 
             if plan.kind.is_section_carried() {
-                for pkt in section_packetiser.packetise(&[sample.data.as_slice()]) {
+                for pkt in section_packetiser.packetise(&[&sample.data[..]]) {
                     tagged.push(TaggedPacket {
                         sort_key,
                         packet: pkt,
                     });
                 }
             } else {
-                let pts_local = dts_ticks_local as i64 + sample.composition_offset as i64;
+                // media plane step 2c: `composition_offset()` derives PTS−DTS
+                // from the sample's own absolute `dts`/`pts` when both are
+                // known (§0 invariant), falling back to `0` — identical to
+                // the old stored field's value for every real (non-`None`)
+                // sample this muxer ever sees.
+                let pts_local = dts_ticks_local as i64 + sample.composition_offset() as i64;
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
@@ -647,7 +789,7 @@ pub(crate) fn mux_tracks_at(
                 );
             }
 
-            dts_ticks_local += sample.duration as u64;
+            dts_ticks_local += sample.duration.unwrap_or(0) as u64;
         }
     }
 
@@ -718,8 +860,10 @@ fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> 
 /// by the caller instead ([`SectionPacketiser`]).
 fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
     match plan.kind {
-        EsKind::Avc => build_annexb_au(&sample.data, sample.is_sync, &plan.avc_sps_pps),
-        EsKind::Hevc => build_hevc_annexb_au(&sample.data, sample.is_sync, &plan.hevc_vps_sps_pps),
+        EsKind::Avc => build_annexb_au(&sample.data, sample.flags.is_sync, &plan.avc_sps_pps),
+        EsKind::Hevc => {
+            build_hevc_annexb_au(&sample.data, sample.flags.is_sync, &plan.hevc_vps_sps_pps)
+        }
         EsKind::Aac => {
             let asc = plan
                 .asc
@@ -738,7 +882,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
         | EsKind::Eac3
         | EsKind::Dts
         | EsKind::MpegH
-        | EsKind::Data { .. } => Ok(sample.data.clone()),
+        | EsKind::Data { .. } => Ok(sample.data.to_vec()),
     }
 }
 
@@ -867,12 +1011,13 @@ fn build_pat_section(pmt_pid: u16) -> Vec<u8> {
 /// Build a PMT section listing every planned elementary stream, with its
 /// trailing CRC_32. ISO/IEC 13818-1 §2.4.4.8.
 ///
-/// Each ES's `ES_info` descriptor loop carries its [`EsPlan::descriptors`]
-/// verbatim (issue #576) — non-empty for an [`EsKind::Data`] track sourced
-/// from a [`CodecConfig::Data`] (so a receiver can identify a carried opaque
-/// stream, e.g. its DVB subtitling/teletext descriptor); every decoded codec
-/// carries none in the IR today, so its loop stays empty. `program_info`
-/// stays empty (no program-level descriptors are modelled).
+/// Each ES's `ES_info` descriptor loop carries its already-merged
+/// [`EsPlan::descriptors`] verbatim — every track kind, not only an opaque
+/// [`EsKind::Data`] one, per the module doc's ES_info passthrough policy
+/// (issue #775) — so a receiver can recover e.g. a DVB subtitling/teletext
+/// descriptor (issue #576) or an audio track's language (issue #775) after a
+/// re-mux. `program_info` stays empty (no program-level descriptors are
+/// modelled).
 fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Vec<u8> {
     let mut body = Vec::new();
     // table_id_extension = program_number, then version/cni + section numbers.
@@ -1321,5 +1466,148 @@ mod tests {
         // Mutating the profile-level must change the descriptor bytes (not a
         // fixed/cached template).
         assert_ne!(bytes, mpegh_3daudio_descriptor(0x10));
+    }
+
+    // ── ES_info descriptor passthrough policy (issue #775) ──────────────────
+
+    #[test]
+    fn merge_es_info_descriptors_denies_ca_and_preserves_order() {
+        // ISO_639_language_descriptor (tag 0x0A), then a CA_descriptor (tag
+        // 0x09) sandwiched in the middle, then a private descriptor (tag
+        // 0x88) — proves the CA tag is excised out of the middle of the
+        // loop (not just truncated off the end) and the survivors keep
+        // their original relative order.
+        let lang = alloc::vec![
+            DESCRIPTOR_TAG_ISO_639_LANGUAGE_FOR_TEST,
+            0x04,
+            b'e',
+            b'n',
+            b'g',
+            0x00
+        ];
+        let ca = alloc::vec![DESCRIPTOR_TAG_CA, 0x04, 0x00, 0x01, 0x00, 0x82];
+        let private = alloc::vec![0x88u8, 0x02, 0xAA, 0xBB];
+        let mut inherited = lang.clone();
+        inherited.extend_from_slice(&ca);
+        inherited.extend_from_slice(&private);
+
+        let merged = merge_es_info_descriptors(&inherited, &[]).expect("no overflow");
+
+        let mut expected = lang;
+        expected.extend_from_slice(&private);
+        assert_eq!(
+            merged, expected,
+            "CA_descriptor must be dropped; siblings survive in source order"
+        );
+    }
+
+    /// Local alias so the test above doesn't depend on a demux-side constant
+    /// this module doesn't otherwise need — ISO_639_language_descriptor's
+    /// tag (ETSI EN 300 468 §6.2.28) is `0x0A`.
+    const DESCRIPTOR_TAG_ISO_639_LANGUAGE_FOR_TEST: u8 = 0x0A;
+
+    #[test]
+    fn merge_es_info_descriptors_dedups_synthesized_tag_favouring_synthesized_bytes() {
+        // A stale inherited MPEG-H_3dAudio_descriptor-shaped entry (tag 0x3F,
+        // same extension_descriptor_tag 0x08, but a different — wrong —
+        // profile-level byte), sandwiched between two unrelated survivors.
+        let before = alloc::vec![0x88u8, 0x01, 0x01];
+        let stale_mpegh = alloc::vec![
+            DESCRIPTOR_TAG_EXTENSION,
+            MPEGH_3DAUDIO_DESCRIPTOR_BODY_LEN,
+            MPEGH_3DAUDIO_EXTENSION_TAG,
+            0xFF, // stale/wrong profile-level
+        ];
+        let after = alloc::vec![0x89u8, 0x01, 0x02];
+        let mut inherited = before.clone();
+        inherited.extend_from_slice(&stale_mpegh);
+        inherited.extend_from_slice(&after);
+
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
+
+        // Exactly one occurrence of the extension tag, holding the
+        // synthesized (grounded-in-CodecConfig) bytes, not the stale
+        // inherited ones; the two unrelated siblings both survive in order,
+        // and the synthesized descriptor is appended after them.
+        let mut expected = before;
+        expected.extend_from_slice(&after);
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        assert_eq!(
+            merged, expected,
+            "inherited duplicate of a synthesized tag must be dropped, keeping only the \
+             synthesized copy, appended after the surviving unrelated siblings"
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .enumerate()
+                .filter(|&(i, &b)| b == DESCRIPTOR_TAG_EXTENSION && i + 1 < merged.len())
+                .count(),
+            1,
+            "extension_descriptor tag (0x3F) must appear exactly once in the merged loop"
+        );
+    }
+
+    #[test]
+    fn merge_es_info_descriptors_keeps_distinct_extension_descriptor_tag_siblings() {
+        // Two `extension_descriptor` (0x3F) entries that share only the
+        // outer tag: the inherited one carries a *different* second-level
+        // extension_descriptor_tag (0x15) than the synthesized MPEG-H one
+        // (0x08, `MPEGH_3DAUDIO_EXTENSION_TAG`). Keying dedup on 0x3F alone
+        // (the pre-R4 behaviour) would wrongly collapse these two unrelated
+        // registrations onto one; keyed on `(tag, extension_descriptor_tag)`
+        // both must survive.
+        const OTHER_EXTENSION_TAG_FOR_TEST: u8 = 0x15;
+        let other_extension = alloc::vec![
+            DESCRIPTOR_TAG_EXTENSION,
+            0x02, // body length
+            OTHER_EXTENSION_TAG_FOR_TEST,
+            0xAB, // arbitrary payload byte
+        ];
+        let inherited = other_extension.clone();
+
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
+
+        let mut expected = other_extension;
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        assert_eq!(
+            merged, expected,
+            "two extension_descriptor entries with distinct extension_descriptor_tag values \
+             are not duplicates and must both survive"
+        );
+    }
+
+    #[test]
+    fn merge_es_info_descriptors_overflow_returns_typed_error_not_truncated() {
+        // 17 descriptors of 255 bytes each (tag + 0xFD length + 253-byte
+        // body) = 17 * 255 = 4335 bytes, comfortably over the 4095-byte
+        // ES_info_length cap — using a tag that is neither denied nor
+        // synthesized, so every one of them would otherwise pass through.
+        const BODY_LEN: u8 = 0xFD; // 253
+        const N: usize = 17;
+        let mut inherited = Vec::new();
+        for _ in 0..N {
+            inherited.push(0x80u8); // arbitrary private descriptor tag
+            inherited.push(BODY_LEN);
+            inherited.extend(core::iter::repeat_n(0xAAu8, BODY_LEN as usize));
+        }
+        assert!(
+            inherited.len() > MAX_ES_INFO_LENGTH,
+            "test setup must actually overflow"
+        );
+
+        let result = merge_es_info_descriptors(&inherited, &[]);
+        match result {
+            Err(Error::BufferCapExceeded { what, cap }) => {
+                assert_eq!(what, "PMT ES_info descriptor loop");
+                assert_eq!(cap, MAX_ES_INFO_LENGTH);
+            }
+            other => panic!(
+                "expected Err(Error::BufferCapExceeded {{ .. }}) for an over-cap ES_info loop, \
+                 got {other:?} — a truncated loop would be a malformed PMT"
+            ),
+        }
     }
 }

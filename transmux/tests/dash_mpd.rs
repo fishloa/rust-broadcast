@@ -102,7 +102,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         let (track_id, sample) = {
             let c = &mut cursors[i];
             let s = c.samples[c.idx].clone();
-            c.dts_ticks += s.duration as u64;
+            c.dts_ticks += s.duration.unwrap_or(0) as u64;
             c.idx += 1;
             (c.track_id, s)
         };
@@ -127,7 +127,11 @@ fn recover_segment_timing(
         buf.extend_from_slice(seg);
         let media = Fmp4Demux::new().unpackage(&buf[..]).expect("demux segment");
         for t in &media.tracks {
-            let dur: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+            let dur: u64 = t
+                .samples
+                .iter()
+                .map(|s| s.duration.unwrap_or(0) as u64)
+                .sum();
             let entry = out.entry(t.spec.track_id).or_default();
             entry.0.push(dur);
             entry.1.push(t.start_decode_time);
@@ -425,7 +429,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
             .expect("track")
             .samples
             .iter()
-            .map(|s| s.duration as u64)
+            .map(|s| s.duration.unwrap_or(0) as u64)
             .sum();
         assert_eq!(
             sum_of_real_segments, track_total,
@@ -708,9 +712,9 @@ fn content_protection_and_inband_event_stream_hooks() {
 /// `TrackEncryption::samples.len()` matches the track's sample count (the
 /// documented invariant), even though DASH signalling never reads it.
 fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> TrackEncryption {
-    TrackEncryption {
+    TrackEncryption::new(
         scheme,
-        tenc: TrackEncryptionBox {
+        TrackEncryptionBox {
             version: 0,
             default_crypt_byte_block: 0,
             default_skip_byte_block: 0,
@@ -719,14 +723,14 @@ fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> T
             default_kid: kid,
             default_constant_iv: None,
         },
-        samples: vec![
+        vec![
             SampleEncryptionEntry {
                 initialization_vector: vec![0u8; 8],
                 subsamples: vec![],
             };
             sample_count
         ],
-    }
+    )
 }
 
 #[test]

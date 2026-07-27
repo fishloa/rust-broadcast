@@ -282,25 +282,81 @@ pub struct SampleEncryptionBox {
     pub entries: Vec<SampleEncryptionEntry>,
 }
 
+/// Bytes an entry's `sample_count` field occupies in a `senc` body — ISO/IEC
+/// 23001-7 §12.3.
+const SENC_SAMPLE_COUNT_LEN: usize = 4;
+/// Bytes a `senc` entry's `subsample_count` field occupies when the
+/// [`SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION`] flag is set — ISO/IEC 23001-7 §12.3.2.
+const SENC_SUBSAMPLE_COUNT_LEN: usize = 2;
+
 impl SampleEncryptionBox {
     /// Parse a `senc` box from FullBox body bytes, given the per-sample IV size.
+    ///
+    /// `sample_count` is an untrusted 32-bit field straight off the wire, so it
+    /// is bounded against the box body's own length **before** anything is
+    /// allocated: each entry occupies at least its per-sample IV plus (when
+    /// `UseSubSampleEncryption` is set) its 2-byte `subsample_count`, so a body
+    /// too short to hold `sample_count` such minima is rejected outright.
+    /// Without that bound a 20-byte box declaring `sample_count == 0xFFFFFFFF`
+    /// asks for ~4.3 billion entries up front (hundreds of GB) and aborts the
+    /// process — a remote denial of service, since this parser reads
+    /// third-party media.
+    ///
+    /// A `senc` whose entries would carry *no* bytes at all (no per-sample IV
+    /// **and** no subsample map) is rejected for the same reason: it declares a
+    /// sample count the wire cannot corroborate at any length, while carrying
+    /// no per-sample information for a decryptor to use. ISO/IEC 23001-7 §12.3
+    /// gives the box exactly two jobs — per-sample IVs and subsample maps — so
+    /// a track with a constant IV and whole-sample protection has no `senc` to
+    /// write in the first place.
     pub fn parse_body(
         bytes: &[u8],
         version: u8,
         flags: u32,
         per_sample_iv_size: u8,
     ) -> Result<Self> {
-        if bytes.len() < 4 {
+        if bytes.len() < SENC_SAMPLE_COUNT_LEN {
             return Err(Error::BufferTooShort {
-                need: 4,
+                need: SENC_SAMPLE_COUNT_LEN,
                 have: bytes.len(),
                 what: "senc sample_count",
             });
         }
         let sample_count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
-        let mut offset = 4usize;
+        let mut offset = SENC_SAMPLE_COUNT_LEN;
         let iv_sz = per_sample_iv_size as usize;
         let use_subs = (flags & SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION) != 0;
+
+        // Bound the untrusted `sample_count` against what the body can hold
+        // before allocating for it (see the doc comment above).
+        let min_entry_len = iv_sz
+            + if use_subs {
+                SENC_SUBSAMPLE_COUNT_LEN
+            } else {
+                0
+            };
+        if min_entry_len == 0 {
+            if sample_count != 0 {
+                return Err(Error::InvalidInput(
+                    "senc declares samples but carries no per-sample data (per_sample_iv_size == 0 \
+                     with UseSubSampleEncryption clear), so sample_count cannot be verified against \
+                     the box length",
+                ));
+            }
+        } else {
+            let need = sample_count
+                .checked_mul(min_entry_len)
+                .and_then(|n| n.checked_add(offset))
+                .ok_or(Error::InvalidInput("senc sample_count overflows the body"))?;
+            if need > bytes.len() {
+                return Err(Error::BufferTooShort {
+                    need,
+                    have: bytes.len(),
+                    what: "senc entries (sample_count exceeds what the box can hold)",
+                });
+            }
+        }
+
         let mut entries = Vec::with_capacity(sample_count);
         for _ in 0..sample_count {
             if bytes.len() < offset + iv_sz {
@@ -773,7 +829,12 @@ impl SampleAuxInfoOffsetsBox {
         ]) as usize;
         offset += 4;
         let offset_sz = if version == 0 { 4 } else { 8 };
-        let offsets_needed = entry_count * offset_sz;
+        // `entry_count` is an untrusted 32-bit field: on a 32-bit target
+        // `entry_count * 8` wraps, which would defeat the length check below
+        // and let `Vec::with_capacity` be asked for a hostile count.
+        let offsets_needed = entry_count
+            .checked_mul(offset_sz)
+            .ok_or(Error::InvalidInput("saio entry_count overflows the body"))?;
         if bytes.len() < offset + offsets_needed {
             return Err(Error::BufferTooShort {
                 need: offset + offsets_needed,
@@ -1276,5 +1337,72 @@ mod tests {
             buf
         };
         assert_ne!(original, mutated_bytes);
+    }
+
+    /// **The alloc-DoS regression test (behaviour half).** A tiny `senc`
+    /// declaring `sample_count == 0xFFFFFFFF` must be rejected from the box's
+    /// own length. The old code sized `Vec::with_capacity(sample_count)` from
+    /// this untrusted field first — ~4.3 billion entries, hundreds of GB — on a
+    /// 20-byte input read straight off the network.
+    ///
+    /// This test pins the *error*; `tests/cenc_senc_alloc_bound.rs` pins the
+    /// *allocation* (the part that actually matters, and the part this test
+    /// cannot see: a hostile `with_capacity` still ends in `BufferTooShort`
+    /// from the per-entry checks, just after asking the allocator for 206 GB).
+    #[test]
+    fn senc_hostile_sample_count_is_rejected() {
+        // body = sample_count(4) + 16 bytes of would-be entry data = 20 bytes.
+        let mut body = alloc::vec![0xFFu8; 4];
+        body.extend_from_slice(&[0u8; 16]);
+        assert_eq!(body.len(), 20);
+
+        for (iv_size, flags) in [
+            (8u8, 0u32),
+            (8, SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION),
+            (16, SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION),
+            (0, SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION),
+        ] {
+            let err = SampleEncryptionBox::parse_body(&body, 0, flags, iv_size)
+                .expect_err("a hostile sample_count must be rejected");
+            assert!(
+                matches!(err, Error::BufferTooShort { .. }),
+                "iv_size={iv_size} flags={flags:#x}: expected BufferTooShort, got {err:?}"
+            );
+        }
+
+        // The degenerate shape that carries no per-sample bytes at all: the
+        // count is unverifiable against any body length, so it is rejected
+        // rather than trusted.
+        let err = SampleEncryptionBox::parse_body(&body, 0, 0, 0)
+            .expect_err("an unverifiable sample_count must be rejected");
+        assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+    }
+
+    /// The bound must not reject *well-formed* boxes: a body exactly sized for
+    /// its declared entries still parses.
+    #[test]
+    fn senc_exact_length_body_parses() {
+        const SAMPLES: usize = 3;
+        let mut body = (SAMPLES as u32).to_be_bytes().to_vec();
+        for i in 0..SAMPLES {
+            body.extend_from_slice(&[i as u8; 8]); // 8-byte IV
+        }
+        let parsed = SampleEncryptionBox::parse_body(&body, 0, 0, 8).expect("well-formed senc");
+        assert_eq!(parsed.entries.len(), SAMPLES);
+        assert_eq!(parsed.entries[2].initialization_vector, alloc::vec![2u8; 8]);
+    }
+
+    /// A `saio` `entry_count` that would overflow `entry_count * 8` on a 32-bit
+    /// `usize` must be rejected rather than wrap past the length check.
+    #[test]
+    fn saio_hostile_entry_count_is_rejected() {
+        // version 1 → 8-byte offsets; entry_count = 0xFFFFFFFF.
+        let body = alloc::vec![0xFFu8; 4];
+        let err = SampleAuxInfoOffsetsBox::parse_body(&body, 1, 0)
+            .expect_err("a hostile entry_count must be rejected");
+        assert!(
+            matches!(err, Error::BufferTooShort { .. } | Error::InvalidInput(_)),
+            "{err:?}"
+        );
     }
 }

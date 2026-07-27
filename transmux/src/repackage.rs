@@ -66,8 +66,8 @@ fn presentation_times(track: &Track) -> Vec<i64> {
     let mut out = Vec::with_capacity(track.samples.len());
     let mut dts: i64 = 0;
     for s in &track.samples {
-        out.push(dts + s.composition_offset as i64);
-        dts += s.duration as i64;
+        out.push(dts + s.composition_offset() as i64);
+        dts += s.duration.unwrap_or(0) as i64;
     }
     out
 }
@@ -190,7 +190,7 @@ impl Media {
                 // Anchor: snap the start back to the preceding sync sample so the
                 // output opens on a random-access point.
                 if ti == anchor {
-                    while start_idx > 0 && !track.samples[start_idx].is_sync {
+                    while start_idx > 0 && !track.samples[start_idx].flags.is_sync {
                         start_idx -= 1;
                     }
                 }
@@ -226,7 +226,11 @@ impl Media {
     pub fn anchor_duration(&self) -> Option<(u64, u32)> {
         let anchor = anchor_index(self)?;
         let t = &self.tracks[anchor];
-        let ticks: u64 = t.samples.iter().map(|s| s.duration as u64).sum();
+        let ticks: u64 = t
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         Some((ticks, t.spec.timescale))
     }
 }
@@ -355,7 +359,7 @@ impl Repackage {
             let track = &media.tracks[ti];
             let sample = &track.samples[cursors[ti]];
             seg.push(track.spec.track_id, sample.clone())?;
-            dts[ti] += sample.duration as u128;
+            dts[ti] += sample.duration.unwrap_or(0) as u128;
             cursors[ti] += 1;
             for s in seg.take_ready() {
                 seg_ready.push(s);

@@ -166,11 +166,19 @@ fn synthetic_cuts_are_exact_and_lossless() {
     for (_, is_video, idx) in &items {
         if *is_video {
             let is_sync = idx % 10 == 0;
-            seg.push(1, Sample::new(vec![0xAA; 16], VID_DUR, is_sync, 0))
-                .unwrap();
+            // Duration-driven segmenter: dts/pts stay `None` for these
+            // synthetic samples (media plane step 2c — never fabricated).
+            seg.push(
+                1,
+                Sample::new(vec![0xAA; 16], None, None, Some(VID_DUR), is_sync),
+            )
+            .unwrap();
         } else {
-            seg.push(2, Sample::from_raw(vec![0xBB; 8], AUD_DUR))
-                .unwrap();
+            seg.push(
+                2,
+                Sample::from_raw(vec![0xBB; 8], None, None, Some(AUD_DUR)),
+            )
+            .unwrap();
         }
     }
     seg.flush().unwrap();
@@ -225,26 +233,30 @@ fn synthetic_cuts_are_exact_and_lossless() {
 #[test]
 fn single_segment_is_byte_identical_to_batch_builder() {
     let vid: Vec<Sample> = (0..12)
-        .map(|i| Sample::new(vec![i as u8; 10], 3000, i % 6 == 0, 0))
+        .map(|i| {
+            let dts = i as i64 * 3000;
+            Sample::new(
+                vec![i as u8; 10],
+                Some(dts),
+                Some(dts),
+                Some(3000),
+                i % 6 == 0,
+            )
+        })
         .collect();
     let aud: Vec<Sample> = (0..20)
-        .map(|_| Sample::from_raw(vec![0x5A; 6], 1024))
+        .map(|i| {
+            let dts = i as i64 * 1024;
+            Sample::from_raw(vec![0x5A; 6], Some(dts), Some(dts), Some(1024))
+        })
         .collect();
 
     // Batch reference: one media segment, video traf first then audio.
     let reference = build_media_segment(
         1,
         &[
-            FragmentTrackData {
-                track_id: 1,
-                base_media_decode_time: 0,
-                samples: &vid,
-            },
-            FragmentTrackData {
-                track_id: 2,
-                base_media_decode_time: 0,
-                samples: &aud,
-            },
+            FragmentTrackData::new(1, 0, &vid),
+            FragmentTrackData::new(2, 0, &aud),
         ],
     )
     .unwrap();
@@ -283,7 +295,8 @@ fn rejects_bad_construction() {
     );
     let mut seg = Segmenter::new(vec![video_track()], 1000, 2.0).unwrap();
     assert!(
-        seg.push(99, Sample::from_raw(vec![0], 1)).is_err(),
+        seg.push(99, Sample::from_raw(vec![0], None, None, Some(1)))
+            .is_err(),
         "unknown track_id"
     );
 }
@@ -469,14 +482,24 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     assert!(find_box_body(&init, b"ftyp").is_some() && find_box_body(&init, b"moov").is_some());
 
     for (i, (payload, pts, dts)) in vid.iter().enumerate() {
-        let cts = (*pts as i64 - (*dts).unwrap_or(*pts) as i64) as i32;
-        seg.push(1, Sample::from_annexb(payload, 3000, idr[i], cts))
-            .unwrap();
+        // media plane step 2c: feed the real absolute PES dts/pts pair.
+        let dts_val = (*dts).unwrap_or(*pts) as i64;
+        seg.push(
+            1,
+            Sample::from_annexb(
+                payload,
+                Some(dts_val),
+                Some(*pts as i64),
+                Some(3000),
+                idr[i],
+            ),
+        )
+        .unwrap();
     }
     for p in &aud {
         for f in split_adts_frames(p) {
             if f.len() > 7 {
-                seg.push(2, Sample::from_raw(f[7..].to_vec(), 1024))
+                seg.push(2, Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)))
                     .unwrap();
             }
         }

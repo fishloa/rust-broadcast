@@ -28,9 +28,11 @@
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
 //!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —
-//!   PTS/DTS rebase, offset, 33-bit MPEG wrap-unroll, discontinuity-gap
-//!   insertion ([`rebase_to_zero`] / [`apply_offset`] / [`unroll_33bit_wraps`] /
-//!   [`insert_discontinuity_gap`], via each [`Track::start_decode_time`] anchor);
+//!   PTS/DTS rebase and offset, discontinuity-gap insertion
+//!   ([`rebase_to_zero`] / [`apply_offset`] / [`insert_discontinuity_gap`],
+//!   via each absolute [`Sample`] `dts`/`pts` and the [`Track::start_decode_time`]
+//!   anchor kept in lockstep with it — 33-bit MPEG wrap-unroll happens once,
+//!   at the demux edge, see [`ts_demux`]);
 //!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
 //!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
@@ -129,6 +131,7 @@ pub mod flv_stream;
 pub mod hevc_config;
 pub mod hls;
 pub mod init_segment;
+pub mod ir;
 pub mod klv;
 pub mod ll_dash;
 pub mod ll_hls;
@@ -243,8 +246,10 @@ pub use klv::{
     ber_length, ber_oid, crc16_ccitt, encode_ber_length, encode_ber_oid,
 };
 pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
-pub use ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
-pub use media::{CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, Track, TrackEncryption};
+pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
+pub use media::{
+    CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
+};
 pub use movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
     TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
@@ -267,15 +272,14 @@ pub use nal::{
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
 pub use pipeline::{
-    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Sample, SourceTiming,
-    TrackSpec, build_init_segment, build_media_segment, build_media_segment_with_events,
+    CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Provenance, Sample,
+    SampleFlags, TrackSpec, build_init_segment, build_media_segment,
+    build_media_segment_with_events,
 };
 pub use progressive::ProgressiveMux;
 pub use progressive_demux::ProgressiveDemux;
 pub use ps_demux::PsDemux;
-pub use rebase::{
-    MPEG_TS_WRAP, apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps,
-};
+pub use rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
 pub use repackage::{Repackage, RepackageOutput};
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CommonHeader, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT,
@@ -338,7 +342,9 @@ pub use timing::{
     SegmentIndexBox, SidxReference, SttsEntry, TimeToSampleBox,
 };
 pub use trickplay::{append_iframe_track, derive_iframe_track};
-pub use ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+pub use ts_demux::{
+    AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, StreamingTsDemux, TsDemux,
+};
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::TsMux;
 pub use validate::{

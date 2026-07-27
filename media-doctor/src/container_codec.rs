@@ -62,7 +62,19 @@ pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
     }
     let media = match Fmp4Demux::new().unpackage(bytes) {
         Ok(m) => Some(m),
-        Err(_) => ProgressiveDemux::new().unpackage(bytes).ok(),
+        // `bytes` is already the whole file in memory here (the `Unpackage`
+        // path, not `Stage::feed`), so the bound just needs to cover it —
+        // `bytes.len()` never rejects (transmux issue B7: `ProgressiveDemux`
+        // now requires an explicit `max_bytes` bound at construction).
+        // `ProgressiveDemux::new` is fallible since it now rejects a zero
+        // cap (transmux issue R1); `bytes.len()` is guaranteed non-zero here
+        // by `looks_like_isobmff`'s `bytes.len() < 8` guard above, so the
+        // only way this `Err` arm is reached is a genuine internal bug, not
+        // a real input this function needs to tolerate — treat it the same
+        // as "does not demux".
+        Err(_) => ProgressiveDemux::new(bytes.len())
+            .ok()
+            .and_then(|mut demux| demux.unpackage(bytes).ok()),
     };
     if let Some(media) = media {
         check_media(&media, report);

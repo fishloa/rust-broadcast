@@ -507,6 +507,10 @@ impl DashPackager {
             // Opaque PES data track: no RFC 6381 codec string can be derived
             // without decoding the payload (mirrors the fMP4 mux rejection).
             CodecConfig::Data { .. } => Err(Error::UnsupportedCodec { codec: "Data" }),
+            // Subtitle track (media plane step 2d): no fMP4 mux path yet
+            // (see `CodecConfig::Subtitle`'s doc comment / `TODO(#753)` on
+            // `build_trak`), so no RFC 6381 string either.
+            CodecConfig::Subtitle { .. } => Err(Error::UnsupportedCodec { codec: "Subtitle" }),
         }
     }
 
@@ -514,7 +518,11 @@ impl DashPackager {
     fn repr_info(&self, track: &Track) -> Result<ReprInfo> {
         let config = &track.spec.config;
         let timescale = track.spec.timescale.max(1);
-        let total_duration: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
+        let total_duration: u64 = track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         let total_bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
 
         // bandwidth = total coded bits / duration in seconds, ISO/IEC 23009-1
@@ -672,6 +680,8 @@ impl DashPackager {
             // resolve (unreachable in practice — `codec_string` above already
             // errors for `Data`, short-circuiting this function via `?`).
             CodecConfig::Data { .. } => {}
+            // Subtitle track: same short-circuit via `codec_string` above.
+            CodecConfig::Subtitle { .. } => {}
         }
 
         Ok(info)
@@ -1055,7 +1065,7 @@ fn frame_rate_from_samples(samples: &[crate::pipeline::Sample], timescale: u32) 
     if samples.is_empty() {
         return None;
     }
-    let total: u64 = samples.iter().map(|s| s.duration as u64).sum();
+    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
     if total == 0 {
         return None;
     }

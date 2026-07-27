@@ -275,7 +275,13 @@ mod tests {
         for i in 0..90u32 {
             let is_sync = i == 0 || i == 45;
             let data = vec![0xAAu8.wrapping_add(i as u8); 32];
-            let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+            let sample = Sample::new(
+                data,
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(FRAME_DUR),
+                is_sync,
+            );
             batches.push(vec![(1u32, sample)]);
         }
 
@@ -322,7 +328,13 @@ mod tests {
         for i in 0..60u32 {
             let is_sync = i == 0 || i == 45;
             let data = vec![0xCCu8.wrapping_add(i as u8); 32];
-            let sample = Sample::new(data, FRAME_DUR, is_sync, 0);
+            let sample = Sample::new(
+                data,
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(i64::from(i) * i64::from(FRAME_DUR)),
+                Some(FRAME_DUR),
+                is_sync,
+            );
             batches.push(vec![(1u32, sample)]);
         }
 

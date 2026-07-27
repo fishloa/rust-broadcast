@@ -6,6 +6,7 @@
 //! is the byte-exact oracle. Every test walks the box tree — no hardcoded offsets.
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use bytes::Bytes;
 use transmux::media::{CmafMux, Fmp4Demux};
 use transmux::pipeline::CodecConfig;
 use transmux::vvc_config::{VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalUnitType};
@@ -137,7 +138,7 @@ fn vvc_sample_round_trip_through_cmaf() {
     let mut demux = Fmp4Demux::new();
     let media = demux.unpackage(&mp4).expect("demux");
 
-    let orig_samples: Vec<Vec<u8>> = media.tracks[0]
+    let orig_samples: Vec<Bytes> = media.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())
@@ -149,7 +150,7 @@ fn vvc_sample_round_trip_through_cmaf() {
 
     let mut demux2 = Fmp4Demux::new();
     let media2 = demux2.unpackage(&remuxed).expect("re-demux");
-    let round_samples: Vec<Vec<u8>> = media2.tracks[0]
+    let round_samples: Vec<Bytes> = media2.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())

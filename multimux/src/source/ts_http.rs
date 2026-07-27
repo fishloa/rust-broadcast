@@ -145,8 +145,8 @@ impl TsHttpSource {
                 let mut resolved = false;
                 while let Some(event) = demux.poll_event() {
                     match event {
-                        DemuxEvent::TrackAdded(track) => specs.push(track.spec.clone()),
-                        DemuxEvent::TracksResolved => resolved = true,
+                        DemuxEvent::TrackAdded(spec) => specs.push(spec),
+                        DemuxEvent::TracksResolved { .. } => resolved = true,
                         _ => {}
                     }
                 }
@@ -241,10 +241,59 @@ impl TsHttpSession {
         self.demux.feed(&chunk);
         let mut out = Vec::new();
         while let Some(event) = self.demux.poll_event() {
-            if let DemuxEvent::Sample { track_id, sample } = event {
-                if self.known_track_ids.contains(&track_id) {
-                    out.push((track_id, sample));
+            match event {
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if self.known_track_ids.contains(&track_id) {
+                        out.push((track_id, sample));
+                    }
                 }
+                DemuxEvent::TrackRemoved { track_id, .. } => {
+                    // A mid-stream PMT version bump dropped a previously-live
+                    // PID (issue #774). Drop it from the known set so no
+                    // stale sample is ever forwarded for it (defense in depth
+                    // — `DemuxEvent`'s removal semantics already guarantee no
+                    // `Sample` for this `track_id` follows), and surface the
+                    // change instead of silently swallowing it: the running
+                    // pipeline/segmenter was built once from connect-time
+                    // `track_specs()` and has no way to learn a track vanished.
+                    tracing::warn!(
+                        track_id,
+                        "ts/http: track removed mid-stream (PMT no longer lists it); \
+                         no further samples will be surfaced for it"
+                    );
+                    self.known_track_ids.remove(&track_id);
+                }
+                DemuxEvent::TrackUpdated(spec) => {
+                    tracing::debug!(
+                        track_id = spec.track_id,
+                        "ts/http: track metadata updated mid-stream (es_info_descriptors/\
+                         stream_type); the running pipeline was built from the connect-time \
+                         TrackSpec and does not pick this up"
+                    );
+                }
+                DemuxEvent::TrackAdded(spec) => {
+                    // A PID declared only after `connect()`'s PMT wait
+                    // resolved. The pipeline was built from that connect-time
+                    // track set (`SampleSource::track_specs` is a one-shot
+                    // snapshot, `pipeline::run_pipeline` calls it exactly
+                    // once) — there is no API on this session to add a track
+                    // to an already-running segmenter, so this is reported
+                    // rather than silently dropped or half-wired in.
+                    tracing::warn!(
+                        track_id = spec.track_id,
+                        "ts/http: new track declared mid-stream; the running pipeline was built \
+                         from the connect-time track set and cannot pick it up without a reconnect"
+                    );
+                }
+                DemuxEvent::TrackAbandoned { reason, .. } => {
+                    tracing::warn!(
+                        ?reason,
+                        "ts/http: a probing track was abandoned before it resolved"
+                    );
+                }
+                _ => {}
             }
         }
         Ok(Some(out))
@@ -284,7 +333,13 @@ mod tests {
                 let nal = [0x65u8, 0xAA, i as u8];
                 let mut data = (nal.len() as u32).to_be_bytes().to_vec();
                 data.extend_from_slice(&nal);
-                Sample::new(data, frame_dur, i == 0, 0)
+                Sample::new(
+                    data,
+                    Some(i64::from(i) * i64::from(frame_dur)),
+                    Some(i64::from(i) * i64::from(frame_dur)),
+                    Some(frame_dur),
+                    i == 0,
+                )
             })
             .collect();
         let track = Track::new(spec, samples);

@@ -100,7 +100,7 @@ fn fmp4_demux_unpackage_two_tracks_correct_counts() {
 
     // At least one video sample must be a sync sample (random-access point).
     assert!(
-        vid.samples.iter().any(|s| s.is_sync),
+        vid.samples.iter().any(|s| s.flags.is_sync),
         "video track must contain a sync sample"
     );
 }
@@ -145,14 +145,14 @@ fn cmaf_package_reunpackage_preserves_structure() {
                 a.track_id()
             );
             assert_eq!(
-                sa.is_sync,
-                sb.is_sync,
+                sa.flags.is_sync,
+                sb.flags.is_sync,
                 "track {} sample {i} sync flag preserved",
                 a.track_id()
             );
             assert_eq!(
-                sa.composition_offset,
-                sb.composition_offset,
+                sa.composition_offset(),
+                sb.composition_offset(),
                 "track {} sample {i} composition offset preserved",
                 a.track_id()
             );
@@ -176,12 +176,14 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
     let fragments: Vec<FragmentTrackData<'_>> = media
         .tracks
         .iter()
-        .map(|t| FragmentTrackData {
-            track_id: t.spec.track_id,
-            // CmafMux now anchors each fragment at the track's start_decode_time
-            // (the demuxed tfdt), so the byte-transparent equivalent must too.
-            base_media_decode_time: t.start_decode_time,
-            samples: &t.samples,
+        .map(|t| {
+            FragmentTrackData::new(
+                t.spec.track_id,
+                // CmafMux now anchors each fragment at the track's start_decode_time
+                // (the demuxed tfdt), so the byte-transparent equivalent must too.
+                t.start_decode_time,
+                &t.samples,
+            )
         })
         .collect();
     let media_seg = build_media_segment(7, &fragments).expect("media segment");

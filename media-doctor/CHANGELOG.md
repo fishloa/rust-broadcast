@@ -5,6 +5,14 @@ All notable changes to `media-doctor` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-07-26
+### Changed
+- Widen the `transmux` dependency to `0.20` (was `0.18`), picking up
+  transmux's media-plane IR changes: `Sample.data` is now `bytes::Bytes`
+  and the IR types moved into a `transmux::ir` module. media-doctor's own
+  public API is unchanged (no transmux type crosses its boundary), so this
+  remains a patch release.
+
 ## [0.4.2] - 2026-07-21
 ### Changed
 - Widen the `transmux` dependency to `0.18` (was `0.17`) and the internal

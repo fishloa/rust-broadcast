@@ -508,18 +508,28 @@ fn build_media(
             } else {
                 default_dur_ir as u32
             };
+            // Absolute dts/pts (media plane step 2c): WebM carries only a
+            // presentation time per block (RFC 9559 §12) with no separate
+            // decode-time field, so dts == pts (WebM's VP8/VP9/Opus/Vorbis
+            // scope here has no B-frame reordering to express).
             samples.push(Sample {
-                data: core::mem::take(&mut payloads[i]),
-                duration,
-                is_sync: sync[i],
-                composition_offset: 0,
-                source_timing: None,
+                data: core::mem::take(&mut payloads[i]).into(),
+                dts: Some(pts[i]),
+                pts: Some(pts[i]),
+                duration: Some(duration),
+                flags: crate::ir::SampleFlags::new(sync[i]),
+                provenance: None,
             });
         }
 
-        out_tracks.push(Track::new(
+        // Anchor at the first block's absolute pts, kept in lockstep with
+        // `samples[0].dts` (media plane step 2c) — WebM does carry a real
+        // absolute clock, unlike the demuxers with no anchor at all.
+        let anchor = pts.first().map(|&p| p.max(0) as u64).unwrap_or(0);
+        out_tracks.push(Track::new_at(
             TrackSpec::new(track_id, IR_TIMESCALE, config),
             samples,
+            anchor,
         ));
         track_id += 1;
     }

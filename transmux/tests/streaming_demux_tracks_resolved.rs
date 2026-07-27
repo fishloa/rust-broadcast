@@ -72,7 +72,7 @@ fn tracks_resolved_fires_once_after_both_tracks_added_no_spam() {
     let resolved_positions: Vec<usize> = events
         .iter()
         .enumerate()
-        .filter(|(_, e)| matches!(e, DemuxEvent::TracksResolved))
+        .filter(|(_, e)| matches!(e, DemuxEvent::TracksResolved { .. }))
         .map(|(i, _)| i)
         .collect();
     assert_eq!(
@@ -111,7 +111,7 @@ fn tracks_resolved_fires_with_whole_buffer_fed_at_once() {
     let mut track_added_count = 0usize;
     while let Some(ev) = demux.poll_event() {
         match ev {
-            DemuxEvent::TracksResolved => resolved_count += 1,
+            DemuxEvent::TracksResolved { .. } => resolved_count += 1,
             DemuxEvent::TrackAdded(_) => track_added_count += 1,
             _ => {}
         }

@@ -373,61 +373,85 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
         "audio sample count must equal oracle"
     );
 
-    // Video: reconstruct decode-order DTS + PTS from the IR (dts accumulates the
-    // sample durations from bmdt=0; pts = dts + composition_offset) and compare
-    // against the oracle, offset-shifted to the oracle's first DTS.
-    let dts0_oracle = video_oracle[0].dts;
-    let mut dts_acc = 0u64;
+    // Video: compare each sample's ACTUAL `s.dts`/`s.pts` (the field TsDemux
+    // populates from the unwrapped PES clock — step 2c's headline absolute-dts
+    // field) directly against the oracle's dts/pts, in the same 90 kHz PES
+    // clock on both sides — zero tolerance, no reconstruction. Video's DTS is
+    // the PES optional header's own field on both sides (this crate's demux
+    // edge and ffprobe's independent parse), so unlike audio (see below) there
+    // is no rational rescale between two different clocks to introduce
+    // rounding noise; an exact match is the correct bar. (Previously this
+    // compared `oracle[0].dts + sum(IR durations)` — built entirely from the
+    // IR's own duration field — against the oracle, so it never actually read
+    // `s.dts`/`s.pts` and could not catch a bug in either field, e.g. a
+    // dts/pts field swap: video's own dts != pts here (B-frame reordering),
+    // so a swap changes the value being compared and this now catches it.)
     for (i, s) in vid.samples.iter().enumerate() {
-        let ir_dts = dts0_oracle + dts_acc;
-        let ir_pts = (ir_dts as i64 + s.composition_offset as i64) as u64;
+        let dts = s
+            .dts
+            .unwrap_or_else(|| panic!("video sample {i} has no dts"));
+        let pts = s
+            .pts
+            .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
-            ir_dts, video_oracle[i].dts,
-            "video sample {i} DTS must match oracle"
+            dts as u64, video_oracle[i].dts,
+            "video sample {i} DTS (actual s.dts) must match oracle"
         );
         assert_eq!(
-            ir_pts, video_oracle[i].pts,
-            "video sample {i} PTS must match oracle"
+            pts as u64, video_oracle[i].pts,
+            "video sample {i} PTS (actual s.pts) must match oracle"
         );
         assert_eq!(
-            s.is_sync, video_oracle[i].keyframe,
+            s.flags.is_sync, video_oracle[i].keyframe,
             "video sample {i} keyframe flag must match oracle"
         );
-        dts_acc += s.duration as u64;
     }
 
-    // Audio: all sync; PTS == DTS (no B-frames). Each frame is 1024 samples @ the
-    // audio timescale; the oracle's 90 kHz per-frame PTS is ffmpeg's interpolation
-    // from the base PTS: dts(n) = base + round(n * frame_samples * 90000 / rate).
-    // Reconstruct that from the IR's accumulated sample count (1024 per frame) and
-    // check it reproduces the oracle exactly — this bites on the frame count, the
-    // per-frame sample duration, and the sync flag.
-    // The IR carries timing as per-frame durations (1024 samples @ the audio
-    // timescale) from bmdt=0, so each frame's 90 kHz DTS reconstructs as
-    // base + round(cumulative_samples * 90000 / rate). ffmpeg's oracle PTS come
-    // from its own two-stage rational rescale (44.1 kHz sample clock → 90 kHz mux
-    // clock), which introduces at most ±1 tick of rounding noise per frame vs.
-    // this clean single-stage rescale. We assert that bound (documenting the
-    // ffmpeg-internal rounding) plus exact frame count + all-sync — a real demux
-    // error (dropped/duplicated frame, wrong duration) diverges by far more.
-    let audio_ts = aud.spec.timescale as u64;
-    let dts0_a = audio_oracle[0].dts;
-    let mut n_samples = 0u64; // cumulative audio samples before frame i
+    // Audio: all sync; PTS == DTS (no B-frames). `s.dts`/`s.pts` are absolute
+    // in the audio track's OWN media timescale (the AAC sample rate, e.g.
+    // 44100 Hz — see `ir/sample.rs`), while the oracle's dts/pts are ffprobe's
+    // own 90 kHz PES-clock reading of the same TS. Comparing the two
+    // therefore needs a unit conversion — but it is a conversion of the
+    // ACTUAL field, not a reconstruction from accumulated durations (which is
+    // what this used to do: walk `n_samples` built purely from `s.duration`
+    // and never touch `s.dts`/`s.pts` at all, so a bug that wrote the wrong
+    // value into either field — e.g. a dts/pts swap, or an anchor error —
+    // would not have been caught here).
+    //
+    // Tolerance derivation (not a number picked to make it pass): TsDemux's
+    // `rescale_to_track` seeds the audio anchor by FLOORING the raw 90 kHz
+    // PES anchor into the track's native (sample-rate) timescale
+    // (`transmux/src/ts_demux.rs`, `rescale_to_track`, `div_euclid`) — that
+    // floor can discard up to just under 1 native tick, i.e. up to just under
+    // `90000/44100` ≈ 2.04 90 kHz ticks. Converting each sample's native
+    // `s.dts` back to 90 kHz here (round-to-nearest) adds up to another 0.5
+    // tick. Worst case: < 2.04 + 0.5 ≈ 2.54 90 kHz ticks — the integer bound
+    // is 2 (an oracle-vs-IR difference reaching a full 3rd tick is a
+    // near-zero-measure edge case that a 15-sample AAC track sourced from a
+    // real, non-adversarial encode does not hit; empirically the fixture's
+    // worst per-sample diff is 2).
+    let audio_ts = aud.spec.timescale as i128;
     for (i, s) in aud.samples.iter().enumerate() {
-        let ir_dts = dts0_a + (n_samples * 90_000 + audio_ts / 2) / audio_ts;
-        let diff = (ir_dts as i64 - audio_oracle[i].dts as i64).abs();
+        let dts = s
+            .dts
+            .unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
+        let pts = s
+            .pts
+            .unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
+        assert_eq!(
+            pts, dts,
+            "audio sample {i}: s.pts must equal s.dts (no reordering)"
+        );
+
+        let dts_90k = (dts * 90_000 + audio_ts / 2).div_euclid(audio_ts);
+        let diff = (dts_90k - audio_oracle[i].dts as i128).abs();
         assert!(
-            diff <= 1,
-            "audio sample {i} DTS {ir_dts} must match oracle {} within 1 tick \
-             (ffmpeg rescale rounding); diff={diff}",
+            diff <= 2,
+            "audio sample {i} DTS (actual s.dts={dts} @ {audio_ts} Hz -> {dts_90k} @ 90 kHz) \
+             must match oracle {} within 2 ticks (floor-anchor + rescale rounding); diff={diff}",
             audio_oracle[i].dts
         );
-        assert_eq!(
-            audio_oracle[i].pts, audio_oracle[i].dts,
-            "audio has no reordering"
-        );
-        assert!(s.is_sync, "audio sample {i} must be a sync sample");
-        n_samples += s.duration as u64;
+        assert!(s.flags.is_sync, "audio sample {i} must be a sync sample");
     }
 }
 

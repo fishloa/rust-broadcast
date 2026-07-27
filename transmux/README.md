@@ -18,11 +18,21 @@ The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (conta
 
 Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
 (`Segmenter`), IR timeline conditioning — PTS/DTS rebase-to-zero / offset /
-33-bit MPEG wrap-unroll / discontinuity-gap insertion (`rebase_to_zero`,
-`apply_offset`, `unroll_33bit_wraps`, `insert_discontinuity_gap`, over each
-`Track::start_decode_time` anchor) — CENC/CBCS decrypt (`CencDecryptor`) and
-encrypt (`CencEncryptor`, plus DASH/HLS DRM signalling), and RTP de/packetise +
-SDP (`RtpPacketiser`/`RtpDepacketiser`).
+discontinuity-gap insertion (`rebase_to_zero`, `apply_offset`,
+`insert_discontinuity_gap`, over each `Track::start_decode_time` anchor) —
+CENC/CBCS decrypt (`CencDecryptor`) and encrypt (`CencEncryptor`, plus
+DASH/HLS DRM signalling), and RTP de/packetise + SDP
+(`RtpPacketiser`/`RtpDepacketiser`).
+
+Every `Sample`'s `dts`/`pts` are **absolute**, optional ticks in the track's
+own media timescale (`Option<i64>`; `None` only for a genuinely
+timestamp-less, section-carried sample), `duration` is `Option<u32>`, and
+`data` is a `bytes::Bytes` (cheap fan-out, not a copy). 33-bit MPEG-2 Systems
+(ISO/IEC 13818-1 §2.4.3.7) and 32-bit RTP (RFC 3550 §5.1) rollover is
+unwrapped once, at the demux edge — never re-derived downstream, and no
+longer a caller-invoked transform. The IR types (`Media`, `Track`,
+`TrackSpec`, `Sample`, `DemuxEvent`, …) live in `transmux::ir` and are
+re-exported at the crate root for convenience.
 
 ## Scope — container muxing only
 
@@ -112,7 +122,7 @@ round-trips through the IR.
 | DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` · `SmoothPackager` | ✅ |
 | TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`) | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
-| IR timeline conditioning (rebase / offset / 33-bit unroll / gap) | — | `rebase_to_zero` · `apply_offset` · `unroll_33bit_wraps` · `insert_discontinuity_gap` (over `Track::start_decode_time`) | ✅ |
+| IR timeline conditioning (rebase / offset / gap) | — | `rebase_to_zero` · `apply_offset` · `insert_discontinuity_gap` (over `Track::start_decode_time`; 33-bit MPEG-2/32-bit RTP wrap unroll happens once at the demux edge, not as a caller transform) | ✅ |
 | IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
 | CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | `CencDecryptor` · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
 | CENC/CBCS DRM signalling | — | DASH: `DashPackager::content_protection` auto-derives the generic-CENC `ContentProtection` from `Track::encryption`. HLS: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs` (`cenc`/CTR has no HLS `METHOD` — DASH-only) | ✅ |
@@ -141,11 +151,8 @@ let init = build_init_segment(&tracks, 1000)?;         // ftyp + moov
 
 // Feed samples per fragment.
 let video: Vec<Sample> = /* … */ Vec::new();
-let media = build_media_segment(1, &[FragmentTrackData {
-    track_id: 1,
-    base_media_decode_time: 0,
-    samples: &video,
-}])?;                                                  // styp + moof + mdat
+let media = build_media_segment(1, &[FragmentTrackData::new(1, 0, &video)])?;
+                                                        // styp + moof + mdat
 # Ok::<(), transmux::Error>(())
 ```
 

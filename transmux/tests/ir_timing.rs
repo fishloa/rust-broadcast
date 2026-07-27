@@ -14,7 +14,7 @@ use mpeg_pes::PesAssembler;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::media::CmafMux;
-use transmux::pipeline::{CodecConfig, DataCarriage, Sample, SourceTiming, TrackSpec};
+use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Fmp4Demux, Media, PcrSample, Track, TsDemux};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -101,11 +101,29 @@ fn cumulative_starts(lens: &[usize]) -> Vec<usize> {
     out
 }
 
+/// Rescale a 90 kHz PES-clock timestamp into a track's own media timescale,
+/// floored — mirroring `ts_demux`'s `rescale_to_track` exactly, so the
+/// comparison below stays a 0-drift equality rather than a tolerance.
+///
+/// Needed because since media plane step 2c a sample's absolute `dts`/`pts`
+/// are in the **track** timescale (an audio track's is its sample rate), while
+/// the PES clock is always 90 kHz (ISO/IEC 13818-1 §2.4.3.7). For a 90 kHz
+/// (video / opaque `Data`) track this is the identity.
+fn pes_ts_in_track_ticks(pes_ts: u64, timescale: u32) -> u64 {
+    if timescale == 90_000 {
+        return pes_ts;
+    }
+    ((pes_ts as u128 * timescale as u128) / 90_000u128) as u64
+}
+
 /// Assert that splitting a track's PES access units into `samples` lost no
 /// bytes (concatenation is byte-identical to the concatenated PES payloads)
 /// and that every sample landing exactly on a PES boundary carries that PES's
-/// PTS in `source_timing`, exactly (0 ticks of drift).
-fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu]) {
+/// PTS as its **absolute** `pts`, within 1 tick of the independently-rescaled
+/// PES PTS (media plane step 2c; tolerance per issue B5, media plane step-2
+/// fix wave 1 — see the comment inline below for why 1 tick, not 0, is now
+/// the right bar).
+fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32) {
     let sample_lens: Vec<usize> = samples.iter().map(|s| s.data.len()).collect();
     let sample_starts = cumulative_starts(&sample_lens);
     let pes_lens: Vec<usize> = pes.iter().map(|p| p.payload.len()).collect();
@@ -123,13 +141,30 @@ fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu]) {
             .iter()
             .position(|&s| s == pes_start)
             .expect("every PES boundary must align exactly with a sample boundary");
-        let st = samples[idx]
-            .source_timing
-            .expect("a PES-boundary sample must carry source_timing");
+        let sample_pts = samples[idx]
+            .pts
+            .expect("a PES-boundary sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(
-                st.pts, pts,
-                "PES-boundary sample PTS must equal the PES PTS exactly (0 ticks)"
+            let oracle = pes_ts_in_track_ticks(pts, timescale);
+            // Issue B5 (media plane step-2 fix wave 1): the demuxer anchors a
+            // track's dts/pts ONCE from the first access unit, then advances
+            // by the intrinsic per-frame duration — it no longer re-derives
+            // every PES boundary's pts from this lossy wire stamp (90000
+            // does not evenly divide a typical audio sample rate, so this
+            // oracle's OWN floor-rescale carries up to 1 tick of rounding
+            // noise per boundary). Demanding bit-exact equality against a
+            // lossy oracle at every boundary would re-encode that same
+            // rounding as a (spurious) per-PES jitter requirement — exactly
+            // the bug this fix removes. A tolerance of 1 tick still catches
+            // a genuinely wrong anchor/track/accumulation bug (which would
+            // show up as a persistent, larger-than-1-tick disagreement at
+            // ANY boundary, checked independently here), while accepting the
+            // legitimate sub-tick 90kHz<->track-timescale quantization.
+            let diff = (sample_pts as i64 - oracle as i64).abs();
+            assert!(
+                diff <= 1,
+                "PES-boundary sample PTS must be within 1 tick of the independently \
+                 rescaled PES PTS; got sample={sample_pts} oracle={oracle} (diff {diff})"
             );
         }
     }
@@ -156,11 +191,11 @@ fn ac3_syncframe_splitting_exact_pts_and_duration() {
         track.samples.len() >= pes.len(),
         "at least one syncframe per PES access unit"
     );
-    assert_pes_boundary_timing(&track.samples, &pes);
+    assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
             s.duration,
-            transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME,
+            Some(transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME),
             "every AC-3 sample duration must be 1536 (6 blocks x 256 samples)"
         );
     }
@@ -190,22 +225,23 @@ fn eac3_syncframe_splitting_exact_pts_and_duration() {
         track.samples.len() >= pes.len(),
         "at least one access unit per PES access unit"
     );
-    assert_pes_boundary_timing(&track.samples, &pes);
+    assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
-            s.duration, expected_duration,
+            s.duration,
+            Some(expected_duration),
             "every E-AC-3 sample duration must be numblks * 256"
         );
     }
 }
 
-// ── #556: AAC exact PES-boundary PTS + video source_timing ──────────────────
+// ── #556: AAC exact PES-boundary PTS + absolute video dts/pts ───────────────
 
 const H264_AAC_VIDEO_PID: u16 = 0x0100;
 const H264_AAC_AUDIO_PID: u16 = 0x0101;
 
 #[test]
-fn aac_exact_pes_boundary_pts_and_video_source_timing() {
+fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
     let data = read_fixture("h264_aac.ts");
     let video_pes = collect_pes(&data, H264_AAC_VIDEO_PID);
     let audio_pes = collect_pes(&data, H264_AAC_AUDIO_PID);
@@ -224,14 +260,14 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("AAC audio track");
 
-    // Video: every sample now carries source_timing, and the FIRST video
-    // sample's pts/dts match the first video PES exactly.
+    // Video: every sample now carries ABSOLUTE dts/pts (media plane step 2c),
+    // and the FIRST video sample's pts/dts match the first video PES exactly.
     assert!(
         video_track
             .samples
             .iter()
-            .all(|s| s.source_timing.is_some()),
-        "every H.264 sample must carry source_timing (issue #556)"
+            .all(|s| s.dts.is_some() && s.pts.is_some()),
+        "every H.264 sample must carry absolute dts/pts (issue #556 / step 2c)"
     );
     let first_video_pes = &video_pes[0];
     let expected_pts = first_video_pes.pts.expect("first video PES has a PTS");
@@ -239,11 +275,16 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
     // The very first access unit in decode order should be the very first
     // access unit in wire order for this fixture (no B-frame reordering at
     // the stream head), so comparing the track's first sample is valid.
-    let first_sample_ts = video_track.samples[0]
-        .source_timing
-        .expect("first video sample has source_timing");
-    assert_eq!(first_sample_ts.pts, expected_pts);
-    assert_eq!(first_sample_ts.dts, expected_dts);
+    let first = &video_track.samples[0];
+    let vts = video_track.timescale();
+    assert_eq!(
+        first.pts.expect("first video sample has an absolute pts") as u64,
+        pes_ts_in_track_ticks(expected_pts, vts)
+    );
+    assert_eq!(
+        first.dts.expect("first video sample has an absolute dts") as u64,
+        pes_ts_in_track_ticks(expected_dts, vts)
+    );
 
     // AAC: exact PES-boundary PTS. Unlike AC-3/E-AC-3 (which keep the raw
     // syncframe bytes verbatim), each AAC `Sample` strips the 7-byte ADTS
@@ -262,13 +303,24 @@ fn aac_exact_pes_boundary_pts_and_video_source_timing() {
         "total decoded AAC samples must match an independent ADTS frame count"
     );
     for (pes_au, &boundary_idx) in audio_pes.iter().zip(pes_boundary_indices.iter()) {
-        let st = audio_track.samples[boundary_idx]
-            .source_timing
-            .expect("a PES-boundary AAC sample must carry source_timing");
+        let sample_pts = audio_track.samples[boundary_idx]
+            .pts
+            .expect("a PES-boundary AAC sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(
-                st.pts, pts,
-                "PES-boundary AAC sample PTS must equal the PES PTS exactly"
+            // Issue B5 (media plane step-2 fix wave 1): tolerance, not exact
+            // equality — see the doc comment on `assert_pes_boundary_timing`
+            // above for why. The demuxer anchors once and advances by the
+            // intrinsic per-frame duration; it no longer re-derives every
+            // PES boundary's pts from the lossy 90 kHz wire stamp, so this
+            // independent oracle's OWN floor-rescale (44.1 kHz doesn't
+            // evenly divide 90 kHz either) can legitimately disagree by 1
+            // tick without indicating drift.
+            let oracle = pes_ts_in_track_ticks(pts, audio_track.timescale());
+            let diff = (sample_pts as i64 - oracle as i64).abs();
+            assert!(
+                diff <= 1,
+                "PES-boundary AAC sample PTS must be within 1 tick of the independently \
+                 rescaled PES PTS; got sample={sample_pts} oracle={oracle} (diff {diff})"
             );
         }
     }
@@ -439,11 +491,14 @@ fn data_track_subtitle_pes_passthrough() {
     );
 
     for (sample, pes_au) in data_track.samples.iter().zip(pes.iter()) {
-        let st = sample
-            .source_timing
-            .expect("every Data sample must carry source_timing");
+        let sample_pts = sample
+            .pts
+            .expect("every PES-carried Data sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
-            assert_eq!(st.pts, pts, "Data sample PTS must equal its PES PTS");
+            assert_eq!(
+                sample_pts as u64, pts,
+                "Data sample PTS must equal its PES PTS"
+            );
         }
     }
 }
@@ -464,12 +519,12 @@ fn collect_pcr_oracle(data: &[u8]) -> Vec<PcrSample> {
         let Some(pcr) = af.pcr else {
             continue;
         };
-        out.push(PcrSample {
-            pcr_27mhz: pcr.as_27mhz(),
-            pid: pkt.header.pid,
-            packet_index: idx as u64,
-            discontinuity: af.discontinuity_indicator,
-        });
+        out.push(PcrSample::new(
+            pcr.as_27mhz(),
+            pkt.header.pid,
+            idx as u64,
+            af.discontinuity_indicator,
+        ));
     }
     out
 }
@@ -572,19 +627,21 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
     assert!(!ac3_track.samples.is_empty());
     for s in &ac3_track.samples {
         assert_ne!(
-            s.duration, 0,
+            s.duration,
+            Some(0),
             "AC-3 trun durations must be non-zero after issue #556 (pre-#556 they were all 0)"
         );
     }
 }
 
 #[test]
-fn data_track_skipped_by_cmaf_unlike_vp8() {
-    // Issue #576: a `CodecConfig::Data` track has no ISOBMFF sample entry in
-    // this crate, but — unlike the genuinely-unsupported WebM-native VP8 —
-    // the fMP4/CMAF mux SKIPS it gracefully rather than erroring, so a TS
-    // multiplex mixing carriable and opaque streams still produces a valid
-    // CMAF init segment for its carriable tracks.
+fn data_track_errors_named_by_cmaf_unlike_vp8() {
+    // Media plane step 2d: a `CodecConfig::Data` track has no ISOBMFF sample
+    // entry in this crate; `CmafMux` used to skip it gracefully (issue #576)
+    // but now names the offending track and errors instead (so it can no
+    // longer vanish from the output without the caller knowing) — the same
+    // outcome (rejection) as the genuinely-unsupported WebM-native VP8, but
+    // with a different, more specific error naming the track.
     let data_only = Media::new(
         vec![Track::new(
             TrackSpec::new(
@@ -596,7 +653,7 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
                     carriage: DataCarriage::Pes,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], 0)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
         90_000,
     );
@@ -610,19 +667,24 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
                     height: 480,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], 0)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
         90_000,
     );
 
-    // A Media of ONLY a Data track has nothing left to mux once it is
-    // skipped — still an error, but no longer "Data is unsupported"; the
-    // skip logic itself never returns `UnsupportedCodec { codec: "Data" }`.
+    // A Media of a Data track must now fail with the specific, named
+    // `UnmuxableDataTrack` error — not the generic `UnsupportedCodec`.
     let data_err = CmafMux::default().package(&data_only).unwrap_err();
     assert!(
-        !matches!(data_err, Error::UnsupportedCodec { codec: "Data" }),
-        "a Data-only Media must no longer fail with UnsupportedCodec(\"Data\") \
-         — Data is skipped, not rejected: {data_err:?}"
+        matches!(
+            data_err,
+            Error::UnmuxableDataTrack {
+                track_id: 1,
+                stream_type: 0x06
+            }
+        ),
+        "a Data track must fail with UnmuxableDataTrack naming track_id + \
+         stream_type, got {data_err:?}"
     );
 
     // VP8 is unrelated to this issue (a genuinely out-of-scope WebM-native
@@ -633,13 +695,13 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
         "VP8 must still fail exactly as before, got {vp8_err:?}"
     );
 
-    // Confirm the skip (not a hard error) on the real demuxed m6-single.ts
-    // Data tracks too. Since issue #641, this excerpt's 3 audio PIDs
-    // (0x82/0x83/0x84) classify as real, CMAF-carriable `CodecConfig::Eac3`
-    // tracks rather than opaque Data (see `tests/any_stream.rs`), so this is
-    // no longer an all-Data Media: CmafMux now succeeds, muxing the 3
-    // E-AC-3 tracks and silently skipping the remaining Data tracks
-    // (0x8C subtitle, 0xAA/0xAB sections).
+    // Confirm the named error (not a silent skip) on the real demuxed
+    // m6-single.ts Data tracks too. Since issue #641, this excerpt's 3 audio
+    // PIDs (0x82/0x83/0x84) classify as real, CMAF-carriable
+    // `CodecConfig::Eac3` tracks rather than opaque Data (see
+    // `tests/any_stream.rs`), so this Media mixes carriable and opaque
+    // tracks: `CmafMux` must reject it naming one of the Data tracks, and
+    // only succeed once the caller explicitly filters them out.
     let ts = read_fixture("m6-single.ts");
     let media = demux(&ts);
     assert!(
@@ -656,26 +718,36 @@ fn data_track_skipped_by_cmaf_unlike_vp8() {
             .any(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. })),
         "m6-single.ts must produce at least one E-AC-3 track (issue #641)"
     );
+    let mixed_err = CmafMux::default().package(&media).unwrap_err();
+    assert!(
+        matches!(mixed_err, Error::UnmuxableDataTrack { .. }),
+        "a mixed Media with a Data track must be rejected naming it, got {mixed_err:?}"
+    );
+
+    let carriable = media
+        .select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))
+        .expect("at least the E-AC-3 tracks remain carriable");
     let out = CmafMux::default()
-        .package(&media)
-        .expect("CmafMux must succeed: the E-AC-3 tracks are carriable, Data tracks are skipped");
+        .package(&carriable)
+        .expect("CmafMux must succeed once the Data tracks are explicitly filtered out");
     assert!(
         out.windows(4).any(|w| w == b"moov"),
         "CmafMux output must contain a moov box for the carriable E-AC-3 tracks"
     );
 }
 
-// ── SourceTiming::with_source_timing sanity ─────────────────────────────────
+// ── Provenance builder sanity (replaces the deleted `SourceTiming`) ─────────
 
 #[test]
-fn source_timing_builder_round_trips() {
-    let s = Sample::from_raw(vec![0u8; 4], 100).with_source_timing(SourceTiming {
-        pts: 12345,
-        dts: 12000,
-    });
-    let st = s
-        .source_timing
-        .expect("with_source_timing must set the field");
-    assert_eq!(st.pts, 12345);
-    assert_eq!(st.dts, 12000);
+fn provenance_builder_round_trips() {
+    // media plane step 2c: absolute timing lives on the sample itself; the raw
+    // pre-unwrap wire stamps survive only as debug-only `Provenance`.
+    let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100))
+        .with_provenance(transmux::Provenance::new(Some(12000), Some(12345)));
+    assert_eq!(s.dts, Some(12000), "absolute dts is carried on the sample");
+    assert_eq!(s.pts, Some(12345), "absolute pts is carried on the sample");
+    assert_eq!(s.composition_offset(), 345, "pts - dts");
+    let p = s.provenance.expect("with_provenance must set the field");
+    assert_eq!(p.wire_dts, Some(12000));
+    assert_eq!(p.wire_pts, Some(12345));
 }

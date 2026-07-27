@@ -100,14 +100,21 @@ fn video_samples(data: &[u8]) -> Vec<Sample> {
     let base = moof_off + trun.data_offset.expect("data_offset") as usize;
     let mut samples = Vec::new();
     let mut cursor = base;
+    // Absolute dts from the running trun duration sum (media plane step 2c);
+    // pts folds in the trun composition offset.
+    let mut next_dts: i64 = 0;
     for (i, ts) in trun.samples.iter().enumerate() {
         let size = ts.sample_size.expect("sample_size") as usize;
+        let dur = ts.sample_duration.unwrap_or(3000);
+        let co = ts.sample_composition_time_offset.unwrap_or(0) as i64;
         samples.push(Sample::new(
             data[cursor..cursor + size].to_vec(),
-            ts.sample_duration.unwrap_or(3000),
+            Some(next_dts),
+            Some(next_dts + co),
+            Some(dur),
             i == 0,
-            ts.sample_composition_time_offset.unwrap_or(0),
         ));
+        next_dts += i64::from(dur);
         cursor += size;
     }
     samples
@@ -124,15 +131,7 @@ fn clean_init() -> Vec<u8> {
 /// A clean media segment with the given sequence_number + base decode time,
 /// carrying the real video samples.
 fn clean_media(seq: u32, base_time: u64, samples: &[Sample]) -> Vec<u8> {
-    build_media_segment(
-        seq,
-        &[FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: base_time,
-            samples,
-        }],
-    )
-    .expect("build media")
+    build_media_segment(seq, &[FragmentTrackData::new(1, base_time, samples)]).expect("build media")
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +280,7 @@ fn clean_track_has_no_errors() {
     let data = fixture();
     let samples = video_samples(&data);
     let init = clean_init();
-    let total: u64 = samples.iter().map(|s| s.duration as u64).sum();
+    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
     let seg1 = clean_media(1, 0, &samples);
     let seg2 = clean_media(2, total, &samples);
     let issues = validate_cmaf_track(&init, &[&seg1, &seg2]);
@@ -417,7 +416,7 @@ fn mdat_orphan_bites() {
 fn tfdt_continuity_bites() {
     let data = fixture();
     let samples = video_samples(&data);
-    let total: u64 = samples.iter().map(|s| s.duration as u64).sum();
+    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
     let init = clean_init();
 
     // positive: two contiguous segments → no continuity error.
@@ -444,7 +443,7 @@ fn tfdt_continuity_bites() {
 fn mfhd_sequence_bites() {
     let data = fixture();
     let samples = video_samples(&data);
-    let total: u64 = samples.iter().map(|s| s.duration as u64).sum();
+    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
     let init = clean_init();
 
     let seg1 = clean_media(5, 0, &samples);
@@ -465,7 +464,7 @@ fn zero_duration_sample_bites() {
     let mut samples = video_samples(&data);
     // positive path already covered by clean_media_has_no_errors.
     // negative: force a zero-duration sample.
-    samples[0].duration = 0;
+    samples[0].duration = Some(0);
     let media = clean_media(1, 0, &samples);
     let issues = validate_media_segment(&media);
     assert!(

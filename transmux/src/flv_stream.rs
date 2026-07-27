@@ -47,15 +47,24 @@
 //! `AACPacketType` == 0) to precede that track's media tags. Unlike the
 //! one-shot [`FlvDemux`](crate::flv::FlvDemux) — which can freely accumulate
 //! all of a track's samples before its config is known, because it only
-//! builds the final [`Track`] after the whole buffer is
+//! builds the final [`Track`](crate::media::Track) after the whole buffer is
 //! consumed — a streaming demuxer with
 //! *bounded* memory cannot hold an unbounded pre-config backlog waiting for
 //! a config that might arrive arbitrarily late (or never). A media tag for a
 //! track whose sequence header has not yet been seen is therefore dropped,
-//! not buffered; this never affects a conformant encoder's real output (the
-//! committed fixture `fixtures/flv/av.flv` included), and is the same
-//! trade-off [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux)
-//! documents for a PMT-listed PID whose config never becomes recoverable.
+//! not buffered — the simplest bounded response, since this demuxer has no
+//! byte-capped backlog to fall back on the way
+//! [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) does. This never
+//! affects a conformant encoder's real output (the committed fixture
+//! `fixtures/flv/av.flv` included).
+//!
+//! [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) faces the same
+//! never-resolves risk for a PMT-listed PID, but chooses differently: it
+//! *does* buffer, up to `MAX_PROBE_BACKLOG_BYTES`, and only then abandons the
+//! PID (dropping its backlog and raising a `Discontinuity`) — not dropped on
+//! arrival like this module's media tag, because a real broadcast capture's
+//! parameter sets are expected within the first access unit or two, so the
+//! backlog is small in the common case.
 //!
 //! # No `TracksResolved`
 //!
@@ -72,7 +81,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_common::{Demand, Parse, Stage, Timestamp};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -81,9 +90,8 @@ use crate::flv::{
     FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN,
     aac_packet_type, asc_rate_hz, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
-use crate::media::Track;
+use crate::ir::DemuxEvent;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-use crate::ts_demux::DemuxEvent;
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
 /// next same-kind tag's timestamp makes its forward-delta duration knowable,
@@ -125,7 +133,7 @@ impl TrackState {
             let duration = dts.saturating_sub(prev.dts);
             self.last_duration = duration;
             let mut emitted = prev.sample;
-            emitted.duration = duration;
+            emitted.duration = Some(duration);
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -142,7 +150,7 @@ impl TrackState {
         };
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
-            emitted.duration = self.last_duration;
+            emitted.duration = Some(self.last_duration);
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -300,6 +308,48 @@ impl StreamingFlvDemux {
         self.audio.flush(&mut self.events);
     }
 
+    /// Bytes still missing before the unit [`feed`](Self::feed) is currently
+    /// blocked on becomes consumable — the exact complement of each `break`
+    /// in `feed`'s loop, in the same order. Backs [`Stage::demand`]'s
+    /// `want_bytes`; see that impl for why a constant was wrong.
+    ///
+    /// Never `0`: a `Demand::want_bytes` of `0` means "no particular
+    /// preference" rather than "no bytes needed", and this demuxer always
+    /// needs at least one more byte to make progress (`feed` drains every
+    /// complete tag before returning, so `pending` never already holds one).
+    fn bytes_wanted(&self) -> usize {
+        let have = self.pending.len();
+        if !self.header_seen {
+            // The fixed header + PreviousTagSize0 must land before
+            // `DataOffset` can even be read.
+            let minimum = FLV_HEADER_LEN + PREV_TAG_SIZE_LEN;
+            if have < minimum {
+                return minimum - have;
+            }
+            // `DataOffset` (bytes [5:9]) may declare a larger non-standard
+            // header; `feed` validates it against `MAX_FLV_HEADER_LEN` before
+            // trusting it, and rejects an over-large one, so the worst this
+            // can over-ask for is that already-rejected bound.
+            let data_offset = u32::from_be_bytes([
+                self.pending[5],
+                self.pending[6],
+                self.pending[7],
+                self.pending[8],
+            ]) as usize;
+            let skip = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
+            return skip.saturating_sub(have).max(1);
+        }
+        if have < TAG_HEADER_LEN {
+            return TAG_HEADER_LEN - have;
+        }
+        // Tag header present: `DataSize` (bytes [1:4], 24-bit) gives the whole
+        // remaining unit — body plus the trailing `PreviousTagSize`.
+        let data_size =
+            u32::from_be_bytes([0, self.pending[1], self.pending[2], self.pending[3]]) as usize;
+        let total = TAG_HEADER_LEN + data_size + PREV_TAG_SIZE_LEN;
+        total.saturating_sub(have).max(1)
+    }
+
     fn process_tag(
         video: &mut TrackState,
         audio: &mut TrackState,
@@ -372,7 +422,7 @@ impl StreamingFlvDemux {
                             height,
                         },
                     );
-                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(spec));
                 }
             }
             avc_packet_type::NALU => {
@@ -380,12 +430,19 @@ impl StreamingFlvDemux {
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
                 if video.track_id.is_some() {
+                    // Absolute dts/pts (media plane step 2c): the FLV tag
+                    // timestamp is already an absolute wire clock
+                    // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
+                    // (§E.4.3.2) folds directly into `pts`.
+                    let dts_abs = timestamp as i64;
+                    let pts_abs = dts_abs + composition_time as i64;
                     let sample = Sample {
-                        data: data.to_vec(),
-                        duration: 0, // filled in by `TrackState::advance`/`flush`
-                        is_sync: frame_type == FRAME_TYPE_KEYFRAME,
-                        composition_offset: composition_time,
-                        source_timing: None,
+                        data: data.to_vec().into(),
+                        dts: Some(dts_abs),
+                        pts: Some(pts_abs),
+                        duration: None, // filled in by `TrackState::advance`/`flush`
+                        flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
+                        provenance: None,
                     };
                     video.advance(sample, timestamp, events);
                 }
@@ -436,7 +493,7 @@ impl StreamingFlvDemux {
                             sample_size: AUDIO_SAMPLE_SIZE_BITS,
                         },
                     );
-                    events.push_back(DemuxEvent::TrackAdded(Track::new(spec, Vec::new())));
+                    events.push_back(DemuxEvent::TrackAdded(spec));
                 }
             }
             aac_packet_type::RAW => {
@@ -444,12 +501,14 @@ impl StreamingFlvDemux {
                 // resolved the track yet — see the module `# Ordering
                 // assumption` note.
                 if audio.track_id.is_some() {
+                    let dts_abs = timestamp as i64;
                     let sample = Sample {
-                        data: data.to_vec(),
-                        duration: 0, // filled in by `TrackState::advance`/`flush`
-                        is_sync: true,
-                        composition_offset: 0,
-                        source_timing: None,
+                        data: data.to_vec().into(),
+                        dts: Some(dts_abs),
+                        pts: Some(dts_abs),
+                        duration: None, // filled in by `TrackState::advance`/`flush`
+                        flags: crate::ir::SampleFlags::SYNC,
+                        provenance: None,
                     };
                     audio.advance(sample, timestamp, events);
                 }
@@ -460,10 +519,73 @@ impl StreamingFlvDemux {
     }
 }
 
+/// [`Stage`] adoption (media plane step 2e): delegates straight to the
+/// inherent [`feed`](StreamingFlvDemux::feed)/[`poll_event`
+/// ](StreamingFlvDemux::poll_event)/[`finish`](StreamingFlvDemux::finish) —
+/// which keep working unchanged — so a caller can drive both
+/// `StreamingFlvDemux` and [`crate::ts_demux::StreamingTsDemux`] through the
+/// exact same generic loop despite the two disagreeing on `feed`'s return
+/// type (`Result` vs infallible) before this trait.
+impl Stage for StreamingFlvDemux {
+    type In<'a> = &'a [u8];
+    type Out = DemuxEvent;
+    type Error = FlvError;
+
+    /// Fully-qualified inherent calls (`StreamingFlvDemux::feed`, not
+    /// `self.feed`): the inherent methods and these trait methods share their
+    /// names, and bare method-call syntax picks the inherent one only by
+    /// inherent-over-trait precedence. `finish` is the dangerous one — same
+    /// name, same arity, and its inherent form returns `()` — so renaming it
+    /// would silently retarget `self.finish()` at *this* method: infinite
+    /// recursion that still compiles.
+    fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<(), FlvError> {
+        StreamingFlvDemux::feed(self, input)
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.poll_event()
+    }
+
+    fn finish(&mut self) -> Result<(), FlvError> {
+        StreamingFlvDemux::finish(self);
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Only ever reacts to feed/finish — no rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// `want_bytes` is the **exact** number of bytes still missing before the
+    /// unit [`feed`](StreamingFlvDemux::feed) is currently blocked on can be
+    /// consumed: the rest of the FLV header, the rest of a partial tag
+    /// header, or the rest of the in-flight tag's body + trailing
+    /// `PreviousTagSize` — the same arithmetic `feed`'s loop breaks on.
+    ///
+    /// It used to be a constant `TAG_HEADER_LEN` (11), even mid-body, so a
+    /// driver that sizes its reads by `want_bytes` made ~1.5 million `feed`
+    /// calls to deliver one 16 MiB tag instead of one.
+    ///
+    /// `saturated` stays `false`, and that is not a fabrication: `pending`
+    /// holds at most one in-flight tag, and a tag's `DataSize` is a 24-bit
+    /// field (Adobe FLV v10.1 Annex E), so the buffer is *structurally*
+    /// bounded at ~16 MiB — more bytes always make progress, and there is no
+    /// state in which this demuxer would rather not be fed. (The pre-header
+    /// prefix is separately capped by `MAX_FLV_HEADER_LEN`, and a header
+    /// declaring more is surfaced as an `Err` rather than a steady buffered
+    /// state a driver would observe here.)
+    fn demand(&self) -> Demand {
+        Demand::new(self.bytes_wanted())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
+    use bytes::Bytes;
 
     // --- Synthetic FLV fixture builder (small + deterministic) --------------
     //
@@ -576,11 +698,16 @@ mod tests {
 
     /// Collect every `Sample` for the (single) video track across all
     /// events, in emission order.
-    fn video_samples(events: &[DemuxEvent]) -> Vec<(u32, Vec<u8>)> {
+    fn video_samples(events: &[DemuxEvent]) -> Vec<(u32, Bytes)> {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.duration, sample.data.clone())),
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample
+                        .duration
+                        .expect("FLV video samples always carry a duration"),
+                    sample.data.clone(),
+                )),
                 _ => None,
             })
             .collect()

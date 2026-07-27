@@ -7,6 +7,628 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-26
+
+**Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).
+
+Media plane step 2: consolidates the IR to carry absolute, unwrapped
+timestamps (`Sample::dts`/`pts` as `Option<i64>`, `duration` as `Option<u32>`)
+so downstream callers (splice, DVR, pacing, live origin) can work with real
+time, and adds track-lifecycle events (`TrackUpdated`/`TrackRemoved`/
+`TrackAbandoned`) for mid-stream PMT changes. An aggregate review of the whole
+step-2 range then found 11 blocking defects; the five worst are fixed here
+(folded into this still-open release rather than shipped separately),
+alongside two CENC confidentiality vulnerabilities disclosed under Security
+below.
+
+### Added
+
+- **`CodecConfig::Subtitle { format: SubtitleFormat }`** (media plane step 2d):
+  `Fmp4Demux` now demuxes `stpp` (TTML/IMSC, ISO/IEC 14496-30 §7.2) and `wvtt`
+  (WebVTT, §9.2) ISOBMFF sample entries into this variant instead of silently
+  dropping the track — samples stay opaque (never cue-parsed).
+  `SubtitleFormat` (`#[non_exhaustive]`, `name()`/`Display` per the #204
+  convention) also carries `DvbBitmap`/`Teletext` tokens for the PES-carried
+  broadcast subtitle formats (still `CodecConfig::Data` on the TS demux path
+  today). There is no re-mux path yet for a `Subtitle` track — `build_trak`
+  rejects it with `Error::UnsupportedCodec` (`TODO(#753)`).
+- The `ac-4` ISOBMFF sample entry now demuxes to the existing
+  `CodecConfig::Ac4` (the mux direction already worked; only the demux arm was
+  missing) — a full mux ↔ demux round trip.
+- **Shared segmentation primitives in `transmux::segmenter`**, now public
+  because all four segmenters use them and their behaviour is observable:
+  `MediaClock` (per-track elapsed-media accounting: `duration` when it is a
+  real, non-zero span, else the absolute `dts` delta), `choose_anchor` /
+  `is_anchor_capable` (first video track of any codec, else the first track
+  whose clock can advance; a section-only track set is an error), and
+  `MAX_PENDING_SAMPLES_PER_TRACK` (the un-cut buffer bound). Previously each
+  module carried its own copy, so the four could — and did — drift apart.
+- **`DemuxEvent::TrackUpdated`/`TrackRemoved`/`TrackAbandoned`, PMT version
+  diffing** (issue #774, unblocks rust-skyfire#96): `StreamingTsDemux` now
+  diffs a PMT's `version_number`/`current_next_indicator` (ISO/IEC 13818-1
+  §2.4.4.8) instead of only ever inserting newly-seen PIDs.
+  - A version change that no longer lists a previously-declared PID emits
+    `TrackRemoved { track_id, provenance }` (only for a PID that had already
+    reached `Live` — a real `track_id` a consumer has seen).
+  - A version change that alters an existing PID's `es_info_descriptors` or
+    reclassifies its `stream_type` emits `TrackUpdated(TrackSpec)` (codec
+    config recovery itself stays single-shot and permanent).
+  - A track whose codec config never becomes recoverable by end of input, or
+    whose probe/parked backlog exceeds its byte budget, emits
+    `TrackAbandoned { track_id: Option<u32>, reason: AbandonReason,
+    provenance }` (`AbandonReason::ConfigUnrecoverable` /
+    `AbandonReason::BudgetExceeded`).
+  - A carousel-repeated identical-version PMT section (several times a second
+    on a real broadcast) is parsed but never re-diffed — no spurious events on
+    an unchanged track set.
+
+### Changed
+
+- **BREAKING — two silent drops are now typed errors** (media plane step 2d,
+  landed only after the coverage above, so `stpp`/`wvtt`/`ac-4` — which used
+  to hit these paths — no longer do):
+  - `Fmp4Demux` no longer silently skips a track whose sample entry it cannot
+    reconstruct into a `CodecConfig`; it now returns
+    `Error::UnsupportedSampleEntry { fourcc }`, naming the offending sample
+    entry.
+  - `CmafMux` no longer silently filters `CodecConfig::Data` tracks out of the
+    init/media segments; it now returns
+    `Error::UnmuxableDataTrack { track_id, stream_type }`. A caller that wants
+    the old best-effort behaviour must pre-filter explicitly, e.g.
+    `media.select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))`.
+- **BREAKING — `Sample` timing is now absolute and optional** (media plane step
+  2c, `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
+  `Sample` is now `{ data, dts: Option<i64>, pts: Option<i64>, duration:
+  Option<u32>, flags: SampleFlags, provenance: Option<Provenance> }`:
+  - `dts`/`pts` are **absolute** tick values in the track's own media timescale
+    (`TrackSpec::timescale`), replacing the previous model in which a sample's
+    time was the running sum of preceding `duration`s anchored on
+    `Track::start_decode_time` — an anchor that FLV, WebM, MPEG Program Stream,
+    RTMP and RTP all left at `0`. The IR can now address a splice point, rebase
+    across sources, and express a send deadline.
+  - 33-bit (MPEG-2 Systems, ISO/IEC 13818-1 §2.4.3.7) and 32-bit (RTP,
+    RFC 3550 §5.1) rollover is unwrapped **once, at the demux edge**, and never
+    re-derived downstream.
+  - `Option`, not mandatory: section-carried tracks (SCTE-35 `stream_type`
+    `0x86`, DSM-CC, private sections) genuinely have no timestamp, so they keep
+    `dts`/`pts`/`duration` of `None` rather than a fabricated value.
+  - `composition_offset` is no longer a stored field — it is implied by the
+    pair, via the new `Sample::composition_offset()` (`pts - dts`), and still
+    round-trips fMP4 `ctts` byte-identically.
+  - `is_sync` moved into the `#[non_exhaustive]` `SampleFlags` struct
+    (`sample.flags.is_sync`; `SampleFlags::SYNC` / `NON_SYNC` / `new`).
+  - `Sample::new`/`from_annexb` take `(data, dts, pts, duration, is_sync)` and
+    `from_raw` takes `(data, dts, pts, duration)`.
+- **BREAKING — `SourceTiming` deleted.** It was write-only (the crate's own docs
+  admitted "all mux paths in this crate ignore this field"). The source
+  container's raw, pre-unwrap wire stamps survive as the debug-only
+  `Provenance { wire_dts, wire_pts }` side-field (`Sample::with_provenance`), so
+  no information is lost — the crate just stops presenting a debug field as a
+  timing model.
+- **BREAKING — `rebase::unroll_33bit_wraps` and `rebase::MPEG_TS_WRAP` removed.**
+  Wrap-unrolling now happens once at the demux edge, so re-folding the IR
+  timeline back into 33 bits in order to unwrap it again was exactly the
+  anti-pattern this step removes. `rebase_to_zero` / `apply_offset` /
+  `insert_discontinuity_gap` now shift every sample's absolute `dts`/`pts` in
+  lockstep with `Track::start_decode_time` (and never fabricate a timestamp for
+  a `None`-timed sample).
+- **BREAKING — `DemuxEvent` reshaped a second time within this release**
+  (found by the aggregate review below; applied here rather than deferred to a
+  later major bump):
+  - `TrackAdded(Track)` → `TrackAdded(TrackSpec)` — drops the always-empty
+    `samples` and never-set `encryption` fields that came along with the full
+    `Track`; every existing consumer already only read `track.spec`.
+  - `Discontinuity { track, provenance }` → `Discontinuity { track, kind:
+    DiscontinuityKind, provenance }`, and the variant is now `#[non_exhaustive]`
+    with a `DemuxEvent::discontinuity(...)` constructor. `DiscontinuityKind` is
+    `Signalled` (an MPEG-2 TS adaptation-field `discontinuity_indicator`),
+    `TimelineReanchored` (a live audio track's frame-exact anchor drifted from
+    the wire PES clock), or `BudgetExceeded { bytes }` (a per-PID buffer cap
+    dropped in-flight data). `abandon_backlog`'s probe/parked-backlog budget
+    cap now emits `TrackAbandoned` instead of a `Discontinuity` — it was
+    mis-typed before (a budget overflow abandons the track; nothing survives
+    to "continue" from).
+  - `TracksResolved` → `TracksResolved { generation: u32 }` — fixes a live bug
+    where the de-dup key was the known-PID *count*: a removal immediately
+    followed by an addition could return the count to a previously-seen
+    value, silently suppressing the re-fire a consumer needs. `generation` is
+    a monotonic counter bumped once per applied PMT diff (add/update/remove).
+  - `ClockReference` is now `#[non_exhaustive]` too, with a matching
+    `DemuxEvent::clock_reference(...)` constructor — both non-exhaustive
+    variants can grow a field later (e.g. a wall-clock/UTC anchor) without a
+    further breaking change.
+  - Documented `DemuxEvent`'s event-order guarantee (observation order per
+    emission class, not wire order across classes) and its removal semantics
+    (no `Sample` for a removed `track_id` ever follows its `TrackRemoved`;
+    removal tracks only the PMT-declared set, never a silence timeout).
+- **BREAKING — the rest of the IR surface is `#[non_exhaustive]` too**, applied
+  in this same release rather than costing a major bump later (`Media`/`Track`
+  were already done): the `DemuxEvent::Sample`,
+  `TrackRemoved`, `TrackAbandoned` and `TracksResolved` **variants**, and the
+  `Provenance`, `PcrSample`, `SkippedTrack`, `TrackEncryption` and
+  `FragmentTrackData` structs. `TracksResolved` took a field this release,
+  which is exactly the case this prevents recurring. Every affected type gained
+  a constructor so none became unconstructible from outside the crate:
+  `DemuxEvent::{sample, track_removed, track_abandoned, tracks_resolved}`,
+  `Provenance::new`, `PcrSample::new`, `SkippedTrack::new`,
+  `TrackEncryption::new`, `FragmentTrackData::new`. Pattern matches on the four
+  variants need a trailing `..`. `EventProvenance` stays `Copy + Eq + Default`.
+- **BREAKING — `HlsPackager` omits a timestamp-less track instead of emitting
+  `#EXTINF:0.000`.** A section-carried track (SCTE-35 `stream_type` `0x86`,
+  DSM-CC, private sections) has `duration: None` on every sample, deliberately
+  and never fabricated; summing `unwrap_or(0)` over it rendered a zero
+  `EXTINF`, which RFC 8216 §4.3.2.1 defines as a real playback duration a
+  player would honour. An HLS media playlist is a timeline of playable
+  segments and such a track is not one, so it is left out (its content reaches
+  an output through the paths built for it — an inband `emsg`, an
+  `EXT-X-DATERANGE`). A `Media` whose tracks are *all* timestamp-less is now a
+  named `Error::InvalidInput` rather than an empty playlist.
+
+### Fixed
+
+- `TsDemux` stored **audio** sample timing in 90 kHz PES-clock ticks while the
+  track's timescale is its sample rate, so `dts` deltas (e.g. 2089) disagreed
+  with `duration` (1024 AAC samples). Audio `dts`/`pts` — and the audio track's
+  `start_decode_time` anchor — are now rescaled into the track's own timescale,
+  the same unit as `duration`. Latent before this release only because the old
+  `SourceTiming` was never read back.
+- `PsDemux` left every AC-3 sample's `duration` at `0`, making the recovered
+  audio timeline uninterpretable; it now carries the intrinsic 1536-sample
+  syncframe duration (ETSI TS 102 366 §4.1) and absolute time rescaled from the
+  PES stamps.
+- `RtpDepacketiser` (batch) discarded the RTP timestamp and the per-AU sync
+  flag entirely, emitting `duration: 0` / `is_sync: true` for every sample. It
+  now carries the unwrapped absolute RTP media clock and the real IDR-derived
+  sync flag.
+- **CRITICAL — a PMT that reclassifies a PID's codec no longer panics the
+  process.** PMT version diffing (above) made PMT application *destructive*,
+  which turned several latent weaknesses into live faults; this is the worst
+  of them. `apply_pmt_diff` wrote `stream.codec` in place, leaving the
+  `ConfigProbe`, the `Carrier`, and any buffered access units built for the
+  **old** codec. A version change that reclassified a still-probing PID — DVB's
+  routine `stream_type` `0x06` gaining an `AC-3_descriptor`, so
+  `Codec::Data(0x06)` becomes `Codec::Ac3` (issue #641) — then reached
+  `finalize_probe`'s `unreachable!("ConfigProbe::Data is only created for
+  Codec::Data")` and **aborted on ordinary broadcast input**. A codec change is
+  a different elementary stream, so the PID is now torn down and re-registered,
+  which rebuilds every derived piece of state in one move. That also fixes the
+  stale-`Carrier` half of the same bug: ISO/IEC 13818-1 Table 2-34 splits
+  `stream_type` into PES- and section-carried families, so a `0x86` → `0x1B`
+  reclassification used to feed H.264 PES bytes to a `SectionReassembler` and
+  produce silence while the track still claimed to exist. The `unreachable!`
+  itself is gone: a probe/codec mismatch now degrades to "unresolved" (and is
+  concluded by the existing `TrackAbandoned` paths) rather than aborting a
+  `#![forbid(unsafe_code)]` library on remote input. Every remaining
+  panic-class site in `ts_demux` reachable from parsed input was converted the
+  same way.
+- **CRITICAL — PSI `CRC_32` is validated before any PAT/PMT is acted on**
+  (ISO/IEC 13818-1 §2.4.4.1, via `broadcast_common::crc32_mpeg2`). Nothing
+  checked it before: `CRC32_LEN` was used only to skip the trailer in length
+  arithmetic. Now that PMT application tears tracks down, one bit error in a
+  version byte or an ES loop destroyed a live track and reassigned its
+  `track_id`; and because `process_packet` consults `pmt_reasm` *before*
+  `streams`, a corrupt PAT permanently hijacked an elementary PID into PMT
+  reassembly, shadowing its stream for the rest of the run. A section failing
+  CRC — or clearing `section_syntax_indicator`, which a PAT/PMT never legally
+  does — is now dropped silently and disturbs nothing, not even
+  `last_applied_version` (bumping that off a corrupt section would have
+  swallowed the genuine version that follows).
+- **A PAT may remap a PMT PID, and a "next" PAT is not applied.** The
+  PAT-derived `program_number` was write-once (`entry().or_insert_with()`) and
+  the PAT was applied ignoring `current_next_indicator`, so a legitimate remap
+  — or a `cni == 0` "next" PAT — froze the binding and made the defensive
+  `program_number` cross-check reject every PMT on that PID **forever**: a
+  silent zero-track demux. The `cni == 1` rule PMT application already used now
+  gates the PAT too, and a current PAT updates the binding (clearing
+  `last_applied_version`, since the version counter belongs to the program, not
+  the PID).
+- **A removed PID's payload is not replayed into the re-added track.**
+  `remove_track` left the dropped PID's traffic flowing into `unattributed` —
+  the *pre-registration* replay buffer — so post-removal orphan payloads
+  accumulated to the 4 MiB cap and were then delivered as the **re-added**
+  track's first samples, anchoring its `start_decode_time` in the past. The
+  backlog is now purged on removal and the PID is blacklisted from that buffer
+  until a PMT declares it again.
+- **An ES PID declared by two programs survives one of them dropping it.**
+  `streams`/`es_seen` are global while a PMT's `applied_es` is per-PMT, so a
+  shared audio/subtitle component was torn down as soon as *either* program's
+  PMT stopped listing it. Removal is now refcounted by declaring PMT PID; only
+  the last declarer's drop removes the track.
+- **The audio re-anchor threshold is derived from real muxer behaviour, not
+  from one sample period.** The B5 anchor's discontinuity threshold was
+  `ceil(90000 / sample_rate)` — 3 ticks at 44.1 kHz — while a 1024-sample AAC
+  frame is `2089.795…` ticks, so a muxer stamping the rounded constant `2090`
+  drifts `+0.204…` ticks per frame *on a perfectly continuous stream* and
+  crossed the threshold about every 15 frames; non-frame-aligned MP2 PES (issue
+  #638) crossed it on essentially every access unit. `TimelineReanchored` was
+  therefore pure noise and the anchor effectively inert. The bound is now
+  20 ms of 90 kHz (1800 ticks) — below the lip-sync detectability floor the
+  broadcast recommendations work to (ITU-R BT.1359-1; ATSC A/85's ±15 ms), so
+  re-anchoring inside it would trade a real `Discontinuity` event for an
+  inaudible correction — floored at two intrinsic sample periods for
+  degenerate sample rates. `DiscontinuityKind` had no assertion coverage
+  anywhere in the crate; it now has both halves of the contract (a
+  constant-increment 44.1 kHz stream emits **zero** re-anchors; one genuine gap
+  emits exactly one).
+- **A gapped/discontinuous fMP4 keeps its gap.** `Fmp4Demux` seeded `next_dts`
+  from only the **first** fragment's `tfdt` and then pure-summed `trun`
+  durations, so every sample after a gap came out short by exactly the gap —
+  re-muxing to a wrong `tfdt`/PES stamp and permanently desyncing A/V. `tfdt`
+  is per-fragment and authoritative (ISO/IEC 14496-12:2015 §8.8.12), so every
+  fragment that carries one now re-seeds the cursor; `Track::start_decode_time`
+  still records the first fragment's anchor. A gapless stream is byte-for-byte
+  unaffected.
+- **`rescale_to_track` preserves a negative audio anchor.** Its `.max(0) as
+  u128` fabricated `dts = 0` for audio where a legitimately negative unwrapped
+  anchor (reordering across the 2^33 boundary) is carried through verbatim for
+  every other track kind — desyncing the audio track alone.
+- **CRITICAL — a `duration` of `Some(0)`/`None` on the anchor track no longer
+  stalls segmentation forever** (all four segmenters: `Segmenter`,
+  `LlSegmenter`, `LlHlsSegmenter`, `StreamingTsHlsSegmenter`). The anchor
+  accumulator advanced only from `Sample::duration`, so a stream carrying
+  `Some(0)` never reached the segment target: no part and no segment was ever
+  emitted, `pending` grew without bound, and `Stage::demand()` still reported
+  "not saturated", inviting a well-behaved driver to feed to exhaustion. This
+  was reachable on a shipped path — `StreamingFlvDemux` derives `duration` as
+  the forward delta between FLV tag timestamps, so an RTMP publish's first
+  sample (and any two tags sharing a timestamp) is `Some(0)`. Since
+  `Sample::dts` is absolute, the new shared `segmenter::MediaClock` advances
+  on each sample's own `duration` when that is a real, non-zero span and on
+  the **`dts` delta** otherwise; a stream with real durations segments exactly
+  as before. Per-track `tfdt`/`base_media_decode_time` accounting was the same
+  duration sum and is fixed alongside it, so segment decode times no longer
+  all collapse to 0. `StreamingTsHlsSegmenter::push` also no longer rejects an
+  anchor sample with `duration: None` outright.
+- **CRITICAL — a legal single-IDR / infinite-GOP stream is now bounded instead
+  of growing without limit** (all four segmenters). With one keyframe at the
+  start and none after, no cut is possible — and cutting mid-GOP would break
+  CMAF's (and classic HLS's) random-access guarantee — so the pending buffer
+  is bounded on **data**, not time (these types are sans-IO and `no_std`): at
+  the new `segmenter::MAX_PENDING_SAMPLES_PER_TRACK` un-cut samples,
+  `Stage::demand()` reports `saturated` so a cooperative driver stops feeding,
+  and `push`/`Stage::feed` then return a named `Error::InvalidInput`. `flush`/
+  `finish` closes the trailing partial segment and input flows again.
+- **`LlSegmenter`/`LlHlsSegmenter` anchor on any video codec, not just AVC.**
+  Both selected the anchor with `matches!(config, CodecConfig::Avc { .. })`,
+  so an HEVC-plus-AAC media with audio first anchored on the **audio** track:
+  segments did not begin on an IRAP, and since every AAC sample is a sync
+  sample every `PartInfo.independent` was `true`, advertising
+  `INDEPENDENT=YES` (RFC 8216bis §4.4.4.9) on parts that actually start
+  mid-GOP. Both now use the shared `segmenter::choose_anchor`, matching
+  `Segmenter`/`ts_hls` as their doc comments already claimed. A track set with
+  no anchor-capable track (all section-carried) is a construction error in all
+  four rather than a silent stall.
+- **`TsHlsPackager` places a timestamped section sample in the right segment.**
+  `partition_tracks` advanced its per-track placement clock only from
+  `duration`, which a section-carried track never has, so **every** section
+  sample landed in segment 0 — an SCTE-35 cue for t=40 s was muxed at t=0 —
+  while the streaming path placed it in the segment that was open on arrival.
+  Both paths now share `placement_secs`, which falls back to the sample's
+  absolute `dts`, restoring the batch/streaming equivalence the module docs
+  claim (and now enforced by a test).
+- **`ProgressiveDemux` cannot return silently-wrong sample payloads after a
+  buffer-cap rejection.** A `Stage::feed` rejected for exceeding `max_bytes`
+  discarded that chunk but was neither terminal nor recorded, and `demand()`
+  still advertised headroom — so a following smaller chunk was accepted and
+  `finish()` parsed a buffer **with a hole** using file-absolute `stbl` chunk
+  offsets (ISO/IEC 14496-12:2015 §8.7.5), yielding either a misleading
+  `UnexpectedBox` or a `Media` whose samples carried the wrong bytes. The
+  rejection now poisons the demuxer permanently: every later `feed` and
+  `finish` re-report the original `BufferCapExceeded`, `demand()` stays
+  `saturated`, and no parse is attempted. `feed` after `finish` is likewise
+  rejected instead of silently appending, and `finish` releases the
+  accumulated buffer rather than retaining the whole file alongside a copy of
+  every sample.
+- **`StreamingFlvDemux::demand()` reports the real want.** It returned a
+  constant 11-byte `want_bytes` even mid-tag-body, so a driver sizing its
+  reads by `want_bytes` made ~1.5 million `feed` calls to deliver one 16 MiB
+  tag. It now returns exactly the bytes still missing for the unit `feed` is
+  blocked on.
+- **`StreamingTsHlsSegmenter` keeps one ready queue, not two.** Its `Stage`
+  adapter had a separate `stage_ready` beside the inherent inline return, so
+  delivery routed per call and the two could drift; both now drain a single
+  `ready`. The `Stage` impls of `StreamingTsHlsSegmenter` and
+  `StreamingFlvDemux` also call their inherent methods by fully-qualified
+  path, since `self.finish()` resolved to the inherent one only by
+  inherent-over-trait precedence at identical arity — renaming it would have
+  turned the delegation into silent infinite recursion.
+- **`Segmenter::push` no longer loses the sample that triggered a failing
+  cut.** A `build_media_segment` failure (reachable since `new` stopped
+  filtering BMFF-unmuxable tracks) propagated *before* the triggering keyframe
+  was buffered, punching a hole in the timeline on every subsequent anchor
+  keyframe; the sample is now buffered first and the error surfaced after.
+- **`trickplay::derive_iframe_track` doc corrections**: dropped a bullet
+  naming the removed `composition_offset` field, and the false claim that the
+  derived track "covers the same total timeline as the source" (it starts at
+  the first sync sample, so it is shorter when `samples[0]` is not one).
+- **`TsMux` no longer drops a recognised codec's PMT `ES_info` descriptors**
+  (issue #775, closes #775; nullified a shipped rust-skyfire track-picker
+  feature). `plan_elementary_streams` only carried a track's inherited
+  `TrackSpec::es_info_descriptors` into the re-muxed PMT for an opaque
+  `CodecConfig::Data` track — a stale guard from issue #576, written when the
+  IR genuinely carried no descriptors for a decoded codec. Since issue #582
+  `TsDemux` populates `es_info_descriptors` for **every** track, so a
+  recognised codec's audio-language (`ISO_639_language_descriptor`) and DVB
+  `subtitling_descriptor` were silently lost on a TS re-mux — a track lost
+  information precisely *because* its codec was understood.
+  - The new policy (documented with its spec citations in the `ts_mux` module
+    doc) is a **deny-list, not an allow-list** — an allow-list would silently
+    drop an unknown-but-valid broadcaster-private or newly-registered
+    descriptor, which is the same class of bug.
+  - **`CA_descriptor` (tag `0x09`, ISO/IEC 13818-1 §2.6.16) is denied.** It
+    signals that the elementary stream is scrambled and names the `CA_PID`
+    carrying its ECMs; this muxer emits cleartext, so copying it forward would
+    falsely advertise the re-mux as encrypted and point at a `CA_PID` absent
+    from the new PMT.
+  - Inherited descriptors are **de-duplicated against the descriptors the
+    muxer synthesises itself** (e.g. the `MPEG-H_3dAudio_descriptor` built
+    from the typed `mpegh3daProfileLevelIndication`, issue #579), keeping the
+    synthesised copy — emitting both yields a malformed `ES_info` loop with
+    contradictory signalling under one tag.
+  - Surviving descriptors keep their **source order**.
+  - A merged loop over the 12-bit `ES_info_length` field's 4095-byte maximum
+    (§2.4.4.8) returns `Error::BufferCapExceeded { what: "PMT ES_info
+    descriptor loop", cap }` rather than being silently truncated into a
+    malformed PMT.
+- **BREAKING — one strictness policy everywhere: DEMUX = lenient but loud,
+  MUX = strict but filterable** (B1-B4).
+  - `Fmp4Demux` no longer fails the whole file on one track it cannot
+    reconstruct (a QuickTime hint/chapter track, `c608`/`c708`, GoPro
+    `gpmd`, ...) — it skips that track and records it, named, in the new
+    `Media::skipped: Vec<SkippedTrack>`, matching `ProgressiveDemux`'s
+    existing per-track leniency (the two used to diverge on identical
+    input).
+  - `CodecConfig::is_muxable_in_bmff()` (new, `pub`) now covers both the
+    opaque `CodecConfig::Data` carriage and `CodecConfig::Subtitle` — B1:
+    `CmafMux` (and every other fMP4/CMAF mux entry point) previously had no
+    predicate covering `Subtitle`, so a subtitle-bearing CMAF asset that used
+    to repackage fine now failed. A caller must pre-filter with
+    `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())` before
+    muxing a `Media` that mixes carriable and non-carriable tracks.
+  - `Error::UnmuxableSubtitleTrack { track_id, format }` (new): the named
+    rejection for a `Subtitle` track, mirroring `UnmuxableDataTrack`.
+  - The strict-but-filterable check is now centralized in
+    `build_init_segment` itself, so `CmafMux`, `ProgressiveMux`,
+    `Segmenter`, `LlSegmenter`, and `LlHlsSegmenter` all reject a
+    non-muxable track the same way (previously only `CmafMux` did; the
+    other four silently dropped it).
+  - The `transmux` CLI (`cli` feature) now filters non-muxable tracks (with
+    a stderr warning naming them) before every fMP4/CMAF-based output
+    format, so it no longer fails on an ordinary real-world DVB multiplex
+    (DVB subtitle/teletext/ANC/SCTE-35 tracks are routine).
+- **Audio DTS is frame-exact again (B5)**: `TsDemux` no longer re-derives an
+  audio track's dts/pts from the lossy 90 kHz PES clock on every access
+  unit (which injected up to ±1 track tick of jitter at every PES boundary,
+  since 90000 does not evenly divide a typical sample rate) — it anchors
+  once from the first access unit, then advances by the intrinsic per-frame
+  duration, and only re-anchors (emitting `DemuxEvent::Discontinuity`) on a
+  genuine gap. The same re-anchor-on-every-stamp bug, found via the new
+  invariant test below, is fixed identically in `PsDemux`'s AC-3 track
+  recovery.
+- Added a per-timed-track invariant, checked on real fixtures across every
+  demuxer in the crate (`tests/demux_timing_invariant.rs`): a track's
+  `start_decode_time` must equal its first sample's `dts`, and
+  `sum(sample.duration)` must equal the span from the first to the last
+  sample's `dts` plus the last sample's `duration` — the standing guard
+  against the whole re-derive-from-a-lossy-clock class of bug.
+- **A codec-changed re-registration bypassed the shared-PID refcount.** The
+  "removed" branch of `apply_pmt_diff` already refused to tear down a PID
+  another PMT still declares (above); the codec-changed branch never got the
+  same check, so a PID declared by two programs (an ordinary shared audio/
+  subtitle component) had its track torn down and rebuilt — a fresh
+  `track_id`, a spurious `TrackRemoved`/`TrackAdded` — the moment *either*
+  declaring PMT reclassified its codec, even though the other program's
+  declaration was unchanged. The codec-changed branch now consults
+  `es_declarers` too: reclassification is refused while any other declarer
+  still lists the PID (the existing classification wins; two programs
+  declaring one PID under different codecs is a malformed multiplex, and
+  last-writer-wins was rejected as letting either program's routine version
+  bump flip the shared track back and forth), proceeding only once this PMT
+  is the *last* declarer. The same re-registration also now restores the
+  PID's original PMT-declaration-order slot in `codec_order`/`data_order`
+  instead of losing it to the back of the list, which reordered `TrackAdded`
+  emission and could block a later-ranked PID's promotion behind it.
+- **`splice::concat`/`splice_insert` read a sample's true absolute `dts` for
+  the join/snap position, not a duration-sum reconstruction.**
+  `track_end_decode_time`, `snap_to_preceding_sync`, and `splice_insert`'s own
+  boundary-decode-time calculation still derived decode time as
+  `start_decode_time + Σ duration` — harmless while the two representations
+  agreed, but the per-fragment `tfdt` reseed (above) can legitimately leave a
+  gap between `start_decode_time` and a sample's true `dts`, which silently
+  mis-placed the splice join/snap one step downstream of that fix. All three
+  now read the sample's own absolute `dts` directly, falling back to the
+  duration sum only for a genuinely timestamp-less (section-carried) sample.
+
+### Security
+
+Four CENC (ISO/IEC 23001-7) defects, two of them a **total loss of
+confidentiality** for content encrypted by this crate. Anything encrypted by
+`CencEncryptor` with the affected configurations must be re-encrypted with a
+fresh content key — the exposure is in the ciphertext already published, not
+only in the code.
+
+**Affected releases: 0.16.0 through 0.19.0** (`CencEncryptor` first shipped in
+0.16.0); fixed in 0.20.0. **Affected configurations:** the keystream-reuse
+defect requires `CencScheme::Cenc` and a `Media` carrying **two or more
+tracks** encrypted in one `encrypt` call — the overwhelmingly common
+video+audio case. Single-track output, and all `CencScheme::Cbcs` output, are
+unaffected by it. Re-keying alone is not sufficient if the same content is
+re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
+
+- **CRITICAL — BREAKING: AES-CTR keystream reuse across tracks (a two-time
+  pad).** `CencEncryptor::encrypt` restarted its per-sample IV counter at
+  `base` for *every* track while applying one shared content key, so under
+  `cenc` (AES-CTR) video sample *i* and audio sample *i* were encrypted with
+  the same key **and** the same counter block. XOR-ing the two ciphertexts
+  cancels the keystream and yields the XOR of the two plaintexts — both
+  disclosed without the key. ISO/IEC 23001-7 §9.2 requires the IV to be unique
+  per *key*; "unique per track" is not sufficient when one key covers every
+  track. Measured on the two-track `fixtures/ts/h264_aac.ts`: 75 of 206
+  per-sample IVs collided. Every pre-existing test narrowed its fixture to a
+  single track, which is why a green suite shipped it. An adversarial review
+  of the first fix (below) found it incomplete in two further ways, both
+  closed in this same 0.20.0 (never separately released): the duplicate-IV
+  backstop ran *after* every track had already been keystreamed in place
+  (fixed by validating the full planned IV sequence before ciphering a single
+  byte), and IV uniqueness was only ever guaranteed *within* one `encrypt`
+  call, not across separate calls sharing a key (fixed by moving the running
+  counter onto the encryptor instance). See the two follow-up entries below.
+  - `IvGen::Counter { base }`'s sample index now runs continuously across the
+    whole `Media` in (track, sample) order, and never resets per track.
+  - **BREAKING** — `IvGen::Explicit(ivs)` now requires exactly
+    `media.tracks.iter().map(|t| t.samples.len()).sum()` IVs, consumed in
+    (track, sample) order. Previously it was validated against *each track's*
+    count, so one list was replayed verbatim for every track — the same defect
+    by a different route. A caller passing a per-track-sized list now gets
+    `Error::InvalidInput` instead of silent keystream reuse.
+  - `IvGen::Explicit` also rejects a list containing any **duplicate** IV.
+  - All IV validation — including the whole-`Media` duplicate check — now
+    happens before the first sample is ciphered, so a rejected configuration
+    leaves the `Media` untouched instead of half-encrypted (see the follow-up
+    entry immediately below for why this is now actually true, not just
+    documented as true).
+- **CRITICAL — BREAKING (adversarial-review follow-up, F1): the duplicate-IV
+  backstop ran after ciphering, not before.** The check above that rejects a
+  duplicate per-sample IV used to run against every track's *already-recorded*
+  `Track::encryption` — i.e. **after** `encrypt`'s per-track cipher loop had
+  already overwritten every sample via a real AES-CTR/CBC pass. Its whole
+  purpose is catching a *reintroduced* per-track-reset bug (the defect above),
+  so on the one path it exists to guard, `encrypt` returned `Err` while `media`
+  was left irreversibly two-time-padded with the plaintext already gone and no
+  rollback — exactly contradicting the CHANGELOG claim above ("a rejected
+  configuration leaves the Media untouched"), which was therefore false for
+  this one path. `CencEncryptor::encrypt` now resolves the **entire** planned
+  (track, sample) → IV mapping up front (`plan_sample_ivs`) and validates the
+  whole plan for duplicates (`assert_ivs_unique`) *before* any cipher work
+  runs; the cipher loop then consumes that exact, already-validated plan
+  (never re-resolving), so there is no window in which what was checked can
+  drift from what gets recorded. Verified by reintroducing the historical
+  per-track reset into `plan_sample_ivs` (Edit-then-revert): `encrypt` returns
+  `Err` and every sample's bytes remain byte-identical to the input.
+- **CRITICAL — BREAKING (adversarial-review follow-up, F2): IV uniqueness was
+  only guaranteed within one `encrypt` call, not per key for all time.**
+  AES-CTR requires IV uniqueness per **key**, for the life of that key — not
+  merely within a single `encrypt` invocation. `IvGen::Counter { base: 0 }`
+  (the `Default`) restarted its counter at `0` on every call, so two
+  invocations sharing a key — a video-only + audio-only split of one asset, or
+  successive live segments encrypted under one key period — reproduced the
+  exact two-time pad the first fix closed *within* one call. `CencEncryptor`
+  is now a **stateful** value constructed with its content key
+  (`CencEncryptor::new(key)` / `CencEncryptor::resume(key, next_counter)`),
+  owning the running `IvGen::Counter` index itself and advancing it after
+  every successful call rather than resetting it — reusing *one* instance
+  across every call that shares a key continues the counter instead of
+  restarting it. Consequences:
+  - **BREAKING** — `Encrypt::encrypt` (the `broadcast-common` hub trait) now
+    takes `&mut self`, not `&self` — the only production implementor
+    (`CencEncryptor`) needs mutable state to own the counter; the only other
+    implementor workspace-wide is a trait-usability test fixture inside
+    `broadcast-common`'s own test module, updated identically.
+  - **BREAKING** — `EncryptConfig` no longer carries a `key` field (the key
+    now lives on the `CencEncryptor` instance, so a per-call key could never
+    silently pair one running counter with a different key). `IvGen::Counter`
+    is now a unit variant (no `base` field); construct a resumed encryptor
+    with `CencEncryptor::resume(key, base)` for the equivalent effect.
+  - Verified: two successive `encrypt` calls on one `CencEncryptor` instance
+    that would previously collide now produce fully disjoint IV sets.
+    Constructing a second, *separate* `CencEncryptor::new(key)` with the same
+    key still collides (each starts its counter at `0`) — this is
+    structurally undetectable from inside the type (it has no way to know
+    another instance ever used `key` before) and is documented on
+    `CencEncryptor` as the caller's remaining obligation: reuse one instance
+    per key, never construct a fresh one for a key already in use.
+- **Minor — cipher-core IV lengths tightened to exactly 8 or 16 bytes.**
+  `cenc_crypto`'s shared `apply_ctr`/`resolve_cbcs_iv` (used by both the
+  encrypt and decrypt paths, so this also hardens decryption of untrusted
+  files) accepted any length `1..=16`, silently zero-padding it to a 16-byte
+  counter/CBC-seed block — so two differently-invalid-length IVs whose
+  non-zero bytes happened to coincide could zero-pad to the *same* block.
+  Only 8 and 16 bytes are valid on the wire (ISO/IEC 23001-7 §9.2/§12.2); any
+  other length is now `Error::InvalidValue`.
+- **CRITICAL — BREAKING: `IvGen::Constant` + `CencScheme::Cenc` produced
+  unreadable output encrypted under an all-zero counter.** The `cenc` cipher is
+  never handed the track's `tenc`, so `IvGen::Constant`'s 16-byte seed (which
+  lives only in `tenc.default_constant_IV`) never reached it: every sample was
+  encrypted with an all-zero counter block — one keystream for the entire
+  track, and output no conformant decryptor can read. The combination is now
+  rejected with `Error::InvalidInput`; a constant IV is fundamentally
+  incompatible with CTR mode. `IvGen::Constant` is documented as `cbcs`-only
+  (where it is the standard convention) and is unchanged under `cbcs`.
+- **`cenc` decrypt no longer "succeeds" over garbage.** A conformant file whose
+  `tenc` declares `default_per_sample_iv_size == 0` with a
+  `default_constant_IV` yields empty `senc` IVs; the `cenc` path decrypted
+  those against an all-zero counter and returned `Ok(())` over rubbish. An
+  empty per-sample IV under `cenc` is now a typed error in both directions.
+- **`senc` no longer sizes an allocation from an unbounded wire field (remote
+  DoS).** `SampleEncryptionBox::parse_body` sized
+  `Vec::with_capacity(sample_count)` from the untrusted 32-bit `sample_count`
+  before any bounds check: a 20-byte box carrying `FF FF FF FF` requested a
+  single **206 GB** allocation (measured). `sample_count` is now bounded
+  against the box body's own length via each entry's minimum on-wire size, and
+  a `senc` whose entries would carry no bytes at all (no per-sample IV *and* no
+  subsample map — a shape whose count the wire cannot corroborate at any
+  length) is rejected. `saio`'s `entry_count * offset_size` is likewise
+  `checked_mul`'d so it cannot wrap past its length check on a 32-bit target.
+
+### Fixed (CENC, lower severity)
+
+- **A failed cipher pass no longer commits a half-encrypted payload.**
+  `cenc_crypto`'s in-place rewrite committed the buffer even when the cipher
+  returned `Err`, so a malformed `senc` that overran on its *second* subsample
+  left the first subsample keystreamed and stored that back into
+  `Sample::data`. Both cipher entry points now validate the entire subsample
+  map up front, after which their block loops cannot fail — so an error leaves
+  the sample byte-identical, and never leaves it empty.
+- **Subsample maps must now cover the whole sample on decrypt too** (ISO/IEC
+  23001-7 §9.3, matching the encrypt side): a map declaring 100 bytes of a
+  1000-byte sample used to return `Ok(())`, leaving 900 bytes of ciphertext
+  presented as plaintext.
+- **BREAKING — `CencDecryptor`'s `Decrypt::decrypt` pairs tracks by `track_id`,
+  not by position.** It zipped `Media` tracks to crypto records positionally
+  while storing the `track_id` for exactly that purpose, so a
+  `select_tracks_by`-narrowed `Media` decrypted (say) audio with the *video*
+  track's IVs — and when the two tracks' sample counts coincided, the existing
+  count check did not catch it either. A media track with no matching record is
+  now `Error::InvalidInput`; unmatched *records* remain fine (the narrowed
+  case).
+- **`iter_length_prefixed_nals` checks its NAL-length addition.** A 4-byte NAL
+  length of `0xFFFFFFFF` wrapped `start + len` on a 32-bit `usize`, defeating
+  the overrun guard and panicking on the subsequent slice. Reachable from
+  `CencEncryptor`'s subsample-map construction on caller-supplied sample data.
+- Added a `transmux_cenc_boxes` fuzz target covering the `senc`/`saiz`/`saio`
+  parsers (untrusted third-party media; 7.1 M executions clean).
+- **(F4) `CencDecryptor` can now decrypt a legitimately `senc`-less fragment.**
+  A constant-IV, whole-sample-protected `cbcs` fragment carries none of
+  `senc`/`saiz`/`saio` at all (nothing for them to carry — see
+  `movie_fragment.rs`'s `build_cenc_fragment_boxes`, issue R3); the decrypt
+  side's per-fragment harvesting only ever populated a track's per-sample
+  entries *from* a `senc` box, so this shape's `crypto.samples` silently
+  stayed empty and `Decrypt::decrypt` always rejected it with a generic
+  "sample count mismatch", despite `tenc.default_constant_IV` alone being
+  everything a conformant decryptor needs. `harvest_fragment_senc` now
+  synthesizes the placeholder per-sample entries this shape needs (one empty
+  IV/subsample-map pair per `trun` sample) when `senc` is legitimately absent
+  (`default_per_sample_iv_size == 0`); a genuinely missing `senc` on a
+  per-sample-IV track is unaffected (still tolerated, still caught downstream
+  by the same count check). Found and fixed while adding end-to-end coverage
+  for this branch, which had previously been exercised only by this crate's
+  own parser, never a real decryptor.
+  - That same new coverage found a real, verified interop limitation in
+    Bento4's `mp4decrypt` (1.6.0.0): given this exact, ISO/IEC-23001-7-legitimate
+    `senc`-less shape, `mp4decrypt` does not decrypt it at all — the output
+    `mdat` comes back byte-for-byte unchanged (still ciphertext), no error
+    reported. This is not a defect in this crate's cipher math (independently
+    re-verified outside this crate: the real ciphertext, AES-128-CBC-decrypted
+    with the real key and `tenc.default_constant_IV`, reproduces the true
+    plaintext exactly) or in the `saio` anchor (there is no `senc`/`saio` in
+    this shape to be wrong about) — it appears `mp4decrypt` requires *some*
+    per-sample aux-info structure present in the `traf` before it will attempt
+    to decrypt a track, regardless of `tenc`. Documented on the new
+    `tests/cenc_encrypt_e2e.rs` test rather than silently masked; the crate's
+    own (now-fixed) self round-trip remains that test's hard gate. Tracked as
+    a known third-party limitation, not a defect introduced or fixable by this
+    story.
+
 ## [0.19.0] - 2026-07-26
 
 ### Added

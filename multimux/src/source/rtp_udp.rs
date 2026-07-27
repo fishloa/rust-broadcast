@@ -329,10 +329,10 @@ mod tests {
         assert_eq!(samples.len(), 2);
         let (track_id0, sample0) = &samples[0];
         assert_eq!(*track_id0, 1);
-        assert!(sample0.is_sync, "first AU was the IDR");
+        assert!(sample0.flags.is_sync, "first AU was the IDR");
         let (track_id1, sample1) = &samples[1];
         assert_eq!(*track_id1, 1);
-        assert!(!sample1.is_sync, "second AU was non-IDR");
+        assert!(!sample1.flags.is_sync, "second AU was non-IDR");
     }
 
     /// A datagram whose payload type matches no configured track (e.g. RTCP

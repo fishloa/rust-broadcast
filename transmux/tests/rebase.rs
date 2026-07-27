@@ -1,4 +1,5 @@
-//! IR timeline-conditioning transforms — PTS/DTS rebase & anchor wiring (#476).
+//! IR timeline-conditioning transforms — PTS/DTS rebase & anchor wiring (#476),
+//! on the **absolute** timing model (media plane step 2c).
 //!
 //! These tests bite end-to-end against the real box layer: the absolute
 //! decode-time anchor ([`Track::start_decode_time`]) is populated by
@@ -8,17 +9,25 @@
 //! observed through the muxer/demuxer, so a hardcoded-0 muxer or a no-op
 //! transform fails.
 //!
+//! Since step 2c each `Sample` carries its own absolute `dts`/`pts`, so every
+//! transform must move the anchor **and** the samples in lockstep — asserted
+//! here. 33-bit wrap-unrolling is no longer a transform in this module at all:
+//! it happens once, at the demux edge, and is gated by
+//! `tests/absolute_timing.rs`.
+//!
 //! EXIT CRITERIA:
 //! 1. Anchor from real demux: an fMP4 built at a known non-zero `tfdt`
-//!    re-demuxes to that exact `start_decode_time`.
+//!    re-demuxes to that exact `start_decode_time` *and* first-sample `dts`.
 //! 2. Rebase-to-zero end-to-end: a Media with a non-zero anchor muxes to a
 //!    `tfdt` equal to the anchor (proves the muxer consumes it); after
-//!    `rebase_to_zero` the muxed `tfdt` is 0 (proves the transform).
-//! 3. `apply_offset(+90000)` moves every anchor and the muxed `tfdt` by +90000.
-//! 4. `unroll_33bit_wraps` lifts a timeline crossing 2^33 into a monotonic one
-//!    with the exact expected DTS values.
-//! 5. `insert_discontinuity_gap` grows the timeline span by exactly the gap and
-//!    leaves earlier samples unchanged.
+//!    `rebase_to_zero` the muxed `tfdt` is 0 (proves the transform), and every
+//!    sample's absolute `dts` moved with it.
+//! 3. `apply_offset(+90000)` moves every anchor, every sample `dts`, and the
+//!    muxed `tfdt` by +90000.
+//! 4. `insert_discontinuity_gap` pushes the sample at the insertion point (and
+//!    every later one) out by exactly the gap, leaving earlier samples alone.
+//! 5. A `None`-timed (section-carried) sample is never given a fabricated
+//!    timestamp by any transform.
 
 use broadcast_common::{Package, Unpackage};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -27,9 +36,7 @@ use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
-use transmux::rebase::{
-    MPEG_TS_WRAP, apply_offset, insert_discontinuity_gap, rebase_to_zero, unroll_33bit_wraps,
-};
+use transmux::rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
 
 /// A minimal but real AVC track spec (track_id=1, 90 kHz) so `build_init_segment`
 /// emits a valid `avc1`/`avcC` the demuxer can round-trip.
@@ -61,18 +68,31 @@ fn avc_spec() -> TrackSpec {
     )
 }
 
-/// One length-prefixed IDR-ish sample (a single 4-byte-prefixed NAL body).
-fn sample(duration: u32) -> Sample {
+/// One length-prefixed IDR-ish sample (a single 4-byte-prefixed NAL body) at an
+/// absolute decode time of `dts` ticks.
+fn sample_at(dts: i64, duration: u32) -> Sample {
     // A 4-byte length prefix + a tiny slice NAL (type 5 = IDR).
     let nal = [0x65u8, 0x88, 0x84, 0x00];
     let mut data = (nal.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&nal);
-    Sample::new(data, duration, true, 0)
+    Sample::new(data, Some(dts), Some(dts), Some(duration), true)
 }
 
+/// Build a one-track `Media` anchored at `start`, whose samples carry
+/// consecutive **absolute** dts/pts stepping by each duration in `durs`.
 fn media_with_anchor(start: u64, durs: &[u32]) -> Media {
-    let samples = durs.iter().map(|&d| sample(d)).collect();
+    let mut dts = start as i64;
+    let mut samples = Vec::with_capacity(durs.len());
+    for &d in durs {
+        samples.push(sample_at(dts, d));
+        dts += i64::from(d);
+    }
     Media::new(vec![Track::new_at(avc_spec(), samples, start)], 90_000)
+}
+
+/// The absolute dts of every sample in track 0.
+fn dts_seq(media: &Media) -> Vec<Option<i64>> {
+    media.tracks[0].samples.iter().map(|s| s.dts).collect()
 }
 
 /// Parse the first `moof`/`traf`/`tfdt` baseMediaDecodeTime out of an fMP4.
@@ -103,15 +123,11 @@ fn muxed_tfdt(fmp4: &[u8]) -> u64 {
 fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     const KNOWN_BASE: u64 = 123_456;
     let spec = avc_spec();
-    let samples = [sample(3000), sample(3000)];
+    let samples = [sample_at(0, 3000), sample_at(3000, 3000)];
 
     // Build a real init + media segment at a KNOWN non-zero tfdt.
     let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), 90_000).expect("init");
-    let frag = FragmentTrackData {
-        track_id: 1,
-        base_media_decode_time: KNOWN_BASE,
-        samples: &samples,
-    };
+    let frag = FragmentTrackData::new(1, KNOWN_BASE, &samples);
     let media_seg = build_media_segment(1, &[frag]).expect("media segment");
     fmp4.extend_from_slice(&media_seg);
 
@@ -121,6 +137,13 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     assert_eq!(
         media.tracks[0].start_decode_time, KNOWN_BASE,
         "Fmp4Demux must set start_decode_time from the first fragment tfdt"
+    );
+    // media plane step 2c: the samples themselves are absolute, seeded from the
+    // same tfdt — the anchor is no longer the only place the time lives.
+    assert_eq!(
+        dts_seq(&media),
+        vec![Some(KNOWN_BASE as i64), Some(KNOWN_BASE as i64 + 3000)],
+        "sample dts must be absolute, anchored on the fragment tfdt"
     );
 }
 
@@ -139,9 +162,14 @@ fn rebase_to_zero_end_to_end() {
         "muxed tfdt must equal the track anchor before rebase"
     );
 
-    // Rebase, then the muxed tfdt must be 0.
+    // Rebase: the anchor, and every sample's absolute dts, move to 0.
     rebase_to_zero(&mut media);
     assert_eq!(media.tracks[0].start_decode_time, 0);
+    assert_eq!(
+        dts_seq(&media),
+        vec![Some(0), Some(3000), Some(6000)],
+        "rebase_to_zero must move the samples, not just the anchor"
+    );
     let after = CmafMux::default().package(&media).expect("package");
     assert_eq!(
         muxed_tfdt(&after),
@@ -158,6 +186,14 @@ fn apply_offset_bites() {
     let mut media = media_with_anchor(ANCHOR, &[3000, 3000]);
     apply_offset(&mut media, DELTA);
     assert_eq!(media.tracks[0].start_decode_time, ANCHOR + DELTA as u64);
+    assert_eq!(
+        dts_seq(&media),
+        vec![
+            Some(ANCHOR as i64 + DELTA),
+            Some(ANCHOR as i64 + DELTA + 3000)
+        ],
+        "apply_offset must shift every sample's absolute dts too"
+    );
     let fmp4 = CmafMux::default().package(&media).expect("package");
     assert_eq!(
         muxed_tfdt(&fmp4),
@@ -166,93 +202,76 @@ fn apply_offset_bites() {
     );
 }
 
-// ── Test 4: 33-bit unroll bites ─────────────────────────────────────────────
-#[test]
-fn unroll_33bit_wraps_bites() {
-    // Anchor 3000 ticks below 2^33; three 3000-tick samples cross the boundary.
-    let start = MPEG_TS_WRAP - 3000;
-    let mut media = media_with_anchor(start, &[3000, 3000, 3000]);
-    unroll_33bit_wraps(&mut media);
-
-    let t = &media.tracks[0];
-    assert_eq!(
-        t.start_decode_time,
-        MPEG_TS_WRAP - 3000,
-        "anchor stays at its unwrapped position"
-    );
-    // Reconstruct the DTS sequence and assert it is monotonic + exact.
-    let expected = [MPEG_TS_WRAP - 3000, MPEG_TS_WRAP, MPEG_TS_WRAP + 3000];
-    let mut dts = t.start_decode_time;
-    let mut seq = Vec::new();
-    for s in &t.samples {
-        seq.push(dts);
-        dts += s.duration as u64;
-    }
-    assert_eq!(seq, expected, "unrolled DTS crosses 2^33 monotonically");
-    // Explicitly monotonic non-decreasing.
-    for w in seq.windows(2) {
-        assert!(w[1] >= w[0], "DTS must be non-decreasing after unroll");
-    }
-}
-
-/// A synthetic backward-wrap: the anchor was captured folded near 0 while the
-/// samples fold back to the top of the range, so the reconstructed folded wire
-/// timeline steps backward across the boundary; unroll lifts the later samples
-/// by +2^33.
-#[test]
-fn unroll_synthetic_backward_wrap() {
-    // Anchor 3000 below 2^33, one sample of 3000 lands exactly on 2^33 (folds to
-    // 0 on the wire) — the classic +2^33 unroll.
-    let start = MPEG_TS_WRAP - 3000;
-    let mut media = media_with_anchor(start, &[3000, 6000]);
-    unroll_33bit_wraps(&mut media);
-    let t = &media.tracks[0];
-    let mut dts = t.start_decode_time;
-    let seq: Vec<u64> = t
-        .samples
-        .iter()
-        .map(|s| {
-            let v = dts;
-            dts += s.duration as u64;
-            v
-        })
-        .collect();
-    assert_eq!(seq, vec![MPEG_TS_WRAP - 3000, MPEG_TS_WRAP]);
-    assert_eq!(dts, MPEG_TS_WRAP + 6000, "final sample carried +2^33");
-}
-
-// ── Test 5: discontinuity-gap insertion bites ───────────────────────────────
+// ── Test 4: discontinuity-gap insertion bites ───────────────────────────────
 #[test]
 fn insert_discontinuity_gap_bites() {
     const GAP: u32 = 4500;
     let mut media = media_with_anchor(0, &[3000, 3000, 3000, 3000]);
     let track = &mut media.tracks[0];
 
-    let span_before: u32 = track.samples.iter().map(|s| s.duration).sum();
-    let s0_before = track.samples[0].duration;
-    let s1_before = track.samples[1].duration;
-
     insert_discontinuity_gap(track, 2, GAP);
 
-    let span_after: u32 = track.samples.iter().map(|s| s.duration).sum();
+    // Samples before the insertion point are untouched; the one at the
+    // insertion point and everything after it is pushed out by exactly GAP.
+    let seq: Vec<Option<i64>> = track.samples.iter().map(|s| s.dts).collect();
     assert_eq!(
-        span_after - span_before,
-        GAP,
-        "timeline span grows by exactly the gap"
+        seq,
+        vec![
+            Some(0),
+            Some(3000),
+            Some(6000 + i64::from(GAP)),
+            Some(9000 + i64::from(GAP)),
+        ],
+        "the gap must push the insertion point and every later sample out by exactly GAP"
     );
-    assert_eq!(track.samples[0].duration, s0_before, "sample 0 unchanged");
     assert_eq!(
-        track.samples[1].duration,
-        s1_before + GAP,
-        "the sample before the insertion point absorbs the gap"
+        track.start_decode_time, 0,
+        "a mid-track gap leaves the anchor alone"
     );
+}
 
-    // The gap is observable end-to-end: the sample at index 2 now starts GAP
-    // ticks later on the reconstructed timeline.
-    let dts_at_2: u64 = track.samples[..2].iter().map(|s| s.duration as u64).sum();
+/// A gap at index 0 has no preceding sample, so it shifts the whole track —
+/// anchor included — keeping the two in lockstep.
+#[test]
+fn insert_discontinuity_gap_at_zero_shifts_anchor_and_samples() {
+    const GAP: u32 = 250;
+    let mut media = media_with_anchor(1000, &[100, 100]);
+    let track = &mut media.tracks[0];
+    insert_discontinuity_gap(track, 0, GAP);
+    assert_eq!(track.start_decode_time, 1000 + u64::from(GAP));
     assert_eq!(
-        dts_at_2,
-        (s0_before + s1_before + GAP) as u64,
-        "sample 2 decode time is pushed out by the gap"
+        track.samples.iter().map(|s| s.dts).collect::<Vec<_>>(),
+        vec![Some(1250), Some(1350)]
+    );
+}
+
+// ── Test 5: transforms never fabricate a timestamp ──────────────────────────
+
+/// A section-carried sample legitimately has `dts`/`pts` of `None`. No
+/// transform may invent one (media plane step 2c) — the whole point of the
+/// `Option` is that "no timestamp" survives conditioning.
+#[test]
+fn transforms_never_fabricate_a_timestamp() {
+    let mut media = media_with_anchor(5000, &[100, 100]);
+    // Make the second sample untimed, as a section-carried sample would be.
+    media.tracks[0].samples[1].dts = None;
+    media.tracks[0].samples[1].pts = None;
+
+    rebase_to_zero(&mut media);
+    assert_eq!(media.tracks[0].samples[1].dts, None, "rebase_to_zero");
+    assert_eq!(media.tracks[0].samples[1].pts, None, "rebase_to_zero");
+
+    apply_offset(&mut media, 1234);
+    assert_eq!(media.tracks[0].samples[1].dts, None, "apply_offset");
+    assert_eq!(media.tracks[0].samples[1].pts, None, "apply_offset");
+
+    insert_discontinuity_gap(&mut media.tracks[0], 1, 999);
+    assert_eq!(
+        media.tracks[0].samples[1].dts, None,
+        "insert_discontinuity_gap"
+    );
+    assert_eq!(
+        media.tracks[0].samples[1].pts, None,
+        "insert_discontinuity_gap"
     );
 }

@@ -63,9 +63,128 @@
 
 use aes::cipher::generic_array::GenericArray;
 use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
+use bytes::{Bytes, BytesMut};
 
 use crate::cenc::{SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
 use crate::error::{Error, Result};
+
+/// Rewrite one sample's [`Bytes`] in place (media plane step 2b, G12 —
+/// `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
+///
+/// `Bytes` is immutable/shared, so an in-place cipher pass needs a mutable
+/// buffer. Takes the zero-copy [`Bytes::try_into_mut`] fast path when the
+/// caller holds the only reference to the sample's storage — the common case
+/// for a sample encrypted/decrypted before it is fanned out to any other
+/// consumer — and falls back to exactly one defensive copy only when the
+/// buffer is genuinely shared. Returns whether the fast path was taken, so
+/// callers can assert it rather than trust it (never guess-and-hope: see
+/// `cenc_encrypt.rs`'s/`cenc_decrypt.rs`'s tests).
+///
+/// # Contract on `f`: validate, *then* mutate
+///
+/// Rewriting in place means there is no pristine copy to roll back to, so `f`
+/// **must** finish every check that can fail before it writes its first byte.
+/// Every cipher entry point in this module honours that: [`apply_ctr`] and
+/// [`cbcs_sample`] run [`validate_subsample_map`] (plus their IV checks) to
+/// completion up front, after which their block loops are infallible and
+/// panic-free — every index has already been bounds-checked. So on `Err` the
+/// sample's bytes are returned **unmodified**, which matters because the
+/// alternative is committing a half-encrypted payload (e.g. a malformed `senc`
+/// that overruns on its *second* subsample, having already keystreamed the
+/// first) and presenting it as either plaintext or ciphertext.
+///
+/// `data` is always restored, `Ok` or `Err` — it is never left empty. A
+/// **panic** inside `f` is the one case that does leave `*data` empty (the
+/// [`core::mem::take`] below has no unwind guard, and the buffer is dropped
+/// during unwind); the cipher core is panic-free by construction as described
+/// above, and the crate's fuzz targets cover the parse paths that feed it, so
+/// this is documented rather than paid for on every sample.
+pub(crate) fn rewrite_in_place(
+    data: &mut Bytes,
+    f: impl FnOnce(&mut [u8]) -> Result<()>,
+) -> Result<bool> {
+    let owned = core::mem::take(data);
+    let (mut buf, fast_path) = match owned.try_into_mut() {
+        Ok(buf) => (buf, true),
+        Err(shared) => (BytesMut::from(&shared[..]), false),
+    };
+    let result = f(&mut buf);
+    // Restore the sample's storage either way (never leave `*data` empty); on
+    // `Err` the contract above guarantees `buf` still holds the original bytes.
+    *data = buf.freeze();
+    result.map(|()| fast_path)
+}
+
+/// Validate one sample's subsample map against the sample's own length —
+/// ISO/IEC 23001-7 §9.3 — **before** any cipher pass mutates a byte.
+///
+/// Walks the `(clear, protected)` runs exactly as the cipher loops do and
+/// rejects three things:
+///
+/// - an offset/length addition that would overflow `usize`,
+/// - a range running past the end of the sample, and
+/// - a map that does not cover the sample **exactly**: §9.3 requires the
+///   subsample structure to account for every byte of the sample, so a map
+///   declaring (say) 100 bytes of a 1000-byte sample must not be accepted —
+///   the remaining 900 bytes would be left as ciphertext and handed back as
+///   plaintext (or vice versa on encrypt) with an `Ok`.
+///
+/// Running this to completion first is what lets [`rewrite_in_place`] promise
+/// that a failed cipher call leaves the sample's bytes untouched: after this
+/// returns `Ok`, the block loops cannot fail (or panic — every index is
+/// already proven in range).
+fn validate_subsample_map(subsamples: &[SubSampleEntry], data_len: usize) -> Result<()> {
+    let mut offset = 0usize;
+    for sub in subsamples {
+        offset = offset
+            .checked_add(sub.bytes_of_clear_data as usize)
+            .ok_or(Error::InvalidInput("CENC subsample clear length overflow"))?;
+        let end = offset
+            .checked_add(sub.bytes_of_protected_data as usize)
+            .ok_or(Error::InvalidInput(
+                "CENC subsample protected length overflow",
+            ))?;
+        if end > data_len {
+            return Err(Error::BufferTooShort {
+                need: end,
+                have: data_len,
+                what: "CENC subsample range exceeds sample",
+            });
+        }
+        offset = end;
+    }
+    if offset != data_len {
+        return Err(Error::InvalidInput(
+            "CENC subsample map does not cover the whole sample (ISO/IEC 23001-7 §9.3): the \
+             uncovered bytes would be passed through unprotected",
+        ));
+    }
+    Ok(())
+}
+
+/// Valid CENC IV lengths, on either the encrypt or decrypt path — ISO/IEC
+/// 23001-7 §9.2 (`cenc` per-sample IV)/§12.2 (`cbcs` per-sample or constant
+/// IV) permit exactly 8 or 16 bytes, no other length. Both are left-justified
+/// and zero-padded to a 16-byte block before use (see [`apply_ctr`] /
+/// [`resolve_cbcs_iv`]), so two different *invalid* lengths that happen to
+/// zero-pad to the same block (e.g. a 12-byte and an empty IV both padding
+/// toward all but their non-zero prefix) could otherwise collide — tightened
+/// to exactly this pair rather than "anything up to 16 bytes" so that cannot
+/// happen. Shared by the encrypt and decrypt paths so both enforce the same
+/// bound; the decrypt path applies this to untrusted wire input.
+const VALID_IV_LENS: [usize; 2] = [8, 16];
+
+/// Reject an IV length that is not exactly 8 or 16 bytes.
+fn check_iv_len(len: usize) -> Result<()> {
+    if !VALID_IV_LENS.contains(&len) {
+        return Err(Error::InvalidValue {
+            field: "CENC IV length",
+            value: len as u64,
+            reason: "ISO/IEC 23001-7 §9.2/§12.2 permit only 8 or 16 bytes",
+        });
+    }
+    Ok(())
+}
 
 /// AES-128 in big-endian counter mode (CENC `cenc` cipher, ISO/IEC 23001-7
 /// §10.1). Symmetric: the same keystream apply-in-place both encrypts and
@@ -102,17 +221,44 @@ pub(crate) enum CbcsOp {
 /// once per 16-byte cipher block across the concatenated *protected* bytes of
 /// the sample (clear subsample ranges are skipped, not counted). When
 /// `subsamples` is empty the entire sample is protected.
+///
+/// # An empty `iv` is rejected, not zero-padded
+///
+/// `cenc` derives its counter block from the per-sample IV alone — unlike
+/// `cbcs`, this cipher is never given the track's `tenc`, and ISO/IEC 23001-7
+/// §10.1/§12.2 gives it nothing else to fall back on: a `cenc` track carries a
+/// real 8- or 16-byte IV per sample in `senc`, and `default_constant_IV` is a
+/// `cbcs` construct. So an empty IV can only mean one of two broken things,
+/// both of which must fail loudly:
+///
+/// - **encrypting**, it would build an all-zero counter block reused for every
+///   sample of the track — one keystream for the whole track (a two-time pad),
+///   and output no conformant decryptor can read;
+/// - **decrypting**, it would "decrypt" a file whose `tenc` declares
+///   `default_per_sample_iv_size == 0` plus a `default_constant_IV` against
+///   that same all-zero counter and return `Ok` over garbage. Silent wrong
+///   output is worse than a failure, so this returns an error instead.
 pub(crate) fn apply_ctr(
     iv: &[u8],
     key: &[u8; KEY_LEN],
     subsamples: &[SubSampleEntry],
     data: &mut [u8],
 ) -> Result<()> {
-    if iv.len() > KEY_LEN {
+    if iv.is_empty() {
         return Err(Error::InvalidInput(
-            "CENC per-sample IV longer than 16 bytes",
+            "cenc (AES-CTR) sample has no per-sample IV: an all-zero counter block would reuse \
+             one keystream for every sample. cenc requires a per-sample IV in senc — a \
+             tenc.default_constant_IV (default_per_sample_iv_size == 0) is cbcs-only",
         ));
     }
+    check_iv_len(iv.len())?;
+    // Validate the whole subsample map before touching a byte, so a malformed
+    // map cannot leave a half-keystreamed sample behind (see
+    // `rewrite_in_place`'s contract and `validate_subsample_map`).
+    if !subsamples.is_empty() {
+        validate_subsample_map(subsamples, data.len())?;
+    }
+
     let mut counter = [0u8; KEY_LEN];
     counter[..iv.len()].copy_from_slice(iv);
 
@@ -127,24 +273,12 @@ pub(crate) fn apply_ctr(
     // Walk the subsample map, keystreaming only the protected ranges. The
     // CTR counter advances continuously across the protected bytes (the
     // clear bytes are skipped, never counted), so a single cipher instance
-    // spans the whole sample.
+    // spans the whole sample. Every range below is already proven in bounds
+    // by `validate_subsample_map`, so this loop cannot fail or panic.
     let mut offset = 0usize;
     for sub in subsamples {
-        let clear = sub.bytes_of_clear_data as usize;
-        let protected = sub.bytes_of_protected_data as usize;
-        offset = offset
-            .checked_add(clear)
-            .ok_or(Error::InvalidInput("CENC subsample clear length overflow"))?;
-        let end = offset.checked_add(protected).ok_or(Error::InvalidInput(
-            "CENC subsample protected length overflow",
-        ))?;
-        if end > data.len() {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: data.len(),
-                what: "CENC subsample range exceeds sample",
-            });
-        }
+        offset += sub.bytes_of_clear_data as usize;
+        let end = offset + sub.bytes_of_protected_data as usize;
         cipher.apply_keystream(&mut data[offset..end]);
         offset = end;
     }
@@ -171,9 +305,7 @@ fn resolve_cbcs_iv(
             "cbcs sample has no per-sample IV and tenc carries no default_constant_IV",
         ));
     };
-    if src.len() > KEY_LEN {
-        return Err(Error::InvalidInput("CBCS IV longer than 16 bytes"));
-    }
+    check_iv_len(src.len())?;
     let mut iv = [0u8; KEY_LEN];
     iv[..src.len()].copy_from_slice(src);
     Ok(iv)
@@ -300,6 +432,13 @@ pub(crate) fn cbcs_sample(
         ));
     }
     let seed_iv = resolve_cbcs_iv(entry, tenc)?;
+    // Validate the whole subsample map before touching a byte (see
+    // `rewrite_in_place`'s contract and `validate_subsample_map`) — including
+    // that it covers the sample exactly, so no tail of the sample is silently
+    // passed through unprotected/undecrypted.
+    if !entry.subsamples.is_empty() {
+        validate_subsample_map(&entry.subsamples, data.len())?;
+    }
 
     if entry.subsamples.is_empty() {
         let mut chain_iv = seed_iv;
@@ -307,23 +446,12 @@ pub(crate) fn cbcs_sample(
         return Ok(());
     }
 
+    // Every range below is already proven in bounds by
+    // `validate_subsample_map`, so this loop cannot fail or panic.
     let mut offset = 0usize;
     for sub in &entry.subsamples {
-        let clear = sub.bytes_of_clear_data as usize;
-        let protected = sub.bytes_of_protected_data as usize;
-        offset = offset
-            .checked_add(clear)
-            .ok_or(Error::InvalidInput("CBCS subsample clear length overflow"))?;
-        let end = offset.checked_add(protected).ok_or(Error::InvalidInput(
-            "CBCS subsample protected length overflow",
-        ))?;
-        if end > data.len() {
-            return Err(Error::BufferTooShort {
-                need: end,
-                have: data.len(),
-                what: "CBCS subsample range exceeds sample",
-            });
-        }
+        offset += sub.bytes_of_clear_data as usize;
+        let end = offset + sub.bytes_of_protected_data as usize;
         // Reset the chain to the sample's seed IV at the start of every
         // subsample's protected range (see the module docs) — within this
         // one subsample, `cbcs_pattern` still chains correctly across its own
@@ -444,5 +572,266 @@ mod tests {
         let mut data: Vec<u8> = (0u8..64).collect();
         let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    /// `cenc` (AES-CTR) with **no** per-sample IV must error rather than build
+    /// an all-zero counter block. On the decrypt side this is a real
+    /// conformant-file case: `tenc.default_per_sample_iv_size == 0` +
+    /// `default_constant_IV` (a `cbcs` construct) yields empty `senc` IVs, and
+    /// the `cenc` path is never handed `tenc`, so without this guard it would
+    /// return `Ok(())` over garbage.
+    #[test]
+    fn ctr_rejects_empty_iv() {
+        let mut data: Vec<u8> = (0u8..64).collect();
+        let untouched = data.clone();
+        let err = apply_ctr(&[], &KEY, &[], &mut data).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)));
+        assert_eq!(data, untouched, "a rejected call must not cipher anything");
+    }
+
+    /// F3: `apply_ctr` must reject any IV length other than 8 or 16 bytes —
+    /// not just empty or `> 16` (ISO/IEC 23001-7 §9.2 permits no other
+    /// length). A 12-byte IV used to be silently zero-padded to a 16-byte
+    /// counter block indistinguishable from a genuine (differently-valued)
+    /// 8- or 16-byte IV that happened to share the same non-zero bytes.
+    #[test]
+    fn ctr_rejects_non_8_or_16_byte_iv() {
+        for len in [1usize, 7, 9, 12, 15, 17, 20] {
+            let iv = alloc::vec![0x42u8; len];
+            let mut data: Vec<u8> = (0u8..64).collect();
+            let untouched = data.clone();
+            let err = apply_ctr(&iv, &KEY, &[], &mut data).unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidValue { .. }),
+                "len {len}: expected InvalidValue, got {err:?}"
+            );
+            assert_eq!(
+                data, untouched,
+                "len {len}: a rejected call must not cipher anything"
+            );
+        }
+    }
+
+    /// F3: `cbcs_sample`/`resolve_cbcs_iv` must reject the same non-8/16-byte
+    /// lengths, whether the IV comes from a per-sample `senc` entry or from
+    /// `tenc.default_constant_IV` — both are validated by the same shared
+    /// `check_iv_len`.
+    #[test]
+    fn cbcs_rejects_non_8_or_16_byte_iv() {
+        let tenc = TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 1,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 12,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let entry = SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0x42u8; 12],
+            subsamples: Vec::new(),
+        };
+        let mut data: Vec<u8> = (0u8..64).collect();
+        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+
+        // Same rejection when the 12-byte IV instead comes from
+        // `tenc.default_constant_IV` (empty per-sample IV, constant-IV
+        // fallback).
+        let tenc_constant = TrackEncryptionBox {
+            default_per_sample_iv_size: 0,
+            default_constant_iv: Some(alloc::vec![0x42u8; 12]),
+            ..tenc
+        };
+        let entry_empty = SampleEncryptionEntry {
+            initialization_vector: Vec::new(),
+            subsamples: Vec::new(),
+        };
+        let mut data2: Vec<u8> = (0u8..64).collect();
+        let err = cbcs_sample(
+            &tenc_constant,
+            &entry_empty,
+            &KEY,
+            &mut data2,
+            CbcsOp::Decrypt,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { .. }), "got {err:?}");
+    }
+
+    /// A subsample map covering only part of the sample must error — ISO/IEC
+    /// 23001-7 §9.3 requires it to account for every byte. Without the check,
+    /// the uncovered tail is handed back untouched: on decrypt, 900 bytes of
+    /// ciphertext presented as plaintext with an `Ok`.
+    #[test]
+    fn ctr_rejects_partial_subsample_coverage() {
+        let mut data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
+        let untouched = data.clone();
+        let subsamples = alloc::vec![SubSampleEntry {
+            bytes_of_clear_data: 4,
+            bytes_of_protected_data: 96,
+        }];
+        let err = apply_ctr(&IV8, &KEY, &subsamples, &mut data).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+        assert_eq!(
+            data, untouched,
+            "the sample must be left byte-identical, not partially keystreamed"
+        );
+    }
+
+    /// The same coverage rule on the `cbcs` path.
+    #[test]
+    fn cbcs_rejects_partial_subsample_coverage() {
+        let tenc = TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 1,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let entry = SampleEncryptionEntry {
+            initialization_vector: IV8.to_vec(),
+            subsamples: alloc::vec![SubSampleEntry {
+                bytes_of_clear_data: 4,
+                bytes_of_protected_data: 96,
+            }],
+        };
+        let mut data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
+        let untouched = data.clone();
+        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+        assert_eq!(data, untouched, "the sample must be left byte-identical");
+    }
+
+    /// **The half-encrypted-payload regression test.** A `senc` subsample map
+    /// whose *second* subsample overruns the sample is exactly the shape that
+    /// used to keystream the first subsample, fail on the second, and still
+    /// commit the half-encrypted buffer into `sample.data`. The cipher core now
+    /// validates the whole map first, so the sample comes back byte-identical
+    /// — verified here through [`rewrite_in_place`] (i.e. on a real
+    /// `Bytes`-backed sample, both schemes).
+    #[test]
+    fn second_subsample_overrun_leaves_the_sample_unchanged() {
+        let plaintext: Vec<u8> = (0u8..=255).cycle().take(200).collect();
+        let overrunning = alloc::vec![
+            SubSampleEntry {
+                bytes_of_clear_data: 4,
+                bytes_of_protected_data: 60, // fine on its own
+            },
+            SubSampleEntry {
+                bytes_of_clear_data: 4,
+                bytes_of_protected_data: 4096, // runs past the 200-byte sample
+            },
+        ];
+        let tenc = TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 1,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 8,
+            default_kid: [0u8; KEY_LEN],
+            default_constant_iv: None,
+        };
+        let entry = SampleEncryptionEntry {
+            initialization_vector: IV8.to_vec(),
+            subsamples: overrunning.clone(),
+        };
+
+        for label in ["cenc", "cbcs"] {
+            let mut data = Bytes::from(plaintext.clone());
+            let err = rewrite_in_place(&mut data, |buf| {
+                if label == "cenc" {
+                    apply_ctr(&IV8, &KEY, &overrunning, buf)
+                } else {
+                    cbcs_sample(&tenc, &entry, &KEY, buf, CbcsOp::Encrypt)
+                }
+            })
+            .expect_err("an overrunning subsample map must be rejected");
+            assert!(
+                matches!(err, Error::BufferTooShort { .. }),
+                "{label}: {err:?}"
+            );
+            assert_eq!(
+                &data[..],
+                &plaintext[..],
+                "{label}: sample.data must be unchanged — not half-encrypted, not empty"
+            );
+        }
+    }
+
+    /// A failing closure must never leave `sample.data` **empty**: the
+    /// `mem::take` inside [`rewrite_in_place`] hands the storage to the closure,
+    /// and the buffer has to be put back on the error path too.
+    #[test]
+    fn rewrite_in_place_restores_the_buffer_on_err() {
+        let original: Vec<u8> = (0u8..32).collect();
+        let mut data = Bytes::from(original.clone());
+        let err = rewrite_in_place(&mut data, |_buf| {
+            Err(Error::InvalidInput("closure failed before mutating"))
+        })
+        .expect_err("the closure's error must propagate");
+        assert!(matches!(err, Error::InvalidInput(_)));
+        assert_eq!(
+            &data[..],
+            &original[..],
+            "a validate-then-mutate closure's failure must leave the sample intact"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // `rewrite_in_place` (media plane step 2b, G12) — the try_into_mut
+    // fast-path mechanism itself. Proved directly here (not trusted): the
+    // MANDATORY MEASUREMENT in `tests/alloc_measurement.rs` covers the
+    // whole-pipeline allocation count; these two prove the *mechanism*
+    // picks the right branch and never corrupts a genuinely shared buffer.
+    // -----------------------------------------------------------------
+
+    /// A uniquely-owned `Bytes` (refcount 1, the common case — a sample that
+    /// hasn't been fanned out to any other consumer yet) must take the
+    /// zero-copy `try_into_mut` fast path.
+    #[test]
+    fn rewrite_in_place_takes_fast_path_when_unique() {
+        let mut data = Bytes::from(alloc::vec![1u8, 2, 3, 4]);
+        let took_fast_path = rewrite_in_place(&mut data, |buf| {
+            buf[0] = 0xFF;
+            Ok(())
+        })
+        .expect("rewrite ok");
+        assert!(
+            took_fast_path,
+            "uniquely-owned Bytes must take the zero-copy try_into_mut fast path"
+        );
+        assert_eq!(&data[..], &[0xFF, 2, 3, 4]);
+    }
+
+    /// A shared `Bytes` (another handle holds a clone — refcount > 1) must
+    /// NOT take the fast path, and the fallback copy must not corrupt the
+    /// other holder's view (proving the copy-on-write branch is genuinely
+    /// safe, not just "doesn't panic").
+    #[test]
+    fn rewrite_in_place_copies_and_leaves_other_holder_untouched_when_shared() {
+        let original = Bytes::from(alloc::vec![9u8, 9, 9, 9]);
+        let mut shared_handle = original.clone(); // refcount 2: original + shared_handle
+        let took_fast_path = rewrite_in_place(&mut shared_handle, |buf| {
+            buf[0] = 0x00;
+            Ok(())
+        })
+        .expect("rewrite ok");
+        assert!(
+            !took_fast_path,
+            "shared Bytes must not take the fast path — that would alias/corrupt the other holder"
+        );
+        assert_eq!(
+            &original[..],
+            &[9, 9, 9, 9],
+            "the other holder's bytes must be untouched by shared_handle's rewrite"
+        );
+        assert_eq!(
+            &shared_handle[..],
+            &[0x00, 9, 9, 9],
+            "the rewriting handle's own view must reflect the mutation"
+        );
     }
 }

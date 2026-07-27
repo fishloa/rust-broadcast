@@ -286,7 +286,7 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
         .samples
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.is_sync)
+        .filter(|(_, s)| s.flags.is_sync)
         .map(|(i, _)| i)
         .collect();
 
@@ -381,7 +381,7 @@ fn closed_gop_h264_main_ts_idr_anchoring_unchanged() {
         .samples
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.is_sync)
+        .filter(|(_, s)| s.flags.is_sync)
         .map(|(i, _)| i)
         .collect();
 

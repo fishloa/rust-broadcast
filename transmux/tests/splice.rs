@@ -1,7 +1,11 @@
 //! Integration tests for the IR-level timeline splice / concat → SSAI transforms
 //! (issue #475): contiguity + byte preservation, end-to-end `tfdt` monotonicity
-//! through the muxer, SSAI insert timing, keyframe-alignment snapping, and
-//! discontinuity reporting driving the segmenter.
+//! through the muxer, SSAI insert timing, keyframe-alignment snapping,
+//! discontinuity reporting driving the segmenter, and — a genuine per-fragment
+//! `tfdt`-reseed gap between `Track::start_decode_time` and a sample's true
+//! absolute `dts` (media plane step 2c) — that `concat`'s join position and
+//! `snap_to_preceding_sync`'s snap read that true `dts` rather than
+//! reconstructing decode time as `start_decode_time + Σ duration`.
 
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
@@ -39,7 +43,16 @@ fn avc_spec(track_id: u32) -> TrackSpec {
 /// Build a sample whose `data` bytes are a recognizable pattern (so byte
 /// preservation is verifiable). `tag` distinguishes samples across media.
 fn sample(tag: u8, index: usize, duration: u32, is_sync: bool) -> Sample {
-    Sample::new(vec![tag, index as u8, 0xAB, 0xCD], duration, is_sync, 0)
+    // Absolute dts/pts on the sample's own uniform grid (media plane step 2c):
+    // sample `index` sits at `index * duration`.
+    let dts = index as i64 * i64::from(duration);
+    Sample::new(
+        vec![tag, index as u8, 0xAB, 0xCD],
+        Some(dts),
+        Some(dts),
+        Some(duration),
+        is_sync,
+    )
 }
 
 /// A video track: first sample is a sync sample (keyframe), then `sync_period`
@@ -51,12 +64,32 @@ fn video_track(track_id: u32, tag: u8, count: usize, dur: u32, sync_period: usiz
     Track::new(avc_spec(track_id), samples)
 }
 
-fn media_of(track: Track, start_decode_time: u64) -> Media {
+fn media_of(mut track: Track, start_decode_time: u64) -> Media {
+    // `sample()` builds each sample's absolute dts/pts on a zero-based grid
+    // (`index * duration`) independent of the track's intended start — shift
+    // every sample by `start_decode_time` here so `Sample::dts`/`Sample::pts`
+    // stay consistent with `Track::start_decode_time` (the media plane step
+    // 2c invariant that `track_end_decode_time`/`snap_to_preceding_sync`
+    // in `splice.rs` now rely on, having moved off reconstructing decode
+    // time as `start_decode_time + Σ duration`).
+    let delta = start_decode_time as i64;
+    for s in &mut track.samples {
+        if let Some(d) = s.dts {
+            s.dts = Some(d + delta);
+        }
+        if let Some(p) = s.pts {
+            s.pts = Some(p + delta);
+        }
+    }
     Media::new(vec![track.with_start_decode_time(start_decode_time)], 1000)
 }
 
 fn track_span(track: &Track) -> u64 {
-    track.samples.iter().map(|s| s.duration as u64).sum()
+    track
+        .samples
+        .iter()
+        .map(|s| s.duration.unwrap_or(0) as u64)
+        .sum()
 }
 
 /// Reconstruct each sample's DTS from a track (start + running sum).
@@ -65,7 +98,7 @@ fn dts_sequence(track: &Track) -> Vec<u64> {
     let mut out = Vec::new();
     for s in &track.samples {
         out.push(dts);
-        dts += s.duration as u64;
+        dts += s.duration.unwrap_or(0) as u64;
     }
     out
 }
@@ -271,7 +304,7 @@ fn splice_snaps_to_preceding_keyframe() {
 
     // An ad whose first sample is NOT sync → Err.
     let mut bad_ad_track = video_track(1, 0xAD, 3, 3000, 3);
-    bad_ad_track.samples[0].is_sync = false;
+    bad_ad_track.samples[0].flags.is_sync = false;
     let bad_ad = media_of(bad_ad_track, 0);
     assert!(
         splice_insert(&base, &bad_ad, 9000).is_err(),
@@ -347,4 +380,51 @@ fn discontinuity_points_drive_segmenter() {
     // And we did mark exactly two discontinuities (ad-in @3→seg1, resume @6→seg2).
     assert_eq!(expected_disc_segments, vec![1, 2]);
     assert_eq!(metas.iter().filter(|d| **d).count(), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Test 6 — a genuine tfdt-reseed gap (F2) must be read from the sample's own
+// absolute dts, not reconstructed as start_decode_time + Σ duration.
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_and_snap_honour_a_genuine_tfdt_gap() {
+    // `a`: 3 samples, every one a sync sample (sync_period = 1), on what
+    // looks like a normal 3000-tick grid — except the LAST sample's true
+    // absolute dts jumps ahead by a real 50_000-tick gap, exactly as a
+    // per-fragment `tfdt` reseed legitimately produces
+    // (`media.rs::absorb_fragment`; `Track::start_decode_time` only ever
+    // records the *first* fragment's anchor). Naive reconstruction
+    // (`start_decode_time + Σ duration`) would place the track's end at
+    // 3 * 3000 = 9000 and the last sample at 6000 — both wrong once the gap
+    // is real.
+    let mut a_track = video_track(1, 0xA0, 3, 3000, 1);
+    let gap: i64 = 50_000;
+    let last = a_track.samples.len() - 1;
+    a_track.samples[last].dts = Some(a_track.samples[last].dts.unwrap() + gap);
+    a_track.samples[last].pts = Some(a_track.samples[last].pts.unwrap() + gap);
+    let a = Media::new(vec![a_track], 1000);
+    let true_last_dts = a.tracks[0].samples[last].dts.unwrap() as u64;
+    let true_end = true_last_dts + a.tracks[0].samples[last].duration.unwrap() as u64;
+    assert_eq!(true_last_dts, 56_000);
+    assert_eq!(true_end, 59_000);
+
+    // concat: the join must land at the true post-gap end, not the naive
+    // reconstruction (9000).
+    let b = media_of(video_track(1, 0xB0, 2, 3000, 2), 0);
+    let res = concat(&a, &b).unwrap();
+    assert_eq!(
+        res.discontinuity_points[0].presentation_time, true_end,
+        "join must use the gapped sample's true absolute dts, not \
+         start_decode_time + Σ duration"
+    );
+
+    // snap_to_preceding_sync: a request that falls inside the gapped
+    // sample's span must snap to ITS true dts (56_000), not the naive
+    // reconstructed value (6000) a duration-sum walk would have produced.
+    let (snapped, idx) = snap_to_preceding_sync(&a.tracks[0], 57_000).unwrap();
+    assert_eq!(
+        (snapped, idx),
+        (56_000, last),
+        "snap must read the gapped sample's true absolute dts"
+    );
 }

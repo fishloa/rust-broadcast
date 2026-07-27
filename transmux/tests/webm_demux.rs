@@ -150,10 +150,10 @@ fn timestamps_and_keyframes_match_oracle() {
             "video sample {i} reconstructed PTS must equal oracle"
         );
         assert_eq!(
-            s.is_sync, vid_oracle[i].keyframe,
+            s.flags.is_sync, vid_oracle[i].keyframe,
             "video sample {i} keyframe flag must equal oracle"
         );
-        acc += s.duration as i64;
+        acc += s.duration.unwrap_or(0) as i64;
     }
 
     // Audio: recon_pts == oracle_pts + codec delay; every sample is sync.
@@ -165,8 +165,8 @@ fn timestamps_and_keyframes_match_oracle() {
             aud_oracle[i].pts + AUDIO_CODEC_DELAY_MS,
             "audio sample {i} reconstructed PTS must equal oracle + codec delay"
         );
-        assert!(s.is_sync, "audio sample {i} must be a sync sample");
-        acc += s.duration as i64;
+        assert!(s.flags.is_sync, "audio sample {i} must be a sync sample");
+        acc += s.duration.unwrap_or(0) as i64;
     }
 }
 

@@ -140,8 +140,7 @@ fn cenc_cfg(subsample: SubsamplePolicy) -> EncryptConfig {
     EncryptConfig {
         scheme: CencScheme::Cenc,
         kid: KID,
-        key: KEY,
-        iv: IvGen::Counter { base: 0 },
+        iv: IvGen::Counter,
         pattern: None,
         subsample,
     }
@@ -177,7 +176,9 @@ fn protect_init_segment_emits_encv_sinf() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
 
     let protected = protect(&media, track_id);
@@ -251,7 +252,9 @@ fn protect_media_segment_emits_senc_saiz_saio() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
@@ -344,7 +347,9 @@ fn protect_media_segment_sets_subsample_flag() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::Video);
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
     let enc = media.tracks[0].encryption.clone().unwrap();
     assert!(
@@ -380,7 +385,9 @@ fn protect_media_segment_unknown_track_errors() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor.encrypt(&mut media, &cfg).expect("encrypt");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
     let enc = media.tracks[0].encryption.clone().unwrap();
 
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");

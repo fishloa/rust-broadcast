@@ -142,11 +142,7 @@ fn whole_segment(
                 .iter()
                 .find(|t| t.spec.track_id == *track_id)
                 .unwrap();
-            FragmentTrackData {
-                track_id: *track_id,
-                base_media_decode_time: *base,
-                samples: &t.samples[r.clone()],
-            }
+            FragmentTrackData::new(*track_id, *base, &t.samples[r.clone()])
         })
         .collect();
     transmux::pipeline::build_media_segment(seq, &frags).expect("whole segment")

@@ -118,15 +118,18 @@ fn vp8_frame_oracle() {
             "VP8 sample {i} byte length must equal oracle size"
         );
         assert_eq!(
-            s.is_sync, o.keyframe,
+            s.flags.is_sync, o.keyframe,
             "VP8 sample {i} keyframe flag must equal oracle"
         );
     }
     // The first frame is the only keyframe (a bite on the SimpleBlock flag ↔
     // key_frame mapping).
-    assert!(vid.samples[0].is_sync, "first VP8 frame is a keyframe");
+    assert!(
+        vid.samples[0].flags.is_sync,
+        "first VP8 frame is a keyframe"
+    );
     assert_eq!(
-        vid.samples.iter().filter(|s| s.is_sync).count(),
+        vid.samples.iter().filter(|s| s.flags.is_sync).count(),
         1,
         "exactly one VP8 keyframe"
     );

@@ -111,7 +111,11 @@ fn timestamped_sample(is_sync: bool) -> Sample {
         .as_nanos() as u64;
     let mut data = now_ns.to_be_bytes().to_vec();
     data.extend_from_slice(&[0xAB; 16]);
-    Sample::new(data, FRAME_DUR, is_sync, 0)
+    // No absolute source time: these are synthetic samples for the
+    // duration-driven `Segmenter`, so dts/pts stay `None` (media plane step 2c
+    // — never fabricate a timestamp) and the segment timeline comes from
+    // `duration` exactly as before.
+    Sample::new(data, None, None, Some(FRAME_DUR), is_sync)
 }
 
 /// The inverse of [`timestamped_sample`]: how long ago (from `now()`) this

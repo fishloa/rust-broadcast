@@ -125,11 +125,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fragments: Vec<FragmentTrackData<'_>> = media
         .tracks
         .iter()
-        .map(|t| FragmentTrackData {
-            track_id: t.spec.track_id,
-            base_media_decode_time: 0,
-            samples: &t.samples,
-        })
+        .map(|t| FragmentTrackData::new(t.spec.track_id, 0, &t.samples))
         .collect();
     let media_seg = build_media_segment(1, &fragments)?;
 

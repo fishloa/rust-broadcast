@@ -53,9 +53,12 @@
 //!     height: 1080,
 //! });
 //!
-//! // 8 samples: sync at indices 0 and 4, all with duration 100.
+//! // 8 samples, 100 ticks apart: sync at indices 0 and 4, all with duration 100.
 //! let samples: Vec<Sample> = (0u8..8)
-//!     .map(|i| Sample::new(vec![i], 100, i == 0 || i == 4, 0))
+//!     .map(|i| {
+//!         let dts = i as i64 * 100;
+//!         Sample::new(vec![i], Some(dts), Some(dts), Some(100), i == 0 || i == 4)
+//!     })
 //!     .collect();
 //!
 //! let src = Track::new(spec, samples);
@@ -63,8 +66,8 @@
 //!
 //! // Two keyframes kept; durations folded to span the gaps.
 //! assert_eq!(trick.samples.len(), 2);
-//! assert_eq!(trick.samples[0].duration, 400);
-//! assert_eq!(trick.samples[1].duration, 400);
+//! assert_eq!(trick.samples[0].duration, Some(400));
+//! assert_eq!(trick.samples[1].duration, Some(400));
 //! ```
 
 use alloc::vec::Vec;
@@ -78,12 +81,19 @@ use crate::pipeline::Sample;
 /// Only the source's sync samples (`is_sync = true`) are retained. Each kept
 /// sample's `duration` is set to the sum of all source sample durations from
 /// that sync sample up to (but not including) the next sync sample, so the
-/// derived track covers the same total timeline as the source.
+/// derived track spans the source timeline **from its first sync sample to the
+/// end**. Any source samples that precede that first sync sample are dropped
+/// along with the leading interval they occupy: a trick-play track has to
+/// begin on a random-access point, so when `samples[0]` is not a sync sample
+/// the derived track is correspondingly shorter than the source, and starts
+/// later (its [`Track::start_decode_time`] is the first kept sample's `dts`).
 ///
 /// - The `data` bytes of each kept sample are copied byte-for-byte from the
 ///   source.
 /// - `is_sync` is `true` for every sample in the derived track.
-/// - `composition_offset` is preserved from the source sync sample unchanged.
+/// - `dts` and `pts` are preserved verbatim from the source sync sample
+///   (absolute, media plane step 2c); a source sample carrying no timestamp
+///   keeps `None` — never fabricated. Only `duration` is rewritten.
 /// - The [`TrackSpec`](crate::pipeline::TrackSpec) (codec config, timescale,
 ///   track_id) is cloned from the source.
 ///
@@ -102,7 +112,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         .samples
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.is_sync)
+        .filter(|(_, s)| s.flags.is_sync)
         .map(|(i, _)| i)
         .collect();
 
@@ -127,22 +137,33 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         // Sum the durations of all source samples in [idx, span_end).
         let folded_duration: u32 = src.samples[idx..span_end]
             .iter()
-            .map(|s| s.duration)
+            .map(|s| s.duration.unwrap_or(0))
             .fold(0u32, |acc, d| acc.saturating_add(d));
 
         let src_sample = &src.samples[idx];
+        // The derived sample opens exactly where `src_sample` did, so it keeps
+        // that sample's absolute dts/pts verbatim (media plane step 2c); only
+        // the duration is folded, stretching each I-frame across the span it
+        // replaces. A source sample carrying no timestamp stays `None` — never
+        // fabricated.
         derived.push(Sample {
             data: src_sample.data.clone(),
-            duration: folded_duration,
-            is_sync: true,
-            composition_offset: src_sample.composition_offset,
-            // The derived sample opens where `src_sample` did — its source
-            // timing anchor (if any) still applies.
-            source_timing: src_sample.source_timing,
+            dts: src_sample.dts,
+            pts: src_sample.pts,
+            duration: Some(folded_duration),
+            flags: crate::ir::SampleFlags::SYNC,
+            provenance: src_sample.provenance,
         });
     }
 
-    Ok(Track::new(src.spec.clone(), derived))
+    // The derived track keeps the source's absolute anchor: its first sample
+    // is the source's first sync sample, whose dts is unchanged.
+    let anchor = derived
+        .first()
+        .and_then(|s| s.dts)
+        .map(|d| d.max(0) as u64)
+        .unwrap_or(src.start_decode_time);
+    Ok(Track::new_at(src.spec.clone(), derived, anchor))
 }
 
 /// Convenience: append a derived I-frame-only track to a [`crate::media::Media`].

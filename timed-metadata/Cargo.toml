@@ -31,6 +31,9 @@ serde         = { version = "1", default-features = false, features = ["derive",
 # as the PES `cc_data()` path (#568). Test-only: the library itself has no
 # transmux dependency.
 transmux = { path = "../transmux", default-features = false }
+# ssai_ad_stitch example: moved from transmux (which had the dev-dep cycle fix
+# requirement). Needs mpeg-ts for SectionReassembler to extract SCTE-35 cues.
+mpeg-ts = { path = "../mpeg-ts", version = "0.3", default-features = false }
 
 [features]
 default = ["std", "serde", "chrono"]

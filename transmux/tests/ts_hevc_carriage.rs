@@ -296,7 +296,7 @@ fn real_hevc_parts() -> RealHevcParts {
         other => panic!("expected HEVC, got {other:?}"),
     };
     let first = &track.samples[0];
-    assert!(first.is_sync, "fixture's first AU must be the IRAP");
+    assert!(first.flags.is_sync, "fixture's first AU must be the IRAP");
     let (mut aud, mut vps, mut sps, mut pps, mut slice) = (None, None, None, None, None);
     for nal in split_lp(&first.data) {
         match hevc_nal_type(&nal) {
@@ -340,7 +340,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
         .into_iter()
         .flat_map(|n| lp_nal(n))
         .collect();
-    let sample0 = Sample::new(sample0_data, 90_000, true, 0);
+    let sample0 = Sample::new(sample0_data, Some(0), Some(0), Some(90_000), true);
 
     // Sample 1: a second IRAP AU *without* its own VPS/SPS/PPS — the case
     // `build_hevc_annexb_au` must repair so every emitted TS AU stays
@@ -349,7 +349,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
         .into_iter()
         .flat_map(|n| lp_nal(n))
         .collect();
-    let sample1 = Sample::new(sample1_data, 90_000, true, 0);
+    let sample1 = Sample::new(sample1_data, Some(90_000), Some(90_000), Some(90_000), true);
 
     let track = Track::new(spec, vec![sample0, sample1]);
     let media = Media::new(vec![track], 90_000);
@@ -435,7 +435,10 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         },
     );
     let audio_samples: Vec<Sample> = (0..20)
-        .map(|_| Sample::new(vec![0xAAu8; 8], 1_024, true, 0))
+        .map(|i| {
+            let dts = i as i64 * 1_024;
+            Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true)
+        })
         .collect();
     let audio_track = Track::new(audio_spec, audio_samples);
 
@@ -458,10 +461,22 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         },
     );
     let video_samples = vec![
-        Sample::new(full_au.clone(), 90_000, true, 0),
-        Sample::new(full_au.clone(), 90_000, false, 0),
-        Sample::new(full_au.clone(), 90_000, true, 0),
-        Sample::new(full_au, 90_000, false, 0),
+        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true),
+        Sample::new(
+            full_au.clone(),
+            Some(90_000),
+            Some(90_000),
+            Some(90_000),
+            false,
+        ),
+        Sample::new(
+            full_au.clone(),
+            Some(180_000),
+            Some(180_000),
+            Some(90_000),
+            true,
+        ),
+        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false),
     ];
     let video_track = Track::new(video_spec, video_samples);
 
@@ -532,24 +547,43 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     // must cut on the video's keyframes; anchored on audio (the bug), the
     // short audio frames never reach the target and nothing cuts at all.
     let video_samples = vec![
-        Sample::new(full_au.clone(), 90_000, true, 0),
-        Sample::new(full_au.clone(), 90_000, false, 0),
-        Sample::new(full_au.clone(), 90_000, true, 0),
-        Sample::new(full_au, 90_000, false, 0),
+        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true),
+        Sample::new(
+            full_au.clone(),
+            Some(90_000),
+            Some(90_000),
+            Some(90_000),
+            false,
+        ),
+        Sample::new(
+            full_au.clone(),
+            Some(180_000),
+            Some(180_000),
+            Some(90_000),
+            true,
+        ),
+        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false),
     ];
     let mut cuts = 0usize;
     for s in video_samples {
-        if seg.push(2, s).expect("push video").is_some() {
-            cuts += 1;
-        }
+        seg.push(2, s).expect("push video");
+        cuts += seg.take_ready().len();
     }
-    for _ in 0..5 {
-        seg.push(1, Sample::new(vec![0xAAu8; 8], 1_024, true, 0))
-            .expect("push audio");
+    for i in 0..5i64 {
+        let dts = i * 1_024;
+        seg.push(
+            1,
+            Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true),
+        )
+        .expect("push audio");
+        // Drain and discard: under the pre-`take_ready` API a cut produced by
+        // an audio push was returned here and dropped, never counted. Draining
+        // per push keeps `cuts` counting exactly the video-push cuts it did
+        // before, instead of sweeping an audio-push cut into the `finish` drain.
+        let _ = seg.take_ready();
     }
-    if seg.finish().expect("finish").is_some() {
-        cuts += 1;
-    }
+    seg.finish().expect("finish");
+    cuts += seg.take_ready().len();
 
     assert_eq!(
         cuts, 2,

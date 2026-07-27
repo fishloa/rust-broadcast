@@ -233,7 +233,11 @@ fn fragment_c_timeline() {
         let expanded = si.enumerate_chunks().expect("enumerate_chunks");
         assert_eq!(expanded.len(), emitted);
         let sum_d: u64 = expanded.iter().map(|(_, d)| *d).sum();
-        let media_ticks: u64 = track.samples.iter().map(|s| s.duration as u64).sum();
+        let media_ticks: u64 = track
+            .samples
+            .iter()
+            .map(|s| s.duration.unwrap_or(0) as u64)
+            .sum();
         let ts = track.spec.timescale.max(1) as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
         assert_eq!(
@@ -393,7 +397,10 @@ fn lossless_round_trip_video() {
             "coded NAL payload byte-identical at sample {i}"
         );
         assert_eq!(a.duration, b.duration, "duration preserved at sample {i}");
-        assert_eq!(a.is_sync, b.is_sync, "sync flag preserved at sample {i}");
+        assert_eq!(
+            a.flags.is_sync, b.flags.is_sync,
+            "sync flag preserved at sample {i}"
+        );
     }
 }
 

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use broadcast_common::Unpackage;
 use transmux::TsDemux;
 use transmux::media::{Media, PcrSample, Track};
-use transmux::pipeline::CodecConfig;
+use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -64,23 +64,44 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
     let mut pcr: Vec<PcrSample> = Vec::new();
     while let Some(event) = demux.poll_event() {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                index_by_id.insert(track.spec.track_id, tracks.len());
-                tracks.push(track);
+            DemuxEvent::TrackAdded(spec) => {
+                index_by_id.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
             }
-            DemuxEvent::TrackUpdated(track) => {
-                if let Some(&i) = index_by_id.get(&track.spec.track_id) {
-                    let samples = std::mem::take(&mut tracks[i].samples);
-                    tracks[i] = track;
-                    tracks[i].samples = samples;
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&i) = index_by_id.get(&spec.track_id) {
+                    tracks[i].spec = spec;
                 }
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 if let Some(&i) = index_by_id.get(&track_id) {
-                    tracks[i].samples.push(sample);
+                    let track = &mut tracks[i];
+                    // `Track::start_decode_time` is no longer carried by
+                    // `TrackAdded` (issue #774 reshape) — it is exactly the
+                    // first sample's own `dts` (media plane step 2c
+                    // invariant), so derive it here instead, matching
+                    // `TsDemux::demux`'s own oracle derivation.
+                    if track.samples.is_empty() {
+                        if let Some(dts) = sample.dts {
+                            track.start_decode_time = dts as u64;
+                        }
+                    }
+                    track.samples.push(sample);
                 }
             }
-            DemuxEvent::Pcr(sample) => pcr.push(sample),
+            DemuxEvent::ClockReference {
+                ticks,
+                discontinuous,
+                provenance,
+                ..
+            } => pcr.push(PcrSample::new(
+                ticks,
+                provenance.pid.unwrap_or(0),
+                provenance.packet_index.unwrap_or(0),
+                discontinuous,
+            )),
             DemuxEvent::Discontinuity { .. } => {}
             _ => {}
         }
@@ -99,7 +120,7 @@ fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {
 
 /// Deep-equality assertion between two `Media` values built via different
 /// paths. `pcr` compares via `PcrSample`'s own `PartialEq`; everything else
-/// (tracks/samples/codec configs/source_timing/composition offsets) compares
+/// (tracks/samples/codec configs/absolute dts+pts/durations) compares
 /// via the complete `Debug` dump of `Media::tracks` — every nested type here
 /// (`Sample`, `TrackSpec`, `CodecConfig` and its box types) is derived-Debug
 /// plain data, so any byte, timestamp, or config divergence between the two
@@ -130,7 +151,7 @@ const CHUNK_SIZES: [usize; 8] = [1, 7, 100, 187, 188, 189, 1024, 65536];
 
 /// Test 1 (headline gate) — for every fixture, for every chunk size, feeding
 /// the file through `StreamingTsDemux` in that chunk size must reconstruct a
-/// `Media` byte-identical (all tracks, all sample bytes, all source_timing
+/// `Media` byte-identical (all tracks, all sample bytes, all absolute dts/pts
 /// values, all pcr entries) to the one-shot batch `TsDemux::demux()` result.
 /// Chunk size 1 (byte-at-a-time) is included.
 #[test]
@@ -167,10 +188,10 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
     let mut demux = StreamingTsDemux::new();
     demux.feed(&data);
     demux.finish();
-    let mut added: Vec<Track> = Vec::new();
+    let mut added: Vec<TrackSpec> = Vec::new();
     while let Some(event) = demux.poll_event() {
-        if let DemuxEvent::TrackAdded(track) = event {
-            added.push(track);
+        if let DemuxEvent::TrackAdded(spec) = event {
+            added.push(spec);
         }
     }
 
@@ -181,7 +202,7 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
     assert!(
         added
             .iter()
-            .any(|t| matches!(t.spec.config, CodecConfig::Data { .. })),
+            .any(|t| matches!(t.config, CodecConfig::Data { .. })),
         "TrackAdded must cover at least one opaque Data (stream_type 0x06) track"
     );
 
@@ -229,7 +250,7 @@ fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
     demux.finish();
     let mut pcr_events = 0usize;
     while let Some(event) = demux.poll_event() {
-        if matches!(event, DemuxEvent::Pcr(_)) {
+        if matches!(event, DemuxEvent::ClockReference { .. }) {
             pcr_events += 1;
         }
     }

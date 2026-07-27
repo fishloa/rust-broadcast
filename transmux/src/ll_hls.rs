@@ -35,11 +35,17 @@
 //! [`low_latency`](crate::hls::MediaPlaylist::low_latency) config is set; see
 //! [`crate::hls`] for the exact RFC 8216bis syntax and sections.
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+
+use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::ll_dash::build_chunk;
-use crate::pipeline::{CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
+use crate::segmenter::{
+    MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
+};
 
 /// One finished LL-HLS **partial segment** ("part") — RFC 8216bis §4.4.4.9.
 ///
@@ -92,6 +98,21 @@ struct TrackState {
     /// `base_media_decode_time` of the whole current *segment* for this track =
     /// decode time of `pending[0]`.
     seg_base_decode: u64,
+    /// Advances `part_base_decode` past each sample as it is drained into a
+    /// part, under the same duration-then-dts-delta rule as the anchor
+    /// accumulator (see [`MediaClock`]).
+    ///
+    /// Deliberately a *different* clock instance from `seg_clock`: the two
+    /// accumulators cover the same samples at different granularities (parts
+    /// walk `pending` in sub-ranges, the segment walks it once at the
+    /// boundary), and a [`MediaClock`]'s dts-delta fallback is only correct
+    /// if it sees each sample exactly once. A plain `duration` sum would pin
+    /// both at 0 forever on a `duration: Some(0)` stream, collapsing every
+    /// part's and segment's `tfdt` onto the same decode time.
+    part_clock: MediaClock,
+    /// Advances `seg_base_decode` past the whole segment at the boundary —
+    /// see `part_clock` for why this is a second, independent clock.
+    seg_clock: MediaClock,
 }
 
 /// A stateful **Low-Latency HLS** segmenter (RFC 8216bis).
@@ -109,7 +130,12 @@ struct TrackState {
 /// use transmux::{CodecConfig, Sample, TrackSpec};
 /// use transmux::ll_hls::LlHlsSegmenter;
 /// # fn spec() -> TrackSpec { unimplemented!() }
-/// # fn au(sync: bool) -> Sample { Sample::from_raw(vec![0u8; 4], 3000) }
+/// # fn au(sync: bool) -> Sample {
+/// #     use std::sync::atomic::{AtomicI64, Ordering};
+/// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
+/// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
+/// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// # }
 /// # if false {
 /// // 1 s target segments, ~334 ms parts.
 /// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], 1000, 1.0, 334).unwrap();
@@ -133,16 +159,26 @@ pub struct LlHlsSegmenter {
     anchor_seg_dur: u64,
     /// Buffered duration since the last part flush on the anchor (ticks).
     anchor_part_dur: u64,
+    /// Anchor-progress clock: advances *both* accumulators above from each
+    /// anchor sample's `duration`, or from its `dts` delta when `duration` is
+    /// absent or zero (see [`MediaClock`]).
+    anchor_clock: MediaClock,
     /// `mfhd.sequence_number` of the next part/segment `moof`, 1-based, contiguous.
     next_seq: u32,
     /// 1-based number of the segment currently being built.
     current_segment: u32,
     /// 0-based index of the next part within the current segment.
     next_part_index: u32,
-    /// Parts finished but not yet taken by the caller.
-    ready_parts: Vec<PartInfo>,
-    /// Full segments finished but not yet taken by the caller.
-    ready_segments: Vec<SegmentInfo>,
+    /// Parts and full segments finished but not yet taken by the caller, in
+    /// the exact order they were cut. The single source of truth for the
+    /// inherent [`take_ready_parts`](Self::take_ready_parts)/
+    /// [`take_ready_segments`](Self::take_ready_segments) drains *and*
+    /// [`Stage::poll`] — there is no separate staging copy. The inherent
+    /// drains filter this queue by variant (each leaving the other kind's
+    /// relative order undisturbed); `poll` pops the raw item. Whichever API
+    /// (or mix of both) the caller uses, every part and segment is delivered
+    /// exactly once.
+    ready: VecDeque<LlHlsStageOutput>,
 }
 
 impl LlHlsSegmenter {
@@ -151,13 +187,16 @@ impl LlHlsSegmenter {
     /// part whenever the anchor buffers `part_target_ms` milliseconds since the
     /// last part.
     ///
-    /// The anchor is the first video track (falling back to the first track for
-    /// audio-only), exactly as [`crate::segmenter::Segmenter`]. `movie_timescale`
-    /// matches [`build_init_segment`].
+    /// The anchor is chosen by the shared
+    /// [`crate::segmenter::choose_anchor`] — the first **video**
+    /// track (any codec, not just AVC), falling back to the first
+    /// anchor-capable track — exactly as [`crate::segmenter::Segmenter`].
+    /// `movie_timescale` matches [`build_init_segment`].
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate `track_id`s,
-    /// `target_duration_secs` is not positive and finite, or `part_target_ms` is 0.
+    /// `target_duration_secs` is not positive and finite, `part_target_ms` is 0,
+    /// or no track is anchor-capable (every track is section-carried).
     pub fn with_part_target(
         tracks: Vec<TrackSpec>,
         movie_timescale: u32,
@@ -183,23 +222,24 @@ impl LlHlsSegmenter {
             }
         }
 
-        // Opaque `CodecConfig::Data` tracks have no ISOBMFF sample entry in
-        // this crate (issue #557/#576) — omit them entirely rather than
-        // erroring on the first part.
-        let tracks: Vec<TrackSpec> = tracks
-            .into_iter()
-            .filter(|t| !t.config.is_opaque_data())
-            .collect();
-        if tracks.is_empty() {
-            return Err(Error::InvalidInput(
-                "ll-hls segmenter needs at least one carriable (non-Data) track",
-            ));
-        }
+        // MUX = strict but filterable (media plane step-2 fix wave 1,
+        // B2-B4): a track `build_init_segment` cannot place into an ISOBMFF
+        // `trak` (opaque `CodecConfig::Data` or `CodecConfig::Subtitle`) is
+        // no longer silently omitted here — it surfaces the same named
+        // error every other mux entry point does, the first time
+        // `init_segment`/a part build actually needs the `trak`. The caller
+        // must pre-filter first (e.g. with
+        // `tracks.retain(|t| t.config.is_muxable_in_bmff())`) if it wants
+        // to drop such tracks rather than fail.
 
-        let anchor = tracks
-            .iter()
-            .position(|t| matches!(t.config, CodecConfig::Avc { .. }))
-            .unwrap_or(0);
+        // Anchor = first **video** track (any `CodecConfig::is_video` codec),
+        // else the first anchor-capable track — the shared rule
+        // `Segmenter`/`ts_hls` use. This used to match only
+        // `CodecConfig::Avc`, so an HEVC+AAC media with audio first anchored on
+        // the *audio* track: segments did not begin on an IRAP and every part
+        // was reported `independent` (audio is all sync samples), advertising
+        // `INDEPENDENT=YES` on parts that actually start mid-GOP.
+        let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
         let anchor_timescale = tracks[anchor].timescale as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
@@ -215,6 +255,8 @@ impl LlHlsSegmenter {
                 part_start: 0,
                 part_base_decode: 0,
                 seg_base_decode: 0,
+                part_clock: MediaClock::new(),
+                seg_clock: MediaClock::new(),
             })
             .collect();
 
@@ -226,11 +268,11 @@ impl LlHlsSegmenter {
             part_target_ticks,
             anchor_seg_dur: 0,
             anchor_part_dur: 0,
+            anchor_clock: MediaClock::new(),
             next_seq: 1,
             current_segment: 1,
             next_part_index: 0,
-            ready_parts: Vec::new(),
-            ready_segments: Vec::new(),
+            ready: VecDeque::new(),
         })
     }
 
@@ -256,9 +298,18 @@ impl LlHlsSegmenter {
     /// Otherwise, once the anchor buffers a part-target's worth of samples since
     /// the last part, a part is flushed.
     ///
+    /// Both accumulators advance via [`MediaClock`]: each anchor sample's own
+    /// `duration` when that is a real, non-zero span, else the `dts` delta from
+    /// the previous anchor sample — `duration` alone stalls on the `Some(0)`
+    /// durations live input legitimately produces (no part *and* no segment
+    /// would ever be emitted).
+    ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, or a part/segment
-    /// build fails.
+    /// [`Error::InvalidInput`] if `track_id` matches no track, a part/segment
+    /// build fails, or this track already holds
+    /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
+    /// to cut on — call [`flush`](Self::flush) to close a trailing partial
+    /// segment).
     pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
@@ -268,16 +319,21 @@ impl LlHlsSegmenter {
 
         // Segment boundary: anchor keyframe past target → finalize the segment.
         if idx == self.anchor
-            && sample.is_sync
+            && sample.flags.is_sync
             && self.anchor_seg_dur >= self.target_ticks
             && !self.tracks[self.anchor].pending.is_empty()
         {
             self.finish_segment()?;
         }
 
+        if self.tracks[idx].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
+            return Err(no_sync_sample_error());
+        }
+
         if idx == self.anchor {
-            self.anchor_seg_dur += sample.duration as u64;
-            self.anchor_part_dur += sample.duration as u64;
+            let elapsed = self.anchor_clock.tick(&sample);
+            self.anchor_seg_dur += elapsed;
+            self.anchor_part_dur += elapsed;
         }
         self.tracks[idx].pending.push(sample);
 
@@ -306,14 +362,37 @@ impl LlHlsSegmenter {
     }
 
     /// Remove and return every part finished since the last call, in order.
+    /// Any not-yet-taken segments remain queued (retrievable via
+    /// [`take_ready_segments`](Self::take_ready_segments) or `Stage::poll`),
+    /// in their original relative order.
     pub fn take_ready_parts(&mut self) -> Vec<PartInfo> {
-        core::mem::take(&mut self.ready_parts)
+        let mut parts = Vec::new();
+        let mut remaining = VecDeque::with_capacity(self.ready.len());
+        for item in self.ready.drain(..) {
+            match item {
+                LlHlsStageOutput::Part(p) => parts.push(p),
+                other => remaining.push_back(other),
+            }
+        }
+        self.ready = remaining;
+        parts
     }
 
     /// Remove and return every full segment finished since the last call, in
-    /// order — distinct from the parts.
+    /// order — distinct from the parts. Any not-yet-taken parts remain
+    /// queued (retrievable via [`take_ready_parts`](Self::take_ready_parts)
+    /// or `Stage::poll`), in their original relative order.
     pub fn take_ready_segments(&mut self) -> Vec<SegmentInfo> {
-        core::mem::take(&mut self.ready_segments)
+        let mut segments = Vec::new();
+        let mut remaining = VecDeque::with_capacity(self.ready.len());
+        for item in self.ready.drain(..) {
+            match item {
+                LlHlsStageOutput::Segment(s) => segments.push(s),
+                other => remaining.push_back(other),
+            }
+        }
+        self.ready = remaining;
+        segments
     }
 
     /// Finalize the current segment: flush its remaining un-parted samples as a
@@ -346,16 +425,17 @@ impl LlHlsSegmenter {
 
         let seg_duration =
             self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale as f64;
-        self.ready_segments.push(SegmentInfo {
+        self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
             segment_seq: self.current_segment,
             part_count: self.next_part_index,
-        });
+        }));
 
         // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
-            let dur: u64 = t.pending.iter().map(|s| s.duration as u64).sum();
+            let clock = &mut t.seg_clock;
+            let dur: u64 = t.pending.iter().map(|s| clock.tick(s)).sum();
             t.seg_base_decode += dur;
             t.part_base_decode = t.seg_base_decode;
             t.pending.clear();
@@ -403,7 +483,7 @@ impl LlHlsSegmenter {
         let independent = anchor_state
             .pending
             .get(anchor_state.part_start)
-            .map(|s| s.is_sync)
+            .map(|s| s.flags.is_sync)
             .unwrap_or(false);
 
         // Part duration = the anchor's buffered-since-last-part duration.
@@ -427,11 +507,14 @@ impl LlHlsSegmenter {
         };
         self.next_seq += 1;
 
-        // Advance per-track part cursors and part-base decode times.
+        // Advance per-track part cursors and part-base decode times. The
+        // `[part_start..end)` ranges are contiguous and in decode order across
+        // calls, so `part_clock` sees each sample exactly once.
         for (t, &end) in self.tracks.iter_mut().zip(&take_ends) {
+            let clock = &mut t.part_clock;
             let dur: u64 = t.pending[t.part_start..end]
                 .iter()
-                .map(|s| s.duration as u64)
+                .map(|s| clock.tick(s))
                 .sum();
             t.part_base_decode += dur;
             t.part_start = end;
@@ -441,13 +524,94 @@ impl LlHlsSegmenter {
         self.next_part_index += 1;
         self.anchor_part_dur = 0;
 
-        self.ready_parts.push(PartInfo {
+        self.ready.push_back(LlHlsStageOutput::Part(PartInfo {
             bytes: part_bytes,
             duration: part_secs,
             independent,
             segment_seq: self.current_segment,
             part_index,
-        });
+        }));
         Ok(())
+    }
+}
+
+/// [`LlHlsSegmenter`]'s [`Stage::Out`] — this segmenter drains two distinct
+/// kinds of ready output today ([`take_ready_parts`](LlHlsSegmenter::take_ready_parts)
+/// / [`take_ready_segments`](LlHlsSegmenter::take_ready_segments)); `Stage`
+/// needs one `Out` type, and an enum is the honest way to carry that
+/// distinction through rather than silently merging or dropping one kind.
+/// Deliberately not unified with any other segmenter's `Out` — see the
+/// `stage` module docs on why each implementor states its own shape.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum LlHlsStageOutput {
+    /// A finished partial segment — see [`PartInfo`].
+    Part(PartInfo),
+    /// A finished full segment — see [`SegmentInfo`].
+    Segment(SegmentInfo),
+}
+
+/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
+/// reasoning as [`crate::segmenter::Segmenter`]'s impl. `Out =
+/// [`LlHlsStageOutput`]`, covering both parts and segments (see that type's
+/// docs).
+///
+/// Every inherent method — [`push`](Self::push), [`take_ready_parts`
+/// ](Self::take_ready_parts), [`take_ready_segments`](Self::take_ready_segments),
+/// [`flush`](Self::flush) — keeps working unchanged; this impl is an
+/// additional, uniform way to drive the same engine. [`Stage::poll`] and the
+/// inherent `take_ready_parts`/`take_ready_segments` drains all read from the
+/// *same* `ready` queue (there is no separate staging copy) — `poll` pops the
+/// raw part-or-segment item in exact production order, while each inherent
+/// drain filters out its own variant and leaves the other kind queued. So a
+/// part or segment is delivered exactly once no matter which API — inherent,
+/// `Stage`, or a mix of both on the same instance — the caller uses to
+/// retrieve it.
+impl Stage for LlHlsSegmenter {
+    type In<'a> = (u32, Sample);
+    type Out = LlHlsStageOutput;
+    type Error = Error;
+
+    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        self.push(track_id, sample)
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.flush()
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        // Parts/segments are only cut in reaction to `push`/`flush` — no
+        // rate-scheduled or timeout work.
+        None
+    }
+
+    fn on_deadline(&mut self, _now: Timestamp) {}
+
+    /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
+    /// un-cut samples — the same bound (and reasoning) as
+    /// [`Segmenter`](crate::segmenter::Segmenter)'s: past it
+    /// [`feed`](Stage::feed) errors rather than buffering a stream that never
+    /// produces the sync sample a segment must open on.
+    ///
+    /// This segmenter is the one with the sharpest need for the bound: past
+    /// the segment target it *also* stops emitting parts (a part is only
+    /// flushed while `anchor_seg_dur < target_ticks`, so the segment's tail
+    /// is held for the boundary), so a single-IDR stream produces no part
+    /// **and** no segment while `pending` grows.
+    fn demand(&self) -> Demand {
+        if self
+            .tracks
+            .iter()
+            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
+        {
+            Demand::saturated()
+        } else {
+            Demand::default()
+        }
     }
 }

@@ -12,6 +12,7 @@
 //! 5. Cross-hub: FLV → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use bytes::Bytes;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::{CmafMux, CodecConfig, FlvDemux, FlvMux};
 
@@ -200,10 +201,13 @@ fn timestamps_and_keyframes_match_oracle() {
 
     // Video keyframe flag = FLV FrameType==1. Oracle has exactly the same set.
     for (i, (s, p)) in vid.iter().zip(&vid_ora).enumerate() {
-        assert_eq!(s.is_sync, p.keyframe, "video sample {i} keyframe flag");
+        assert_eq!(
+            s.flags.is_sync, p.keyframe,
+            "video sample {i} keyframe flag"
+        );
     }
     // Bites: keyframes present at all + the right count (3 per the oracle).
-    let kf = vid.iter().filter(|s| s.is_sync).count();
+    let kf = vid.iter().filter(|s| s.flags.is_sync).count();
     assert_eq!(kf, 3, "exactly 3 video keyframes");
 }
 
@@ -220,13 +224,13 @@ fn check_timing(samples: &[transmux::Sample], ora: &[Pkt], kind: &str) {
         // PTS = DTS + composition offset.
         let exp_pts_rel = p.pts - base_dts;
         assert_eq!(
-            dts + s.composition_offset as i64,
+            dts + s.composition_offset() as i64,
             exp_pts_rel,
             "{kind} sample {i} PTS (= DTS + composition offset)"
         );
         // Advance by the forward-delta duration (exact for all but the last).
         if i + 1 < samples.len() {
-            dts += s.duration as i64;
+            dts += s.duration.unwrap_or(0) as i64;
         }
     }
 }
@@ -259,14 +263,14 @@ fn flv_round_trip_preserves_samples_and_timing() {
         for (i, (sa, sb)) in a.samples.iter().zip(&b.samples).enumerate() {
             assert_eq!(sa.data, sb.data, "track {} sample {i} bytes", a.track_id());
             assert_eq!(
-                sa.composition_offset,
-                sb.composition_offset,
+                sa.composition_offset(),
+                sb.composition_offset(),
                 "track {} sample {i} composition offset",
                 a.track_id()
             );
             assert_eq!(
-                sa.is_sync,
-                sb.is_sync,
+                sa.flags.is_sync,
+                sb.flags.is_sync,
                 "track {} sample {i} sync flag",
                 a.track_id()
             );
@@ -298,7 +302,7 @@ fn flv_round_trip_preserves_samples_and_timing() {
 fn cross_hub_flv_to_cmaf() {
     let mut demux = FlvDemux::new();
     let media = demux.unpackage(FLV).expect("demux av.flv");
-    let flv_nals: Vec<Vec<u8>> = media.tracks[0]
+    let flv_nals: Vec<Bytes> = media.tracks[0]
         .samples
         .iter()
         .map(|s| s.data.clone())

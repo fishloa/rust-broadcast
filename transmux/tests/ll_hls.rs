@@ -90,7 +90,10 @@ fn audio_track() -> TrackSpec {
 const VID_DUR: u32 = 3000; // 90 kHz, 1/30 s per AU
 
 fn vsample(is_sync: bool, byte: u8) -> Sample {
-    Sample::new(vec![byte; 32], VID_DUR, is_sync, 0)
+    // Synthetic sample for the duration-driven segmenter: dts/pts stay `None`
+    // (media plane step 2c — never fabricate a timestamp); the timeline comes
+    // from `duration`, exactly as before.
+    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync)
 }
 
 // ---------------------------------------------------------------------------
@@ -398,7 +401,12 @@ fn part_media_matches_whole_segment_build() {
             vid_samples.push(s.clone());
             seg.push(1, s).unwrap();
         } else {
-            let s = Sample::from_raw(vec![(*idx as u8).wrapping_add(1); 20], AUD_DUR);
+            let s = Sample::from_raw(
+                vec![(*idx as u8).wrapping_add(1); 20],
+                None,
+                None,
+                Some(AUD_DUR),
+            );
             aud_samples.push(s.clone());
             seg.push(2, s).unwrap();
         }
@@ -442,16 +450,8 @@ fn part_media_matches_whole_segment_build() {
     // The whole segment built from the identical sample set.
     let whole = {
         let frags = vec![
-            FragmentTrackData {
-                track_id: 1,
-                base_media_decode_time: 0,
-                samples: &vid_samples,
-            },
-            FragmentTrackData {
-                track_id: 2,
-                base_media_decode_time: 0,
-                samples: &aud_samples,
-            },
+            FragmentTrackData::new(1, 0, &vid_samples),
+            FragmentTrackData::new(2, 0, &aud_samples),
         ];
         transmux::pipeline::build_media_segment(1, &frags).unwrap()
     };

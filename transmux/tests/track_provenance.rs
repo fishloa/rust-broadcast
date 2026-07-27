@@ -293,13 +293,10 @@ fn streaming_demux_track_added_matches_batch_provenance() {
 
     let mut streamed: BTreeMap<u32, (Option<u16>, Vec<u8>)> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {
-        if let DemuxEvent::TrackAdded(track) = event {
+        if let DemuxEvent::TrackAdded(spec) = event {
             streamed.insert(
-                track.spec.track_id,
-                (
-                    track.spec.source_pid,
-                    track.spec.es_info_descriptors.clone(),
-                ),
+                spec.track_id,
+                (spec.source_pid, spec.es_info_descriptors.clone()),
             );
         }
     }

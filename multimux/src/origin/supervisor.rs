@@ -340,7 +340,9 @@ mod tests {
         (0..n)
             .map(|i| {
                 let data = vec![0xABu8.wrapping_add(i as u8); 32];
-                let sample = Sample::new(data, FRAME_DUR, i == 0, 0);
+                // Absolute dts/pts on the frame grid (media plane step 2c).
+                let dts = i64::from(i) * i64::from(FRAME_DUR);
+                let sample = Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0);
                 vec![(1u32, sample)]
             })
             .collect()

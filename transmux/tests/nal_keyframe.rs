@@ -60,7 +60,7 @@ fn avc_keyframes_agree_with_demuxer_and_oracle() {
     for s in &video.samples {
         let helper = access_unit_is_keyframe(NalCodec::Avc, &s.data, true);
         assert_eq!(
-            helper, s.is_sync,
+            helper, s.flags.is_sync,
             "helper keyframe verdict must equal demuxer is_sync for every sample"
         );
         if helper {

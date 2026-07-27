@@ -270,8 +270,15 @@ fn ts_to_cmaf_end_to_end() {
             let is_sync = is_idr_flags[i];
             let pts_val = *pts;
             let dts_val = dts.unwrap_or(pts_val);
-            let composition_offset = (pts_val as i64 - dts_val as i64) as i32;
-            Sample::from_annexb(payload, vid_duration, is_sync, composition_offset)
+            // media plane step 2c: the PES clock IS the absolute pair; the
+            // composition offset is implied by pts - dts.
+            Sample::from_annexb(
+                payload,
+                Some(dts_val as i64),
+                Some(pts_val as i64),
+                Some(vid_duration),
+                is_sync,
+            )
         })
         .collect();
 
@@ -285,7 +292,14 @@ fn ts_to_cmaf_end_to_end() {
         for frame in frames {
             // Strip the 7-byte ADTS header → raw AAC frame
             if frame.len() > 7 {
-                audio_samples_vec.push(Sample::new(frame[7..].to_vec(), 1024, true, 0));
+                let dts = total_adts_frames as i64 * 1024;
+                audio_samples_vec.push(Sample::new(
+                    frame[7..].to_vec(),
+                    Some(dts),
+                    Some(dts),
+                    Some(1024),
+                    true,
+                ));
                 total_adts_frames += 1;
             }
         }
@@ -321,16 +335,8 @@ fn ts_to_cmaf_end_to_end() {
     let init_data = build_init_segment(&tracks, 1000).expect("build_init_segment must succeed");
 
     let fragment_tracks = [
-        FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: 0,
-            samples: &video_samples,
-        },
-        FragmentTrackData {
-            track_id: 2,
-            base_media_decode_time: 0,
-            samples: &audio_samples_vec,
-        },
+        FragmentTrackData::new(1, 0, &video_samples),
+        FragmentTrackData::new(2, 0, &audio_samples_vec),
     ];
     let media_data =
         build_media_segment(1, &fragment_tracks).expect("build_media_segment must succeed");

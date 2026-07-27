@@ -99,12 +99,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = EncryptConfig {
         scheme: CencScheme::Cbcs,
         kid: KID,
-        key: KEY,
         iv: IvGen::Constant(CONSTANT_IV),
         pattern: Some((1, 9)),
         subsample: SubsamplePolicy::Video,
     };
-    CencEncryptor.encrypt(&mut media, &cfg)?;
+    CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
     let track_id = media.tracks[0].spec.track_id;
     let encryption: TrackEncryption = media.tracks[0]
         .encryption

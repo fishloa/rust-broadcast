@@ -21,6 +21,7 @@
 //! [`transmux::StreamingTsDemux`].
 
 use broadcast_common::Unpackage;
+use bytes::Bytes;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
 
 const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");
@@ -65,8 +66,13 @@ fn codec_kind(c: &CodecConfig) -> &'static str {
 
 #[derive(Debug, Clone, PartialEq)]
 struct FullSample {
-    data: Vec<u8>,
-    duration: u32,
+    data: Bytes,
+    /// Absolute decode/presentation time (media plane step 2c) — compared
+    /// across the batch and streaming demuxers so the two must agree on the
+    /// recovered timeline, not just on durations.
+    dts: Option<i64>,
+    pts: Option<i64>,
+    duration: Option<u32>,
     is_sync: bool,
     composition_offset: i32,
 }
@@ -105,9 +111,11 @@ fn one_shot_full() -> Vec<FullTrack> {
                     .iter()
                     .map(|s| FullSample {
                         data: s.data.clone(),
+                        dts: s.dts,
+                        pts: s.pts,
                         duration: s.duration,
-                        is_sync: s.is_sync,
-                        composition_offset: s.composition_offset,
+                        is_sync: s.flags.is_sync,
+                        composition_offset: s.composition_offset(),
                     })
                     .collect(),
             }
@@ -123,25 +131,29 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
 
     for event in events {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                let (width, height) = track_dims(&track.spec.config);
-                index_by_id.insert(track.spec.track_id, tracks.len());
+            DemuxEvent::TrackAdded(spec) => {
+                let (width, height) = track_dims(&spec.config);
+                index_by_id.insert(spec.track_id, tracks.len());
                 tracks.push(FullTrack {
-                    codec_kind: codec_kind(&track.spec.config),
+                    codec_kind: codec_kind(&spec.config),
                     width,
                     height,
                     samples: Vec::new(),
                 });
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 let &i = index_by_id
                     .get(track_id)
                     .expect("Sample must follow its track's TrackAdded");
                 tracks[i].samples.push(FullSample {
                     data: sample.data.clone(),
+                    dts: sample.dts,
+                    pts: sample.pts,
                     duration: sample.duration,
-                    is_sync: sample.is_sync,
-                    composition_offset: sample.composition_offset,
+                    is_sync: sample.flags.is_sync,
+                    composition_offset: sample.composition_offset(),
                 });
             }
             _ => {}
@@ -212,11 +224,11 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
 
     for event in events {
         match event {
-            DemuxEvent::TrackAdded(track) => {
-                let (width, height) = track_dims(&track.spec.config);
-                index_by_id.insert(track.spec.track_id, summaries.len());
+            DemuxEvent::TrackAdded(spec) => {
+                let (width, height) = track_dims(&spec.config);
+                index_by_id.insert(spec.track_id, summaries.len());
                 summaries.push(TrackSummary {
-                    codec_kind: codec_kind(&track.spec.config),
+                    codec_kind: codec_kind(&spec.config),
                     width,
                     height,
                     sample_count: 0,
@@ -225,14 +237,16 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     keyframes: 0,
                 });
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 let &i = index_by_id
                     .get(track_id)
                     .expect("Sample must follow its track's TrackAdded");
                 summaries[i].sample_count += 1;
                 summaries[i].total_bytes += sample.data.len();
-                summaries[i].total_duration += sample.duration as u64;
-                if sample.is_sync {
+                summaries[i].total_duration += sample.duration.unwrap_or(0) as u64;
+                if sample.flags.is_sync {
                     summaries[i].keyframes += 1;
                 }
             }
@@ -268,11 +282,13 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
     let whole_samples: Vec<_> = whole_events
         .iter()
         .filter_map(|e| match e {
-            DemuxEvent::Sample { track_id, sample } => Some((
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => Some((
                 *track_id,
                 sample.data.clone(),
                 sample.duration,
-                sample.is_sync,
+                sample.flags.is_sync,
             )),
             _ => None,
         })
@@ -280,11 +296,13 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
     let chunked_samples: Vec<_> = chunked_events
         .iter()
         .filter_map(|e| match e {
-            DemuxEvent::Sample { track_id, sample } => Some((
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => Some((
                 *track_id,
                 sample.data.clone(),
                 sample.duration,
-                sample.is_sync,
+                sample.flags.is_sync,
             )),
             _ => None,
         })

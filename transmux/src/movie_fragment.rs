@@ -881,12 +881,36 @@ impl CencFragmentBoxes {
     }
 }
 
-/// Build the `senc`/`saiz`/`saio` boxes for one protected track's fragment.
-/// `saio.offsets[0]` is a placeholder (`0`) — [`protect_media_segment`]
-/// back-patches it once every box's final position in the rebuilt `moof` is
-/// known.
-fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<CencFragmentBoxes> {
+/// Build the `senc`/`saiz`/`saio` boxes for one protected track's fragment,
+/// or `None` when this track's fragment has nothing meaningful for them to
+/// carry (issue R3, ISO/IEC 23001-7 §12.2/§12.3).
+///
+/// `senc`'s syntax (§12.3) writes, per sample, `InitializationVector[Per_Sample_IV_Size]`
+/// then — only when `UseSubSampleEncryption` is set — a subsample map. When a
+/// track uses a **constant IV** (`per_sample_iv_size == 0`, the per-sample IV
+/// lives once in `tenc.default_constant_IV` instead — §12.2's
+/// `default_isProtected==1 && default_Per_Sample_IV_Size==0` case) *and* whole-
+/// sample protection (no subsample split needed), every one of `senc`'s
+/// `sample_count` entries is **zero bytes wide**: nothing after `sample_count`
+/// itself. That box asserts a sample count the bitstream carries no data to
+/// corroborate, while recording no per-sample information a decryptor could
+/// use — precisely the shape [`crate::cenc::SampleEncryptionBox::parse_body`]
+/// rejects as [`Error::InvalidInput`] (a `senc` "declares samples but carries
+/// no per-sample data"), and rightly so: a `sample_count`-only box with no
+/// backing bytes is unverifiable, not merely unusual. There is nothing this
+/// track's fragment needs `senc`/`saiz`/`saio` for at all in that case — a
+/// decryptor already has everything it needs from `tenc`'s constant IV and the
+/// (subsample-free) whole-sample protection convention — so the correct fix is
+/// to omit the triple entirely, not to shrink it into an unparseable shape.
+///
+/// `saio.offsets[0]` (when `Some` is returned) is a placeholder (`0`) —
+/// [`protect_media_segment`] back-patches it once every box's final position
+/// in the rebuilt `moof` is known.
+fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<Option<CencFragmentBoxes>> {
     let use_subsamples = p.entries.iter().any(|e| !e.subsamples.is_empty());
+    if p.per_sample_iv_size == 0 && !use_subsamples {
+        return Ok(None);
+    }
     let flags = if use_subsamples {
         crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION
     } else {
@@ -931,13 +955,17 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<CencFragmentB
         aux_info_type_parameter: None,
         offsets: alloc::vec![0u64],
     };
-    Ok(CencFragmentBoxes { senc, saiz, saio })
+    Ok(Some(CencFragmentBoxes { senc, saiz, saio }))
 }
 
 /// Rewrite an already-built **single-fragment** CMAF media segment (`styp`
 /// [+ `emsg`*] + one `moof` + `mdat`) so each track named in `protections`
 /// gets CENC `senc`/`saiz`/`saio` boxes appended to its `traf` (issue #564
-/// Task 3).
+/// Task 3) — except a track whose fragment has nothing for those boxes to
+/// carry (constant IV + whole-sample protection: see this module's private
+/// `build_cenc_fragment_boxes`, issue R3), whose `traf` is left unmodified
+/// entirely; its samples are still encrypted, decryptable from `tenc`'s
+/// `default_constant_IV` alone.
 ///
 /// This is the normal CMAF media-segment case (one `moof`/`mdat` pair per
 /// segment). Only the buffer's *first* `moof` is located and rewritten — a
@@ -995,7 +1023,7 @@ pub fn protect_media_segment(
                 "protect_media_segment: entries.len() must equal the traf's total trun sample count",
             ));
         }
-        built[idx] = Some(build_cenc_fragment_boxes(p)?);
+        built[idx] = build_cenc_fragment_boxes(p)?;
     }
 
     // Pass A: each traf's "base" (tfhd+tfdt+trun) length, and its final
@@ -1375,5 +1403,139 @@ mod tests {
             remaining = &remaining[consumed..];
         }
         panic!("moof box not found");
+    }
+
+    // ── Issue R3: constant-IV + whole-sample `senc` producer/parser mismatch ─
+
+    /// A constant-IV (`per_sample_iv_size == 0`), whole-sample-protected
+    /// (`subsamples` empty) track has nothing for `senc` to carry: every one
+    /// of `sample_count`'s entries would be zero bytes wide. That degenerate
+    /// shape is exactly what [`crate::cenc::SampleEncryptionBox::parse_body`]
+    /// rejects — proven directly here against a hand-built body matching what
+    /// [`build_cenc_fragment_boxes`] *used* to emit for this case, so the
+    /// producer/parser mismatch this issue is about is reproduced, not just
+    /// asserted. [`build_cenc_fragment_boxes`] must therefore return `None`.
+    #[test]
+    fn build_cenc_fragment_boxes_omits_senc_for_constant_iv_whole_sample() {
+        // Reproduce the old shape directly: a `senc` FullBox body declaring
+        // `sample_count == 2` with `per_sample_iv_size == 0` and no
+        // `UseSubSampleEncryption` flag — i.e. every entry is zero bytes.
+        let degenerate_senc_body: [u8; 4] = 2u32.to_be_bytes(); // sample_count = 2
+        let rejected = crate::cenc::SampleEncryptionBox::parse_body(
+            &degenerate_senc_body,
+            0,
+            0, // flags: UseSubSampleEncryption clear
+            0, // per_sample_iv_size
+        );
+        assert!(
+            matches!(rejected, Err(Error::InvalidInput(_))),
+            "this crate's own senc parser must reject a sample_count with no backing per-sample \
+             bytes, got {rejected:?}"
+        );
+
+        // The exact shape that would produce that rejected body: a
+        // `FragmentProtection` with a constant IV (`per_sample_iv_size: 0`)
+        // and whole-sample protection (empty `subsamples` on every entry).
+        let entries = alloc::vec![
+            crate::cenc::SampleEncryptionEntry {
+                initialization_vector: Vec::new(),
+                subsamples: Vec::new(),
+            },
+            crate::cenc::SampleEncryptionEntry {
+                initialization_vector: Vec::new(),
+                subsamples: Vec::new(),
+            },
+        ];
+        let protection = FragmentProtection {
+            track_id: 1,
+            entries: &entries,
+            per_sample_iv_size: 0,
+        };
+        let built = build_cenc_fragment_boxes(&protection).expect("must not error");
+        assert!(
+            built.is_none(),
+            "a constant-IV whole-sample track has nothing for senc/saiz/saio to carry \
+             (ISO/IEC 23001-7 §12.2/§12.3) — build_cenc_fragment_boxes must return None, not a \
+             senc shape this crate's own parser rejects"
+        );
+    }
+
+    /// End-to-end: [`protect_media_segment`] over a constant-IV,
+    /// whole-sample-protected track must leave the `moof` byte-identical to
+    /// the unprotected input — no `senc`/`saiz`/`saio` appended — so there is
+    /// nothing for this crate's own hardened `senc` parser to ever reject on
+    /// its own output (the hard round-trip invariant this issue is about).
+    #[test]
+    fn protect_media_segment_constant_iv_whole_sample_round_trips_with_no_senc() {
+        const TRACK_ID: u32 = 1;
+
+        let tfhd = TrackFragmentHeaderBox {
+            flags: 0,
+            track_id: TRACK_ID,
+            base_data_offset: None,
+            sample_description_index: None,
+            default_sample_duration: None,
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        let trun = TrackFragmentRunBox {
+            version: 0,
+            tr_flags: TRUN_SAMPLE_SIZE_PRESENT,
+            data_offset: None,
+            first_sample_flags: None,
+            samples: vec![
+                TrunSample {
+                    sample_duration: None,
+                    sample_size: Some(4),
+                    sample_flags: None,
+                    sample_composition_time_offset: None,
+                },
+                TrunSample {
+                    sample_duration: None,
+                    sample_size: Some(4),
+                    sample_flags: None,
+                    sample_composition_time_offset: None,
+                },
+            ],
+        };
+        let traf = TrackFragmentBox {
+            tfhd,
+            tfdt: None,
+            trun: vec![trun],
+        };
+        let moof = MovieFragmentBox {
+            mfhd: MovieFragmentHeaderBox::new(1),
+            traf: vec![traf],
+        };
+        let unprotected = moof.to_bytes();
+
+        let entries = alloc::vec![
+            crate::cenc::SampleEncryptionEntry {
+                initialization_vector: Vec::new(),
+                subsamples: Vec::new(),
+            },
+            crate::cenc::SampleEncryptionEntry {
+                initialization_vector: Vec::new(),
+                subsamples: Vec::new(),
+            },
+        ];
+        let protection = FragmentProtection {
+            track_id: TRACK_ID,
+            entries: &entries,
+            per_sample_iv_size: 0,
+        };
+
+        let protected = protect_media_segment(&unprotected, &[protection])
+            .expect("protect_media_segment must not error on a constant-IV whole-sample track");
+        assert_eq!(
+            protected, unprotected,
+            "no senc/saiz/saio bytes must be appended when there is nothing for them to carry"
+        );
+
+        // Re-parse with this crate's own parser: still a well-formed moof.
+        let reparsed = MovieFragmentBox::parse_body(&protected[BOX_HEADER_SIZE..])
+            .expect("protected output must still parse as a valid moof");
+        assert_eq!(reparsed.traf.len(), 1);
+        assert_eq!(reparsed.traf[0].trun[0].samples.len(), 2);
     }
 }

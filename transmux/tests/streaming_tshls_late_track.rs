@@ -82,8 +82,10 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     let mut before_segments: Vec<TsSegment> = Vec::new();
     let mut split_idx: Option<usize> = None;
     for (i, s) in video_samples.iter().enumerate() {
-        if let Some(cut) = seg.push(video_track_id, s.clone()).expect("push video") {
-            before_segments.push(cut);
+        seg.push(video_track_id, s.clone()).expect("push video");
+        let ready = seg.take_ready();
+        if !ready.is_empty() {
+            before_segments.extend(ready);
             split_idx = Some(i);
             break;
         }
@@ -119,34 +121,31 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     // ── Phase 3: push the remaining video + all audio, interleaved by decode time ─
     let mut acc: u64 = video_samples[..=split_idx]
         .iter()
-        .map(|s| s.duration as u64)
+        .map(|s| s.duration.unwrap_or(0) as u64)
         .sum();
     let mut items: Vec<(f64, bool, usize)> = Vec::new();
     for (i, s) in video_samples.iter().enumerate().skip(split_idx + 1) {
         items.push((acc as f64 / video_scale as f64, true, i));
-        acc += s.duration as u64;
+        acc += s.duration.unwrap_or(0) as u64;
     }
     let mut aacc: u64 = 0;
     for (i, s) in audio_samples.iter().enumerate() {
         items.push((aacc as f64 / audio_scale as f64, false, i));
-        aacc += s.duration as u64;
+        aacc += s.duration.unwrap_or(0) as u64;
     }
     items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
 
-    let mut after_segments: Vec<TsSegment> = Vec::new();
     for (_, is_video, idx) in items {
         let (track_id, sample) = if is_video {
             (video_track_id, video_samples[idx].clone())
         } else {
             (audio_track_id, audio_samples[idx].clone())
         };
-        if let Some(cut) = seg.push(track_id, sample).expect("push") {
-            after_segments.push(cut);
-        }
+        seg.push(track_id, sample).expect("push");
     }
-    if let Some(cut) = seg.finish().expect("finish") {
-        after_segments.push(cut);
-    }
+    let mut after_segments: Vec<TsSegment> = seg.take_ready();
+    seg.finish().expect("finish");
+    after_segments.extend(seg.take_ready());
     assert!(
         !after_segments.is_empty(),
         "at least one segment must be cut after add_track"
