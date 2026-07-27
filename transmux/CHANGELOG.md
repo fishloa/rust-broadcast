@@ -12,6 +12,14 @@ Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
 
 ### Added
 
+- **Shared segmentation primitives in `transmux::segmenter`**, now public
+  because all four segmenters use them and their behaviour is observable:
+  `MediaClock` (per-track elapsed-media accounting: `duration` when it is a
+  real, non-zero span, else the absolute `dts` delta), `choose_anchor` /
+  `is_anchor_capable` (first video track of any codec, else the first track
+  whose clock can advance; a section-only track set is an error), and
+  `MAX_PENDING_SAMPLES_PER_TRACK` (the un-cut buffer bound). Previously each
+  module carried its own copy, so the four could — and did — drift apart.
 - **`DemuxEvent::TrackUpdated`/`TrackRemoved`/`TrackAbandoned`, PMT version
   diffing** (issue #774, unblocks rust-skyfire#96): `StreamingTsDemux` now
   diffs a PMT's `version_number`/`current_next_indicator` (ISO/IEC 13818-1
@@ -65,6 +73,85 @@ Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
 
 ### Fixed
 
+- **CRITICAL — a `duration` of `Some(0)`/`None` on the anchor track no longer
+  stalls segmentation forever** (all four segmenters: `Segmenter`,
+  `LlSegmenter`, `LlHlsSegmenter`, `StreamingTsHlsSegmenter`). The anchor
+  accumulator advanced only from `Sample::duration`, so a stream carrying
+  `Some(0)` never reached the segment target: no part and no segment was ever
+  emitted, `pending` grew without bound, and `Stage::demand()` still reported
+  "not saturated", inviting a well-behaved driver to feed to exhaustion. This
+  was reachable on a shipped path — `StreamingFlvDemux` derives `duration` as
+  the forward delta between FLV tag timestamps, so an RTMP publish's first
+  sample (and any two tags sharing a timestamp) is `Some(0)`. Since
+  `Sample::dts` is absolute, the new shared `segmenter::MediaClock` advances
+  on each sample's own `duration` when that is a real, non-zero span and on
+  the **`dts` delta** otherwise; a stream with real durations segments exactly
+  as before. Per-track `tfdt`/`base_media_decode_time` accounting was the same
+  duration sum and is fixed alongside it, so segment decode times no longer
+  all collapse to 0. `StreamingTsHlsSegmenter::push` also no longer rejects an
+  anchor sample with `duration: None` outright.
+- **CRITICAL — a legal single-IDR / infinite-GOP stream is now bounded instead
+  of growing without limit** (all four segmenters). With one keyframe at the
+  start and none after, no cut is possible — and cutting mid-GOP would break
+  CMAF's (and classic HLS's) random-access guarantee — so the pending buffer
+  is bounded on **data**, not time (these types are sans-IO and `no_std`): at
+  the new `segmenter::MAX_PENDING_SAMPLES_PER_TRACK` un-cut samples,
+  `Stage::demand()` reports `saturated` so a cooperative driver stops feeding,
+  and `push`/`Stage::feed` then return a named `Error::InvalidInput`. `flush`/
+  `finish` closes the trailing partial segment and input flows again.
+- **`LlSegmenter`/`LlHlsSegmenter` anchor on any video codec, not just AVC.**
+  Both selected the anchor with `matches!(config, CodecConfig::Avc { .. })`,
+  so an HEVC-plus-AAC media with audio first anchored on the **audio** track:
+  segments did not begin on an IRAP, and since every AAC sample is a sync
+  sample every `PartInfo.independent` was `true`, advertising
+  `INDEPENDENT=YES` (RFC 8216bis §4.4.4.9) on parts that actually start
+  mid-GOP. Both now use the shared `segmenter::choose_anchor`, matching
+  `Segmenter`/`ts_hls` as their doc comments already claimed. A track set with
+  no anchor-capable track (all section-carried) is a construction error in all
+  four rather than a silent stall.
+- **`TsHlsPackager` places a timestamped section sample in the right segment.**
+  `partition_tracks` advanced its per-track placement clock only from
+  `duration`, which a section-carried track never has, so **every** section
+  sample landed in segment 0 — an SCTE-35 cue for t=40 s was muxed at t=0 —
+  while the streaming path placed it in the segment that was open on arrival.
+  Both paths now share `placement_secs`, which falls back to the sample's
+  absolute `dts`, restoring the batch/streaming equivalence the module docs
+  claim (and now enforced by a test).
+- **`ProgressiveDemux` cannot return silently-wrong sample payloads after a
+  buffer-cap rejection.** A `Stage::feed` rejected for exceeding `max_bytes`
+  discarded that chunk but was neither terminal nor recorded, and `demand()`
+  still advertised headroom — so a following smaller chunk was accepted and
+  `finish()` parsed a buffer **with a hole** using file-absolute `stbl` chunk
+  offsets (ISO/IEC 14496-12:2015 §8.7.5), yielding either a misleading
+  `UnexpectedBox` or a `Media` whose samples carried the wrong bytes. The
+  rejection now poisons the demuxer permanently: every later `feed` and
+  `finish` re-report the original `BufferCapExceeded`, `demand()` stays
+  `saturated`, and no parse is attempted. `feed` after `finish` is likewise
+  rejected instead of silently appending, and `finish` releases the
+  accumulated buffer rather than retaining the whole file alongside a copy of
+  every sample.
+- **`StreamingFlvDemux::demand()` reports the real want.** It returned a
+  constant 11-byte `want_bytes` even mid-tag-body, so a driver sizing its
+  reads by `want_bytes` made ~1.5 million `feed` calls to deliver one 16 MiB
+  tag. It now returns exactly the bytes still missing for the unit `feed` is
+  blocked on.
+- **`StreamingTsHlsSegmenter` keeps one ready queue, not two.** Its `Stage`
+  adapter had a separate `stage_ready` beside the inherent inline return, so
+  delivery routed per call and the two could drift; both now drain a single
+  `ready`. The `Stage` impls of `StreamingTsHlsSegmenter` and
+  `StreamingFlvDemux` also call their inherent methods by fully-qualified
+  path, since `self.finish()` resolved to the inherent one only by
+  inherent-over-trait precedence at identical arity — renaming it would have
+  turned the delegation into silent infinite recursion.
+- **`Segmenter::push` no longer loses the sample that triggered a failing
+  cut.** A `build_media_segment` failure (reachable since `new` stopped
+  filtering BMFF-unmuxable tracks) propagated *before* the triggering keyframe
+  was buffered, punching a hole in the timeline on every subsequent anchor
+  keyframe; the sample is now buffered first and the error surfaced after.
+- **`trickplay::derive_iframe_track` doc corrections**: dropped a bullet
+  naming the removed `composition_offset` field, and the false claim that the
+  derived track "covers the same total timeline as the source" (it starts at
+  the first sync sample, so it is shorter when `samples[0]` is not one).
 - **`TsMux` no longer drops a recognised codec's PMT `ES_info` descriptors**
   (issue #775, closes #775; nullified a shipped rust-skyfire track-picker
   feature). `plan_elementary_streams` only carried a track's inherited

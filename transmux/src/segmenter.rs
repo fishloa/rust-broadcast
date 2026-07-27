@@ -104,7 +104,7 @@ use crate::pipeline::{
 /// section tracks verbatim (raw on their own PID rather than PES), so a
 /// section-carried track must stay in the segmenter's track set to be muxed
 /// — it is just never chosen as the anchor.
-pub(crate) fn is_anchor_capable(config: &CodecConfig) -> bool {
+pub fn is_anchor_capable(config: &CodecConfig) -> bool {
     !matches!(
         config,
         CodecConfig::Data {
@@ -115,7 +115,8 @@ pub(crate) fn is_anchor_capable(config: &CodecConfig) -> bool {
 }
 
 /// Choose the anchor track index used for segment-cut boundaries: the first
-/// video track (any [`CodecConfig::is_video`] codec — issue #628), else the
+/// video track (any `CodecConfig::is_video` codec — issue #628; that predicate
+/// is crate-internal), else the
 /// first [`is_anchor_capable`] track.
 ///
 /// Never silently falls back to track 0 when no track qualifies: that would
@@ -128,7 +129,7 @@ pub(crate) fn is_anchor_capable(config: &CodecConfig) -> bool {
 /// [`Error::InvalidInput`] if `configs` is empty, or no track is
 /// anchor-capable (every track is a section-carried [`CodecConfig::Data`]
 /// track).
-pub(crate) fn choose_anchor<'a, I>(configs: I) -> Result<usize>
+pub fn choose_anchor<'a, I>(configs: I) -> Result<usize>
 where
     I: Iterator<Item = &'a CodecConfig>,
 {
@@ -165,7 +166,7 @@ where
 /// the increment is `0` — a track in that state is not
 /// [`is_anchor_capable`], and the anchor role is refused at construction.
 #[derive(Debug, Default)]
-pub(crate) struct MediaClock {
+pub struct MediaClock {
     /// `dts` of the most recent sample that carried one — deliberately *not*
     /// reset at a segment/part boundary, so the first sample of a new window
     /// can still take its delta from the last sample of the previous one.
@@ -174,14 +175,27 @@ pub(crate) struct MediaClock {
 
 impl MediaClock {
     /// A clock that has not yet seen a sample.
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self { last_dts: None }
+    }
+
+    /// A clock resumed at `last_dts` — the `dts` of the last sample some
+    /// *other* pass over the same track already consumed. Lets a read-only
+    /// scan (e.g. deciding a segment split point without draining) take its
+    /// first dts delta from the correct baseline instead of losing it.
+    pub const fn resumed_at(last_dts: Option<i64>) -> Self {
+        Self { last_dts }
+    }
+
+    /// The `dts` baseline the next [`tick`](Self::tick) would measure from.
+    pub const fn last_dts(&self) -> Option<i64> {
+        self.last_dts
     }
 
     /// The elapsed-tick increment `sample` contributes, and record its `dts`
     /// as the baseline for the next call. See the type docs for the
     /// duration-then-dts-delta rule.
-    pub(crate) fn tick(&mut self, sample: &Sample) -> u64 {
+    pub fn tick(&mut self, sample: &Sample) -> u64 {
         let increment = match sample.duration {
             Some(duration) if duration > 0 => u64::from(duration),
             _ => match (self.last_dts, sample.dts) {
@@ -215,7 +229,7 @@ const MAX_ANCHOR_RATE_HZ: usize = 120;
 /// routine for screen capture and low-motion surveillance — never satisfies
 /// the "next sync sample" half of the cut rule, so without a bound every
 /// segmenter buffers until memory is exhausted while
-/// [`Stage::demand`](broadcast_common::Stage::demand) still answers "not
+/// [`Stage::demand`] still answers "not
 /// saturated", inviting a well-behaved driver to keep feeding.
 ///
 /// Cutting mid-GOP is *not* the answer: a CMAF segment (and a classic-HLS
@@ -233,7 +247,7 @@ const MAX_ANCHOR_RATE_HZ: usize = 120;
 /// A segmenter that has hit the bound is not wedged: `flush`/`finish` cuts
 /// the whole pending buffer (a trailing partial segment is allowed not to
 /// start on a keyframe) and the segmenter accepts input again.
-pub(crate) const MAX_PENDING_SAMPLES_PER_TRACK: usize = MAX_UNCUT_SECS * MAX_ANCHOR_RATE_HZ;
+pub const MAX_PENDING_SAMPLES_PER_TRACK: usize = MAX_UNCUT_SECS * MAX_ANCHOR_RATE_HZ;
 
 /// The error every segmenter returns when a `push`/`feed` would grow a
 /// track's un-cut buffer past [`MAX_PENDING_SAMPLES_PER_TRACK`] — i.e. the
@@ -266,10 +280,18 @@ struct TrackState {
     spec: TrackSpec,
     /// Samples buffered for the current (not-yet-cut) segment, in decode order.
     pending: Vec<Sample>,
-    /// Decode time of the first *pending* sample = sum of the durations of every
+    /// Decode time of the first *pending* sample = the elapsed media time of every
     /// sample already emitted in earlier segments (media-timescale ticks). This is
     /// the `base_media_decode_time` (`tfdt`) of the next segment for this track.
     base_decode: u64,
+    /// Advances `base_decode` past each sample as it is flushed into a
+    /// segment. A *separate* [`MediaClock`] from the anchor's: this one walks
+    /// each track's samples once at cut time, the anchor's walks the anchor's
+    /// once at push time, and each needs its own `last_dts` baseline. Without
+    /// it `base_decode` would be a plain `duration` sum and would stay at `0`
+    /// forever on a `duration: Some(0)` stream, so every segment's `tfdt`
+    /// would collapse to the same value (see [`MediaClock`]).
+    flush_clock: MediaClock,
 }
 
 /// A stateful CMAF segmenter. Build it from the same [`TrackSpec`]s used for the
@@ -383,6 +405,7 @@ impl Segmenter {
                 spec,
                 pending: Vec::new(),
                 base_decode: 0,
+                flush_clock: MediaClock::new(),
             })
             .collect();
 
@@ -538,11 +561,12 @@ impl Segmenter {
 
         self.next_seq += 1;
         for t in &mut self.tracks {
-            let dur: u64 = t
-                .pending
-                .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
-                .sum();
+            // Same duration-then-dts-delta rule as the anchor accumulator (see
+            // `MediaClock`): a plain `duration` sum would leave `base_decode`
+            // at 0 forever on a `duration: Some(0)` stream, collapsing every
+            // segment's `tfdt` onto the same decode time.
+            let clock = &mut t.flush_clock;
+            let dur: u64 = t.pending.iter().map(|s| clock.tick(s)).sum();
             t.base_decode += dur;
             t.pending.clear();
         }

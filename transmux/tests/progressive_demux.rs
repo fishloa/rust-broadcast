@@ -334,3 +334,113 @@ fn sidx_byte_exact_round_trip_and_mutation_bites() {
         "mutating subsegment_duration must change serialized bytes"
     );
 }
+
+// ── Stage-adapter poisoning after a cap rejection ───────────────────────────
+
+/// A `Stage::feed` rejected for exceeding `max_bytes` **discards that chunk**,
+/// so the accumulated buffer has a hole in it. Because a progressive MP4
+/// resolves sample payloads through `stbl`'s *file-absolute* chunk offsets
+/// (ISO/IEC 14496-12:2015 §8.7.5), parsing a holed buffer does not fail
+/// cleanly — it either reports a misleading `UnexpectedBox` or, far worse,
+/// succeeds and hands back a `Media` whose samples carry the wrong bytes.
+///
+/// So the rejection is terminal: a following smaller chunk is refused too,
+/// `demand()` stays saturated, and `finish()` re-reports the original cap
+/// error instead of parsing. Before this, the smaller chunk was accepted and
+/// `finish()` parsed the corrupt buffer.
+#[test]
+fn progressive_demux_stays_poisoned_after_a_cap_rejection() {
+    use broadcast_common::{Demand, Stage, Timestamp};
+
+    const MAX_BYTES: usize = 4096;
+    let mut demux = ProgressiveDemux::new(MAX_BYTES);
+
+    // A real prefix of a real file, so `finish()` could plausibly parse
+    // something if the poison were missing.
+    let file = prog_fixture();
+    Stage::feed(&mut demux, &file[..1024], Timestamp::ZERO).expect("first chunk fits");
+
+    // Overshoot the cap: this chunk is dropped on the floor.
+    let big = vec![0u8; MAX_BYTES];
+    let first_err = Stage::feed(&mut demux, &big, Timestamp::ZERO)
+        .expect_err("a chunk past the cap must be rejected");
+    assert!(
+        matches!(first_err, transmux::Error::BufferCapExceeded { cap, .. } if cap == MAX_BYTES),
+        "expected BufferCapExceeded naming the bound, got {first_err:?}"
+    );
+
+    let Demand { saturated, .. } = Stage::demand(&demux);
+    assert!(saturated, "a poisoned demuxer must report saturated");
+
+    // A smaller chunk that *would* fit must still be refused — accepting it
+    // is what used to build the holed buffer.
+    let follow_up = Stage::feed(&mut demux, &file[1024..1088], Timestamp::ZERO)
+        .expect_err("a poisoned demuxer must refuse every further feed");
+    assert!(
+        matches!(follow_up, transmux::Error::BufferCapExceeded { .. }),
+        "the poison must keep reporting the original cap error, got {follow_up:?}"
+    );
+
+    let finish_err =
+        Stage::finish(&mut demux).expect_err("finish must not parse a buffer with a hole");
+    assert!(
+        matches!(finish_err, transmux::Error::BufferCapExceeded { cap, .. } if cap == MAX_BYTES),
+        "finish must re-report the original cap error, got {finish_err:?}"
+    );
+    assert!(
+        Stage::poll(&mut demux).is_none(),
+        "no Media may ever be produced from a poisoned demuxer"
+    );
+}
+
+/// `feed` after `finish` used to append bytes that nothing would ever parse,
+/// while `demand()` still advertised headroom inviting more of them.
+#[test]
+fn progressive_demux_refuses_feed_after_finish() {
+    use broadcast_common::{Stage, Timestamp};
+
+    let file = prog_fixture();
+    let mut demux = ProgressiveDemux::new(file.len());
+    Stage::feed(&mut demux, &file, Timestamp::ZERO).expect("whole file fits");
+    Stage::finish(&mut demux).expect("parse");
+    assert!(
+        Stage::poll(&mut demux).is_some(),
+        "finish produces the Media"
+    );
+
+    assert!(
+        Stage::demand(&demux).saturated,
+        "a finished demuxer must not advertise headroom"
+    );
+    let err = Stage::feed(&mut demux, &file[..64], Timestamp::ZERO)
+        .expect_err("feed after finish must be refused, not silently appended");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected a named InvalidInput, got {err:?}"
+    );
+}
+
+/// `ProgressiveDemux::new(0)` is a useless `Stage` configuration. It must fail
+/// loudly and terminally on the first byte rather than wedge: every `feed`
+/// errors, `demand()` is saturated from the start, and `finish()` reports the
+/// cap error instead of parsing an empty buffer.
+#[test]
+fn progressive_demux_new_zero_fails_loudly_instead_of_wedging() {
+    use broadcast_common::{Stage, Timestamp};
+
+    let mut demux = ProgressiveDemux::new(0);
+    assert!(
+        Stage::demand(&demux).saturated,
+        "a zero cap has no headroom to advertise"
+    );
+    let err = Stage::feed(&mut demux, &[0u8; 1], Timestamp::ZERO)
+        .expect_err("a zero cap must reject the very first byte");
+    assert!(
+        matches!(err, transmux::Error::BufferCapExceeded { cap: 0, .. }),
+        "expected BufferCapExceeded naming the zero bound, got {err:?}"
+    );
+    assert!(
+        Stage::finish(&mut demux).is_err(),
+        "finish must surface the poison, not parse an empty buffer"
+    );
+}

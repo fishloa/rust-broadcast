@@ -81,12 +81,19 @@ use crate::pipeline::Sample;
 /// Only the source's sync samples (`is_sync = true`) are retained. Each kept
 /// sample's `duration` is set to the sum of all source sample durations from
 /// that sync sample up to (but not including) the next sync sample, so the
-/// derived track covers the same total timeline as the source.
+/// derived track spans the source timeline **from its first sync sample to the
+/// end**. Any source samples that precede that first sync sample are dropped
+/// along with the leading interval they occupy: a trick-play track has to
+/// begin on a random-access point, so when `samples[0]` is not a sync sample
+/// the derived track is correspondingly shorter than the source, and starts
+/// later (its [`Track::start_decode_time`] is the first kept sample's `dts`).
 ///
 /// - The `data` bytes of each kept sample are copied byte-for-byte from the
 ///   source.
 /// - `is_sync` is `true` for every sample in the derived track.
-/// - `composition_offset` is preserved from the source sync sample unchanged.
+/// - `dts` and `pts` are preserved verbatim from the source sync sample
+///   (absolute, media plane step 2c); a source sample carrying no timestamp
+///   keeps `None` — never fabricated. Only `duration` is rewritten.
 /// - The [`TrackSpec`](crate::pipeline::TrackSpec) (codec config, timescale,
 ///   track_id) is cloned from the source.
 ///

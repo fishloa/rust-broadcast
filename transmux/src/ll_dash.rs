@@ -116,6 +116,13 @@ struct TrackState {
     /// Decode time of the first *pending* sample (media-timescale ticks) — the
     /// `tfdt.baseMediaDecodeTime` of this track's next chunk.
     base_decode: u64,
+    /// Advances `base_decode` past each sample as it is drained into a chunk,
+    /// under the same duration-then-dts-delta rule as the anchor accumulator
+    /// (see [`MediaClock`]). A separate clock instance from the anchor's: this
+    /// one walks *this* track's samples once at drain time. A plain `duration`
+    /// sum would pin `base_decode` at 0 forever on a `duration: Some(0)`
+    /// stream, collapsing every chunk's `tfdt` onto the same decode time.
+    flush_clock: MediaClock,
 }
 
 /// A stateful **chunked** CMAF segmenter for low-latency DASH.
@@ -181,7 +188,7 @@ impl LlSegmenter {
     /// each segment into chunks of `chunk_samples` anchor-track samples.
     ///
     /// The anchor is chosen by the shared
-    /// [`choose_anchor`](crate::segmenter::choose_anchor) — the first **video**
+    /// [`crate::segmenter::choose_anchor`] — the first **video**
     /// track (any codec, not just AVC), falling back to the first
     /// anchor-capable track — exactly as [`crate::segmenter::Segmenter`].
     /// `movie_timescale` matches [`build_init_segment`].
@@ -240,6 +247,7 @@ impl LlSegmenter {
                 spec,
                 pending: Vec::new(),
                 base_decode: 0,
+                flush_clock: MediaClock::new(),
             })
             .collect();
 
@@ -399,12 +407,13 @@ impl LlSegmenter {
             build_chunk(seq, &frags, is_start)?
         };
 
-        // Advance decode times and drop the drained samples.
+        // Advance decode times and drop the drained samples. The drained
+        // ranges are contiguous and in decode order across calls, so one
+        // per-track `flush_clock` walks each sample exactly once and its
+        // dts-delta fallback stays correct across chunk boundaries.
         for (t, &n) in self.tracks.iter_mut().zip(&take_counts) {
-            let dur: u64 = t.pending[..n]
-                .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
-                .sum();
+            let clock = &mut t.flush_clock;
+            let dur: u64 = t.pending[..n].iter().map(|s| clock.tick(s)).sum();
             t.base_decode += dur;
             t.pending.drain(..n);
         }

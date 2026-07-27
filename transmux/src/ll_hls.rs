@@ -98,6 +98,21 @@ struct TrackState {
     /// `base_media_decode_time` of the whole current *segment* for this track =
     /// decode time of `pending[0]`.
     seg_base_decode: u64,
+    /// Advances `part_base_decode` past each sample as it is drained into a
+    /// part, under the same duration-then-dts-delta rule as the anchor
+    /// accumulator (see [`MediaClock`]).
+    ///
+    /// Deliberately a *different* clock instance from `seg_clock`: the two
+    /// accumulators cover the same samples at different granularities (parts
+    /// walk `pending` in sub-ranges, the segment walks it once at the
+    /// boundary), and a [`MediaClock`]'s dts-delta fallback is only correct
+    /// if it sees each sample exactly once. A plain `duration` sum would pin
+    /// both at 0 forever on a `duration: Some(0)` stream, collapsing every
+    /// part's and segment's `tfdt` onto the same decode time.
+    part_clock: MediaClock,
+    /// Advances `seg_base_decode` past the whole segment at the boundary —
+    /// see `part_clock` for why this is a second, independent clock.
+    seg_clock: MediaClock,
 }
 
 /// A stateful **Low-Latency HLS** segmenter (RFC 8216bis).
@@ -173,7 +188,7 @@ impl LlHlsSegmenter {
     /// last part.
     ///
     /// The anchor is chosen by the shared
-    /// [`choose_anchor`](crate::segmenter::choose_anchor) — the first **video**
+    /// [`crate::segmenter::choose_anchor`] — the first **video**
     /// track (any codec, not just AVC), falling back to the first
     /// anchor-capable track — exactly as [`crate::segmenter::Segmenter`].
     /// `movie_timescale` matches [`build_init_segment`].
@@ -240,6 +255,8 @@ impl LlHlsSegmenter {
                 part_start: 0,
                 part_base_decode: 0,
                 seg_base_decode: 0,
+                part_clock: MediaClock::new(),
+                seg_clock: MediaClock::new(),
             })
             .collect();
 
@@ -417,11 +434,8 @@ impl LlHlsSegmenter {
 
         // Advance per-track decode times past the whole segment and clear buffers.
         for t in &mut self.tracks {
-            let dur: u64 = t
-                .pending
-                .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
-                .sum();
+            let clock = &mut t.seg_clock;
+            let dur: u64 = t.pending.iter().map(|s| clock.tick(s)).sum();
             t.seg_base_decode += dur;
             t.part_base_decode = t.seg_base_decode;
             t.pending.clear();
@@ -493,11 +507,14 @@ impl LlHlsSegmenter {
         };
         self.next_seq += 1;
 
-        // Advance per-track part cursors and part-base decode times.
+        // Advance per-track part cursors and part-base decode times. The
+        // `[part_start..end)` ranges are contiguous and in decode order across
+        // calls, so `part_clock` sees each sample exactly once.
         for (t, &end) in self.tracks.iter_mut().zip(&take_ends) {
+            let clock = &mut t.part_clock;
             let dur: u64 = t.pending[t.part_start..end]
                 .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
+                .map(|s| clock.tick(s))
                 .sum();
             t.part_base_decode += dur;
             t.part_start = end;
@@ -575,9 +592,26 @@ impl Stage for LlHlsSegmenter {
 
     fn on_deadline(&mut self, _now: Timestamp) {}
 
-    /// No hard cap on buffered samples end-to-end (same as `Segmenter`) — the
-    /// honest "no preference" default rather than a fabricated bound.
+    /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
+    /// un-cut samples — the same bound (and reasoning) as
+    /// [`Segmenter`](crate::segmenter::Segmenter)'s: past it
+    /// [`feed`](Stage::feed) errors rather than buffering a stream that never
+    /// produces the sync sample a segment must open on.
+    ///
+    /// This segmenter is the one with the sharpest need for the bound: past
+    /// the segment target it *also* stops emitting parts (a part is only
+    /// flushed while `anchor_seg_dur < target_ticks`, so the segment's tail
+    /// is held for the boundary), so a single-IDR stream produces no part
+    /// **and** no segment while `pending` grows.
     fn demand(&self) -> Demand {
-        Demand::default()
+        if self
+            .tracks
+            .iter()
+            .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK)
+        {
+            Demand::saturated()
+        } else {
+            Demand::default()
+        }
     }
 }

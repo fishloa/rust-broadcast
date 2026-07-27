@@ -308,6 +308,48 @@ impl StreamingFlvDemux {
         self.audio.flush(&mut self.events);
     }
 
+    /// Bytes still missing before the unit [`feed`](Self::feed) is currently
+    /// blocked on becomes consumable — the exact complement of each `break`
+    /// in `feed`'s loop, in the same order. Backs [`Stage::demand`]'s
+    /// `want_bytes`; see that impl for why a constant was wrong.
+    ///
+    /// Never `0`: a `Demand::want_bytes` of `0` means "no particular
+    /// preference" rather than "no bytes needed", and this demuxer always
+    /// needs at least one more byte to make progress (`feed` drains every
+    /// complete tag before returning, so `pending` never already holds one).
+    fn bytes_wanted(&self) -> usize {
+        let have = self.pending.len();
+        if !self.header_seen {
+            // The fixed header + PreviousTagSize0 must land before
+            // `DataOffset` can even be read.
+            let minimum = FLV_HEADER_LEN + PREV_TAG_SIZE_LEN;
+            if have < minimum {
+                return minimum - have;
+            }
+            // `DataOffset` (bytes [5:9]) may declare a larger non-standard
+            // header; `feed` validates it against `MAX_FLV_HEADER_LEN` before
+            // trusting it, and rejects an over-large one, so the worst this
+            // can over-ask for is that already-rejected bound.
+            let data_offset = u32::from_be_bytes([
+                self.pending[5],
+                self.pending[6],
+                self.pending[7],
+                self.pending[8],
+            ]) as usize;
+            let skip = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
+            return skip.saturating_sub(have).max(1);
+        }
+        if have < TAG_HEADER_LEN {
+            return TAG_HEADER_LEN - have;
+        }
+        // Tag header present: `DataSize` (bytes [1:4], 24-bit) gives the whole
+        // remaining unit — body plus the trailing `PreviousTagSize`.
+        let data_size =
+            u32::from_be_bytes([0, self.pending[1], self.pending[2], self.pending[3]]) as usize;
+        let total = TAG_HEADER_LEN + data_size + PREV_TAG_SIZE_LEN;
+        total.saturating_sub(have).max(1)
+    }
+
     fn process_tag(
         video: &mut TrackState,
         audio: &mut TrackState,
@@ -489,8 +531,15 @@ impl Stage for StreamingFlvDemux {
     type Out = DemuxEvent;
     type Error = FlvError;
 
+    /// Fully-qualified inherent calls (`StreamingFlvDemux::feed`, not
+    /// `self.feed`): the inherent methods and these trait methods share their
+    /// names, and bare method-call syntax picks the inherent one only by
+    /// inherent-over-trait precedence. `finish` is the dangerous one — same
+    /// name, same arity, and its inherent form returns `()` — so renaming it
+    /// would silently retarget `self.finish()` at *this* method: infinite
+    /// recursion that still compiles.
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<(), FlvError> {
-        self.feed(input)
+        StreamingFlvDemux::feed(self, input)
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
@@ -498,7 +547,7 @@ impl Stage for StreamingFlvDemux {
     }
 
     fn finish(&mut self) -> Result<(), FlvError> {
-        self.finish();
+        StreamingFlvDemux::finish(self);
         Ok(())
     }
 
@@ -509,16 +558,26 @@ impl Stage for StreamingFlvDemux {
 
     fn on_deadline(&mut self, _now: Timestamp) {}
 
-    /// This demuxer enforces exactly one hard cap end-to-end — the pre-header
-    /// prefix (`MAX_FLV_HEADER_LEN`, guarding a malicious `DataOffset`, see
-    /// [`feed`](Self::feed)'s docs) — and a malicious/oversized header is
-    /// already surfaced as an `Err`, not a steady buffered state a driver
-    /// would see via `demand()`. Post-header, `pending` holds at most one
-    /// in-progress tag with no separate configured cap, so `saturated` is
-    /// honestly always `false` here; a future hard per-tag cap should update
-    /// this alongside it rather than fabricate saturation now.
+    /// `want_bytes` is the **exact** number of bytes still missing before the
+    /// unit [`feed`](StreamingFlvDemux::feed) is currently blocked on can be
+    /// consumed: the rest of the FLV header, the rest of a partial tag
+    /// header, or the rest of the in-flight tag's body + trailing
+    /// `PreviousTagSize` — the same arithmetic `feed`'s loop breaks on.
+    ///
+    /// It used to be a constant `TAG_HEADER_LEN` (11), even mid-body, so a
+    /// driver that sizes its reads by `want_bytes` made ~1.5 million `feed`
+    /// calls to deliver one 16 MiB tag instead of one.
+    ///
+    /// `saturated` stays `false`, and that is not a fabrication: `pending`
+    /// holds at most one in-flight tag, and a tag's `DataSize` is a 24-bit
+    /// field (Adobe FLV v10.1 Annex E), so the buffer is *structurally*
+    /// bounded at ~16 MiB — more bytes always make progress, and there is no
+    /// state in which this demuxer would rather not be fed. (The pre-header
+    /// prefix is separately capped by `MAX_FLV_HEADER_LEN`, and a header
+    /// declaring more is surfaced as an `Err` rather than a steady buffered
+    /// state a driver would observe here.)
     fn demand(&self) -> Demand {
-        Demand::new(TAG_HEADER_LEN)
+        Demand::new(self.bytes_wanted())
     }
 }
 

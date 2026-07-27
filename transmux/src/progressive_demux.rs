@@ -75,6 +75,21 @@ pub struct ProgressiveDemux<'a> {
     buf: Vec<u8>,
     media: Option<Media>,
     finished: bool,
+    /// Set the moment a [`Stage::feed`] is rejected for exceeding
+    /// `max_bytes`, and never cleared: that rejection **discarded a chunk of
+    /// the file**, so `buf` now has a hole in it.
+    ///
+    /// This demuxer resolves sample payloads through `stbl`'s *file-absolute*
+    /// chunk offsets (ISO/IEC 14496-12:2015 §8.7.5), so parsing a buffer with
+    /// a hole does not fail cleanly — every offset past the hole is shifted,
+    /// and the parse either reports a misleading [`Error::UnexpectedBox`] or,
+    /// far worse, succeeds and returns a [`Media`] whose samples carry the
+    /// **wrong bytes**. There is no resynchronisation point to recover from
+    /// (unlike the PES/backlog caps elsewhere in this crate), so the only
+    /// safe response is to stay in error: once poisoned,
+    /// [`feed`](Stage::feed) and [`finish`](Stage::finish) both return the
+    /// original cap error and no parse is ever attempted.
+    poisoned: bool,
     /// Hard cap on `buf` (issue B7, media plane step 2 fix wave 3): under the
     /// old [`Unpackage`] API the *caller* owned the input buffer, but under
     /// [`Stage`] this type owns it, so the bound is this constructor's
@@ -91,14 +106,33 @@ impl ProgressiveDemux<'_> {
     /// type (Step 3's whole premise) must not be able to grow `buf` without
     /// bound while waiting for the rest of the file to arrive. Exceeding the
     /// cap returns [`Error::BufferCapExceeded`] from [`Stage::feed`] rather
-    /// than silently accumulating past it.
+    /// than silently accumulating past it, and **poisons** the demuxer — see
+    /// [`Stage::feed`].
+    ///
+    /// `max_bytes` of `0` is accepted but useless as a [`Stage`]: the first
+    /// non-empty `feed` exceeds it, so the demuxer is immediately saturated
+    /// and poisoned and [`Stage::finish`] returns that error. (It is *not*
+    /// rejected here only because the signature is infallible and shared with
+    /// the [`Unpackage`] path, which never consults `max_bytes` at all — it
+    /// borrows the caller's slice directly.) It no longer wedges silently,
+    /// which is what it used to do.
     pub fn new(max_bytes: usize) -> Self {
         Self {
             _marker: PhantomData,
             buf: Vec::new(),
             media: None,
             finished: false,
+            poisoned: false,
             max_bytes,
+        }
+    }
+
+    /// The error a poisoned demuxer keeps returning — see the `poisoned`
+    /// field docs for why the poison is permanent.
+    fn poison_error(&self) -> Error {
+        Error::BufferCapExceeded {
+            what: "ProgressiveDemux Stage buffer",
+            cap: self.max_bytes,
         }
     }
 }
@@ -182,13 +216,33 @@ impl Stage for ProgressiveDemux<'_> {
     /// [`new`](Self::new); a larger one is rejected outright (this demuxer
     /// has no partial-unit resync point to drop and continue from, unlike
     /// the PES/backlog caps elsewhere in this crate).
+    ///
+    /// That rejection is **terminal**: the rejected chunk is gone, so `buf`
+    /// has a hole, and `stbl`'s file-absolute offsets would resolve every
+    /// later sample to the wrong bytes. Every subsequent `feed` — including a
+    /// smaller chunk that would otherwise fit — and [`finish`](Self::finish)
+    /// return this same error, [`demand`](Self::demand) reports `saturated`,
+    /// and no parse is ever attempted. Feeding on regardless used to yield a
+    /// spurious [`Error::UnexpectedBox`] or, worse, a `Media` whose samples
+    /// silently carried the wrong payloads.
+    ///
+    /// Also returns it for a `feed` after [`finish`](Self::finish): those
+    /// bytes arrive too late for the one whole-file parse this demuxer runs,
+    /// so appending them would silently do nothing.
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
+        if self.poisoned {
+            return Err(self.poison_error());
+        }
+        if self.finished {
+            return Err(Error::InvalidInput(
+                "ProgressiveDemux::feed after finish: the whole-file parse has already run, so \
+                 these bytes would never be parsed",
+            ));
+        }
         let new_len = self.buf.len().saturating_add(input.len());
         if new_len > self.max_bytes {
-            return Err(Error::BufferCapExceeded {
-                what: "ProgressiveDemux Stage buffer",
-                cap: self.max_bytes,
-            });
+            self.poisoned = true;
+            return Err(self.poison_error());
         }
         self.buf.extend_from_slice(input);
         Ok(())
@@ -201,12 +255,29 @@ impl Stage for ProgressiveDemux<'_> {
     /// Runs the whole-file parse once, over every byte accumulated by
     /// [`feed`](Self::feed) so far. Idempotent: a second call does not
     /// re-parse or emit a second [`Media`].
+    ///
+    /// Returns the original [`Error::BufferCapExceeded`] — and parses nothing
+    /// — if a `feed` was ever rejected for exceeding the cap: the accumulated
+    /// buffer is missing the rejected chunk, and parsing it would produce
+    /// wrong sample payloads rather than a clean failure. See
+    /// [`feed`](Self::feed).
+    ///
+    /// Releases the accumulated `buf` once the parse is done: past `finish`
+    /// this demuxer holds only the parsed [`Media`], not that plus a second
+    /// whole copy of the file it was built from.
     fn finish(&mut self) -> Result<()> {
+        if self.poisoned {
+            return Err(self.poison_error());
+        }
         if self.finished {
             return Ok(());
         }
         self.finished = true;
-        self.media = Some(demux_progressive(&self.buf)?);
+        let media = demux_progressive(&self.buf);
+        // Free the input copy either way: the parse is one-shot, so nothing
+        // will read `buf` again.
+        self.buf = Vec::new();
+        self.media = Some(media?);
         Ok(())
     }
 
@@ -222,7 +293,15 @@ impl Stage for ProgressiveDemux<'_> {
     /// further [`feed`](Self::feed) call returns [`Error::BufferCapExceeded`]
     /// rather than growing the buffer, so a cooperative driver should stop
     /// feeding once this flips.
+    ///
+    /// Also `saturated` once the demuxer is poisoned (a cap rejection
+    /// happened) or finished — in both states every further `feed` is an
+    /// error, so continuing to advertise headroom would invite a driver to
+    /// keep pushing bytes this demuxer will never accept.
     fn demand(&self) -> Demand {
+        if self.poisoned || self.finished {
+            return Demand::saturated();
+        }
         let remaining = self.max_bytes.saturating_sub(self.buf.len());
         if remaining == 0 {
             Demand::saturated()
