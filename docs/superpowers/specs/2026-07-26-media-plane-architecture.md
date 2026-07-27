@@ -44,15 +44,31 @@ Renamed from rev 1: **`Trunk`**, not `Timeline` — `timed_metadata::Timeline` i
 
 ### 1.1 The byte layer (resolves B2, B3, B4, most of B5, G5)
 
+byte → byte, pre-demux. Clock-taking, deadline-driven.
+
+**Revised 2026-07-27 — `ByteStage` is NOT a new trait.** Rev 2 specced it as a standalone
+four-method trait (`feed`/`poll`/`next_deadline`/`on_deadline` over `&[u8]` and `Instant`). That
+predates Step 1, which shipped `broadcast_common::Stage` with `type In<'a>` as a GAT **for exactly
+this purpose** — its own doc reads: *"byte-stream stages use `&'a [u8]`; sample-consuming stages use
+an owned typed input"*. Defining a second trait with the same shape would give the plane two drive
+models, and byte stages would lose `finish()` (flush at EOF) and `demand()` (back-pressure) for no
+reason.
+
+So a byte stage is a `Stage` whose input is a borrowed byte slice:
+
 ```rust
-/// byte → byte, pre-demux. Clock-taking, deadline-driven.
-pub trait ByteStage: Send {
-    fn feed(&mut self, input: &[u8], now: Instant) -> Result<(), StageError>;
-    fn poll(&mut self) -> Option<Bytes>;
-    fn next_deadline(&self) -> Option<Instant>;
-    fn on_deadline(&mut self, now: Instant);
-}
+pub trait ByteStage: for<'a> Stage<In<'a> = &'a [u8], Out = Bytes> + Send {}
+impl<T> ByteStage for T where T: for<'a> Stage<In<'a> = &'a [u8], Out = Bytes> + Send {}
 ```
+
+`Instant` → `Timestamp` throughout, per the `no_std` note below.
+
+**Implementation caveat:** the HRTB-plus-GAT form above may hit type-system limits (`for<'a>` with an
+associated-type equality constraint is not always accepted). Validate it compiles *first*; if it does
+not, define `ByteStage` as its own trait but keep it structurally identical to `Stage` — same method
+names, same `Timestamp`, and include `finish`/`demand` — and record in the module doc that it is a
+`Stage` in all but name and why the alias form was rejected. **Do not silently drop `finish`/`demand`.**
+
 Implementors: `dvb_ci_runtime::CaDescrambler` (CAM descramble), `ts_fix::TsFix` (continuity/PCR
 repair, PID filter, PSI regen), `dvb_t2mi::T2miPump` + `InnerTsRecovery` (inner-TS recovery),
 program-split (see §1.3).
