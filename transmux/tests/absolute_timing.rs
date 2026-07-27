@@ -422,9 +422,222 @@ fn flv_demux_emits_absolute_time_from_tag_timestamps() {
     );
 }
 
+// ── A standalone EBML/Matroska walk (T6): an independent oracle for WebM ────
+//
+// The module doc (above) has long claimed the WebM test compares against "a
+// WebM cluster/block-timecode walk", but until this file's `absolute_timing`
+// test-integrity pass, no such walk existed — the test below only called
+// `assert_absolute_timeline` (monotonic + anchor + "saw at least one nonzero
+// dts"), which a 1000x wrong `TimestampScale` satisfies just as easily as a
+// correct one. This section is a real walk: it reads EBML element IDs/sizes
+// and Matroska's `Segment > {Info, Cluster > {Timestamp, SimpleBlock}}`
+// structure directly off the fixture's raw bytes (RFC 8794 §4/§5 for the EBML
+// varint/ID encoding; RFC 9559 §12/§27 for Cluster/Timestamp/SimpleBlock and
+// `TimestampScale`) — entirely independently of `transmux::webm_demux`, which
+// this test exists to check.
+
+/// Read an EBML variable-size-integer **element ID** (RFC 8794 §5): unlike a
+/// size/value vint, the ID's leading length-marker bits are kept as part of
+/// the ID. Returns `(id, bytes_consumed)`.
+fn ebml_read_id(buf: &[u8]) -> Option<(u32, usize)> {
+    let first = *buf.first()?;
+    let len = first.leading_zeros() as usize + 1;
+    if len == 0 || len > 4 || buf.len() < len {
+        return None;
+    }
+    let mut id: u32 = 0;
+    for &b in &buf[..len] {
+        id = (id << 8) | b as u32;
+    }
+    Some((id, len))
+}
+
+/// Read an EBML variable-size-integer **value** (a size or SimpleBlock track
+/// number, RFC 8794 §4): the leading length-marker bits are masked off.
+/// Returns `(value, bytes_consumed)`.
+fn ebml_read_vint(buf: &[u8]) -> Option<(u64, usize)> {
+    let first = *buf.first()?;
+    let len = first.leading_zeros() as usize + 1;
+    if len == 0 || len > 8 || buf.len() < len {
+        return None;
+    }
+    let mask: u8 = if len >= 8 { 0 } else { 0xFFu8 >> len };
+    let mut value: u64 = (first & mask) as u64;
+    for &b in &buf[1..len] {
+        value = (value << 8) | b as u64;
+    }
+    Some((value, len))
+}
+
+/// One SimpleBlock's independently-computed absolute presentation time (IR
+/// milliseconds) and keyframe flag, keyed by the raw Matroska track number.
+struct WebmOracle {
+    /// `track_number -> [(pts_ms, is_sync), ...]` in file (Cluster) order.
+    tracks: std::collections::BTreeMap<u64, Vec<(i64, bool)>>,
+}
+
+/// Walk a WebM/Matroska file's `EBML header`, `Segment > Info` (for
+/// `TimestampScale`), and every `Segment > Cluster > {Timestamp, SimpleBlock}`
+/// (RFC 9559 §12), computing each SimpleBlock's absolute presentation time in
+/// IR milliseconds exactly as documented in `webm_demux.rs`'s module doc
+/// (`(cluster_ts + rel_ts) * timestamp_scale_ns / 1_000_000`) — but by
+/// re-deriving it from the raw bytes here, not by calling into that module.
+fn walk_webm(data: &[u8]) -> WebmOracle {
+    const EBML_HEADER: u32 = 0x1A45_DFA3;
+    const SEGMENT: u32 = 0x1853_8067;
+    const INFO: u32 = 0x1549_A966;
+    const TIMESTAMP_SCALE: u32 = 0x2A_D7B1;
+    const CLUSTER: u32 = 0x1F43_B675;
+    const CLUSTER_TIMESTAMP: u32 = 0xE7;
+    const SIMPLE_BLOCK: u32 = 0xA3;
+    const BLOCK_GROUP: u32 = 0xA0;
+    const BLOCK: u32 = 0xA1;
+    const REFERENCE_BLOCK: u32 = 0xFB;
+    const KEYFRAME_FLAG: u8 = 0x80;
+    const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
+    const NS_PER_MS: i64 = 1_000_000;
+
+    // Decode a SimpleBlock/Block payload's `track_number` vint + `i16`
+    // relative timecode (both use the identical layout, RFC 9559 §12.5/§12.9),
+    // returning `(track_number, rel_ts, flags_byte_offset)`.
+    fn read_block_header(data: &[u8], p: usize) -> (u64, i64, usize) {
+        let (track_number, tn_len) =
+            ebml_read_vint(&data[p..]).expect("Block/SimpleBlock track number vint");
+        let rel_off = p + tn_len;
+        let rel_ts = i16::from_be_bytes([data[rel_off], data[rel_off + 1]]) as i64;
+        (track_number, rel_ts, rel_off + 2)
+    }
+
+    let (id, idlen) = ebml_read_id(data).expect("EBML header element id");
+    assert_eq!(id, EBML_HEADER, "file must start with the EBML header");
+    let (hdr_size, hdr_sizelen) = ebml_read_vint(&data[idlen..]).expect("EBML header size");
+    let mut pos = idlen + hdr_sizelen + hdr_size as usize;
+
+    let (id, idlen) = ebml_read_id(&data[pos..]).expect("Segment element id");
+    assert_eq!(id, SEGMENT, "EBML header must be followed by a Segment");
+    pos += idlen;
+    let (_seg_size, sizelen) = ebml_read_vint(&data[pos..]).expect("Segment size");
+    pos += sizelen;
+
+    let mut timestamp_scale_ns = DEFAULT_TIMESTAMP_SCALE_NS;
+    let mut tracks: std::collections::BTreeMap<u64, Vec<(i64, bool)>> = Default::default();
+
+    while pos < data.len() {
+        let Some((id, idlen)) = ebml_read_id(&data[pos..]) else {
+            break;
+        };
+        pos += idlen;
+        let Some((size, sizelen)) = ebml_read_vint(&data[pos..]) else {
+            break;
+        };
+        pos += sizelen;
+        let body_start = pos;
+        let body_end = (body_start + size as usize).min(data.len());
+
+        if id == INFO {
+            let mut p = body_start;
+            while p < body_end {
+                let Some((cid, cidlen)) = ebml_read_id(&data[p..]) else {
+                    break;
+                };
+                p += cidlen;
+                let Some((csize, csizelen)) = ebml_read_vint(&data[p..]) else {
+                    break;
+                };
+                p += csizelen;
+                if cid == TIMESTAMP_SCALE {
+                    let mut v = 0u64;
+                    for &b in &data[p..p + csize as usize] {
+                        v = (v << 8) | b as u64;
+                    }
+                    timestamp_scale_ns = v;
+                }
+                p += csize as usize;
+            }
+        } else if id == CLUSTER {
+            let mut cluster_ts: i64 = 0;
+            let mut p = body_start;
+            while p < body_end {
+                let Some((cid, cidlen)) = ebml_read_id(&data[p..]) else {
+                    break;
+                };
+                p += cidlen;
+                let Some((csize, csizelen)) = ebml_read_vint(&data[p..]) else {
+                    break;
+                };
+                p += csizelen;
+                if cid == CLUSTER_TIMESTAMP {
+                    let mut v = 0i64;
+                    for &b in &data[p..p + csize as usize] {
+                        v = (v << 8) | b as i64;
+                    }
+                    cluster_ts = v;
+                } else if cid == SIMPLE_BLOCK {
+                    let (track_number, rel_ts, flags_off) = read_block_header(data, p);
+                    let flags = data[flags_off];
+                    let is_sync = flags & KEYFRAME_FLAG != 0;
+                    let raw_ticks = cluster_ts + rel_ts;
+                    let ns = raw_ticks.saturating_mul(timestamp_scale_ns as i64);
+                    let pts_ms = ns / NS_PER_MS;
+                    tracks
+                        .entry(track_number)
+                        .or_default()
+                        .push((pts_ms, is_sync));
+                } else if cid == BLOCK_GROUP {
+                    // A `Block` wrapped in a `BlockGroup` (RFC 9559 §12.4) —
+                    // ffmpeg emits this instead of a `SimpleBlock` at least
+                    // for a track's final frame (observed: this fixture's
+                    // very last audio frame, alongside a `DiscardPadding`
+                    // sibling). `Block`'s own flags byte carries no keyframe
+                    // bit (unlike `SimpleBlock`'s); a `BlockGroup` is a
+                    // keyframe iff it carries no `ReferenceBlock` child (a
+                    // frame with no reference is, by definition, not
+                    // predicted from another frame).
+                    let mut q = p;
+                    let qend = p + csize as usize;
+                    let mut block: Option<(u64, i64, usize)> = None;
+                    let mut has_reference_block = false;
+                    while q < qend {
+                        let Some((qid, qidlen)) = ebml_read_id(&data[q..]) else {
+                            break;
+                        };
+                        q += qidlen;
+                        let Some((qsize, qsizelen)) = ebml_read_vint(&data[q..]) else {
+                            break;
+                        };
+                        q += qsizelen;
+                        if qid == BLOCK {
+                            block = Some(read_block_header(data, q));
+                        } else if qid == REFERENCE_BLOCK {
+                            has_reference_block = true;
+                        }
+                        q += qsize as usize;
+                    }
+                    let (track_number, rel_ts, _flags_off) =
+                        block.expect("BlockGroup must carry exactly one Block child");
+                    let raw_ticks = cluster_ts + rel_ts;
+                    let ns = raw_ticks.saturating_mul(timestamp_scale_ns as i64);
+                    let pts_ms = ns / NS_PER_MS;
+                    tracks
+                        .entry(track_number)
+                        .or_default()
+                        .push((pts_ms, !has_reference_block));
+                }
+                p += csize as usize;
+            }
+        }
+        pos = body_end;
+    }
+
+    WebmOracle { tracks }
+}
+
 /// WebM: absolute time comes from Cluster + SimpleBlock timecodes (RFC 9559
 /// §12), scaled by `TimestampScale` — WebM carries a presentation clock only,
-/// so `dts == pts`.
+/// so `dts == pts`. Checked against `walk_webm`'s independent re-derivation
+/// of the same value straight from the file's raw EBML bytes (see above) —
+/// not against `assert_absolute_timeline` alone, which a 1000x wrong
+/// `TimestampScale` would satisfy just as easily as a correct one.
 #[test]
 fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
     let webm = std::fs::read(concat!(
@@ -439,6 +652,40 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
             assert_eq!(
                 s.dts, s.pts,
                 "WebM carries only a presentation clock, so dts must equal pts"
+            );
+        }
+    }
+
+    let oracle = walk_webm(&webm);
+    assert_eq!(
+        oracle.tracks.len(),
+        media.tracks.len(),
+        "walk_webm must find the same track count as the IR"
+    );
+    // Matroska track numbers are 1-based and (for this fixture, like the IR's
+    // own track_id) assigned in ascending Tracks-element order, so zipping
+    // the two ascending sequences pairs up the same elementary streams.
+    for (t, (_track_number, oracle_samples)) in media.tracks.iter().zip(oracle.tracks.iter()) {
+        assert_eq!(
+            t.samples.len(),
+            oracle_samples.len(),
+            "sample count must match the independent EBML walk"
+        );
+        for (i, (s, &(oracle_pts_ms, oracle_sync))) in
+            t.samples.iter().zip(oracle_samples.iter()).enumerate()
+        {
+            let dts = s
+                .dts
+                .unwrap_or_else(|| panic!("WebM sample {i} has no dts"));
+            assert_eq!(
+                dts, oracle_pts_ms,
+                "WebM sample {i} dts must match the independent EBML \
+                 Cluster+SimpleBlock walk (this is what a 1000x wrong \
+                 TimestampScale would break)"
+            );
+            assert_eq!(
+                s.flags.is_sync, oracle_sync,
+                "WebM sample {i} keyframe flag must match the independent EBML walk"
             );
         }
     }

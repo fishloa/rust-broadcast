@@ -387,8 +387,12 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     // dts/pts field swap: video's own dts != pts here (B-frame reordering),
     // so a swap changes the value being compared and this now catches it.)
     for (i, s) in vid.samples.iter().enumerate() {
-        let dts = s.dts.unwrap_or_else(|| panic!("video sample {i} has no dts"));
-        let pts = s.pts.unwrap_or_else(|| panic!("video sample {i} has no pts"));
+        let dts = s
+            .dts
+            .unwrap_or_else(|| panic!("video sample {i} has no dts"));
+        let pts = s
+            .pts
+            .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
             dts as u64, video_oracle[i].dts,
             "video sample {i} DTS (actual s.dts) must match oracle"
@@ -428,9 +432,16 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     // worst per-sample diff is 2).
     let audio_ts = aud.spec.timescale as i128;
     for (i, s) in aud.samples.iter().enumerate() {
-        let dts = s.dts.unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
-        let pts = s.pts.unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
-        assert_eq!(pts, dts, "audio sample {i}: s.pts must equal s.dts (no reordering)");
+        let dts = s
+            .dts
+            .unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
+        let pts = s
+            .pts
+            .unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
+        assert_eq!(
+            pts, dts,
+            "audio sample {i}: s.pts must equal s.dts (no reordering)"
+        );
 
         let dts_90k = (dts * 90_000 + audio_ts / 2).div_euclid(audio_ts);
         let diff = (dts_90k - audio_oracle[i].dts as i128).abs();

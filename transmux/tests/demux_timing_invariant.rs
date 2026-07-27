@@ -186,7 +186,9 @@ fn fmp4_demux_timing_invariant_holds() {
         oracle.len()
     );
     for (i, (s, o)) in video.samples.iter().zip(oracle.iter()).enumerate() {
-        let dts = s.dts.unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
+        let dts = s
+            .dts
+            .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
         assert_eq!(
             dts, o.dts,
             "Fmp4Demux: sample {i} dts ({dts}) must match the ffprobe oracle's dts ({})",

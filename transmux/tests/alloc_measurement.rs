@@ -140,15 +140,15 @@ const KEY: [u8; 16] = [
 const CENC_MEASURED_ALLOCS: usize = 51;
 const CENC_MEASURED_ALLOC_BYTES: usize = 2_888;
 const CENC_MEASURED_DEALLOCS: usize = 34;
-/// NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
-/// with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
-/// "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
-/// to `Ok(())` — allocating and freeing *nothing* — still satisfies "<= 2x a
-/// nonzero pinned count", so the assertion would pass against a no-op. Pin
-/// the exact measured value instead: if a legitimate change moves it,
-/// re-measure with `cargo test -p transmux --all-features --locked --test
-/// alloc_measurement -- --nocapture` (run twice to confirm stability — see
-/// the module doc), then update the const + this comment's date.
+// NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
+// with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
+// "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
+// to `Ok(())` — allocating and freeing *nothing* — still satisfies "<= 2x a
+// nonzero pinned count", so the assertion would pass against a no-op. Pin
+// the exact measured value instead: if a legitimate change moves it,
+// re-measure with `cargo test -p transmux --all-features --locked --test
+// alloc_measurement -- --nocapture` (run twice to confirm stability — see
+// the module doc), then update the const + this comment's date.
 
 /// The measurement: allocation count/bytes/deallocs for one `CencEncryptor::encrypt`
 /// pass (`cenc` scheme, NAL-aware subsample map — the common real-world config)
