@@ -2928,15 +2928,12 @@ impl StreamingTsDemux {
     /// is also already `Parked`. Stops at the first PID that is still
     /// `Probing` (blocked) or not yet known at all.
     fn try_promote_ready(&mut self) {
-        loop {
-            let Some(&next_pid) = self
-                .codec_order
-                .iter()
-                .chain(self.data_order.iter())
-                .find(|p| !self.resolved.contains(p))
-            else {
-                break;
-            };
+        while let Some(&next_pid) = self
+            .codec_order
+            .iter()
+            .chain(self.data_order.iter())
+            .find(|p| !self.resolved.contains(p))
+        {
             let Some(stream) = self.streams.get_mut(&next_pid) else {
                 break;
             };
