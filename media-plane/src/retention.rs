@@ -66,7 +66,7 @@
 //! # A failing or slow sink cannot stall ingest — and the pending hand-off
 //! queue has a hard, structural bound of one
 //!
-//! [`TrunkWriter::publish_segment`](crate::trunk::TrunkWriter::publish_segment)
+//! [`SegmentWriter::publish_segment`](crate::trunk::SegmentWriter::publish_segment)
 //! never references [`SegmentSink`] at all — a [`RetentionDriver`] is driven
 //! by whatever caller owns it, on its own schedule, entirely decoupled from
 //! the writer. That is a *structural* guarantee, not a race this module
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn segment_is_cold_for_the_window_then_evicted() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
@@ -530,7 +530,7 @@ mod tests {
     // --- 2. A failing sink does not stall `publish_segment` ---------------
 
     /// This is a *structural* property, not one a mutation can meaningfully
-    /// break: `TrunkWriter::publish_segment` (see `src/trunk.rs`) has no
+    /// break: `SegmentWriter::publish_segment` (see `src/trunk.rs`) has no
     /// reference to `SegmentSink`, `RetentionDriver`, or this module at all
     /// — there is no code path from the writer into a sink for a mutation to
     /// introduce a stall into. This test still exercises the real scenario
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn publish_segment_never_touches_the_sink() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
@@ -583,7 +583,7 @@ mod tests {
     #[test]
     fn slow_sink_pending_hand_off_queue_is_bounded_to_one() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(64), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn archive_overrun_gap_reports_loss_and_locate_reflects_it() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(2), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
@@ -676,7 +676,7 @@ mod tests {
     /// crate).
     ///
     /// No fresh mutation is recorded for this test: the blocking logic
-    /// itself is `TrunkWriter::publish_segment`'s existing `must_wait`/
+    /// itself is `SegmentWriter::publish_segment`'s existing `must_wait`/
     /// `Condvar::wait` code in `src/trunk.rs`, entirely unmodified by this
     /// module — see that file's own
     /// `archive_overrun_stall_ingest_actually_blocks_the_writer`, which
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn archive_overrun_stall_ingest_blocks_writer_until_driver_advances() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
-        let writer = Arc::new(trunk.writer().unwrap());
+        let writer = Arc::new(trunk.segment_writer().unwrap());
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::StallIngest,
             cold_window: Duration::from_secs(10),
@@ -747,7 +747,7 @@ mod tests {
     #[test]
     fn archive_overrun_terminate_drops_pin_and_locate_stays_honest() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(1), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let retention = Retention::Tiered {
             on_overrun: ArchiveOverrun::Terminate,
             cold_window: Duration::from_secs(10),

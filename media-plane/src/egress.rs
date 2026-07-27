@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn served_egress_resolves_once_populated_and_awaits_bounded_before_that() {
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(4), nz(8), nz(8)));
-        let writer = trunk.writer().unwrap();
+        let writer = trunk.segment_writer().unwrap();
         let mut cursor = trunk.subscribe_segments();
         let egress = FakeServedEgress::new();
 
@@ -894,7 +894,7 @@ mod tests {
         // Capacity 2: publishing 3 segments while pinned overflows by
         // exactly 1, forcing `ArchiveOverrun::Gap` (the default) to fire.
         let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(2), nz(8), nz(8)));
-        let writer_handle = trunk.writer().unwrap();
+        let writer_handle = trunk.segment_writer().unwrap();
         let mut cursor = trunk.pin_segments(ArchiveOverrun::Gap);
 
         writer_handle.publish_segment(segment_entry(1));

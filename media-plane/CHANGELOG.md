@@ -374,3 +374,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ingress/egress/retention were "later steps... deliberately absent"), and
     to state plainly that only the byte layer is `no_std` + `alloc` — `Trunk`
     and everything built on it require `std`.
+
+### Breaking
+- `Trunk`'s single write handle is split by **ring group**, fixing a design
+  hole found while porting real ingest sources: `Trunk::writer()` (one
+  `TrunkWriter`, single-take) made it *structurally impossible* for anything
+  other than the ingest driver to ever publish a segment or a part, because
+  the whole `Trunk` had exactly one writer — so a segmenter (a component
+  that needs to *read* samples via a `SampleCursor` and *write* the
+  segments/parts it derives from them, at the same time) could not exist.
+  The original doc's justification ("a second concurrent writer would
+  silently interleave two unrelated publish sequences into one ring") is
+  true, but only protects ordering *within a ring* — samples, segments,
+  parts, and events live in different rings, so the single-writer rule was
+  broader than its own reason.
+  - `TrunkWriter` (via `Trunk::writer`, unchanged signature) now covers only
+    the **samples + events** ring group: `publish`/`publish_event`. Held by
+    the ingest driver, as before.
+  - New `SegmentWriter` (via the new `Trunk::segment_writer`, also
+    single-take via its own `AtomicBool`) covers the **segments + parts**
+    ring group: `publish_segment`/`publish_part`/`note_segment_start`/
+    `set_time_anchor` — moved off `TrunkWriter`. Held by whoever owns
+    segmentation. `note_segment_start`/`set_time_anchor` are grouped here
+    rather than split onto `TrunkWriter` because neither *appends* to the
+    event ring (both resolve an already-published `EventAnchor::Segment`/
+    `EventAnchor::Utc` entry in place), so this does not create a second
+    appender for `TrunkWriter::publish_event`'s ring; `note_segment_start`
+    specifically must live wherever segmentation lives, since only the
+    segmenter can honestly report a segment's start (the literal B1 fix).
+  - Uniqueness is unchanged in kind, only in scope: each ring group still has
+    exactly one writer, guarded by the same `compare_exchange` pattern —
+    two concurrent *sample* writers remain exactly as impossible as before.
+  - The module docs are rewritten to state the invariant as it actually is
+    ("one writer per ring group", not "one writer per `Trunk`") and to
+    answer, rather than leave implicit, whether the split can let a
+    consumer observe a segment before the samples that produced it: it
+    cannot, because every ring still lives behind the one `Mutex<TrunkState>`
+    this module has always used — splitting the write *handle* did not
+    split the *lock* — see `trunk`'s module docs, "One writer per ring
+    group, not one writer per `Trunk`".
+  - Any caller matching on `TrunkWriter`'s method set (rather than calling
+    `Trunk::writer()`/`.publish()`/`.publish_event()` directly) needs to
+    take a second handle via the new `Trunk::segment_writer()` for
+    `publish_segment`/`publish_part`/`note_segment_start`/`set_time_anchor`.
