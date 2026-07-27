@@ -6,6 +6,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-27
+
+### Changed
+- **BREAKING: `server::MediaStore`/`HealthState`/`SegmentWindowEntry`/
+  `PlaylistOutcome`/`ResourceOutcome` are gone.** Media-plane implementation
+  plan step 4: the LL-HLS origin is now [`server::LlHlsOrigin`], a
+  `media_plane::egress::ServedEgress` that renders playlists and resolves
+  blocking-reload/part-availability requests directly from a shared
+  `media_plane::Trunk`, instead of a second, push-fed rolling-window store
+  that duplicated exactly what the `Trunk` now holds. `server/store.rs`
+  (732 lines of `MediaStore`) is deleted outright — live parts, whether a
+  segment has closed, and the just-closed-segment-final-part-still-serves
+  guarantee (multimux 0.2.1/0.2.2's hard-won bug fixes) all now fall out of
+  the `Trunk`'s own live-part log with no cache of any kind on this crate's
+  side. The one thing that genuinely cannot come from a `&Trunk` call alone —
+  the rolling window of currently-advertised *closed* segments (bytes,
+  duration, discontinuity bit), the lifetime-max segment duration, and the
+  cumulative `#EXT-X-DISCONTINUITY-SEQUENCE` count — is assembled by
+  `LlHlsOrigin` draining exactly **one** `Trunk` segment cursor, per this
+  crate's own `media_plane::egress` module doc ("a `ServedEgress`
+  implementation... keeps its own resolvable window in sync by draining
+  [cursors]"), not a second `MediaStore`. See `docs/superpowers/plans/
+  2026-07-26-media-plane-implementation.md` Step 4.
+- The engine-level `BlockingQuery`/`DEFAULT_TRACK_ID`/`master_playlist_m3u8`
+  are unchanged; the local `CachePolicy` duplicate is gone in favour of
+  `media_plane::egress::CachePolicy`, re-exported via `LlHlsOrigin`'s
+  `EgressResponse`.
+- Dropped the `event-listener` direct dependency (now reached transitively
+  through `media-plane`, whose `Trunk::listen` supersedes `MediaStore::listen`)
+  and added `media-plane`/`bytes` (both gated by this crate's `std` feature,
+  same as `event-listener` was).
+
+### Removed
+- **`multimux` no longer builds against this crate.** `multimux::store`
+  re-exported `server::MediaStore`/`HealthState` directly, and
+  `multimux::output::{llhls,dash,ll_dash}`/`origin::resource` called the
+  deleted `resolve_playlist`/`resolve_resource`/`media_playlist_m3u8(&MediaStore,
+  _)` shapes — none of that is a cheap adapter-level fix (it is `multimux`'s
+  full `ServedEgress` port, scoped to plan Step 5, which this step
+  deliberately does not half-port). `ll-hls-runtime`'s own `tests/
+  golden_gate.rs`/`tests/glass_to_glass.rs` (both `tokio`-feature-gated,
+  both depending on `multimux` as a dev-dependency) do not build until
+  Step 5 lands.
+
 ### Fixed
 - **Cleared this crate's share of the latest-stable clippy canary** (issue
   #770 — the non-blocking `clippy (latest stable)` CI job, which had been

@@ -9,13 +9,14 @@ of the ll-hls-runtime unification). The crate holds two halves:
   slices 2-4: reload scheduler, fetch pipeline, output adapter, plus slice
   5's `tokio` feature for the async IO adapter) — a driveable LL-HLS
   playback client engine.
-- **`server`** (feature `std`; issue #663/#717 Stage 2) — the sans-IO LL-HLS
-  **origin engine**, moved out of `multimux`: the rolling in-RAM window
-  (`server::MediaStore`), the blocking-reload + part-availability decision
-  logic (`resolve_playlist`/`resolve_resource`, never blocking, never
-  touching a clock), and the playlist renderers. `multimux` is now a thin
-  tokio+axum adapter driving this engine; any other HTTP framework can
-  adapt it the same way.
+- **`server`** (feature `std`; issue #663/#717 Stage 2, media-plane
+  implementation plan step 4) — the sans-IO LL-HLS **origin engine**:
+  `server::LlHlsOrigin`, a `media_plane::egress::ServedEgress` rendering
+  playlists and resolving blocking-reload/part-availability requests
+  (never blocking, never touching a clock) directly from a shared
+  `media_plane::Trunk` — not a push-fed rolling-window store of its own.
+  An async adapter (`multimux`, being ported in Step 5) drives this engine
+  the same way any HTTP framework can adapt it.
 
 `client::LlHlsClient` is a driveable, caller-driven state machine in the same
 sans-IO shape as [`srt-runtime`](../srt-runtime) (issue #565): the core never
@@ -95,32 +96,40 @@ that a genuinely non-LL origin still plays via the full-segment fallback.
 
 ## The `server` module (feature `std`)
 
-The sans-IO LL-HLS **origin engine**, moved out of `multimux` (issue
-#663/#717 Stage 2) so any HTTP framework can adapt it:
+The sans-IO LL-HLS **origin engine**, rendering from a shared
+`media_plane::Trunk` (media-plane implementation plan step 4) so any HTTP
+framework can adapt it:
 
-- **`server::MediaStore`** — the protocol-neutral rolling in-RAM window
-  (init/segments/live parts/health/max-segment-duration). Wakeup is
-  runtime-agnostic: `progress_version()` (a monotonic counter) +
-  `listen()` (an `event_listener::EventListener` any executor — or none, via
-  its blocking `.wait()` — can drive), not a `tokio`-specific channel.
-- **`server::MediaStore::resolve_playlist`/`resolve_resource`** — the
-  Blocking Playlist Reload (RFC 8216bis §6.2.5.2) and part-availability
-  decision logic as synchronous poll methods returning `PlaylistOutcome`/
-  `ResourceOutcome` — never blocking, never touching a clock. An async
-  adapter (e.g. `multimux`) turns a `WouldBlock` outcome into an actual
-  bounded wait via `MediaStore::listen()` plus its own `tokio::time::timeout`
-  (or equivalent).
-- **`server::media_playlist_m3u8`/`master_playlist_m3u8`** — the LL-HLS
-  playlist renderers; `master_playlist_m3u8` takes the media playlist's
-  served filename as an explicit argument, so an adapter can serve it under
-  any configured name.
-- **`server::CachePolicy`** (`Immutable`/`NoCache`) — the cache-control
-  policy a resolved `ResourceOutcome::Ready` carries, for an adapter to
-  apply as HTTP `Cache-Control`.
+- **`server::LlHlsOrigin`** — implements `media_plane::egress::ServedEgress`.
+  Owns exactly one `media_plane::trunk::SegmentCursor` (never one per
+  request/peer) to keep a small synced window of currently-advertised closed
+  segments, the lifetime-max segment duration, and the cumulative
+  `#EXT-X-DISCONTINUITY-SEQUENCE` count — the one thing a `&Trunk` call alone
+  cannot answer (there is no snapshot query over the segment log). Every
+  other decision — live parts of the open segment, whether a segment has
+  closed, and the just-closed-segment's-final-part-still-serves guarantee
+  (multimux 0.2.1/0.2.2's hard-won bug fixes) — comes straight from the
+  `Trunk`'s own live-part log, with no cache at all.
+- **`LlHlsOrigin::resolve`** (the `ServedEgress` impl) — the Blocking
+  Playlist Reload (RFC 8216bis §6.2.5.2) and part-availability decision
+  logic as a synchronous poll method returning
+  `media_plane::egress::EgressResponse` (`Ready`/`Await`/`BadRequest`/
+  `NotFound`) — never blocking, never touching a clock, and never
+  `Await`-ing past the caller's own `AwaitPolicy` deadline. An async adapter
+  turns an `Await` outcome into an actual bounded wait via
+  `media_plane::Trunk::listen()` plus its own `tokio::time::timeout` (or
+  equivalent).
+- **`server::master_playlist_m3u8`** — the master-playlist renderer;
+  takes the media playlist's served filename as an explicit argument, so an
+  adapter can serve it under any configured name.
+- **`media_plane::egress::CachePolicy`** (`Immutable`/`NoCache`) — the
+  cache-control policy a resolved `EgressResponse::Ready` carries, for an
+  adapter to apply as HTTP `Cache-Control`.
 
-`multimux` is the reference adapter: a thin tokio+axum layer that calls
-`resolve_playlist`/`resolve_resource` and drives the one thing the sans-IO
-engine can't — the actual bounded `.await` on `WouldBlock`.
+`multimux` was the reference adapter through 0.1.x; it is being ported to
+`LlHlsOrigin`/`ServedEgress` in Step 5 (deleting its own push-fed
+`MediaStore` re-export) and does not build against this crate's `server`
+module in the interim — see the 0.2.0 CHANGELOG entry.
 
 ## What's *not* here — explicit follow-ups
 
