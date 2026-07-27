@@ -124,3 +124,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reuses `timed_metadata::Timeline`'s 33-bit PTS wrap-unroll rather than
   hand-rolling it; `timed-metadata` becomes a real (non-dev) dependency of
   `media-plane`.
+- `Dialer`, `Listener`, `IngestSession`, `run_dial`/`run_listen` (plan step
+  3c, `std`-only, new `ingress` module): the ingress traits and the generic
+  drivers that pump them into a `Trunk`, so no protocol reimplements its own
+  feed/poll/dispatch loop (every one of `multimux`'s nine sources hand-rolls
+  this today). `IngestSession` is a `Stage<In<'a> = &'a [u8], Out =
+  SessionEvent>` specialisation plus a `poll_transmit` hook, implemented
+  explicitly (**not** blanket like `ByteStage`, which adds nothing — a blanket
+  impl would make `poll_transmit`'s default impossible to override, breaking
+  the handshake mechanism it exists for; documented on the trait).
+  - **Establishment is sans-IO, through the ordinary pump.** `Dialer::dial`
+    performs **no I/O and completes no handshake** — it constructs a session
+    in a not-yet-established state along with its first outbound request. The
+    handshake then completes through the same feed/poll pump as everything
+    else: `poll_transmit` out, `Stage::feed` in, until the session emits
+    `SessionEvent::Established`. This mirrors `rtsp-runtime`'s existing
+    driveable `ClientSession` (request builders return bytes to send,
+    `handle_data` consumes replies and returns events, phase readable via
+    `state()`) rather than inventing a second pattern, and keeps tokio out of
+    the layer: an earlier revision had `dial()` "perform the whole
+    connect/handshake", which only ever fit sources whose connect is purely
+    local and would have forced an executor bridge for RTSP/SRT-caller/TS-UDP.
+    A separate `PendingSession` type was considered and rejected (it would
+    duplicate `feed`/`poll_transmit`/`next_deadline`/`on_deadline` for one bit
+    of state; `rtsp-runtime` does not do it either) — the phase is visible as
+    `HealthState::Establishing` vs `Live`.
+  - **The handshake is bounded** by `HandshakePolicy::establish_by`, an
+    absolute caller-supplied `Timestamp`; past it a still-establishing session
+    terminates as `HealthState::HandshakeTimedOut { deadline }` and, in a
+    `ListenDriver`, is **reaped**, freeing its `max_sessions` slot — so a flood
+    of half-open connections cannot squat the bound. A deadline rather than an
+    attempt/pump-iteration cap because the failure mode is wall-clock (matching
+    `multimux`'s already-proven `IngestTimeouts::connect`) and because a real
+    RTSP handshake is DESCRIBE + SETUP × N + PLAY with N unknowable up front,
+    so any fixed iteration cap is either too small for a real multi-track SDP
+    or too large to bound anything. `IngestDriver::next_deadline` surfaces it
+    while establishing; per this crate's sans-IO rule there is no internal
+    timer.
+  - **B5 (the program dimension)**: `SessionEvent::NewProgram` may be
+    announced at any point in a session's lifetime, not only at the start.
+    `IngestDriver`/`ListenDriver` mint a fresh `Trunk` per `ProgramId` the
+    instant it is announced — including a second program on an already-live
+    connection — closing the gap `multimux::source::ts_udp::TsUdpSession`
+    has today (a post-connect `DemuxEvent::TrackAdded` is only logged and
+    dropped).
+  - **EOF vs failure**: `HealthState<E>`
+    (`Establishing`/`Live`/`Ended`/`Failed(E)`/`HandshakeTimedOut`) fixes the
+    bug that made `ll_hls_runtime::server::store::HealthState::Failed`
+    unproducible — `multimux::origin::supervisor::supervise` today folds a
+    clean `run_pipeline` EOF and a real error into the same `Reconnecting`
+    transition. `Stage::finish` returning `Ok(())` drives `Ended`;
+    `feed`/`finish` returning `Err` drives `Failed`, carrying the concrete
+    error rather than a formatted string. `HandshakeTimedOut` is deliberately
+    *not* folded into `Failed`: a handshake that never progressed produced no
+    session error to carry, so inventing an `E` would mean fabricating one.
+  - **`max_sessions` is a hard bound, enforced by `ListenDriver`**, not by
+    each `Listener` implementation: once `max_sessions` sessions are
+    admitted, every further accepted connection is dropped immediately,
+    before being fed a single byte — never queued, never buffered.
+  - **Reconnect is bounded and caller-chosen**: `ReconnectPolicy` bounds how
+    many times `DialSupervisor` retries `Dialer::dial`; it never sleeps or
+    decides backoff duration itself (`DialAttempt::Exhausted` is an `O(1)`
+    no-op once `max_attempts` is spent — a permanently-failing dialer cannot
+    spin or grow).
+  - **Known seam, recorded not solved**: `multimux`'s HLS/DASH/Smooth *pull*
+    sources are request-driven (playlist reload timer + whole-object GETs), not
+    stream-driven. `feed(&[u8])` is fine for them (`Stage` says nothing about
+    chunk size), and `next_deadline`/`on_deadline` already *is* a reload timer;
+    the real gap is that `poll_transmit() -> Option<Bytes>` cannot express
+    "GET this URL". That wants a request-*addressing* type, not a second drive
+    model or a pull-shaped sibling trait — deferred to Step 5, when the first
+    real caller exists.
