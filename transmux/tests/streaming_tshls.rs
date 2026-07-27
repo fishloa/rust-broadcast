@@ -58,18 +58,13 @@ fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
 /// decode-time order, returning every segment emitted by `push` (in order),
 /// followed by `finish`'s trailing segment (if any).
 fn feed_all(ir: &Media, seg: &mut StreamingTsHlsSegmenter) -> Vec<TsSegment> {
-    let mut out = Vec::new();
     for (tpos, i) in merged_decode_order(ir) {
         let track_id = ir.tracks[tpos].spec.track_id;
         let sample = ir.tracks[tpos].samples[i].clone();
-        if let Some(s) = seg.push(track_id, sample).expect("push") {
-            out.push(s);
-        }
+        seg.push(track_id, sample).expect("push");
     }
-    if let Some(s) = seg.finish().expect("finish") {
-        out.push(s);
-    }
-    out
+    seg.finish().expect("finish");
+    seg.take_ready()
 }
 
 fn extract_tag_u64(playlist: &str, tag: &str) -> u64 {
@@ -135,14 +130,12 @@ fn streaming_emits_segments_progressively_and_loses_nothing() {
         "fixture must carry more than one sample to prove incremental behaviour"
     );
 
-    let mut emitted_before_finish: Vec<TsSegment> = Vec::new();
     for (tpos, i) in &order {
         let track_id = ir.tracks[*tpos].spec.track_id;
         let sample = ir.tracks[*tpos].samples[*i].clone();
-        if let Some(s) = seg.push(track_id, sample).expect("push") {
-            emitted_before_finish.push(s);
-        }
+        seg.push(track_id, sample).expect("push");
     }
+    let emitted_before_finish: Vec<TsSegment> = seg.take_ready();
     assert!(
         !emitted_before_finish.is_empty(),
         "at least one segment must be available before finish() (progressive emission)"
@@ -153,9 +146,8 @@ fn streaming_emits_segments_progressively_and_loses_nothing() {
     );
 
     let mut all: Vec<TsSegment> = emitted_before_finish;
-    if let Some(s) = seg.finish().expect("finish") {
-        all.push(s);
-    }
+    seg.finish().expect("finish");
+    all.extend(seg.take_ready());
 
     // No sample lost or duplicated: concatenation matches the batch output
     // exactly (segment-for-segment, matching test 1's stronger claim).
@@ -178,14 +170,12 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     let mut seg =
         StreamingTsHlsSegmenter::new(track_specs(&ir), 1, window).expect("construct segmenter");
 
-    let mut emitted: Vec<TsSegment> = Vec::new();
     for (tpos, i) in merged_decode_order(&ir) {
         let track_id = ir.tracks[tpos].spec.track_id;
         let sample = ir.tracks[tpos].samples[i].clone();
-        if let Some(s) = seg.push(track_id, sample).expect("push") {
-            emitted.push(s);
-        }
+        seg.push(track_id, sample).expect("push");
     }
+    let emitted: Vec<TsSegment> = seg.take_ready();
     let m = emitted.len();
     assert!(
         m > window,
@@ -217,7 +207,8 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     );
 
     // finish() flushes the trailing partial segment and appends ENDLIST.
-    let last = seg.finish().expect("finish");
+    seg.finish().expect("finish");
+    let last = seg.take_ready().pop();
     let pl2 = seg.playlist();
     assert!(
         pl2.trim_end().ends_with("#EXT-X-ENDLIST"),
@@ -292,37 +283,64 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     let mut snapshots = Vec::new();
 
     // sync -> opens s0 (45_000 ticks buffered)
-    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "opening sync sample must not cut"
+    );
     // non-sync -> 90_000 ticks buffered (>= target)
-    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "buffering non-sync sample must not cut"
+    );
 
     // sync -> cuts s0 (continuous); opens s1
-    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
-    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s0");
+    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "buffering non-sync sample must not cut"
+    );
 
     // sync -> cuts s1 (continuous); opens s2
-    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
+    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s1");
     snapshots.push(seg.playlist());
     // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
     seg.mark_discontinuity();
-    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "buffering non-sync sample must not cut"
+    );
 
     // sync -> cuts s2 (discontinuous); opens s3
-    let s2 = seg.push(1, nal_sample(true, 45_000)).unwrap();
-    assert!(
-        s2.expect("s2 cut").discontinuous,
-        "s2 must be discontinuous"
-    );
+    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    let s2 = seg.take_ready();
+    assert_eq!(s2.len(), 1, "sync sample must cut s2 singly");
+    assert!(s2[0].discontinuous, "s2 must be discontinuous");
     snapshots.push(seg.playlist());
-    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "buffering non-sync sample must not cut"
+    );
 
     // sync -> cuts s3 (continuous); opens s4
-    assert!(seg.push(1, nal_sample(true, 45_000)).unwrap().is_some());
+    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s3");
     snapshots.push(seg.playlist());
-    assert!(seg.push(1, nal_sample(false, 45_000)).unwrap().is_none());
+    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    assert!(
+        seg.take_ready().is_empty(),
+        "buffering non-sync sample must not cut"
+    );
 
     // finish() -> cuts s4 (continuous, final flush)
-    assert!(seg.finish().unwrap().is_some());
+    seg.finish().unwrap();
+    assert_eq!(seg.take_ready().len(), 1, "finish must cut s4");
     snapshots.push(seg.playlist());
 
     (seg, snapshots)
