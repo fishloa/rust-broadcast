@@ -9,7 +9,12 @@ use alloc::vec::Vec;
 use super::Track;
 
 /// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
+///
+/// `#[non_exhaustive]`: construct with [`PcrSample::new`] — a future field
+/// (e.g. the `pcr` vs `opcr` distinction of §2.4.3.5) should be additive, not
+/// a major bump.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PcrSample {
     /// `program_clock_reference` as a 27 MHz value (`base * 300 + extension`).
     pub pcr_27mhz: u64,
@@ -19,6 +24,18 @@ pub struct PcrSample {
     pub packet_index: u64,
     /// The adaptation field's `discontinuity_indicator` (§2.4.3.5).
     pub discontinuity: bool,
+}
+
+impl PcrSample {
+    /// Create a PCR observation with every field explicit.
+    pub fn new(pcr_27mhz: u64, pid: u16, packet_index: u64, discontinuity: bool) -> Self {
+        Self {
+            pcr_27mhz,
+            pid,
+            packet_index,
+            discontinuity,
+        }
+    }
 }
 
 /// One track present in the source container that a demuxer could not model
@@ -32,7 +49,10 @@ pub struct PcrSample {
 /// silent — [`Fmp4Demux`](crate::media::Fmp4Demux) and
 /// [`ProgressiveDemux`](crate::progressive_demux::ProgressiveDemux) both
 /// record one of these per skipped track in [`Media::skipped`].
+///
+/// `#[non_exhaustive]`: construct with [`SkippedTrack::new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SkippedTrack {
     /// Best-effort sample-entry FourCC, decoded lossily as text. A
     /// placeholder (`"unknown"`) when the `trak` was too malformed to even
@@ -40,6 +60,14 @@ pub struct SkippedTrack {
     pub fourcc: String,
     /// Human-readable reason (the underlying `Error`'s `Display` text).
     pub reason: String,
+}
+
+impl SkippedTrack {
+    /// Record a skipped track from its sample-entry FourCC and a
+    /// human-readable reason.
+    pub fn new(fourcc: String, reason: String) -> Self {
+        Self { fourcc, reason }
+    }
 }
 
 /// The media intermediate representation: a set of elementary [`Track`]s.

@@ -450,16 +450,8 @@ fn part_media_matches_whole_segment_build() {
     // The whole segment built from the identical sample set.
     let whole = {
         let frags = vec![
-            FragmentTrackData {
-                track_id: 1,
-                base_media_decode_time: 0,
-                samples: &vid_samples,
-            },
-            FragmentTrackData {
-                track_id: 2,
-                base_media_decode_time: 0,
-                samples: &aud_samples,
-            },
+            FragmentTrackData::new(1, 0, &vid_samples),
+            FragmentTrackData::new(2, 0, &aud_samples),
         ];
         transmux::pipeline::build_media_segment(1, &frags).unwrap()
     };

@@ -73,7 +73,9 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                     tracks[i].spec = spec;
                 }
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 if let Some(&i) = index_by_id.get(&track_id) {
                     let track = &mut tracks[i];
                     // `Track::start_decode_time` is no longer carried by
@@ -94,12 +96,12 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                 discontinuous,
                 provenance,
                 ..
-            } => pcr.push(PcrSample {
-                pcr_27mhz: ticks,
-                pid: provenance.pid.unwrap_or(0),
-                packet_index: provenance.packet_index.unwrap_or(0),
-                discontinuity: discontinuous,
-            }),
+            } => pcr.push(PcrSample::new(
+                ticks,
+                provenance.pid.unwrap_or(0),
+                provenance.packet_index.unwrap_or(0),
+                discontinuous,
+            )),
             DemuxEvent::Discontinuity { .. } => {}
             _ => {}
         }

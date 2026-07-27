@@ -519,12 +519,12 @@ fn collect_pcr_oracle(data: &[u8]) -> Vec<PcrSample> {
         let Some(pcr) = af.pcr else {
             continue;
         };
-        out.push(PcrSample {
-            pcr_27mhz: pcr.as_27mhz(),
-            pid: pkt.header.pid,
-            packet_index: idx as u64,
-            discontinuity: af.discontinuity_indicator,
-        });
+        out.push(PcrSample::new(
+            pcr.as_27mhz(),
+            pkt.header.pid,
+            idx as u64,
+            af.discontinuity_indicator,
+        ));
     }
     out
 }
@@ -742,12 +742,8 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
 fn provenance_builder_round_trips() {
     // media plane step 2c: absolute timing lives on the sample itself; the raw
     // pre-unwrap wire stamps survive only as debug-only `Provenance`.
-    let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100)).with_provenance(
-        transmux::Provenance {
-            wire_dts: Some(12000),
-            wire_pts: Some(12345),
-        },
-    );
+    let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100))
+        .with_provenance(transmux::Provenance::new(Some(12000), Some(12345)));
     assert_eq!(s.dts, Some(12000), "absolute dts is carried on the sample");
     assert_eq!(s.pts, Some(12345), "absolute pts is carried on the sample");
     assert_eq!(s.composition_offset(), 345, "pts - dts");

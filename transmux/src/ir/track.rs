@@ -150,7 +150,12 @@ impl Track {
 /// produces (issue #564), and it is what the muxer's crypto-box emission
 /// (`sinf`/`senc`/`saio`/`saiz`) reads back to (re)build the boxes without
 /// needing to know how the samples were protected.
+///
+/// `#[non_exhaustive]`: construct with [`TrackEncryption::new`] — the
+/// ISO/IEC 23001-7 metadata set is still growing here (e.g. multi-`pssh`
+/// carriage), and each addition should be additive.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct TrackEncryption {
     /// The protection scheme (`cenc` AES-CTR or `cbcs` AES-CBC pattern).
     pub scheme: crate::cenc::CencScheme,
@@ -161,4 +166,20 @@ pub struct TrackEncryption {
     /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
     /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
     pub samples: Vec<crate::cenc::SampleEncryptionEntry>,
+}
+
+impl TrackEncryption {
+    /// Build a track's crypto carrier from its scheme, `tenc` defaults, and
+    /// per-sample IV/subsample entries in decode order.
+    pub fn new(
+        scheme: crate::cenc::CencScheme,
+        tenc: crate::cenc::TrackEncryptionBox,
+        samples: Vec<crate::cenc::SampleEncryptionEntry>,
+    ) -> Self {
+        Self {
+            scheme,
+            tenc,
+            samples,
+        }
+    }
 }

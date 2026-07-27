@@ -131,15 +131,7 @@ fn clean_init() -> Vec<u8> {
 /// A clean media segment with the given sequence_number + base decode time,
 /// carrying the real video samples.
 fn clean_media(seq: u32, base_time: u64, samples: &[Sample]) -> Vec<u8> {
-    build_media_segment(
-        seq,
-        &[FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: base_time,
-            samples,
-        }],
-    )
-    .expect("build media")
+    build_media_segment(seq, &[FragmentTrackData::new(1, base_time, samples)]).expect("build media")
 }
 
 // ---------------------------------------------------------------------------

@@ -231,16 +231,8 @@ fn media_segment_offsets_and_samples_are_correct() {
     let base_a = moof.traf[1].tfdt.as_ref().unwrap().base_media_decode_time();
 
     let tracks = [
-        FragmentTrackData {
-            track_id: vid_id,
-            base_media_decode_time: base_v,
-            samples: &vid_samples,
-        },
-        FragmentTrackData {
-            track_id: aud_id,
-            base_media_decode_time: base_a,
-            samples: &aud_samples,
-        },
+        FragmentTrackData::new(vid_id, base_v, &vid_samples),
+        FragmentTrackData::new(aud_id, base_a, &aud_samples),
     ];
     let seg = build_media_segment(7, &tracks).expect("build media segment");
 

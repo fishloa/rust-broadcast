@@ -182,28 +182,14 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // multi-segment (part) build, as CMAF/LL-* tests in this crate do.
     let mid = recovered.len() / 2;
     let (part1, part2) = recovered.split_at(mid);
-    let seg1 = build_media_segment(
-        1,
-        &[FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: 0,
-            samples: part1,
-        }],
-    )
-    .expect("build_media_segment (part 1) must succeed");
+    let seg1 = build_media_segment(1, &[FragmentTrackData::new(1, 0, part1)])
+        .expect("build_media_segment (part 1) must succeed");
     let part1_total: u64 = part1
         .iter()
         .map(|s| u64::from(s.duration.unwrap_or(0)))
         .sum();
-    let seg2 = build_media_segment(
-        2,
-        &[FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: part1_total,
-            samples: part2,
-        }],
-    )
-    .expect("build_media_segment (part 2) must succeed");
+    let seg2 = build_media_segment(2, &[FragmentTrackData::new(1, part1_total, part2)])
+        .expect("build_media_segment (part 2) must succeed");
 
     for (label, seg) in [("part 1", &seg1), ("part 2", &seg2)] {
         assert!(!seg.is_empty(), "{label} segment non-empty");

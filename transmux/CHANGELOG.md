@@ -70,9 +70,113 @@ Media plane step-2 fix wave 1: an aggregate review of the whole step-2 range
     emission class, not wire order across classes) and its removal semantics
     (no `Sample` for a removed `track_id` ever follows its `TrackRemoved`;
     removal tracks only the PMT-declared set, never a silence timeout).
+- **BREAKING — the rest of the IR surface is `#[non_exhaustive]` too**, folded
+  into the same still-open 0.20.0 breaking release rather than costing a major
+  bump later (`Media`/`Track` were already done): the `DemuxEvent::Sample`,
+  `TrackRemoved`, `TrackAbandoned` and `TracksResolved` **variants**, and the
+  `Provenance`, `PcrSample`, `SkippedTrack`, `TrackEncryption` and
+  `FragmentTrackData` structs. `TracksResolved` took a field this release,
+  which is exactly the case this prevents recurring. Every affected type gained
+  a constructor so none became unconstructible from outside the crate:
+  `DemuxEvent::{sample, track_removed, track_abandoned, tracks_resolved}`,
+  `Provenance::new`, `PcrSample::new`, `SkippedTrack::new`,
+  `TrackEncryption::new`, `FragmentTrackData::new`. Pattern matches on the four
+  variants need a trailing `..`. `EventProvenance` stays `Copy + Eq + Default`.
+- **BREAKING — `HlsPackager` omits a timestamp-less track instead of emitting
+  `#EXTINF:0.000`.** A section-carried track (SCTE-35 `stream_type` `0x86`,
+  DSM-CC, private sections) has `duration: None` on every sample, deliberately
+  and never fabricated; summing `unwrap_or(0)` over it rendered a zero
+  `EXTINF`, which RFC 8216 §4.3.2.1 defines as a real playback duration a
+  player would honour. An HLS media playlist is a timeline of playable
+  segments and such a track is not one, so it is left out (its content reaches
+  an output through the paths built for it — an inband `emsg`, an
+  `EXT-X-DATERANGE`). A `Media` whose tracks are *all* timestamp-less is now a
+  named `Error::InvalidInput` rather than an empty playlist.
 
 ### Fixed
 
+- **CRITICAL — a PMT that reclassifies a PID's codec no longer panics the
+  process.** PMT version diffing (above) made PMT application *destructive*,
+  which turned several latent weaknesses into live faults; this is the worst
+  of them. `apply_pmt_diff` wrote `stream.codec` in place, leaving the
+  `ConfigProbe`, the `Carrier`, and any buffered access units built for the
+  **old** codec. A version change that reclassified a still-probing PID — DVB's
+  routine `stream_type` `0x06` gaining an `AC-3_descriptor`, so
+  `Codec::Data(0x06)` becomes `Codec::Ac3` (issue #641) — then reached
+  `finalize_probe`'s `unreachable!("ConfigProbe::Data is only created for
+  Codec::Data")` and **aborted on ordinary broadcast input**. A codec change is
+  a different elementary stream, so the PID is now torn down and re-registered,
+  which rebuilds every derived piece of state in one move. That also fixes the
+  stale-`Carrier` half of the same bug: ISO/IEC 13818-1 Table 2-34 splits
+  `stream_type` into PES- and section-carried families, so a `0x86` → `0x1B`
+  reclassification used to feed H.264 PES bytes to a `SectionReassembler` and
+  produce silence while the track still claimed to exist. The `unreachable!`
+  itself is gone: a probe/codec mismatch now degrades to "unresolved" (and is
+  concluded by the existing `TrackAbandoned` paths) rather than aborting a
+  `#![forbid(unsafe_code)]` library on remote input. Every remaining
+  panic-class site in `ts_demux` reachable from parsed input was converted the
+  same way.
+- **CRITICAL — PSI `CRC_32` is validated before any PAT/PMT is acted on**
+  (ISO/IEC 13818-1 §2.4.4.1, via `broadcast_common::crc32_mpeg2`). Nothing
+  checked it before: `CRC32_LEN` was used only to skip the trailer in length
+  arithmetic. Now that PMT application tears tracks down, one bit error in a
+  version byte or an ES loop destroyed a live track and reassigned its
+  `track_id`; and because `process_packet` consults `pmt_reasm` *before*
+  `streams`, a corrupt PAT permanently hijacked an elementary PID into PMT
+  reassembly, shadowing its stream for the rest of the run. A section failing
+  CRC — or clearing `section_syntax_indicator`, which a PAT/PMT never legally
+  does — is now dropped silently and disturbs nothing, not even
+  `last_applied_version` (bumping that off a corrupt section would have
+  swallowed the genuine version that follows).
+- **A PAT may remap a PMT PID, and a "next" PAT is not applied.** The
+  PAT-derived `program_number` was write-once (`entry().or_insert_with()`) and
+  the PAT was applied ignoring `current_next_indicator`, so a legitimate remap
+  — or a `cni == 0` "next" PAT — froze the binding and made the defensive
+  `program_number` cross-check reject every PMT on that PID **forever**: a
+  silent zero-track demux. The `cni == 1` rule PMT application already used now
+  gates the PAT too, and a current PAT updates the binding (clearing
+  `last_applied_version`, since the version counter belongs to the program, not
+  the PID).
+- **A removed PID's payload is not replayed into the re-added track.**
+  `remove_track` left the dropped PID's traffic flowing into `unattributed` —
+  the *pre-registration* replay buffer — so post-removal orphan payloads
+  accumulated to the 4 MiB cap and were then delivered as the **re-added**
+  track's first samples, anchoring its `start_decode_time` in the past. The
+  backlog is now purged on removal and the PID is blacklisted from that buffer
+  until a PMT declares it again.
+- **An ES PID declared by two programs survives one of them dropping it.**
+  `streams`/`es_seen` are global while a PMT's `applied_es` is per-PMT, so a
+  shared audio/subtitle component was torn down as soon as *either* program's
+  PMT stopped listing it. Removal is now refcounted by declaring PMT PID; only
+  the last declarer's drop removes the track.
+- **The audio re-anchor threshold is derived from real muxer behaviour, not
+  from one sample period.** The B5 anchor's discontinuity threshold was
+  `ceil(90000 / sample_rate)` — 3 ticks at 44.1 kHz — while a 1024-sample AAC
+  frame is `2089.795…` ticks, so a muxer stamping the rounded constant `2090`
+  drifts `+0.204…` ticks per frame *on a perfectly continuous stream* and
+  crossed the threshold about every 15 frames; non-frame-aligned MP2 PES (issue
+  #638) crossed it on essentially every access unit. `TimelineReanchored` was
+  therefore pure noise and the anchor effectively inert. The bound is now
+  20 ms of 90 kHz (1800 ticks) — below the lip-sync detectability floor the
+  broadcast recommendations work to (ITU-R BT.1359-1; ATSC A/85's ±15 ms), so
+  re-anchoring inside it would trade a real `Discontinuity` event for an
+  inaudible correction — floored at two intrinsic sample periods for
+  degenerate sample rates. `DiscontinuityKind` had no assertion coverage
+  anywhere in the crate; it now has both halves of the contract (a
+  constant-increment 44.1 kHz stream emits **zero** re-anchors; one genuine gap
+  emits exactly one).
+- **A gapped/discontinuous fMP4 keeps its gap.** `Fmp4Demux` seeded `next_dts`
+  from only the **first** fragment's `tfdt` and then pure-summed `trun`
+  durations, so every sample after a gap came out short by exactly the gap —
+  re-muxing to a wrong `tfdt`/PES stamp and permanently desyncing A/V. `tfdt`
+  is per-fragment and authoritative (ISO/IEC 14496-12:2015 §8.8.12), so every
+  fragment that carries one now re-seeds the cursor; `Track::start_decode_time`
+  still records the first fragment's anchor. A gapless stream is byte-for-byte
+  unaffected.
+- **`rescale_to_track` preserves a negative audio anchor.** Its `.max(0) as
+  u128` fabricated `dts = 0` for audio where a legitimately negative unwrapped
+  anchor (reordering across the 2^33 boundary) is carried through verbatim for
+  every other track kind — desyncing the audio track alone.
 - **CRITICAL — a `duration` of `Some(0)`/`None` on the anchor track no longer
   stalls segmentation forever** (all four segmenters: `Segmenter`,
   `LlSegmenter`, `LlHlsSegmenter`, `StreamingTsHlsSegmenter`). The anchor

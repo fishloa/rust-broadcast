@@ -48,11 +48,7 @@ fn minimal_tracks() -> Vec<Sample> {
 }
 
 fn minimal_frag(samples: &[Sample]) -> Vec<FragmentTrackData<'_>> {
-    vec![FragmentTrackData {
-        track_id: 1,
-        base_media_decode_time: 0,
-        samples,
-    }]
+    vec![FragmentTrackData::new(1, 0, samples)]
 }
 
 /// Walk the box list in `data` and return a vec of `(start, end, fourcc)` for

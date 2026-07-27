@@ -103,17 +103,19 @@ impl Fmp4Demux<'_> {
 struct TrackBuilder {
     spec: TrackSpec,
     samples: Vec<Sample>,
-    /// Absolute decode-time anchor, taken from the **first** movie fragment's
-    /// `tfdt` seen for this track (`None` until that fragment is absorbed; a
-    /// stream with no `tfdt` at all yields a `0` anchor).
+    /// Absolute decode-time anchor: the track's start time, taken from the
+    /// **first** movie fragment's `tfdt` seen for this track (`None` until that
+    /// fragment is absorbed; a stream with no `tfdt` at all yields a `0`
+    /// anchor). Distinct from `next_dts`, which every later `tfdt` re-seeds.
     start_decode_time: Option<u64>,
     /// Running absolute decode time for the *next* sample to be pushed, in
     /// this track's media timescale (media plane step 2c: `Sample::dts` is
     /// now absolute, so this replaces the old "reconstruct via anchor + Σ
     /// duration downstream" model with the equivalent running value carried
-    /// forward while demuxing). Seeded from the first fragment's `tfdt`
-    /// (falling back to `0` if the stream never carries one), then advanced
-    /// by each sample's duration in decode order.
+    /// forward while demuxing). **Re-seeded from every fragment's own `tfdt`**
+    /// (falling back to the running sum for a fragment that carries none, and
+    /// to `0` if the stream never carries one), then advanced by each sample's
+    /// duration in decode order — see `absorb_fragment`.
     next_dts: i64,
 }
 
@@ -217,15 +219,29 @@ fn absorb_fragment(
             // skip it (well-formed CMAF declares every track in the init moov).
             continue;
         };
-        // The absolute decode-time anchor is the baseMediaDecodeTime of the
-        // FIRST fragment seen for this track (ISO/IEC 14496-12:2015 §8.8.12).
-        // Also seeds the running `next_dts` cursor samples are placed on.
-        if builder.start_decode_time.is_none() {
-            if let Some(tfdt) = &traf.tfdt {
-                let base = tfdt.base_media_decode_time();
+        // `tfdt` is authoritative for **every** fragment that carries one, not
+        // just the first (ISO/IEC 14496-12:2015 §8.8.12: it *is* the absolute
+        // decode time of the fragment's first sample). Seeding once and then
+        // pure-summing `trun` durations silently assumes the source is gapless;
+        // for a discontinuous or gapped fMP4 (a DVR recording spliced across a
+        // dropout, a live capture that missed segments) every sample after the
+        // gap came out short by the gap, which then re-muxes to a wrong `tfdt`
+        // / PES stamp and permanently desyncs A/V.
+        //
+        // Re-seeding per fragment carries the gap through into the samples'
+        // absolute `dts` — which, for a batch `Media`, is what representing the
+        // discontinuity means: this IR has no event channel to raise it on, and
+        // the honest alternative to a preserved gap is a fabricated
+        // contiguity, not a report.
+        //
+        // `start_decode_time` still records the FIRST fragment's anchor: it is
+        // the track's start time, not a running cursor.
+        if let Some(tfdt) = &traf.tfdt {
+            let base = tfdt.base_media_decode_time();
+            if builder.start_decode_time.is_none() {
                 builder.start_decode_time = Some(base);
-                builder.next_dts = base as i64;
             }
+            builder.next_dts = base as i64;
         }
         for trun in &traf.trun {
             // data_offset is measured from the start of the moof box when
@@ -412,6 +428,24 @@ impl Package for HlsPackager {
         // float intrinsic (`f64::ceil`) is needed in `no_std`.
         let mut target_secs = 0u32;
         for t in &media.tracks {
+            // A section-carried track (SCTE-35 `stream_type` 0x86, DSM-CC,
+            // private sections) has no timestamps and no durations at all —
+            // `Sample::duration` is `None` for every sample, deliberately, and
+            // is never fabricated. Summing `unwrap_or(0)` over it rendered
+            // `#EXTINF:0.000`, a duration RFC 8216 §4.3.2.1 defines as this
+            // segment's real playback time — i.e. a knowingly-wrong value a
+            // player would honour.
+            //
+            // Decision: **omit the track from the playlist**. An HLS media
+            // playlist is a timeline of playable segments; a track with no
+            // timeline is not one, and this packager has nothing truthful to
+            // put in its `EXTINF`. Such a track still reaches an output via
+            // the paths built for it (an inband `emsg`, an
+            // `EXT-X-DATERANGE`) — see `timed-metadata` — never as a
+            // zero-length segment here.
+            if t.samples.iter().all(|s| s.duration.is_none()) {
+                continue;
+            }
             let ticks: u64 = t
                 .samples
                 .iter()
@@ -433,6 +467,13 @@ impl Package for HlsPackager {
                 parts: vec![],
                 ..Default::default()
             });
+        }
+        if segments.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot package a Media whose every track is timestamp-less \
+                 (section-carried): an HLS media playlist needs at least one \
+                 segment with a real EXTINF duration",
+            ));
         }
         let playlist = MediaPlaylist {
             version: self.version,
@@ -820,5 +861,271 @@ mod tests {
             Error::UnsupportedSampleEntry { fourcc } => assert_eq!(fourcc, "xyz9"),
             other => panic!("expected UnsupportedSampleEntry, got {other:?}"),
         }
+    }
+
+    // ── Gapped / discontinuous fMP4 (per-fragment `tfdt` re-seed) ───────────
+
+    /// A minimal but real `avcC` — the same Baseline SPS/PPS pair
+    /// `avc_config::tests::make_minimal_avcc_body` builds, expressed
+    /// structurally so this test needs no fixture file.
+    fn minimal_avc_config() -> crate::avc_config::AVCConfigurationBox {
+        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use crate::nalu_types::{AvcPps, AvcSps};
+        AVCConfigurationBox {
+            config: AVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                profile_indication: 66,
+                profile_compatibility: 0,
+                level_indication: 0x1E,
+                length_size_minus_one: 3,
+                sps: vec![AvcSps(vec![0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40])],
+                pps: vec![AvcPps(vec![0x68, 0xCE, 0x3C, 0x80])],
+                chroma_format: None,
+                bit_depth_luma_minus8: None,
+                bit_depth_chroma_minus8: None,
+                sps_ext: Vec::new(),
+            },
+        }
+    }
+
+    /// PROVENANCE: synthesised, not a captured file. No committed fixture in
+    /// this workspace carries a *gapped* fMP4 (every CMAF capture here is
+    /// contiguous), so the two fragments are built with this crate's own
+    /// [`build_init_segment`] / [`build_media_segment`] — i.e. the exact
+    /// `moof`/`tfdt`/`trun` layout the muxer emits (ISO/IEC 14496-12 §8.8),
+    /// not hand-rolled bytes — with the second fragment's
+    /// `base_media_decode_time` deliberately advanced past the running sum of
+    /// the first fragment's `trun` durations.
+    ///
+    /// Seeding `next_dts` from only the FIRST `tfdt` and then pure-summing
+    /// durations makes every post-gap sample's absolute `dts` short by exactly
+    /// the gap, which re-muxes to a wrong `tfdt`/PES stamp and permanently
+    /// desyncs A/V. `tfdt` is per-fragment and authoritative (§8.8.12).
+    #[test]
+    fn gapped_fmp4_reseeds_absolute_dts_from_each_fragments_own_tfdt() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+        const FRAMES_PER_FRAGMENT: u32 = 4;
+        /// Decode time the second fragment declares — one whole extra frame
+        /// beyond where the first fragment's durations leave off.
+        const GAP_TICKS: u64 = FRAME_DUR as u64;
+
+        let spec = TrackSpec::new(
+            1,
+            TIMESCALE,
+            CodecConfig::Avc {
+                config: minimal_avc_config(),
+                width: 16,
+                height: 16,
+            },
+        );
+        let init = build_init_segment(core::slice::from_ref(&spec), TIMESCALE)
+            .expect("init segment builds");
+
+        let frames = |base: i64| -> Vec<Sample> {
+            (0..FRAMES_PER_FRAGMENT)
+                .map(|i| {
+                    // One length-prefixed non-IDR NAL; content is irrelevant
+                    // here (this test is about timing, not codec bytes).
+                    let nal = [0x41u8, 0xAA, 0xBB];
+                    let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                    data.extend_from_slice(&nal);
+                    let dts = base + i64::from(i) * i64::from(FRAME_DUR);
+                    Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
+                })
+                .collect()
+        };
+
+        let first_base = 0u64;
+        let contiguous_second_base = u64::from(FRAMES_PER_FRAGMENT * FRAME_DUR);
+        let gapped_second_base = contiguous_second_base + GAP_TICKS;
+
+        let f1 = frames(first_base as i64);
+        let f2 = frames(gapped_second_base as i64);
+        let seg1 = build_media_segment(1, &[FragmentTrackData::new(1, first_base, &f1)])
+            .expect("fragment 1 builds");
+        let seg2 = build_media_segment(2, &[FragmentTrackData::new(1, gapped_second_base, &f2)])
+            .expect("fragment 2 builds");
+
+        let mut file = init;
+        file.extend_from_slice(&seg1);
+        file.extend_from_slice(&seg2);
+
+        let media = Fmp4Demux::new()
+            .unpackage(&file)
+            .expect("demux gapped fMP4");
+        let track = &media.tracks[0];
+        assert_eq!(
+            track.samples.len(),
+            (FRAMES_PER_FRAGMENT * 2) as usize,
+            "both fragments' samples must be present"
+        );
+        assert_eq!(
+            track.start_decode_time, first_base,
+            "start_decode_time stays the FIRST fragment's anchor, not the last"
+        );
+
+        // The bite: the first post-gap sample must land on the second
+        // fragment's own declared tfdt, NOT on the running duration sum.
+        let first_post_gap = &track.samples[FRAMES_PER_FRAGMENT as usize];
+        assert_eq!(
+            first_post_gap.dts,
+            Some(gapped_second_base as i64),
+            "post-gap dts must come from the second fragment's tfdt \
+             ({gapped_second_base}), not the pure duration sum \
+             ({contiguous_second_base})"
+        );
+
+        // ...and so must every later sample in that fragment.
+        for (i, s) in track.samples[FRAMES_PER_FRAGMENT as usize..]
+            .iter()
+            .enumerate()
+        {
+            let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
+            assert_eq!(s.dts, Some(expected), "sample {i} after the gap");
+        }
+    }
+
+    /// Regression guard for the fix above: a **contiguous** two-fragment
+    /// stream (every `tfdt` exactly equal to the running duration sum) must
+    /// demux to exactly the same absolute dts sequence it always did —
+    /// re-seeding per fragment must be a no-op when there is no gap.
+    #[test]
+    fn contiguous_fmp4_dts_is_unchanged_by_the_per_fragment_tfdt_reseed() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+        const FRAMES: u32 = 3;
+
+        let spec = TrackSpec::new(
+            7,
+            TIMESCALE,
+            CodecConfig::Avc {
+                config: minimal_avc_config(),
+                width: 16,
+                height: 16,
+            },
+        );
+        let init = build_init_segment(core::slice::from_ref(&spec), TIMESCALE).unwrap();
+        let frames = |base: i64| -> Vec<Sample> {
+            (0..FRAMES)
+                .map(|i| {
+                    let nal = [0x41u8, 0xAA, 0xBB];
+                    let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+                    data.extend_from_slice(&nal);
+                    let dts = base + i64::from(i) * i64::from(FRAME_DUR);
+                    Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
+                })
+                .collect()
+        };
+        let second_base = u64::from(FRAMES * FRAME_DUR);
+        let f1 = frames(0);
+        let f2 = frames(second_base as i64);
+        let mut file = init;
+        file.extend_from_slice(
+            &build_media_segment(1, &[FragmentTrackData::new(7, 0, &f1)]).unwrap(),
+        );
+        file.extend_from_slice(
+            &build_media_segment(2, &[FragmentTrackData::new(7, second_base, &f2)]).unwrap(),
+        );
+
+        let media = Fmp4Demux::new().unpackage(&file).unwrap();
+        let got: Vec<i64> = media.tracks[0]
+            .samples
+            .iter()
+            .filter_map(|s| s.dts)
+            .collect();
+        let want: Vec<i64> = (0..FRAMES * 2)
+            .map(|i| i64::from(i) * i64::from(FRAME_DUR))
+            .collect();
+        assert_eq!(got, want, "a gapless stream must be unaffected by the fix");
+    }
+
+    // ── HlsPackager: no knowingly-wrong #EXTINF:0.000 ──────────────────────
+
+    /// A timestamp-less (section-carried) track has `duration: None` on every
+    /// sample and therefore no truthful `EXTINF` — it is omitted from the
+    /// playlist rather than rendered as `#EXTINF:0.000`, which RFC 8216
+    /// §4.3.2.1 defines as a real playback duration a player would honour.
+    #[test]
+    fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
+        const TIMESCALE: u32 = 90_000;
+        const FRAME_DUR: u32 = 3_000;
+
+        let timed = Track::new(
+            TrackSpec::new(
+                1,
+                TIMESCALE,
+                CodecConfig::Avc {
+                    config: minimal_avc_config(),
+                    width: 16,
+                    height: 16,
+                },
+            ),
+            (0..3)
+                .map(|i| {
+                    Sample::new(
+                        vec![0u8; 4],
+                        Some(i64::from(i) * i64::from(FRAME_DUR)),
+                        Some(i64::from(i) * i64::from(FRAME_DUR)),
+                        Some(FRAME_DUR),
+                        true,
+                    )
+                })
+                .collect::<Vec<_>>(),
+        );
+        // A section-carried data track: no dts, no pts, no duration — ever.
+        let sections = Track::new(
+            TrackSpec::new(
+                2,
+                TIMESCALE,
+                CodecConfig::Data {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: crate::ir::DataCarriage::Sections,
+                },
+            ),
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+        );
+
+        let playlist = HlsPackager::default()
+            .package(&Media::new(vec![timed, sections], TIMESCALE))
+            .expect("a Media with one timed track still packages");
+        let zero_extinf = playlist.lines().any(|l| {
+            l.strip_prefix("#EXTINF:")
+                .and_then(|rest| rest.trim_end_matches(',').parse::<f64>().ok())
+                .is_some_and(|secs| secs == 0.0)
+        });
+        assert!(
+            !zero_extinf,
+            "no zero-duration EXTINF may be emitted, got:\n{playlist}"
+        );
+        assert!(
+            !playlist.contains("seg2.m4s"),
+            "the timestamp-less track must be omitted entirely, got:\n{playlist}"
+        );
+        assert!(
+            playlist.contains("seg1.m4s"),
+            "the timed track must still be present, got:\n{playlist}"
+        );
+
+        // Every track timestamp-less => nothing truthful to render at all.
+        let only_sections = Track::new(
+            TrackSpec::new(
+                2,
+                TIMESCALE,
+                CodecConfig::Data {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: crate::ir::DataCarriage::Sections,
+                },
+            ),
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+        );
+        assert!(
+            HlsPackager::default()
+                .package(&Media::new(vec![only_sections], TIMESCALE))
+                .is_err(),
+            "an all-timestamp-less Media must error, not render an empty playlist"
+        );
     }
 }

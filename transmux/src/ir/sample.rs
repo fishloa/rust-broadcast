@@ -55,12 +55,26 @@ impl SampleFlags {
 /// it back — it replaces the write-only `SourceTiming` this crate carried
 /// before media plane step 2c, without pretending a debug field is a timing
 /// model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `#[non_exhaustive]`: construct with [`Provenance::new`] — a future
+/// container's own raw stamp (e.g. an RTP 32-bit timestamp alongside the
+/// TS/PES pair) should be an additive field, not a major bump.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct Provenance {
     /// Raw wire decode timestamp, before rollover unwrap.
     pub wire_dts: Option<u64>,
     /// Raw wire presentation timestamp, before rollover unwrap.
     pub wire_pts: Option<u64>,
+}
+
+impl Provenance {
+    /// Build a provenance record from a source container's raw, pre-unwrap
+    /// wire stamps. Pass `None` for a stamp the container did not carry —
+    /// never a fabricated value.
+    pub fn new(wire_dts: Option<u64>, wire_pts: Option<u64>) -> Self {
+        Self { wire_dts, wire_pts }
+    }
 }
 
 /// A single coded sample (access unit) fed to [`crate::pipeline::build_media_segment`].
@@ -190,6 +204,9 @@ impl Sample {
 }
 
 /// One track's samples for a single media segment.
+///
+/// `#[non_exhaustive]`: construct with [`FragmentTrackData::new`].
+#[non_exhaustive]
 pub struct FragmentTrackData<'a> {
     /// Track ID matching a [`crate::ir::TrackSpec`] from the init segment.
     pub track_id: u32,
@@ -197,4 +214,16 @@ pub struct FragmentTrackData<'a> {
     pub base_media_decode_time: u64,
     /// The samples for this fragment, in decode order.
     pub samples: &'a [Sample],
+}
+
+impl<'a> FragmentTrackData<'a> {
+    /// Build one track's fragment payload from its `tfdt` anchor and its
+    /// samples in decode order.
+    pub fn new(track_id: u32, base_media_decode_time: u64, samples: &'a [Sample]) -> Self {
+        Self {
+            track_id,
+            base_media_decode_time,
+            samples,
+        }
+    }
 }

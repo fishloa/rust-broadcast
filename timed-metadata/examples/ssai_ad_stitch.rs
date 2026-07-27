@@ -414,11 +414,11 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     for (i, &(lo, hi)) in video_ranges.iter().enumerate() {
         let base_media_decode_time =
             spliced_video.start_decode_time + cumulative(&spliced_video.samples, lo);
-        let frag = FragmentTrackData {
-            track_id: spliced_video.spec.track_id,
+        let frag = FragmentTrackData::new(
+            spliced_video.spec.track_id,
             base_media_decode_time,
-            samples: &spliced_video.samples[lo..hi],
-        };
+            &spliced_video.samples[lo..hi],
+        );
         let seg = if i == 1 {
             build_media_segment_with_events(
                 (i + 1) as u32,
@@ -435,11 +435,11 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     for (i, &(lo, hi)) in audio_ranges.iter().enumerate() {
         let base_media_decode_time =
             spliced_audio.start_decode_time + cumulative(&spliced_audio.samples, lo);
-        let frag = FragmentTrackData {
-            track_id: spliced_audio.spec.track_id,
+        let frag = FragmentTrackData::new(
+            spliced_audio.spec.track_id,
             base_media_decode_time,
-            samples: &spliced_audio.samples[lo..hi],
-        };
+            &spliced_audio.samples[lo..hi],
+        );
         audio_segments.push(build_media_segment((i + 1) as u32, &[frag])?);
     }
 

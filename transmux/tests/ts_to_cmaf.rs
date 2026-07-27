@@ -335,16 +335,8 @@ fn ts_to_cmaf_end_to_end() {
     let init_data = build_init_segment(&tracks, 1000).expect("build_init_segment must succeed");
 
     let fragment_tracks = [
-        FragmentTrackData {
-            track_id: 1,
-            base_media_decode_time: 0,
-            samples: &video_samples,
-        },
-        FragmentTrackData {
-            track_id: 2,
-            base_media_decode_time: 0,
-            samples: &audio_samples_vec,
-        },
+        FragmentTrackData::new(1, 0, &video_samples),
+        FragmentTrackData::new(2, 0, &audio_samples_vec),
     ];
     let media_data =
         build_media_segment(1, &fragment_tracks).expect("build_media_segment must succeed");

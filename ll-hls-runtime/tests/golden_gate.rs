@@ -358,11 +358,7 @@ async fn ll_hls_client_reference_reconstructs_decodable_stream() {
     // samples it emitted, NOT the origin's) into a real fMP4.
     let media_seg = transmux::build_media_segment(
         1,
-        &[FragmentTrackData {
-            track_id: DEFAULT_TRACK_ID,
-            base_media_decode_time: 0,
-            samples: &got_samples,
-        }],
+        &[FragmentTrackData::new(DEFAULT_TRACK_ID, 0, &got_samples)],
     )
     .expect("build a media segment from the client's own reconstructed samples");
     let mut reconstructed = init_bytes;
@@ -412,15 +408,9 @@ fn dropped_sample_changes_the_decoded_frame_count() {
 
     let dir = scratch_dir("ll-hls-golden-gate-mutation");
 
-    let full_media_seg = transmux::build_media_segment(
-        1,
-        &[FragmentTrackData {
-            track_id: spec.track_id,
-            base_media_decode_time: 0,
-            samples: &fed_samples,
-        }],
-    )
-    .expect("build full media segment");
+    let full_media_seg =
+        transmux::build_media_segment(1, &[FragmentTrackData::new(spec.track_id, 0, &fed_samples)])
+            .expect("build full media segment");
     let mut full = init.clone();
     full.extend_from_slice(&full_media_seg);
     let full_path = dir.join("full.mp4");
@@ -435,15 +425,9 @@ fn dropped_sample_changes_the_decoded_frame_count() {
     // structure intact -- isolates the frame-count bite from any unrelated
     // decode-error side effect a mid-stream drop could also cause.
     let dropped: Vec<Sample> = fed_samples[..full_count - 1].to_vec();
-    let dropped_media_seg = transmux::build_media_segment(
-        1,
-        &[FragmentTrackData {
-            track_id: spec.track_id,
-            base_media_decode_time: 0,
-            samples: &dropped,
-        }],
-    )
-    .expect("build media segment missing one sample");
+    let dropped_media_seg =
+        transmux::build_media_segment(1, &[FragmentTrackData::new(spec.track_id, 0, &dropped)])
+            .expect("build media segment missing one sample");
     let mut truncated = init;
     truncated.extend_from_slice(&dropped_media_seg);
     let truncated_path = dir.join("dropped.mp4");
@@ -590,15 +574,9 @@ async fn non_ll_full_segment_path_also_decodes() {
         );
     }
 
-    let media_seg = transmux::build_media_segment(
-        1,
-        &[FragmentTrackData {
-            track_id: spec.track_id,
-            base_media_decode_time: 0,
-            samples: &got_samples,
-        }],
-    )
-    .expect("build media segment from fallback-path samples");
+    let media_seg =
+        transmux::build_media_segment(1, &[FragmentTrackData::new(spec.track_id, 0, &got_samples)])
+            .expect("build media segment from fallback-path samples");
     let mut reconstructed = got_init;
     reconstructed.extend_from_slice(&media_seg);
 

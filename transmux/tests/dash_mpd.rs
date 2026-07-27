@@ -712,9 +712,9 @@ fn content_protection_and_inband_event_stream_hooks() {
 /// `TrackEncryption::samples.len()` matches the track's sample count (the
 /// documented invariant), even though DASH signalling never reads it.
 fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> TrackEncryption {
-    TrackEncryption {
+    TrackEncryption::new(
         scheme,
-        tenc: TrackEncryptionBox {
+        TrackEncryptionBox {
             version: 0,
             default_crypt_byte_block: 0,
             default_skip_byte_block: 0,
@@ -723,14 +723,14 @@ fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> T
             default_kid: kid,
             default_constant_iv: None,
         },
-        samples: vec![
+        vec![
             SampleEncryptionEntry {
                 initialization_vector: vec![0u8; 8],
                 subsamples: vec![],
             };
             sample_count
         ],
-    }
+    )
 }
 
 #[test]

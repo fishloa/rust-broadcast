@@ -359,7 +359,10 @@ impl SrtSession {
         self.demux.feed(&bytes);
         let mut out = Vec::new();
         while let Some(event) = self.demux.poll_event() {
-            if let DemuxEvent::Sample { track_id, sample } = event {
+            if let DemuxEvent::Sample {
+                track_id, sample, ..
+            } = event
+            {
                 if self.known_track_ids.contains(&track_id) {
                     out.push((track_id, sample));
                 }

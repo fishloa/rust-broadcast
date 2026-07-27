@@ -208,7 +208,9 @@ impl RtmpSource {
                 while let Some(ev) = demux.poll_event() {
                     match ev {
                         DemuxEvent::TrackAdded(spec) => specs.push(spec),
-                        DemuxEvent::Sample { track_id, sample } => {
+                        DemuxEvent::Sample {
+                            track_id, sample, ..
+                        } => {
                             pending_samples.push_back((track_id, sample));
                             saw_sample = true;
                         }
@@ -349,7 +351,10 @@ fn drain_known_samples(
 ) -> Vec<(u32, Sample)> {
     let mut out = Vec::new();
     while let Some(ev) = demux.poll_event() {
-        if let DemuxEvent::Sample { track_id, sample } = ev {
+        if let DemuxEvent::Sample {
+            track_id, sample, ..
+        } = ev
+        {
             if known_track_ids.contains(&track_id) {
                 out.push((track_id, sample));
             }

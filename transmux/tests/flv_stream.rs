@@ -141,7 +141,9 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
                     samples: Vec::new(),
                 });
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 let &i = index_by_id
                     .get(track_id)
                     .expect("Sample must follow its track's TrackAdded");
@@ -235,7 +237,9 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     keyframes: 0,
                 });
             }
-            DemuxEvent::Sample { track_id, sample } => {
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
                 let &i = index_by_id
                     .get(track_id)
                     .expect("Sample must follow its track's TrackAdded");
@@ -278,7 +282,9 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
     let whole_samples: Vec<_> = whole_events
         .iter()
         .filter_map(|e| match e {
-            DemuxEvent::Sample { track_id, sample } => Some((
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => Some((
                 *track_id,
                 sample.data.clone(),
                 sample.duration,
@@ -290,7 +296,9 @@ fn streaming_100_byte_chunks_match_whole_buffer_feed() {
     let chunked_samples: Vec<_> = chunked_events
         .iter()
         .filter_map(|e| match e {
-            DemuxEvent::Sample { track_id, sample } => Some((
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => Some((
                 *track_id,
                 sample.data.clone(),
                 sample.duration,

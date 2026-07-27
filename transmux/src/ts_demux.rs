@@ -496,8 +496,16 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 }
 
 /// Rescale an unwrapped 90 kHz PES-clock timestamp (ISO/IEC 13818-1 §2.4.3.7)
-/// into a track's own media timescale, floored (u128 math so a full 33-bit
+/// into a track's own media timescale, floored (i128 math so a full 33-bit
 /// anchor cannot overflow).
+///
+/// A **negative** unwrapped anchor is preserved, not clamped to zero. It is a
+/// legitimate value: reordering (or a capture that starts mid-GOP) across the
+/// 2^33 wrap boundary unwraps to a small negative absolute time, and every
+/// other track kind already carries that through to `Sample::dts` verbatim —
+/// clamping it only for audio (as this used to, via `.max(0) as u128`)
+/// fabricated `dts = 0` for the audio track alone and desynced it from the
+/// video it was muxed against.
 ///
 /// The PES clock is always 90 kHz, but an audio track's IR timescale is its
 /// **sample rate** (`TrackSpec::timescale`), and since media plane step 2c
@@ -508,14 +516,15 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 /// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
 /// opaque `Data`) this is the identity.
 fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
-    let base = anchor_90k.max(0) as u128;
-    let ts = timescale.max(1) as u128;
-    let scaled = if ts == VIDEO_TIMESCALE as u128 {
-        base
+    let ts = timescale.max(1) as i128;
+    let scaled = if ts == VIDEO_TIMESCALE as i128 {
+        anchor_90k
     } else {
-        (base * ts) / VIDEO_TIMESCALE as u128
+        // `div_euclid` (not `/`, which truncates toward zero) keeps the
+        // documented floor semantics on both sides of zero.
+        (anchor_90k * ts).div_euclid(VIDEO_TIMESCALE as i128)
     };
-    scaled.min(i64::MAX as u128) as i64
+    to_ticks(scaled)
 }
 
 /// Whether an MPEG-2 video access unit is a random-access point: it carries a
@@ -780,6 +789,60 @@ fn section_body<'a>(section: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
     Ok(&section[SECTION_HEADER_LEN..end - CRC32_LEN])
 }
 
+/// Validate a long-form PSI section's trailing `CRC_32` (ISO/IEC 13818-1
+/// §2.4.4.1) — the gate every PAT/PMT section must clear *before* anything
+/// acts on it.
+///
+/// PMT application is **destructive** (issue #774 turned it into a track-set
+/// diff that tears a live track down and reassigns its `track_id`), and a PAT
+/// entry binds a PID to a `program_number` that every later PMT on that PID is
+/// cross-checked against — so a single flipped bit in a version byte or an ES
+/// loop must never be believed. Both tables fix `section_syntax_indicator` at
+/// `1` (§2.4.4.5 Table 2-30 / §2.4.4.9 Table 2-33), i.e. both always carry the
+/// CRC this checks; a PAT/PMT section that clears the bit is malformed and
+/// carries no checkable trailer, so it is rejected here rather than acted on
+/// unverified.
+///
+/// A rejected section is **dropped silently**: DEMUX is lenient — a corrupt
+/// section is a discarded section, not a stream error — and, critically, it
+/// must not disturb any already-applied state (no `TrackRemoved`, no
+/// `last_applied_version` bump, no PMT-PID rebinding).
+///
+/// The CRC itself comes from [`broadcast_common::crc32_mpeg2`] (the shared
+/// CRC-32/MPEG-2 every PSI trailer in this workspace uses — never hand-rolled
+/// here), computed over `table_id` through the last table byte and compared
+/// against the big-endian trailer.
+fn psi_section_crc_ok(section: &[u8]) -> bool {
+    if section.len() < SECTION_HEADER_LEN + CRC32_LEN {
+        return false;
+    }
+    if section[1] & SECTION_SYNTAX_INDICATOR_BIT == 0 {
+        return false;
+    }
+    // `SectionReassembler` hands out exactly `3 + section_length` bytes, so
+    // the declared length and the slice length already agree; re-deriving it
+    // keeps this correct for any other caller and bounds the slice either way.
+    let section_length =
+        (((section[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | section[2] as usize;
+    let total = 3 + section_length;
+    if total > section.len() || total < SECTION_HEADER_LEN + CRC32_LEN {
+        return false;
+    }
+    let (covered, trailer) = section[..total].split_at(total - CRC32_LEN);
+    let declared = u32::from_be_bytes([trailer[0], trailer[1], trailer[2], trailer[3]]);
+    broadcast_common::crc32_mpeg2::compute(covered) == declared
+}
+
+/// A long-form PSI section's `current_next_indicator` (§2.4.4.1, byte 5 bit 0):
+/// `true` when the table is applicable now, `false` for a not-yet-applicable
+/// "next" table. Only ever called on a section that already cleared
+/// [`psi_section_crc_ok`], which guarantees byte 5 exists.
+fn section_current_next(section: &[u8]) -> bool {
+    section
+        .get(5)
+        .is_some_and(|b| b & CURRENT_NEXT_INDICATOR_BIT != 0)
+}
+
 // ── Streaming core (issue #555) ─────────────────────────────────────────────
 
 /// One buffered access unit awaiting codec-config recovery, held until the
@@ -893,6 +956,7 @@ struct AudioAnchor {
     seed: Option<AudioAnchorSeed>,
 }
 
+#[derive(Clone, Copy)]
 struct AudioAnchorSeed {
     /// Track-tick cursor for the *next* frame's dts.
     next_dts: i64,
@@ -908,20 +972,53 @@ struct AudioAnchorSeed {
     ticks_since_anchor: i64,
 }
 
-/// Discontinuity threshold for the audio dts/pts anchor (issue B5): more than
-/// one intrinsic sample period's worth of 90 kHz ticks between the wire PES
-/// timestamp and where the frame-exact accumulator predicts it should be is
-/// treated as a genuine gap, not the sub-tick rounding noise inherent in the
-/// 90 kHz <-> sample-rate conversion (floored to at least 2 ticks so even a
-/// sample rate above 45 kHz gets a non-degenerate threshold).
+/// Audio dts/pts re-anchor threshold, in milliseconds of 90 kHz clock —
+/// see [`audio_discontinuity_threshold_90k`] for the derivation.
+const AUDIO_REANCHOR_THRESHOLD_MS: i128 = 20;
+
+/// Discontinuity threshold for the audio dts/pts anchor (issue B5): a wire PES
+/// timestamp further than this from where the frame-exact accumulator predicts
+/// it should be is a genuine gap (splice, encoder restart, PID reuse); anything
+/// closer is muxer noise the anchor absorbs silently.
+///
+/// # Derivation
+///
+/// The original threshold was **one intrinsic sample period** (`ceil(90000 /
+/// sample_rate)`, i.e. 3 ticks at 44.1 kHz). That is below what real muxers
+/// actually produce, so it fired constantly on clean streams. An AAC frame at
+/// 44.1 kHz is `1024 / 44100 s = 2089.795…` ticks of 90 kHz; a muxer that
+/// stamps each PES with a constant *integer* increment (2090 is what the
+/// common `1024 * 90000 / 44100` rounding yields) therefore accrues
+/// `+0.204…` ticks per frame **by construction, on a perfectly continuous
+/// stream** — crossing a 3-tick threshold after ~15 frames and every ~15
+/// frames thereafter. Non-frame-aligned MP2 PES (issue #638) crosses it on
+/// essentially every access unit. So the B5 anchor was inert and
+/// [`DiscontinuityKind::TimelineReanchored`] was pure noise.
+///
+/// The bound instead comes from what a drift of this size *means*: audio that
+/// is out of step with the media timeline by less than roughly 15–20 ms is
+/// below the lip-sync detectability floor the broadcast recommendations work
+/// to (ITU-R BT.1359-1's subjective detectability limits; ATSC A/85's ±15 ms
+/// production tolerance), and re-anchoring inside that band trades a real,
+/// visible `Discontinuity` event for an inaudible correction. Above it, the
+/// wire clock has genuinely moved and the accumulator must follow it.
+/// [`AUDIO_REANCHOR_THRESHOLD_MS`] = 20 ms = **1800 ticks** of 90 kHz, which
+/// the constant-rounding muxer above reaches only after ~8800 frames (~3.4
+/// minutes) — at which point the accumulated error really is 20 ms and
+/// re-anchoring is the correct call, not a false positive.
+///
+/// Floored at two intrinsic sample periods so a degenerate/absurd sample rate
+/// (below ~100 Hz, where one frame period exceeds the millisecond bound) still
+/// gets a threshold wider than its own quantisation noise.
 ///
 /// `pub(crate)`: also used by [`crate::ps_demux::build_ac3_track`], which has
 /// the identical 90 kHz-PES-stamp-vs-sample_rate-track-clock re-anchoring
 /// problem (found via the FIX C invariant test, media plane step-2 fix
 /// wave 1).
 pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: u32) -> i128 {
-    let sample_rate = sample_rate.max(1) as i128;
-    ((VIDEO_TIMESCALE as i128 + sample_rate - 1) / sample_rate).max(2)
+    let one_sample_period = (VIDEO_TIMESCALE as u128).div_ceil(sample_rate.max(1) as u128) as i128;
+    let ms_bound = (VIDEO_TIMESCALE as i128 * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
+    ms_bound.max(one_sample_period * 2)
 }
 
 /// A completed-but-not-yet-durationed sample, held until the *next* access
@@ -1267,7 +1364,12 @@ fn emit_audio_au(
     // there is no cursor yet or it has drifted beyond the discontinuity
     // threshold — a genuine gap, not the ±1-tick rounding noise the old
     // per-AU rescale mistook for one.
-    let fresh_anchor = match &anchor.seed {
+    // Snapshot the (all-`Copy`) seed up front, so every later "is there a
+    // cursor?" decision reads the same value without needing a second
+    // borrow-and-`expect` of `anchor.seed` to restate an invariant the
+    // compiler cannot see.
+    let seed = anchor.seed;
+    let fresh_anchor = match &seed {
         None => true,
         Some(seed) => {
             let expected_dts_uw = seed.anchor_dts_uw
@@ -1279,24 +1381,19 @@ fn emit_audio_au(
     // Only signal a discontinuity when re-anchoring an ALREADY-seeded track
     // (the very first access unit establishes the anchor, it doesn't
     // "discontinue" from anything).
-    if fresh_anchor && anchor.seed.is_some() {
+    if fresh_anchor && seed.is_some() {
         events.push_back(DemuxEvent::Discontinuity {
             track: Some(track_id),
             kind: DiscontinuityKind::TimelineReanchored,
             provenance: EventProvenance::default(),
         });
     }
-    let (dts0, pts0) = if fresh_anchor {
-        (
+    let (dts0, pts0) = match (fresh_anchor, &seed) {
+        (false, Some(seed)) => (seed.next_dts, seed.next_pts),
+        _ => (
             rescale_to_track(dts_uw, sample_rate),
             rescale_to_track(pts_uw, sample_rate),
-        )
-    } else {
-        let seed = anchor
-            .seed
-            .as_ref()
-            .expect("fresh_anchor is false only when seed is Some");
-        (seed.next_dts, seed.next_pts)
+        ),
     };
 
     let mut elapsed = 0u64;
@@ -1378,18 +1475,13 @@ fn emit_audio_au(
     // (re-)established (this AU's own values, on a fresh anchor; carried
     // forward otherwise) — they exist purely to predict the *next* AU's
     // expected wire position for drift detection, never to derive a dts/pts.
-    let (anchor_dts_uw, anchor_pts_uw, ticks_since_anchor) = if fresh_anchor {
-        (dts_uw, pts_uw, 0i64)
-    } else {
-        let seed = anchor
-            .seed
-            .as_ref()
-            .expect("fresh_anchor is false only when seed is Some");
-        (
+    let (anchor_dts_uw, anchor_pts_uw, ticks_since_anchor) = match (fresh_anchor, &seed) {
+        (false, Some(seed)) => (
             seed.anchor_dts_uw,
             seed.anchor_pts_uw,
             seed.ticks_since_anchor,
-        )
+        ),
+        _ => (dts_uw, pts_uw, 0i64),
     };
     anchor.seed = Some(AudioAnchorSeed {
         next_dts: dts0 + elapsed as i64,
@@ -1501,13 +1593,30 @@ fn finalize_probe(
     probe: &mut ConfigProbe,
     backlog: &[BufferedAu],
 ) -> Option<(CodecConfig, u32, LiveKind)> {
-    let latest = backlog
-        .last()
-        .expect("finalize_probe is only called after pushing the latest AU");
+    // The caller pushes the newest access unit immediately before calling
+    // this, so the backlog is never empty here — degrade to "not resolvable
+    // yet" rather than panicking if that ever stops holding.
+    let latest = backlog.last()?;
     match probe {
         ConfigProbe::Data => {
             let Codec::Data(stream_type) = codec else {
-                unreachable!("ConfigProbe::Data is only created for Codec::Data")
+                // Probe/codec mismatch. Unreachable by construction today: a
+                // PMT version change that reclassifies a PID's `stream_type`
+                // tears the PID down and re-registers it
+                // (`StreamingTsDemux::apply_pmt_diff`), which rebuilds the
+                // `ConfigProbe` — and the `Carrier` — for the *new* codec,
+                // rather than writing `stream.codec` in place under a probe
+                // built for the old one.
+                //
+                // It is not asserted, though. This is a
+                // `#![forbid(unsafe_code)]` library parsing untrusted remote
+                // broadcast input, so a broken invariant must degrade, never
+                // abort the host process: returning `None` simply leaves the
+                // PID unresolved, and the existing abandonment paths conclude
+                // it — `MAX_PROBE_BACKLOG_BYTES` while running, or `finish()`'s
+                // `TrackAbandoned { reason: AbandonReason::ConfigUnrecoverable }`
+                // at end of input.
+                return None;
             };
             let carriage = data_carriage(stream_type);
             let kind = match carriage {
@@ -1952,10 +2061,13 @@ fn advance_track(
     dts_uw: i128,
     events: &mut VecDeque<DemuxEvent>,
 ) {
-    let track = stream
-        .track
-        .take()
-        .expect("StreamState.track is always populated outside this function");
+    // `StreamState.track` is `None` only transiently, inside this function and
+    // `try_promote_ready` — never on entry. Degrade (drop this access unit)
+    // instead of panicking if that ever stops holding: this crate is
+    // `#![forbid(unsafe_code)]` and must not abort on remote input.
+    let Some(track) = stream.track.take() else {
+        return;
+    };
     let new_track = match track {
         TrackState::Live(mut live) => {
             push_live_au(&mut live, &data, pts_uw, dts_uw, events);
@@ -2187,6 +2299,20 @@ pub struct StreamingTsDemux {
     /// by [`MAX_UNATTRIBUTED_BYTES`] (see `unattributed_order` /
     /// `unattributed_bytes`).
     unattributed: BTreeMap<u16, VecDeque<(bool, Vec<u8>)>>,
+    /// ES PIDs whose declaration was withdrawn by an applied PMT diff, and
+    /// which no PMT has declared since. Payload arriving on such a PID is
+    /// dropped outright rather than buffered into `unattributed`: that buffer
+    /// is strictly a *pre*-registration replay window, and replaying
+    /// post-removal orphan traffic into a later re-registration would deliver
+    /// stale bytes as the re-added track's first samples and anchor its
+    /// `start_decode_time` in the past. Cleared per PID by
+    /// [`Self::register_new_es`]. Bounded by the 13-bit PID space.
+    removed_pids: BTreeSet<u16>,
+    /// Which PMT PIDs currently declare each elementary PID — the refcount
+    /// behind PMT-diff removal. `streams`/`es_seen` are global but `applied_es`
+    /// is per-PMT, so without this a PID declared by two programs is torn down
+    /// the moment *either* program's PMT stops listing it.
+    es_declarers: BTreeMap<u16, BTreeSet<u16>>,
     /// One entry per buffered `unattributed` payload, in insertion order — the
     /// FIFO eviction queue backing [`MAX_UNATTRIBUTED_BYTES`]. Stale entries
     /// (for a PID already replayed into `streams`) are skipped harmlessly when
@@ -2251,6 +2377,8 @@ impl StreamingTsDemux {
             es_seen: BTreeSet::new(),
             streams: BTreeMap::new(),
             unattributed: BTreeMap::new(),
+            removed_pids: BTreeSet::new(),
+            es_declarers: BTreeMap::new(),
             unattributed_order: VecDeque::new(),
             unattributed_bytes: 0,
             codec_order: Vec::new(),
@@ -2327,14 +2455,20 @@ impl StreamingTsDemux {
         if pid == PAT_PID {
             self.pat_reasm.feed(payload, pusi);
             while let Some(section) = self.pat_reasm.pop_section() {
+                // A corrupt PAT must never rebind a PID: an ES PID wrongly
+                // landing in `pmt_reasm` shadows `streams` for the rest of the
+                // stream (see `psi_section_crc_ok`).
+                if !psi_section_crc_ok(&section) {
+                    continue;
+                }
+                // A "next" PAT (§2.4.4.1) is parsed but not applied — the same
+                // `current_next_indicator == 1` rule PMT application uses.
+                if !section_current_next(&section) {
+                    continue;
+                }
                 if let Ok(programs) = parse_pat(&section) {
                     for (program_number, pmt_pid) in programs {
-                        self.pmt_reasm.entry(pmt_pid).or_insert_with(|| PmtState {
-                            reasm: SectionReassembler::default(),
-                            program_number,
-                            last_applied_version: None,
-                            applied_es: BTreeSet::new(),
-                        });
+                        self.learn_pmt_pid(pmt_pid, program_number);
                     }
                 }
             }
@@ -2350,6 +2484,14 @@ impl StreamingTsDemux {
             let program_number = pmt_state.program_number;
             let mut to_apply: Option<Vec<(u16, Codec, Vec<u8>)>> = None;
             for section in &sections {
+                // CRC first, before *anything* observable happens: PMT
+                // application is destructive (it can tear a live track down
+                // and reassign track_ids), and even bumping
+                // `last_applied_version` off a corrupt section would suppress
+                // the genuine version that follows. See `psi_section_crc_ok`.
+                if !psi_section_crc_ok(section) {
+                    continue;
+                }
                 let Ok(header) = parse_pmt_section_header(section) else {
                     continue;
                 };
@@ -2382,7 +2524,7 @@ impl StreamingTsDemux {
             if let Some(es_list) = to_apply {
                 let old_applied_es = pmt_state.applied_es.clone();
                 let new_applied_es: BTreeSet<u16> = es_list.iter().map(|(p, _, _)| *p).collect();
-                self.apply_pmt_diff(&old_applied_es, es_list);
+                self.apply_pmt_diff(pid, &old_applied_es, es_list);
                 if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
                     pmt_state.applied_es = new_applied_es;
                 }
@@ -2410,7 +2552,7 @@ impl StreamingTsDemux {
             for s in sections {
                 on_completed_section(stream, pid, &s, &mut self.events);
             }
-        } else if pid != NULL_PACKET_PID {
+        } else if pid != NULL_PACKET_PID && !self.removed_pids.contains(&pid) {
             self.unattributed
                 .entry(pid)
                 .or_default()
@@ -2420,6 +2562,43 @@ impl StreamingTsDemux {
             self.evict_unattributed();
         }
         self.try_promote_ready();
+    }
+
+    /// Bind `pmt_pid` to the `program_number` a currently-applicable PAT
+    /// (§2.4.4.3) just listed it under.
+    ///
+    /// The binding is **updatable**, not write-once. A PAT may legitimately
+    /// remap a PMT PID to a different program mid-stream, and the previous
+    /// `entry().or_insert_with()` froze the first `program_number` ever seen —
+    /// after which the defensive `header.program_number != program_number`
+    /// cross-check in [`Self::process_packet`] rejected *every* PMT on that
+    /// PID forever, silently demuxing the program to zero tracks.
+    ///
+    /// A re-bind also clears `last_applied_version`: the version counter
+    /// belongs to the program's PMT, not to the PID, so the new program's PMT
+    /// may legitimately re-use a `version_number` the old program had already
+    /// applied. `applied_es` is deliberately kept — it is the diff baseline of
+    /// what this PID last put into `streams`, and the incoming PMT must still
+    /// be diffed against it so the outgoing program's tracks are torn down.
+    fn learn_pmt_pid(&mut self, pmt_pid: u16, program_number: u16) {
+        match self.pmt_reasm.get_mut(&pmt_pid) {
+            Some(state) if state.program_number != program_number => {
+                state.program_number = program_number;
+                state.last_applied_version = None;
+            }
+            Some(_) => {}
+            None => {
+                self.pmt_reasm.insert(
+                    pmt_pid,
+                    PmtState {
+                        reasm: SectionReassembler::default(),
+                        program_number,
+                        last_applied_version: None,
+                        applied_es: BTreeSet::new(),
+                    },
+                );
+            }
+        }
     }
 
     /// Enforce [`MAX_UNATTRIBUTED_BYTES`] by FIFO-evicting the oldest buffered
@@ -2451,6 +2630,10 @@ impl StreamingTsDemux {
     /// fires once this PID reaches its PMT-declaration-order turn in
     /// [`Self::try_promote_ready`].
     fn register_new_es(&mut self, es_pid: u16, codec: Codec, descriptors: Vec<u8>) {
+        // A PID declared again is no longer an orphan: lift the post-removal
+        // buffering blacklist (see `remove_track`) so its fresh traffic is
+        // routed normally from here on.
+        self.removed_pids.remove(&es_pid);
         if matches!(codec, Codec::Data(_)) {
             self.data_order.push(es_pid);
         } else {
@@ -2513,11 +2696,26 @@ impl StreamingTsDemux {
     /// `track_id` a consumer has seen via `TrackAdded`) — a PID removed while
     /// still `Probing`/`Parked`/`Abandoned` was never surfaced to a consumer
     /// in the first place, so there is nothing to report removing.
+    ///
+    /// Also purges — and then blacklists — this PID's `unattributed` backlog.
+    /// That buffer exists solely to replay payloads that arrived *before* a
+    /// PID's very first PMT registration; anything on a PID the declaration has
+    /// since dropped is orphan traffic. Left in place it would accumulate to
+    /// [`MAX_UNATTRIBUTED_BYTES`] and then be replayed as the *re-added*
+    /// track's first samples, anchoring its `start_decode_time` in the past.
+    /// The blacklist is lifted by [`Self::register_new_es`] the moment a PMT
+    /// declares the PID again.
     fn remove_track(&mut self, pid: u16) {
         self.es_seen.remove(&pid);
         self.codec_order.retain(|&p| p != pid);
         self.data_order.retain(|&p| p != pid);
         self.resolved.remove(&pid);
+        if let Some(buffered) = self.unattributed.remove(&pid) {
+            for (_, payload) in &buffered {
+                self.unattributed_bytes = self.unattributed_bytes.saturating_sub(payload.len());
+            }
+        }
+        self.removed_pids.insert(pid);
         if let Some(stream) = self.streams.remove(&pid) {
             if let Some(TrackState::Live(live)) = stream.track {
                 self.events.push_back(DemuxEvent::TrackRemoved {
@@ -2540,6 +2738,7 @@ impl StreamingTsDemux {
     /// genuinely new `version_number` — a carousel repeat never reaches here.
     fn apply_pmt_diff(
         &mut self,
+        pmt_pid: u16,
         old_applied_es: &BTreeSet<u16>,
         es_list: Vec<(u16, Codec, Vec<u8>)>,
     ) {
@@ -2551,21 +2750,81 @@ impl StreamingTsDemux {
             .filter(|p| !new_pids.contains(p))
             .collect();
         for pid in removed {
-            self.remove_track(pid);
+            // Refcounted by declaring PMT (`es_declarers`): the same
+            // elementary PID may legally appear in more than one program's
+            // PMT (a shared audio/subtitle component), and `streams`/`es_seen`
+            // are global while `applied_es` is per-PMT — so one program
+            // dropping the PID must not tear down a stream another program
+            // still declares. Only the *last* declarer's drop removes it.
+            let declarers = self.es_declarers.get_mut(&pid);
+            let still_declared = match declarers {
+                Some(declarers) => {
+                    declarers.remove(&pmt_pid);
+                    let empty = declarers.is_empty();
+                    if empty {
+                        self.es_declarers.remove(&pid);
+                    }
+                    !empty
+                }
+                None => false,
+            };
+            if !still_declared {
+                self.remove_track(pid);
+            }
         }
 
         for (es_pid, codec, descriptors) in es_list {
+            self.es_declarers.entry(es_pid).or_default().insert(pmt_pid);
             if self.es_seen.insert(es_pid) {
                 self.register_new_es(es_pid, codec, descriptors);
                 continue;
             }
+            // Compare through a shared borrow first, then act — the two
+            // outcomes need different (and mutually exclusive) mutable
+            // borrows of `self`.
+            let Some(existing) = self.streams.get(&es_pid) else {
+                continue;
+            };
+            let codec_changed = existing.codec != codec;
+            let descriptors_changed = existing.descriptors != descriptors;
+            if !codec_changed && !descriptors_changed {
+                continue;
+            }
+            if codec_changed {
+                // A reclassified `stream_type` is a **different elementary
+                // stream**, not an in-place relabel. Writing `stream.codec`
+                // through (as this used to) left three pieces of derived state
+                // built for the OLD codec:
+                //
+                //  * the `ConfigProbe` — e.g. `stream_type` 0x06 gaining an
+                //    AC-3 descriptor turns `Codec::Data(0x06)` into
+                //    `Codec::Ac3` while `ConfigProbe::Data` remains, which
+                //    used to reach an `unreachable!` in `finalize_probe`;
+                //  * the `Carrier` — ISO/IEC 13818-1 Table 2-34 splits
+                //    `stream_type` into PES- and section-carried families, and
+                //    feeding one family's bytes to the other's reassembler
+                //    (0x86 → 0x1B: H.264 PES into a `SectionReassembler`)
+                //    silently yields nothing while the track claims to exist;
+                //  * any buffered access units, decoded under the old
+                //    framing.
+                //
+                // Teardown-and-re-register rebuilds all three in one move:
+                // `remove_track` drops the stream (emitting `TrackRemoved` if
+                // it had reached `Live`) and `register_new_es` rebuilds
+                // `initial_carrier`/`initial_probe` for the new codec.
+                self.remove_track(es_pid);
+                // `es_seen` is the "currently declared" set, which
+                // `remove_track` clears — but this PID *is* still declared,
+                // just as something else.
+                self.es_seen.insert(es_pid);
+                self.register_new_es(es_pid, codec, descriptors);
+                continue;
+            }
+            // Descriptors-only change: nothing derived from the codec is
+            // stale, so the track keeps its identity and is updated in place.
             let Some(stream) = self.streams.get_mut(&es_pid) else {
                 continue;
             };
-            if stream.codec == codec && stream.descriptors == descriptors {
-                continue;
-            }
-            stream.codec = codec;
             stream.descriptors = descriptors.clone();
             if let Some(TrackState::Live(live)) = stream.track.as_ref() {
                 let spec = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
@@ -2596,10 +2855,11 @@ impl StreamingTsDemux {
             let Some(stream) = self.streams.get_mut(&next_pid) else {
                 break;
             };
-            let track = stream
-                .track
-                .take()
-                .expect("StreamState.track is always populated outside this function");
+            // See `advance_track`: `track` is `None` only transiently, inside
+            // these two functions. Degrade rather than panic.
+            let Some(track) = stream.track.take() else {
+                break;
+            };
             match track {
                 TrackState::Parked {
                     config,
@@ -3364,6 +3624,174 @@ mod tests {
             saw_config_unrecoverable,
             "expected TrackAbandoned{{ConfigUnrecoverable}} once finish() concludes PID A's \
              config will never resolve"
+        );
+    }
+
+    /// A negative unwrapped anchor is a legitimate value — reordering (or a
+    /// capture starting mid-GOP) across the 2^33 boundary unwraps to a small
+    /// negative absolute time — and every 90 kHz track kind carries it through
+    /// verbatim. Rescaling into an audio track's own sample-rate timescale must
+    /// not be the one path that clamps it to `0`, which fabricated `dts = 0`
+    /// for the audio track alone and desynced it from the video it was muxed
+    /// against.
+    #[test]
+    fn rescale_to_track_preserves_a_negative_anchor_for_audio_as_it_does_for_video() {
+        const SAMPLE_RATE: u32 = 48_000;
+        /// One second before zero, on the 90 kHz PES clock.
+        const NEGATIVE_90K: i128 = -90_000;
+
+        assert_eq!(
+            rescale_to_track(NEGATIVE_90K, VIDEO_TIMESCALE),
+            -90_000,
+            "the 90 kHz identity path already preserved this"
+        );
+        assert_eq!(
+            rescale_to_track(NEGATIVE_90K, SAMPLE_RATE),
+            -48_000,
+            "the audio rescale must preserve it too — one second before zero is \
+             -48000 ticks at 48 kHz, not 0"
+        );
+        // Floor semantics hold on both sides of zero (what the doc claims).
+        assert_eq!(rescale_to_track(-1, SAMPLE_RATE), -1);
+        assert_eq!(rescale_to_track(1, SAMPLE_RATE), 0);
+    }
+
+    // ── Audio re-anchor threshold (issue B5) ───────────────────────────────
+
+    /// One 44.1 kHz stereo AAC-LC access unit: a real ADTS header (built by
+    /// this crate's own `aac_asc::build_adts_header`, ISO/IEC 13818-7 §6.2,
+    /// `sampling_frequency_index = 4` = 44100 Hz) plus filler payload. Content
+    /// is irrelevant here — this test is about the timestamp anchor, and
+    /// `emit_audio_au` only needs `split_adts_frames` to find the frame.
+    fn aac_44100_access_unit() -> Vec<u8> {
+        /// AAC-LC: `profile = audio_object_type - 1 = 1`.
+        const ADTS_PROFILE_AAC_LC: u8 = 1;
+        /// `sampling_frequency_index` for 44100 Hz (ISO/IEC 14496-3 Table 1.16).
+        const SFI_44100: u8 = 4;
+        /// `channel_configuration` = 2 (stereo).
+        const CHANNELS_STEREO: u8 = 2;
+        const PAYLOAD_BYTES: usize = 128;
+
+        let frame_len = (ADTS_HEADER_SIZE + PAYLOAD_BYTES) as u16;
+        let header = crate::aac_asc::build_adts_header(
+            ADTS_PROFILE_AAC_LC,
+            SFI_44100,
+            CHANNELS_STEREO,
+            frame_len,
+        );
+        let mut au = header.to_vec();
+        au.resize(ADTS_HEADER_SIZE + PAYLOAD_BYTES, 0x21);
+        au
+    }
+
+    /// PROVENANCE: synthesised, deliberately. The case under test is a
+    /// **constant integer PES increment** at 44.1 kHz, and no committed
+    /// capture here carries one — `fixtures/ts/h264_aac.ts` is 48 kHz, where
+    /// 1024 samples is exactly 1920 ticks of 90 kHz and this class of drift
+    /// cannot occur at all. The ADTS frames come from the crate's own
+    /// spec-correct header builder, not hand-written bytes.
+    ///
+    /// The bug (issue B5 follow-up): the threshold was one intrinsic sample
+    /// period — 3 ticks at 44.1 kHz — while `1024/44100 s` is `2089.795…`
+    /// ticks, so a muxer stamping the rounded constant `2090` drifts `+0.204…`
+    /// ticks per frame *on a perfectly continuous stream* and crossed the
+    /// threshold roughly every 15 frames. `TimelineReanchored` was pure noise
+    /// and the anchor was effectively inert.
+    #[test]
+    fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
+        /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
+        const PES_INCREMENT_TICKS: i128 = 2090;
+        const SAMPLE_RATE: u32 = 44_100;
+        /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
+        /// the old 3-tick threshold (which would have fired ~34 times), far
+        /// short of the 1800-tick (20 ms) bound the fix derives.
+        const FRAMES: i128 = 500;
+
+        let au = aac_44100_access_unit();
+        let mut anchor = AudioAnchor::default();
+        let mut events: VecDeque<DemuxEvent> = VecDeque::new();
+        for n in 0..FRAMES {
+            let ts = n * PES_INCREMENT_TICKS;
+            emit_audio_au(
+                &AudioKind::Aac,
+                SAMPLE_RATE,
+                &mut anchor,
+                &au,
+                ts,
+                ts,
+                1,
+                &mut events,
+            );
+        }
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Sample { .. })),
+            "sanity: the synthesised ADTS frames must actually split into samples"
+        );
+        let reanchors = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::Discontinuity {
+                        kind: DiscontinuityKind::TimelineReanchored,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            reanchors, 0,
+            "a constant-increment 44.1 kHz stream is continuous — the \
+             rounding drift a real muxer accrues by construction must never be \
+             reported as a discontinuity"
+        );
+    }
+
+    /// The other half of the threshold contract: a **genuine** timeline gap
+    /// (an encoder restart / splice) must still be reported, exactly once.
+    #[test]
+    fn a_real_timeline_gap_emits_exactly_one_reanchor() {
+        const PES_INCREMENT_TICKS: i128 = 2090;
+        const SAMPLE_RATE: u32 = 44_100;
+        const FRAMES_BEFORE: i128 = 50;
+        const FRAMES_AFTER: i128 = 50;
+        /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.
+        const GAP_TICKS: i128 = 180_000;
+
+        let au = aac_44100_access_unit();
+        let mut anchor = AudioAnchor::default();
+        let mut events: VecDeque<DemuxEvent> = VecDeque::new();
+        let emit = |ts: i128, anchor: &mut AudioAnchor, events: &mut VecDeque<DemuxEvent>| {
+            emit_audio_au(&AudioKind::Aac, SAMPLE_RATE, anchor, &au, ts, ts, 1, events);
+        };
+        for n in 0..FRAMES_BEFORE {
+            emit(n * PES_INCREMENT_TICKS, &mut anchor, &mut events);
+        }
+        let resume = FRAMES_BEFORE * PES_INCREMENT_TICKS + GAP_TICKS;
+        for n in 0..FRAMES_AFTER {
+            emit(resume + n * PES_INCREMENT_TICKS, &mut anchor, &mut events);
+        }
+
+        let reanchors = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::Discontinuity {
+                        kind: DiscontinuityKind::TimelineReanchored,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(
+            reanchors, 1,
+            "one genuine gap must produce exactly one TimelineReanchored — not \
+             zero (the anchor silently absorbing a real splice) and not one \
+             per following access unit"
         );
     }
 

@@ -49,10 +49,11 @@ pub enum DiscontinuityKind {
     /// folded into this one).
     Signalled,
     /// A live audio track's frame-exact dts/pts anchor drifted from the wire
-    /// PES clock by more than one intrinsic sample period's worth of ticks
-    /// and was re-anchored — a genuine gap (splice, encoder restart), not the
-    /// sub-tick 90 kHz/sample-rate rounding noise the anchor otherwise
-    /// absorbs silently.
+    /// PES clock past the re-anchor threshold and was re-anchored — a genuine
+    /// gap (splice, encoder restart), not the 90 kHz/sample-rate rounding
+    /// drift a real muxer accrues by construction, which the anchor absorbs
+    /// silently. See `ts_demux`'s `audio_discontinuity_threshold_90k` for the
+    /// threshold and its derivation.
     TimelineReanchored,
     /// A per-PID buffer cap was exceeded and the in-flight payload was
     /// dropped to keep memory bounded (e.g. [`crate::ts_demux::StreamingTsDemux`]'s
@@ -153,6 +154,7 @@ pub enum DemuxEvent {
     /// raised for a track that had already fired [`DemuxEvent::TrackAdded`]
     /// (i.e. a real `track_id` exists) — see the type-level "Removal
     /// semantics" note above.
+    #[non_exhaustive]
     TrackRemoved {
         /// The removed track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
         track_id: u32,
@@ -165,6 +167,7 @@ pub enum DemuxEvent {
     /// is `None`: abandonment always happens *before* a track_id would be
     /// assigned (config recovery — and therefore promotion — never
     /// completed), never fabricated for a track a consumer has already seen.
+    #[non_exhaustive]
     TrackAbandoned {
         /// Always `None` today (see the field doc) — carried as `Option` so
         /// a future abandonment path that *does* have an assigned track_id
@@ -179,6 +182,7 @@ pub enum DemuxEvent {
     /// A completed access unit / audio frame, with absolute per-sample
     /// `dts`/`pts` (issue #556 semantics; media plane step 2c: absolute
     /// rather than carried in a separate `SourceTiming`).
+    #[non_exhaustive]
     Sample {
         /// The owning track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
         track_id: u32,
@@ -245,6 +249,7 @@ pub enum DemuxEvent {
     /// count to a previously-seen value still re-arms this event (the count
     /// itself is never a reliable de-dup key — see `ts_demux.rs`'s own
     /// regression test for the failure mode this replaced).
+    #[non_exhaustive]
     TracksResolved {
         /// The track-set generation this event confirms is fully resolved.
         generation: u32,
@@ -282,5 +287,40 @@ impl DemuxEvent {
             kind,
             provenance,
         }
+    }
+
+    /// Construct a [`DemuxEvent::TrackRemoved`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn track_removed(track_id: u32, provenance: EventProvenance) -> Self {
+        DemuxEvent::TrackRemoved {
+            track_id,
+            provenance,
+        }
+    }
+
+    /// Construct a [`DemuxEvent::TrackAbandoned`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn track_abandoned(
+        track_id: Option<u32>,
+        reason: AbandonReason,
+        provenance: EventProvenance,
+    ) -> Self {
+        DemuxEvent::TrackAbandoned {
+            track_id,
+            reason,
+            provenance,
+        }
+    }
+
+    /// Construct a [`DemuxEvent::Sample`] — see [`Self::clock_reference`] for
+    /// why this variant needs a constructor.
+    pub fn sample(track_id: u32, sample: Sample) -> Self {
+        DemuxEvent::Sample { track_id, sample }
+    }
+
+    /// Construct a [`DemuxEvent::TracksResolved`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn tracks_resolved(generation: u32) -> Self {
+        DemuxEvent::TracksResolved { generation }
     }
 }

@@ -255,16 +255,8 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     let reference = build_media_segment(
         1,
         &[
-            FragmentTrackData {
-                track_id: 1,
-                base_media_decode_time: 0,
-                samples: &vid,
-            },
-            FragmentTrackData {
-                track_id: 2,
-                base_media_decode_time: 0,
-                samples: &aud,
-            },
+            FragmentTrackData::new(1, 0, &vid),
+            FragmentTrackData::new(2, 0, &aud),
         ],
     )
     .unwrap();

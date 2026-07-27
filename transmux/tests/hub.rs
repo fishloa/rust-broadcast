@@ -176,12 +176,14 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
     let fragments: Vec<FragmentTrackData<'_>> = media
         .tracks
         .iter()
-        .map(|t| FragmentTrackData {
-            track_id: t.spec.track_id,
-            // CmafMux now anchors each fragment at the track's start_decode_time
-            // (the demuxed tfdt), so the byte-transparent equivalent must too.
-            base_media_decode_time: t.start_decode_time,
-            samples: &t.samples,
+        .map(|t| {
+            FragmentTrackData::new(
+                t.spec.track_id,
+                // CmafMux now anchors each fragment at the track's start_decode_time
+                // (the demuxed tfdt), so the byte-transparent equivalent must too.
+                t.start_decode_time,
+                &t.samples,
+            )
         })
         .collect();
     let media_seg = build_media_segment(7, &fragments).expect("media segment");
