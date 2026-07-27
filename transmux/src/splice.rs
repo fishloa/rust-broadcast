@@ -13,14 +13,20 @@
 //!
 //! # Timeline model (ISO/IEC 14496-12 `tfdt`)
 //!
-//! [`Sample`] timing is *relative*: each sample carries a `duration`, a sample's
-//! decode time (DTS) is the running sum of preceding durations, and its
-//! presentation time (PTS) is `DTS + composition_offset`. The only *absolute*
-//! datum is [`Track::start_decode_time`] — the decode time of the track's first
-//! sample — which [`CmafMux`](crate::media::CmafMux) writes as the fragment
-//! `tfdt` `baseMediaDecodeTime` (ISO/IEC 14496-12:2015 §8.8.12). A track's
-//! **end decode time** is therefore `start_decode_time + Σ durations`. The joins
-//! here place the appended/inserted content so that its `start_decode_time`
+//! [`Sample`] timing is *absolute* (media plane step 2c): each sample carries
+//! its own optional decode time (DTS) and presentation time (PTS =
+//! DTS + composition_offset), in the track's media timescale.
+//! [`Track::start_decode_time`] — which [`CmafMux`](crate::media::CmafMux)
+//! writes as the *first* fragment's `tfdt` `baseMediaDecodeTime` (ISO/IEC
+//! 14496-12:2015 §8.8.12) — is the track's start anchor, not a running cursor:
+//! a source that re-seeds `tfdt` per fragment (a discontinuous or gapped
+//! capture) can leave a real gap between it and a later sample's true `dts`.
+//! This module therefore reads each join/snap boundary's absolute `dts`
+//! directly rather than reconstructing it as `start_decode_time + Σ
+//! durations`, falling back to that reconstruction only where a sample
+//! genuinely carries no timestamp (a section-carried sample — SCTE-35/
+//! DSM-CC/private sections — which has none to read). The joins here place
+//! the appended/inserted content so that its first sample's absolute `dts`
 //! exactly meets the preceding content's end decode time, keeping the muxed
 //! `tfdt`s monotonic non-decreasing across the join. Coded sample bytes are
 //! preserved byte-for-byte; only timing anchors/durations are recomputed.
@@ -130,8 +136,25 @@ fn is_video(config: &CodecConfig) -> bool {
 }
 
 /// The decode time of a track's first sample beyond its last (its **end decode
-/// time**): `start_decode_time + Σ sample durations`.
+/// time**).
+///
+/// Reads the last sample's own absolute `dts` (media plane step 2c) plus its
+/// `duration`, when both are known — this is the authoritative value and can
+/// legitimately diverge from `start_decode_time + Σ durations` after a
+/// per-fragment `tfdt` reseed (`start_decode_time` only ever records the
+/// *first* fragment's anchor, see `media.rs::absorb_fragment`), which is
+/// exactly the desync this function used to reintroduce one step downstream
+/// of that fix. Falls back to the duration-sum from `start_decode_time` only
+/// when the last sample genuinely carries no timestamp at all (a
+/// section-carried sample — SCTE-35/DSM-CC/private sections — which has no
+/// absolute `dts` to read).
 fn track_end_decode_time(track: &Track) -> u64 {
+    if let Some(last) = track.samples.last() {
+        if let Some(dts) = last.dts {
+            let dts = u64::try_from(dts).unwrap_or(0);
+            return dts.saturating_add(last.duration.unwrap_or(0) as u64);
+        }
+    }
     let span: u64 = track
         .samples
         .iter()
@@ -257,18 +280,30 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
     if track.samples.is_empty() {
         return None;
     }
-    let mut dts = track.start_decode_time;
-    // The best (latest) sync sample seen at or before `at_ticks`. Seed with the
-    // first sample so a request before the track start still snaps into range.
+    // Running fallback decode time — advanced by duration only for a sample
+    // with no absolute `dts` (a section-carried sample). Seed with
+    // `start_decode_time` so a request before the track start still snaps
+    // into range even on such a track.
+    let mut fallback_dts = track.start_decode_time;
     let mut best: (u64, usize) = (track.start_decode_time, 0);
     for (i, s) in track.samples.iter().enumerate() {
+        // Prefer the sample's own absolute `dts` (media plane step 2c) — the
+        // authoritative decode time, which can legitimately diverge from
+        // `start_decode_time + Σ durations` after a per-fragment `tfdt`
+        // reseed (`media.rs::absorb_fragment`). Only fall back to the
+        // running duration-sum for a genuinely timestamp-less
+        // (section-carried) sample, which carries no absolute `dts` at all.
+        let dts = s
+            .dts
+            .map(|d| u64::try_from(d).unwrap_or(0))
+            .unwrap_or(fallback_dts);
         if dts > at_ticks {
             break;
         }
         if s.flags.is_sync {
             best = (dts, i);
         }
-        dts = dts.saturating_add(s.duration.unwrap_or(0) as u64);
+        fallback_dts = dts.saturating_add(s.duration.unwrap_or(0) as u64);
     }
     Some(best)
 }
@@ -370,12 +405,27 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let resume_index = samples.len();
         samples.extend(bt.samples[split_index..].iter().cloned());
 
-        // The decode time of this track's split boundary on the base timeline.
-        let boundary_dts: u64 = bt.start_decode_time
-            + bt.samples[..split_index]
-                .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
-                .sum::<u64>();
+        // The decode time of this track's split boundary on the base
+        // timeline: the boundary sample's own absolute `dts` (media plane
+        // step 2c) when there is one — authoritative, and can legitimately
+        // diverge from `start_decode_time + Σ durations` after a
+        // per-fragment `tfdt` reseed, exactly like `track_end_decode_time`/
+        // `snap_to_preceding_sync` above. A past-the-end split (no
+        // remaining base sample) has no boundary sample to read, so it uses
+        // this track's own end decode time instead; a section-carried
+        // boundary sample with no absolute `dts` falls back to the
+        // duration-sum, same as everywhere else in this module.
+        let boundary_dts: u64 = match bt.samples.get(split_index).and_then(|s| s.dts) {
+            Some(dts) => u64::try_from(dts).unwrap_or(0),
+            None if split_index >= bt.samples.len() => track_end_decode_time(bt),
+            None => {
+                bt.start_decode_time
+                    + bt.samples[..split_index]
+                        .iter()
+                        .map(|s| s.duration.unwrap_or(0) as u64)
+                        .sum::<u64>()
+            }
+        };
 
         // Ad-in point.
         if !adt.samples.is_empty() {

@@ -411,6 +411,33 @@ below.
   `sum(sample.duration)` must equal the span from the first to the last
   sample's `dts` plus the last sample's `duration` — the standing guard
   against the whole re-derive-from-a-lossy-clock class of bug.
+- **A codec-changed re-registration bypassed the shared-PID refcount.** The
+  "removed" branch of `apply_pmt_diff` already refused to tear down a PID
+  another PMT still declares (above); the codec-changed branch never got the
+  same check, so a PID declared by two programs (an ordinary shared audio/
+  subtitle component) had its track torn down and rebuilt — a fresh
+  `track_id`, a spurious `TrackRemoved`/`TrackAdded` — the moment *either*
+  declaring PMT reclassified its codec, even though the other program's
+  declaration was unchanged. The codec-changed branch now consults
+  `es_declarers` too: reclassification is refused while any other declarer
+  still lists the PID (the existing classification wins; two programs
+  declaring one PID under different codecs is a malformed multiplex, and
+  last-writer-wins was rejected as letting either program's routine version
+  bump flip the shared track back and forth), proceeding only once this PMT
+  is the *last* declarer. The same re-registration also now restores the
+  PID's original PMT-declaration-order slot in `codec_order`/`data_order`
+  instead of losing it to the back of the list, which reordered `TrackAdded`
+  emission and could block a later-ranked PID's promotion behind it.
+- **`splice::concat`/`splice_insert` read a sample's true absolute `dts` for
+  the join/snap position, not a duration-sum reconstruction.**
+  `track_end_decode_time`, `snap_to_preceding_sync`, and `splice_insert`'s own
+  boundary-decode-time calculation still derived decode time as
+  `start_decode_time + Σ duration` — harmless while the two representations
+  agreed, but the per-fragment `tfdt` reseed (above) can legitimately leave a
+  gap between `start_decode_time` and a sample's true `dts`, which silently
+  mis-placed the splice join/snap one step downstream of that fix. All three
+  now read the sample's own absolute `dts` directly, falling back to the
+  duration sum only for a genuinely timestamp-less (section-carried) sample.
 
 ### Security
 

@@ -2629,15 +2629,44 @@ impl StreamingTsDemux {
     /// registration completed. Never emits an event itself — `TrackAdded`
     /// fires once this PID reaches its PMT-declaration-order turn in
     /// [`Self::try_promote_ready`].
+    ///
+    /// Appends to the back of its destination order list — the correct slot
+    /// for a PID never seen before. A codec-changed *re*-registration (see
+    /// `apply_pmt_diff`) instead goes through [`Self::register_new_es_at`] to
+    /// preserve the PID's original PMT-declaration-order slot.
     fn register_new_es(&mut self, es_pid: u16, codec: Codec, descriptors: Vec<u8>) {
+        self.register_new_es_at(es_pid, codec, descriptors, None);
+    }
+
+    /// As [`Self::register_new_es`], but inserts the PID at `reinsert_at`
+    /// within its destination order list instead of always appending
+    /// (issue: re-registration losing PMT-declaration order). Used by
+    /// `apply_pmt_diff`'s codec-changed path to restore the PID to the slot
+    /// it occupied before `remove_track` erased it, instead of losing that
+    /// slot to the back of the list — which would reorder `TrackAdded`
+    /// emission and could block a later-ranked PID's promotion behind it.
+    /// `None` (this PID has never been ranked, or it is crossing between the
+    /// codec/data lists — see the caller) appends, exactly like
+    /// `register_new_es`.
+    fn register_new_es_at(
+        &mut self,
+        es_pid: u16,
+        codec: Codec,
+        descriptors: Vec<u8>,
+        reinsert_at: Option<usize>,
+    ) {
         // A PID declared again is no longer an orphan: lift the post-removal
         // buffering blacklist (see `remove_track`) so its fresh traffic is
         // routed normally from here on.
         self.removed_pids.remove(&es_pid);
-        if matches!(codec, Codec::Data(_)) {
-            self.data_order.push(es_pid);
+        let order = if matches!(codec, Codec::Data(_)) {
+            &mut self.data_order
         } else {
-            self.codec_order.push(es_pid);
+            &mut self.codec_order
+        };
+        match reinsert_at {
+            Some(idx) if idx <= order.len() => order.insert(idx, es_pid),
+            _ => order.push(es_pid),
         }
         let mut stream = StreamState {
             codec,
@@ -2785,12 +2814,45 @@ impl StreamingTsDemux {
             let Some(existing) = self.streams.get(&es_pid) else {
                 continue;
             };
-            let codec_changed = existing.codec != codec;
+            let old_codec = existing.codec;
+            let codec_changed = old_codec != codec;
             let descriptors_changed = existing.descriptors != descriptors;
             if !codec_changed && !descriptors_changed {
                 continue;
             }
             if codec_changed {
+                // Refcount check (the same one the "removed" loop above
+                // applies, F1): the same elementary PID may legally be
+                // declared by more than one program's PMT (a shared
+                // audio/subtitle component). `es_declarers[es_pid]` already
+                // has `pmt_pid` inserted (the unconditional insert above), so
+                // any *other* entry means some other program still declares
+                // this PID — and `streams`/`codec_order`/`data_order` are
+                // global, not per-program, so tearing down here would also
+                // destroy that other program's still-valid track (wrong
+                // `track_id` churn: a spurious `TrackRemoved` + `TrackAdded`
+                // for a change only *this* program asked for).
+                //
+                // Two programs declaring the same PID under two different
+                // codecs is a malformed multiplex — there is only one global
+                // stream for a PID, so at most one classification can be
+                // active. Decision (stated here, not left implicit): refuse
+                // to reclassify while any other declarer remains. The
+                // existing classification wins and this PMT's update is
+                // dropped for this PID; last-writer-wins was rejected because
+                // it would let either program's routine version bump flip the
+                // shared track back and forth. Once every *other* declarer
+                // has itself dropped or stopped disagreeing, `es_declarers`
+                // shrinks to just this PMT and a later reclassification by it
+                // proceeds normally below.
+                let other_declarers_remain = self
+                    .es_declarers
+                    .get(&es_pid)
+                    .is_some_and(|declarers| declarers.iter().any(|&p| p != pmt_pid));
+                if other_declarers_remain {
+                    continue;
+                }
+
                 // A reclassified `stream_type` is a **different elementary
                 // stream**, not an in-place relabel. Writing `stream.codec`
                 // through (as this used to) left three pieces of derived state
@@ -2810,14 +2872,37 @@ impl StreamingTsDemux {
                 //
                 // Teardown-and-re-register rebuilds all three in one move:
                 // `remove_track` drops the stream (emitting `TrackRemoved` if
-                // it had reached `Live`) and `register_new_es` rebuilds
+                // it had reached `Live`) and `register_new_es_at` rebuilds
                 // `initial_carrier`/`initial_probe` for the new codec.
+                //
+                // F3: capture this PID's current slot in its *old*
+                // classification's order list before `remove_track` erases it,
+                // so re-registration can restore the same slot instead of
+                // losing it to the back of the list (which would reorder
+                // `TrackAdded` emission and could block a later-ranked PID's
+                // promotion behind it). Only meaningful when the old and new
+                // classification share the same order list (codec vs. data):
+                // a PID crossing between the two has no old slot to preserve
+                // in the list it's moving to, so it appends there like any
+                // other first-time registration into that list.
+                let old_is_data = matches!(old_codec, Codec::Data(_));
+                let new_is_data = matches!(codec, Codec::Data(_));
+                let order_slot = if old_is_data == new_is_data {
+                    let order = if old_is_data {
+                        &self.data_order
+                    } else {
+                        &self.codec_order
+                    };
+                    order.iter().position(|&p| p == es_pid)
+                } else {
+                    None
+                };
                 self.remove_track(es_pid);
                 // `es_seen` is the "currently declared" set, which
                 // `remove_track` clears — but this PID *is* still declared,
                 // just as something else.
                 self.es_seen.insert(es_pid);
-                self.register_new_es(es_pid, codec, descriptors);
+                self.register_new_es_at(es_pid, codec, descriptors, order_slot);
                 continue;
             }
             // Descriptors-only change: nothing derived from the codec is
@@ -3932,5 +4017,186 @@ mod tests {
             Codec::H264.refine_with_descriptors(STREAM_TYPE_AVC, &eac3_desc),
             Codec::H264
         );
+    }
+
+    /// F1: a PID declared by two PMTs (an ordinary shared audio/subtitle
+    /// component across programs in a DVB multiplex) must not be torn down
+    /// just because *one* declaring PMT reclassifies its codec while the
+    /// other program's declaration is unchanged — `apply_pmt_diff`'s
+    /// codec-changed branch must consult the same `es_declarers` refcount the
+    /// "removed" branch already does. Must fail before the fix: without the
+    /// check, `remove_track` ran unconditionally on a codec change,
+    /// destroying the shared track (new `track_id`, spurious
+    /// `TrackRemoved`/`TrackAdded`) even though the other program's
+    /// `applied_es` still lists it.
+    ///
+    /// Also exercises the decided conflict policy for the two-programs/
+    /// different-codecs case (documented on the fix): reclassification is
+    /// refused while any other declarer remains, and only proceeds once this
+    /// PMT is the *last* declarer.
+    #[test]
+    fn codec_change_on_shared_pid_does_not_tear_down_other_program_track() {
+        const PMT_A: u16 = 0x1000;
+        const PMT_B: u16 = 0x1001;
+        const SHARED_PID: u16 = 0x0050;
+        const STREAM_TYPE: u8 = 0x7F; // opaque data, PES-carried (see `data_carriage`)
+
+        let mut demux = StreamingTsDemux::new();
+
+        // PMT A declares the shared PID; PMT B declares it too (same codec).
+        demux.apply_pmt_diff(
+            PMT_A,
+            &BTreeSet::new(),
+            alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
+        );
+        demux.apply_pmt_diff(
+            PMT_B,
+            &BTreeSet::new(),
+            alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
+        );
+        assert_eq!(
+            demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
+            Some(2),
+            "both PMTs must be recorded as declarers of the shared PID"
+        );
+
+        // Promote it straight to `Live`, mirroring what real config recovery
+        // would do: `ConfigProbe::Data` resolves on the very first access
+        // unit (it needs no in-band header at all), so this is a faithful
+        // shortcut, not a fabricated state.
+        let carriage = data_carriage(STREAM_TYPE);
+        assert_eq!(carriage, DataCarriage::Pes);
+        demux.streams.get_mut(&SHARED_PID).unwrap().track = Some(TrackState::Parked {
+            config: CodecConfig::Data {
+                stream_type: STREAM_TYPE,
+                descriptors: Vec::new(),
+                carriage,
+            },
+            timescale: VIDEO_TIMESCALE,
+            kind: LiveKind::Data {
+                pending: None,
+                last_duration: 0,
+            },
+            backlog: Vec::new(),
+        });
+        demux.try_promote_ready();
+        let track_id_before = match demux.streams.get(&SHARED_PID).unwrap().track.as_ref() {
+            Some(TrackState::Live(live)) => live.track_id,
+            _ => panic!("expected the shared PID to be Live after promotion"),
+        };
+        while demux.poll_event().is_some() {} // drain TrackAdded — not under test here
+
+        // PMT A reclassifies the PID's codec. PMT B's `applied_es` (the
+        // diff baseline passed in on its own behalf) still lists the PID
+        // unchanged — this call only ever represents PMT A's own view.
+        let mut pmt_a_applied = BTreeSet::new();
+        pmt_a_applied.insert(SHARED_PID);
+        demux.apply_pmt_diff(
+            PMT_A,
+            &pmt_a_applied,
+            alloc::vec![(SHARED_PID, Codec::Ac3, Vec::new())],
+        );
+
+        // The shared track must survive, unchanged, with its original
+        // track_id — PMT B still declares it, so PMT A's reclassification
+        // alone must not tear it down.
+        match demux
+            .streams
+            .get(&SHARED_PID)
+            .and_then(|s| s.track.as_ref())
+        {
+            Some(TrackState::Live(live)) => assert_eq!(
+                live.track_id, track_id_before,
+                "shared track must keep its original track_id"
+            ),
+            _ => {
+                panic!("expected the shared track to survive PMT A's reclassification, still Live")
+            }
+        }
+        assert!(
+            !demux
+                .events
+                .iter()
+                .any(|ev| matches!(ev, DemuxEvent::TrackRemoved { .. })),
+            "PMT A's reclassification must not remove a track PMT B still declares"
+        );
+        assert_eq!(
+            demux.streams.get(&SHARED_PID).unwrap().codec,
+            Codec::Data(STREAM_TYPE),
+            "the existing classification wins while another declarer disagrees"
+        );
+
+        // Now PMT B drops its declaration entirely — PMT A becomes the sole
+        // (last) declarer.
+        let mut pmt_b_applied = BTreeSet::new();
+        pmt_b_applied.insert(SHARED_PID);
+        demux.apply_pmt_diff(PMT_B, &pmt_b_applied, Vec::new());
+        assert_eq!(
+            demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
+            Some(1),
+            "PMT A must be the sole remaining declarer"
+        );
+
+        // PMT A reclassifies again: as the *last* declarer, the
+        // teardown-and-rebuild now proceeds.
+        demux.apply_pmt_diff(
+            PMT_A,
+            &pmt_a_applied,
+            alloc::vec![(SHARED_PID, Codec::Aac, Vec::new())],
+        );
+        assert!(
+            demux
+                .events
+                .iter()
+                .any(|ev| matches!(ev, DemuxEvent::TrackRemoved { .. })),
+            "once PMT A is the last declarer, its reclassification must actually tear down \
+             the old track"
+        );
+        assert_eq!(demux.streams.get(&SHARED_PID).unwrap().codec, Codec::Aac);
+    }
+
+    /// F3: re-registering a PID after a codec-changed teardown (issue F1's
+    /// `remove_track` + `register_new_es_at` pair) must preserve its original
+    /// PMT-declaration-order slot, not lose it to the back of `codec_order`/
+    /// `data_order` — the order backs `TrackAdded` emission order and gates
+    /// promotion (`try_promote_ready`), so losing the slot reorders both.
+    /// Must fail before the fix (the old `register_new_es` always appended).
+    #[test]
+    fn codec_change_reregistration_preserves_declaration_order_slot() {
+        const PMT: u16 = 0x1000;
+        const PID_X: u16 = 0x0050;
+        const PID_Y: u16 = 0x0051;
+
+        let mut demux = StreamingTsDemux::new();
+        demux.apply_pmt_diff(
+            PMT,
+            &BTreeSet::new(),
+            alloc::vec![
+                (PID_X, Codec::Data(0x06), Vec::new()),
+                (PID_Y, Codec::Data(0x07), Vec::new()),
+            ],
+        );
+        assert_eq!(demux.data_order, alloc::vec![PID_X, PID_Y]);
+
+        // PID X's stream_type changes (still opaque `Codec::Data`, so the
+        // codec-changed teardown path runs) while PID Y is untouched.
+        let mut old_applied = BTreeSet::new();
+        old_applied.insert(PID_X);
+        old_applied.insert(PID_Y);
+        demux.apply_pmt_diff(
+            PMT,
+            &old_applied,
+            alloc::vec![
+                (PID_X, Codec::Data(0x08), Vec::new()),
+                (PID_Y, Codec::Data(0x07), Vec::new()),
+            ],
+        );
+
+        assert_eq!(
+            demux.data_order,
+            alloc::vec![PID_X, PID_Y],
+            "PID X must keep its original (first) declaration-order slot, not move to the back"
+        );
+        assert_eq!(demux.streams.get(&PID_X).unwrap().codec, Codec::Data(0x08));
     }
 }
