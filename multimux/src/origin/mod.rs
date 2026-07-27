@@ -648,10 +648,9 @@ pub async fn serve_with_registry(
         let name = route.name.clone();
         let shutdown_rx = shutdown_rx.clone();
         let handle = match &route.input {
-            // `rtsp`/`rtp`/`ts_udp` were ported onto
+            // `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` were ported onto
             // `media_plane::ingress::{Dialer, IngestSession}` at plan step
-            // 5a (see `crate::source::{rtsp, rtp_udp, ts_udp}`'s
-            // `run_rtsp`/`run_rtp_udp`/`run_ts_udp`, each driving
+            // 5a (see each module's `run_*` entry point, all driving
             // `media_plane::ingress::IngestDriver` into a `media_plane::Trunk`
             // directly) and no longer implement `SourceConnector`/
             // `SampleSource`. Wiring these three routes back into this
@@ -659,10 +658,12 @@ pub async fn serve_with_registry(
             // `Trunk`-backed replacement for `MediaStore`/`HealthState`
             // here, not just a source rename) — left as a stub so the crate
             // names a clear boundary rather than silently regressing these
-            // three routes to "compiles but does nothing" without comment.
+            // these routes to "compiles but does nothing" without comment.
             crate::config::InputSpec::Rtsp { .. }
             | crate::config::InputSpec::Rtp { .. }
-            | crate::config::InputSpec::TsUdp { .. } => {
+            | crate::config::InputSpec::TsUdp { .. }
+            | crate::config::InputSpec::TsHttp { .. }
+            | crate::config::InputSpec::Srt { .. } => {
                 let name = name.clone();
                 tokio::spawn(async move {
                     tracing::error!(
@@ -672,20 +673,6 @@ pub async fn serve_with_registry(
                          supervisor loop (step 5b); the route is disabled until that lands"
                     );
                 })
-            }
-            crate::config::InputSpec::TsHttp { url, auth } => {
-                let connector =
-                    crate::source::ts_http::TsHttpSource::new(name.clone(), url.clone())
-                        .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials));
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
             }
             crate::config::InputSpec::HlsPull { url, auth } => {
                 let connector =
@@ -737,34 +724,6 @@ pub async fn serve_with_registry(
                 let connector = crate::source::rtmp::RtmpSource::new(name.clone(), listen.clone())
                     .with_app(app.clone())
                     .with_stream_key(stream_key.clone());
-                tokio::spawn(supervise(
-                    connector,
-                    store,
-                    target_duration_secs,
-                    part_target_ms,
-                    Backoff::production_default(),
-                    name.clone(),
-                    shutdown_rx,
-                ))
-            }
-            crate::config::InputSpec::Srt {
-                listen,
-                remote,
-                stream_id,
-                latency_ms,
-            } => {
-                // `config.validate()` (called above) already guarantees
-                // exactly one of listen/remote is `Some`.
-                let connector = if let Some(listen) = listen {
-                    crate::source::srt::SrtSource::new_listener(name.clone(), listen.clone())
-                } else {
-                    crate::source::srt::SrtSource::new_caller(
-                        name.clone(),
-                        remote.clone().expect("validated: listen or remote is Some"),
-                    )
-                }
-                .with_stream_id(stream_id.clone())
-                .with_latency_ms(*latency_ms);
                 tokio::spawn(supervise(
                     connector,
                     store,

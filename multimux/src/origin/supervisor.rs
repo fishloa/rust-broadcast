@@ -55,21 +55,13 @@ pub trait SourceConnector: Send + Sync + 'static {
     fn connect(&self) -> impl Future<Output = crate::Result<Self::Source>> + Send;
 }
 
-// `rtsp`, `rtp_udp`, `ts_udp` no longer have a `SourceConnector` impl — see
+// `rtsp`, `rtp_udp`, `ts_udp`, `ts_http`, `srt` no longer have a `SourceConnector` impl — see
 // `crate::pipeline`'s equivalent note. Their new production entry points are
 // `crate::source::{rtsp::run_rtsp, rtp_udp::run_rtp_udp, ts_udp::run_ts_udp}`,
 // which drive `media_plane::ingress::IngestDriver` directly and are not yet
 // wired into this supervisor loop (step 5b: needs a `Trunk`-backed
 // replacement for `MediaStore`/`HealthState` here, not just a `Source`
 // rename).
-
-impl SourceConnector for crate::source::ts_http::TsHttpSource {
-    type Source = crate::source::ts_http::TsHttpSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::ts_http::TsHttpSource::connect(self).await
-    }
-}
 
 impl SourceConnector for crate::source::hls_pull::HlsPullSource {
     type Source = crate::source::hls_pull::HlsPullSession;
@@ -100,14 +92,6 @@ impl SourceConnector for crate::source::rtmp::RtmpSource {
 
     async fn connect(&self) -> crate::Result<Self::Source> {
         crate::source::rtmp::RtmpSource::connect(self).await
-    }
-}
-
-impl SourceConnector for crate::source::srt::SrtSource {
-    type Source = crate::source::srt::SrtSession;
-
-    async fn connect(&self) -> crate::Result<Self::Source> {
-        crate::source::srt::SrtSource::connect(self).await
     }
 }
 
@@ -210,7 +194,7 @@ fn record_reconnect(name: &str) {
 ///
 /// `name` is used only in log lines (never the source URL/credentials —
 /// callers must pass a connector that never surfaces those, which
-/// [`crate::source::ts_http::TsHttpSource`] already ensures by stripping userinfo
+/// [`crate::source::hls_pull::HlsPullSource`] already ensures by stripping userinfo
 /// before it ever reaches an error message).
 ///
 /// This never gives up permanently: a source going away (camera reboot,

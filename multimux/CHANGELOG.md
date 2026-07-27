@@ -2,6 +2,109 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, in progress — plan step 5a, round 2)
+- **Ported `ts_http` and `srt` onto the plane's ingress traits**, and
+  **extracted the shared `source::ts_program::TsIngestSession`** — one copy
+  of the `StreamingTsDemux` → `SessionEvent` translation (including the B5
+  mid-stream `NewProgram` handling), now shared verbatim by `ts_udp`,
+  `ts_http` and `srt`. Those three previously carried three near-identical
+  ~60-line drain loops that had already drifted.
+  - `TsHttpSource`/`TsHttpSession` → `TsHttpRoute`/`TsHttpDialer` +
+    `open_stream`/`recv_and_feed`/`run_ts_http`.
+  - `SrtSource`/`SrtSession` → `SrtRoute`/`SrtDialer` +
+    `connect_caller`/`accept_listener`/`drive_socket`/`run_srt_caller`/
+    `run_srt_listener_once`.
+  - `ts_http` is the first ported source that produces **both**
+    `HealthState::Ended` (a cleanly-finished HTTP body) and
+    `HealthState::Failed` (a read stall) — the EOF≠error distinction step 3c
+    made producible is now actually produced, and mutation-checked.
+  - All 5 of `ts_http`'s Basic/Digest/Bearer/override/wrong-credential auth
+    tests are preserved, retargeted at the new API.
+
+### Findings from this round (design-level, not defects)
+- **The segmenter gap is CLOSED** by `Trunk::segment_writer()`. Proven, not
+  asserted: `source::ts_program`'s
+  `a_segmenter_can_hold_a_segment_writer_while_ingest_holds_the_sample_writer`
+  drives real muxed TS → `TsIngestSession` → `IngestDriver` (holding the
+  `TrunkWriter`) → `SampleCursor` → a real `LlHlsSegmenter` → a
+  `SegmentWriter` taken from the **same** `Trunk`, and asserts the segments
+  land in `Trunk::last_closed_segment`/`segment_len`. It also asserts
+  `trunk.writer().is_none()` so the test cannot silently degrade into "a
+  `Trunk` nobody else was writing to". `MOVIE_TIMESCALE` is now a parameter
+  of the segmenter component rather than a hardcoded `run_pipeline`
+  constant, which is what makes it per-route-configurable at all; **which**
+  component owns the segmenter is step 5b's call, since egress consumes
+  segments.
+- **The pull sources DO need a plane change** — this refutes round 1's
+  answer ("a concrete per-source method suffices"). `ll-hls-runtime`
+  *already* ships the request-addressing type 3c predicted: `LlHlsClient` is
+  a sans-IO engine with `poll() -> Option<Action>`, `on_playlist(&[u8])`,
+  `on_resource(ResourceId, &[u8])`, `on_error(Option<ResourceId>)`.
+  The blocker is not the *request* side, which `poll_transmit` could be
+  widened to carry — it is the **response** side: `Stage::feed(&[u8])` is a
+  single, uncorrelated input, while a pull source has N in-flight requests
+  whose responses must be routed back **by identity** (`ResourceId`) and
+  arrive out of order. There is no honest way to express "these bytes are
+  the response to `Part{msn:5,part:2}`" through `feed(&[u8], now)`.
+  - **Minimum shape** (recorded, not implemented — it is a `media-plane`
+    change with its own blast radius): relax `IngestSession`'s pin of
+    `Stage::In` from `&'a [u8]` to the implementor's choice, and add an
+    associated request type:
+    ```rust
+    pub trait IngestSession: for<'a> Stage<Out = SessionEvent> + Send {
+        type Request: Send;
+        fn poll_transmit(&mut self) -> Option<Self::Request>;
+    }
+    ```
+    Stream sources keep `In<'a> = &'a [u8]`, `Request = Bytes` — no
+    behaviour change. A pull source sets `In<'a> = (ResourceId, &'a [u8])`,
+    `Request = Action`. `IngestDriver::feed` becomes
+    `feed(&mut self, input: S::In<'_>, now)`, which is still fully generic.
+    Associated types cannot have defaults on stable, so every implementor
+    gains one line (`type Request = Bytes;`).
+  - `hls_pull`/`dash_pull`/`smooth_pull` are therefore **deliberately not
+    ported**. Contorting them into the current trait would mean a session
+    whose `Stage::feed` is never called (all real input arriving through
+    out-of-band `on_resource` calls made by the driver), i.e. a type that
+    lies about the contract it implements.
+  - Separately, `dash_pull` holds three pieces of state a segment store
+    would duplicate (`RepState::init_bytes`, re-concatenated onto every
+    segment; `plan`; `last_number`) and buries a wall-clock
+    `Instant::elapsed` + `tokio::time::sleep` inside its read path
+    (`maybe_refresh_mpd`) — a second, independent obstacle to a sans-IO
+    port, which wants `next_deadline`/`on_deadline` instead.
+- **`rtmp` and `srt`-listener: scoped estimate, not a half-port.**
+  - **RTMP is genuinely cheap and worth doing.** `rtmp_runtime::server::ServerSession`
+    is *already* exactly the right sans-IO shape:
+    `handle_data(&[u8]) -> Result<(Vec<u8>, Vec<ServerEvent>)>` — bytes in,
+    (reply bytes, events) out, buffering partial handshakes/chunks
+    internally. That maps onto `Stage::feed` + `poll` + `poll_transmit` with
+    no new machinery, and `rtmp_runtime::io` is a ~246-line adapter (half
+    tests) that would mostly disappear. `AsyncRtmpServer::accept()` is
+    `&self` (no `Mutex` needed) and a *pure* TCP accept exchanging zero
+    protocol bytes. **Estimate: the session half is ~1 day** (close to a
+    transcription of `RtmpConnection::next_events`). **The `Listener` half
+    needs one small upstream addition** — a non-blocking
+    `AsyncRtmpServer::poll_accept()` (a `TcpListener::poll_accept` wrapper,
+    a few lines in `rtmp-runtime`), after which `Listener{max_sessions}` +
+    `ListenDriver` fit with no further redesign. Total ≈ 1.5–2 days.
+  - **SRT-listener is substantially harder and should be sequenced after a
+    `srt-runtime` change.** `SrtListener::accept` is a blocking `.await`
+    only (no `poll_accept`/`try_accept`) and takes `&mut self`; more
+    fundamentally the listener and *every* accepted connection share one
+    `UdpSocket` (`drain_completed` hands each new connection an
+    `Arc::clone`), so "accept another while N are live" is a demultiplexing
+    responsibility **inside `srt-runtime`**, not something `multimux` can
+    arrange. `srt-runtime` does ship a full sans-IO core
+    (`CallerHandshake`/`ListenerHandshake`/`arq`/`tsbpd`/`livecc`) but hides
+    it behind a private `Driver` task; `SrtSocket` is only a pair of `mpsc`
+    channels, so there is **no public "feed a datagram in, get a payload
+    out" connection type**. **Estimate: ~3–5 days in `srt-runtime`**
+    (expose a sans-IO connection + a pollable listener owning the shared
+    socket demux), then ~1 day in `multimux`. Until then `srt`-listener
+    keeps today's accept-one-serially semantics via
+    `run_srt_listener_once`, which is documented rather than disguised.
+
 ### Changed (BREAKING, in progress — plan step 5a)
 - **Ported `rtsp`, `rtp_udp`, and `ts_udp` onto `media_plane::ingress`'s
   `Dialer`/`IngestSession`/`IngestDriver`** (plan step 5, "port the 9 ingest
@@ -32,11 +135,11 @@
     5b's `Trunk`-backed replacement, not just a source rename; the affected
     `InputSpec` match arms are stubbed with a clear "not yet wired" log line
     rather than left silently referencing removed types.
-  - **Not ported in this pass** (step 5a scope; tracked for follow-up):
-    `ts_http`, `srt` (caller + listener), `rtmp` (listener), `hls_pull`,
-    `dash_pull`, `smooth_pull` — still on the pre-5a `SampleSource`/
-    `run_pipeline`/`SourceConnector` path, which remains in place
-    (`crate::pipeline`/`crate::origin::supervisor`) for exactly these six.
+  - **Not ported** (superseded by round 2 above, which added `ts_http` and
+    `srt`): `rtmp`, `hls_pull`, `dash_pull`, `smooth_pull` remain on the
+    pre-5a `SampleSource`/`run_pipeline`/`SourceConnector` path, which stays
+    in place (`crate::pipeline`/`crate::origin::supervisor`) for exactly
+    those four. See "Findings from this round" for why each is deferred.
   - `crate::pipeline::SampleSource`/`run_pipeline` and
     `crate::origin::supervisor::SourceConnector` are **not** deleted this
     pass (still load-bearing for the six not-yet-ported sources); only the

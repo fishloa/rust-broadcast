@@ -395,7 +395,12 @@ mod tests {
     fn established_and_new_program_fire_before_any_packet() {
         let mut dialer = RtpUdpDialer::new(sdp_body());
         let session = dialer.dial().expect("dial: local SDP parse only, no I/O");
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
         assert!(matches!(driver.health(), HealthState::Establishing));
 
         // A feed with an unroutable payload type still drives Established +
@@ -419,7 +424,12 @@ mod tests {
     fn second_feed_does_not_re_announce_the_program() {
         let mut dialer = RtpUdpDialer::new(sdp_body());
         let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
 
         let idr = rtp_packet(1, 1000, true, &[0x65, 0xAA]);
         driver.feed(&idr, Timestamp::ZERO);
@@ -445,7 +455,12 @@ mod tests {
 
         let mut dialer = RtpUdpDialer::new(route.sdp.clone());
         let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
 
         let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
         let idr = [0x65u8, 0xAA, 0xBB];
@@ -499,7 +514,12 @@ mod tests {
         let socket = bind(&route).await.expect("bind");
         let mut dialer = RtpUdpDialer::new(route.sdp.clone());
         let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
         let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
 
         const READ_TIMEOUT: Duration = Duration::from_millis(100);

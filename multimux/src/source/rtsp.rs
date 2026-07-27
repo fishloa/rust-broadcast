@@ -783,7 +783,12 @@ mod tests {
         let session = dialer
             .dial()
             .expect("dial: local construction only, no I/O");
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
         assert!(matches!(driver.health(), HealthState::Establishing));
 
         // 1. DESCRIBE went out; nothing else queued.
@@ -927,7 +932,12 @@ mod tests {
     fn non_success_describe_response_fails_the_session() {
         let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
         let session = dialer.dial().unwrap();
-        let mut driver = IngestDriver::new(session, trunk_config(), handshake());
+        let mut driver = IngestDriver::new(
+            session,
+            trunk_config(),
+            handshake(),
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
         let _describe = driver.poll_transmit().unwrap();
         let not_found = rtsp_response(1, "404 Not Found", "", "");
         driver.feed(&not_found, Timestamp::ZERO);

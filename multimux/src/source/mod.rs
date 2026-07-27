@@ -22,10 +22,18 @@ pub mod sdp;
 pub mod smooth_pull;
 pub mod srt;
 pub mod ts_http;
+pub mod ts_program;
 pub mod ts_udp;
 pub(crate) mod udp;
 
 use std::time::Duration;
+
+/// Read-size hint every MPEG-2 TS transport reports via
+/// [`broadcast_common::Stage::demand`], and the read-buffer size the
+/// datagram transports allocate — comfortably above a typical 7×188-byte
+/// (1316-byte) TS-over-UDP payload and any legal UDP datagram (65 507 bytes
+/// over IPv4), so a single `recv` always captures a whole datagram.
+pub const MAX_TS_READ: usize = 65_536;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
