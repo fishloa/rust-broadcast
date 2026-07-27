@@ -50,6 +50,88 @@
 //!   all AUs in that packet share the RTP timestamp, so non-final AUs get
 //!   `duration = 0`; v1 assumes one AU per packet, which is what transmux's
 //!   own packetiser emits.
+//!
+//! # Loss and reorder detection (issue #779)
+//!
+//! RTP runs over UDP: loss, reordering, and duplication are all normal, not
+//! exceptional. Before this, [`push`](Self::push) decided access-unit
+//! boundaries purely from the RTP timestamp and the marker bit, and never
+//! looked at the sequence number at all — a dropped FU-A fragment was
+//! concatenated with its neighbours into a malformed access unit and handed
+//! downstream with no diagnostic trail.
+//!
+//! Each track now keeps RFC 3550 §5.1 sequence-number state, compared with
+//! **wrapping** arithmetic (never `>` — the field is 16 bits and wraps every
+//! 65536 packets, exactly like this module's own [`unwrap_ts`] for the
+//! 32-bit timestamp). RFC 3550 §A.1's `update_seq` is the standard's
+//! validity-check algorithm; the discipline it embodies (wrapping
+//! comparison, SSRC-scoped state, treating a new SSRC as a new source) is
+//! transcribed and cited in full at
+//! `transmux/docs/rtp/rtp-sequence-validation.md`, along with a precise
+//! account of where this implementation follows it and where it must
+//! diverge (that RFC's algorithm classifies validity for RTCP statistics; it
+//! never reorders, because nothing in plain RTCP loss accounting needs
+//! packets delivered in order — H.264 FU-A reassembly does).
+//!
+//! - **In order**: reassembled immediately, as before.
+//! - **Reordered within a small window**: held in a bounded buffer
+//!   (`RtpStreamTrack::with_reorder_depth`, default [`DEFAULT_REORDER_DEPTH`])
+//!   keyed by wire sequence number, and replayed in the correct order once
+//!   the gap fills — reassembly then sees exactly the in-order byte stream.
+//!   The buffer is a **hard bound**: this project has already shipped four
+//!   unbounded-allocation vectors from RTP/TS input (`MAX_AU_BUFFER_BYTES`
+//!   above is one of the fixes), so the reorder buffer never grows past its
+//!   configured depth (momentarily `depth + 1` while a just-arrived packet
+//!   is considered for the "closest to the hole" resume choice, then
+//!   immediately collapsed back down — see [`SeqState::force_resolve`]).
+//! - **Gap** (the buffer's window is exhausted, or end of stream forces a
+//!   decision — [`Self::flush`]): the access unit under construction, if
+//!   any, is dropped rather than reassembled from a run missing a fragment;
+//!   [`RtpLossEvent::SequenceGap`] is recorded.
+//! - **Duplicate** (already delivered, or already sitting in the reorder
+//!   buffer): discarded silently, exactly as RFC 3550 §A.1 treats it.
+//!
+//! ## Where the signal surfaces (design decision)
+//!
+//! Issue #778 (the MPEG-TS sibling of this issue — continuity-counter gaps
+//! and `transport_error_indicator`) concluded that TR 101 290-style loss
+//! belongs in the media plane's byte-level tap, *not* in the demux family's
+//! own [`crate::ir::DemuxEvent`] vocabulary, because detecting a CC gap is a
+//! pure re-scan of raw bytes: `media-doctor`, `dvb-conformance`, and
+//! `ts-fix` each already implement it independently, entirely outside any
+//! demuxer, over the same bytes a demuxer merely happens to also be
+//! parsing. Widening `DemuxEvent` there would have duplicated a detector
+//! that already exists three times over, in the wrong layer.
+//!
+//! None of that applies here, and the signal surfaces locally instead — a
+//! new [`RtpLossEvent`], polled via [`Self::poll_loss_event`], scoped to
+//! this module rather than folded into `DemuxEvent` (whose own doc comment
+//! already draws its boundary at "the demux family's own vocabulary" —
+//! `StreamingTsDemux` + `StreamingFlvDemux` — and this depacketiser is a
+//! different spoke of the hub, not a member of that family):
+//!
+//! 1. **No detector to bridge.** Unlike #778, there is no existing RTP loss
+//!    monitor anywhere in this workspace to wire in; it has to be written
+//!    somewhere, and there is no "elsewhere" that already does this.
+//! 2. **The signal and the corrective action share one piece of state.**
+//!    A CC gap is diagnostic-only-by-construction: a tap can compute
+//!    "sequence N is missing" from the wire bytes alone, without needing to
+//!    know anything about framing, because nothing about *acting* on that
+//!    gap requires framing state (TS payloads are independently
+//!    re-synchronisable). An RTP sequence gap is different: knowing a
+//!    packet is missing is only useful once paired with knowing *which*
+//!    in-progress NAL it was fragmenting — and that is `TrackState`'s own
+//!    `cur_pkts`/`cur_ts`, private reassembly state a separate tap could not
+//!    see without independently re-implementing this entire module's FU-A
+//!    tracking. The gap decision and the "drop this access unit" decision
+//!    are the same decision, made from the same state, at the same moment —
+//!    so they belong in the same place.
+//!
+//! A future consumer wanting this folded into a wider cross-container
+//! vocabulary (mirroring `DemuxEvent`) remains free to do so additively —
+//! [`RtpLossEvent`] is `#[non_exhaustive]` for exactly that reason — but
+//! that is a decision for whoever builds that cross-container layer, not one
+//! this module should presume.
 
 use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -80,6 +162,68 @@ const NTP_FRACTION_SCALE: f64 = 4_294_967_296.0;
 /// or marker bit).
 const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
+/// Default depth (in packets) of the bounded out-of-order reorder buffer
+/// (see the module docs' "Loss and reorder detection" section and
+/// [`SeqState`]), used unless a track is built with
+/// [`RtpStreamTrack::with_reorder_depth`].
+///
+/// Chosen generously above the reorder distances a real RTSP/RTP session on
+/// a managed network produces (typically a handful of packet positions at
+/// most) while keeping the worst case tiny: `DEFAULT_REORDER_DEPTH + 1`
+/// packets at the network MTU (a few KB) sit in the buffer at any instant,
+/// nowhere near [`MAX_AU_BUFFER_BYTES`]. This is deliberate — this project
+/// has already shipped four unbounded-allocation DoS vectors from RTP/TS
+/// input (audit-ingest #4; `MAX_AU_BUFFER_BYTES` above is one of the fixes),
+/// and RTP is untrusted remote input over UDP, so a fifth was not an option.
+pub const DEFAULT_REORDER_DEPTH: usize = 16;
+
+/// Loss/reorder signal from [`RtpStreamDepacketiser`] (RFC 3550 §5.1
+/// sequence-number semantics; see the module docs' "Loss and reorder
+/// detection" section and `transmux/docs/rtp/rtp-sequence-validation.md` for
+/// the RFC 3550 §A.1 discipline this is adapted from, and why the signal
+/// surfaces here rather than in [`crate::ir::DemuxEvent`]).
+///
+/// `#[non_exhaustive]`: a future variant (e.g. a distinct signal for a
+/// changed SSRC) is additive.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtpLossEvent {
+    /// The sequence numbers strictly between `expected` and `got` were never
+    /// recovered — either genuinely lost in transit, or reordered further
+    /// than the bounded reorder window
+    /// ([`RtpStreamTrack::with_reorder_depth`]) tolerates; from this
+    /// depacketiser's point of view those are indistinguishable, and both
+    /// require the same corrective action. Any access unit under
+    /// construction at the moment the gap was detected was dropped rather
+    /// than reassembled from a run missing a fragment.
+    SequenceGap {
+        /// The track this gap was observed on.
+        track_id: u32,
+        /// The SSRC (RFC 3550 §5.1) the gap was observed on.
+        ssrc: u32,
+        /// The sequence number that was expected next.
+        expected: u16,
+        /// The sequence number actually adopted as the new baseline.
+        got: u16,
+    },
+    /// An access unit could not be reassembled after a [`Self::SequenceGap`]
+    /// resync (e.g. the packet resumed on was itself an FU-A continuation
+    /// fragment with no preceding start fragment in this run — RFC 6184
+    /// §5.8) and was dropped. Always preceded, in the same
+    /// [`RtpStreamDepacketiser::push`] call, by the `SequenceGap` that
+    /// triggered the resync.
+    DamagedAccessUnit {
+        /// The track this occurred on.
+        track_id: u32,
+    },
+}
+
+// `RtpLossEvent` is a data-carrying ADT (each variant is a distinct
+// structured signal, not a flat spec code) — see this crate's
+// `tests/label_coverage.rs` SKIP list (same category as `DemuxEvent`), so it
+// is intentionally exempt from the #204 `name()`/`impl_spec_display!`
+// convention.
+
 /// One track's decode config for [`RtpStreamDepacketiser`].
 #[non_exhaustive]
 pub struct RtpStreamTrack {
@@ -91,16 +235,178 @@ pub struct RtpStreamTrack {
     pub config: CodecConfig,
     /// RTP clock rate (Hz) — also used as the IR track timescale.
     pub clock_rate: u32,
+    /// Bounded reorder-buffer depth (packets) — see [`DEFAULT_REORDER_DEPTH`].
+    reorder_depth: usize,
 }
 
 impl RtpStreamTrack {
-    /// Build a track config from its fields.
+    /// Build a track config from its fields, with the default reorder-buffer
+    /// depth ([`DEFAULT_REORDER_DEPTH`]).
     pub fn new(track_id: u32, kind: RtpMediaKind, config: CodecConfig, clock_rate: u32) -> Self {
         Self {
             track_id,
             kind,
             config,
             clock_rate,
+            reorder_depth: DEFAULT_REORDER_DEPTH,
+        }
+    }
+
+    /// Override the bounded reorder-buffer depth (packets) for this track —
+    /// see [`DEFAULT_REORDER_DEPTH`] and the module docs' "Loss and reorder
+    /// detection" section. `0` disables reordering entirely (any
+    /// out-of-order arrival is immediately treated as a gap).
+    pub fn with_reorder_depth(mut self, reorder_depth: usize) -> Self {
+        self.reorder_depth = reorder_depth;
+        self
+    }
+}
+
+/// Per-(track, SSRC) RTP sequence-number tracking state — RFC 3550 §A.1's
+/// wrapping-comparison discipline, adapted for an active bounded reorder
+/// buffer rather than a passive validity classifier (see the module docs and
+/// `transmux/docs/rtp/rtp-sequence-validation.md`).
+#[derive(Default)]
+struct SeqState {
+    /// The SSRC this state was initialised for. `None` until the first
+    /// packet is seen. A *changed* SSRC (RFC 3550 §8.2: a new source, e.g. a
+    /// stream restart) resets tracking rather than raising a gap.
+    ssrc: Option<u32>,
+    /// Next expected sequence number.
+    expected: Option<u16>,
+    /// Packets received ahead of `expected`, held (raw wire bytes, keyed by
+    /// their own sequence number) so they can be replayed in order once the
+    /// hole fills. Bounded: never holds more than `reorder_depth` entries at
+    /// rest (see [`Self::admit`] / [`Self::force_resolve`]).
+    held: Vec<(u16, Vec<u8>)>,
+}
+
+/// One [`SeqState::admit`] call's outcome.
+struct Admission {
+    /// `Some((expected, got))` if a gap was declared as a result — the
+    /// caller must drop any access unit under construction.
+    gap: Option<(u16, u16)>,
+    /// Packets released for reassembly this call, in sequence order (may be
+    /// empty — held for reorder, or a discarded duplicate).
+    released: Vec<Vec<u8>>,
+}
+
+impl SeqState {
+    /// Feed one packet's SSRC + sequence number through the gate. Returns
+    /// what, if anything, is now ready to reassemble, and whether doing so
+    /// required declaring a gap.
+    fn admit(&mut self, reorder_depth: usize, ssrc: u32, seq: u16, packet: &[u8]) -> Admission {
+        // A new source (first packet ever, or a changed SSRC — RFC 3550
+        // §8.2) resyncs without a gap: there is nothing to have lost yet.
+        if self.ssrc != Some(ssrc) || self.expected.is_none() {
+            self.ssrc = Some(ssrc);
+            self.expected = Some(seq.wrapping_add(1));
+            self.held.clear();
+            return Admission {
+                gap: None,
+                released: alloc::vec![packet.to_vec()],
+            };
+        }
+        let expected = self.expected.expect("checked above");
+
+        // RFC 3550 §A.1's `udelta` idiom, generalised to signed so both
+        // directions are visible in one comparison — wrapping arithmetic
+        // only, never a plain `>`/`<` (the field is 16 bits and wraps).
+        let delta = seq.wrapping_sub(expected) as i16;
+
+        if delta == 0 {
+            // In order.
+            self.expected = Some(seq.wrapping_add(1));
+            let mut released = alloc::vec![packet.to_vec()];
+            self.drain_contiguous(&mut released);
+            return Admission {
+                gap: None,
+                released,
+            };
+        }
+        if delta < 0 {
+            // Behind what we're waiting for: a legal duplicate of an
+            // already-processed packet, or a very late arrival for a
+            // sequence already declared lost — RFC 3550 §A.1 groups both
+            // under "duplicate or reordered packet" and takes no action.
+            return Admission {
+                gap: None,
+                released: Vec::new(),
+            };
+        }
+
+        // Ahead of what we're waiting for.
+        if self.held.iter().any(|(s, _)| *s == seq) {
+            // Duplicate of an already-held future packet.
+            return Admission {
+                gap: None,
+                released: Vec::new(),
+            };
+        }
+        self.held.push((seq, packet.to_vec()));
+        if self.held.len() <= reorder_depth {
+            // Still within the bounded window: wait.
+            return Admission {
+                gap: None,
+                released: Vec::new(),
+            };
+        }
+        // The buffer's bound is reached (momentarily `reorder_depth + 1`,
+        // collapsed back down by `force_resolve` below, never sustained):
+        // the hole cannot be waited out any longer. Force a decision.
+        let (expected, got, released) = self
+            .force_resolve()
+            .expect("held is non-empty: just pushed to it");
+        Admission {
+            gap: Some((expected, got)),
+            released,
+        }
+    }
+
+    /// Force a decision when the buffer can wait no longer (its bound was
+    /// reached mid-stream, or end of stream — [`RtpStreamDepacketiser::flush`]
+    /// — forces one): pick the held packet with the smallest wrapping
+    /// distance from `expected` (RFC 3550 §A.1's wrapping-distance
+    /// discipline, applied to choosing a resume point rather than
+    /// classifying validity), declare the sequence numbers strictly between
+    /// `expected` and it lost, adopt it as the new baseline, and drain
+    /// whatever else in `held` is now consecutively reachable from there —
+    /// so a run of packets that arrived correctly *after* the one genuinely
+    /// lost packet is never discarded along with it. Returns `None` if
+    /// `held` is empty (nothing to resolve).
+    fn force_resolve(&mut self) -> Option<(u16, u16, Vec<Vec<u8>>)> {
+        let expected = self.expected?;
+        if self.held.is_empty() {
+            return None;
+        }
+        let idx = self
+            .held
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (s, _))| s.wrapping_sub(expected))
+            .map(|(i, _)| i)?;
+        let (got, bytes) = self.held.remove(idx);
+        self.expected = Some(got.wrapping_add(1));
+        let mut released = alloc::vec![bytes];
+        self.drain_contiguous(&mut released);
+        Some((expected, got, released))
+    }
+
+    /// Drain any packets in `held` that are now consecutively next after
+    /// `self.expected`, advancing `self.expected` and appending each to
+    /// `out` — the mechanism that reassembles a reordered run into the
+    /// original wire order once the hole it was waiting on fills.
+    fn drain_contiguous(&mut self, out: &mut Vec<Vec<u8>>) {
+        loop {
+            let Some(expected) = self.expected else {
+                break;
+            };
+            let Some(pos) = self.held.iter().position(|(s, _)| *s == expected) else {
+                break;
+            };
+            let (_, bytes) = self.held.remove(pos);
+            out.push(bytes);
+            self.expected = Some(expected.wrapping_add(1));
         }
     }
 }
@@ -133,6 +439,12 @@ struct TrackState {
     /// This track's most recent RTCP Sender Report anchor, if any has been
     /// fed via [`RtpStreamDepacketiser::push_sender_report`].
     sr_anchor: Option<SrAnchor>,
+    /// Bounded reorder-buffer depth for this track (packets) — see
+    /// [`DEFAULT_REORDER_DEPTH`] / [`RtpStreamTrack::with_reorder_depth`].
+    reorder_depth: usize,
+    /// RFC 3550 §5.1 sequence-number tracking state (issue #779) — see the
+    /// module docs' "Loss and reorder detection" section.
+    seq: SeqState,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -178,6 +490,10 @@ pub struct RtpStreamDepacketiser {
     /// samples directly (drained via [`Stage::poll`] instead). Unused by the
     /// inherent API.
     stage_ready: VecDeque<Sample>,
+    /// Loss/reorder signals raised by [`Self::push`]/[`Self::flush`],
+    /// drained via [`Self::poll_loss_event`] — see the module docs' "Loss
+    /// and reorder detection" section.
+    loss_events: VecDeque<RtpLossEvent>,
 }
 
 /// Unwrap a 32-bit wire RTP timestamp against the last unwrapped value.
@@ -239,6 +555,8 @@ impl RtpStreamDepacketiser {
                         pending: None,
                         last_duration: 0,
                         sr_anchor: None,
+                        reorder_depth: t.reorder_depth,
+                        seq: SeqState::default(),
                     },
                 )
             })
@@ -246,6 +564,7 @@ impl RtpStreamDepacketiser {
         Self {
             tracks,
             stage_ready: VecDeque::new(),
+            loss_events: VecDeque::new(),
         }
     }
 
@@ -263,6 +582,13 @@ impl RtpStreamDepacketiser {
             .iter_mut()
             .find(|(id, _)| *id == track_id)
             .map(|(_, st)| st)
+    }
+
+    /// Drain the next pending loss/reorder signal, if any (FIFO across every
+    /// track) — see the module docs' "Loss and reorder detection" section.
+    /// A clean stream never produces one.
+    pub fn poll_loss_event(&mut self) -> Option<RtpLossEvent> {
+        self.loss_events.pop_front()
     }
 
     /// Feed one RTCP Sender Report (RFC 3550 §6.4.1) for `track_id`, anchoring
@@ -342,22 +668,73 @@ impl RtpStreamDepacketiser {
 
     /// Feed one RTP packet for `track_id`. Returns any [`Sample`]s that
     /// became fully timed as a result (zero, one — the AU this packet
-    /// completed — the previous AU emitted with its now-known duration).
-    /// Unknown `track_id`s are silently ignored (return an empty `Vec`).
+    /// completed — the previous AU emitted with its now-known duration; or
+    /// several, when a reordered run finishes draining — see the module
+    /// docs' "Loss and reorder detection" section). Unknown `track_id`s are
+    /// silently ignored (return an empty `Vec`).
+    ///
+    /// The sequence number is checked before anything else: an in-order or
+    /// legally-duplicate/reordered-within-window packet is handled as
+    /// before; a genuine gap drops any access unit under construction and
+    /// records [`RtpLossEvent::SequenceGap`] (drained via
+    /// [`Self::poll_loss_event`]) instead of silently reassembling a run
+    /// missing a fragment.
     pub fn push(&mut self, track_id: u32, rtp_packet: &[u8]) -> Result<Vec<Sample>> {
-        let Some(st) = self.state(track_id) else {
+        let hdr = parse_rtp_header(rtp_packet)?;
+        let RtpStreamDepacketiser {
+            tracks,
+            loss_events,
+            ..
+        } = self;
+        let Some((_, st)) = tracks.iter_mut().find(|(id, _)| *id == track_id) else {
             return Ok(Vec::new());
         };
+
+        let adm = st.seq.admit(st.reorder_depth, hdr.ssrc, hdr.sequence, rtp_packet);
+        let mut out = Vec::new();
+        if let Some((expected, got)) = adm.gap {
+            // The AU under construction, if any, is now known-incomplete:
+            // drop it rather than hand a merged, malformed sample
+            // downstream (issue #779).
+            st.cur_pkts.clear();
+            st.cur_bytes = 0;
+            st.cur_ts = None;
+            loss_events.push_back(RtpLossEvent::SequenceGap {
+                track_id,
+                ssrc: hdr.ssrc,
+                expected,
+                got,
+            });
+        }
+        for pkt in &adm.released {
+            Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
+        }
+        Ok(out)
+    }
+
+    /// The original single-packet accumulation logic (RTP timestamp /
+    /// marker-bit AU boundaries, [`MAX_AU_BUFFER_BYTES`]) — factored out so
+    /// [`Self::push`] can feed it zero, one, or many packets released by
+    /// [`SeqState::admit`] in a single call (a drained reordered run). Only
+    /// [`Error::BufferCapExceeded`] escapes as a hard error; a reassembly
+    /// failure is caught by [`Self::drain_complete_or_discard`] instead, so
+    /// one bad packet in a released batch never aborts the packets after it.
+    fn push_one(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: u32,
+        rtp_packet: &[u8],
+        out: &mut Vec<Sample>,
+    ) -> Result<()> {
         let hdr = parse_rtp_header(rtp_packet)?;
         let ts = hdr.timestamp;
-        let mut out = Vec::new();
 
         // A timestamp change while packets are buffered means the previous
         // timestamp's packets already form a complete AU (defensive: covers
         // a dropped/missing marker bit).
         if let Some(cur) = st.cur_ts {
             if cur != ts && !st.cur_pkts.is_empty() {
-                Self::drain_complete(st, &mut out)?;
+                Self::drain_complete_or_discard(st, loss_events, track_id, out);
             }
         }
         st.cur_ts = Some(ts);
@@ -381,22 +758,73 @@ impl RtpStreamDepacketiser {
 
         // The video marker bit ends an AU immediately (RFC 6184 §5.1).
         if matches!(st.kind, RtpMediaKind::H264) && hdr.marker {
-            Self::drain_complete(st, &mut out)?;
+            Self::drain_complete_or_discard(st, loss_events, track_id, out);
             st.cur_ts = None;
         }
-        Ok(out)
+        Ok(())
+    }
+
+    /// [`Self::drain_complete`], but a reassembly failure — e.g. the packet
+    /// resumed on after a [`RtpLossEvent::SequenceGap`] turns out to be an
+    /// FU-A continuation fragment with no preceding start fragment in this
+    /// run (RFC 6184 §5.8) — is caught and recorded as
+    /// [`RtpLossEvent::DamagedAccessUnit`] instead of propagated:
+    /// `drain_complete` already resets the accumulator
+    /// (`core::mem::take`) before attempting reassembly, so there is no
+    /// inconsistent state to clean up, and a stream that is actively
+    /// recovering from loss must not have that recovery itself abort the
+    /// caller's processing of any packets still to come.
+    fn drain_complete_or_discard(
+        st: &mut TrackState,
+        loss_events: &mut VecDeque<RtpLossEvent>,
+        track_id: u32,
+        out: &mut Vec<Sample>,
+    ) {
+        if Self::drain_complete(st, out).is_err() {
+            loss_events.push_back(RtpLossEvent::DamagedAccessUnit { track_id });
+        }
     }
 
     /// Flush a track at end-of-stream: reassemble any buffered packets, and
     /// emit the final pending AU using the last-known duration (there is no
     /// following AU to measure a real delta against).
+    ///
+    /// First forces a decision on anything still sitting in the reorder
+    /// buffer awaiting a hole that never filled — end of stream is exactly
+    /// as final as the buffer's bound being reached mid-stream (see
+    /// [`SeqState::force_resolve`]); without this, a fragment run missing
+    /// its still-buffered continuation would sit invisibly in the reorder
+    /// buffer forever while `cur_pkts` (missing that fragment) got wrongly
+    /// flushed below as if it were complete.
     pub fn flush(&mut self, track_id: u32) -> Result<Vec<Sample>> {
-        let Some(st) = self.state(track_id) else {
+        let RtpStreamDepacketiser {
+            tracks,
+            loss_events,
+            ..
+        } = self;
+        let Some((_, st)) = tracks.iter_mut().find(|(id, _)| *id == track_id) else {
             return Ok(Vec::new());
         };
         let mut out = Vec::new();
+
+        if let Some((expected, got, released)) = st.seq.force_resolve() {
+            let ssrc = st.seq.ssrc.unwrap_or(0);
+            st.cur_pkts.clear();
+            st.cur_bytes = 0;
+            st.cur_ts = None;
+            loss_events.push_back(RtpLossEvent::SequenceGap {
+                track_id,
+                ssrc,
+                expected,
+                got,
+            });
+            for pkt in &released {
+                Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
+            }
+        }
+
         if !st.cur_pkts.is_empty() {
-            Self::drain_complete(st, &mut out)?;
+            Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
         if let Some(p) = st.pending.take() {
