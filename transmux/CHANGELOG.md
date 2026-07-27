@@ -457,6 +457,15 @@ below.
   mis-placed the splice join/snap one step downstream of that fix. All three
   now read the sample's own absolute `dts` directly, falling back to the
   duration sum only for a genuinely timestamp-less (section-carried) sample.
+- **The four flagship segmenter doctests (`Segmenter`, `LlSegmenter`,
+  `LlHlsSegmenter`, `StreamingTsHlsSegmenter`) actually run now** (#780).
+  Each was wrapped in `# if false { … }` with a `spec()` stub returning
+  `unimplemented!()`, so rustdoc only type-checked the body and never
+  executed it — a user copying the example got code that merely compiled.
+  `spec()` now builds a real minimal AVC `TrackSpec`, the `# if false`
+  wrapper is gone, and each example carries an assertion tied to the
+  segmenter's actual cut/flush behaviour (verified to fail under a mutated
+  segmenter, then reverted).
 
 ### Security
 

@@ -129,22 +129,43 @@ struct TrackState {
 /// ```
 /// use transmux::{CodecConfig, Sample, TrackSpec};
 /// use transmux::ll_hls::LlHlsSegmenter;
-/// # fn spec() -> TrackSpec { unimplemented!() }
+/// # use transmux::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+/// # fn spec() -> TrackSpec {
+/// #     let record = AVCDecoderConfigurationRecord {
+/// #         configuration_version: 1,
+/// #         profile_indication: 66,
+/// #         profile_compatibility: 0,
+/// #         level_indication: 30,
+/// #         length_size_minus_one: 3,
+/// #         sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24])],
+/// #         pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+/// #         chroma_format: None,
+/// #         bit_depth_luma_minus8: None,
+/// #         bit_depth_chroma_minus8: None,
+/// #         sps_ext: vec![],
+/// #     };
+/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #         config: AVCConfigurationBox::new(record),
+/// #         width: 16,
+/// #         height: 16,
+/// #     })
+/// # }
 /// # fn au(sync: bool) -> Sample {
 /// #     use std::sync::atomic::{AtomicI64, Ordering};
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
-/// # if false {
 /// // 1 s target segments, ~334 ms parts.
 /// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], 1000, 1.0, 334).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
+/// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(1, au(true)).unwrap();              // keyframe
 /// seg.push(1, au(false)).unwrap();
-/// for part in seg.take_ready_parts() { /* write part.bytes over HTTP */ }
+/// assert!(seg.take_ready_parts().is_empty());  // still buffering: below the part target
 /// seg.flush().unwrap();                        // trailing part + segment
-/// # }
+/// assert_eq!(seg.take_ready_parts().len(), 1);
+/// assert_eq!(seg.take_ready_segments().len(), 1);
 /// ```
 pub struct LlHlsSegmenter {
     tracks: Vec<TrackState>,
