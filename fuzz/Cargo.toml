@@ -227,3 +227,15 @@ name = "transmux_cenc_boxes"
 path = "fuzz_targets/transmux_cenc_boxes.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "transmux_ts_demux"
+path = "fuzz_targets/transmux_ts_demux.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_ts_demux_packets"
+path = "fuzz_targets/transmux_ts_demux_packets.rs"
+test = false
+doc  = false
