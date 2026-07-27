@@ -453,6 +453,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -512,21 +513,54 @@ pub enum RetentionClass {
 }
 
 /// Construction parameters for a [`Trunk`].
+///
+/// # Why every capacity is a [`NonZeroUsize`], not a validated `usize`
+///
+/// A zero capacity is not a value this type rejects — it is a value this type
+/// **cannot represent**. Every ring in this module evicts its oldest entry
+/// when `entries.len() == capacity`, so a zero capacity would evict every
+/// entry the instant it was pushed, and a zero waiter cap would make
+/// [`Trunk::listen`] incapable of ever registering anybody: not a
+/// configuration, a broken one.
+///
+/// Two weaker designs were considered and rejected:
+///
+/// - **Panicking on zero in [`Trunk::new`]** (what this type did before):
+///   internally consistent, but a library that panics on a value which
+///   arrives *from a file* is a real operational hazard, not a style
+///   question — `multimux` takes its routes from a JSON config, so once
+///   these capacities become operator-configurable a stray `0` would take
+///   down the server process instead of producing a config error. It also
+///   contradicted `transmux::ProgressiveDemux::new`'s deliberate
+///   panic-to-fallible change, which is exactly the kind of
+///   two-crates-apart inconsistency that makes an API feel arbitrary.
+/// - **A fallible `TrunkConfig::new -> Result<Self, _>`** (the
+///   `ProgressiveDemux` shape): correct, but strictly worse *here*.
+///   `ProgressiveDemux` already returns `Result` as part of its `Stage`
+///   contract and already has an `Error` type; `TrunkConfig` has neither, so
+///   this would mean inventing a construction error type and threading
+///   `?`/`unwrap` through every construction site to encode one bit of
+///   information the type system can carry for free. `NonZeroUsize` puts
+///   the invariant *in the signature*, where a reader learns it without
+///   reading this doc — and, for the JSON-config hazard specifically, a
+///   `serde` deserialize of `0` into a `NonZeroUsize` field already fails as
+///   an ordinary deserialization error at the config boundary, with no
+///   hand-written check and no panic.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct TrunkConfig {
     /// Bound, in entry count, on the [`RetentionClass::Timed`] ring.
-    pub timed_capacity: usize,
+    pub timed_capacity: NonZeroUsize,
     /// Bound, in entry count, on the [`RetentionClass::Sparse`] ring —
     /// independent of `timed_capacity`; see [`RetentionClass::Sparse`] for
     /// why that independence is the entire point of the retention rule.
-    pub sparse_capacity: usize,
+    pub sparse_capacity: NonZeroUsize,
     /// Bound, in entry count, on the segment log. **Also** the bound a
     /// pinning [`SegmentCursor`]'s retention is measured against — see
     /// [The DVR contradiction](self#the-dvr-contradiction-losslessness-from-retention-not-back-pressure)
     /// for why there is deliberately no second, independent "pin depth"
     /// knob.
-    pub segment_capacity: usize,
+    pub segment_capacity: NonZeroUsize,
     /// Bound, in entry count, on the event log — **and** on its segment
     /// boundary table (`EventLog::segment_starts`). See
     /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux)
@@ -534,7 +568,7 @@ pub struct TrunkConfig {
     /// knob rather than getting a second, independently-tuned one —
     /// exactly [`TrunkConfig::segment_capacity`]'s "no second capacity
     /// knob" precedent for pinning.
-    pub event_capacity: usize,
+    pub event_capacity: NonZeroUsize,
     /// Bound, in entry count, on the live-part log (step 3b-iv) — **and**
     /// on how many concurrent [`Trunk::listen`] registrations this trunk
     /// will honor at once. See
@@ -545,20 +579,22 @@ pub struct TrunkConfig {
     /// capacity knob" precedent (after [`TrunkConfig::segment_capacity`]'s
     /// pin reuse and [`TrunkConfig::event_capacity`]'s `segment_starts`
     /// reuse).
-    pub part_capacity: usize,
+    pub part_capacity: NonZeroUsize,
 }
 
 impl TrunkConfig {
-    /// Build a config with all five ring capacities. None is validated
-    /// here — [`Trunk::new`] panics on a zero capacity, matching this
-    /// crate's [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]
-    /// precedent of panicking at the point a ring is actually allocated.
+    /// Build a config with all five ring capacities. Nothing is validated
+    /// here, and nothing needs to be: [`NonZeroUsize`] makes the only
+    /// invalid value unrepresentable rather than merely rejected — see
+    /// [this type's own docs](TrunkConfig#why-every-capacity-is-a-nonzerousize-not-a-validated-usize)
+    /// for why that beats both the panic this replaced and a fallible
+    /// constructor.
     pub fn new(
-        timed_capacity: usize,
-        sparse_capacity: usize,
-        segment_capacity: usize,
-        event_capacity: usize,
-        part_capacity: usize,
+        timed_capacity: NonZeroUsize,
+        sparse_capacity: NonZeroUsize,
+        segment_capacity: NonZeroUsize,
+        event_capacity: NonZeroUsize,
+        part_capacity: NonZeroUsize,
     ) -> Self {
         TrunkConfig {
             timed_capacity,
@@ -1112,45 +1148,26 @@ pub struct Trunk {
 impl Trunk {
     /// Construct a fresh, empty `Trunk`.
     ///
-    /// Panics if `config.timed_capacity`, `config.sparse_capacity`,
-    /// `config.segment_capacity`, `config.event_capacity`, or
-    /// `config.part_capacity` is zero — a construction mistake (every entry
-    /// would be evicted the instant it was pushed, or [`Trunk::listen`]
-    /// could never register a single waiter), not remote input, so it
-    /// panics rather than returning a `Result` a caller could ignore
-    /// (matching
-    /// [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]).
+    /// Cannot fail and cannot panic on its configuration: every
+    /// [`TrunkConfig`] capacity is a [`NonZeroUsize`], so the one invalid
+    /// value (zero — a ring that evicts every entry the instant it is
+    /// pushed) is unrepresentable rather than merely rejected. See
+    /// [`TrunkConfig`]'s own docs for why that replaced this method's
+    /// former five `assert!`s.
     pub fn new(config: TrunkConfig) -> Arc<Trunk> {
-        assert!(
-            config.timed_capacity > 0,
-            "Trunk timed_capacity must be > 0"
-        );
-        assert!(
-            config.sparse_capacity > 0,
-            "Trunk sparse_capacity must be > 0"
-        );
-        assert!(
-            config.segment_capacity > 0,
-            "Trunk segment_capacity must be > 0"
-        );
-        assert!(
-            config.event_capacity > 0,
-            "Trunk event_capacity must be > 0"
-        );
-        assert!(config.part_capacity > 0, "Trunk part_capacity must be > 0");
         Arc::new(Trunk {
             state: Mutex::new(TrunkState {
-                timed: ClassLog::new(config.timed_capacity),
-                sparse: ClassLog::new(config.sparse_capacity),
-                segments: SegmentLog::new(config.segment_capacity),
-                events: EventLog::new(config.event_capacity),
-                parts: PartLog::new(config.part_capacity),
+                timed: ClassLog::new(config.timed_capacity.get()),
+                sparse: ClassLog::new(config.sparse_capacity.get()),
+                segments: SegmentLog::new(config.segment_capacity.get()),
+                events: EventLog::new(config.event_capacity.get()),
+                parts: PartLog::new(config.part_capacity.get()),
             }),
             segment_pin_released: Condvar::new(),
             writer_taken: AtomicBool::new(false),
             progress: Event::new(),
             waiter_count: AtomicUsize::new(0),
-            part_waiter_cap: config.part_capacity,
+            part_waiter_cap: config.part_capacity.get(),
         })
     }
 
@@ -2009,6 +2026,16 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
 
+    /// `NonZeroUsize` from a literal capacity, for readability at the ~30
+    /// `TrunkConfig::new` call sites below. Panicking on `0` here is correct
+    /// and is *not* the behaviour the deleted `zero_*_capacity_panics` tests
+    /// asserted: this is a test helper rejecting a typo in test source, not
+    /// the library accepting then rejecting a zero at run time — the library
+    /// can no longer be handed one at all.
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
     fn sample(byte: u8, len: usize) -> Sample {
         Sample::new(Bytes::from(vec![byte; len]), Some(0), Some(0), None, true)
     }
@@ -2081,7 +2108,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_cursors_see_every_sample_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(100), nz(10), nz(4), nz(8), nz(8)));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -2114,7 +2141,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn slow_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 10, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(10), nz(4), nz(8), nz(8)));
         let mut slow = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -2154,7 +2181,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn lag_is_reported_with_an_accurate_skipped_count() {
-        let trunk = Trunk::new(TrunkConfig::new(3, 10, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(3), nz(10), nz(4), nz(8), nz(8)));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -2189,7 +2216,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn sparse_reader_loses_data_reports_degraded_distinguishable_from_timed_lagged() {
-        let trunk = Trunk::new(TrunkConfig::new(2, 2, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(2), nz(2), nz(4), nz(8), nz(8)));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -2231,7 +2258,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn ring_is_bounded_under_flood_on_both_classes() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 3, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(3), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -2266,7 +2293,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn payload_is_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(8, 8, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(4), nz(8), nz(8)));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -2296,47 +2323,26 @@ mod tests {
     }
 
     // --- Construction invariants -------------------------------------------
-
-    #[test]
-    #[should_panic(expected = "timed_capacity must be > 0")]
-    fn zero_timed_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(0, 4, 4, 8, 8));
-    }
-
-    #[test]
-    #[should_panic(expected = "sparse_capacity must be > 0")]
-    fn zero_sparse_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 0, 4, 8, 8));
-    }
-
-    #[test]
-    #[should_panic(expected = "segment_capacity must be > 0")]
-    fn zero_segment_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 0, 8, 8));
-    }
-
-    #[test]
-    #[should_panic(expected = "event_capacity must be > 0")]
-    fn zero_event_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 0, 8));
-    }
-
-    #[test]
-    #[should_panic(expected = "part_capacity must be > 0")]
-    fn zero_part_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 0));
-    }
+    //
+    // The five `zero_*_capacity_panics` tests that used to live here are
+    // deliberately GONE, not merely disabled: every `TrunkConfig` capacity is
+    // now a `NonZeroUsize`, so a zero capacity is unrepresentable rather than
+    // rejected at run time, and `Trunk::new` no longer has (or needs) the
+    // `assert!`s they pinned. A test asserting a panic that can no longer
+    // occur would not compile against the new signature anyway, and keeping a
+    // rewritten version would only be asserting that `NonZeroUsize::new(0)`
+    // returns `None` — a property of the standard library, not of this crate.
 
     #[test]
     fn second_writer_is_refused() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let _first = trunk.writer().unwrap();
         assert!(trunk.writer().is_none(), "a Trunk has exactly one writer");
     }
 
     #[test]
     fn subscribe_starts_from_now_not_from_history() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         writer.publish(1, RetentionClass::Timed, sample(1, 4));
         writer.publish(1, RetentionClass::Timed, sample(2, 4));
@@ -2364,7 +2370,7 @@ mod tests {
     /// index 1. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_segment_cursors_see_every_segment_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 100, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(100), nz(8), nz(8)));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -2396,7 +2402,7 @@ mod tests {
     /// `1020`). Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn non_pinning_slow_segment_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let mut slow = trunk.subscribe_segments();
         let writer = trunk.writer().unwrap();
 
@@ -2434,7 +2440,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_reader_receives_every_segment_while_non_pinning_reader_lags() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut slow = trunk.subscribe_segments(); // non-pinning: will lag
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest); // pinning: must lose nothing
         let writer = Arc::new(trunk.writer().unwrap());
@@ -2506,7 +2512,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_is_bounded_an_unacking_consumer_cannot_grow_memory_without_limit() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         // Default policy (`Gap`) pinning cursor that never polls at all —
         // the worst case for memory growth: a dead/wedged archive consumer.
         let _archive = trunk.pin_segments(ArchiveOverrun::default());
@@ -2532,7 +2538,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_gap_evicts_and_reports_gap() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Gap);
         let writer = trunk.writer().unwrap();
 
@@ -2570,7 +2576,7 @@ mod tests {
     /// reverted.
     #[test]
     fn archive_overrun_stall_ingest_actually_blocks_the_writer() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 1, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let writer = Arc::new(trunk.writer().unwrap());
 
@@ -2607,7 +2613,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_terminate_drops_the_cursor() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(2), nz(8), nz(8)));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Terminate);
         let writer = trunk.writer().unwrap();
 
@@ -2647,7 +2653,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segment_bytes_are_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 8, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(8), nz(8), nz(8)));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -2738,7 +2744,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn events_between_returns_exactly_the_half_open_range() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
         for (id, ticks) in [(1u32, 1_000u64), (2, 2_000), (3, 3_000), (4, 4_000)] {
@@ -2765,7 +2771,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn segment_relative_event_resolves_at_publish_time_when_boundary_already_known() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
         writer.note_segment_start(3, MediaTime(300_000));
@@ -2802,7 +2808,7 @@ mod tests {
     /// reverted.
     #[test]
     fn segment_relative_event_resolves_to_the_named_segment_not_whichever_is_open() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
@@ -2874,7 +2880,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn utc_only_event_stays_unanchored_until_a_time_anchor_arrives() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         let mut cursor = trunk.subscribe_events();
 
@@ -2949,7 +2955,7 @@ mod tests {
     fn a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering() {
         const PTS_WRAP: u64 = 1u64 << 33;
 
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
         let mut timeline = timed_metadata::Timeline::new();
 
@@ -3009,7 +3015,7 @@ mod tests {
     /// the failure, then reverted.
     #[test]
     fn event_log_is_bounded_under_flood() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(3), nz(8)));
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -3032,7 +3038,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn event_cursor_lag_is_reported_with_an_accurate_skipped_count_writer_never_blocks() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(3), nz(8)));
         let mut cursor = trunk.subscribe_events();
         let writer = trunk.writer().unwrap();
 
@@ -3296,7 +3302,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn part_is_addressable_and_readable_before_its_parent_segment_closes() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
         // Segment 9 has never been closed — no `publish_segment` call for it
@@ -3340,7 +3346,7 @@ mod tests {
     ///    `0xCC` bytes instead of the awaited part's `0xAB` bytes.
     #[test]
     fn waiter_is_woken_when_the_awaited_part_lands_and_resolves_to_it() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = Arc::new(trunk.writer().unwrap());
 
         // Register BEFORE re-checking/waiting — the documented no-missed-
@@ -3386,7 +3392,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn waiter_whose_target_never_arrives_is_bounded_not_parked_forever() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let listener = trunk.listen().unwrap();
 
         let start = std::time::Instant::now();
@@ -3423,7 +3429,7 @@ mod tests {
     /// than backed by an invented mutation.
     #[test]
     fn writer_never_blocks_with_a_registered_never_serviced_waiter() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, 8));
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = Arc::new(trunk.writer().unwrap());
 
         // Registered, kept alive for the whole test, and never waited on or
@@ -3456,8 +3462,8 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn waiter_set_is_bounded_a_flood_of_listen_calls_cannot_grow_without_limit() {
-        let cap = 4;
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, cap));
+        let cap = nz(4).get();
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
 
         // Fill exactly to the cap, keeping every registration alive.
         let mut held: Vec<ProgressListener> = Vec::new();
@@ -3516,8 +3522,8 @@ mod tests {
     /// reverted.
     #[test]
     fn parts_remain_addressable_after_segment_close_until_ordinary_eviction_reclaims_them() {
-        let part_cap = 4;
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8, part_cap));
+        let part_cap = nz(4).get();
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(part_cap)));
         let writer = trunk.writer().unwrap();
 
         writer.publish_part(part_entry(0xAB, 1, 0));

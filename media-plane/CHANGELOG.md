@@ -281,3 +281,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     its own peers itself.
   - `TrunkConfig::new` now takes a fifth `part_capacity` argument
     (**breaking**, pre-1.0).
+- **`TrunkConfig`'s five capacities are now `NonZeroUsize`, not `usize`**
+  (**breaking**, pre-1.0 — both the `TrunkConfig::new` signature and the five
+  public struct fields, so a zero cannot be reintroduced by field assignment
+  after construction). `Trunk::new`'s five `assert!(… > 0)` panics are
+  **removed**: a zero capacity is now unrepresentable rather than rejected at
+  run time.
+  - Fixes an inherited inconsistency with `transmux::ProgressiveDemux::new`,
+    which was deliberately changed from panicking-on-zero to fallible
+    construction — the opposite rule two crates over made the API feel
+    arbitrary.
+  - Fixes a real operational hazard, not just a style point: `multimux` takes
+    its routes from a JSON config file, so once trunk capacities become
+    operator-configurable (Step 5) a stray `0` would have panicked the server
+    process. A `serde` deserialize of `0` into a `NonZeroUsize` field instead
+    fails as an ordinary config/deserialization error at the parse boundary,
+    with no hand-written check anywhere.
+  - `NonZeroUsize` was chosen over a fallible `TrunkConfig::new -> Result`
+    because `TrunkConfig` (unlike `ProgressiveDemux`) has no error type and
+    does not otherwise return `Result`, so `Result` would mean inventing a
+    construction error and threading `?`/`unwrap` through every call site to
+    encode one bit the type system carries for free — and the invariant lives
+    in the signature, where a reader sees it without reading the docs.
+  - The five `zero_*_capacity_panics` tests are **deleted** rather than
+    rewritten: they asserted a panic that can no longer occur, and a rewritten
+    version would only be asserting that `NonZeroUsize::new(0)` returns `None`
+    (a `core` property, not this crate's).
