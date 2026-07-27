@@ -48,6 +48,15 @@ cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
 cargo fmt --all --check
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
 
+# The clippy canary — a PINNED stable newer than the MSRV, non-blocking in CI.
+# Pinned so it is reproducible: `cargo +stable` runs whatever you happen to have
+# installed, which is NOT what CI runs and will silently disagree with it (that
+# mismatch let the canary sit red for months — issue #770). Use it by name:
+rustup toolchain install 1.97.1
+cargo +1.97.1 clippy --workspace --all-features --all-targets --locked -- -D warnings
+# Keep this in step with `CANARY_RUST` in .github/workflows/ci.yml. Bumping the
+# pin is its own PR: raise it, fix the new lints, land them together.
+
 # Scoped runs:
 cargo test -p dvb-si --all-features                # one crate
 cargo test -p dvb-si --test round_trip             # one integration test file

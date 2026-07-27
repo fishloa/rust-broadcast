@@ -492,7 +492,7 @@ mod tests {
         let cl1 = &d.channel_lists[0];
         assert_eq!(cl1.channel_list_id, 1);
         assert_eq!(cl1.channel_list_name, name1);
-        assert_eq!(cl1.country_code, LangCode([b'G', b'B', b'R']));
+        assert_eq!(cl1.country_code, LangCode(*b"GBR"));
         assert_eq!(cl1.services.len(), 2);
         assert_eq!(cl1.services[0].service_id, 1);
         assert_eq!(cl1.services[0].logical_channel_number, 1);
@@ -502,7 +502,7 @@ mod tests {
         let cl2 = &d.channel_lists[1];
         assert_eq!(cl2.channel_list_id, 2);
         assert_eq!(cl2.channel_list_name, name2);
-        assert_eq!(cl2.country_code, LangCode([b'D', b'E', b'U']));
+        assert_eq!(cl2.country_code, LangCode(*b"DEU"));
         assert_eq!(cl2.services.len(), 1);
         assert_eq!(cl2.services[0].service_id, 3);
         assert_eq!(cl2.services[0].logical_channel_number, 3);
@@ -565,7 +565,7 @@ mod tests {
                 NordigLogicalChannelV2ChannelList {
                     channel_list_id: 1,
                     channel_list_name: b"Terrestrial".to_vec(),
-                    country_code: LangCode([b'G', b'B', b'R']),
+                    country_code: LangCode(*b"GBR"),
                     services: vec![
                         NordigLogicalChannelV2Service {
                             service_id: 1,
@@ -582,7 +582,7 @@ mod tests {
                 NordigLogicalChannelV2ChannelList {
                     channel_list_id: 2,
                     channel_list_name: vec![],
-                    country_code: LangCode([b'D', b'E', b'U']),
+                    country_code: LangCode(*b"DEU"),
                     services: vec![NordigLogicalChannelV2Service {
                         service_id: 3,
                         visible_service_flag: true,

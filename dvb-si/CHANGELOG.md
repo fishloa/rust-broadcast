@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+### Changed
+- Internal, test-only: replaced byte-char array literals with byte strings
+  (`LangCode([b'G', b'B', b'R'])` -> `LangCode(*b"GBR")`, and one in
+  `ttml_subtitling`'s tests) to satisfy `clippy::byte_char_slices` on the
+  pinned canary toolchain. No public API or behaviour change.
+
 ## [8.5.0] - 2026-07-21
 ### Changed
 - Widen the internal `mpeg-ts` dependency to `0.3` (issue #663; private

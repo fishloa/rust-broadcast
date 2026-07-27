@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Internal, test-only: dropped a redundant `&` in a `fixture_roundtrip`
+  `eprintln!` argument to satisfy `clippy::needless_borrows_for_generic_args`
+  on the pinned canary toolchain. No public API or behaviour change.
 
 ## [0.3.0] - 2026-07-21
 

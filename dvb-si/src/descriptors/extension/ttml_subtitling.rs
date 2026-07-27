@@ -338,7 +338,7 @@ mod tests {
     /// Reject: header too short (fewer than 5 prefix bytes).
     #[test]
     fn parse_rejects_header_too_short() {
-        let sel = [b'e', b'n']; // only 2 bytes
+        let sel = *b"en"; // only 2 bytes
         let bytes = wrap(0x20, &sel);
         let result = ExtensionDescriptor::parse(&bytes);
         assert!(
