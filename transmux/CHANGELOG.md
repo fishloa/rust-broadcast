@@ -420,6 +420,14 @@ confidentiality** for content encrypted by this crate. Anything encrypted by
 fresh content key — the exposure is in the ciphertext already published, not
 only in the code.
 
+**Affected releases: 0.16.0 through 0.19.0** (`CencEncryptor` first shipped in
+0.16.0); fixed in 0.20.0. **Affected configurations:** the keystream-reuse
+defect requires `CencScheme::Cenc` and a `Media` carrying **two or more
+tracks** encrypted in one `encrypt` call — the overwhelmingly common
+video+audio case. Single-track output, and all `CencScheme::Cbcs` output, are
+unaffected by it. Re-keying alone is not sufficient if the same content is
+re-encrypted with colliding IVs; take the 0.20.0 IV semantics below.
+
 - **CRITICAL — BREAKING: AES-CTR keystream reuse across tracks (a two-time
   pad).** `CencEncryptor::encrypt` restarted its per-sample IV counter at
   `base` for *every* track while applying one shared content key, so under
