@@ -60,3 +60,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Payload fan-out is a `Bytes` refcount bump on the production path (no
   `.slice()`/copy anywhere in this module), verified by pointer-identity
   assertion, not content equality.
+- `SegmentEntry`, `SegmentCursor`, `ArchiveOverrun` (plan step 3b-ii,
+  `std`-only): the segment log — a bounded, append-ordered log of finished
+  media segments in playlist order, recorded alongside the sample ring on
+  the same `Trunk`/`TrunkWriter`/one-`Mutex` shape. `SegmentEntry` reuses
+  `transmux::SegmentMeta` for the discontinuity bit (embedding the whole
+  type rather than copying the field out, so a future `SegmentMeta` field is
+  picked up automatically) and adds the three fields nothing in `transmux`
+  computes: `sequence_number`, wall-clock `duration`, and the segment's
+  `timeline_position` on the trunk's absolute clock.
+  `Trunk::subscribe_segments()` gives an ordinary, lossy-on-overflow cursor
+  (`SegmentCursorItem::Lagged`, exactly `RetentionClass::Timed`'s contract);
+  `Trunk::pin_segments(on_overrun)` gives a **pinning** cursor for a
+  DVR/archive consumer that must not miss a segment. Resolves the DVR
+  contradiction (a recording must not have a hole, but the writer must never
+  block) as **losslessness from retention, not back-pressure**: a pinning
+  cursor holds every not-yet-consumed segment retained up to
+  `TrunkConfig::segment_capacity` — the same bound ordinary eviction uses,
+  not a second independent knob — and when that bound is finally hit, the
+  caller's chosen `ArchiveOverrun` decides what gives: `ArchiveOverrun::Gap`
+  (default) evicts and reports `SegmentCursorItem::Gap` (a hole in the
+  recording, stream survives); `ArchiveOverrun::StallIngest` applies real
+  back-pressure — the *one* place in this design a reader may block the
+  writer, opt-in and never the default; `ArchiveOverrun::Terminate` drops
+  the cursor (`SegmentCursorItem::Terminated`) instead of gapping or
+  stalling. Segment bytes are shared, not copied, across cursors on the
+  production path, on the same terms and with the same pointer-identity
+  test discipline as the sample ring's payload sharing. `SegmentEgress`/
+  tiered `Retention` (plan steps 3d/3e) are not built here;
+  `Trunk::pin_segments` is their documented attachment point.

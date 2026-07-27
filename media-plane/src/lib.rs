@@ -26,14 +26,17 @@
 //! ([`broadcast_common::Stage`]) and clock/backpressure types
 //! ([`broadcast_common::Timestamp`], [`broadcast_common::Demand`]).
 //!
-//! **This release (plan steps 3a-ii and 3b-i) completes the byte layer and
-//! the `Trunk`'s sample path**: [`ByteStage`], [`ByteTap`] (a non-blocking
-//! observer), [`ByteMerge`] (the one bounded multi-input primitive), and now
-//! [`Trunk`]/[`TrunkWriter`]/[`SampleCursor`] (the bounded, dual-retention
-//! sample ring). The segment log, the 90 kHz event log,
-//! `Dialer`/`Listener`/`IngestSession`, and the three egress traits are later
-//! steps of the same plan (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md`
-//! Step 3b-ii onward) and are deliberately absent here.
+//! **This release (plan steps 3a-ii through 3b-ii) completes the byte layer
+//! and the `Trunk`'s sample path and segment log**: [`ByteStage`],
+//! [`ByteTap`] (a non-blocking observer), [`ByteMerge`] (the one bounded
+//! multi-input primitive), [`Trunk`]/[`TrunkWriter`]/[`SampleCursor`] (the
+//! bounded, dual-retention sample ring), and now the segment log with
+//! [`SegmentCursor`] and [`ArchiveOverrun`] (lossless-by-retention pinning
+//! for a DVR/archive consumer, without the writer ever blocking by
+//! default). The 90 kHz event log, `Dialer`/`Listener`/`IngestSession`, and
+//! the three egress traits are later steps of the same plan
+//! (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md`
+//! Step 3b-iii onward) and are deliberately absent here.
 //!
 //! # The byte layer ([`byte_stage`], [`byte_tap`], [`byte_merge`])
 //!
@@ -55,16 +58,24 @@
 //! two policies, and why ST 2022-7 hitless switching is deliberately absent
 //! rather than stubbed.
 //!
-//! # `Trunk`, the writer, and the sample cursor ([`trunk`], `std`-only)
+//! # `Trunk`, the writer, and the cursors ([`trunk`], `std`-only)
 //!
-//! Above the byte layer and demux sits [`Trunk`]: the bounded sample ring one
-//! [`TrunkWriter`] publishes into and any number of [`SampleCursor`]s read
-//! from. It requires the `std` feature (`Arc`/`Mutex` for cross-thread
-//! sharing) — see the [`trunk`] module docs for why that is the right line to
-//! draw rather than reaching for a `no_std` spinlock crate, the benchmark
+//! Above the byte layer and demux sits [`Trunk`]: the bounded sample ring and
+//! segment log one [`TrunkWriter`] publishes into and any number of
+//! [`SampleCursor`]/[`SegmentCursor`]s read from. It requires the `std`
+//! feature (`Arc`/`Mutex`/`Condvar` for cross-thread sharing) — see the
+//! [`trunk`] module docs for why that is the right line to draw rather than
+//! reaching for a `no_std` spinlock crate, the benchmark
 //! (`spikes/trunk-bench`) that shaped the design, and — critically, before
-//! calling [`Trunk::subscribe`] once per connection — why supported reader
-//! count is single-digit by design.
+//! calling [`Trunk::subscribe`]/[`Trunk::subscribe_segments`] once per
+//! connection — why supported reader count is single-digit by design.
+//!
+//! The segment log resolves a real contradiction: a DVR/archive consumer
+//! must never miss a segment, but the writer must never block. See the
+//! [`trunk`] module docs' "DVR contradiction" section for why the answer is
+//! retention (a pinning cursor from [`Trunk::pin_segments`]), not
+//! back-pressure, and for the three-way [`ArchiveOverrun`] trade a pinning
+//! cursor's caller makes explicit when the retention bound is finally hit.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![doc(html_root_url = "https://docs.rs/media-plane")]
@@ -81,4 +92,7 @@ pub use byte_merge::{ByteMerge, MergeError, MergePolicy, SourceId};
 pub use byte_stage::ByteStage;
 pub use byte_tap::{ByteTap, TapItem, TapPoint};
 #[cfg(feature = "std")]
-pub use trunk::{RetentionClass, SampleCursor, SampleCursorItem, Trunk, TrunkConfig, TrunkWriter};
+pub use trunk::{
+    ArchiveOverrun, RetentionClass, SampleCursor, SampleCursorItem, SegmentCursor,
+    SegmentCursorItem, SegmentEntry, Trunk, TrunkConfig, TrunkWriter,
+};
