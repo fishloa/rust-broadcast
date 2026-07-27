@@ -67,6 +67,128 @@ fn read(path: &std::path::Path) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+// ── T6 (test-integrity audit): sample-content comparison, not just counts ──
+//
+// `generic_drive_helper_unifies_ts_flv_and_progressive_demuxers` used to
+// compare only `TrackAdded`/`Sample` COUNTS between the Stage-driven event
+// stream and the trusted batch oracle — a Stage adapter that emitted the
+// right NUMBER of samples with the wrong payload bytes or the wrong
+// dts/pts/duration would pass just as well as a correct one. The helpers
+// below collect the actual per-track `Sample`s from the event stream and
+// compare them field-for-field (including the coded payload bytes) against
+// the oracle.
+
+/// Collect every `DemuxEvent::TrackAdded`/`Sample` from `events` into
+/// `(TrackSpec, Vec<Sample>)` pairs, in `TrackAdded` emission order — so the
+/// Stage-driven event stream can be compared sample-for-sample against the
+/// batch oracle's `Media`, not merely by count.
+fn collect_tracks_from_events(events: &[DemuxEvent]) -> Vec<(TrackSpec, Vec<Sample>)> {
+    let mut specs: Vec<TrackSpec> = Vec::new();
+    let mut samples: std::collections::BTreeMap<u32, Vec<Sample>> = Default::default();
+    for e in events {
+        match e {
+            DemuxEvent::TrackAdded(spec) => specs.push(spec.clone()),
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                samples.entry(*track_id).or_default().push(sample.clone());
+            }
+            _ => {}
+        }
+    }
+    specs
+        .into_iter()
+        .map(|spec| {
+            let s = samples.remove(&spec.track_id).unwrap_or_default();
+            (spec, s)
+        })
+        .collect()
+}
+
+/// Find `oracle_tracks`' unique track whose `CodecConfig` variant (its enum
+/// discriminant only — dimensions/bitrate may legitimately differ across
+/// re-parses) matches `spec`'s, so the Stage-driven track and the batch
+/// oracle track for the *same elementary stream* are paired up correctly
+/// regardless of `track_id` numbering differences between the two paths.
+fn find_matching_oracle_track<'a>(
+    spec: &TrackSpec,
+    oracle_tracks: &'a [transmux::media::Track],
+) -> &'a transmux::media::Track {
+    let mut matches = oracle_tracks.iter().filter(|t| {
+        core::mem::discriminant(&t.spec.config) == core::mem::discriminant(&spec.config)
+    });
+    let found = matches
+        .next()
+        .unwrap_or_else(|| panic!("no oracle track matches codec kind {:?}", spec.config));
+    assert!(
+        matches.next().is_none(),
+        "ambiguous match: more than one oracle track shares codec kind {:?} — \
+         this helper needs a less coarse key for this fixture",
+        spec.config
+    );
+    found
+}
+
+/// Assert that every sample field the IR actually carries — `dts`, `pts`,
+/// `duration`, the sync flag, and the coded payload bytes — matches between
+/// the Stage-driven event stream and the batch oracle. Sample *count* alone
+/// (what this test used to check) is satisfied by a demuxer that emits the
+/// right number of samples with the wrong payload or the wrong timestamps.
+fn assert_samples_match(got: &[Sample], oracle: &[Sample], what: &str) {
+    assert_eq!(
+        got.len(),
+        oracle.len(),
+        "{what}: sample count must match the batch oracle"
+    );
+    for (i, (g, o)) in got.iter().zip(oracle.iter()).enumerate() {
+        assert_eq!(
+            g.dts, o.dts,
+            "{what}: sample {i} dts must match the batch oracle"
+        );
+        assert_eq!(
+            g.pts, o.pts,
+            "{what}: sample {i} pts must match the batch oracle"
+        );
+        assert_eq!(
+            g.duration, o.duration,
+            "{what}: sample {i} duration must match the batch oracle"
+        );
+        assert_eq!(
+            g.flags.is_sync, o.flags.is_sync,
+            "{what}: sample {i} sync flag must match the batch oracle"
+        );
+        assert_eq!(
+            g.data, o.data,
+            "{what}: sample {i} payload bytes must match the batch oracle byte-for-byte"
+        );
+    }
+}
+
+/// Proves `assert_samples_match` actually discriminates on payload bytes —
+/// not vacuous, unlike the count-only check it replaces. Two hand-built
+/// samples with identical dts/pts/duration/sync but different `data` (same
+/// length, so a length-only or count-only comparison would still pass) must
+/// make it panic.
+#[test]
+#[should_panic(expected = "payload bytes must match")]
+fn assert_samples_match_catches_wrong_payload_at_matching_count() {
+    let got = [Sample::new(
+        vec![0x01, 0x02, 0x03],
+        Some(0),
+        Some(0),
+        Some(10),
+        true,
+    )];
+    let oracle = [Sample::new(
+        vec![0x01, 0x02, 0xFF],
+        Some(0),
+        Some(0),
+        Some(10),
+        true,
+    )];
+    assert_samples_match(&got, &oracle, "synthetic");
+}
+
 /// The generic drive loop, genuinely spanning both `Stage` families: feed
 /// each input item (draining `poll()` after every call, since a single
 /// `feed` may unlock more than one output), then `finish()` and drain the
@@ -100,74 +222,60 @@ where
 
 /// Drive `StreamingTsDemux` via the generic `drive()` helper, chunked into
 /// small (317-byte, deliberately not TS-packet-aligned) pieces, and check the
-/// resulting `Sample`/`TrackAdded` counts against the trusted batch `TsDemux`
-/// — the same oracle `transmux/tests/streaming_demux.rs` uses.
+/// resulting per-track samples — dts/pts/duration/sync flag/payload bytes,
+/// not just counts — against the trusted batch `TsDemux` oracle (the same
+/// oracle `transmux/tests/streaming_demux.rs` uses).
 #[test]
 fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // --- StreamingTsDemux ---------------------------------------------------
     let ts_bytes = read(&fixtures_ts_dir().join("h264_aac.ts"));
     let oracle_ts: Media = TsDemux::new().unpackage(&ts_bytes).expect("batch TS demux");
-    let oracle_ts_samples: usize = oracle_ts.tracks.iter().map(|t| t.samples.len()).sum();
 
     let ts_chunks: Vec<&[u8]> = ts_bytes.chunks(317).collect();
     let mut ts_stage = StreamingTsDemux::new();
     let ts_events = drive(&mut ts_stage, ts_chunks);
-    let ts_added = ts_events
-        .iter()
-        .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
-        .count();
-    let ts_samples = ts_events
-        .iter()
-        .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
-        .count();
+    let ts_tracks = collect_tracks_from_events(&ts_events);
     assert_eq!(
-        ts_added,
+        ts_tracks.len(),
         oracle_ts.tracks.len(),
         "Stage-driven StreamingTsDemux must add the same tracks as the batch oracle"
     );
-    assert_eq!(
-        ts_samples, oracle_ts_samples,
-        "Stage-driven StreamingTsDemux must yield the same sample count as the batch oracle"
-    );
+    for (spec, samples) in &ts_tracks {
+        let oracle_track = find_matching_oracle_track(spec, &oracle_ts.tracks);
+        assert_samples_match(samples, &oracle_track.samples, "StreamingTsDemux");
+    }
 
     // --- StreamingFlvDemux ---------------------------------------------------
     let flv_bytes: &[u8] = FLV;
     let oracle_flv: Media = transmux::FlvDemux::new()
         .unpackage(flv_bytes)
         .expect("batch FLV demux");
-    let oracle_flv_samples: usize = oracle_flv.tracks.iter().map(|t| t.samples.len()).sum();
 
     let flv_chunks: Vec<&[u8]> = flv_bytes.chunks(257).collect();
     let mut flv_stage = StreamingFlvDemux::new();
     let flv_events = drive(&mut flv_stage, flv_chunks);
-    let flv_added = flv_events
-        .iter()
-        .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
-        .count();
-    let flv_samples = flv_events
-        .iter()
-        .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
-        .count();
+    let flv_tracks = collect_tracks_from_events(&flv_events);
     assert_eq!(
-        flv_added,
+        flv_tracks.len(),
         oracle_flv.tracks.len(),
         "Stage-driven StreamingFlvDemux must add the same tracks as the batch oracle"
     );
-    assert_eq!(
-        flv_samples, oracle_flv_samples,
-        "Stage-driven StreamingFlvDemux must yield the same sample count as the batch oracle"
-    );
+    for (spec, samples) in &flv_tracks {
+        let oracle_track = find_matching_oracle_track(spec, &oracle_flv.tracks);
+        assert_samples_match(samples, &oracle_track.samples, "StreamingFlvDemux");
+    }
 
     // --- ProgressiveDemux -----------------------------------------------------
     // Whole-file parse (see the type's own docs): `Out = Media`, one value
     // popped from `poll()` once, after `finish()` — proving `drive()` handles
     // an `Out` type that isn't `DemuxEvent` at all just as well.
     let oracle_prog: Media = ProgressiveDemux::new(1024 * 1024)
+        .expect("non-zero cap must construct")
         .unpackage(PROGRESSIVE_MP4)
         .expect("batch progressive demux");
 
     let prog_chunks: Vec<&[u8]> = PROGRESSIVE_MP4.chunks(4096).collect();
-    let mut prog_stage = ProgressiveDemux::new(1024 * 1024);
+    let mut prog_stage = ProgressiveDemux::new(1024 * 1024).expect("non-zero cap must construct");
     let mut prog_media = drive(&mut prog_stage, prog_chunks);
     assert_eq!(
         prog_media.len(),
@@ -180,12 +288,14 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
         oracle_prog.tracks.len(),
         "Stage-driven ProgressiveDemux must yield the same track count as Unpackage::unpackage"
     );
-    let prog_samples: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
-    let oracle_prog_samples: usize = oracle_prog.tracks.iter().map(|t| t.samples.len()).sum();
-    assert_eq!(
-        prog_samples, oracle_prog_samples,
-        "Stage-driven ProgressiveDemux must yield the same sample count as Unpackage::unpackage"
-    );
+    for spec_track in &media.tracks {
+        let oracle_track = find_matching_oracle_track(&spec_track.spec, &oracle_prog.tracks);
+        assert_samples_match(
+            &spec_track.samples,
+            &oracle_track.samples,
+            "ProgressiveDemux",
+        );
+    }
 }
 
 /// [`StreamingTsDemux::demand`]'s `saturated` flag must be honest: it tracks
@@ -240,7 +350,7 @@ fn progressive_demux_stage_feed_rejects_input_past_its_byte_cap() {
     const MAX_BYTES: usize = 4096;
     const CHUNK: usize = 64;
 
-    let mut demux = ProgressiveDemux::new(MAX_BYTES);
+    let mut demux = ProgressiveDemux::new(MAX_BYTES).expect("non-zero cap must construct");
     let chunk = vec![0xABu8; CHUNK];
     let mut saw_saturated = false;
     let mut err = None;
