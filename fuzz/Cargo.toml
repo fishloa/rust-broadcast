@@ -40,6 +40,8 @@ st377-1      = { path = "../st377-1" }
 transmux      = { path = "../transmux" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
+media-plane   = { path = "../media-plane" }
+bytes         = "1"
 libfuzzer-sys = "0.4"
 
 [[bin]]
@@ -237,5 +239,23 @@ doc  = false
 [[bin]]
 name = "transmux_ts_demux_packets"
 path = "fuzz_targets/transmux_ts_demux_packets.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "media_plane_byte_merge"
+path = "fuzz_targets/media_plane_byte_merge.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "media_plane_byte_tap"
+path = "fuzz_targets/media_plane_byte_tap.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "media_plane_ingest_driver"
+path = "fuzz_targets/media_plane_ingest_driver.rs"
 test = false
 doc  = false
