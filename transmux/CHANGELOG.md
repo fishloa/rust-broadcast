@@ -166,6 +166,25 @@ below.
 
 ### Fixed
 
+- **`splice::concat`/`splice_insert` now rebase the spliced-in content's
+  `dts`/`pts` onto the join (issue #782).** Both used to place a second
+  `Media`'s samples after a join point but never shift their absolute
+  timestamps onto it — harmless while decode time was reconstructed by
+  summing `duration` from `start_decode_time`, but since this release's
+  switch to reading absolute `dts` (above) the spliced-in asset simply kept
+  whatever timeline it was demuxed with. Two independently-demuxed assets
+  have unrelated absolute timelines (each anchored on its own
+  `tfdt`/PCR/FLV clock), so a join could jump backwards or forwards by an
+  arbitrary offset while the segment structure claimed continuity —
+  producing a wrong fragment `tfdt` and wrong PTS/DTS on TS re-mux, and a
+  player that stalls or skips at an SSAI ad break (`splice_insert`'s
+  advertised use case). Every incoming sample's `dts`/`pts` (when `Some`;
+  a section-carried sample with `dts: None` has nothing to rebase and
+  fabricates nothing) now shifts by a single offset derived from one
+  reference track (video, else the first timed track) and converted into
+  each matched track's own timescale — never derived independently per
+  track, which would silently re-align tracks relative to each other and
+  destroy A/V sync.
 - `TsDemux` stored **audio** sample timing in 90 kHz PES-clock ticks while the
   track's timescale is its sample rate, so `dts` deltas (e.g. 2089) disagreed
   with `duration` (1024 AAC samples). Audio `dts`/`pts` — and the audio track's

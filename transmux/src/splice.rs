@@ -25,11 +25,46 @@
 //! directly rather than reconstructing it as `start_decode_time + Σ
 //! durations`, falling back to that reconstruction only where a sample
 //! genuinely carries no timestamp (a section-carried sample — SCTE-35/
-//! DSM-CC/private sections — which has none to read). The joins here place
-//! the appended/inserted content so that its first sample's absolute `dts`
-//! exactly meets the preceding content's end decode time, keeping the muxed
-//! `tfdt`s monotonic non-decreasing across the join. Coded sample bytes are
+//! DSM-CC/private sections — which has none to read). Coded sample bytes are
 //! preserved byte-for-byte; only timing anchors/durations are recomputed.
+//!
+//! # Rebasing the spliced-in content (issue #782)
+//!
+//! Two independently-demuxed assets have unrelated absolute timelines (each
+//! anchored on its own `tfdt`/PCR/FLV clock) — simply appending a second
+//! [`Media`]'s samples after a join point, keeping their own file's absolute
+//! `dts`/`pts`, produces an arbitrary jump instead of a contiguous join. So
+//! [`concat`](fn@concat) and [`splice_insert`] shift every incoming sample's
+//! `dts`/`pts` (when `Some`) by `join_dts - incoming_reference_start` before
+//! placing it:
+//!
+//! - **One offset per splice, derived from a single reference track** — the
+//!   video track if either side has one, else the first track that carries a
+//!   real timestamp (`pick_reference_track`) — and applied uniformly to
+//!   every matched track, converted into each track's own timescale
+//!   (`rescale_ticks`). Deriving the shift independently per track instead
+//!   would silently re-align tracks relative to each other and destroy A/V
+//!   sync (a track's own boundary sample needn't correspond, wall-clock, to
+//!   another track's).
+//! - **Composition offsets survive exactly**: `dts` and `pts` shift by the
+//!   same amount (`shift_samples`), so `pts - dts` is unchanged.
+//! - **No accumulated rounding across repeated splices**: every splice call
+//!   rescales the *fresh, already-materialized absolute* reference-track
+//!   ticks (the join point and the incoming asset's own start) directly into
+//!   each track's timescale — it never caches and re-rescales an
+//!   already-rounded delta from a previous splice. A chain of splices reads
+//!   real integers out of the previous call's result every time, so any
+//!   sub-tick rounding from one splice can never compound into the next.
+//! - **`dts: None` samples are left untouched** — a section-carried sample
+//!   (SCTE-35/DSM-CC/private sections) has no timestamp to rebase and none is
+//!   fabricated.
+//!
+//! The reference track's own contribution lands exactly on the join (no
+//! rescale needed, same timescale); a non-reference track's contribution
+//! lands within a fraction of a tick of the wall-clock join, preserving
+//! whatever real inter-track relationship the incoming asset already had
+//! (e.g. a small audio pre-roll ahead of video) rather than forcing every
+//! track to butt exactly against its own predecessor.
 //!
 //! # Keyframe / RAP alignment
 //!
@@ -198,15 +233,95 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
     Ok(mapping)
 }
 
+/// Pick the single track (by index into `a`/`b`, matched via `mapping`) whose
+/// timeline anchors the splice offset applied uniformly to every track
+/// (issue #782): the video track if either side has one, else the first
+/// track that carries at least one real timestamp on either side. `None`
+/// when no track anywhere carries a timestamp — there is nothing to align
+/// on, so the caller leaves every sample untouched.
+///
+/// Deliberately a *single* pick, not one per track: computing the offset
+/// independently per track would silently re-align tracks relative to each
+/// other and destroy A/V sync (see the module-level doc).
+fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<usize> {
+    if let Some(i) = a.iter().position(|t| is_video(&t.spec.config)) {
+        return Some(i);
+    }
+    a.iter().enumerate().position(|(i, at)| {
+        at.samples.iter().any(|s| s.dts.is_some())
+            || b[mapping[i]].samples.iter().any(|s| s.dts.is_some())
+    })
+}
+
+/// Rescale an absolute tick value from one track's media timescale into
+/// another's, in 128-bit arithmetic to avoid overflow. Truncates toward zero
+/// on a non-exact ratio (matching `repackage::rescale_floor`/`ts_mux::rescale`'s
+/// existing technique elsewhere in this crate) — timescales are always
+/// positive on a real track; an identity is returned for a degenerate zero or
+/// an already-equal pair, with no arithmetic at all.
+///
+/// Used to convert the *single* splice offset derived from one reference
+/// track ([`pick_reference_track`]) into every other matched track's own
+/// timescale, so mixed-timescale tracks (e.g. 48 kHz audio alongside 90 kHz
+/// video) shift by the same real-world amount of time. Callers always feed
+/// this the fresh absolute tick values read directly off the current
+/// samples — never an already-rescaled delta carried over from a previous
+/// splice — which is what keeps sub-tick rounding from compounding across a
+/// chain of splices (see the module-level doc).
+fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> i64 {
+    if from_timescale == 0 || to_timescale == 0 || from_timescale == to_timescale {
+        return ticks;
+    }
+    ((ticks as i128 * to_timescale as i128) / from_timescale as i128) as i64
+}
+
+/// Shift every sample's absolute `dts`/`pts` — when present — by `offset`
+/// ticks in the track's own media timescale.
+///
+/// Both fields move by the same amount, so each sample's composition offset
+/// (`pts - dts`) is preserved exactly. A sample with `dts: None` (a
+/// section-carried sample — SCTE-35/DSM-CC/private sections) has no
+/// timestamp to rebase and is left untouched — never fabricated.
+fn shift_samples(samples: &[Sample], offset: i64) -> Vec<Sample> {
+    samples
+        .iter()
+        .cloned()
+        .map(|mut s| {
+            if let Some(d) = s.dts {
+                s.dts = Some(d + offset);
+            }
+            if let Some(p) = s.pts {
+                s.pts = Some(p + offset);
+            }
+            s
+        })
+        .collect()
+}
+
+/// The [`Track::start_decode_time`] anchor for a splice/concat result: the
+/// first sample's own absolute `dts` when there is one — keeping the anchor
+/// in lockstep with the sample it names — else `fallback` (the original
+/// track's own anchor, used only when the result has no sample to read one
+/// from, or whose first sample is untimed).
+fn result_start_decode_time(samples: &[Sample], fallback: u64) -> u64 {
+    samples
+        .first()
+        .and_then(|s| s.dts)
+        .map(|d| u64::try_from(d).unwrap_or(0))
+        .unwrap_or(fallback)
+}
+
 /// Append `b` after `a` on a shared, contiguous, monotonic decode timeline.
 ///
-/// Tracks are matched pairwise (by `track_id`, else by index). For each matched
-/// track, `b`'s samples follow `a`'s with `b` rebased so its first sample's
-/// decode time equals `a`'s **end decode time**
-/// (`a.start_decode_time + Σ a.durations`) — i.e. contiguous, no gap or overlap.
-/// Sample `data` is preserved byte-for-byte; `duration`/`is_sync`/
-/// `composition_offset` are carried through unchanged. The movie timescale is
-/// taken from `a`.
+/// Tracks are matched pairwise (by `track_id`, else by index). For each
+/// matched track, `b`'s samples follow `a`'s, rebased onto the join by the
+/// single reference-track offset described at the module level (issue #782)
+/// — `b`'s reference track lands exactly on `a`'s **end decode time**
+/// (`a`'s last sample's own absolute `dts` + duration); every other matched
+/// track shifts by the same offset, converted into its own timescale.
+/// Sample `data` is preserved byte-for-byte; only `dts`/`pts` move, and only
+/// when they were `Some` to begin with. The movie timescale is taken from
+/// `a`.
 ///
 /// The first sample of each `b` contribution is the splice point and is reported
 /// in [`SpliceResult::discontinuity_points`].
@@ -230,33 +345,64 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
         }
     }
 
+    // The single reference-track shift (issue #782): derived once, here,
+    // from fresh absolute ticks (`a`'s reference track's real end decode
+    // time and `b`'s reference track's real start) — then converted into
+    // each matched track's own timescale inside the loop below. Never
+    // derived independently per track.
+    let ref_shift = pick_reference_track(&a.tracks, &b.tracks, &mapping).map(|ri| {
+        let ref_timescale = a.tracks[ri].spec.timescale;
+        let join_dts_ref = track_end_decode_time(&a.tracks[ri]) as i64;
+        let bt = &b.tracks[mapping[ri]];
+        let incoming_ref_start = bt
+            .samples
+            .first()
+            .and_then(|s| s.dts)
+            .unwrap_or(bt.start_decode_time as i64);
+        (ref_timescale, join_dts_ref, incoming_ref_start)
+    });
+
     let mut out_tracks = Vec::with_capacity(a.tracks.len());
     let mut points = Vec::new();
     for (i, at) in a.tracks.iter().enumerate() {
         let bt = &b.tracks[mapping[i]];
-        let join_dts = track_end_decode_time(at);
 
+        // Rescale the single reference offset into THIS track's own
+        // timescale (rescaling the fresh absolute endpoints, not a cached
+        // delta — see `rescale_ticks`'s doc), then shift b's samples by it.
+        let shifted = match ref_shift {
+            Some((ref_ts, join_dts_ref, incoming_ref_start)) => {
+                let track_ts = at.spec.timescale;
+                let offset = rescale_ticks(join_dts_ref, ref_ts, track_ts)
+                    - rescale_ticks(incoming_ref_start, ref_ts, track_ts);
+                shift_samples(&bt.samples, offset)
+            }
+            None => bt.samples.clone(),
+        };
+
+        let join_index = at.samples.len();
         let mut samples = at.samples.clone();
-        let join_index = samples.len();
-        samples.extend(bt.samples.iter().cloned());
+        samples.extend(shifted.iter().cloned());
 
         // The join is a discontinuity only when `b` actually contributes samples.
-        if !bt.samples.is_empty() {
+        if !shifted.is_empty() {
+            // Presentation time of b's first (now-rebased) sample: its own
+            // `pts` when it has one; a section-carried leading sample (no
+            // timestamp at all) falls back to `a`'s reference-track end, the
+            // best information available.
+            let presentation_time = match shifted[0].pts {
+                Some(p) => u64::try_from(p).unwrap_or(0),
+                None => track_end_decode_time(at),
+            };
             points.push(SplicePoint {
                 track_id: at.spec.track_id,
                 sample_index: join_index,
-                // Presentation time of b's first sample on the joined timeline:
-                // it decodes at join_dts (== a's end), plus its composition offset.
-                presentation_time: join_dts
-                    .saturating_add_signed(bt.samples[0].composition_offset() as i64),
+                presentation_time,
             });
         }
 
-        out_tracks.push(Track::new_at(
-            at.spec.clone(),
-            samples,
-            at.start_decode_time,
-        ));
+        let track_start = result_start_decode_time(&samples, at.start_decode_time);
+        out_tracks.push(Track::new_at(at.spec.clone(), samples, track_start));
     }
 
     Ok(SpliceResult {
@@ -310,9 +456,12 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
 
 /// Splice `ad` into `base` at `at_ticks` (server-side ad insertion).
 ///
-/// The result plays `base` up to the splice boundary, then `ad` (rebased to
-/// start at the boundary), then the remainder of `base` rebased forward by
-/// `ad`'s duration — one monotonic decode timeline across both joins.
+/// The result plays `base` up to the splice boundary, then `ad` — rebased
+/// from its own file's independent timeline onto the boundary via the single
+/// reference-track offset described at the module level (issue #782) — then
+/// the remainder of `base`, itself rebased forward so it resumes exactly
+/// where the rebased `ad` ends on each track — one monotonic decode timeline
+/// across both joins.
 ///
 /// `at_ticks` is an absolute decode time in the base **video** track's media
 /// timescale; it is **snapped to the nearest preceding sync sample** of that
@@ -322,11 +471,8 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
 /// media timescale (audio is virtually never carried on the same timescale as
 /// video, e.g. 90 kHz video vs. 44.1/48 kHz audio) before searching for its
 /// split sample; audio is not independently RAP-aligned, but every audio sample
-/// is itself a sync sample, so the audio cut is always on a RAP. Each track's
-/// `ad` contribution is placed at the snapped boundary and the resumed base is
-/// shifted by that track's own `ad` span, keeping every track's timeline
-/// contiguous and monotonic. The snapped time is exposed on the returned
-/// [`SplicePoint`]s.
+/// is itself a sync sample, so the audio cut is always on a RAP. The snapped
+/// time is exposed on the returned [`SplicePoint`]s.
 ///
 /// # Errors
 /// [`Error::InvalidInput`] if the track sets are incompatible (see [`concat`](fn@concat)),
@@ -346,7 +492,10 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
     }
 
     // Pick the base video track to align the splice on, and snap the request to
-    // its preceding sync sample.
+    // its preceding sync sample. This is also the reference track for the
+    // ad-in rebase (issue #782): `splice_insert` always requires one, so
+    // there is never an "else the first timed track" case to consider here
+    // (unlike `concat`'s `pick_reference_track`).
     let video_idx = base
         .tracks
         .iter()
@@ -366,11 +515,27 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         snapped_video_dts.saturating_sub(base.tracks[video_idx].start_decode_time);
     let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.max(1));
 
+    // The single reference-track shift for the ad-in point (issue #782):
+    // derived once, here, from fresh absolute ticks — the base video
+    // track's own real boundary decode time and the ad's video track's own
+    // real start — then converted into every matched track's own timescale
+    // inside the loop below, mirroring `concat`. Never derived
+    // independently per track.
+    let ref_timescale = base.tracks[video_idx].spec.timescale;
+    let join_dts_ref = boundary_decode_time(&base.tracks[video_idx], video_split) as i64;
+    let ad_video = &ad.tracks[mapping[video_idx]];
+    let incoming_ref_start = ad_video
+        .samples
+        .first()
+        .and_then(|s| s.dts)
+        .unwrap_or(ad_video.start_decode_time as i64);
+
     let mut out_tracks = Vec::with_capacity(base.tracks.len());
     let mut points = Vec::new();
 
     for (i, bt) in base.tracks.iter().enumerate() {
         let adt = &ad.tracks[mapping[i]];
+        let track_ts = bt.spec.timescale;
 
         // Where to cut this base track. For the video track it is the snapped
         // sync sample; for the others, the first sample whose decode time is at
@@ -388,77 +553,106 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
             sample_index_at_offset(bt, offset_in_track_ticks)
         };
 
+        // This track's own natural continuation point at the split, on the
+        // ORIGINAL (pre-splice) base timeline — see `boundary_decode_time`.
+        let boundary_dts = boundary_decode_time(bt, split_index);
+
+        // Ad-in shift: the single reference offset (derived above from the
+        // video track), rescaled into this track's own timescale — never
+        // computed independently from this track's own boundary (that would
+        // re-derive a per-track alignment and destroy A/V sync).
+        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale, track_ts)
+            - rescale_ticks(incoming_ref_start, ref_timescale, track_ts);
+        let shifted_ad = shift_samples(&adt.samples, ad_offset);
+
         let ad_span: u64 = adt
             .samples
             .iter()
             .map(|s| s.duration.unwrap_or(0) as u64)
             .sum();
 
+        // Resume shift: push the remainder of base forward so — on THIS
+        // track — it picks up exactly where the rebased ad content ends
+        // (`shifted_ad`'s first real dts + this track's own ad span), rather
+        // than at its original, now ad-occupied, position. A section-carried
+        // ad contribution with no timestamp on this track at all has no
+        // "where the ad ends" to read; falls back to the span alone (there
+        // is nothing else to derive it from).
+        let resume_shift: i64 = match shifted_ad.first().and_then(|s| s.dts) {
+            Some(new_ad_first_dts) => new_ad_first_dts + ad_span as i64 - boundary_dts as i64,
+            None => ad_span as i64,
+        };
+        let shifted_resume = shift_samples(&bt.samples[split_index..], resume_shift);
+
         let mut samples: Vec<Sample> = Vec::with_capacity(bt.samples.len() + adt.samples.len());
         // 1. Base up to the split (unchanged).
         samples.extend(bt.samples[..split_index].iter().cloned());
-        // 2. The ad.
+        // 2. The ad, rebased onto the boundary.
         let ad_index = samples.len();
-        samples.extend(adt.samples.iter().cloned());
-        // 3. The remainder of the base (bytes unchanged; timing shifts because the
-        //    ad's duration now sits before it on the shared relative timeline).
+        samples.extend(shifted_ad.iter().cloned());
+        // 3. The remainder of the base, rebased forward so it resumes
+        //    exactly where the rebased ad ends.
         let resume_index = samples.len();
-        samples.extend(bt.samples[split_index..].iter().cloned());
-
-        // The decode time of this track's split boundary on the base
-        // timeline: the boundary sample's own absolute `dts` (media plane
-        // step 2c) when there is one — authoritative, and can legitimately
-        // diverge from `start_decode_time + Σ durations` after a
-        // per-fragment `tfdt` reseed, exactly like `track_end_decode_time`/
-        // `snap_to_preceding_sync` above. A past-the-end split (no
-        // remaining base sample) has no boundary sample to read, so it uses
-        // this track's own end decode time instead; a section-carried
-        // boundary sample with no absolute `dts` falls back to the
-        // duration-sum, same as everywhere else in this module.
-        let boundary_dts: u64 = match bt.samples.get(split_index).and_then(|s| s.dts) {
-            Some(dts) => u64::try_from(dts).unwrap_or(0),
-            None if split_index >= bt.samples.len() => track_end_decode_time(bt),
-            None => {
-                bt.start_decode_time
-                    + bt.samples[..split_index]
-                        .iter()
-                        .map(|s| s.duration.unwrap_or(0) as u64)
-                        .sum::<u64>()
-            }
-        };
+        samples.extend(shifted_resume.iter().cloned());
 
         // Ad-in point.
-        if !adt.samples.is_empty() {
+        if !shifted_ad.is_empty() {
+            let presentation_time = match shifted_ad[0].pts {
+                Some(p) => u64::try_from(p).unwrap_or(0),
+                None => boundary_dts,
+            };
             points.push(SplicePoint {
                 track_id: bt.spec.track_id,
                 sample_index: ad_index,
-                presentation_time: boundary_dts
-                    .saturating_add_signed(adt.samples[0].composition_offset() as i64),
+                presentation_time,
             });
         }
         // Resume point (the base sample that follows the ad), only if base has a
         // remainder after the split.
         if split_index < bt.samples.len() {
-            let resume_dts = boundary_dts + ad_span;
+            let presentation_time = match shifted_resume.first().and_then(|s| s.pts) {
+                Some(p) => u64::try_from(p).unwrap_or(0),
+                None => boundary_dts.saturating_add(ad_span),
+            };
             points.push(SplicePoint {
                 track_id: bt.spec.track_id,
                 sample_index: resume_index,
-                presentation_time: resume_dts
-                    .saturating_add_signed(bt.samples[split_index].composition_offset() as i64),
+                presentation_time,
             });
         }
 
-        out_tracks.push(Track::new_at(
-            bt.spec.clone(),
-            samples,
-            bt.start_decode_time,
-        ));
+        let track_start = result_start_decode_time(&samples, bt.start_decode_time);
+        out_tracks.push(Track::new_at(bt.spec.clone(), samples, track_start));
     }
 
     Ok(SpliceResult {
         media: Media::new(out_tracks, base.movie_timescale),
         discontinuity_points: points,
     })
+}
+
+/// The decode time of `track`'s natural continuation at `split_index`, in
+/// its own media timescale: the boundary sample's own absolute `dts` (media
+/// plane step 2c) when there is one — authoritative, and can legitimately
+/// diverge from `start_decode_time + Σ durations` after a per-fragment
+/// `tfdt` reseed, exactly like `track_end_decode_time`/
+/// `snap_to_preceding_sync` above. A past-the-end split (no remaining
+/// sample) has no boundary sample to read, so it uses the track's own end
+/// decode time instead; a section-carried boundary sample with no absolute
+/// `dts` falls back to the duration-sum, same as everywhere else in this
+/// module.
+fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
+    match track.samples.get(split_index).and_then(|s| s.dts) {
+        Some(dts) => u64::try_from(dts).unwrap_or(0),
+        None if split_index >= track.samples.len() => track_end_decode_time(track),
+        None => {
+            track.start_decode_time
+                + track.samples[..split_index]
+                    .iter()
+                    .map(|s| s.duration.unwrap_or(0) as u64)
+                    .sum::<u64>()
+        }
+    }
 }
 
 /// First sample index of `track` whose decode time (relative to the track start)

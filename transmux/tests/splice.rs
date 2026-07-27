@@ -6,7 +6,19 @@
 //! absolute `dts` (media plane step 2c) — that `concat`'s join position and
 //! `snap_to_preceding_sync`'s snap read that true `dts` rather than
 //! reconstructing decode time as `start_decode_time + Σ duration`.
+//!
+//! The `#782` block below tests the rebase-onto-the-join fix specifically:
+//! unlike the tests above (which check `dts_sequence`, a reconstruction from
+//! `start_decode_time + Σ duration` that literally cannot observe whether a
+//! spliced-in sample's own absolute `dts` was rebased), every `#782` test
+//! reads `Sample::dts`/`Sample::pts` directly. PROVENANCE: every fixture in
+//! this file — before and after `#782` — is synthetic, built procedurally
+//! (`video_track`/`data_track`/`media_of*`); no committed capture isolates
+//! two independently-anchored assets, mixed track timescales, or a
+//! section-carried track cleanly enough to exercise this in one place, so
+//! synthetic construction is this file's existing, established convention.
 
+use transmux::pipeline::DataCarriage;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
     MovieFragmentBox, Sample, Segmenter, Track, TrackSpec, concat, parse_box,
@@ -82,6 +94,72 @@ fn media_of(mut track: Track, start_decode_time: u64) -> Media {
         }
     }
     Media::new(vec![track.with_start_decode_time(start_decode_time)], 1000)
+}
+
+/// A generic non-video track built on [`CodecConfig::Data`] — a stand-in for
+/// an audio (or, when `timed = false`, section-carried) track. `splice.rs`'s
+/// rebase logic only keys off codec-*kind* identity (video vs. not) and
+/// timescale, never the concrete codec, so `Data` exercises the same code
+/// paths without a full AAC `esds`/`OpusSpecificBox` fixture.
+///
+/// `timed = true` builds samples with real, evenly-spaced `dts`/`pts` (like
+/// [`sample`], zero-based); `timed = false` builds section-carried samples
+/// (`dts`/`pts`/`duration` all `None`, ISO/IEC 13818-1 §2.4.4 PSI/private
+/// sections — SCTE-35/DSM-CC), matching how `Fmp4Demux`/`TsDemux` actually
+/// populate one in this crate. Every sample is a sync sample (real audio is
+/// always sync; a section has no such distinction).
+fn data_track(
+    track_id: u32,
+    timescale: u32,
+    tag: u8,
+    count: usize,
+    dur: u32,
+    carriage: DataCarriage,
+    timed: bool,
+) -> Track {
+    let samples = (0..count)
+        .map(|i| {
+            if timed {
+                let dts = i as i64 * i64::from(dur);
+                Sample::new(vec![tag, i as u8], Some(dts), Some(dts), Some(dur), true)
+            } else {
+                Sample::new(vec![tag, i as u8], None, None, None, true)
+            }
+        })
+        .collect();
+    Track::new(
+        TrackSpec::new(
+            track_id,
+            timescale,
+            CodecConfig::Data {
+                stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
+                descriptors: Vec::new(),
+                carriage,
+            },
+        ),
+        samples,
+    )
+}
+
+/// A two-track `Media` (e.g. video + a second matched track), each shifted to
+/// its own `start_decode_time` — the multi-track analogue of [`media_of`].
+fn media_of_two(video: Track, video_start: u64, other: Track, other_start: u64) -> Media {
+    fn shifted(mut t: Track, start: u64) -> Track {
+        let delta = start as i64;
+        for s in &mut t.samples {
+            if let Some(d) = s.dts {
+                s.dts = Some(d + delta);
+            }
+            if let Some(p) = s.pts {
+                s.pts = Some(p + delta);
+            }
+        }
+        t.with_start_decode_time(start)
+    }
+    Media::new(
+        vec![shifted(video, video_start), shifted(other, other_start)],
+        1000,
+    )
 }
 
 fn track_span(track: &Track) -> u64 {
@@ -426,5 +504,384 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
         (snapped, idx),
         (56_000, last),
         "snap must read the gapped sample's true absolute dts"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 1 (the headline) — two independently-anchored assets (one at 0,
+// one 10 hours in) must be rebased onto the join: real per-sample `dts` is
+// strictly monotonic across it, and each side's own internal spacing is
+// unchanged. Fails before the fix: the unfixed code appended `b`'s samples
+// with their own-file absolute `dts`/`pts` untouched, so `b`'s first real
+// `dts` (near 0) would land immediately after `a`'s real end `dts` (10
+// hours+), producing a multi-hour BACKWARD jump — non-monotonic.
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_rebases_unrelated_timelines_onto_the_join() {
+    // a: a "programme" 10 hours into its own broadcast day (90 kHz ticks).
+    let ten_hours_ticks: u64 = 10 * 3600 * u64::from(TIMESCALE);
+    let a = media_of(video_track(1, 0xA0, 5, 3000, 5), ten_hours_ticks);
+    // b: an independently-demuxed asset anchored at 0 — its own file's
+    // clock, unrelated to `a`'s.
+    let b = media_of(video_track(1, 0xB0, 4, 3000, 4), 0);
+
+    let a_last = a.tracks[0].samples.last().unwrap();
+    let a_end = a_last.dts.unwrap() + a_last.duration.unwrap() as i64;
+
+    let res = concat(&a, &b).unwrap();
+    let out = &res.media.tracks[0];
+
+    // Real per-sample dts — NOT `dts_sequence`'s `start_decode_time + Σ
+    // duration` reconstruction, which cannot see this bug at all (it never
+    // reads `Sample::dts`).
+    let real_dts: Vec<i64> = out.samples.iter().map(|s| s.dts.unwrap()).collect();
+
+    for w in real_dts.windows(2) {
+        assert!(
+            w[1] >= w[0],
+            "real dts must be monotonic across the join, got {w:?}"
+        );
+    }
+    assert_eq!(
+        real_dts[5], a_end,
+        "b's first real dts must meet a's real end"
+    );
+    for w in real_dts[5..].windows(2) {
+        assert_eq!(
+            w[1] - w[0],
+            3000,
+            "b's internal spacing is unchanged by the rebase"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 2 — every spliced sample's composition offset (`pts - dts`) is
+// byte-identical before and after the splice.
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_preserves_composition_offsets_exactly() {
+    let mut a = media_of(video_track(1, 0xA0, 3, 3000, 3), 0);
+    let mut b = media_of(video_track(1, 0xB0, 4, 3000, 4), 777_777);
+
+    // Varied, nonzero (including negative) composition offsets, as a B-frame
+    // reorder pattern would produce.
+    let offsets = [0i64, 500, -250, 1200];
+    for (i, s) in a.tracks[0].samples.iter_mut().enumerate() {
+        s.pts = Some(s.dts.unwrap() + offsets[i % offsets.len()]);
+    }
+    for (i, s) in b.tracks[0].samples.iter_mut().enumerate() {
+        s.pts = Some(s.dts.unwrap() + offsets[i % offsets.len()]);
+    }
+    let b_offsets_before: Vec<i64> = b.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.composition_offset() as i64)
+        .collect();
+
+    let res = concat(&a, &b).unwrap();
+    let out = &res.media.tracks[0];
+    let k = a.tracks[0].samples.len();
+
+    for (j, off_before) in b_offsets_before.iter().enumerate() {
+        assert_eq!(
+            out.samples[k + j].composition_offset() as i64,
+            *off_before,
+            "composition offset unchanged by the rebase for b[{j}]"
+        );
+    }
+    // a's own samples are untouched entirely (both dts and pts).
+    for i in 0..k {
+        assert_eq!(out.samples[i].dts, a.tracks[0].samples[i].dts);
+        assert_eq!(out.samples[i].pts, a.tracks[0].samples[i].pts);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 3 — SSAI round trip (programme → ad → programme) is ONE
+// continuous timeline on real sample stamps, not on `start_decode_time` /
+// `dts_sequence`. `splice_insert` performs both joins (ad-in + resume) in a
+// single call, so this exercises the full path end to end. Also fails before
+// the fix, for the same reason as Test 1.
+// ---------------------------------------------------------------------------
+#[test]
+fn splice_insert_ssai_round_trip_is_continuous_on_real_stamps() {
+    // Base "programme": 9 samples @3000, anchored normally at 0. Ad: 4
+    // samples @3000, anchored at a wildly unrelated 5,000,000 ticks — an ad
+    // file demuxed with its own independent clock.
+    let base = media_of(video_track(1, 0xB0, 9, 3000, 3), 0);
+    let ad = media_of(video_track(1, 0xAD, 4, 3000, 4), 5_000_000);
+
+    let at = 9000; // sample index 3, a keyframe
+    let res = splice_insert(&base, &ad, at).unwrap();
+    let out = &res.media.tracks[0];
+    let real_dts: Vec<i64> = out.samples.iter().map(|s| s.dts.unwrap()).collect();
+
+    // Base head (indices 0..3) unchanged.
+    for (i, &d) in real_dts[..3].iter().enumerate() {
+        assert_eq!(d, (i as i64) * 3000, "base head unchanged");
+    }
+    // Ad (indices 3..7) opens exactly at the splice point, regardless of its
+    // own file's unrelated 5,000,000-tick anchor.
+    assert_eq!(
+        real_dts[3], at as i64,
+        "ad opens exactly at the splice point"
+    );
+    for w in real_dts[3..7].windows(2) {
+        assert_eq!(w[1] - w[0], 3000, "ad's internal spacing preserved");
+    }
+    // Base tail (indices 7..9) resumes exactly where the (rebased) ad ends —
+    // one continuous timeline.
+    let ad_end = real_dts[6] + 3000;
+    assert_eq!(
+        real_dts[7], ad_end,
+        "base resumes exactly where the ad ends"
+    );
+    for w in real_dts[7..].windows(2) {
+        assert_eq!(w[1] - w[0], 3000, "base tail spacing unchanged");
+    }
+    for w in real_dts.windows(2) {
+        assert!(w[1] >= w[0], "real dts monotonic across both joins: {w:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 4 — mixed timescales (a 48 kHz non-video track alongside 90 kHz
+// video) keep A/V alignment: the single reference-derived offset (from the
+// video track) is rescaled into the other track's own timescale, rather than
+// computed independently for it (which would silently re-align them).
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_preserves_av_alignment_across_mixed_timescales() {
+    const AUDIO_TS: u32 = 48_000;
+
+    // a: video ends at exactly 15_000 (90kHz) — a multiple of 15, so the
+    // 90kHz→48kHz conversion (ratio 8/15) below is exact and this test's own
+    // arithmetic is unambiguous; #782 Test 5 covers the non-exact/rounding
+    // case deliberately.
+    let a_video = video_track(1, 0xA0, 5, 3000, 5);
+    let a_audio = data_track(2, AUDIO_TS, 0xA1, 5, 1000, DataCarriage::Pes, true);
+    let a = media_of_two(a_video, 0, a_audio, 0);
+
+    // b: an independently-demuxed asset anchored at 0 for video, with its
+    // matched track pre-rolled 500 (48kHz) ticks ahead of video — a
+    // realistic small A/V lead that must survive the splice unchanged.
+    let b_video = video_track(1, 0xB0, 3, 3000, 3);
+    let b_audio = data_track(2, AUDIO_TS, 0xB1, 3, 1000, DataCarriage::Pes, true);
+    let b = media_of_two(b_video, 0, b_audio, 500);
+
+    let res = concat(&a, &b).unwrap();
+    let video_out = res
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == 1)
+        .unwrap();
+    let audio_out = res
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == 2)
+        .unwrap();
+
+    let video_join_index = 5; // a_video had 5 samples
+    let audio_join_index = 5; // a_audio had 5 samples
+
+    let video_join_dts = video_out.samples[video_join_index].dts.unwrap();
+    let audio_join_dts = audio_out.samples[audio_join_index].dts.unwrap();
+
+    assert_eq!(
+        video_join_dts, 15_000,
+        "video (reference track) join is exact"
+    );
+
+    // Audio's join = video's join rescaled 90kHz→48kHz (8/15, exact here)
+    // plus b's own 500-tick internal lead — the SAME single offset,
+    // expressed in audio ticks, not an independently re-derived alignment.
+    let expected_audio_join = 15_000i64 * 48_000 / 90_000 + 500;
+    assert_eq!(
+        audio_join_dts, expected_audio_join,
+        "audio join uses the reference-derived offset rescaled into its own timescale"
+    );
+}
+
+/// The single-splice offset decision #782-3 mandates: rescale the two
+/// *absolute* reference-track endpoints (the join point and the incoming
+/// asset's own start) into the target track's timescale separately, then
+/// subtract — never rescale an already-computed delta (which is what would
+/// let rounding compound across repeated splices). Reimplemented here (not
+/// calling the crate's private `rescale_ticks`) so this test encodes the
+/// documented contract, not the implementation.
+fn expected_offset_48k(join_dts_ref_90k: i64, incoming_ref_start_90k: i64) -> i64 {
+    let rescale = |t: i64| (t as i128 * 48_000i128 / 90_000i128) as i64;
+    rescale(join_dts_ref_90k) - rescale(incoming_ref_start_90k)
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 5 — repeated splices (4 in a row) do not accumulate rounding
+// drift. Deliberately non-exact-dividing deltas (90kHz/48kHz is only exact on
+// multiples of 15) force a fractional-tick rounding on every single splice;
+// each join is checked against a FRESH per-step computation (never a
+// carried-forward running total), so a regression that reused a previous
+// splice's already-rounded delta (compounding error with each join) would
+// diverge from this and fail — most likely within the first couple of steps.
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_repeated_does_not_accumulate_rounding_drift() {
+    const AUDIO_TS: u32 = 48_000;
+
+    let mut media = media_of_two(
+        video_track(1, 0xA0, 4, 3001, 4),
+        0,
+        data_track(2, AUDIO_TS, 0xA1, 4, 1601, DataCarriage::Pes, true),
+        0,
+    );
+
+    for step in 0u8..4 {
+        let video_before_len = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == 1)
+            .unwrap()
+            .samples
+            .len();
+        let audio_before_len = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == 2)
+            .unwrap()
+            .samples
+            .len();
+        let video_before_last = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == 1)
+            .unwrap()
+            .samples
+            .last()
+            .unwrap()
+            .clone();
+        let video_join_dts_exact =
+            video_before_last.dts.unwrap() + video_before_last.duration.unwrap() as i64;
+
+        // Each increment is its own small, unrelated, independently-anchored
+        // asset — never derived from the growing result so far. Anchors are
+        // deliberately not multiples of 15, to force rounding at every step.
+        let increment_video_start: i64 = 11 + step as i64;
+        let increment_audio_start: i64 = 5 + step as i64;
+        let increment = media_of_two(
+            video_track(1, 0x10 + step, 3, 3001, 3),
+            increment_video_start as u64,
+            data_track(2, AUDIO_TS, 0x20 + step, 3, 1601, DataCarriage::Pes, true),
+            increment_audio_start as u64,
+        );
+
+        media = concat(&media, &increment).unwrap().media;
+
+        let video_out = media.tracks.iter().find(|t| t.spec.track_id == 1).unwrap();
+        let audio_out = media.tracks.iter().find(|t| t.spec.track_id == 2).unwrap();
+
+        let video_join_dts = video_out.samples[video_before_len].dts.unwrap();
+        assert_eq!(
+            video_join_dts, video_join_dts_exact,
+            "step {step}: reference track join is always exact (same timescale, no rescale)"
+        );
+
+        let audio_join_dts = audio_out.samples[audio_before_len].dts.unwrap();
+        let offset = expected_offset_48k(video_join_dts_exact, increment_video_start);
+        let expected_audio_join = increment_audio_start + offset;
+        assert_eq!(
+            audio_join_dts, expected_audio_join,
+            "step {step}: audio join must match a FRESH per-step rescale, not a \
+             carried-forward (and compounding) delta"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #782 Test 6 — a section-carried (`dts: None`) sample survives a splice
+// with its timestamp still `None` — never fabricated — and does not panic,
+// whether or not a reference track exists elsewhere in the same media.
+// ---------------------------------------------------------------------------
+#[test]
+fn concat_leaves_untimed_section_samples_as_none() {
+    // Pure section-only media: nothing anywhere carries a timestamp, so
+    // there is no reference track to derive an offset from — nothing to
+    // rebase, nothing to fabricate.
+    let a = Media::new(
+        vec![data_track(
+            1,
+            90_000,
+            0xA0,
+            2,
+            0,
+            DataCarriage::Sections,
+            false,
+        )],
+        1000,
+    );
+    let b = Media::new(
+        vec![data_track(
+            1,
+            90_000,
+            0xB0,
+            2,
+            0,
+            DataCarriage::Sections,
+            false,
+        )],
+        1000,
+    );
+    let res = concat(&a, &b).unwrap();
+    assert_eq!(res.media.tracks[0].samples.len(), 4);
+    for s in &res.media.tracks[0].samples {
+        assert!(
+            s.dts.is_none() && s.pts.is_none(),
+            "section-carried sample must stay untimed, never fabricated"
+        );
+    }
+
+    // A realistic mixed case: a timed video track (the reference) alongside
+    // an untimed section-carried track (e.g. an SCTE-35 PID), on unrelated
+    // timelines. The video track rebases normally; the section track has
+    // nothing to rebase and must not panic or fabricate a timestamp even
+    // though a valid reference track exists elsewhere in the same media.
+    let a2 = media_of_two(
+        video_track(1, 0xA1, 3, 3000, 3),
+        0,
+        data_track(2, 90_000, 0xA2, 2, 0, DataCarriage::Sections, false),
+        0,
+    );
+    let b2 = media_of_two(
+        video_track(1, 0xB1, 2, 3000, 2),
+        9_000_000,
+        data_track(2, 90_000, 0xB2, 2, 0, DataCarriage::Sections, false),
+        0,
+    );
+    let res2 = concat(&a2, &b2).unwrap();
+    let video_out = res2
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == 1)
+        .unwrap();
+    let data_out = res2
+        .media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == 2)
+        .unwrap();
+    assert_eq!(video_out.samples.len(), 5);
+    assert!(
+        video_out.samples.iter().all(|s| s.dts.is_some()),
+        "video track stays timed"
+    );
+    assert_eq!(data_out.samples.len(), 4);
+    assert!(
+        data_out
+            .samples
+            .iter()
+            .all(|s| s.dts.is_none() && s.pts.is_none()),
+        "section track stays untimed even though a reference track exists elsewhere"
     );
 }
