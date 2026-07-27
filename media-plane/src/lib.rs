@@ -26,17 +26,20 @@
 //! ([`broadcast_common::Stage`]) and clock/backpressure types
 //! ([`broadcast_common::Timestamp`], [`broadcast_common::Demand`]).
 //!
-//! **This release (plan steps 3a-ii through 3b-ii) completes the byte layer
-//! and the `Trunk`'s sample path and segment log**: [`ByteStage`],
-//! [`ByteTap`] (a non-blocking observer), [`ByteMerge`] (the one bounded
-//! multi-input primitive), [`Trunk`]/[`TrunkWriter`]/[`SampleCursor`] (the
-//! bounded, dual-retention sample ring), and now the segment log with
-//! [`SegmentCursor`] and [`ArchiveOverrun`] (lossless-by-retention pinning
-//! for a DVR/archive consumer, without the writer ever blocking by
-//! default). The 90 kHz event log, `Dialer`/`Listener`/`IngestSession`, and
-//! the three egress traits are later steps of the same plan
+//! **This release (plan steps 3a-ii through 3b-iii) completes the byte
+//! layer and the whole `Trunk`**: [`ByteStage`], [`ByteTap`] (a
+//! non-blocking observer), [`ByteMerge`] (the one bounded multi-input
+//! primitive), [`Trunk`]/[`TrunkWriter`]/[`SampleCursor`] (the bounded,
+//! dual-retention sample ring), the segment log with [`SegmentCursor`] and
+//! [`ArchiveOverrun`] (lossless-by-retention pinning for a DVR/archive
+//! consumer, without the writer ever blocking by default), and now the
+//! 90 kHz event log with [`EventCursor`] and [`EventAnchor`] — the piece
+//! that resolves architecture-audit finding B1 (rev 1's false claim of one
+//! time model for every event; see the [`trunk`] module docs' event-log
+//! section). `Dialer`/`Listener`/`IngestSession` and the three egress
+//! traits are later steps of the same plan
 //! (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md`
-//! Step 3b-iii onward) and are deliberately absent here.
+//! Step 3c onward) and are deliberately absent here.
 //!
 //! # The byte layer ([`byte_stage`], [`byte_tap`], [`byte_merge`])
 //!
@@ -76,6 +79,15 @@
 //! retention (a pinning cursor from [`Trunk::pin_segments`]), not
 //! back-pressure, and for the three-way [`ArchiveOverrun`] trade a pinning
 //! cursor's caller makes explicit when the retention bound is finally hit.
+//!
+//! The event log carries [`timed_metadata::TimedEvent`] on the trunk's own
+//! 90 kHz absolute clock, addressable both by media time
+//! ([`Trunk::events_between`]) and by segment
+//! ([`Trunk::events_in_segment`]) — and, critically, never fabricates a
+//! media time for an event that is only segment-relative (`emsg` v0) or
+//! wall-clock-only (SCTE-35 `splice_schedule`) until the boundary or
+//! [`timed_metadata::TimeAnchor`] it actually needs arrives. See the
+//! [`trunk`] module docs' event-log section for the full B1 story.
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![doc(html_root_url = "https://docs.rs/media-plane")]
@@ -93,6 +105,7 @@ pub use byte_stage::ByteStage;
 pub use byte_tap::{ByteTap, TapItem, TapPoint};
 #[cfg(feature = "std")]
 pub use trunk::{
-    ArchiveOverrun, RetentionClass, SampleCursor, SampleCursorItem, SegmentCursor,
-    SegmentCursorItem, SegmentEntry, Trunk, TrunkConfig, TrunkWriter,
+    ArchiveOverrun, EventAnchor, EventCursor, EventCursorItem, EventEntry, RetentionClass,
+    SampleCursor, SampleCursorItem, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk,
+    TrunkConfig, TrunkWriter,
 };

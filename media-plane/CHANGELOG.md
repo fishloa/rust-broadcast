@@ -89,3 +89,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   test discipline as the sample ring's payload sharing. `SegmentEgress`/
   tiered `Retention` (plan steps 3d/3e) are not built here;
   `Trunk::pin_segments` is their documented attachment point.
+- `EventAnchor`, `EventEntry`, `EventCursor` (plan step 3b-iii, `std`-only):
+  the 90 kHz event log, completing the `Trunk` per
+  `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §1.2 and
+  resolving the architecture audit's **blocking finding B1** — rev 1's false
+  claim that every event fits one absolute `i64` in track timescale, which
+  is untrue for SCTE-35 `splice_schedule.utc_splice_time` (GPS-epoch UTC,
+  not a media timestamp) and `emsg` v0's `presentation_time_delta`
+  (segment-relative, unresolvable until the segmenter owns a boundary). The
+  event log's reference clock is **90 kHz absolute**
+  (`timed_metadata::MediaTime`), not any one track's timescale — a `Media`
+  with several tracks at several timescales has no single track clock an
+  event log could borrow. It carries `timed_metadata::TimedEvent` (owned,
+  lossless, `#[non_exhaustive]`, already published at 0.4.0) verbatim rather
+  than a parallel type; `mp4_emsg::EmsgBox<'a>` is borrowed and cannot be
+  stored, `timed_metadata::SourcePayload::Emsg` already is its owned form.
+  **The B1 fix itself is `EventAnchor`**: every entry is `Media` (already on
+  the trunk's clock), `Segment { segment_number, delta }` (an `emsg` v0,
+  stays exactly this variant — addressable by segment number only — until
+  `TrunkWriter::note_segment_start` reports *that* segment's own start, and
+  resolves against it specifically, never against whichever segment happens
+  to be open), or `Utc { utc_epoch_ms }` (a GPS/UTC-only `splice_schedule`
+  cue, stays exactly this variant, with **no fabricated media time**, until
+  `TrunkWriter::set_time_anchor` gives the log a `timed_metadata::TimeAnchor`
+  to translate through). Addressable **both** by media time
+  (`Trunk::events_between`, half-open `[from, to)`) and by segment
+  (`Trunk::events_in_segment`, via a small boundary table bounded by the
+  same `TrunkConfig::event_capacity` rather than a second knob — the same
+  "no second capacity knob" precedent `TrunkConfig::segment_capacity`
+  already set for pinning) — both queries only ever return `Media`-resolved
+  entries. `Trunk::subscribe_events()` gives a streaming `EventCursor` on the
+  same one-`Mutex`, single-digit-reader-by-design, in-band-`Lagged`,
+  writer-never-blocks shape the sample/segment cursors already established.
+  Reuses `timed_metadata::Timeline`'s 33-bit PTS wrap-unroll rather than
+  hand-rolling it; `timed-metadata` becomes a real (non-dev) dependency of
+  `media-plane`.

@@ -1,14 +1,17 @@
 //! [`Trunk`] — the sample ring, [`TrunkWriter`], and [`SampleCursor`] (plan
-//! step 3b-i), and now the segment log, [`SegmentCursor`], and the
-//! lossless-by-retention pinning mechanism (plan step 3b-ii).
+//! step 3b-i); the segment log, [`SegmentCursor`], and the
+//! lossless-by-retention pinning mechanism (plan step 3b-ii); and now the
+//! 90 kHz event log, [`EventCursor`], and [`EventAnchor`] (plan step
+//! 3b-iii), which completes the `Trunk` per
+//! `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §1.2.
 //!
-//! This is the sample path plus the segment log: two bounded rings, the one
-//! writer that publishes into both, and the cursors that read them. The
-//! 90 kHz event log
-//! (`docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §1.2) is
-//! the one remaining piece (3b-iii) of the same plan — see
-//! [Where the rest of `Trunk` attaches](#where-the-rest-of-trunk-attaches)
-//! below for why nothing here needs to change shape to make room for it.
+//! This is three bounded rings behind the one writer, and the cursors that
+//! read them: the sample path, the segment log, and now the event log. See
+//! [The event log: 90 kHz absolute, and the B1 crux](#the-event-log-90-khz-absolute-and-the-b1-crux)
+//! below for why the event log needed a third, genuinely different shape —
+//! not just a third copy of `ClassLog`/`SegmentLog` (this module's internal
+//! per-class/per-segment logs) — to resolve the architecture audit's
+//! blocking finding B1.
 //!
 //! # Why this module needs `std`, unlike its byte-layer siblings
 //!
@@ -173,19 +176,129 @@
 //! (drop bytes, block the writer, or drop the consumer), just without
 //! naming which — which is worse, not better.
 //!
-//! # Where the rest of `Trunk` attaches
+//! # The event log: 90 kHz absolute, and the B1 crux
 //!
-//! `TrunkState` (the shared state behind a `Trunk`) now holds the two
-//! per-class sample logs *and* the segment log this step adds. The 90 kHz
-//! event log (3b-iii) is the one remaining **sibling field on the same
-//! `TrunkState`, behind the same one `Mutex`** — not a redesign:
-//! `TrunkState` gains an `events: EventLog` field, `Trunk` gains an
-//! `events()` method shaped like [`Trunk::subscribe`]/
-//! [`Trunk::subscribe_segments`], and `TrunkConfig` gains its window field
-//! alongside `timed_capacity`/`sparse_capacity`/`segment_capacity`. The
-//! one-writer-never-blocks-by-default and per-cursor-lag-accounting shape
-//! established across both logs is intended to be reused verbatim, not
-//! reconsidered, when the event log lands.
+//! `TrunkState` (the shared state behind a `Trunk`) holds the two per-class
+//! sample logs, the segment log, and now the event log — a **sibling ring
+//! behind the same one `Mutex`**, exactly the pattern the segment log
+//! established (`TrunkState::events: EventLog`, `Trunk::subscribe_events`/
+//! `events_between`/`events_in_segment` shaped like `Trunk::subscribe`/
+//! `Trunk::subscribe_segments`, `TrunkConfig::event_capacity` alongside
+//! `timed_capacity`/`sparse_capacity`/`segment_capacity`). Where it is
+//! genuinely a new shape, not a third `ClassLog`/`SegmentLog` copy, is
+//! its *clock* and its *addressing* — both forced by architecture audit
+//! finding B1
+//! (`docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §0/§1.2).
+//!
+//! **What B1 got wrong.** Revision 1 of the spec claimed one time model for
+//! everything the plane carries: an absolute `i64` in the *producing
+//! track's* timescale. That is false in two ways this project already
+//! parses, and both are events, not samples:
+//!
+//! - `splice_schedule.utc_splice_time` (SCTE-35 §9.7.4) is **GPS-epoch
+//!   UTC** — not a media timestamp in any track's timescale at all.
+//! - `emsg` version 0's `presentation_time_delta` (ISO/IEC 23009-1
+//!   §5.10.3.3) is **segment-relative** — its value only means something
+//!   once you know which segment it lands in, and that segment's earliest
+//!   presentation time is not knowable until the segmenter has actually cut
+//!   the boundary. `timed_metadata::convert::emsg_convert` already encodes
+//!   this exact arithmetic (`T = EPT + presentation_time_delta`) for
+//!   *converting* one emsg to another; the event log's job is different —
+//!   it has to hold the delta *honestly unresolved* for however long the
+//!   boundary is unknown, which a stateless conversion function has no
+//!   reason to model.
+//!
+//! Neither of those is expressible as a single struct field without either
+//! (a) losing information (which timescale? relative to what?) or (b)
+//! **fabricating** a resolution that has not actually happened yet — an
+//! event log that stores a plausible-looking media time for a
+//! `splice_schedule` cue before any wall-clock↔media-clock mapping exists,
+//! or for an `emsg` v0 before its segment's start is known, has invented
+//! data. **The failure mode is not a crash: it is an ad break firing at the
+//! wrong wall-clock instant**, because a plausible-but-wrong media time is
+//! indistinguishable from a correct one until playout.
+//!
+//! **Why 90 kHz absolute, not per-track timescale.** A single `Media` can
+//! carry several tracks at several timescales (48 kHz audio, a 25 fps
+//! video track at 90 000, a subtitle track with none at all) — there is no
+//! one track whose timescale the *event* log could borrow without an
+//! arbitrary, undocumented choice among them. [`EventAnchor::Media`]
+//! therefore carries [`timed_metadata::MediaTime`] — 90 kHz ticks,
+//! wrap-unrolled, the same clock SCTE-35's own `pts_time` already uses —
+//! rather than any one track's clock. This is also why the event log is a
+//! genuinely separate ring from the sample rings, not a third
+//! [`RetentionClass`]: a [`transmux::Sample`] is timestamped in its
+//! *track's* clock ([`transmux::Sample::pts`]/`dts`, per §4 of the spec);
+//! an event lives on the trunk's own, track-independent clock.
+//!
+//! **Carries [`timed_metadata::TimedEvent`], not a parallel type.** It is
+//! owned, lossless, `#[non_exhaustive]`, and already published (0.4.0, live
+//! on crates.io) — [`EventEntry::event`] stores it verbatim rather than
+//! re-deriving a second event representation this crate would then have to
+//! keep in sync by hand. `mp4_emsg::EmsgBox<'a>` is *borrowed* and cannot
+//! outlive the buffer it was parsed from, so it cannot sit in a `'static`
+//! ring; [`timed_metadata::SourcePayload::Emsg`] is already its owned form
+//! (scheme/value/verbatim `message_data`), and is what ends up inside the
+//! stored `TimedEvent` for an `emsg`-sourced entry.
+//!
+//! **The B1 crux: [`EventAnchor`] — an unresolved event stays honestly
+//! unresolved.** Every entry's addressability is one of three states, and
+//! there is deliberately no path from `Segment`/`Utc` to `Media` other than
+//! the specific fact each one is waiting for actually arriving:
+//!
+//! - [`EventAnchor::Media`] — already on the trunk's 90 kHz clock (a
+//!   `splice_time` PTS post-wrap-unroll, or an already-absolute `emsg` v1).
+//! - [`EventAnchor::Segment`] — an `emsg` v0's `presentation_time_delta`
+//!   plus the `segment_number` it is relative to. Stays exactly this
+//!   variant — addressable by segment number, **not** by media time —
+//!   until [`TrunkWriter::note_segment_start`] reports that segment's
+//!   start, at which point this module's internal event log resolves it
+//!   **in place**, computed from *that segment's own* reported start —
+//!   never "whichever segment happens to be currently open", which would
+//!   silently produce *a* segment instead of *the* segment the emsg
+//!   actually named.
+//! - [`EventAnchor::Utc`] — a GPS/UTC instant (`splice_schedule`) with no
+//!   media-timeline position at all. Stays exactly this variant — not
+//!   returned by [`Trunk::events_between`] or [`Trunk::events_in_segment`],
+//!   because there is no honest media time to filter on — until
+//!   [`TrunkWriter::set_time_anchor`] gives the event log a
+//!   [`timed_metadata::TimeAnchor`] to translate through. This is the
+//!   literal B1 test: an event with only a wall-clock time and no anchor
+//!   must never be handed a fabricated media time.
+//!
+//! `epoch_ms_to_media` (the UTC→media direction) is the mirror image of
+//! [`timed_metadata::TimeAnchor::media_to_epoch_ms`] (which only goes the
+//! other way) — plain affine algebra, **not** a reimplementation of
+//! [`timed_metadata::Timeline`]'s 33-bit wrap-unroll, which this module
+//! reuses rather than hand-rolls: every `MediaTime` this ring ever stores
+//! either came out of `Timeline::push_scte35` already unrolled, or is
+//! computed from one that did (`Segment`/`Utc` resolution only ever adds a
+//! non-negative delta or an anchor-relative offset to an already-unrolled
+//! value).
+//!
+//! **Dual addressing: media time *and* segment, both, not either** — because
+//! a manifest renderer needs "the events in segment N" while a playback
+//! scheduler needs "the events between T1 and T2", and neither is a special
+//! case of the other. [`Trunk::events_between`] answers the first
+//! (half-open `[from, to)` over every currently-`Media`-resolved entry);
+//! [`Trunk::events_in_segment`] answers the second, by consulting
+//! `EventLog::segment_starts` — a small boundary table, populated by
+//! [`TrunkWriter::note_segment_start`], bounded by the **same**
+//! `TrunkConfig::event_capacity` rather than a second, independent knob
+//! (exactly [`TrunkConfig::segment_capacity`]'s "no second capacity knob"
+//! precedent for pinning). Both queries only ever return `Media`-resolved
+//! entries — an entry still `Segment`/`Utc`-anchored is not fabricated a
+//! position just to satisfy either query.
+//!
+//! Both point-in-time queries read the same log a subscribed
+//! [`EventCursor`] does (via [`Trunk::subscribe_events`]) — the same
+//! single-`Mutex`, single-digit-reader-by-design, in-band-loss-reporting,
+//! writer-never-blocks shape [`Trunk::subscribe`]/[`Trunk::subscribe_segments`]
+//! already established, reused verbatim rather than reconsidered: an
+//! `EventCursor` sees an entry (and a `Lagged` loss report, if it fell
+//! behind [`TrunkConfig::event_capacity`]'s eviction) the moment it is
+//! published, whether or not it has resolved yet, while the two query
+//! methods are a snapshot of what has resolved *so far*.
 //!
 //! `SegmentEgress` and tiered `Retention` (plan steps 3d/3e — an egress
 //! trait that owns one [`SegmentCursor`] and pushes to DVR/MABR/ROUTE/Smooth,
@@ -209,6 +322,7 @@ use std::time::Duration;
 
 use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
+use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
 use transmux::{Sample, SegmentMeta};
 
 /// Which retention discipline a published entry follows once inside the
@@ -258,9 +372,6 @@ pub enum RetentionClass {
 }
 
 /// Construction parameters for a [`Trunk`].
-///
-/// `#[non_exhaustive]`: plan step 3b-iii adds an event-log window field here
-/// (see the [module docs](self#where-the-rest-of-trunk-attaches)).
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
 pub struct TrunkConfig {
@@ -276,18 +387,32 @@ pub struct TrunkConfig {
     /// for why there is deliberately no second, independent "pin depth"
     /// knob.
     pub segment_capacity: usize,
+    /// Bound, in entry count, on the event log — **and** on its segment
+    /// boundary table (`EventLog::segment_starts`). See
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux)
+    /// for why a segment-relative event's target boundary shares this one
+    /// knob rather than getting a second, independently-tuned one —
+    /// exactly [`TrunkConfig::segment_capacity`]'s "no second capacity
+    /// knob" precedent for pinning.
+    pub event_capacity: usize,
 }
 
 impl TrunkConfig {
-    /// Build a config with all three ring capacities. None is validated
+    /// Build a config with all four ring capacities. None is validated
     /// here — [`Trunk::new`] panics on a zero capacity, matching this
     /// crate's [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]
     /// precedent of panicking at the point a ring is actually allocated.
-    pub fn new(timed_capacity: usize, sparse_capacity: usize, segment_capacity: usize) -> Self {
+    pub fn new(
+        timed_capacity: usize,
+        sparse_capacity: usize,
+        segment_capacity: usize,
+        event_capacity: usize,
+    ) -> Self {
         TrunkConfig {
             timed_capacity,
             sparse_capacity,
             segment_capacity,
+            event_capacity,
         }
     }
 }
@@ -493,13 +618,204 @@ impl SegmentLog {
     }
 }
 
-/// The shared state behind one [`Trunk`]: the two sample [`ClassLog`]s and
-/// the [`SegmentLog`]. See [module docs](self#where-the-rest-of-trunk-attaches)
-/// for the sibling field 3b-iii adds here.
+/// How one [`EventEntry`] is currently addressable on the trunk's 90 kHz
+/// absolute clock ([`timed_metadata::MediaTime`]) — the distinction
+/// architecture-audit finding B1 exists to make honest. See
+/// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux) for
+/// why these three states cannot be collapsed into one `MediaTime` without
+/// reintroducing B1's silent-wrong-instant failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EventAnchor {
+    /// Already expressible on this trunk's 90 kHz absolute clock — a
+    /// SCTE-35 `splice_time` PTS after [`timed_metadata::Timeline`]'s
+    /// 33-bit wrap-unroll, or an `emsg` v1 (already-absolute)
+    /// `presentation_time` on this same clock. The only variant
+    /// [`Trunk::events_between`]/[`Trunk::events_in_segment`] can ever
+    /// match against.
+    Media(MediaTime),
+    /// Segment-relative (`emsg` v0's `presentation_time_delta`, ISO/IEC
+    /// 23009-1 §5.10.3.3): this event's media time is `delta` ticks after
+    /// the *start* of segment `segment_number` — a start this entry does
+    /// not know yet. Resolves in place, to that segment's own reported
+    /// start, the instant [`TrunkWriter::note_segment_start`] reports it;
+    /// until then it stays exactly this variant — addressable by
+    /// `segment_number` (once a boundary exists), never by a fabricated
+    /// media time.
+    Segment {
+        /// The target segment's sequence number — matches
+        /// [`SegmentEntry::sequence_number`].
+        segment_number: u32,
+        /// `presentation_time_delta`: ticks after that segment's start.
+        delta: u64,
+    },
+    /// GPS/UTC wall-clock only (SCTE-35 `splice_schedule.utc_splice_time`,
+    /// §9.7.4): this event has **no** media-timeline position at all, only
+    /// an instant on the wall clock, until
+    /// [`TrunkWriter::set_time_anchor`] gives the event log a
+    /// [`TimeAnchor`] to translate through. **This is the B1 case** — see
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    Utc {
+        /// Milliseconds since the Unix epoch — matches
+        /// [`TimeAnchor::utc_epoch_ms`]'s unit.
+        utc_epoch_ms: i64,
+    },
+}
+
+/// One entry in the event log: the owned, lossless [`TimedEvent`] this
+/// trunk carries verbatim — see
+/// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux) for
+/// why this is *the* published `timed_metadata` type, not a parallel one —
+/// plus its current [`EventAnchor`] resolution state.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct EventEntry {
+    /// The canonical event, carried verbatim.
+    pub event: TimedEvent,
+    /// This entry's current resolution state.
+    pub anchor: EventAnchor,
+}
+
+/// The event log: a bounded, append-ordered log of [`EventEntry`] values,
+/// plus the two small resolution tables an [`EventAnchor::Segment`]/
+/// [`EventAnchor::Utc`] entry resolves against.
+///
+/// Evict-then-push shape identical to [`ClassLog`]/[`SegmentLog`] —
+/// `base`/`published` mean exactly the same thing here as there.
+struct EventLog {
+    entries: VecDeque<EventEntry>,
+    base: u64,
+    published: u64,
+    capacity: usize,
+    /// Recently-reported segment starts, in the order
+    /// [`TrunkWriter::note_segment_start`] received them (playlist order in
+    /// practice, since segments are announced in sequence). Bounded by the
+    /// **same** `capacity` as `entries` — see [`TrunkConfig::event_capacity`]'s
+    /// doc for why this deliberately is not a second, independently-tuned
+    /// knob.
+    segment_starts: VecDeque<(u32, MediaTime)>,
+    /// The one wall-clock↔media-clock mapping this trunk's event log
+    /// knows, if any. Mirrors [`timed_metadata::Timeline`]'s own
+    /// `anchor: Option<TimeAnchor>` field — one mapping per session/trunk,
+    /// not one per event.
+    time_anchor: Option<TimeAnchor>,
+}
+
+impl EventLog {
+    fn new(capacity: usize) -> Self {
+        EventLog {
+            entries: VecDeque::with_capacity(capacity),
+            base: 0,
+            published: 0,
+            capacity,
+            segment_starts: VecDeque::with_capacity(capacity),
+            time_anchor: None,
+        }
+    }
+
+    /// Resolve `anchor` against whatever segment starts / time anchor are
+    /// already known — **without** fabricating a resolution the log cannot
+    /// yet justify. An anchor this call cannot resolve is returned
+    /// unchanged: no anchor, no media time, per B1.
+    fn try_resolve(&self, anchor: EventAnchor) -> EventAnchor {
+        match anchor {
+            EventAnchor::Segment {
+                segment_number,
+                delta,
+            } => self
+                .segment_starts
+                .iter()
+                .find(|(n, _)| *n == segment_number)
+                .map(|(_, start)| EventAnchor::Media(MediaTime(start.0.saturating_add(delta))))
+                .unwrap_or(anchor),
+            EventAnchor::Utc { utc_epoch_ms } => self
+                .time_anchor
+                .as_ref()
+                .map(|a| EventAnchor::Media(epoch_ms_to_media(a, utc_epoch_ms)))
+                .unwrap_or(anchor),
+            EventAnchor::Media(_) => anchor,
+        }
+    }
+
+    /// Push one event, evicting the oldest if the log is already at
+    /// `capacity`. Never rejects, never blocks — exactly [`ClassLog::push`]/
+    /// [`SegmentLog::push`]'s contract.
+    fn push(&mut self, event: TimedEvent, anchor: EventAnchor) {
+        let anchor = self.try_resolve(anchor);
+        if self.entries.len() == self.capacity {
+            self.entries.pop_front();
+            self.base += 1;
+        }
+        self.entries.push_back(EventEntry { event, anchor });
+        self.published += 1;
+    }
+
+    /// Record segment `segment_number`'s start on this trunk's 90 kHz
+    /// absolute clock, and resolve, **in place**, every still-pending
+    /// [`EventAnchor::Segment`] entry that targets exactly this
+    /// `segment_number` — not whichever segment happened to be open when
+    /// the event was published (that would resolve to *a* segment, not
+    /// *the* segment the `emsg` actually named, which is exactly the bug
+    /// this design avoids).
+    fn note_segment_start(&mut self, segment_number: u32, start: MediaTime) {
+        if self.segment_starts.len() == self.capacity {
+            self.segment_starts.pop_front();
+        }
+        self.segment_starts.push_back((segment_number, start));
+        for entry in &mut self.entries {
+            if let EventAnchor::Segment {
+                segment_number: n,
+                delta,
+            } = entry.anchor
+            {
+                if n == segment_number {
+                    entry.anchor = EventAnchor::Media(MediaTime(start.0.saturating_add(delta)));
+                }
+            }
+        }
+    }
+
+    /// Record this trunk's wall-clock↔media-clock mapping, and resolve, in
+    /// place, every still-pending [`EventAnchor::Utc`] entry through it.
+    /// Before this call, a `Utc`-anchored entry stays a `Utc` entry — see
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    fn set_time_anchor(&mut self, anchor: TimeAnchor) {
+        self.time_anchor = Some(anchor);
+        for entry in &mut self.entries {
+            if let EventAnchor::Utc { utc_epoch_ms } = entry.anchor {
+                entry.anchor = EventAnchor::Media(epoch_ms_to_media(&anchor, utc_epoch_ms));
+            }
+        }
+    }
+}
+
+/// The inverse of [`TimeAnchor::media_to_epoch_ms`]: the [`MediaTime`]
+/// `anchor` implies for a UTC instant (milliseconds since the Unix epoch).
+///
+/// Plain affine algebra — the mirror image of a function `timed_metadata`
+/// already publishes — **not** a reimplementation of
+/// [`timed_metadata::Timeline`]'s 33-bit wrap-unroll, a different, modular
+/// arithmetic problem this module does not re-solve; see
+/// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+/// Clamps rather than panics on an out-of-range result — a malformed or
+/// adversarial `splice_schedule` entry must not crash the writer.
+fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> MediaTime {
+    let delta_ms = i128::from(utc_epoch_ms) - i128::from(anchor.utc_epoch_ms);
+    let delta_ticks = delta_ms * i128::from(PTS_HZ) / 1000;
+    let media = i128::from(anchor.pts_90k) + delta_ticks;
+    MediaTime(media.clamp(0, i128::from(u64::MAX)) as u64)
+}
+
+/// The shared state behind one [`Trunk`]: the two sample [`ClassLog`]s, the
+/// [`SegmentLog`], and the [`EventLog`]. See
+/// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux) for
+/// why the event log needed its own shape rather than being a third copy of
+/// the other two.
 struct TrunkState {
     timed: ClassLog,
     sparse: ClassLog,
     segments: SegmentLog,
+    events: EventLog,
 }
 
 /// The sample ring: bounded, dual-retention-class, single-writer,
@@ -528,11 +844,11 @@ pub struct Trunk {
 impl Trunk {
     /// Construct a fresh, empty `Trunk`.
     ///
-    /// Panics if `config.timed_capacity`, `config.sparse_capacity`, or
-    /// `config.segment_capacity` is zero — a construction mistake (every
-    /// entry would be evicted the instant it was pushed), not remote input,
-    /// so it panics rather than returning a `Result` a caller could ignore
-    /// (matching
+    /// Panics if `config.timed_capacity`, `config.sparse_capacity`,
+    /// `config.segment_capacity`, or `config.event_capacity` is zero — a
+    /// construction mistake (every entry would be evicted the instant it
+    /// was pushed), not remote input, so it panics rather than returning a
+    /// `Result` a caller could ignore (matching
     /// [`crate::byte_tap::ByteTap::new`]/[`crate::byte_merge::ByteMerge::new`]).
     pub fn new(config: TrunkConfig) -> Arc<Trunk> {
         assert!(
@@ -547,11 +863,16 @@ impl Trunk {
             config.segment_capacity > 0,
             "Trunk segment_capacity must be > 0"
         );
+        assert!(
+            config.event_capacity > 0,
+            "Trunk event_capacity must be > 0"
+        );
         Arc::new(Trunk {
             state: Mutex::new(TrunkState {
                 timed: ClassLog::new(config.timed_capacity),
                 sparse: ClassLog::new(config.sparse_capacity),
                 segments: SegmentLog::new(config.segment_capacity),
+                events: EventLog::new(config.event_capacity),
             }),
             segment_pin_released: Condvar::new(),
             writer_taken: AtomicBool::new(false),
@@ -688,6 +1009,86 @@ impl Trunk {
     pub fn segment_len(&self) -> usize {
         self.state.lock().unwrap().segments.entries.len()
     }
+
+    /// Subscribe a new [`EventCursor`] over the event log, starting from
+    /// *now* — the same "next entry only, no backlog" rule as
+    /// [`Trunk::subscribe`]/[`Trunk::subscribe_segments`], and the same
+    /// single-digit-reader, one-cursor-per-distinct-consumer guidance
+    /// applies here verbatim (this cursor contends exactly the lock every
+    /// other cursor does).
+    ///
+    /// A streaming consumer — e.g. a playback scheduler that wants every
+    /// event as it resolves — wants this. A point-in-time query — "what has
+    /// resolved for segment N" (a manifest renderer), or "what resolved
+    /// between T1 and T2" (that same scheduler, replaying its window) —
+    /// wants [`Trunk::events_in_segment`]/[`Trunk::events_between`] instead;
+    /// both read the same log, just as a snapshot rather than a moving
+    /// position. See
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    pub fn subscribe_events(self: &Arc<Self>) -> EventCursor {
+        let state = self.state.lock().unwrap();
+        EventCursor {
+            trunk: Arc::clone(self),
+            consumed: state.events.published,
+        }
+    }
+
+    /// Every currently-**resolved** ([`EventAnchor::Media`]) event whose
+    /// media time falls in the half-open range `[from, to)` — start
+    /// inclusive, end exclusive. An entry still `Segment`/`Utc`-anchored
+    /// never appears here: it has no honest media time yet, and
+    /// fabricating one to satisfy this query would be exactly B1 — see
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    pub fn events_between(&self, from: MediaTime, to: MediaTime) -> Vec<EventEntry> {
+        let state = self.state.lock().unwrap();
+        state
+            .events
+            .entries
+            .iter()
+            .filter(|e| matches!(e.anchor, EventAnchor::Media(t) if t.0 >= from.0 && t.0 < to.0))
+            .cloned()
+            .collect()
+    }
+
+    /// Every currently-resolved event whose media time falls within segment
+    /// `segment_number`'s span: `[start_N, start_{N+1})` once
+    /// [`TrunkWriter::note_segment_start`] has reported the *next*
+    /// segment's start too, else `[start_N, ∞)` (the segment is still open
+    /// — nothing yet says where it ends). Returns nothing for a
+    /// `segment_number` this trunk has never reported a start for: there is
+    /// no span to contain anything, and an unresolved
+    /// [`EventAnchor::Segment`] entry targeting it is not returned either,
+    /// for the same B1 reason [`Trunk::events_between`] documents.
+    pub fn events_in_segment(&self, segment_number: u32) -> Vec<EventEntry> {
+        let state = self.state.lock().unwrap();
+        let log = &state.events;
+        let Some(&(_, start)) = log
+            .segment_starts
+            .iter()
+            .find(|(n, _)| *n == segment_number)
+        else {
+            return Vec::new();
+        };
+        let end = log
+            .segment_starts
+            .iter()
+            .find(|(n, _)| *n == segment_number + 1)
+            .map(|&(_, s)| s.0);
+        log.entries
+            .iter()
+            .filter(|e| match e.anchor {
+                EventAnchor::Media(t) => t.0 >= start.0 && end.map(|e2| t.0 < e2).unwrap_or(true),
+                _ => false,
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Diagnostic: entries currently resident in the event log. Never
+    /// exceeds [`TrunkConfig::event_capacity`].
+    pub fn event_len(&self) -> usize {
+        self.state.lock().unwrap().events.entries.len()
+    }
 }
 
 /// The one writer for a [`Trunk`]. Obtained via [`Trunk::writer`].
@@ -772,6 +1173,38 @@ impl TrunkWriter {
             // pending.
         }
         state.segments.push(entry);
+    }
+
+    /// Publish one event. Never blocks and never rejects — a full event log
+    /// evicts its oldest entry exactly like the sample/segment logs.
+    /// `anchor` is resolved immediately against whatever segment starts /
+    /// time anchor this trunk already knows; if it cannot be resolved yet,
+    /// the entry is stored exactly as given, and resolves later, in place,
+    /// once [`TrunkWriter::note_segment_start`]/[`TrunkWriter::set_time_anchor`]
+    /// supplies what was missing. See
+    /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
+    pub fn publish_event(&self, event: TimedEvent, anchor: EventAnchor) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.events.push(event, anchor);
+    }
+
+    /// Report that segment `segment_number` starts at `start` on this
+    /// trunk's 90 kHz absolute clock — the boundary an
+    /// [`EventAnchor::Segment`] (an `emsg` v0's `presentation_time_delta`)
+    /// needs before it can resolve. Called by whoever owns segmentation —
+    /// the entity the spec's B1 fix names explicitly: "it cannot be
+    /// finalised until the segmenter owns a boundary."
+    pub fn note_segment_start(&self, segment_number: u32, start: MediaTime) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.events.note_segment_start(segment_number, start);
+    }
+
+    /// Give the event log a wall-clock↔media-clock mapping. Resolves every
+    /// currently-pending [`EventAnchor::Utc`] entry immediately, and every
+    /// future one at publish time, until a later call replaces it.
+    pub fn set_time_anchor(&self, anchor: TimeAnchor) {
+        let mut state = self.trunk.state.lock().unwrap();
+        state.events.set_time_anchor(anchor);
     }
 }
 
@@ -1038,6 +1471,60 @@ impl Drop for SegmentCursor {
     }
 }
 
+/// One item [`EventCursor::poll`] can hand back: one event-log entry (which
+/// may itself still be `Segment`/`Utc`-anchored — a cursor sees an entry
+/// the instant it is published, not only once it resolves; see
+/// [`EventEntry::anchor`]), or a loss report.
+///
+/// `#[non_exhaustive]`: the growth point for anything a cursor might need
+/// to surface beyond "entry" or "loss" later, without a breaking change to
+/// every match arm in the workspace.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum EventCursorItem {
+    /// One event-log entry, in publish order.
+    Event(EventEntry),
+    /// This cursor fell behind the event log's ordinary
+    /// [`TrunkConfig::event_capacity`] eviction: `skipped` entries were
+    /// evicted before it read them. Exactly [`SampleCursorItem::Lagged`]'s
+    /// contract.
+    Lagged {
+        /// Exact count of entries evicted since this cursor's last
+        /// successful read.
+        skipped: u64,
+    },
+}
+
+/// A subscribed reader of a [`Trunk`]'s event log. Obtained via
+/// [`Trunk::subscribe_events`] — read that method's docs, and
+/// [`Trunk::subscribe`]'s fan-out guidance, before creating more than a
+/// handful of these.
+pub struct EventCursor {
+    trunk: Arc<Trunk>,
+    consumed: u64,
+}
+
+impl EventCursor {
+    /// Pull the next item, if any is ready. Loss is always reported before
+    /// further data — the same cannot-be-skipped-past precedent as
+    /// [`SampleCursor::poll`]/[`SegmentCursor::poll`].
+    pub fn poll(&mut self) -> Option<EventCursorItem> {
+        let state = self.trunk.state.lock().unwrap();
+        let log = &state.events;
+        if self.consumed < log.base {
+            let skipped = log.base - self.consumed;
+            self.consumed = log.base;
+            return Some(EventCursorItem::Lagged { skipped });
+        }
+        let idx = (self.consumed - log.base) as usize;
+        if let Some(entry) = log.entries.get(idx) {
+            self.consumed += 1;
+            return Some(EventCursorItem::Event(entry.clone()));
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1116,7 +1603,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_cursors_see_every_sample_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4));
+        let trunk = Trunk::new(TrunkConfig::new(100, 10, 4, 8));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -1149,7 +1636,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn slow_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 10, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 10, 4, 8));
         let mut slow = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1189,7 +1676,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn lag_is_reported_with_an_accurate_skipped_count() {
-        let trunk = Trunk::new(TrunkConfig::new(3, 10, 4));
+        let trunk = Trunk::new(TrunkConfig::new(3, 10, 4, 8));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1224,7 +1711,7 @@ mod tests {
     /// confirm the failure, then reverted.
     #[test]
     fn sparse_reader_loses_data_reports_degraded_distinguishable_from_timed_lagged() {
-        let trunk = Trunk::new(TrunkConfig::new(2, 2, 4));
+        let trunk = Trunk::new(TrunkConfig::new(2, 2, 4, 8));
         let mut cursor = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
@@ -1266,7 +1753,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn ring_is_bounded_under_flood_on_both_classes() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 3, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 3, 4, 8));
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
@@ -1301,7 +1788,7 @@ mod tests {
     /// to confirm the failure, then reverted.
     #[test]
     fn payload_is_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(8, 8, 4));
+        let trunk = Trunk::new(TrunkConfig::new(8, 8, 4, 8));
         let mut c1 = trunk.subscribe();
         let mut c2 = trunk.subscribe();
         let mut c3 = trunk.subscribe();
@@ -1335,31 +1822,37 @@ mod tests {
     #[test]
     #[should_panic(expected = "timed_capacity must be > 0")]
     fn zero_timed_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(0, 4, 4));
+        let _ = Trunk::new(TrunkConfig::new(0, 4, 4, 8));
     }
 
     #[test]
     #[should_panic(expected = "sparse_capacity must be > 0")]
     fn zero_sparse_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 0, 4));
+        let _ = Trunk::new(TrunkConfig::new(4, 0, 4, 8));
     }
 
     #[test]
     #[should_panic(expected = "segment_capacity must be > 0")]
     fn zero_segment_capacity_panics() {
-        let _ = Trunk::new(TrunkConfig::new(4, 4, 0));
+        let _ = Trunk::new(TrunkConfig::new(4, 4, 0, 8));
+    }
+
+    #[test]
+    #[should_panic(expected = "event_capacity must be > 0")]
+    fn zero_event_capacity_panics() {
+        let _ = Trunk::new(TrunkConfig::new(4, 4, 4, 0));
     }
 
     #[test]
     fn second_writer_is_refused() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
         let _first = trunk.writer().unwrap();
         assert!(trunk.writer().is_none(), "a Trunk has exactly one writer");
     }
 
     #[test]
     fn subscribe_starts_from_now_not_from_history() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
         let writer = trunk.writer().unwrap();
         writer.publish(1, RetentionClass::Timed, sample(1, 4));
         writer.publish(1, RetentionClass::Timed, sample(2, 4));
@@ -1387,7 +1880,7 @@ mod tests {
     /// index 1. Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn multiple_segment_cursors_see_every_segment_in_order_with_no_dup_or_loss() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 100));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 100, 8));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -1419,7 +1912,7 @@ mod tests {
     /// `1020`). Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn non_pinning_slow_segment_reader_lags_but_writer_completes_regardless() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
         let mut slow = trunk.subscribe_segments();
         let writer = trunk.writer().unwrap();
 
@@ -1457,7 +1950,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_reader_receives_every_segment_while_non_pinning_reader_lags() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
         let mut slow = trunk.subscribe_segments(); // non-pinning: will lag
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest); // pinning: must lose nothing
         let writer = Arc::new(trunk.writer().unwrap());
@@ -1529,7 +2022,7 @@ mod tests {
     /// failure, then reverted.
     #[test]
     fn pinning_is_bounded_an_unacking_consumer_cannot_grow_memory_without_limit() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
         // Default policy (`Gap`) pinning cursor that never polls at all —
         // the worst case for memory growth: a dead/wedged archive consumer.
         let _archive = trunk.pin_segments(ArchiveOverrun::default());
@@ -1555,7 +2048,7 @@ mod tests {
     /// re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_gap_evicts_and_reports_gap() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Gap);
         let writer = trunk.writer().unwrap();
 
@@ -1593,7 +2086,7 @@ mod tests {
     /// reverted.
     #[test]
     fn archive_overrun_stall_ingest_actually_blocks_the_writer() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 1));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 1, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::StallIngest);
         let writer = Arc::new(trunk.writer().unwrap());
 
@@ -1630,7 +2123,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn archive_overrun_terminate_drops_the_cursor() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 2, 8));
         let mut archive = trunk.pin_segments(ArchiveOverrun::Terminate);
         let writer = trunk.writer().unwrap();
 
@@ -1670,7 +2163,7 @@ mod tests {
     /// Recompiled and re-run to confirm the failure, then reverted.
     #[test]
     fn segment_bytes_are_shared_not_copied_across_cursors() {
-        let trunk = Trunk::new(TrunkConfig::new(4, 4, 8));
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 8, 8));
         let mut c1 = trunk.subscribe_segments();
         let mut c2 = trunk.subscribe_segments();
         let mut c3 = trunk.subscribe_segments();
@@ -1702,5 +2195,596 @@ mod tests {
             "cursor 3's segment payload must be the SAME allocation as cursor 1's"
         );
         assert_eq!(segment_data(&i1).unwrap().bytes.len(), 65536);
+    }
+
+    // ===================== event log =======================================
+
+    use timed_metadata::{EventKind, SourcePayload};
+
+    /// A minimal `TimedEvent` for tests that don't care about the SCTE-35
+    /// source payload itself — only about how the event *log* addresses and
+    /// resolves it. `at`/`duration` are left `None`: this step's
+    /// [`EventAnchor`] carries the resolution state, not `TimedEvent::at`.
+    fn basic_event(id: u32) -> TimedEvent {
+        TimedEvent {
+            id: Some(id),
+            kind: EventKind::BreakStart,
+            at: None,
+            duration: None,
+            source: SourcePayload::Scte35 { raw: Vec::new() },
+        }
+    }
+
+    fn event_id(item: &EventCursorItem) -> Option<u32> {
+        match item {
+            EventCursorItem::Event(e) => e.event.id,
+            _ => None,
+        }
+    }
+
+    /// Build real, valid (Parse/Serialize round-tripping) `splice_insert()`
+    /// bytes carrying `pts_time`, via `scte35-splice`'s own builder +
+    /// serializer — not hand-rolled/fabricated wire bytes. Used to drive
+    /// `timed_metadata::Timeline::push_scte35`'s 33-bit wrap-unroll across a
+    /// genuine wrap boundary (see `a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering`).
+    fn splice_insert_bytes(event_id: u32, pts_time: u64) -> Vec<u8> {
+        use broadcast_common::Serialize;
+        use scte35_splice::SpliceInfoSection;
+        use scte35_splice::commands::AnyCommand;
+        use scte35_splice::commands::splice_insert::SpliceInsert;
+        use scte35_splice::time::SpliceTime;
+
+        let si = SpliceInsert {
+            splice_event_id: event_id,
+            out_of_network_indicator: true,
+            splice_time: Some(SpliceTime::with_pts(pts_time)),
+            ..SpliceInsert::default()
+        };
+        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        section.to_bytes()
+    }
+
+    // --- E1. events_between: half-open [from, to), boundaries exact -------
+
+    /// MUTATION VERIFIED: changing the upper-bound comparison in
+    /// `Trunk::events_between`'s filter from `t.0 < to.0` to `t.0 <= to.0`
+    /// (making the range closed instead of half-open) makes this test fail:
+    /// `ids` becomes `[2, 3, 4]` (the boundary event at `to` is wrongly
+    /// included) instead of the expected `[2, 3]`. Recompiled and re-run to
+    /// confirm the failure, then reverted.
+    #[test]
+    fn events_between_returns_exactly_the_half_open_range() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let writer = trunk.writer().unwrap();
+
+        for (id, ticks) in [(1u32, 1_000u64), (2, 2_000), (3, 3_000), (4, 4_000)] {
+            writer.publish_event(basic_event(id), EventAnchor::Media(MediaTime(ticks)));
+        }
+
+        let got = trunk.events_between(MediaTime(2_000), MediaTime(4_000));
+        let ids: Vec<u32> = got.iter().map(|e| e.event.id.unwrap()).collect();
+        assert_eq!(
+            ids,
+            vec![2, 3],
+            "start (2_000) inclusive, end (4_000) exclusive"
+        );
+    }
+
+    // --- E2. a Segment-anchored entry resolves at PUBLISH time when the ---
+    // --- boundary is already known ------------------------------------------
+
+    /// MUTATION VERIFIED: changing `EventLog::try_resolve`'s `Segment` arm
+    /// to always return the anchor unresolved (`_ => anchor` in place of the
+    /// `segment_starts` lookup) makes this test fail: `events_in_segment(3)`
+    /// comes back empty instead of containing the published event, because
+    /// the entry never leaves `EventAnchor::Segment`. Recompiled and re-run
+    /// to confirm the failure, then reverted.
+    #[test]
+    fn segment_relative_event_resolves_at_publish_time_when_boundary_already_known() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let writer = trunk.writer().unwrap();
+
+        writer.note_segment_start(3, MediaTime(300_000));
+        writer.publish_event(
+            basic_event(9),
+            EventAnchor::Segment {
+                segment_number: 3,
+                delta: 1_500,
+            },
+        );
+
+        let got = trunk.events_in_segment(3);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].event.id, Some(9));
+        assert!(matches!(
+            got[0].anchor,
+            EventAnchor::Media(MediaTime(t)) if t == 301_500
+        ));
+    }
+
+    // --- E3. THE B1 SEGMENT CASE: a segment-relative event resolves to ----
+    // --- the segment it actually named, not whichever segment is open -----
+
+    /// MUTATION VERIFIED: removing the `if n == segment_number` guard in
+    /// `EventLog::note_segment_start` (resolving *every* pending `Segment`
+    /// entry against whichever boundary arrives, regardless of which
+    /// segment it targets) makes this test fail at the first assertion:
+    /// after `note_segment_start(1, MediaTime(0))` — segment 1, NOT the
+    /// event's actual target segment 2 — the entry is wrongly resolved to
+    /// `MediaTime(1_000)` (segment 1's start + delta) instead of staying
+    /// `EventAnchor::Segment { segment_number: 2, .. }`, so the
+    /// `matches!(entry.anchor, EventAnchor::Segment { segment_number: 2, .. })`
+    /// assertion fails. Recompiled and re-run to confirm the failure, then
+    /// reverted.
+    #[test]
+    fn segment_relative_event_resolves_to_the_named_segment_not_whichever_is_open() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let writer = trunk.writer().unwrap();
+        let mut cursor = trunk.subscribe_events();
+
+        // The event targets segment 2 specifically, delta 1_000 after ITS
+        // start — published before ANY segment boundary is known.
+        writer.publish_event(
+            basic_event(42),
+            EventAnchor::Segment {
+                segment_number: 2,
+                delta: 1_000,
+            },
+        );
+
+        // Segment 1 — a DIFFERENT, "currently open" segment — reports its
+        // start first. This must NOT resolve the segment-2-targeted event.
+        writer.note_segment_start(1, MediaTime(0));
+
+        let item = cursor.poll().unwrap();
+        let entry = match item {
+            EventCursorItem::Event(e) => e,
+            other => panic!("expected Event, got {other:?}"),
+        };
+        assert!(
+            matches!(
+                entry.anchor,
+                EventAnchor::Segment {
+                    segment_number: 2,
+                    delta: 1_000
+                }
+            ),
+            "must stay pending on segment 2 — segment 1 being open must not \
+             resolve it against the wrong boundary: {:?}",
+            entry.anchor
+        );
+        assert!(
+            trunk.events_in_segment(2).is_empty(),
+            "not resolved yet: must not appear under segment 2 either"
+        );
+        assert!(trunk.events_in_segment(1).is_empty());
+
+        // Now segment 2's own start arrives: resolves in place, to the
+        // RIGHT segment's start + delta.
+        writer.note_segment_start(2, MediaTime(90_000));
+
+        let in_seg2 = trunk.events_in_segment(2);
+        assert_eq!(in_seg2.len(), 1);
+        assert_eq!(in_seg2[0].event.id, Some(42));
+        assert!(matches!(
+            in_seg2[0].anchor,
+            EventAnchor::Media(MediaTime(t)) if t == 91_000
+        ));
+        assert!(
+            trunk.events_in_segment(1).is_empty(),
+            "must not ALSO appear under segment 1"
+        );
+    }
+
+    // --- E4. THE B1 CRUX: a UTC-only event stays honestly unanchored ------
+    // --- until a TimeAnchor arrives, then resolves correctly ---------------
+
+    /// MUTATION VERIFIED: changing `EventLog::try_resolve`'s `Utc` arm to
+    /// fabricate `EventAnchor::Media(MediaTime(0))` whenever no
+    /// `time_anchor` is set yet (in place of returning the anchor
+    /// unresolved) — i.e. reintroducing the exact B1 bug this design
+    /// exists to prevent — makes this test fail at the first assertion:
+    /// `entry.anchor` is `EventAnchor::Media(MediaTime(0))` instead of the
+    /// expected `EventAnchor::Utc { utc_epoch_ms: 5_000 }`, so the
+    /// `matches!` assertion fails. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn utc_only_event_stays_unanchored_until_a_time_anchor_arrives() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let writer = trunk.writer().unwrap();
+        let mut cursor = trunk.subscribe_events();
+
+        // A GPS/UTC-scheduled event (SCTE-35 splice_schedule.utc_splice_time
+        // semantics, §9.7.4) with no media anchor yet.
+        writer.publish_event(
+            basic_event(7),
+            EventAnchor::Utc {
+                utc_epoch_ms: 5_000,
+            },
+        );
+
+        let item = cursor.poll().unwrap();
+        let entry = match item {
+            EventCursorItem::Event(e) => e,
+            other => panic!("expected Event, got {other:?}"),
+        };
+        assert!(
+            matches!(
+                entry.anchor,
+                EventAnchor::Utc {
+                    utc_epoch_ms: 5_000
+                }
+            ),
+            "must stay honestly unanchored — NO fabricated media time: {:?}",
+            entry.anchor
+        );
+        // Nothing to filter a media time against yet: the point-in-time
+        // query must not surface it either.
+        assert!(
+            trunk
+                .events_between(MediaTime(0), MediaTime(u64::MAX))
+                .is_empty(),
+            "an unanchored event must not appear in a media-time query"
+        );
+
+        // An anchor arrives: pts 0 == epoch 1_000ms (`TimeAnchor`'s own
+        // convention), so epoch 5_000ms is 4_000ms == 360_000 ticks later.
+        writer.set_time_anchor(TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_000,
+        });
+
+        let resolved = trunk.events_between(MediaTime(0), MediaTime(u64::MAX));
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].event.id, Some(7));
+        assert!(
+            matches!(resolved[0].anchor, EventAnchor::Media(MediaTime(t)) if t == 360_000),
+            "expected MediaTime(360_000), got {:?}",
+            resolved[0].anchor
+        );
+    }
+
+    // --- E5. a 33-bit PTS wrap does not corrupt event log ordering --------
+    // --- (reuses timed_metadata::Timeline's unroll; does not hand-roll it) -
+
+    /// MUTATION VERIFIED: re-introducing a 33-bit mask on an
+    /// already-unrolled `MediaTime` in `EventLog::try_resolve`'s `Media`
+    /// arm (`EventAnchor::Media(MediaTime(t)) => EventAnchor::Media(MediaTime(t
+    /// & ((1u64 << 33) - 1)))` in place of the pass-through `anchor`) makes
+    /// this test fail: `ev2`'s post-wrap absolute tick value
+    /// (`(1u64 << 33) + 5`) exceeds 33 bits, so it is stored truncated to
+    /// `5` instead of the value `Timeline` actually computed, and
+    /// `matches!(got[1].anchor, EventAnchor::Media(t) if t.0 == at2.0)`
+    /// fails (stored `5` != `at2.0` ≈ `2^33 + 5`). (The earlier
+    /// `at2.0 > at1.0` assertion, which only reads `Timeline`'s local return
+    /// value, does NOT catch this mutation — a stored-value mutation only
+    /// shows up in what the log hands back, which is exactly why this test
+    /// asserts against `got[..].anchor`, not just `at1`/`at2`.) Recompiled
+    /// and re-run to confirm the failure, then reverted.
+    #[test]
+    fn a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering() {
+        const PTS_WRAP: u64 = 1u64 << 33;
+
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 8));
+        let writer = trunk.writer().unwrap();
+        let mut timeline = timed_metadata::Timeline::new();
+
+        // Event 1: a PTS 10 ticks before the 33-bit wrap point.
+        let before_wrap = splice_insert_bytes(1, PTS_WRAP - 10);
+        let ev1 = timeline.push_scte35(&before_wrap).unwrap();
+        let at1 = ev1.at.unwrap();
+        writer.publish_event(ev1, EventAnchor::Media(at1));
+
+        // Event 2: a small RAW PTS after the wrap. `Timeline` must unroll
+        // this into a value larger than `at1`, not a small one.
+        let after_wrap = splice_insert_bytes(2, 5);
+        let ev2 = timeline.push_scte35(&after_wrap).unwrap();
+        let at2 = ev2.at.unwrap();
+        writer.publish_event(ev2, EventAnchor::Media(at2));
+
+        assert!(
+            at2.0 > at1.0,
+            "Timeline itself must unroll monotonically: at1={}, at2={}",
+            at1.0,
+            at2.0
+        );
+
+        // The event log must store EXACTLY the MediaTime `Timeline` already
+        // unrolled — no re-derivation, re-masking, or truncation of an
+        // already-unrolled value anywhere in this module's storage/
+        // resolution path. (Publish-order preservation across a wrap is
+        // trivial regardless of the anchor's value — `VecDeque` iteration
+        // order does not depend on it — so the real assertion here is
+        // value-exactness, not position.)
+        let got = trunk.events_between(MediaTime(0), MediaTime(u64::MAX));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].event.id, Some(1));
+        assert_eq!(got[1].event.id, Some(2));
+        assert!(
+            matches!(got[0].anchor, EventAnchor::Media(t) if t.0 == at1.0),
+            "event 1's stored anchor must equal Timeline's unrolled value \
+             exactly, got {:?}",
+            got[0].anchor
+        );
+        assert!(
+            matches!(got[1].anchor, EventAnchor::Media(t) if t.0 == at2.0),
+            "event 2's stored (post-wrap) anchor must equal Timeline's \
+             unrolled value exactly — not re-masked back into 33 bits, got {:?}",
+            got[1].anchor
+        );
+    }
+
+    // --- E6. the event log is bounded: flooding cannot grow memory --------
+    // --- without limit -------------------------------------------------------
+
+    /// MUTATION VERIFIED: removing the eviction check in `EventLog::push`
+    /// (replacing `if self.entries.len() == self.capacity { .. }` with a
+    /// no-op) makes `trunk.event_len()` grow well past the configured cap
+    /// (`3`) instead of staying bounded — the in-loop assertion fails on
+    /// the first over-capacity iteration. Recompiled and re-run to confirm
+    /// the failure, then reverted.
+    #[test]
+    fn event_log_is_bounded_under_flood() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3));
+        let writer = trunk.writer().unwrap();
+
+        for i in 0u32..50_000 {
+            writer.publish_event(basic_event(i), EventAnchor::Media(MediaTime(u64::from(i))));
+            assert!(
+                trunk.event_len() <= 3,
+                "event log exceeded its cap mid-flood"
+            );
+        }
+        assert_eq!(trunk.event_len(), 3);
+    }
+
+    // --- E7. event cursor lag is reported in-band with an accurate --------
+    // --- skipped count; the writer never blocks -----------------------------
+
+    /// MUTATION VERIFIED: changing the `skipped` computation in
+    /// `EventCursor::poll`'s lag branch from `log.base - self.consumed` to
+    /// `log.base - self.consumed + 1` makes this test fail: expected
+    /// `skipped: 6`, got `skipped: 7`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn event_cursor_lag_is_reported_with_an_accurate_skipped_count_writer_never_blocks() {
+        let trunk = Trunk::new(TrunkConfig::new(4, 4, 4, 3));
+        let mut cursor = trunk.subscribe_events();
+        let writer = trunk.writer().unwrap();
+
+        // Capacity 3, publish 9: 6 evicted before the cursor ever reads.
+        // Never blocks — there is no wait-for-reader path in
+        // `EventLog::push`.
+        for i in 0u32..9 {
+            writer.publish_event(basic_event(i), EventAnchor::Media(MediaTime(u64::from(i))));
+        }
+        assert_eq!(
+            trunk.event_len(),
+            3,
+            "writer unblocked: event log stayed bounded"
+        );
+
+        let first = cursor.poll().unwrap();
+        assert!(
+            matches!(first, EventCursorItem::Lagged { skipped: 6 }),
+            "expected Lagged{{skipped: 6}}, got {first:?}"
+        );
+
+        // The remaining 3 (ids 6, 7, 8) must still be readable, in order.
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(event_id(&cursor.poll().unwrap()).unwrap());
+        }
+        assert_eq!(ids, vec![6, 7, 8]);
+        assert!(cursor.poll().is_none());
+    }
+
+    // --- E8. `epoch_ms_to_media` really is the inverse of ------------------
+    // --- `TimeAnchor::media_to_epoch_ms` -----------------------------------
+
+    /// A wall-clock anchor with room on *both* sides of `pts_90k`, so a sign
+    /// error in the (signed) delta shows up rather than being clipped away:
+    /// 10 s of media already elapsed, mapped to a realistic epoch instant.
+    fn round_trip_anchor() -> TimeAnchor {
+        TimeAnchor {
+            pts_90k: 900_000,                // 10 s at 90 kHz
+            utc_epoch_ms: 1_700_000_000_000, // ~2023-11-14T22:13:20Z
+        }
+    }
+
+    /// Ticks of the 90 kHz media clock per millisecond of the epoch clock.
+    ///
+    /// Derived, not asserted: the media clock is [`PTS_HZ`] ticks/second and
+    /// `utc_epoch_ms` counts milliseconds, i.e. thousandths of a second, so
+    /// one millisecond spans `PTS_HZ / 1000` ticks.
+    const TICKS_PER_EPOCH_MS: u64 = PTS_HZ / 1000;
+
+    /// The exact worst-case `media -> epoch_ms -> media` error, in ticks.
+    ///
+    /// **Derivation (not a tuned constant).**
+    /// [`TimeAnchor::media_to_epoch_ms`] computes
+    /// `delta_ticks * 1000 / PTS_HZ`, i.e. `delta_ticks / TICKS_PER_EPOCH_MS`,
+    /// in integer arithmetic — Rust integer division truncates toward zero,
+    /// so it discards a remainder `r` with `|r| <= TICKS_PER_EPOCH_MS - 1`.
+    /// `epoch_ms_to_media` then multiplies the surviving whole milliseconds
+    /// back up by `TICKS_PER_EPOCH_MS`, reconstructing `delta_ticks - r`
+    /// exactly. The round-trip error is therefore *precisely* that discarded
+    /// remainder: at most `TICKS_PER_EPOCH_MS - 1` == 89 ticks, i.e. strictly
+    /// less than one millisecond. `media_round_trip_is_lossy_by_at_most_one_
+    /// millisecond` additionally asserts this bound is **tight** (some input
+    /// attains exactly 89), so it cannot silently be loosened into a
+    /// tolerance that hides a real error.
+    const MEDIA_ROUND_TRIP_MAX_TICKS: u64 = TICKS_PER_EPOCH_MS - 1;
+
+    /// The `epoch_ms -> media -> epoch_ms` direction is **exact** — the media
+    /// clock is finer-grained than the millisecond clock (90 ticks per ms),
+    /// so no information is lost going to ticks and back. Asserted with
+    /// equality, no tolerance.
+    ///
+    /// MUTATION VERIFIED: flipping the sign of the delta in
+    /// `epoch_ms_to_media` (`i128::from(anchor.utc_epoch_ms) -
+    /// i128::from(utc_epoch_ms)` in place of the correct
+    /// `i128::from(utc_epoch_ms) - i128::from(anchor.utc_epoch_ms)`) makes
+    /// this test fail on the first non-zero offset: for `+1` ms the
+    /// round-tripped epoch comes back as `1699999999999` instead of
+    /// `1700000000001`. **Second mutation, also verified:** changing the
+    /// scale conversion from `* PTS_HZ / 1000` to `* PTS_HZ * 1000` fails the
+    /// same assertion with `1700001000000` instead of `1700000000001`. So
+    /// both the *sign* and the *magnitude* of the inverse are pinned, not
+    /// just its shape. Recompiled and re-run to confirm each failure, then
+    /// reverted.
+    #[test]
+    fn epoch_ms_round_trip_through_media_time_is_exact() {
+        let anchor = round_trip_anchor();
+
+        // Offsets in ms from the anchor's own epoch instant. Zero, both
+        // signs at ±1 ms and ±1 s, a full day forward, a backward offset
+        // that lands well clear of the clamp, and one large enough that
+        // `delta_ms * PTS_HZ` (2e14 * 9e4 = 1.8e19) exceeds `i64::MAX`
+        // (~9.2e18) — the case that exercises the `i128` widening.
+        for offset_ms in [
+            0i64,
+            1,
+            -1,
+            1_000,
+            -1_000,
+            86_400_000,
+            -9_000,
+            200_000_000_000_000,
+        ] {
+            let epoch_ms = anchor.utc_epoch_ms + offset_ms;
+            let media = epoch_ms_to_media(&anchor, epoch_ms);
+            let back = anchor.media_to_epoch_ms(media);
+            assert_eq!(
+                back, epoch_ms,
+                "epoch_ms -> media -> epoch_ms must be EXACT at offset {offset_ms} ms \
+                 (media = {media:?})"
+            );
+        }
+    }
+
+    /// The `media -> epoch_ms -> media` direction is **lossy**, by a bounded
+    /// and derived amount: the media clock is 90× finer than the millisecond
+    /// clock, so sub-millisecond tick precision cannot survive the trip. See
+    /// [`MEDIA_ROUND_TRIP_MAX_TICKS`] for the derivation. This test also
+    /// pins the bound as *tight*, so it is a real property and not a loose
+    /// tolerance hiding an error.
+    ///
+    /// MUTATION VERIFIED: flipping the sign of the delta in
+    /// `epoch_ms_to_media` (as in
+    /// `epoch_ms_round_trip_through_media_time_is_exact`'s note) makes this
+    /// test fail at the first offset that is a whole number of milliseconds
+    /// away from the anchor: at media offset `+90` ticks the value comes
+    /// back as `899_910` instead of `900_090`, a diff of `180` ticks, so the
+    /// `diff <= MEDIA_ROUND_TRIP_MAX_TICKS` (89) assertion fails.
+    /// **Second mutation, also verified:** the `* PTS_HZ * 1000` scale error
+    /// fails the same assertion with a diff of `89_999_910` ticks. Recompiled
+    /// and re-run to confirm each failure, then reverted.
+    #[test]
+    fn media_round_trip_is_lossy_by_at_most_one_millisecond() {
+        let anchor = round_trip_anchor();
+        let mut worst = 0u64;
+
+        // Tick offsets from the anchor's own `pts_90k`. Both signs, values
+        // that are and are not whole multiples of TICKS_PER_EPOCH_MS (so the
+        // truncated remainder is genuinely exercised), the exact worst-case
+        // remainder on each side (±89), and a large offset well past the
+        // i64/i128 boundary region.
+        for offset_ticks in [
+            0i64,
+            1,
+            -1,
+            89,
+            -89,
+            90,
+            -90,
+            91,
+            -91,
+            18_000_000_000_000_037,
+        ] {
+            let media = MediaTime((anchor.pts_90k as i64 + offset_ticks) as u64);
+            let epoch_ms = anchor.media_to_epoch_ms(media);
+            let back = epoch_ms_to_media(&anchor, epoch_ms);
+            let diff = media.0.abs_diff(back.0);
+            assert!(
+                diff <= MEDIA_ROUND_TRIP_MAX_TICKS,
+                "media -> epoch_ms -> media lost {diff} ticks at offset \
+                 {offset_ticks} (bound is {MEDIA_ROUND_TRIP_MAX_TICKS}, i.e. \
+                 < 1 ms): {media:?} -> {epoch_ms} -> {back:?}"
+            );
+            worst = worst.max(diff);
+        }
+
+        // The bound is TIGHT: the ±89-tick cases attain it exactly. Without
+        // this, `MEDIA_ROUND_TRIP_MAX_TICKS` could be quietly raised to
+        // paper over a genuine arithmetic error and the test above would
+        // still pass.
+        assert_eq!(
+            worst, MEDIA_ROUND_TRIP_MAX_TICKS,
+            "the derived bound must be attained, not merely respected — \
+             otherwise it is a loose tolerance, not a property"
+        );
+    }
+
+    /// `epoch_ms_to_media`'s `clamp(0, u64::MAX)` for an epoch instant far
+    /// enough *before* the anchor that the implied media time would be
+    /// negative.
+    ///
+    /// **This documents clamping as SAFE, not CORRECT** — they are different
+    /// claims and this test asserts the weaker, true one. A negative media
+    /// time is simply not representable in `MediaTime(u64)`, so no return
+    /// value here can be right: clamping to `0` reports "at the very start
+    /// of this trunk's timeline", which is *not* the instant asked for, and
+    /// the round trip provably does not recover the input (asserted below).
+    /// What the clamp does buy is that the failure is bounded and obvious
+    /// rather than catastrophic: an unchecked `as u64` cast of a negative
+    /// value would wrap to something near `u64::MAX` — an event appearing
+    /// scheduled ~6.5 million years in the future, which is exactly the
+    /// silent wrong-instant class B1 is about. Clamping keeps a
+    /// pre-origin event in the past (where a scheduler treats it as already
+    /// elapsed) instead of the unreachable future.
+    ///
+    /// If pre-origin scheduled events turn out to be real rather than
+    /// pathological, the *honest* fix is not a different clamp value — it is
+    /// to leave the entry `EventAnchor::Utc` (unresolved), exactly as an
+    /// event with no anchor at all stays unresolved. That would be an
+    /// additive change to `try_resolve`/`set_time_anchor`, not a change to
+    /// this helper's contract.
+    #[test]
+    fn epoch_before_the_timeline_origin_clamps_to_zero_which_is_safe_not_correct() {
+        let anchor = round_trip_anchor();
+
+        // 20 s before the anchor's epoch, but only 10 s of media has
+        // elapsed at the anchor — so the implied media time is -10 s.
+        let epoch_ms = anchor.utc_epoch_ms - 20_000;
+        let media = epoch_ms_to_media(&anchor, epoch_ms);
+
+        assert_eq!(
+            media,
+            MediaTime(0),
+            "a pre-origin epoch must clamp to the start of the timeline"
+        );
+
+        // Bounded-and-obvious, not catastrophic: emphatically NOT a wrapped
+        // near-`u64::MAX` value masquerading as the far future.
+        assert!(
+            media.0 < u64::from(u32::MAX),
+            "must not have wrapped into the far future: {media:?}"
+        );
+
+        // And it is genuinely NOT correct: the round trip does not recover
+        // the input, because the requested instant is unrepresentable.
+        let back = anchor.media_to_epoch_ms(media);
+        assert_ne!(
+            back, epoch_ms,
+            "clamping is lossy by construction — this asserts the honest \
+             claim (safe) rather than the false one (correct)"
+        );
+        assert_eq!(
+            back,
+            anchor.utc_epoch_ms - 10_000,
+            "clamped media time 0 maps back to the timeline origin (10 s \
+             before the anchor), not to the requested instant"
+        );
     }
 }

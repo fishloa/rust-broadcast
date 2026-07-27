@@ -1574,7 +1574,9 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
+ "scte35-splice",
  "thiserror",
+ "timed-metadata",
  "transmux",
 ]
 
