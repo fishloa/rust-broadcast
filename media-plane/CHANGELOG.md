@@ -195,3 +195,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     "GET this URL". That wants a request-*addressing* type, not a second drive
     model or a pull-shaped sibling trait — deferred to Step 5, when the first
     real caller exists.
+- `ServedEgress`, `PushEgress`, `SegmentEgress` (plan step 3d, `std`-only, new
+  `egress` module): the three egress traits, kept separate rather than unified
+  because they are structurally different operations — resolve a request
+  (`ServedEgress`), stream existing samples (`PushEgress`), consume finished
+  segments (`SegmentEgress`) — not three configurations of one interface (see
+  the module docs for why a merge attempt forces an unreachable branch either
+  way).
+  - **`ServedEgress::resolve` takes no `&Trunk`**, correcting the architecture
+    spec's pseudocode after reading `ll-hls-runtime/src/server/`: the segment
+    log has only a moving `SegmentCursor`, no snapshot/random-access query the
+    way the event log has `events_between`, so every real implementation would
+    ignore a passed-in `&Trunk` and consult its own synced cache instead
+    (exactly what `MediaStore` already does, fed by `add_segment`/`add_part`
+    separately from its `resolve_*` read side). `resolve` is bounded instead by
+    `AwaitPolicy`/`EgressResponse::Await`, mirroring
+    `HandshakePolicy::establish_by`'s absolute-deadline shape; `Trunk` has no
+    reader-side notify primitive today (only a writer-side `Condvar` for
+    `ArchiveOverrun::StallIngest`), so an adapter must poll-with-backoff bounded
+    by the same policy — recorded as a gap for Step 4 to decide on, not solved
+    here.
+  - **`EgressResponse::Await` is bounded by construction**: `AwaitPolicy::expired`
+    and `EgressResponse::pending` are real, mutation-tested code (not a
+    documented convention) that turns "not ready" into `Await` before a
+    caller-chosen deadline and `NotFound` after it — a hostile client asking
+    for a part that never arrives cannot park a request forever.
+  - **`PushEgress`** owns exactly one `SampleCursor` (never one per peer,
+    matching `Trunk::subscribe`'s O(N)-in-cursor-count finding) and `send`
+    takes one `&SampleCursorItem` per call (including `Lagged`/`Degraded`),
+    reusing the cursor's own item type rather than inventing the architecture
+    spec's unimplemented `TrackBatch`. `poll_transmit` mirrors
+    `IngestSession::poll_transmit`'s `None`-default exactly.
+  - **`PushEgress::renegotiate`** is the mechanism issue #781 needs (a
+    mid-stream track addition currently cannot reach a running segmenter):
+    given the current `&[TrackSpec]`, it returns `NegotiationOutcome::Accepted`
+    with the new selection, or `NegotiationOutcome::Refused { reason }` when
+    the output cannot honour the change without breaking an already-established
+    peer contract (an answered WHEP SDP offer, an already-published DASH
+    `Period`) — a truthful, in-band refusal rather than a silent drop or a
+    fabricated `Accepted`.
+  - **`SegmentEgress::on_segment`** takes `&SegmentCursorItem` verbatim,
+    reusing 3b-ii's pinning/`ArchiveOverrun` rather than reimplementing it; the
+    architecture spec's sketched `on_manifest(&ManifestSnapshot)` is
+    deliberately not included — no concrete DVR/MABR/ROUTE/Smooth producer
+    exists yet to shape a single `ManifestSnapshot` type honestly.
