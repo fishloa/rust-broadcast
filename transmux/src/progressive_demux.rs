@@ -109,22 +109,34 @@ impl ProgressiveDemux<'_> {
     /// than silently accumulating past it, and **poisons** the demuxer — see
     /// [`Stage::feed`].
     ///
-    /// `max_bytes` of `0` is accepted but useless as a [`Stage`]: the first
-    /// non-empty `feed` exceeds it, so the demuxer is immediately saturated
-    /// and poisoned and [`Stage::finish`] returns that error. (It is *not*
-    /// rejected here only because the signature is infallible and shared with
-    /// the [`Unpackage`] path, which never consults `max_bytes` at all — it
-    /// borrows the caller's slice directly.) It no longer wedges silently,
-    /// which is what it used to do.
-    pub fn new(max_bytes: usize) -> Self {
-        Self {
+    /// Returns [`Error::InvalidInput`] for `max_bytes == 0`: a zero cap can
+    /// never accept a single byte (the very first non-empty `feed` would
+    /// exceed it), so a [`Stage`] built from it is permanently saturated and
+    /// poisoned before it ever sees data — a wedged demuxer indistinguishable
+    /// from a real cap-exceeded failure, for no reason a caller can act on.
+    /// Rejecting it at construction, rather than on the first `feed`, means a
+    /// caller misconfiguring the bound learns immediately instead of via a
+    /// confusing downstream `BufferCapExceeded`. This is the same class of
+    /// fix as [`Stage::feed`]'s poison-on-cap-rejection: an unrepresentable
+    /// or unusable state should fail at its source, not propagate as a
+    /// working-looking value that wedges later. The [`Unpackage::unpackage`]
+    /// path is unaffected: it never consults `max_bytes` at all, borrowing
+    /// the caller's slice directly.
+    pub fn new(max_bytes: usize) -> Result<Self> {
+        if max_bytes == 0 {
+            return Err(Error::InvalidInput(
+                "ProgressiveDemux::new: max_bytes must be non-zero — a zero cap can never accept \
+                 any bytes and would permanently wedge the Stage",
+            ));
+        }
+        Ok(Self {
             _marker: PhantomData,
             buf: Vec::new(),
             media: None,
             finished: false,
             poisoned: false,
             max_bytes,
-        }
+        })
     }
 
     /// The error a poisoned demuxer keeps returning — see the `poisoned`
@@ -540,4 +552,36 @@ fn expand_stss(stss: Option<&SyncSampleBox>, total_samples: usize) -> Vec<bool> 
         }
     }
     flags
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ProgressiveDemux::new(0)` must be rejected outright: a zero cap can
+    /// never accept a byte, so a `Stage` built from it would be permanently
+    /// saturated/poisoned before ever seeing data (R1).
+    #[test]
+    fn new_zero_cap_is_rejected() {
+        let err =
+            ProgressiveDemux::new(0).expect_err("a zero cap must be rejected at construction");
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "expected Error::InvalidInput for a zero cap, got {err:?}"
+        );
+    }
+
+    /// A non-zero cap still constructs successfully and the `Stage` accepts
+    /// bytes under it.
+    #[test]
+    fn new_nonzero_cap_still_works() {
+        use broadcast_common::{Stage, Timestamp};
+
+        let mut demux = ProgressiveDemux::new(16).expect("non-zero cap must construct");
+        Stage::feed(&mut demux, &[0u8; 4], Timestamp::ZERO).expect("feed under the cap fits");
+        assert!(
+            !Stage::demand(&demux).saturated,
+            "headroom remains under the cap"
+        );
+    }
 }

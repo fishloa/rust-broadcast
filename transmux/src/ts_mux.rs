@@ -572,9 +572,18 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
 ///
 /// - `CA_descriptor` (tag [`DESCRIPTOR_TAG_CA`]) is denied — dropped
 ///   unconditionally.
-/// - Any other inherited descriptor whose tag matches one of `synthesized`'s
-///   is dropped too (dedup: the synthesized copy — grounded in the current
-///   [`CodecConfig`] — is kept instead, once, further down).
+/// - Any other inherited descriptor whose **dedup key** ([`descriptor_dedup_key`])
+///   matches one of `synthesized`'s is dropped too (dedup: the synthesized
+///   copy — grounded in the current [`CodecConfig`] — is kept instead, once,
+///   further down). For every tag except [`DESCRIPTOR_TAG_EXTENSION`] (`0x3F`)
+///   the key is the tag alone; for `0x3F` it is `(0x3F, extension_descriptor_tag)`
+///   (issue #775 follow-up, R4) — `extension_descriptor` is an umbrella tag
+///   under which unrelated post-2013 registrations (MPEG-H's own
+///   `MPEGH_3dAudio_descriptor` among them) each pick their own second-level
+///   `extension_descriptor_tag` (ISO/IEC 13818-1 Table 2-45), so two `0x3F`
+///   descriptors sharing only the outer tag are not duplicates and keying on
+///   `0x3F` alone would wrongly collapse a second, unrelated synthesized (or
+///   inherited) extension onto this one.
 /// - Every other inherited descriptor passes through, in source order.
 /// - `synthesized` is then appended.
 ///
@@ -586,9 +595,13 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
 /// cap (§2.4.4.8) — if the merged loop would overflow it, rather than
 /// silently truncating into a malformed PMT.
 fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Result<Vec<u8>> {
-    let synthesized_tags: Vec<u8> = synthesized
+    let synthesized_keys: Vec<(u8, Option<u8>)> = synthesized
         .iter()
-        .filter_map(|d| d.first().copied())
+        .filter_map(|d| {
+            let tag = *d.first()?;
+            // A descriptor's body starts after `tag`(1) + `length`(1).
+            Some(descriptor_dedup_key(tag, d.get(2..).unwrap_or(&[])))
+        })
         .collect();
 
     let mut out = Vec::with_capacity(inherited.len() + total_param_len(synthesized));
@@ -597,7 +610,9 @@ fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Resul
         let tag = inherited[off];
         let len = inherited[off + 1] as usize;
         let end = (off + 2 + len).min(inherited.len());
-        if tag != DESCRIPTOR_TAG_CA && !synthesized_tags.contains(&tag) {
+        let body = &inherited[(off + 2).min(end)..end];
+        let key = descriptor_dedup_key(tag, body);
+        if tag != DESCRIPTOR_TAG_CA && !synthesized_keys.contains(&key) {
             out.extend_from_slice(&inherited[off..end]);
         }
         off = end;
@@ -613,6 +628,29 @@ fn merge_es_info_descriptors(inherited: &[u8], synthesized: &[Vec<u8>]) -> Resul
         });
     }
     Ok(out)
+}
+
+/// The dedup key [`merge_es_info_descriptors`] compares an inherited
+/// descriptor's tag against a synthesized one's (issue #775 follow-up, R4).
+///
+/// For every tag except [`DESCRIPTOR_TAG_EXTENSION`] (`extension_descriptor`,
+/// `0x3F`, ISO/IEC 13818-1 Table 2-45) the tag alone identifies what the
+/// descriptor is, so the key is `(tag, None)`. `0x3F` is different: it is an
+/// umbrella under which independent post-2013 registrations each choose their
+/// own second-level `extension_descriptor_tag` — the first body byte — so two
+/// `0x3F` descriptors are the same registration only if that second-level tag
+/// also matches; the key is `(0x3F, Some(extension_descriptor_tag))`. A `0x3F`
+/// descriptor with an empty body (malformed: no `extension_descriptor_tag` on
+/// the wire) keys as `(0x3F, None)`, matching only another equally-malformed
+/// `0x3F` entry, never a well-formed one — this dedup is a same-registration
+/// check, not a byte-for-byte one, and an absent tag cannot be shown to be the
+/// same registration as a present one.
+fn descriptor_dedup_key(tag: u8, body: &[u8]) -> (u8, Option<u8>) {
+    if tag == DESCRIPTOR_TAG_EXTENSION {
+        (tag, body.first().copied())
+    } else {
+        (tag, None)
+    }
 }
 
 /// Collect a HEVC `hvcC` record's parameter-set NALs in AU order — VPS, then
@@ -1508,6 +1546,36 @@ mod tests {
                 .count(),
             1,
             "extension_descriptor tag (0x3F) must appear exactly once in the merged loop"
+        );
+    }
+
+    #[test]
+    fn merge_es_info_descriptors_keeps_distinct_extension_descriptor_tag_siblings() {
+        // Two `extension_descriptor` (0x3F) entries that share only the
+        // outer tag: the inherited one carries a *different* second-level
+        // extension_descriptor_tag (0x15) than the synthesized MPEG-H one
+        // (0x08, `MPEGH_3DAUDIO_EXTENSION_TAG`). Keying dedup on 0x3F alone
+        // (the pre-R4 behaviour) would wrongly collapse these two unrelated
+        // registrations onto one; keyed on `(tag, extension_descriptor_tag)`
+        // both must survive.
+        const OTHER_EXTENSION_TAG_FOR_TEST: u8 = 0x15;
+        let other_extension = alloc::vec![
+            DESCRIPTOR_TAG_EXTENSION,
+            0x02, // body length
+            OTHER_EXTENSION_TAG_FOR_TEST,
+            0xAB, // arbitrary payload byte
+        ];
+        let inherited = other_extension.clone();
+
+        let synthesized = alloc::vec![mpegh_3daudio_descriptor(0x0B)];
+        let merged = merge_es_info_descriptors(&inherited, &synthesized).expect("no overflow");
+
+        let mut expected = other_extension;
+        expected.extend_from_slice(&mpegh_3daudio_descriptor(0x0B));
+        assert_eq!(
+            merged, expected,
+            "two extension_descriptor entries with distinct extension_descriptor_tag values \
+             are not duplicates and must both survive"
         );
     }
 

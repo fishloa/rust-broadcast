@@ -543,8 +543,9 @@ struct StreamTrackState {
 /// # if false {
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
-/// if let Some(s) = seg.push(1, au(true)).unwrap() { /* write s.bytes */ }
-/// if let Some(s) = seg.finish().unwrap() { /* write s.bytes */ }
+/// seg.push(1, au(true)).unwrap();
+/// seg.finish().unwrap();
+/// for s in seg.take_ready() { /* write s.bytes */ }
 /// let playlist = seg.playlist(); // rolling window, #EXT-X-ENDLIST after finish
 /// # }
 /// ```
@@ -601,26 +602,30 @@ pub struct StreamingTsHlsSegmenter {
     /// per RFC 8216 §4.3.3.1 — never shrinks even as segments roll off).
     target_duration: u32,
     /// Segments cut but not yet handed to the caller — the **single** source
-    /// of truth for both delivery paths, matching the shape the other three
-    /// segmenters use.
+    /// of truth for every retrieval path: the inherent [`Self::take_ready`]
+    /// drain, and [`Stage::poll`]. Every cut lands here and *only* here (issue
+    /// R2); neither [`push`](Self::push) nor [`finish`](Self::finish) returns
+    /// a segment inline any more, so there is no value a caller can silently
+    /// drop.
     ///
-    /// Every cut lands here first. The inherent
-    /// [`push`](Self::push)/[`finish`](Self::finish) then pop the oldest
-    /// queued segment and hand it back inline (their long-standing return
-    /// shape), while [`Stage::feed`]/[`Stage::finish`] leave it queued for
-    /// [`Stage::poll`]. Either way a segment is taken off exactly one queue
-    /// exactly once, so the two APIs can be mixed on one instance without a
-    /// segment being stranded in a drain the caller is not reading. This used
-    /// to be two independent queues (a `stage_ready` beside the inline
-    /// return), which routed delivery per call and could drift apart.
-    ///
-    /// **Caller obligation** (unchanged, and the reason this is not the whole
-    /// fix): the inherent `push`/`finish` return the segment *by value*, so a
-    /// driver that follows the `Stage` protocol — where output arrives only
-    /// from `poll` — must not call them and discard the result. Closing that
-    /// hole for good means dropping the inline return in favour of a
-    /// `take_ready()` drain like the other three, which is a breaking API
-    /// change deferred to its own change.
+    /// This used to also be handed back inline from `push`/`finish`
+    /// (`Result<Option<TsSegment>>`), alongside this same queue. That was
+    /// reachable data loss, not just a caller-discipline note: because
+    /// `finish` is both an inherent method *and* the [`Stage::finish`] trait
+    /// method with the same name and arity, an unqualified `seg.finish()` call
+    /// always resolves to the inherent one (inherent-over-trait method
+    /// resolution) regardless of whether the caller is otherwise driving this
+    /// type purely through [`Stage`] (`Stage::feed` + `Stage::poll`). Such a
+    /// caller has no reason to inspect the `Result<()>` a `Stage`-style
+    /// `finish` implies, so the old inherent `finish`'s popped-and-returned
+    /// trailing segment was dropped on the floor the moment that expression's
+    /// value went unused — silently, with no error, and a subsequent
+    /// `Stage::poll` finding the queue already empty. See
+    /// `finish_bare_call_does_not_lose_the_trailing_segment_to_a_poll_driver`
+    /// for the reproduction. Removing the inline return removes the value
+    /// there was anything to drop: `push`/`finish` now only ever return
+    /// `Result<()>`, and the *only* ways to retrieve a cut segment are
+    /// [`Self::take_ready`] and [`Stage::poll`], both draining this one queue.
     ready: VecDeque<TsSegment>,
 }
 
@@ -723,12 +728,11 @@ impl StreamingTsHlsSegmenter {
     /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
     /// to cut on — call [`finish`](Self::finish) to close a trailing partial
     /// segment).
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<Option<TsSegment>> {
-        self.push_inner(track_id, sample)?;
-        // Single-queue delivery: `push_inner` enqueued any cut on `ready`;
-        // this inherent API hands it straight back, a `Stage::feed` caller
-        // leaves it queued for `Stage::poll`. Exactly one of the two drains it.
-        Ok(self.ready.pop_front())
+    ///
+    /// Any segment this push cuts is queued, not returned inline (issue R2)
+    /// — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
+    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+        self.push_inner(track_id, sample)
     }
 
     /// [`push`](Self::push)'s whole body, leaving any cut segment on
@@ -779,10 +783,25 @@ impl StreamingTsHlsSegmenter {
     ///
     /// # Errors
     /// Propagates a mux failure while cutting the trailing segment.
-    pub fn finish(&mut self) -> Result<Option<TsSegment>> {
-        self.finish_inner()?;
-        // Single-queue delivery — see [`push`](Self::push).
-        Ok(self.ready.pop_front())
+    ///
+    /// The trailing segment this cuts (if any) is queued, not returned inline
+    /// (issue R2) — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
+    /// This matters even for a caller that never touches [`Stage`] directly:
+    /// `finish` is also the [`Stage::finish`] trait method's name, so an
+    /// inline return here would tempt a `Stage`-style driver's bare
+    /// `seg.finish()` call (which always resolves to *this* inherent method,
+    /// never the trait one, by inherent-over-trait precedence) into silently
+    /// discarding it. See the `ready` field docs.
+    pub fn finish(&mut self) -> Result<()> {
+        self.finish_inner()
+    }
+
+    /// Drain every segment cut so far but not yet retrieved, in cut order —
+    /// the inherent-API analogue of [`Stage::poll`], draining the same
+    /// private `ready` queue (issue R2). Mirrors
+    /// [`Segmenter::take_ready`](crate::segmenter::Segmenter::take_ready).
+    pub fn take_ready(&mut self) -> Vec<TsSegment> {
+        self.ready.drain(..).collect()
     }
 
     /// [`finish`](Self::finish)'s whole body, leaving the trailing segment on
@@ -1033,15 +1052,13 @@ impl StreamingTsHlsSegmenter {
 /// segmenter's own natural output, not unified with any other segmenter's
 /// `Out`.
 ///
-/// Unlike the other three segmenters, [`push`](StreamingTsHlsSegmenter::push)/
-/// [`finish`](StreamingTsHlsSegmenter::finish) also return a cut `TsSegment`
-/// **inline**. Both shapes now drain the *same*
-/// `ready` queue rather than the two independent ones this type used to keep,
-/// so a segment is taken off exactly one queue exactly once:
-/// `Stage::feed`/`Stage::finish` cut and leave it queued for
-/// [`poll`](Stage::poll), the inherent methods cut and pop it straight back.
-/// A driver following the `Stage` protocol must therefore not *also* call the
-/// inherent methods and drop their return value — see the `ready` field docs.
+/// Like the other three segmenters (issue R2), [`push`](StreamingTsHlsSegmenter::push)/
+/// [`finish`](StreamingTsHlsSegmenter::finish) never return a cut segment
+/// inline — every cut lands on the same `ready` queue this impl's
+/// [`poll`](Stage::poll) drains, and the inherent
+/// [`take_ready`](StreamingTsHlsSegmenter::take_ready) drains it too, so a
+/// segment is retrievable exactly once no matter which API — inherent,
+/// `Stage`, or a mix of both on the same instance — the caller uses.
 impl Stage for StreamingTsHlsSegmenter {
     type In<'a> = (u32, Sample);
     type Out = TsSegment;
@@ -1237,13 +1254,12 @@ mod tests {
         seg.push(SCTE_ID, section_sample()).expect("push section");
 
         // 12 audio samples of 200 ticks each: a cut fires once buffered
-        // reaches the 1000-tick target on the 6th and 11th pushes.
-        let mut cuts: Vec<TsSegment> = Vec::new();
+        // reaches the 1000-tick target on the 6th and 11th pushes. Cuts are
+        // queued, not returned inline (issue R2) — drained via `take_ready`.
         for _ in 0..12 {
-            if let Some(seg_out) = seg.push(AUDIO_ID, audio_sample(200)).expect("push audio") {
-                cuts.push(seg_out);
-            }
+            seg.push(AUDIO_ID, audio_sample(200)).expect("push audio");
         }
+        let cuts = seg.take_ready();
 
         assert_eq!(
             cuts.len(),
@@ -1302,5 +1318,51 @@ mod tests {
             Err(other) => panic!("expected InvalidInput, got a different error: {other:?}"),
             Ok(_) => panic!("a track set of only section-carried tracks must not construct"),
         }
+    }
+
+    /// Reproduces the R2 hazard directly: a driver that pushes exclusively
+    /// through [`Stage::feed`]/[`Stage::poll`] (never touching the inherent
+    /// API) but closes the stream with a bare, unqualified `seg.finish()`
+    /// call. Rust's inherent-over-trait method resolution means that bare
+    /// call always picks [`StreamingTsHlsSegmenter::finish`] — the inherent
+    /// method — never [`Stage::finish`], regardless of the fact that every
+    /// other call in this test goes through `Stage`. A `Stage`-only driver
+    /// has no reason to inspect a `finish()` call's return value as anything
+    /// but `Result<()>`, so before the R2 fix (when the inherent `finish`
+    /// popped-and-returned the trailing segment as `Result<Option<TsSegment>>`)
+    /// that value was simply dropped, unread, and the trailing segment was
+    /// gone: a following `Stage::poll` found the queue already empty. Since
+    /// the R2 fix, `finish` only ever returns `Result<()>`, so there is no
+    /// value to drop — the segment is retrieved by the following `poll` no
+    /// matter what.
+    #[test]
+    fn finish_bare_call_does_not_lose_the_trailing_segment_to_a_poll_driver() {
+        const AUDIO_ID: u32 = 1;
+        const TIMESCALE: u32 = 1000;
+
+        let mut seg =
+            StreamingTsHlsSegmenter::new(vec![aac_track(AUDIO_ID, TIMESCALE)], 1000, usize::MAX)
+                .expect("construct");
+
+        // One sample only: not enough to cross the (huge) cut target, so
+        // nothing is cut yet and the only segment `Stage::poll` will ever see
+        // is the trailing one `finish` cuts below.
+        Stage::feed(&mut seg, (AUDIO_ID, audio_sample(200)), Timestamp::ZERO)
+            .expect("feed via Stage");
+        assert!(
+            Stage::poll(&mut seg).is_none(),
+            "no cut yet: nothing should be ready before finish"
+        );
+
+        // The hazard: an unqualified bare call, exactly what a caller who
+        // believes they are only using the `Stage` trait would naturally
+        // write to close the stream out.
+        seg.finish().expect("finish");
+
+        assert!(
+            Stage::poll(&mut seg).is_some(),
+            "the trailing segment cut by a bare finish() call must still be retrievable via \
+             Stage::poll — it must not have been silently handed back inline and dropped"
+        );
     }
 }
