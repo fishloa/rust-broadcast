@@ -5,7 +5,7 @@ edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.86"
-description  = "Media-plane integration layer: byte-stage abstraction over broadcast_common::Stage, the pre-demux stage of the ingress -> byte stages -> demux -> IR transforms -> Trunk -> egress pipeline. no_std + alloc."
+description  = "Media-plane integration layer: the byte-stage/tap/merge byte layer over broadcast_common::Stage, and the Trunk sample ring (TrunkWriter/SampleCursor), in the ingress -> byte stages -> demux -> IR transforms -> Trunk -> egress pipeline. no_std + alloc byte layer; Trunk requires std."
 keywords     = ["streaming", "ingest", "no-std", "media"]
 categories   = ["multimedia", "no-std"]
 readme       = "README.md"
@@ -14,10 +14,11 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "8.7", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
+transmux         = { path = "../transmux", version = "0.20", default-features = false, optional = true }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux"]
 
 [package.metadata.docs.rs]
 all-features = true
